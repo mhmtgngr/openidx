@@ -11,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -129,10 +130,12 @@ type GroupMember struct {
 
 // Service provides identity management operations
 type Service struct {
-	db     *database.PostgresDB
-	redis  *database.RedisClient
-	config *config.Config
-	logger *zap.Logger
+	db                *database.PostgresDB
+	redis             *database.RedisClient
+	cfg               *config.Config
+	logger            *zap.Logger
+	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
+	pushMFASessions   sync.Map // In-memory storage for Push MFA challenges (use Redis in production)
 }
 
 // NewService creates a new identity service
@@ -140,7 +143,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	return &Service{
 		db:     db,
 		redis:  redis,
-		config: cfg,
+		cfg:    cfg,
 		logger: logger.With(zap.String("service", "identity")),
 	}
 }
@@ -1085,6 +1088,22 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/mfa/backup/generate", svc.handleGenerateBackupCodes)
 		identity.POST("/mfa/backup/verify", svc.handleVerifyBackupCode)
 		identity.GET("/mfa/backup/count", svc.handleGetBackupCodeCount)
+
+		// WebAuthn (Passwordless) MFA
+		identity.POST("/mfa/webauthn/register/begin", svc.handleBeginWebAuthnRegistration)
+		identity.POST("/mfa/webauthn/register/finish", svc.handleFinishWebAuthnRegistration)
+		identity.POST("/mfa/webauthn/authenticate/begin", svc.handleBeginWebAuthnAuthentication)
+		identity.POST("/mfa/webauthn/authenticate/finish", svc.handleFinishWebAuthnAuthentication)
+		identity.GET("/mfa/webauthn/credentials", svc.handleGetWebAuthnCredentials)
+		identity.DELETE("/mfa/webauthn/credentials/:credential_id", svc.handleDeleteWebAuthnCredential)
+
+		// Push MFA
+		identity.POST("/mfa/push/register", svc.handleRegisterPushDevice)
+		identity.GET("/mfa/push/devices", svc.handleGetPushDevices)
+		identity.DELETE("/mfa/push/devices/:device_id", svc.handleDeletePushDevice)
+		identity.POST("/mfa/push/challenge", svc.handleCreatePushChallenge)
+		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
+		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
 	}
 }
 

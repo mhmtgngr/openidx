@@ -50,6 +50,30 @@ type Config struct {
 	SMTPUsername string `mapstructure:"smtp_username"`
 	SMTPPassword string `mapstructure:"smtp_password"`
 	SMTPFrom     string `mapstructure:"smtp_from"`
+
+	// WebAuthn configuration
+	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
+
+	// Push MFA configuration
+	PushMFA PushMFAConfig `mapstructure:"push_mfa"`
+}
+
+// WebAuthnConfig holds WebAuthn/FIDO2 configuration
+type WebAuthnConfig struct {
+	RPID      string   `mapstructure:"rp_id"`       // Relying Party ID (e.g., "example.com")
+	RPOrigins []string `mapstructure:"rp_origins"`  // Allowed origins
+	Timeout   int      `mapstructure:"timeout"`     // Timeout in seconds (default: 60)
+}
+
+// PushMFAConfig holds Push MFA configuration
+type PushMFAConfig struct {
+	Enabled          bool   `mapstructure:"enabled"`
+	FCMServerKey     string `mapstructure:"fcm_server_key"`      // Firebase Cloud Messaging server key
+	APNSKeyID        string `mapstructure:"apns_key_id"`         // Apple Push Notification Service key ID
+	APNSTeamID       string `mapstructure:"apns_team_id"`        // Apple team ID
+	APNSKeyPath      string `mapstructure:"apns_key_path"`       // Path to APNS .p8 key file
+	ChallengeTimeout int    `mapstructure:"challenge_timeout"`   // Timeout in seconds (default: 60)
+	AutoApprove      bool   `mapstructure:"auto_approve"`        // Auto-approve for development (NEVER use in production)
 }
 
 // Load reads configuration from file and environment variables
@@ -139,6 +163,16 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
+
+	// WebAuthn defaults
+	v.SetDefault("webauthn.rp_id", "localhost")
+	v.SetDefault("webauthn.rp_origins", []string{"http://localhost:3000", "http://localhost:8080"})
+	v.SetDefault("webauthn.timeout", 60)
+
+	// Push MFA defaults
+	v.SetDefault("push_mfa.enabled", true)
+	v.SetDefault("push_mfa.challenge_timeout", 60)
+	v.SetDefault("push_mfa.auto_approve", false)
 }
 
 func bindEnvVars(v *viper.Viper) {
