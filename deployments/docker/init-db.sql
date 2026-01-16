@@ -155,6 +155,69 @@ CREATE TABLE IF NOT EXISTS user_mfa_policies (
     PRIMARY KEY (user_id, policy_id)
 );
 
+-- WebAuthn (FIDO2/Passkey) credentials
+CREATE TABLE IF NOT EXISTS mfa_webauthn (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    credential_id TEXT UNIQUE NOT NULL, -- Base64URL encoded
+    public_key TEXT NOT NULL, -- COSE encoded public key
+    sign_count BIGINT DEFAULT 0, -- Counter to prevent replay attacks
+    aaguid VARCHAR(36), -- Authenticator attestation GUID
+    transports TEXT[], -- usb, nfc, ble, internal
+    name VARCHAR(255), -- User-friendly name (e.g., "YubiKey 5", "Touch ID")
+    backup_eligible BOOLEAN DEFAULT false, -- Can credential be backed up (passkey)
+    backup_state BOOLEAN DEFAULT false, -- Is credential currently backed up
+    attestation_format VARCHAR(50), -- packed, fido-u2f, none, etc.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id, credential_id)
+);
+
+-- Push notification MFA devices
+CREATE TABLE IF NOT EXISTS mfa_push_devices (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    device_token TEXT UNIQUE NOT NULL, -- FCM/APNS token
+    platform VARCHAR(20) NOT NULL, -- ios, android, web
+    device_name VARCHAR(255), -- User-friendly name (e.g., "iPhone 13", "Pixel 6")
+    device_model VARCHAR(100), -- Phone model
+    os_version VARCHAR(50), -- OS version
+    app_version VARCHAR(50), -- App version
+    enabled BOOLEAN DEFAULT true,
+    trusted BOOLEAN DEFAULT false, -- Device trust status
+    last_ip VARCHAR(45), -- Last IP address
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE -- Token expiry
+);
+
+-- Push MFA challenges
+CREATE TABLE IF NOT EXISTS mfa_push_challenges (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    device_id UUID REFERENCES mfa_push_devices(id) ON DELETE CASCADE,
+    challenge_code VARCHAR(10) NOT NULL, -- Number matching code (e.g., "73")
+    status VARCHAR(20) DEFAULT 'pending', -- pending, approved, denied, expired
+    session_info JSONB, -- IP, location, browser, etc.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    responded_at TIMESTAMP WITH TIME ZONE,
+    ip_address VARCHAR(45), -- IP of login attempt
+    user_agent TEXT, -- Browser/client info
+    location VARCHAR(255) -- Geolocation (city, country)
+);
+
+-- Indexes for WebAuthn
+CREATE INDEX IF NOT EXISTS idx_webauthn_user_id ON mfa_webauthn(user_id);
+CREATE INDEX IF NOT EXISTS idx_webauthn_credential_id ON mfa_webauthn(credential_id);
+
+-- Indexes for Push MFA
+CREATE INDEX IF NOT EXISTS idx_push_devices_user_id ON mfa_push_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_push_devices_token ON mfa_push_devices(device_token);
+CREATE INDEX IF NOT EXISTS idx_push_challenges_user_id ON mfa_push_challenges(user_id);
+CREATE INDEX IF NOT EXISTS idx_push_challenges_status ON mfa_push_challenges(status);
+CREATE INDEX IF NOT EXISTS idx_push_challenges_expires_at ON mfa_push_challenges(expires_at);
+
 -- Audit events
 CREATE TABLE IF NOT EXISTS audit_events (
     id UUID PRIMARY KEY,
