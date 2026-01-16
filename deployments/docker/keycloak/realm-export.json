@@ -36,9 +36,9 @@
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "redirectUris": ["http://localhost:3000/*", "http://192.168.31.76:3000/*", "https://admin.openidx.io/*"],
-      "webOrigins": ["http://localhost:3000", "http://192.168.31.76:3000", "https://admin.openidx.io"],
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*", "http://localhost:3000/*", "https://admin.openidx.io/*"],
+      "webOrigins": ["http://localhost:3000", "http://localhost:3000", "https://admin.openidx.io"],
       "defaultClientScopes": ["openid", "profile", "email", "roles"]
     },
     {
@@ -70,7 +70,43 @@
       "realmRoles": ["admin", "user-admin", "group-admin", "app-admin", "policy-admin"]
     }
   ],
-  "passwordPolicy": "length(4)",
+
+  "identityProviders": [
+    {
+      "alias": "saml-adfs",
+      "displayName": "Microsoft ADFS",
+      "providerId": "saml",
+      "enabled": true,
+      "updateProfileFirstLoginMode": "on",
+      "trustEmail": false,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "config": {
+        "singleSignOnServiceUrl": "https://adfs.example.com/adfs/ls/",
+        "singleLogoutServiceUrl": "https://adfs.example.com/adfs/ls/",
+        "nameIDPolicyFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+        "principalType": "SUBJECT",
+        "signatureAlgorithm": "RSA_SHA256",
+        "xmlSigKeyInfoKeyNameTransformer": "KEY_ID",
+        "entityId": "https://openidx.io",
+        "allowCreate": true,
+        "postBindingResponse": true,
+        "postBindingAuthnRequest": true,
+        "postBindingLogout": true,
+        "wantAuthnRequestsSigned": false,
+        "wantAssertionsSigned": true,
+        "wantAssertionsEncrypted": false,
+        "forceAuthn": false,
+        "validateSignature": true,
+        "signSpMetadata": false,
+        "loginHint": false,
+        "passSubject": true,
+        "passSubjectToCallback": false
+      }
+    }
+  ],
   "browserSecurityHeaders": {
     "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
     "xContentTypeOptions": "nosniff",

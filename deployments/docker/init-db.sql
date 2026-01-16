@@ -11,7 +11,14 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    last_login_at TIMESTAMP WITH TIME ZONE
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    -- Password policy fields
+    password_changed_at TIMESTAMP WITH TIME ZONE,
+    password_must_change BOOLEAN DEFAULT false,
+    -- Account lockout fields
+    failed_login_count INTEGER DEFAULT 0,
+    last_failed_login_at TIMESTAMP WITH TIME ZONE,
+    locked_until TIMESTAMP WITH TIME ZONE
 );
 
 -- Sessions table
@@ -102,6 +109,50 @@ CREATE TABLE IF NOT EXISTS scim_users (
     data JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- MFA (TOTP) settings
+CREATE TABLE IF NOT EXISTS mfa_totp (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    secret VARCHAR(255) NOT NULL,
+    enabled BOOLEAN DEFAULT false,
+    enrolled_at TIMESTAMP WITH TIME ZONE,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Backup codes for MFA
+CREATE TABLE IF NOT EXISTS mfa_backup_codes (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    code_hash VARCHAR(255) NOT NULL,
+    used BOOLEAN DEFAULT false,
+    used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- MFA enforcement policies
+CREATE TABLE IF NOT EXISTS mfa_policies (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0,
+    conditions JSONB, -- e.g., {"groups": ["admin"], "ip_ranges": ["192.168.1.0/24"]}
+    required_methods JSONB, -- e.g., ["totp", "backup_code"]
+    grace_period_hours INTEGER DEFAULT 24,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User MFA policy assignments
+CREATE TABLE IF NOT EXISTS user_mfa_policies (
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    policy_id UUID REFERENCES mfa_policies(id) ON DELETE CASCADE,
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_id, policy_id)
 );
 
 -- Audit events
@@ -200,6 +251,20 @@ INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, re
 ('31000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'application', '20000000-0000-0000-0000-000000000002', 'HR Portal', 'pending'),
 ('31000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'application', '20000000-0000-0000-0000-000000000003', 'Finance Application', 'approved'),
 ('31000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000004', 'group', '10000000-0000-0000-0000-000000000005', 'Finance', 'pending')
+ON CONFLICT (id) DO NOTHING;
+
+-- Insert sample MFA policies
+INSERT INTO mfa_policies (id, name, description, enabled, priority, conditions, required_methods, grace_period_hours) VALUES
+('50000000-0000-0000-0000-000000000001', 'Admin MFA Required', 'Require MFA for all administrators', true, 100,
+ '{"groups": ["Administrators"]}', '["totp", "backup_code"]', 24),
+('50000000-0000-0000-0000-000000000002', 'Finance Department MFA', 'Require MFA for finance department during business hours', true, 80,
+ '{"groups": ["Finance"], "time_windows": [{"days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "start_hour": 9, "end_hour": 17}]}', '["totp"]', 48),
+('50000000-0000-0000-0000-000000000003', 'External Access MFA', 'Require MFA for access from external IP ranges', true, 60,
+ '{"ip_ranges": ["192.168.0.0/16", "10.0.0.0/8"]}', '["totp", "backup_code"]', 0),
+('50000000-0000-0000-0000-000000000004', 'Verified Users Only', 'Require MFA for users with verified email', true, 40,
+ '{"attributes": {"email_verified": true}}', '["totp"]', 168),
+('50000000-0000-0000-0000-000000000005', 'Weekend Access MFA', 'Require MFA during weekends', true, 50,
+ '{"time_windows": [{"days": ["Saturday", "Sunday"], "start_hour": 0, "end_hour": 23}]}', '["totp", "backup_code"]', 24)
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert sample audit events
