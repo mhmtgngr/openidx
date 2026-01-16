@@ -1,0 +1,80 @@
+{
+  "realm": "openidx",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "roles": {
+    "realm": [
+      {"name": "admin", "description": "Administrator"},
+      {"name": "user-admin", "description": "User Administrator"},
+      {"name": "user-viewer", "description": "User Viewer"},
+      {"name": "group-admin", "description": "Group Administrator"},
+      {"name": "group-viewer", "description": "Group Viewer"},
+      {"name": "app-admin", "description": "Application Administrator"},
+      {"name": "app-viewer", "description": "Application Viewer"},
+      {"name": "policy-admin", "description": "Policy Administrator"},
+      {"name": "policy-viewer", "description": "Policy Viewer"},
+      {"name": "auditor", "description": "Auditor"}
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "admin-console",
+      "name": "Admin Console",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*", "http://192.168.31.76:3000/*", "https://admin.openidx.io/*"],
+      "webOrigins": ["http://localhost:3000", "http://192.168.31.76:3000", "https://admin.openidx.io"],
+      "defaultClientScopes": ["openid", "profile", "email", "roles"]
+    },
+    {
+      "clientId": "openidx-api",
+      "name": "OpenIDX API",
+      "enabled": true,
+      "bearerOnly": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@openidx.local",
+      "firstName": "System",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": true
+        }
+      ],
+      "realmRoles": ["admin", "user-admin", "group-admin", "app-admin", "policy-admin"]
+    }
+  ],
+  "passwordPolicy": "length(4)",
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xContentTypeOptions": "nosniff",
+    "xFrameOptions": "SAMEORIGIN",
+    "xXSSProtection": "1; mode=block"
+  }
+}

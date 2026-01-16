@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+*.cover
+*.out
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker
+.docker/
+
+# Secrets (never commit these)
+*.pem
+*.key
+credentials.json
+secrets.yaml

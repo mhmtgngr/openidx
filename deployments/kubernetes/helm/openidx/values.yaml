@@ -1,0 +1,236 @@
+# OpenIDX Helm Chart Values
+
+global:
+  imageRegistry: ghcr.io/openidx
+  imagePullSecrets: []
+  storageClass: ""
+
+# Identity Service
+identityService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: identity-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+# Governance Service
+governanceService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: governance-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8002
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Provisioning Service
+provisioningService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: provisioning-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8003
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Audit Service
+auditService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: audit-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8004
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Admin API
+adminApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: admin-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8005
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Admin Console
+adminConsole:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: admin-console
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: admin.openidx.io
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: admin-console-tls
+        hosts:
+          - admin.openidx.io
+
+# Keycloak
+keycloak:
+  enabled: true
+  auth:
+    adminUser: admin
+    adminPassword: ""  # Set via secret
+  postgresql:
+    enabled: false  # Use external PostgreSQL
+  externalDatabase:
+    host: ""
+    port: 5432
+    user: keycloak
+    password: ""
+    database: keycloak
+
+# APISIX
+apisix:
+  enabled: true
+  gateway:
+    type: LoadBalancer
+  ingress-controller:
+    enabled: true
+  dashboard:
+    enabled: true
+
+# OPA
+opa:
+  enabled: true
+  replicas: 2
+
+# PostgreSQL
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: ""  # Set via secret
+    database: openidx
+  primary:
+    persistence:
+      size: 20Gi
+
+# Redis
+redis:
+  enabled: true
+  auth:
+    password: ""  # Set via secret
+  master:
+    persistence:
+      size: 5Gi
+
+# Elasticsearch
+elasticsearch:
+  enabled: true
+  replicas: 3
+  minimumMasterNodes: 2
+  volumeClaimTemplate:
+    resources:
+      requests:
+        storage: 30Gi
+
+# Monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: true
+    adminPassword: ""  # Set via secret
+
+# Ingress
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+  hosts:
+    - host: api.openidx.io
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: api-tls
+      hosts:
+        - api.openidx.io
+
+# Service Account
+serviceAccount:
+  create: true
+  name: openidx
+
+# Pod Security
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000

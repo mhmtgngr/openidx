@@ -1,0 +1,313 @@
+version: '3.9'
+
+services:
+  #---------------------------------------------------------------------------
+  # Infrastructure Services
+  #---------------------------------------------------------------------------
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: openidx-postgres
+    environment:
+      POSTGRES_DB: openidx
+      POSTGRES_USER: openidx
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openidx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openidx-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: openidx-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secret}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openidx-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: openidx-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'status'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Keycloak - Identity Provider
+  #---------------------------------------------------------------------------
+  
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: openidx-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/openidx
+      KC_DB_USERNAME: openidx
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
+      KC_HOSTNAME_URL: http://192.168.31.76:8180
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      KC_HTTP_PORT: 8180
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - ./keycloak/themes:/opt/keycloak/themes:ro
+    ports:
+      - "8180:8180"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8180'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # API Gateway - Apache APISIX
+  #---------------------------------------------------------------------------
+  
+  apisix:
+    image: apache/apisix:3.8.0-debian
+    container_name: openidx-apisix
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+      - "8088:9080"
+      - "8443:9443"
+      - "9188:9180"
+    depends_on:
+      - etcd
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openidx-network
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.12
+    container_name: openidx-etcd
+    command:
+      - /usr/local/bin/etcd
+      - --data-dir=/etcd-data
+      - --name=etcd
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Policy Engine - Open Policy Agent
+  #---------------------------------------------------------------------------
+  
+  opa:
+    image: openpolicyagent/opa:0.61.0
+    container_name: openidx-opa
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=info"
+      - "/policies"
+    volumes:
+      - ./opa/policies:/policies:ro
+    ports:
+      - "8181:8181"
+    healthcheck:
+      test: ["NONE"]
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # OpenIDX Services
+  #---------------------------------------------------------------------------
+  
+  identity-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.identity-service
+    container_name: openidx-identity-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - KEYCLOAK_URL=http://keycloak:8180
+      - OPA_URL=http://opa:8181
+      - LOG_LEVEL=debug
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    networks:
+      - openidx-network
+
+  governance-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.governance-service
+    container_name: openidx-governance-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - OPA_URL=http://opa:8181
+      - LOG_LEVEL=debug
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  provisioning-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.provisioning-service
+    container_name: openidx-provisioning-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - KEYCLOAK_URL=http://keycloak:8180
+      - LOG_LEVEL=debug
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  audit-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.audit-service
+    container_name: openidx-audit-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - LOG_LEVEL=debug
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  admin-api:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.admin-api
+    container_name: openidx-admin-api
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - KEYCLOAK_URL=http://keycloak:8180
+      - OPA_URL=http://opa:8181
+      - LOG_LEVEL=debug
+    ports:
+      - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Admin Console - React Frontend
+  #---------------------------------------------------------------------------
+  
+  admin-console:
+    build:
+      context: ../../web/admin-console
+      dockerfile: ../../deployments/docker/Dockerfile.admin-console
+      args:
+        - VITE_API_URL=http://192.168.31.76:8088
+        - VITE_KEYCLOAK_URL=http://192.168.31.76:8180
+        - VITE_KEYCLOAK_REALM=openidx
+        - VITE_KEYCLOAK_CLIENT_ID=admin-console
+    container_name: openidx-admin-console
+    environment:
+      - VITE_API_URL=http://192.168.31.76:8088
+      - VITE_KEYCLOAK_URL=http://192.168.31.76:8180
+      - VITE_KEYCLOAK_REALM=openidx
+      - VITE_KEYCLOAK_CLIENT_ID=admin-console
+    ports:
+      - "3000:3000"
+    depends_on:
+      - admin-api
+      - keycloak
+    networks:
+      - openidx-network
+
+#---------------------------------------------------------------------------
+# Networks
+#---------------------------------------------------------------------------
+
+networks:
+  openidx-network:
+    driver: bridge
+
+#---------------------------------------------------------------------------
+# Volumes
+#---------------------------------------------------------------------------
+
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+  etcd_data:

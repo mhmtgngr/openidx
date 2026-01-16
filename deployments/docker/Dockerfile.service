@@ -1,0 +1,51 @@
+# Build stage
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build argument for service name
+ARG SERVICE_NAME=identity-service
+ARG VERSION=dev
+
+# Build the service
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION}" \
+    -o /app/service ./cmd/${SERVICE_NAME}
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN addgroup -S openidx && adduser -S openidx -G openidx
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/service .
+
+# Copy configs if needed
+COPY --from=builder /app/configs ./configs
+
+# Use non-root user
+USER openidx
+
+# Expose port
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:8001/health || exit 1
+
+# Run the service
+ENTRYPOINT ["./service"]

@@ -1,0 +1,67 @@
+import axios, { AxiosError, AxiosRequestConfig } from 'axios'
+
+const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+
+const axiosInstance = axios.create({
+  baseURL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// Request interceptor to add auth token
+axiosInstance.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// Exported for auth.tsx to signal when auth init is complete (kept for potential future use)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const setAuthInitializing = (_value: boolean) => {
+  // Currently not used - 401 handling moved to auth context
+}
+
+// Response interceptor for error handling
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      // Log 401 errors but don't auto-redirect - let the auth context handle session state
+      // This prevents redirect loops when the backend rejects tokens during auth flow
+      console.warn('[API] 401 Unauthorized:', error.config?.url)
+    }
+    return Promise.reject(error)
+  }
+)
+
+export const api = {
+  get: async <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
+    const response = await axiosInstance.get<T>(url, config)
+    return response.data
+  },
+
+  post: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
+    const response = await axiosInstance.post<T>(url, data, config)
+    return response.data
+  },
+
+  put: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
+    const response = await axiosInstance.put<T>(url, data, config)
+    return response.data
+  },
+
+  patch: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
+    const response = await axiosInstance.patch<T>(url, data, config)
+    return response.data
+  },
+
+  delete: async <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
+    const response = await axiosInstance.delete<T>(url, config)
+    return response.data
+  },
+}
+
+export default axiosInstance

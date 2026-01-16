@@ -1,0 +1,36 @@
+# Build stage
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION}" \
+    -o /app/service ./cmd/admin-api
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+RUN addgroup -S openidx && adduser -S openidx -G openidx
+
+WORKDIR /app
+
+COPY --from=builder /app/service .
+
+USER openidx
+
+EXPOSE 8005
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:8005/health || exit 1
+
+ENTRYPOINT ["./service"]

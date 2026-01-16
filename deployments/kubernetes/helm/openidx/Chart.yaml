@@ -1,0 +1,33 @@
+apiVersion: v2
+name: openidx
+description: OpenIDX - Open Source Zero Trust Access Platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - identity
+  - access-management
+  - iam
+  - zero-trust
+  - sso
+  - mfa
+maintainers:
+  - name: OpenIDX Team
+    email: team@openidx.io
+dependencies:
+  - name: postgresql
+    version: "14.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+  - name: elasticsearch
+    version: "19.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: elasticsearch.enabled
+  - name: keycloak
+    version: "18.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: keycloak.enabled
