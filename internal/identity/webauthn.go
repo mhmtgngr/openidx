@@ -238,7 +238,7 @@ func (s *Service) BeginWebAuthnAuthentication(ctx context.Context, username stri
 	// Get user by username
 	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND enabled = true`
 	var userID, uname, email, firstName, lastName string
-	err := s.db.QueryRow(ctx, query, username).Scan(&userID, &uname, &email, &firstName, &lastName)
+	err := s.db.Pool.QueryRow(ctx, query, username).Scan(&userID, &uname, &email, &firstName, &lastName)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
@@ -305,7 +305,7 @@ func (s *Service) FinishWebAuthnAuthentication(ctx context.Context, username str
 	// Get user by username
 	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND enabled = true`
 	var userID, uname, email, firstName, lastName string
-	err := s.db.QueryRow(ctx, query, username).Scan(&userID, &uname, &email, &firstName, &lastName)
+	err := s.db.Pool.QueryRow(ctx, query, username).Scan(&userID, &uname, &email, &firstName, &lastName)
 	if err != nil {
 		return "", fmt.Errorf("user not found: %w", err)
 	}
@@ -394,7 +394,7 @@ func (s *Service) GetWebAuthnCredentials(ctx context.Context, userID string) ([]
 // DeleteWebAuthnCredential removes a WebAuthn credential
 func (s *Service) DeleteWebAuthnCredential(ctx context.Context, userID, credentialID string) error {
 	query := `DELETE FROM mfa_webauthn WHERE user_id = $1 AND id = $2`
-	result, err := s.db.Exec(ctx, query, userID, credentialID)
+	result, err := s.db.Pool.Exec(ctx, query, userID, credentialID)
 	if err != nil {
 		return fmt.Errorf("failed to delete credential: %w", err)
 	}
@@ -443,7 +443,7 @@ func (s *Service) getWebAuthnCredentials(ctx context.Context, userID string) ([]
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.db.Query(ctx, query, userID)
+	rows, err := s.db.Pool.Query(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +490,7 @@ func (s *Service) storeWebAuthnCredential(ctx context.Context, cred *WebAuthnCre
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 
-	_, err := s.db.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(ctx, query,
 		cred.ID,
 		cred.UserID,
 		cred.CredentialID,
@@ -515,7 +515,7 @@ func (s *Service) updateWebAuthnCredential(ctx context.Context, userID, credenti
 		WHERE user_id = $3 AND credential_id = $4
 	`
 
-	_, err := s.db.Exec(ctx, query, signCount, time.Now(), userID, credentialID)
+	_, err := s.db.Pool.Exec(ctx, query, signCount, time.Now(), userID, credentialID)
 	return err
 }
 
