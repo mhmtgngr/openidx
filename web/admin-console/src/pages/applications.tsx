@@ -52,14 +52,19 @@ export function ApplicationsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
+  const [registerAppModal, setRegisterAppModal] = useState(false)
   const [editAppModal, setEditAppModal] = useState(false)
   const [ssoSettingsModal, setSsoSettingsModal] = useState(false)
   const [selectedApp, setSelectedApp] = useState<Application | null>(null)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    type: 'web',
     base_url: '',
     redirect_uris: '',
+    grant_types: 'authorization_code,refresh_token',
+    scopes: 'openid,profile,email,offline_access',
+    pkce_required: true,
   })
   const [ssoSettings, setSsoSettings] = useState({
     enabled: true,
@@ -72,6 +77,38 @@ export function ApplicationsPage() {
   const { data: applications, isLoading } = useQuery({
     queryKey: ['applications', search],
     queryFn: () => api.get<Application[]>('/api/v1/applications'),
+  })
+
+  // Create OAuth client mutation
+  const createClientMutation = useMutation({
+    mutationFn: (clientData: any) =>
+      api.post('/api/v1/oauth/clients', clientData),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      toast({
+        title: 'Success',
+        description: `OAuth client created! Client ID: ${data.client_id}`,
+        variant: 'success',
+      })
+      setRegisterAppModal(false)
+      setFormData({
+        name: '',
+        description: '',
+        type: 'web',
+        base_url: '',
+        redirect_uris: '',
+        grant_types: 'authorization_code,refresh_token',
+        scopes: 'openid,profile,email,offline_access',
+        pkce_required: true,
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to create OAuth client: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
   })
 
   // Update application mutation
@@ -129,8 +166,12 @@ export function ApplicationsPage() {
     setFormData({
       name: app.name,
       description: app.description || '',
+      type: app.type || 'web',
       base_url: app.base_url || '',
       redirect_uris: app.redirect_uris?.join('\n') || '',
+      grant_types: 'authorization_code,refresh_token',
+      scopes: 'openid,profile,email,offline_access',
+      pkce_required: true,
     })
     setEditAppModal(true)
   }
@@ -153,6 +194,23 @@ export function ApplicationsPage() {
     if (confirm(`Are you sure you want to delete application: ${appName}? This action cannot be undone.`)) {
       deleteApplicationMutation.mutate(appId)
     }
+  }
+
+  const handleRegisterSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    createClientMutation.mutate({
+      name: formData.name,
+      description: formData.description,
+      type: formData.type,
+      redirect_uris: formData.redirect_uris.split('\n').filter(uri => uri.trim()),
+      grant_types: formData.grant_types.split(',').map(g => g.trim()),
+      response_types: ['code'],
+      scopes: formData.scopes.split(',').map(s => s.trim()),
+      pkce_required: formData.pkce_required,
+      allow_refresh_token: true,
+      access_token_lifetime: 3600,
+      refresh_token_lifetime: 86400,
+    })
   }
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -204,7 +262,7 @@ export function ApplicationsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Applications</h1>
           <p className="text-muted-foreground">Manage registered applications and SSO configurations</p>
         </div>
-        <Button>
+        <Button onClick={() => setRegisterAppModal(true)}>
           <Plus className="mr-2 h-4 w-4" /> Register Application
         </Button>
       </div>
@@ -320,6 +378,119 @@ export function ApplicationsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Register OAuth Client Modal */}
+      <Dialog open={registerAppModal} onOpenChange={setRegisterAppModal}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Register OAuth/OIDC Application</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleRegisterSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Application Name *</Label>
+              <Input
+                id="name"
+                name="name"
+                value={formData.name}
+                onChange={handleInputChange}
+                placeholder="My Application"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Input
+                id="description"
+                name="description"
+                value={formData.description}
+                onChange={handleInputChange}
+                placeholder="Application description"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="type">Application Type *</Label>
+              <select
+                id="type"
+                name="type"
+                value={formData.type}
+                onChange={(e) => setFormData(prev => ({ ...prev, type: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="web">Web Application</option>
+                <option value="native">Native/Mobile App</option>
+                <option value="service">Service/Machine-to-Machine</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                {formData.type === 'web' && 'Server-side web applications (confidential client)'}
+                {formData.type === 'native' && 'Mobile or desktop applications (public client with PKCE)'}
+                {formData.type === 'service' && 'Backend services using client credentials'}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="redirect_uris">Redirect URIs * (one per line)</Label>
+              <textarea
+                id="redirect_uris"
+                name="redirect_uris"
+                value={formData.redirect_uris}
+                onChange={handleInputChange}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="https://myapp.com/callback&#10;https://myapp.com/auth/callback"
+                required
+              />
+              <p className="text-xs text-gray-500">
+                Valid OAuth 2.0 redirect URIs for your application
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="scopes">Scopes (comma-separated)</Label>
+              <Input
+                id="scopes"
+                name="scopes"
+                value={formData.scopes}
+                onChange={handleInputChange}
+                placeholder="openid,profile,email,offline_access"
+              />
+              <p className="text-xs text-gray-500">
+                OAuth/OIDC scopes this client can request
+              </p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="pkce_required"
+                name="pkce_required"
+                checked={formData.pkce_required}
+                onChange={(e) => setFormData(prev => ({ ...prev, pkce_required: e.target.checked }))}
+                className="rounded"
+              />
+              <Label htmlFor="pkce_required">Require PKCE (Recommended for mobile/SPA)</Label>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
+              <p className="font-medium text-blue-900 mb-1">After registration:</p>
+              <ul className="text-blue-800 space-y-1 list-disc list-inside">
+                <li>You'll receive a <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+                <li>Store the Client Secret securely - it won't be shown again</li>
+                <li>Use these credentials to integrate OAuth 2.0 / OIDC</li>
+              </ul>
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRegisterAppModal(false)}
+                disabled={createClientMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createClientMutation.isPending}>
+                {createClientMutation.isPending ? 'Registering...' : 'Register Application'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Application Modal */}
       <Dialog open={editAppModal} onOpenChange={setEditAppModal}>
