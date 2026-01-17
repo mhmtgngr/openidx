@@ -297,6 +297,20 @@ CREATE TABLE IF NOT EXISTS applications (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Application SSO settings
+CREATE TABLE IF NOT EXISTS application_sso_settings (
+    id UUID PRIMARY KEY,
+    application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
+    enabled BOOLEAN DEFAULT true,
+    use_refresh_tokens BOOLEAN DEFAULT true,
+    access_token_lifetime INTEGER DEFAULT 3600, -- seconds
+    refresh_token_lifetime INTEGER DEFAULT 86400, -- seconds
+    require_consent BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(application_id)
+);
+
 INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, enabled) VALUES
 ('20000000-0000-0000-0000-000000000001', 'admin-console', 'Admin Console', 'OpenIDX Administration Console', 'web', 'openid-connect', 'http://localhost:3000', true),
 ('20000000-0000-0000-0000-000000000002', 'hr-portal', 'HR Portal', 'Human Resources Management Portal', 'web', 'openid-connect', 'http://hr.example.com', true),

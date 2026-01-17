@@ -231,17 +231,44 @@ export function ApplicationsPage() {
   const handleSsoSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedApp) {
-      // TODO: Update SSO settings via API (this would be a separate endpoint)
+      updateSSOSettingsMutation.mutate({
+        applicationId: selectedApp.id,
+        enabled: ssoSettings.enabled,
+        useRefreshTokens: ssoSettings.refreshToken,
+        accessTokenLifetime: parseInt(ssoSettings.accessTokenLifetime),
+        refreshTokenLifetime: parseInt(ssoSettings.refreshTokenLifetime),
+        requireConsent: ssoSettings.consentRequired,
+      })
+    }
+  }
+
+  // Update SSO settings mutation
+  const updateSSOSettingsMutation = useMutation({
+    mutationFn: (settings: any) =>
+      api.put(`/api/v1/applications/${settings.applicationId}/sso-settings`, {
+        enabled: settings.enabled,
+        use_refresh_tokens: settings.useRefreshTokens,
+        access_token_lifetime: settings.accessTokenLifetime,
+        refresh_token_lifetime: settings.refreshTokenLifetime,
+        require_consent: settings.requireConsent,
+      }),
+    onSuccess: () => {
       toast({
         title: 'Success',
-        description: `SSO settings updated for "${selectedApp.name}"`,
+        description: `SSO settings updated for "${selectedApp?.name}"`,
         variant: 'success',
       })
       setSsoSettingsModal(false)
       setSelectedApp(null)
-      queryClient.invalidateQueries({ queryKey: ['applications'] })
-    }
-  }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update SSO settings: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))

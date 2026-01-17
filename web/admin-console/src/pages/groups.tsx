@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -172,13 +172,14 @@ export function GroupsPage() {
   const handleSettingsSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedGroup) {
+      const maxMembers = groupSettings.maxMembers ? parseInt(groupSettings.maxMembers) : null
       updateGroupMutation.mutate({
         id: selectedGroup.id,
         name: selectedGroup.name,
         description: selectedGroup.description,
         allow_self_join: groupSettings.allowSelfJoin,
         require_approval: groupSettings.requireApproval,
-        max_members: groupSettings.maxMembers || null,
+        max_members: maxMembers,
       })
     }
   }
