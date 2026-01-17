@@ -204,65 +204,65 @@ func RateLimit(message string) *AppError {
 
 // UserNotFound creates a user not found error
 func UserNotFound(userID string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrUserNotFound,
 		Message:    "User not found",
 		StatusCode: http.StatusNotFound,
-	}.WithMetadata("user_id", userID)
+	}).WithMetadata("user_id", userID)
 }
 
 // UserAlreadyExists creates a user already exists error
 func UserAlreadyExists(username string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrUserAlreadyExists,
 		Message:    "User already exists",
 		StatusCode: http.StatusConflict,
-	}.WithMetadata("username", username)
+	}).WithMetadata("username", username)
 }
 
 // UserDisabled creates a user disabled error
 func UserDisabled(userID string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrUserDisabled,
 		Message:    "User is disabled",
 		StatusCode: http.StatusForbidden,
-	}.WithMetadata("user_id", userID)
+	}).WithMetadata("user_id", userID)
 }
 
 // GroupNotFound creates a group not found error
 func GroupNotFound(groupID string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrGroupNotFound,
 		Message:    "Group not found",
 		StatusCode: http.StatusNotFound,
-	}.WithMetadata("group_id", groupID)
+	}).WithMetadata("group_id", groupID)
 }
 
 // GroupAlreadyExists creates a group already exists error
 func GroupAlreadyExists(name string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrGroupAlreadyExists,
 		Message:    "Group already exists",
 		StatusCode: http.StatusConflict,
-	}.WithMetadata("group_name", name)
+	}).WithMetadata("group_name", name)
 }
 
 // SessionNotFound creates a session not found error
 func SessionNotFound(sessionID string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrSessionNotFound,
 		Message:    "Session not found",
 		StatusCode: http.StatusNotFound,
-	}.WithMetadata("session_id", sessionID)
+	}).WithMetadata("session_id", sessionID)
 }
 
 // SessionExpired creates a session expired error
 func SessionExpired(sessionID string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrSessionExpired,
 		Message:    "Session has expired",
 		StatusCode: http.StatusUnauthorized,
-	}.WithMetadata("session_id", sessionID)
+	}).WithMetadata("session_id", sessionID)
 }
 
 // InvalidCredentials creates an invalid credentials error
@@ -295,30 +295,30 @@ func TokenExpired() *AppError {
 
 // InsufficientPermissions creates an insufficient permissions error
 func InsufficientPermissions(action string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrInsufficientPerms,
 		Message:    "Insufficient permissions to perform this action",
 		StatusCode: http.StatusForbidden,
-	}.WithMetadata("action", action)
+	}).WithMetadata("action", action)
 }
 
 // PolicyNotFound creates a policy not found error
 func PolicyNotFound(policyID string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrPolicyNotFound,
 		Message:    "Policy not found",
 		StatusCode: http.StatusNotFound,
-	}.WithMetadata("policy_id", policyID)
+	}).WithMetadata("policy_id", policyID)
 }
 
 // PolicyViolation creates a policy violation error
 func PolicyViolation(policyName, reason string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrPolicyViolation,
 		Message:    fmt.Sprintf("Policy violation: %s", policyName),
 		Details:    reason,
 		StatusCode: http.StatusForbidden,
-	}.WithMetadata("policy", policyName)
+	}).WithMetadata("policy", policyName)
 }
 
 // DatabaseError creates a database error
@@ -334,11 +334,11 @@ func DatabaseError(operation string, err error) *AppError {
 
 // DuplicateKey creates a duplicate key error
 func DuplicateKey(key string) *AppError {
-	return &AppError{
+	return (&AppError{
 		Code:       ErrDuplicateKey,
 		Message:    "Duplicate key violation",
 		StatusCode: http.StatusConflict,
-	}.WithMetadata("key", key)
+	}).WithMetadata("key", key)
 }
 
 // ErrorResponse is the JSON response structure for errors

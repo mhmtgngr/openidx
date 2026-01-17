@@ -266,7 +266,7 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.db.Query(ctx, query, userID)
+	rows, err := s.db.Pool.Query(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (s *Service) GetPushMFADevices(ctx context.Context, userID string) ([]PushM
 // DeletePushMFADevice removes a push MFA device
 func (s *Service) DeletePushMFADevice(ctx context.Context, userID, deviceID string) error {
 	query := `DELETE FROM mfa_push_devices WHERE user_id = $1 AND id = $2`
-	result, err := s.db.Exec(ctx, query, userID, deviceID)
+	result, err := s.db.Pool.Exec(ctx, query, userID, deviceID)
 	if err != nil {
 		return fmt.Errorf("failed to delete device: %w", err)
 	}
@@ -331,7 +331,7 @@ func (s *Service) getPushDeviceByToken(ctx context.Context, token string) (*Push
 	`
 
 	var device PushMFADevice
-	err := s.db.QueryRow(ctx, query, token).Scan(
+	err := s.db.Pool.QueryRow(ctx, query, token).Scan(
 		&device.ID,
 		&device.UserID,
 		&device.DeviceToken,
@@ -363,7 +363,7 @@ func (s *Service) storePushDevice(ctx context.Context, device *PushMFADevice) er
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 
-	_, err := s.db.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(ctx, query,
 		device.ID,
 		device.UserID,
 		device.DeviceToken,
@@ -389,7 +389,7 @@ func (s *Service) updatePushDevice(ctx context.Context, device *PushMFADevice) e
 		WHERE id = $7
 	`
 
-	_, err := s.db.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(ctx, query,
 		device.DeviceName,
 		device.DeviceModel,
 		device.OSVersion,
@@ -404,7 +404,7 @@ func (s *Service) updatePushDevice(ctx context.Context, device *PushMFADevice) e
 
 func (s *Service) updatePushDeviceLastUsed(ctx context.Context, deviceID string) error {
 	query := `UPDATE mfa_push_devices SET last_used_at = $1 WHERE id = $2`
-	_, err := s.db.Exec(ctx, query, time.Now(), deviceID)
+	_, err := s.db.Pool.Exec(ctx, query, time.Now(), deviceID)
 	return err
 }
 
@@ -418,7 +418,7 @@ func (s *Service) storePushChallenge(ctx context.Context, challenge *PushMFAChal
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 
-	_, err := s.db.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(ctx, query,
 		challenge.ID,
 		challenge.UserID,
 		challenge.DeviceID,
@@ -446,7 +446,7 @@ func (s *Service) getPushChallenge(ctx context.Context, challengeID string) (*Pu
 	var challenge PushMFAChallenge
 	var sessionInfoJSON []byte
 
-	err := s.db.QueryRow(ctx, query, challengeID).Scan(
+	err := s.db.Pool.QueryRow(ctx, query, challengeID).Scan(
 		&challenge.ID,
 		&challenge.UserID,
 		&challenge.DeviceID,
@@ -479,7 +479,7 @@ func (s *Service) updatePushChallenge(ctx context.Context, challenge *PushMFACha
 		WHERE id = $3
 	`
 
-	_, err := s.db.Exec(ctx, query,
+	_, err := s.db.Pool.Exec(ctx, query,
 		challenge.Status,
 		challenge.RespondedAt,
 		challenge.ID,
