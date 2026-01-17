@@ -10,6 +10,7 @@ import { AccessReviewsPage } from './pages/access-reviews'
 import { AuditLogsPage } from './pages/audit-logs'
 import { SettingsPage } from './pages/settings'
 import { LoadingSpinner } from './components/ui/loading-spinner'
+import { Toaster } from './components/ui/toaster'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -31,28 +32,31 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="users" element={<UsersPage />} />
-        <Route path="groups" element={<GroupsPage />} />
-        <Route path="applications" element={<ApplicationsPage />} />
-        <Route path="access-reviews" element={<AccessReviewsPage />} />
-        <Route path="audit-logs" element={<AuditLogsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-      </Route>
+    <>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
 
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="groups" element={<GroupsPage />} />
+          <Route path="applications" element={<ApplicationsPage />} />
+          <Route path="access-reviews" element={<AccessReviewsPage />} />
+          <Route path="audit-logs" element={<AuditLogsPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <Toaster />
+    </>
   )
 }

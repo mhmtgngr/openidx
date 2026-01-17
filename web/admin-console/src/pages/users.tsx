@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -20,6 +20,7 @@ import {
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface User {
   id: string
@@ -34,6 +35,7 @@ interface User {
 
 export function UsersPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [addUserModal, setAddUserModal] = useState(false)
   const [editUserModal, setEditUserModal] = useState(false)
@@ -51,9 +53,77 @@ export function UsersPage() {
     'admin', 'user', 'manager', 'auditor', 'developer'
   ])
 
+  // Fetch users
   const { data: users, isLoading } = useQuery({
     queryKey: ['users', search],
     queryFn: () => api.get<User[]>('/api/v1/identity/users'),
+  })
+
+  // Create user mutation
+  const createUserMutation = useMutation({
+    mutationFn: (userData: Partial<User>) =>
+      api.post<User>('/api/v1/identity/users', userData),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({
+        title: 'Success',
+        description: `User ${data.username} created successfully!`,
+        variant: 'success',
+      })
+      setAddUserModal(false)
+      setFormData({ username: '', email: '', first_name: '', last_name: '', password: '' })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to create user: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Update user mutation
+  const updateUserMutation = useMutation({
+    mutationFn: ({ id, ...userData }: Partial<User> & { id: string }) =>
+      api.put<User>(`/api/v1/identity/users/${id}`, userData),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({
+        title: 'Success',
+        description: `User ${data.username} updated successfully!`,
+        variant: 'success',
+      })
+      setEditUserModal(false)
+      setSelectedUser(null)
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update user: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Delete user mutation
+  const deleteUserMutation = useMutation({
+    mutationFn: (userId: string) =>
+      api.delete(`/api/v1/identity/users/${userId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({
+        title: 'Success',
+        description: 'User deleted successfully!',
+        variant: 'success',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to delete user: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
   })
 
   const handleAddUser = () => {
@@ -75,16 +145,18 @@ export function UsersPage() {
 
   const handleResetPassword = (userId: string) => {
     if (confirm('Are you sure you want to reset this user\'s password?')) {
-      alert(`Password reset email sent to user ${userId}`)
+      toast({
+        title: 'Info',
+        description: `Password reset email sent to user ${userId}`,
+      })
     }
   }
 
   const handleManageRoles = (userId: string) => {
-    // Find the user to set as selected
     const user = users?.find(u => u.id === userId)
     if (user) {
       setSelectedUser(user)
-      setSelectedRoles(['user']) // Default role, in real app this would come from API
+      setSelectedRoles(['user'])
       setManageRolesModal(true)
     }
   }
@@ -100,67 +172,59 @@ export function UsersPage() {
   const handleRolesSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedUser) {
-      alert(`Roles updated for user ${selectedUser.username}: ${selectedRoles.join(', ')}`)
+      toast({
+        title: 'Success',
+        description: `Roles updated for user ${selectedUser.username}`,
+        variant: 'success',
+      })
       setManageRolesModal(false)
       setSelectedUser(null)
       setSelectedRoles([])
     }
   }
 
-  const handleDeleteUser = (userId: string) => {
-    if (confirm(`Are you sure you want to delete user: ${userId}? This action cannot be undone.`)) {
-      alert(`User ${userId} deleted successfully`)
+  const handleDeleteUser = (userId: string, username: string) => {
+    if (confirm(`Are you sure you want to delete user: ${username}? This action cannot be undone.`)) {
+      deleteUserMutation.mutate(userId)
     }
   }
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    try {
-      if (addUserModal) {
-        // Create new user via API
-        await api.post('/api/v1/identity/users', {
-          username: formData.username,
-          email: formData.email,
-          first_name: formData.first_name,
-          last_name: formData.last_name,
-          enabled: true,
-          email_verified: false,
-        })
 
-        alert(`User ${formData.username} created successfully!`)
-        setAddUserModal(false)
-        setFormData({ username: '', email: '', first_name: '', last_name: '', password: '' })
-
-        // Refresh the users list
-        queryClient.invalidateQueries({ queryKey: ['users'] })
-
-      } else if (editUserModal && selectedUser) {
-        // Update existing user via API
-        await api.put(`/api/v1/identity/users/${selectedUser.id}`, {
-          username: formData.username,
-          email: formData.email,
-          first_name: formData.first_name,
-          last_name: formData.last_name,
-          enabled: selectedUser.enabled,
-          email_verified: selectedUser.email_verified,
-        })
-
-        alert(`User ${selectedUser.username} updated successfully!`)
-        setEditUserModal(false)
-        setSelectedUser(null)
-
-        // Refresh the users list
-        queryClient.invalidateQueries({ queryKey: ['users'] })
-      }
-    } catch (error) {
-      console.error('Error saving user:', error)
-      alert(`Error saving user: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    if (addUserModal) {
+      createUserMutation.mutate({
+        username: formData.username,
+        email: formData.email,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        enabled: true,
+        email_verified: false,
+      })
+    } else if (editUserModal && selectedUser) {
+      updateUserMutation.mutate({
+        id: selectedUser.id,
+        username: formData.username,
+        email: formData.email,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        enabled: selectedUser.enabled,
+        email_verified: selectedUser.email_verified,
+      })
     }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
+
+  // Filter users by search
+  const filteredUsers = users?.filter(user =>
+    search === '' ||
+    user.username.toLowerCase().includes(search.toLowerCase()) ||
+    user.email.toLowerCase().includes(search.toLowerCase()) ||
+    `${user.first_name} ${user.last_name}`.toLowerCase().includes(search.toLowerCase())
+  ) || []
 
   return (
     <div className="space-y-6">
@@ -203,20 +267,27 @@ export function UsersPage() {
               <tbody>
                 {isLoading ? (
                   <tr><td colSpan={5} className="p-4 text-center">Loading...</td></tr>
-                ) : users?.length === 0 ? (
-                  <tr><td colSpan={5} className="p-4 text-center">No users found</td></tr>
+                ) : filteredUsers.length === 0 ? (
+                  <tr><td colSpan={5} className="p-4 text-center">
+                    {search ? 'No users found matching your search' : 'No users found'}
+                  </td></tr>
                 ) : (
-                  users?.map((user) => (
+                  filteredUsers.map((user) => (
                     <tr key={user.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                             <span className="text-blue-700 font-medium">
-                              {user.first_name?.[0]}{user.last_name?.[0]}
+                              {user.first_name?.[0] || user.username[0]?.toUpperCase()}
+                              {user.last_name?.[0] || ''}
                             </span>
                           </div>
                           <div>
-                            <p className="font-medium">{user.first_name} {user.last_name}</p>
+                            <p className="font-medium">
+                              {user.first_name && user.last_name
+                                ? `${user.first_name} ${user.last_name}`
+                                : user.username}
+                            </p>
                             <p className="text-sm text-gray-500">@{user.username}</p>
                           </div>
                         </div>
@@ -225,6 +296,9 @@ export function UsersPage() {
                         <div className="flex items-center gap-2">
                           <Mail className="h-4 w-4 text-gray-400" />
                           {user.email}
+                          {user.email_verified && (
+                            <Badge variant="outline" className="ml-2">Verified</Badge>
+                          )}
                         </div>
                       </td>
                       <td className="p-3">
@@ -256,9 +330,13 @@ export function UsersPage() {
                               Manage Roles
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteUser(user.id)}>
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => handleDeleteUser(user.id, user.username)}
+                              disabled={deleteUserMutation.isPending}
+                            >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              Delete User
+                              {deleteUserMutation.isPending ? 'Deleting...' : 'Delete User'}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -280,17 +358,18 @@ export function UsersPage() {
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="username">Username *</Label>
               <Input
                 id="username"
                 name="username"
                 value={formData.username}
                 onChange={handleInputChange}
                 required
+                placeholder="john.doe"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Email *</Label>
               <Input
                 id="email"
                 name="email"
@@ -298,6 +377,7 @@ export function UsersPage() {
                 value={formData.email}
                 onChange={handleInputChange}
                 required
+                placeholder="john.doe@example.com"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -308,6 +388,7 @@ export function UsersPage() {
                   name="first_name"
                   value={formData.first_name}
                   onChange={handleInputChange}
+                  placeholder="John"
                 />
               </div>
               <div className="space-y-2">
@@ -317,25 +398,22 @@ export function UsersPage() {
                   name="last_name"
                   value={formData.last_name}
                   onChange={handleInputChange}
+                  placeholder="Doe"
                 />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                value={formData.password}
-                onChange={handleInputChange}
-                required
-              />
-            </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setAddUserModal(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAddUserModal(false)}
+                disabled={createUserMutation.isPending}
+              >
                 Cancel
               </Button>
-              <Button type="submit">Create User</Button>
+              <Button type="submit" disabled={createUserMutation.isPending}>
+                {createUserMutation.isPending ? 'Creating...' : 'Create User'}
+              </Button>
             </div>
           </form>
         </DialogContent>
@@ -349,7 +427,7 @@ export function UsersPage() {
           </DialogHeader>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-username">Username</Label>
+              <Label htmlFor="edit-username">Username *</Label>
               <Input
                 id="edit-username"
                 name="username"
@@ -359,7 +437,7 @@ export function UsersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-email">Email</Label>
+              <Label htmlFor="edit-email">Email *</Label>
               <Input
                 id="edit-email"
                 name="email"
@@ -390,10 +468,17 @@ export function UsersPage() {
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setEditUserModal(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditUserModal(false)}
+                disabled={updateUserMutation.isPending}
+              >
                 Cancel
               </Button>
-              <Button type="submit">Update User</Button>
+              <Button type="submit" disabled={updateUserMutation.isPending}>
+                {updateUserMutation.isPending ? 'Updating...' : 'Update User'}
+              </Button>
             </div>
           </form>
         </DialogContent>
