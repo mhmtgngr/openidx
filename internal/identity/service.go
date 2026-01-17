@@ -109,13 +109,16 @@ type TOTPVerification struct {
 
 // Group represents a group in the system
 type Group struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	ParentID    *string   `json:"parent_id,omitempty"`
-	MemberCount int       `json:"member_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	ParentID       *string   `json:"parent_id,omitempty"`
+	AllowSelfJoin  bool      `json:"allow_self_join"`
+	RequireApproval bool     `json:"require_approval"`
+	MaxMembers     *int      `json:"max_members,omitempty"`
+	MemberCount    int       `json:"member_count"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // GroupMember represents a user's membership in a group
@@ -310,7 +313,7 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int) ([]Group, i
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.created_at, g.updated_at,
+		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
 		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
 		FROM groups g
 		ORDER BY g.name
@@ -325,7 +328,7 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int) ([]Group, i
 	for rows.Next() {
 		var g Group
 		if err := rows.Scan(
-			&g.ID, &g.Name, &g.Description, &g.ParentID, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+			&g.ID, &g.Name, &g.Description, &g.ParentID, &g.AllowSelfJoin, &g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -341,11 +344,11 @@ func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) 
 
 	var g Group
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.created_at, g.updated_at,
+		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
 		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
 		FROM groups g WHERE g.id = $1
 	`, groupID).Scan(
-		&g.ID, &g.Name, &g.Description, &g.ParentID, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+		&g.ID, &g.Name, &g.Description, &g.ParentID, &g.AllowSelfJoin, &g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
 	)
 	if err != nil {
 		return nil, err
@@ -411,9 +414,9 @@ func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE groups
-		SET name = $2, description = $3, parent_id = $4, updated_at = $5
+		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5, require_approval = $6, max_members = $7, updated_at = $8
 		WHERE id = $1
-	`, group.ID, group.Name, group.Description, group.ParentID, group.UpdatedAt)
+	`, group.ID, group.Name, group.Description, group.ParentID, group.AllowSelfJoin, group.RequireApproval, group.MaxMembers, group.UpdatedAt)
 
 	return err
 }

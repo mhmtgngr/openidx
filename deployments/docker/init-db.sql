@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS groups (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     parent_id UUID REFERENCES groups(id),
+    allow_self_join BOOLEAN DEFAULT false,
+    require_approval BOOLEAN DEFAULT false,
+    max_members INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

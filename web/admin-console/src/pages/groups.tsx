@@ -27,6 +27,9 @@ interface Group {
   name: string
   description: string
   parent_id: string | null
+  allow_self_join: boolean
+  require_approval: boolean
+  max_members: number | null
   member_count: number
   created_at: string
   updated_at: string
@@ -169,11 +172,34 @@ export function GroupsPage() {
   const handleSettingsSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedGroup) {
-      alert(`Group settings updated for "${selectedGroup.name}": ${JSON.stringify(groupSettings)}`)
-      setGroupSettingsModal(false)
-      setSelectedGroup(null)
+      updateGroupMutation.mutate({
+        id: selectedGroup.id,
+        name: selectedGroup.name,
+        description: selectedGroup.description,
+        allow_self_join: groupSettings.allowSelfJoin,
+        require_approval: groupSettings.requireApproval,
+        max_members: groupSettings.maxMembers || null,
+      })
     }
   }
+
+  // Handle group settings update success
+  React.useEffect(() => {
+    if (updateGroupMutation.isSuccess && groupSettingsModal) {
+      toast({
+        title: 'Success',
+        description: `Group settings updated for "${selectedGroup?.name}"`,
+        variant: 'success',
+      })
+      setGroupSettingsModal(false)
+      setSelectedGroup(null)
+      setGroupSettings({
+        allowSelfJoin: false,
+        requireApproval: false,
+        maxMembers: '',
+      })
+    }
+  }, [updateGroupMutation.isSuccess])
 
   const handleDeleteGroup = (groupId: string, groupName: string) => {
     if (confirm(`Are you sure you want to delete group: ${groupName}? This action cannot be undone.`)) {
