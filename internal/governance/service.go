@@ -218,17 +218,91 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 // CreatePolicy creates a new policy
 func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 	s.logger.Info("Creating policy", zap.String("name", policy.Name))
-	
+
 	now := time.Now()
 	policy.CreatedAt = now
 	policy.UpdatedAt = now
-	
+
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO policies (id, name, description, type, enabled, priority, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, policy.ID, policy.Name, policy.Description, policy.Type, policy.Enabled,
 		policy.Priority, policy.CreatedAt, policy.UpdatedAt)
-	
+
+	return err
+}
+
+// GetPolicy retrieves a policy by ID
+func (s *Service) GetPolicy(ctx context.Context, policyID string) (*Policy, error) {
+	var policy Policy
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, description, type, enabled, priority, created_at, updated_at
+		FROM policies WHERE id = $1
+	`, policyID).Scan(
+		&policy.ID, &policy.Name, &policy.Description, &policy.Type,
+		&policy.Enabled, &policy.Priority, &policy.CreatedAt, &policy.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+// ListPolicies retrieves all policies
+func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy, int, error) {
+	var total int
+	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM policies").Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, description, type, enabled, priority, created_at, updated_at
+		FROM policies
+		ORDER BY priority DESC, created_at DESC
+		OFFSET $1 LIMIT $2
+	`, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var policies []Policy
+	for rows.Next() {
+		var p Policy
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Description, &p.Type,
+			&p.Enabled, &p.Priority, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		policies = append(policies, p)
+	}
+
+	return policies, total, nil
+}
+
+// UpdatePolicy updates an existing policy
+func (s *Service) UpdatePolicy(ctx context.Context, policyID string, policy *Policy) error {
+	s.logger.Info("Updating policy", zap.String("policy_id", policyID))
+
+	now := time.Now()
+	policy.UpdatedAt = now
+
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE policies
+		SET name = $2, description = $3, type = $4, enabled = $5, priority = $6, updated_at = $7
+		WHERE id = $1
+	`, policyID, policy.Name, policy.Description, policy.Type, policy.Enabled, policy.Priority, now)
+
+	return err
+}
+
+// DeletePolicy deletes a policy
+func (s *Service) DeletePolicy(ctx context.Context, policyID string) error {
+	s.logger.Info("Deleting policy", zap.String("policy_id", policyID))
+
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1", policyID)
 	return err
 }
 
@@ -323,7 +397,27 @@ func (s *Service) handleSubmitDecision(c *gin.Context) {
 }
 
 func (s *Service) handleListPolicies(c *gin.Context) {
-	c.JSON(200, []Policy{})
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil {
+			offset = parsed
+		}
+	}
+
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil {
+			limit = parsed
+		}
+	}
+
+	policies, total, err := s.ListPolicies(c.Request.Context(), offset, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("X-Total-Count", strconv.Itoa(total))
+	c.JSON(200, policies)
 }
 
 func (s *Service) handleCreatePolicy(c *gin.Context) {
@@ -340,14 +434,32 @@ func (s *Service) handleCreatePolicy(c *gin.Context) {
 }
 
 func (s *Service) handleGetPolicy(c *gin.Context) {
-	c.JSON(200, Policy{})
+	policy, err := s.GetPolicy(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(404, gin.H{"error": "policy not found"})
+		return
+	}
+	c.JSON(200, policy)
 }
 
 func (s *Service) handleUpdatePolicy(c *gin.Context) {
-	c.JSON(200, Policy{})
+	var policy Policy
+	if err := c.ShouldBindJSON(&policy); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.UpdatePolicy(c.Request.Context(), c.Param("id"), &policy); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, policy)
 }
 
 func (s *Service) handleDeletePolicy(c *gin.Context) {
+	if err := s.DeletePolicy(c.Request.Context(), c.Param("id")); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(204, nil)
 }
 
