@@ -3,6 +3,8 @@ package admin
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -245,6 +247,55 @@ func (s *Service) UpdateSettings(ctx context.Context, settings *Settings) error 
 	return nil
 }
 
+// UpdateApplication updates an existing application
+func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[string]interface{}) error {
+	s.logger.Info("Updating application", zap.String("id", id))
+
+	setParts := []string{}
+	args := []interface{}{}
+	argCount := 1
+
+	if name, ok := updates["name"].(string); ok {
+		setParts = append(setParts, "name = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, name)
+		argCount++
+	}
+
+	if description, ok := updates["description"].(string); ok {
+		setParts = append(setParts, "description = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, description)
+		argCount++
+	}
+
+	if baseURL, ok := updates["base_url"].(string); ok {
+		setParts = append(setParts, "base_url = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, baseURL)
+		argCount++
+	}
+
+	if redirectURIs, ok := updates["redirect_uris"].([]string); ok {
+		setParts = append(setParts, "redirect_uris = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, redirectURIs)
+		argCount++
+	}
+
+	if len(setParts) == 0 {
+		return fmt.Errorf("no valid fields to update")
+	}
+
+	setParts = append(setParts, "updated_at = NOW()")
+	query := fmt.Sprintf("UPDATE applications SET %s WHERE id = $%d",
+		strings.Join(setParts, ", "), argCount)
+	args = append(args, id)
+
+	_, err := s.db.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update application: %w", err)
+	}
+
+	return nil
+}
+
 // ListApplications returns all registered applications
 func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
 	s.logger.Debug("Listing applications")
@@ -365,7 +416,21 @@ func (s *Service) handleCreateApplication(c *gin.Context) {
 }
 
 func (s *Service) handleGetApplication(c *gin.Context)    { c.JSON(200, Application{}) }
-func (s *Service) handleUpdateApplication(c *gin.Context) { c.JSON(200, Application{}) }
+func (s *Service) handleUpdateApplication(c *gin.Context) {
+	id := c.Param("id")
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.UpdateApplication(c.Request.Context(), id, updates); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Application updated successfully"})
+}
 func (s *Service) handleDeleteApplication(c *gin.Context) { c.JSON(204, nil) }
 
 func (s *Service) handleListDirectories(c *gin.Context)   { c.JSON(200, []gin.H{}) }

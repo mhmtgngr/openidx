@@ -382,6 +382,57 @@ func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupM
 	return members, nil
 }
 
+// CreateGroup creates a new group
+func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
+	s.logger.Info("Creating group", zap.String("name", group.Name))
+
+	// Generate UUID if not provided
+	if group.ID == "" {
+		group.ID = uuid.New().String()
+	}
+
+	now := time.Now()
+	group.CreatedAt = now
+	group.UpdatedAt = now
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, group.ID, group.Name, group.Description, group.ParentID, group.CreatedAt, group.UpdatedAt)
+
+	return err
+}
+
+// UpdateGroup updates an existing group
+func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
+	s.logger.Info("Updating group", zap.String("group_id", group.ID))
+
+	group.UpdatedAt = time.Now()
+
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE groups
+		SET name = $2, description = $3, parent_id = $4, updated_at = $5
+		WHERE id = $1
+	`, group.ID, group.Name, group.Description, group.ParentID, group.UpdatedAt)
+
+	return err
+}
+
+// DeleteGroup deletes a group
+func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
+	s.logger.Info("Deleting group", zap.String("group_id", groupID))
+
+	// First remove all group memberships
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1", groupID)
+	if err != nil {
+		return fmt.Errorf("failed to remove group memberships: %w", err)
+	}
+
+	// Then delete the group
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1", groupID)
+	return err
+}
+
 // CreateSession creates a new user session
 func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress, userAgent string, sessionDuration time.Duration) (*Session, error) {
 	s.logger.Info("Creating session", zap.String("user_id", userID), zap.String("client_id", clientID))
@@ -1076,7 +1127,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 
 		// Group management
 		identity.GET("/groups", svc.handleListGroups)
+		identity.POST("/groups", svc.handleCreateGroup)
 		identity.GET("/groups/:id", svc.handleGetGroup)
+		identity.PUT("/groups/:id", svc.handleUpdateGroup)
+		identity.DELETE("/groups/:id", svc.handleDeleteGroup)
 		identity.GET("/groups/:id/members", svc.handleGetGroupMembers)
 
 		// MFA management
@@ -1238,6 +1292,50 @@ func (s *Service) handleGetGroupMembers(c *gin.Context) {
 	}
 
 	c.JSON(200, members)
+}
+
+func (s *Service) handleCreateGroup(c *gin.Context) {
+	var group Group
+	if err := c.ShouldBindJSON(&group); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.CreateGroup(c.Request.Context(), &group); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(201, group)
+}
+
+func (s *Service) handleUpdateGroup(c *gin.Context) {
+	groupID := c.Param("id")
+
+	var group Group
+	if err := c.ShouldBindJSON(&group); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	group.ID = groupID
+	if err := s.UpdateGroup(c.Request.Context(), &group); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, group)
+}
+
+func (s *Service) handleDeleteGroup(c *gin.Context) {
+	groupID := c.Param("id")
+
+	if err := s.DeleteGroup(c.Request.Context(), groupID); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(204, nil)
 }
 
 // MFA HTTP Handlers
