@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -20,6 +20,7 @@ import {
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface Group {
   id: string
@@ -33,6 +34,7 @@ interface Group {
 
 export function GroupsPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [createGroupModal, setCreateGroupModal] = useState(false)
   const [editGroupModal, setEditGroupModal] = useState(false)
@@ -52,6 +54,73 @@ export function GroupsPage() {
   const { data: groups, isLoading } = useQuery({
     queryKey: ['groups', search],
     queryFn: () => api.get<Group[]>('/api/v1/identity/groups'),
+  })
+
+  // Create group mutation
+  const createGroupMutation = useMutation({
+    mutationFn: (groupData: Partial<Group>) =>
+      api.post<Group>('/api/v1/identity/groups', groupData),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      toast({
+        title: 'Success',
+        description: `Group ${data.name} created successfully!`,
+        variant: 'success',
+      })
+      setCreateGroupModal(false)
+      setFormData({ name: '', description: '' })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to create group: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Update group mutation
+  const updateGroupMutation = useMutation({
+    mutationFn: ({ id, ...groupData }: Partial<Group> & { id: string }) =>
+      api.put<Group>(`/api/v1/identity/groups/${id}`, groupData),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      toast({
+        title: 'Success',
+        description: `Group ${data.name} updated successfully!`,
+        variant: 'success',
+      })
+      setEditGroupModal(false)
+      setSelectedGroup(null)
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update group: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Delete group mutation
+  const deleteGroupMutation = useMutation({
+    mutationFn: (groupId: string) =>
+      api.delete(`/api/v1/identity/groups/${groupId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      toast({
+        title: 'Success',
+        description: 'Group deleted successfully!',
+        variant: 'success',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to delete group: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
   })
 
   const filteredGroups = groups?.filter(group =>
@@ -106,46 +175,26 @@ export function GroupsPage() {
     }
   }
 
-  const handleDeleteGroup = (groupId: string) => {
-    if (confirm(`Are you sure you want to delete group: ${groupId}? This action cannot be undone.`)) {
-      alert(`Delete Group functionality - would remove group: ${groupId}`)
+  const handleDeleteGroup = (groupId: string, groupName: string) => {
+    if (confirm(`Are you sure you want to delete group: ${groupName}? This action cannot be undone.`)) {
+      deleteGroupMutation.mutate(groupId)
     }
   }
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    try {
-      if (createGroupModal) {
-        // Create new group via API
-        await api.post('/api/v1/identity/groups', {
-          name: formData.name,
-          description: formData.description,
-        })
 
-        alert(`Group "${formData.name}" created successfully!`)
-        setCreateGroupModal(false)
-        setFormData({ name: '', description: '' })
-
-        // Refresh the groups list
-        queryClient.invalidateQueries({ queryKey: ['groups'] })
-
-      } else if (editGroupModal && selectedGroup) {
-        // Update existing group via API
-        await api.put(`/api/v1/identity/groups/${selectedGroup.id}`, {
-          name: formData.name,
-          description: formData.description,
-        })
-
-        alert(`Group "${selectedGroup.name}" updated successfully!`)
-        setEditGroupModal(false)
-        setSelectedGroup(null)
-
-        // Refresh the groups list
-        queryClient.invalidateQueries({ queryKey: ['groups'] })
-      }
-    } catch (error) {
-      console.error('Error saving group:', error)
-      alert(`Error saving group: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    if (createGroupModal) {
+      createGroupMutation.mutate({
+        name: formData.name,
+        description: formData.description,
+      })
+    } else if (editGroupModal && selectedGroup) {
+      updateGroupMutation.mutate({
+        id: selectedGroup.id,
+        name: formData.name,
+        description: formData.description,
+      })
     }
   }
 
@@ -255,9 +304,13 @@ export function GroupsPage() {
                               Group Settings
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteGroup(group.id)}>
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => handleDeleteGroup(group.id, group.name)}
+                              disabled={deleteGroupMutation.isPending}
+                            >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              Delete Group
+                              {deleteGroupMutation.isPending ? 'Deleting...' : 'Delete Group'}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -300,10 +353,17 @@ export function GroupsPage() {
               />
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setCreateGroupModal(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateGroupModal(false)}
+                disabled={createGroupMutation.isPending}
+              >
                 Cancel
               </Button>
-              <Button type="submit">Create Group</Button>
+              <Button type="submit" disabled={createGroupMutation.isPending}>
+                {createGroupMutation.isPending ? 'Creating...' : 'Create Group'}
+              </Button>
             </div>
           </form>
         </DialogContent>
@@ -337,10 +397,17 @@ export function GroupsPage() {
               />
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setEditGroupModal(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditGroupModal(false)}
+                disabled={updateGroupMutation.isPending}
+              >
                 Cancel
               </Button>
-              <Button type="submit">Update Group</Button>
+              <Button type="submit" disabled={updateGroupMutation.isPending}>
+                {updateGroupMutation.isPending ? 'Updating...' : 'Update Group'}
+              </Button>
             </div>
           </form>
         </DialogContent>

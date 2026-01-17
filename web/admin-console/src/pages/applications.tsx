@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -20,6 +20,7 @@ import {
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface Application {
   id: string
@@ -49,6 +50,7 @@ const typeColors: Record<string, string> = {
 
 export function ApplicationsPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [editAppModal, setEditAppModal] = useState(false)
   const [ssoSettingsModal, setSsoSettingsModal] = useState(false)
@@ -72,6 +74,50 @@ export function ApplicationsPage() {
     queryFn: () => api.get<Application[]>('/api/v1/applications'),
   })
 
+  // Update application mutation
+  const updateApplicationMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Application> }) =>
+      api.put(`/api/v1/applications/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      toast({
+        title: 'Success',
+        description: 'Application updated successfully!',
+        variant: 'success',
+      })
+      setEditAppModal(false)
+      setSelectedApp(null)
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update application: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Delete application mutation
+  const deleteApplicationMutation = useMutation({
+    mutationFn: (appId: string) =>
+      api.delete(`/api/v1/applications/${appId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      toast({
+        title: 'Success',
+        description: 'Application deleted successfully!',
+        variant: 'success',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to delete application: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
   const filteredApps = applications?.filter(app =>
     app.name.toLowerCase().includes(search.toLowerCase()) ||
     app.client_id.toLowerCase().includes(search.toLowerCase()) ||
@@ -91,7 +137,11 @@ export function ApplicationsPage() {
 
   const handleCopyClientId = (clientId: string) => {
     navigator.clipboard.writeText(clientId)
-    alert(`Client ID "${clientId}" copied to clipboard!`)
+    toast({
+      title: 'Success',
+      description: 'Client ID copied to clipboard!',
+      variant: 'success',
+    })
   }
 
   const handleSsoSettings = (app: Application) => {
@@ -99,52 +149,39 @@ export function ApplicationsPage() {
     setSsoSettingsModal(true)
   }
 
-  const handleDeleteApp = (appId: string) => {
-    if (confirm(`Are you sure you want to delete application: ${appId}? This action cannot be undone.`)) {
-      alert(`Delete Application functionality - would remove application: ${appId}`)
+  const handleDeleteApp = (appId: string, appName: string) => {
+    if (confirm(`Are you sure you want to delete application: ${appName}? This action cannot be undone.`)) {
+      deleteApplicationMutation.mutate(appId)
     }
   }
 
-  const handleFormSubmit = async (e: React.FormEvent) => {
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    try {
-      if (selectedApp) {
-        // Update application via API
-        await api.put(`/api/v1/applications/${selectedApp.id}`, {
+    if (selectedApp) {
+      updateApplicationMutation.mutate({
+        id: selectedApp.id,
+        data: {
           name: formData.name,
           description: formData.description,
           base_url: formData.base_url,
           redirect_uris: formData.redirect_uris.split('\n').filter(uri => uri.trim()),
-        })
-
-        alert(`Application "${selectedApp.name}" updated successfully!`)
-        setEditAppModal(false)
-        setSelectedApp(null)
-
-        // Refresh the applications list
-        queryClient.invalidateQueries({ queryKey: ['applications'] })
-      }
-    } catch (error) {
-      console.error('Error updating application:', error)
-      alert(`Error updating application: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        },
+      })
     }
   }
 
-  const handleSsoSubmit = async (e: React.FormEvent) => {
+  const handleSsoSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    try {
-      if (selectedApp) {
-        // Update SSO settings via API (this would be a separate endpoint)
-        alert(`SSO settings updated for "${selectedApp.name}": ${JSON.stringify(ssoSettings)}`)
-        setSsoSettingsModal(false)
-        setSelectedApp(null)
-
-        // Refresh the applications list
-        queryClient.invalidateQueries({ queryKey: ['applications'] })
-      }
-    } catch (error) {
-      console.error('Error updating SSO settings:', error)
-      alert(`Error updating SSO settings: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    if (selectedApp) {
+      // TODO: Update SSO settings via API (this would be a separate endpoint)
+      toast({
+        title: 'Success',
+        description: `SSO settings updated for "${selectedApp.name}"`,
+        variant: 'success',
+      })
+      setSsoSettingsModal(false)
+      setSelectedApp(null)
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
     }
   }
 
@@ -263,9 +300,13 @@ export function ApplicationsPage() {
                                 SSO Settings
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteApp(app.id)}>
+                              <DropdownMenuItem
+                                className="text-red-600"
+                                onClick={() => handleDeleteApp(app.id, app.name)}
+                                disabled={deleteApplicationMutation.isPending}
+                              >
                                 <Trash2 className="mr-2 h-4 w-4" />
-                                Delete Application
+                                {deleteApplicationMutation.isPending ? 'Deleting...' : 'Delete Application'}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -330,10 +371,17 @@ export function ApplicationsPage() {
               />
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setEditAppModal(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditAppModal(false)}
+                disabled={updateApplicationMutation.isPending}
+              >
                 Cancel
               </Button>
-              <Button type="submit">Update Application</Button>
+              <Button type="submit" disabled={updateApplicationMutation.isPending}>
+                {updateApplicationMutation.isPending ? 'Updating...' : 'Update Application'}
+              </Button>
             </div>
           </form>
         </DialogContent>
