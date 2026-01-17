@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -387,10 +388,10 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 	// Try to update existing settings
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE application_sso_settings SET
-			enabled = $3, use_refresh_tokens = $4, access_token_lifetime = $5,
-			refresh_token_lifetime = $6, require_consent = $7, updated_at = $8
-		WHERE application_id = $2
-	`, settings.ID, settings.ApplicationID, settings.Enabled, settings.UseRefreshTokens,
+			enabled = $2, use_refresh_tokens = $3, access_token_lifetime = $4,
+			refresh_token_lifetime = $5, require_consent = $6, updated_at = $7
+		WHERE application_id = $1
+	`, settings.ApplicationID, settings.Enabled, settings.UseRefreshTokens,
 		settings.AccessTokenLifetime, settings.RefreshTokenLifetime, settings.RequireConsent, settings.UpdatedAt)
 
 	if err != nil {
@@ -400,7 +401,7 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 	// If no rows were affected, create new settings
 	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
-		settings.ID = fmt.Sprintf("%s-settings", settings.ApplicationID)
+		settings.ID = uuid.New().String()
 		settings.CreatedAt = settings.UpdatedAt
 
 		_, err = s.db.Pool.Exec(ctx, `
