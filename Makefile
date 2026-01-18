@@ -27,7 +27,7 @@ HELM := helm
 NAMESPACE ?= openidx
 
 # Services
-SERVICES := identity-service governance-service provisioning-service audit-service gateway-service admin-api
+SERVICES := identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service
 
 #---------------------------------------------------------------------------
 # Default target
