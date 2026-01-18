@@ -1,8 +1,9 @@
 -- ============================================================================
--- OpenIDX Database Schema - Complete
+-- OpenIDX Database Schema - Complete (Merged)
 -- ============================================================================
 -- This file creates all tables and seed data for OpenIDX
 -- Run automatically by PostgreSQL on container initialization
+-- Combines: OAuth/OIDC, SCIM, Governance, MFA, User Roles, Applications
 -- ============================================================================
 
 -- ============================================================================
@@ -34,6 +35,9 @@ CREATE TABLE IF NOT EXISTS groups (
     name VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
     parent_id UUID REFERENCES groups(id),
+    allow_self_join BOOLEAN DEFAULT false,
+    require_approval BOOLEAN DEFAULT false,
+    max_members INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -53,22 +57,13 @@ CREATE TABLE IF NOT EXISTS roles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- ============================================================================
--- APPLICATIONS TABLE
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS applications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_id VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    type VARCHAR(50) NOT NULL,
-    protocol VARCHAR(50) DEFAULT 'openid-connect',
-    base_url VARCHAR(500),
-    redirect_uris TEXT[],
-    enabled BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- User roles (many-to-many relationship) - from dev
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    assigned_by UUID REFERENCES users(id),
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_id, role_id)
 );
 
 -- ============================================================================
@@ -327,6 +322,38 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 -- ============================================================================
+-- APPLICATIONS - from dev
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS applications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    type VARCHAR(50) NOT NULL,
+    protocol VARCHAR(50) DEFAULT 'openid-connect',
+    base_url VARCHAR(500),
+    redirect_uris TEXT[],
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Application SSO settings - from dev
+CREATE TABLE IF NOT EXISTS application_sso_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
+    enabled BOOLEAN DEFAULT true,
+    use_refresh_tokens BOOLEAN DEFAULT true,
+    access_token_lifetime INTEGER DEFAULT 3600,
+    refresh_token_lifetime INTEGER DEFAULT 86400,
+    require_consent BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(application_id)
+);
+
+-- ============================================================================
 -- AUDIT AND COMPLIANCE
 -- ============================================================================
 
@@ -357,6 +384,10 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name);
+
+-- Roles
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_role_id ON user_roles(role_id);
 
 -- OAuth
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_client_id ON oauth_clients(client_id);
@@ -391,6 +422,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(session_token);
 
+-- Applications
+CREATE INDEX IF NOT EXISTS idx_applications_client_id ON applications(client_id);
+CREATE INDEX IF NOT EXISTS idx_application_sso_settings_application_id ON application_sso_settings(application_id);
+
 -- Audit
 CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_id);
@@ -404,6 +439,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_category ON audit_events(category);
 -- Insert default admin user
 INSERT INTO users (id, username, email, first_name, last_name, enabled, email_verified)
 VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', 'System', 'Admin', true, true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Insert sample roles (from dev)
+INSERT INTO roles (id, name, description, is_composite) VALUES
+('60000000-0000-0000-0000-000000000001', 'admin', 'System administrator with full access', false),
+('60000000-0000-0000-0000-000000000002', 'user', 'Standard user role', false),
+('60000000-0000-0000-0000-000000000003', 'manager', 'Manager role with additional permissions', false),
+('60000000-0000-0000-0000-000000000004', 'auditor', 'Audit and compliance role', false),
+('60000000-0000-0000-0000-000000000005', 'developer', 'Software developer role', false)
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert sample users
@@ -502,8 +546,9 @@ ON CONFLICT (id) DO NOTHING;
 -- ============================================================================
 DO $$
 BEGIN
-    RAISE NOTICE '✅ OpenIDX Database Schema Created Successfully';
-    RAISE NOTICE '📊 Tables: users, groups, oauth_clients, scim_users, access_reviews, policies, audit_events, and more';
+    RAISE NOTICE '✅ OpenIDX Database Schema Created Successfully (Merged)';
+    RAISE NOTICE '📊 Tables: users, groups, roles, oauth_clients, scim_users, applications, access_reviews, policies, audit_events, MFA, and more';
     RAISE NOTICE '👤 Default admin user: admin@openidx.local';
     RAISE NOTICE '🔐 Demo OAuth client: demo-client';
+    RAISE NOTICE '🎭 Sample roles: admin, user, manager, auditor, developer';
 END $$;
