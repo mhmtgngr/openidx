@@ -1,0 +1,386 @@
+/* OpenIDX Keycloak Theme - Matching Admin Console Design */
+
+:root {
+  --openidx-blue: #3b82f6;
+  --openidx-blue-dark: #1d4ed8;
+  --openidx-blue-light: #dbeafe;
+  --openidx-gray-50: #f9fafb;
+  --openidx-gray-100: #f3f4f6;
+  --openidx-gray-200: #e5e7eb;
+  --openidx-gray-300: #d1d5db;
+  --openidx-gray-400: #9ca3af;
+  --openidx-gray-500: #6b7280;
+  --openidx-gray-600: #4b5563;
+  --openidx-gray-700: #374151;
+  --openidx-gray-800: #1f2937;
+  --openidx-gray-900: #111827;
+  --openidx-white: #ffffff;
+  --openidx-red: #ef4444;
+  --openidx-red-dark: #dc2626;
+  --openidx-green: #10b981;
+  --openidx-radius: 0.5rem;
+  --openidx-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --openidx-shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+/* Reset and base styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  background: linear-gradient(135deg, var(--openidx-gray-50) 0%, var(--openidx-blue-light) 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Main container */
+.login-pf {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100%;
+}
+
+.login-pf-page {
+  width: 100%;
+  max-width: 28rem;
+  padding: 2rem;
+}
+
+.card-pf {
+  background: var(--openidx-white);
+  border-radius: var(--openidx-radius);
+  box-shadow: var(--openidx-shadow-lg);
+  border: 1px solid var(--openidx-gray-200);
+  overflow: hidden;
+}
+
+/* Header section */
+.login-pf-header {
+  text-align: center;
+  padding: 2rem 2rem 1.5rem;
+  border-bottom: 1px solid var(--openidx-gray-100);
+  background: linear-gradient(135deg, var(--openidx-white) 0%, var(--openidx-gray-50) 100%);
+}
+
+.login-pf-brand {
+  margin-bottom: 1.5rem;
+}
+
+.login-pf-brand img {
+  height: 4rem;
+  width: 4rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--openidx-blue) 0%, var(--openidx-blue-dark) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  box-shadow: var(--openidx-shadow);
+}
+
+.login-pf-brand img::before {
+  content: "🛡️";
+  font-size: 2rem;
+}
+
+#kc-page-title {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(135deg, var(--openidx-blue) 0%, var(--openidx-blue-dark) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.025em;
+}
+
+#kc-page-title::after {
+  content: "OpenIDX";
+  display: block;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--openidx-gray-600);
+  margin-top: 0.25rem;
+  letter-spacing: 0.05em;
+}
+
+#kc-page-subtitle {
+  color: var(--openidx-gray-500);
+  font-size: 0.875rem;
+  margin: 0.5rem 0 0;
+  font-weight: 400;
+}
+
+/* Form section */
+.login-pf-body {
+  padding: 2rem;
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--openidx-gray-700);
+  margin-bottom: 0.5rem;
+}
+
+.login-pf-fields {
+  margin-bottom: 1.5rem;
+}
+
+.form-group .form-control {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--openidx-gray-300);
+  border-radius: var(--openidx-radius);
+  font-size: 1rem;
+  background: var(--openidx-white);
+  transition: all 0.2s ease-in-out;
+}
+
+.form-group .form-control:focus {
+  outline: none;
+  border-color: var(--openidx-blue);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.form-group .form-control::placeholder {
+  color: var(--openidx-gray-400);
+}
+
+/* Buttons */
+.login-pf-actions {
+  margin-top: 2rem;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.75rem 2rem;
+  border: none;
+  border-radius: var(--openidx-radius);
+  font-size: 1rem;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  width: 100%;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--openidx-blue) 0%, var(--openidx-blue-dark) 100%);
+  color: var(--openidx-white);
+  box-shadow: var(--openidx-shadow);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--openidx-blue-dark) 0%, #1e3a8a 100%);
+  transform: translateY(-1px);
+  box-shadow: var(--openidx-shadow-lg);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background: var(--openidx-gray-100);
+  color: var(--openidx-gray-700);
+}
+
+.btn-secondary:hover {
+  background: var(--openidx-gray-200);
+}
+
+/* Alert messages */
+.alert {
+  padding: 1rem;
+  border-radius: var(--openidx-radius);
+  margin-bottom: 1rem;
+  border: 1px solid;
+}
+
+.alert-error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: var(--openidx-red-dark);
+}
+
+.alert-success {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: var(--openidx-green);
+}
+
+.alert-info {
+  background: var(--openidx-blue-light);
+  border-color: #bfdbfe;
+  color: var(--openidx-blue-dark);
+}
+
+/* Footer */
+.login-pf-footer {
+  padding: 1.5rem 2rem;
+  background: var(--openidx-gray-50);
+  border-top: 1px solid var(--openidx-gray-100);
+  text-align: center;
+}
+
+.login-pf-footer .footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  font-size: 0.875rem;
+  color: var(--openidx-gray-500);
+}
+
+.login-pf-footer .footer-links a {
+  color: var(--openidx-gray-600);
+  text-decoration: none;
+}
+
+.login-pf-footer .footer-links a:hover {
+  color: var(--openidx-blue);
+}
+
+.login-pf-footer .footer-branding {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  color: var(--openidx-gray-400);
+}
+
+.login-pf-footer .footer-branding strong {
+  color: var(--openidx-gray-600);
+}
+
+/* Social providers */
+.login-pf-social {
+  margin-bottom: 2rem;
+}
+
+.login-pf-social .btn {
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* Remember me */
+.login-pf-remember {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.login-pf-remember input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.login-pf-remember label {
+  font-size: 0.875rem;
+  color: var(--openidx-gray-600);
+}
+
+/* Links */
+.login-pf-links {
+  text-align: center;
+  margin-top: 1.5rem;
+}
+
+.login-pf-links a {
+  color: var(--openidx-blue);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+
+.login-pf-links a:hover {
+  text-decoration: underline;
+}
+
+/* Loading spinner */
+.spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--openidx-gray-300);
+  border-radius: 50%;
+  border-top-color: var(--openidx-blue);
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Responsive design */
+@media (max-width: 640px) {
+  .login-pf-page {
+    padding: 1rem;
+  }
+
+  .login-pf-header,
+  .login-pf-body,
+  .login-pf-footer {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+
+  #kc-page-title {
+    font-size: 1.5rem;
+  }
+}
+
+/* Hide default Keycloak elements we don't want */
+#kc-current-locale-link,
+#kc-locale-dropdown,
+#kc-locale-wrapper {
+  display: none !important;
+}
+
+/* Override default Keycloak styles */
+.kc-feedback-text {
+  margin-top: 1rem;
+}
+
+.kc-form-group {
+  margin-bottom: 1.5rem;
+}
+
+.kc-input-group {
+  position: relative;
+}
+
+.kc-input-group .kc-input-error-icon {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--openidx-red);
+}
+
+.kc-form-options {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+.kc-form-options a {
+  color: var(--openidx-blue);
+  text-decoration: none;
+}
+
+.kc-form-options a:hover {
+  text-decoration: underline;
+}

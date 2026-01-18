@@ -29,6 +29,7 @@
       {"name": "auditor", "description": "Auditor"}
     ]
   },
+  "loginTheme": "openidx",
   "clients": [
     {
       "clientId": "admin-console",
