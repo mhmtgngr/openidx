@@ -63,6 +63,15 @@ CREATE TABLE IF NOT EXISTS roles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- User roles (many-to-many relationship)
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    assigned_by UUID REFERENCES users(id),
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_id, role_id)
+);
+
 -- Access reviews
 CREATE TABLE IF NOT EXISTS access_reviews (
     id UUID PRIMARY KEY,
@@ -251,6 +260,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_type ON audit_events(event_type);
 -- Insert default admin user
 INSERT INTO users (id, username, email, first_name, last_name, enabled, email_verified)
 VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', 'System', 'Admin', true, true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Insert sample roles
+INSERT INTO roles (id, name, description, is_composite) VALUES
+('60000000-0000-0000-0000-000000000001', 'admin', 'System administrator with full access', false),
+('60000000-0000-0000-0000-000000000002', 'user', 'Standard user role', false),
+('60000000-0000-0000-0000-000000000003', 'manager', 'Manager role with additional permissions', false),
+('60000000-0000-0000-0000-000000000004', 'auditor', 'Audit and compliance role', false),
+('60000000-0000-0000-0000-000000000005', 'developer', 'Software developer role', false)
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert sample users

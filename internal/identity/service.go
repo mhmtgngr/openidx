@@ -131,6 +131,15 @@ type GroupMember struct {
 	JoinedAt  time.Time `json:"joined_at"`
 }
 
+// Role represents a role in the system
+type Role struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	IsComposite bool      `json:"is_composite"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // Service provides identity management operations
 type Service struct {
 	db                *database.PostgresDB
@@ -1113,6 +1122,140 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 	return groups, nil
 }
 
+// ListRoles retrieves all available roles
+func (s *Service) ListRoles(ctx context.Context) ([]Role, error) {
+	s.logger.Debug("Listing roles")
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, description, is_composite, created_at
+		FROM roles
+		ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var roles []Role
+	for rows.Next() {
+		var r Role
+		err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.IsComposite, &r.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+
+	return roles, nil
+}
+
+// GetUserRoles retrieves roles assigned to a user
+func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, error) {
+	s.logger.Debug("Getting user roles", zap.String("user_id", userID))
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT r.id, r.name, r.description, r.is_composite, r.created_at
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1
+		ORDER BY r.name
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var roles []Role
+	for rows.Next() {
+		var r Role
+		err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.IsComposite, &r.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+
+	return roles, nil
+}
+
+// AssignUserRole assigns a role to a user
+func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, assignedBy string) error {
+	s.logger.Info("Assigning role to user",
+		zap.String("user_id", userID), zap.String("role_id", roleID), zap.String("assigned_by", assignedBy))
+
+	// Check if role assignment already exists
+	var exists bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2)
+	`, userID, roleID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		return fmt.Errorf("user already has this role")
+	}
+
+	// Insert role assignment
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
+		VALUES ($1, $2, $3, NOW())
+	`, userID, roleID, assignedBy)
+
+	return err
+}
+
+// RemoveUserRole removes a role from a user
+func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) error {
+	s.logger.Info("Removing role from user", zap.String("user_id", userID), zap.String("role_id", roleID))
+
+	result, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2
+	`, userID, roleID)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("user does not have this role")
+	}
+
+	return nil
+}
+
+// UpdateUserRoles replaces all roles for a user
+func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []string, assignedBy string) error {
+	s.logger.Info("Updating user roles", zap.String("user_id", userID), zap.Int("role_count", len(roleIDs)))
+
+	// Start transaction
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Remove all existing roles
+	_, err = tx.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1", userID)
+	if err != nil {
+		return err
+	}
+
+	// Insert new roles
+	for _, roleID := range roleIDs {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role_id, assigned_at)
+			VALUES ($1, $2, NOW())
+		`, userID, roleID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
 // RegisterRoutes registers identity service routes
 func RegisterRoutes(router *gin.Engine, svc *Service) {
 	identity := router.Group("/api/v1/identity")
@@ -1127,6 +1270,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		// Session management
 		identity.GET("/users/:id/sessions", svc.handleGetUserSessions)
 		identity.DELETE("/sessions/:id", svc.handleTerminateSession)
+
+		// Role management
+		identity.GET("/roles", svc.handleListRoles)
+		identity.GET("/users/:id/roles", svc.handleGetUserRoles)
+		identity.POST("/users/:id/roles", svc.handleAssignUserRole)
+		identity.DELETE("/users/:id/roles/:roleId", svc.handleRemoveUserRole)
+		identity.PUT("/users/:id/roles", svc.handleUpdateUserRoles)
 
 		// Group management
 		identity.GET("/groups", svc.handleListGroups)
@@ -1257,6 +1407,95 @@ func (s *Service) handleTerminateSession(c *gin.Context) {
 	}
 
 	c.JSON(204, nil)
+}
+
+func (s *Service) handleListRoles(c *gin.Context) {
+	roles, err := s.ListRoles(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, roles)
+}
+
+func (s *Service) handleGetUserRoles(c *gin.Context) {
+	userID := c.Param("id")
+
+	roles, err := s.GetUserRoles(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, roles)
+}
+
+func (s *Service) handleAssignUserRole(c *gin.Context) {
+	userID := c.Param("id")
+
+	var req struct {
+		RoleID string `json:"role_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get current user ID from context (admin performing the action)
+	assignedBy := c.GetString("user_id")
+	if assignedBy == "" {
+		assignedBy = "" // Allow NULL for unauthenticated requests
+	}
+
+	err := s.AssignUserRole(c.Request.Context(), userID, req.RoleID, assignedBy)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "assigned"})
+}
+
+func (s *Service) handleRemoveUserRole(c *gin.Context) {
+	userID := c.Param("id")
+	roleID := c.Param("roleId")
+
+	err := s.RemoveUserRole(c.Request.Context(), userID, roleID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "removed"})
+}
+
+func (s *Service) handleUpdateUserRoles(c *gin.Context) {
+	userID := c.Param("id")
+
+	var req struct {
+		RoleIDs []string `json:"role_ids"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get current user ID from context (admin performing the action)
+	assignedBy := c.GetString("user_id")
+	if assignedBy == "" {
+		assignedBy = "00000000-0000-0000-0000-000000000001" // Default admin user
+	}
+
+	err := s.UpdateUserRoles(c.Request.Context(), userID, req.RoleIDs, assignedBy)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "updated"})
 }
 
 func (s *Service) handleListGroups(c *gin.Context) {
