@@ -57,11 +57,6 @@ CREATE TABLE IF NOT EXISTS roles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-<<<<<<< HEAD
--- User roles (many-to-many relationship) - from dev
-=======
--- User roles (many-to-many relationship)
->>>>>>> origin/dev
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
@@ -70,8 +65,6 @@ CREATE TABLE IF NOT EXISTS user_roles (
     PRIMARY KEY (user_id, role_id)
 );
 
-<<<<<<< HEAD
--- ============================================================================
 -- OAUTH 2.0 / OIDC TABLES
 -- ============================================================================
 
@@ -155,9 +148,7 @@ CREATE TABLE IF NOT EXISTS scim_groups (
 -- GOVERNANCE TABLES (Access Reviews & Policies)
 -- ============================================================================
 
-=======
 -- Access reviews
->>>>>>> origin/dev
 CREATE TABLE IF NOT EXISTS access_reviews (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
@@ -449,11 +440,8 @@ INSERT INTO users (id, username, email, first_name, last_name, enabled, email_ve
 VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', 'System', 'Admin', true, true)
 ON CONFLICT (id) DO NOTHING;
 
-<<<<<<< HEAD
 -- Insert sample roles (from dev)
-=======
 -- Insert sample roles
->>>>>>> origin/dev
 INSERT INTO roles (id, name, description, is_composite) VALUES
 ('60000000-0000-0000-0000-000000000001', 'admin', 'System administrator with full access', false),
 ('60000000-0000-0000-0000-000000000002', 'user', 'Standard user role', false),
@@ -492,37 +480,9 @@ INSERT INTO group_memberships (user_id, group_id) VALUES
 ON CONFLICT DO NOTHING;
 
 -- Insert sample applications
-<<<<<<< HEAD
-=======
-CREATE TABLE IF NOT EXISTS applications (
-    id UUID PRIMARY KEY,
-    client_id VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    type VARCHAR(50) NOT NULL,
-    protocol VARCHAR(50) DEFAULT 'openid-connect',
-    base_url VARCHAR(500),
-    redirect_uris TEXT[],
-    enabled BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Application SSO settings
-CREATE TABLE IF NOT EXISTS application_sso_settings (
-    id UUID PRIMARY KEY,
-    application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
-    enabled BOOLEAN DEFAULT true,
-    use_refresh_tokens BOOLEAN DEFAULT true,
-    access_token_lifetime INTEGER DEFAULT 3600, -- seconds
-    refresh_token_lifetime INTEGER DEFAULT 86400, -- seconds
-    require_consent BOOLEAN DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(application_id)
 );
 
->>>>>>> origin/dev
 INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, enabled) VALUES
 ('20000000-0000-0000-0000-000000000001', 'admin-console', 'Admin Console', 'OpenIDX Administration Console', 'web', 'openid-connect', 'http://localhost:3000', true),
 ('20000000-0000-0000-0000-000000000002', 'hr-portal', 'HR Portal', 'Human Resources Management Portal', 'web', 'openid-connect', 'http://hr.example.com', true),
