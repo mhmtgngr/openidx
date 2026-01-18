@@ -287,10 +287,23 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		argCount++
 	}
 
-	if redirectURIs, ok := updates["redirect_uris"].([]string); ok {
-		setParts = append(setParts, "redirect_uris = $"+fmt.Sprintf("%d", argCount))
-		args = append(args, redirectURIs)
-		argCount++
+	if redirectURIsRaw, ok := updates["redirect_uris"]; ok {
+		// Handle both []string and []interface{} types
+		var redirectURIs []string
+		if uris, ok := redirectURIsRaw.([]string); ok {
+			redirectURIs = uris
+		} else if uris, ok := redirectURIsRaw.([]interface{}); ok {
+			for _, uri := range uris {
+				if uriStr, ok := uri.(string); ok {
+					redirectURIs = append(redirectURIs, uriStr)
+				}
+			}
+		}
+		if len(redirectURIs) > 0 {
+			setParts = append(setParts, "redirect_uris = $"+fmt.Sprintf("%d", argCount))
+			args = append(args, redirectURIs)
+			argCount++
+		}
 	}
 
 	if len(setParts) == 0 {

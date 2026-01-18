@@ -171,31 +171,37 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int) ([]A
 	if err != nil {
 		return nil, 0, err
 	}
-	
+
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, description, type, status, reviewer_id,
-		       start_date, end_date, created_at, completed_at
-		FROM access_reviews
-		ORDER BY created_at DESC
+		SELECT ar.id, ar.name, ar.description, ar.type, ar.status, ar.reviewer_id,
+		       ar.start_date, ar.end_date, ar.created_at, ar.completed_at,
+		       COUNT(ri.id) as total_items,
+		       COUNT(CASE WHEN ri.decision != 'pending' THEN 1 END) as reviewed_items
+		FROM access_reviews ar
+		LEFT JOIN review_items ri ON ar.id = ri.review_id
+		GROUP BY ar.id, ar.name, ar.description, ar.type, ar.status, ar.reviewer_id,
+		         ar.start_date, ar.end_date, ar.created_at, ar.completed_at
+		ORDER BY ar.created_at DESC
 		OFFSET $1 LIMIT $2
 	`, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
-	
+
 	var reviews []AccessReview
 	for rows.Next() {
 		var r AccessReview
 		if err := rows.Scan(
 			&r.ID, &r.Name, &r.Description, &r.Type, &r.Status,
 			&r.ReviewerID, &r.StartDate, &r.EndDate, &r.CreatedAt, &r.CompletedAt,
+			&r.TotalItems, &r.ReviewedItems,
 		); err != nil {
 			return nil, 0, err
 		}
 		reviews = append(reviews, r)
 	}
-	
+
 	return reviews, total, nil
 }
 
