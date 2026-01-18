@@ -1,11 +1,20 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus, Search, ClipboardCheck, Clock, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, ClipboardCheck, Clock, CheckCircle, XCircle, AlertTriangle, Edit } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog'
+import { Label } from '../components/ui/label'
+import { Textarea } from '../components/ui/textarea'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface AccessReview {
   id: string
@@ -46,11 +55,58 @@ const typeLabels: Record<string, string> = {
 }
 
 export function AccessReviewsPage() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [search, setSearch] = useState('')
+  const [createModal, setCreateModal] = useState(false)
+  const [editModal, setEditModal] = useState(false)
+  const [selectedReview, setSelectedReview] = useState<AccessReview | null>(null)
+  const [newReview, setNewReview] = useState({
+    name: '',
+    description: '',
+    type: 'user_access',
+    start_date: '',
+    end_date: '',
+  })
+  const [editReview, setEditReview] = useState({
+    name: '',
+    description: '',
+    type: 'user_access',
+    start_date: '',
+    end_date: '',
+  })
 
   const { data: reviews, isLoading } = useQuery({
     queryKey: ['access-reviews', search],
     queryFn: () => api.get<AccessReview[]>('/api/v1/governance/reviews'),
+  })
+
+  // Create access review mutation
+  const createReviewMutation = useMutation({
+    mutationFn: (reviewData: any) => api.post('/api/v1/governance/reviews', reviewData),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
+      toast({
+        title: 'Success',
+        description: 'Access review created successfully!',
+        variant: 'success',
+      })
+      setCreateModal(false)
+      setNewReview({
+        name: '',
+        description: '',
+        type: 'user_access',
+        start_date: '',
+        end_date: '',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to create access review: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
   })
 
   const filteredReviews = reviews?.filter(review =>
@@ -72,6 +128,55 @@ export function AccessReviewsPage() {
     })
   }
 
+  const handleNewReviewChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target
+    setNewReview(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleCreateSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    createReviewMutation.mutate({
+      name: newReview.name,
+      description: newReview.description,
+      type: newReview.type,
+      reviewer_id: '00000000-0000-0000-0000-000000000001', // Default reviewer ID
+      start_date: new Date(newReview.start_date).toISOString(),
+      end_date: new Date(newReview.end_date).toISOString(),
+    })
+  }
+
+  const handleEditReview = (review: AccessReview) => {
+    setSelectedReview(review)
+    setEditReview({
+      name: review.name,
+      description: review.description || '',
+      type: review.type,
+      start_date: review.start_date.split('T')[0], // Extract date part
+      end_date: review.end_date.split('T')[0], // Extract date part
+    })
+    setEditModal(true)
+  }
+
+  const handleEditReviewChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target
+    setEditReview(prev => ({ ...prev, [name]: value }))
+  }
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedReview) return
+
+    // Note: The governance service currently doesn't have an update endpoint
+    // For now, we'll show a message that editing is not implemented yet
+    toast({
+      title: 'Feature Not Available',
+      description: 'Editing access reviews is not yet implemented in the backend.',
+      variant: 'default',
+    })
+    setEditModal(false)
+    setSelectedReview(null)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -79,7 +184,7 @@ export function AccessReviewsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Access Reviews</h1>
           <p className="text-muted-foreground">Manage access certifications and reviews</p>
         </div>
-        <Button>
+        <Button onClick={() => setCreateModal(true)}>
           <Plus className="mr-2 h-4 w-4" /> Create Review
         </Button>
       </div>
@@ -171,13 +276,14 @@ export function AccessReviewsPage() {
                   <th className="p-3 text-left text-sm font-medium">Status</th>
                   <th className="p-3 text-left text-sm font-medium">Period</th>
                   <th className="p-3 text-left text-sm font-medium">Progress</th>
+                  <th className="p-3 text-right text-sm font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={5} className="p-4 text-center">Loading...</td></tr>
+                  <tr><td colSpan={6} className="p-4 text-center">Loading...</td></tr>
                 ) : filteredReviews?.length === 0 ? (
-                  <tr><td colSpan={5} className="p-4 text-center">No access reviews found</td></tr>
+                  <tr><td colSpan={6} className="p-4 text-center">No access reviews found</td></tr>
                 ) : (
                   filteredReviews?.map((review) => (
                     <tr key={review.id} className="border-b hover:bg-gray-50">
@@ -223,6 +329,16 @@ export function AccessReviewsPage() {
                           </div>
                         </div>
                       </td>
+                      <td className="p-3 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEditReview(review)}
+                        >
+                          <Edit className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -231,6 +347,177 @@ export function AccessReviewsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Create Access Review Modal */}
+      <Dialog open={createModal} onOpenChange={setCreateModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Access Review</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Review Name *</Label>
+              <Input
+                id="name"
+                name="name"
+                value={newReview.name}
+                onChange={handleNewReviewChange}
+                placeholder="Q1 2026 Access Review"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                name="description"
+                value={newReview.description}
+                onChange={handleNewReviewChange}
+                placeholder="Quarterly access review for all users"
+                rows={3}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="type">Review Type *</Label>
+              <select
+                id="type"
+                name="type"
+                value={newReview.type}
+                onChange={handleNewReviewChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="user_access">User Access Review</option>
+                <option value="role_assignment">Role Assignment Review</option>
+                <option value="application_access">Application Access Review</option>
+                <option value="privileged_access">Privileged Access Review</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="start_date">Start Date *</Label>
+                <Input
+                  id="start_date"
+                  name="start_date"
+                  type="date"
+                  value={newReview.start_date}
+                  onChange={handleNewReviewChange}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="end_date">End Date *</Label>
+                <Input
+                  id="end_date"
+                  name="end_date"
+                  type="date"
+                  value={newReview.end_date}
+                  onChange={handleNewReviewChange}
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateModal(false)}
+                disabled={createReviewMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createReviewMutation.isPending}>
+                {createReviewMutation.isPending ? 'Creating...' : 'Create Review'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Access Review Modal */}
+      <Dialog open={editModal} onOpenChange={setEditModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Access Review</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Review Name *</Label>
+              <Input
+                id="edit-name"
+                name="name"
+                value={editReview.name}
+                onChange={handleEditReviewChange}
+                placeholder="Q1 2026 Access Review"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">Description</Label>
+              <Textarea
+                id="edit-description"
+                name="description"
+                value={editReview.description}
+                onChange={handleEditReviewChange}
+                placeholder="Quarterly access review for all users"
+                rows={3}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-type">Review Type *</Label>
+              <select
+                id="edit-type"
+                name="type"
+                value={editReview.type}
+                onChange={handleEditReviewChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="user_access">User Access Review</option>
+                <option value="role_assignment">Role Assignment Review</option>
+                <option value="application_access">Application Access Review</option>
+                <option value="privileged_access">Privileged Access Review</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-start_date">Start Date *</Label>
+                <Input
+                  id="edit-start_date"
+                  name="start_date"
+                  type="date"
+                  value={editReview.start_date}
+                  onChange={handleEditReviewChange}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-end_date">End Date *</Label>
+                <Input
+                  id="edit-end_date"
+                  name="end_date"
+                  type="date"
+                  value={editReview.end_date}
+                  onChange={handleEditReviewChange}
+                  required
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit">
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

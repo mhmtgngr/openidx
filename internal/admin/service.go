@@ -3,9 +3,12 @@ package admin
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -64,6 +67,19 @@ type Application struct {
 	Enabled       bool      `json:"enabled"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// ApplicationSSOSettings represents SSO settings for an application
+type ApplicationSSOSettings struct {
+	ID                     string    `json:"id"`
+	ApplicationID          string    `json:"application_id"`
+	Enabled                bool      `json:"enabled"`
+	UseRefreshTokens       bool      `json:"use_refresh_tokens"`
+	AccessTokenLifetime    int       `json:"access_token_lifetime"`
+	RefreshTokenLifetime   int       `json:"refresh_token_lifetime"`
+	RequireConsent         bool      `json:"require_consent"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // Settings represents system settings
@@ -245,13 +261,75 @@ func (s *Service) UpdateSettings(ctx context.Context, settings *Settings) error 
 	return nil
 }
 
+// UpdateApplication updates an existing application
+func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[string]interface{}) error {
+	s.logger.Info("Updating application", zap.String("id", id))
+
+	setParts := []string{}
+	args := []interface{}{}
+	argCount := 1
+
+	if name, ok := updates["name"].(string); ok {
+		setParts = append(setParts, "name = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, name)
+		argCount++
+	}
+
+	if description, ok := updates["description"].(string); ok {
+		setParts = append(setParts, "description = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, description)
+		argCount++
+	}
+
+	if baseURL, ok := updates["base_url"].(string); ok {
+		setParts = append(setParts, "base_url = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, baseURL)
+		argCount++
+	}
+
+	if redirectURIsRaw, ok := updates["redirect_uris"]; ok {
+		// Handle both []string and []interface{} types
+		var redirectURIs []string
+		if uris, ok := redirectURIsRaw.([]string); ok {
+			redirectURIs = uris
+		} else if uris, ok := redirectURIsRaw.([]interface{}); ok {
+			for _, uri := range uris {
+				if uriStr, ok := uri.(string); ok {
+					redirectURIs = append(redirectURIs, uriStr)
+				}
+			}
+		}
+		if len(redirectURIs) > 0 {
+			setParts = append(setParts, "redirect_uris = $"+fmt.Sprintf("%d", argCount))
+			args = append(args, redirectURIs)
+			argCount++
+		}
+	}
+
+	if len(setParts) == 0 {
+		return fmt.Errorf("no valid fields to update")
+	}
+
+	setParts = append(setParts, "updated_at = NOW()")
+	query := fmt.Sprintf("UPDATE applications SET %s WHERE id = $%d",
+		strings.Join(setParts, ", "), argCount)
+	args = append(args, id)
+
+	_, err := s.db.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update application: %w", err)
+	}
+
+	return nil
+}
+
 // ListApplications returns all registered applications
 func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
 	s.logger.Debug("Listing applications")
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
-		       COALESCE(base_url, ''), enabled, created_at, updated_at
+		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
 		FROM applications
 		ORDER BY name
 	`)
@@ -265,7 +343,7 @@ func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
 		var app Application
 		if err := rows.Scan(
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
-			&app.Protocol, &app.BaseURL, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
+			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -280,6 +358,78 @@ func (s *Service) CreateApplication(ctx context.Context, app *Application) error
 	s.logger.Info("Creating application", zap.String("name", app.Name))
 	app.CreatedAt = time.Now()
 	app.UpdatedAt = time.Now()
+	return nil
+}
+
+// GetApplicationSSOSettings gets SSO settings for an application
+func (s *Service) GetApplicationSSOSettings(ctx context.Context, applicationID string) (*ApplicationSSOSettings, error) {
+	s.logger.Debug("Getting SSO settings", zap.String("application_id", applicationID))
+
+	var settings ApplicationSSOSettings
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, application_id, enabled, use_refresh_tokens, access_token_lifetime,
+		       refresh_token_lifetime, require_consent, created_at, updated_at
+		FROM application_sso_settings WHERE application_id = $1
+	`, applicationID).Scan(
+		&settings.ID, &settings.ApplicationID, &settings.Enabled, &settings.UseRefreshTokens,
+		&settings.AccessTokenLifetime, &settings.RefreshTokenLifetime, &settings.RequireConsent,
+		&settings.CreatedAt, &settings.UpdatedAt,
+	)
+
+	if err != nil {
+		// Return default settings if none exist
+		settings = ApplicationSSOSettings{
+			ApplicationID:          applicationID,
+			Enabled:                true,
+			UseRefreshTokens:       true,
+			AccessTokenLifetime:    3600,
+			RefreshTokenLifetime:   86400,
+			RequireConsent:         false,
+		}
+		return &settings, nil
+	}
+
+	return &settings, nil
+}
+
+// UpdateApplicationSSOSettings updates SSO settings for an application
+func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *ApplicationSSOSettings) error {
+	s.logger.Info("Updating SSO settings", zap.String("application_id", settings.ApplicationID))
+
+	settings.UpdatedAt = time.Now()
+
+	// Try to update existing settings
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE application_sso_settings SET
+			enabled = $2, use_refresh_tokens = $3, access_token_lifetime = $4,
+			refresh_token_lifetime = $5, require_consent = $6, updated_at = $7
+		WHERE application_id = $1
+	`, settings.ApplicationID, settings.Enabled, settings.UseRefreshTokens,
+		settings.AccessTokenLifetime, settings.RefreshTokenLifetime, settings.RequireConsent, settings.UpdatedAt)
+
+	if err != nil {
+		return fmt.Errorf("failed to update SSO settings: %w", err)
+	}
+
+	// If no rows were affected, create new settings
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		settings.ID = uuid.New().String()
+		settings.CreatedAt = settings.UpdatedAt
+
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO application_sso_settings (id, application_id, enabled, use_refresh_tokens,
+				access_token_lifetime, refresh_token_lifetime, require_consent, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, settings.ID, settings.ApplicationID, settings.Enabled, settings.UseRefreshTokens,
+			settings.AccessTokenLifetime, settings.RefreshTokenLifetime, settings.RequireConsent,
+			settings.CreatedAt, settings.UpdatedAt)
+
+		if err != nil {
+			return fmt.Errorf("failed to create SSO settings: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -298,6 +448,10 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/applications/:id", svc.handleGetApplication)
 	router.PUT("/applications/:id", svc.handleUpdateApplication)
 	router.DELETE("/applications/:id", svc.handleDeleteApplication)
+
+	// Application SSO Settings
+	router.GET("/applications/:id/sso-settings", svc.handleGetApplicationSSOSettings)
+	router.PUT("/applications/:id/sso-settings", svc.handleUpdateApplicationSSOSettings)
 	
 	// Directory integrations
 	router.GET("/directories", svc.handleListDirectories)
@@ -365,7 +519,21 @@ func (s *Service) handleCreateApplication(c *gin.Context) {
 }
 
 func (s *Service) handleGetApplication(c *gin.Context)    { c.JSON(200, Application{}) }
-func (s *Service) handleUpdateApplication(c *gin.Context) { c.JSON(200, Application{}) }
+func (s *Service) handleUpdateApplication(c *gin.Context) {
+	id := c.Param("id")
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.UpdateApplication(c.Request.Context(), id, updates); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Application updated successfully"})
+}
 func (s *Service) handleDeleteApplication(c *gin.Context) { c.JSON(204, nil) }
 
 func (s *Service) handleListDirectories(c *gin.Context)   { c.JSON(200, []gin.H{}) }
@@ -374,3 +542,34 @@ func (s *Service) handleSyncDirectory(c *gin.Context)     { c.JSON(200, gin.H{"s
 
 func (s *Service) handleListMFAMethods(c *gin.Context)    { c.JSON(200, []string{"totp", "webauthn", "sms"}) }
 func (s *Service) handleUpdateMFAMethods(c *gin.Context)  { c.JSON(200, gin.H{"status": "updated"}) }
+
+func (s *Service) handleGetApplicationSSOSettings(c *gin.Context) {
+	applicationID := c.Param("id")
+
+	settings, err := s.GetApplicationSSOSettings(c.Request.Context(), applicationID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, settings)
+}
+
+func (s *Service) handleUpdateApplicationSSOSettings(c *gin.Context) {
+	applicationID := c.Param("id")
+
+	var settings ApplicationSSOSettings
+	if err := c.ShouldBindJSON(&settings); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	settings.ApplicationID = applicationID
+
+	if err := s.UpdateApplicationSSOSettings(c.Request.Context(), &settings); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "SSO settings updated successfully"})
+}

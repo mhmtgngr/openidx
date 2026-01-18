@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -190,6 +190,41 @@ export function ApplicationsPage() {
     setSsoSettingsModal(true)
   }
 
+  // Query to fetch SSO settings for the selected application
+  const ssoSettingsQuery = useQuery({
+    queryKey: ['sso-settings', selectedApp?.id],
+    queryFn: () => selectedApp ? api.get(`/api/v1/applications/${selectedApp.id}/sso-settings`) : null,
+    enabled: !!selectedApp && ssoSettingsModal, // Fetch when modal is open and app is selected
+  })
+
+  // Initialize SSO settings form when data is loaded
+  React.useEffect(() => {
+    if (ssoSettingsQuery.data && typeof ssoSettingsQuery.data === 'object') {
+      const data = ssoSettingsQuery.data as any
+      setSsoSettings({
+        enabled: data.enabled ?? true,
+        refreshToken: data.use_refresh_tokens ?? true,
+        accessTokenLifetime: data.access_token_lifetime?.toString() ?? '3600',
+        refreshTokenLifetime: data.refresh_token_lifetime?.toString() ?? '86400',
+        consentRequired: data.require_consent ?? false,
+      })
+    }
+  }, [ssoSettingsQuery.data])
+
+  // Reset form when modal closes
+  React.useEffect(() => {
+    if (!ssoSettingsModal) {
+      setSsoSettings({
+        enabled: true,
+        refreshToken: true,
+        accessTokenLifetime: '3600',
+        refreshTokenLifetime: '86400',
+        consentRequired: false,
+      })
+      setSelectedApp(null)
+    }
+  }, [ssoSettingsModal])
+
   const handleDeleteApp = (appId: string, appName: string) => {
     if (confirm(`Are you sure you want to delete application: ${appName}? This action cannot be undone.`)) {
       deleteApplicationMutation.mutate(appId)
@@ -231,17 +266,48 @@ export function ApplicationsPage() {
   const handleSsoSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedApp) {
-      // TODO: Update SSO settings via API (this would be a separate endpoint)
+      updateSSOSettingsMutation.mutate({
+        applicationId: selectedApp.id,
+        enabled: ssoSettings.enabled,
+        useRefreshTokens: ssoSettings.refreshToken,
+        accessTokenLifetime: parseInt(ssoSettings.accessTokenLifetime),
+        refreshTokenLifetime: parseInt(ssoSettings.refreshTokenLifetime),
+        requireConsent: ssoSettings.consentRequired,
+      })
+    }
+  }
+
+  // Update SSO settings mutation
+  const updateSSOSettingsMutation = useMutation({
+    mutationFn: (settings: any) =>
+      api.put(`/api/v1/applications/${settings.applicationId}/sso-settings`, {
+        enabled: settings.enabled,
+        use_refresh_tokens: settings.useRefreshTokens,
+        access_token_lifetime: settings.accessTokenLifetime,
+        refresh_token_lifetime: settings.refreshTokenLifetime,
+        require_consent: settings.requireConsent,
+      }),
+    onSuccess: () => {
+      // Invalidate the SSO settings query to refresh the data
+      queryClient.invalidateQueries({
+        queryKey: ['sso-settings', selectedApp?.id]
+      })
       toast({
         title: 'Success',
-        description: `SSO settings updated for "${selectedApp.name}"`,
+        description: `SSO settings updated for "${selectedApp?.name}"`,
         variant: 'success',
       })
       setSsoSettingsModal(false)
       setSelectedApp(null)
-      queryClient.invalidateQueries({ queryKey: ['applications'] })
-    }
-  }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update SSO settings: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))

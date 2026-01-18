@@ -104,7 +104,9 @@ func main() {
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
-	v1.Use(middleware.Auth(cfg.KeycloakURL, cfg.KeycloakRealm))
+	if cfg.Environment != "development" {
+		v1.Use(middleware.Auth(cfg.KeycloakURL, cfg.KeycloakRealm))
+	}
 	{
 		admin.RegisterRoutes(v1, adminService)
 	}

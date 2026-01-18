@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -33,6 +33,14 @@ interface User {
   created_at: string
 }
 
+interface Role {
+  id: string
+  name: string
+  description: string
+  is_composite: boolean
+  created_at: string
+}
+
 export function UsersPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -49,9 +57,27 @@ export function UsersPage() {
     password: '',
   })
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
-  const [availableRoles] = useState([
-    'admin', 'user', 'manager', 'auditor', 'developer'
-  ])
+
+  // Fetch available roles
+  const { data: availableRoles, isLoading: rolesLoading } = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => api.get<Role[]>('/api/v1/identity/roles'),
+  })
+
+  // Fetch user roles when managing roles
+  const { data: userRoles, isLoading: userRolesLoading } = useQuery({
+    queryKey: ['user-roles', selectedUser?.id],
+    queryFn: () => selectedUser ? api.get<Role[]>(`/api/v1/identity/users/${selectedUser.id}/roles`) : [],
+    enabled: !!selectedUser && manageRolesModal,
+  })
+
+  // Populate selectedRoles when userRoles data loads
+  useEffect(() => {
+    if (userRoles && manageRolesModal) {
+      const roleIds = userRoles.map(role => role.id)
+      setSelectedRoles(roleIds)
+    }
+  }, [userRoles, manageRolesModal])
 
   // Fetch users
   const { data: users, isLoading } = useQuery({
@@ -156,32 +182,53 @@ export function UsersPage() {
     const user = users?.find(u => u.id === userId)
     if (user) {
       setSelectedUser(user)
-      setSelectedRoles(['user'])
+      // Reset selected roles - will be populated when userRoles query loads
+      setSelectedRoles([])
       setManageRolesModal(true)
     }
   }
 
-  const handleRoleToggle = (role: string) => {
+  const handleRoleToggle = (roleId: string) => {
     setSelectedRoles(prev =>
-      prev.includes(role)
-        ? prev.filter(r => r !== role)
-        : [...prev, role]
+      prev.includes(roleId)
+        ? prev.filter(id => id !== roleId)
+        : [...prev, roleId]
     )
   }
 
   const handleRolesSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (selectedUser) {
+      updateUserRolesMutation.mutate({
+        userId: selectedUser.id,
+        roleIds: selectedRoles,
+      })
+    }
+  }
+
+  // Update user roles mutation
+  const updateUserRolesMutation = useMutation({
+    mutationFn: ({ userId, roleIds }: { userId: string; roleIds: string[] }) =>
+      api.put(`/api/v1/identity/users/${userId}/roles`, { role_ids: roleIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
         title: 'Success',
-        description: `Roles updated for user ${selectedUser.username}`,
+        description: `Roles updated for user ${selectedUser?.username}`,
         variant: 'success',
       })
       setManageRolesModal(false)
       setSelectedUser(null)
       setSelectedRoles([])
-    }
-  }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update roles: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
 
   const handleDeleteUser = (userId: string, username: string) => {
     if (confirm(`Are you sure you want to delete user: ${username}? This action cannot be undone.`)) {
@@ -490,33 +537,44 @@ export function UsersPage() {
           <DialogHeader>
             <DialogTitle>Manage Roles - {selectedUser?.username}</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleRolesSubmit} className="space-y-4">
-            <div className="space-y-3">
-              <Label>Available Roles</Label>
-              <div className="space-y-2">
-                {availableRoles.map((role) => (
-                  <div key={role} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id={`role-${role}`}
-                      checked={selectedRoles.includes(role)}
-                      onChange={() => handleRoleToggle(role)}
-                      className="rounded"
-                    />
-                    <Label htmlFor={`role-${role}`} className="capitalize">
-                      {role}
-                    </Label>
-                  </div>
-                ))}
+          {rolesLoading || userRolesLoading ? (
+            <div className="py-4 text-center">Loading roles...</div>
+          ) : (
+            <form onSubmit={handleRolesSubmit} className="space-y-4">
+              <div className="space-y-3">
+                <Label>Available Roles</Label>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {availableRoles?.map((role) => (
+                    <div key={role.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id={`role-${role.id}`}
+                        checked={selectedRoles.includes(role.id)}
+                        onChange={() => handleRoleToggle(role.id)}
+                        className="rounded"
+                      />
+                      <Label htmlFor={`role-${role.id}`} className="capitalize">
+                        {role.name}
+                        {role.description && (
+                          <span className="text-sm text-gray-500 ml-2">
+                            - {role.description}
+                          </span>
+                        )}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setManageRolesModal(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">Update Roles</Button>
-            </div>
-          </form>
+              <div className="flex justify-end gap-2 pt-4">
+                <Button type="button" variant="outline" onClick={() => setManageRolesModal(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={updateUserRolesMutation.isPending}>
+                  {updateUserRolesMutation.isPending ? 'Updating...' : 'Update Roles'}
+                </Button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>
