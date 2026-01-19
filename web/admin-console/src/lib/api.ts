@@ -1,6 +1,19 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios'
 
-const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+export interface IdentityProvider {
+  id: string;
+  name: string;
+  provider_type: 'oidc' | 'saml';
+  issuer_url: string;
+  client_id: string;
+  client_secret: string;
+  scopes: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
 const axiosInstance = axios.create({
   baseURL,
@@ -61,6 +74,31 @@ export const api = {
   delete: async <T>(url: string, config?: AxiosRequestConfig): Promise<T> => {
     const response = await axiosInstance.delete<T>(url, config)
     return response.data
+  },
+
+  // Identity Providers API
+  getIdentityProviders: async (): Promise<IdentityProvider[]> => {
+    const response = await api.get<IdentityProvider[]>('/api/v1/identity/providers');
+    return response;
+  },
+
+  createIdentityProvider: async (data: Omit<IdentityProvider, 'id' | 'created_at' | 'updated_at'>): Promise<IdentityProvider> => {
+    const response = await api.post<IdentityProvider>('/api/v1/identity/providers', data);
+    return response;
+  },
+
+  getIdentityProvider: async (id: string): Promise<IdentityProvider> => {
+    const response = await api.get<IdentityProvider>(`/api/v1/identity/providers/${id}`);
+    return response;
+  },
+
+  updateIdentityProvider: async (id: string, data: Partial<IdentityProvider>): Promise<IdentityProvider> => {
+    const response = await api.put<IdentityProvider>(`/api/v1/identity/providers/${id}`, data);
+    return response;
+  },
+
+  deleteIdentityProvider: async (id: string): Promise<void> => {
+    await api.delete<void>(`/api/v1/identity/providers/${id}`);
   },
 }
 

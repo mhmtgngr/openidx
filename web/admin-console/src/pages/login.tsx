@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Shield, AlertCircle, Loader2 } from 'lucide-react'
+import { Shield, AlertCircle, Loader2, Globe } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { useAuth } from '../lib/auth'
+import { api, baseURL, IdentityProvider } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 export function LoginPage() {
   const navigate = useNavigate()
   const { login, isAuthenticated, isLoading } = useAuth()
   const [error, setError] = useState('')
+  const [identityProviders, setIdentityProviders] = useState<IdentityProvider[]>([])
+  const [loadingIdPs, setLoadingIdPs] = useState(true)
+  const { toast } = useToast()
 
   // If already authenticated, redirect to dashboard
   useEffect(() => {
@@ -16,6 +21,27 @@ export function LoginPage() {
       navigate('/dashboard', { replace: true })
     }
   }, [isAuthenticated, navigate])
+
+  // Fetch Identity Providers
+  useEffect(() => {
+    const fetchIdPs = async () => {
+      try {
+        setLoadingIdPs(true)
+        const data = await api.getIdentityProviders()
+        setIdentityProviders(data.filter(idp => idp.enabled)) // Only show enabled IdPs
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: "Failed to load external identity providers.",
+          variant: "destructive",
+        });
+        console.error("Failed to fetch identity providers:", err);
+      } finally {
+        setLoadingIdPs(false)
+      }
+    }
+    fetchIdPs()
+  }, [toast])
 
   // Check for OAuth callback parameters and handle authentication
   useEffect(() => {
@@ -35,9 +61,17 @@ export function LoginPage() {
     }
   }, [isAuthenticated, isLoading])
 
-  const handleLogin = () => {
+  const handleKeycloakLogin = () => {
     setError('')
-    login()
+    login() // This is the existing Keycloak login
+  }
+
+  const handleSSOLogin = (idp: IdentityProvider) => {
+    setError('')
+    // Construct the redirect URL to our OAuth service's authorize endpoint
+    // with idp_hint set to the external IdP's ID
+    const redirectUrl = `${baseURL}/oauth/authorize?response_type=code&client_id=admin-console&redirect_uri=${window.location.origin}/login&scope=openid%20profile%20email&idp_hint=${idp.id}`
+    window.location.href = redirectUrl
   }
 
   return (
@@ -72,21 +106,51 @@ export function LoginPage() {
               Sign in to access your OpenIDX admin console
             </p>
 
-            <Button
-              onClick={handleLogin}
-              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-              size="lg"
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Signing in...
-                </span>
-              ) : (
-                'Sign in with Keycloak'
-              )}
-            </Button>
+            {loadingIdPs ? (
+              <div className="flex justify-center">
+                <Loader2 className="h-5 w-5 animate-spin text-gray-500" />
+              </div>
+            ) : (
+              <>
+                {identityProviders.map((idp) => (
+                  <Button
+                    key={idp.id}
+                    onClick={() => handleSSOLogin(idp)}
+                    className="w-full bg-gray-700 hover:bg-gray-800 text-white"
+                    size="lg"
+                    disabled={isLoading}
+                  >
+                    <Globe className="mr-2 h-4 w-4" />
+                    Sign in with {idp.name}
+                  </Button>
+                ))}
+
+                {identityProviders.length > 0 && <div className="relative my-4">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                  </div>
+                </div>}
+
+                <Button
+                  onClick={handleKeycloakLogin}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  size="lg"
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Signing in...
+                    </span>
+                  ) : (
+                    'Sign in with Keycloak'
+                  )}
+                </Button>
+              </>
+            )}
           </div>
 
           <div className="text-center">
