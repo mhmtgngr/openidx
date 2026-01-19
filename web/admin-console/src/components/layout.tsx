@@ -1,15 +1,18 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { 
-  LayoutDashboard, 
-  Users, 
-  Users2, 
-  AppWindow, 
+import {
+  LayoutDashboard,
+  Users,
+  Users2,
+  AppWindow,
   ClipboardCheck,
   FileText,
   Settings,
   LogOut,
   Shield,
-  Menu
+  Menu,
+  Scale,
+  ShieldCheck,
+  ClipboardList
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -28,9 +31,12 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Groups', href: '/groups', icon: Users2 },
+  { name: 'Roles', href: '/roles', icon: ShieldCheck },
   { name: 'Applications', href: '/applications', icon: AppWindow },
   { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck },
+  { name: 'Policies', href: '/policies', icon: Scale },
   { name: 'Audit Logs', href: '/audit-logs', icon: FileText },
+  { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 

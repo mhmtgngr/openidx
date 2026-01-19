@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter } from 'lucide-react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter, Calendar, TrendingUp, BarChart3 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
-import { Card, CardContent, CardHeader } from '../components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface AuditEvent {
   id: string
@@ -23,6 +24,16 @@ interface AuditEvent {
   details: Record<string, unknown>
   session_id: string
   request_id: string
+}
+
+interface AuditStatistics {
+  total_events: number
+  by_type: Record<string, number>
+  by_outcome: Record<string, number>
+  by_category: Record<string, number>
+  events_per_day: Array<{ date: string; count: number }>
+  failed_auth_count: number
+  success_rate: number
 }
 
 const eventTypeIcons: Record<string, React.ReactNode> = {
@@ -54,12 +65,64 @@ const outcomeIcons: Record<string, React.ReactNode> = {
 }
 
 export function AuditLogsPage() {
+  const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [eventTypeFilter, setEventTypeFilter] = useState<string>('')
+  const [outcomeFilter, setOutcomeFilter] = useState<string>('')
+  const [showStats, setShowStats] = useState(true)
+
+  // Date range defaults to last 30 days
+  const defaultEndDate = new Date().toISOString().split('T')[0]
+  const defaultStartDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  const [startDate, setStartDate] = useState(defaultStartDate)
+  const [endDate, setEndDate] = useState(defaultEndDate)
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ['audit-events', search, eventTypeFilter],
+    queryKey: ['audit-events', search, eventTypeFilter, outcomeFilter],
     queryFn: () => api.get<AuditEvent[]>('/api/v1/audit/events'),
+  })
+
+  const { data: statistics } = useQuery({
+    queryKey: ['audit-statistics', startDate, endDate],
+    queryFn: () => api.get<AuditStatistics>(`/api/v1/audit/statistics?start=${startDate}&end=${endDate}`),
+  })
+
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch('/api/v1/audit/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          start_time: new Date(startDate).toISOString(),
+          end_time: new Date(endDate + 'T23:59:59').toISOString(),
+          event_type: eventTypeFilter || undefined,
+          outcome: outcomeFilter || undefined,
+        }),
+      })
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `audit_events_${startDate}_${endDate}.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    },
+    onSuccess: () => {
+      toast({
+        title: 'Export Complete',
+        description: 'Audit events have been exported to CSV.',
+        variant: 'success',
+      })
+    },
+    onError: () => {
+      toast({
+        title: 'Export Failed',
+        description: 'Failed to export audit events.',
+        variant: 'destructive',
+      })
+    },
   })
 
   const filteredEvents = events?.filter(event => {
@@ -70,9 +133,13 @@ export function AuditLogsPage() {
       event.target_id?.toLowerCase().includes(search.toLowerCase())
 
     const matchesType = eventTypeFilter === '' || event.event_type === eventTypeFilter
+    const matchesOutcome = outcomeFilter === '' || event.outcome === outcomeFilter
 
-    return matchesSearch && matchesType
+    return matchesSearch && matchesType && matchesOutcome
   })
+
+  // Calculate max for chart scaling
+  const maxDailyEvents = Math.max(...(statistics?.events_per_day?.map(d => d.count) || [1]))
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)
@@ -95,71 +162,241 @@ export function AuditLogsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Audit Logs</h1>
           <p className="text-muted-foreground">View and search audit events</p>
         </div>
-        <Button variant="outline">
-          <Download className="mr-2 h-4 w-4" /> Export Logs
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowStats(!showStats)}
+          >
+            <BarChart3 className="mr-2 h-4 w-4" />
+            {showStats ? 'Hide' : 'Show'} Stats
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => exportMutation.mutate()}
+            disabled={exportMutation.isPending}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {exportMutation.isPending ? 'Exporting...' : 'Export CSV'}
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-blue-100 flex items-center justify-center">
-                <Shield className="h-6 w-6 text-blue-700" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">
-                  {events?.filter(e => e.event_type === 'authentication').length || 0}
-                </p>
-                <p className="text-sm text-gray-500">Auth Events</p>
-              </div>
+      {/* Date Range Selector */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-gray-500" />
+              <span className="text-sm font-medium">Date Range:</span>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-green-100 flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-green-700" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">
-                  {events?.filter(e => e.outcome === 'success').length || 0}
-                </p>
-                <p className="text-sm text-gray-500">Successful</p>
-              </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-40"
+              />
+              <span className="text-gray-500">to</span>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-40"
+              />
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-red-100 flex items-center justify-center">
-                <XCircle className="h-6 w-6 text-red-700" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">
-                  {events?.filter(e => e.outcome === 'failure').length || 0}
-                </p>
-                <p className="text-sm text-gray-500">Failed</p>
-              </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setStartDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+                  setEndDate(new Date().toISOString().split('T')[0])
+                }}
+              >
+                Last 7 Days
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setStartDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+                  setEndDate(new Date().toISOString().split('T')[0])
+                }}
+              >
+                Last 30 Days
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setStartDate(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+                  setEndDate(new Date().toISOString().split('T')[0])
+                }}
+              >
+                Last 90 Days
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg bg-purple-100 flex items-center justify-center">
-                <Database className="h-6 w-6 text-purple-700" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Statistics Section */}
+      {showStats && statistics && (
+        <>
+          <div className="grid gap-4 md:grid-cols-4">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-lg bg-blue-100 flex items-center justify-center">
+                    <TrendingUp className="h-6 w-6 text-blue-700" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{statistics.total_events}</p>
+                    <p className="text-sm text-gray-500">Total Events</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-lg bg-green-100 flex items-center justify-center">
+                    <CheckCircle className="h-6 w-6 text-green-700" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{statistics.success_rate.toFixed(1)}%</p>
+                    <p className="text-sm text-gray-500">Success Rate</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-lg bg-red-100 flex items-center justify-center">
+                    <AlertTriangle className="h-6 w-6 text-red-700" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{statistics.failed_auth_count}</p>
+                    <p className="text-sm text-gray-500">Failed Auth</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-lg bg-purple-100 flex items-center justify-center">
+                    <Shield className="h-6 w-6 text-purple-700" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{statistics.by_type?.authentication || 0}</p>
+                    <p className="text-sm text-gray-500">Auth Events</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Charts Row */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Events Over Time Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Events Over Time</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {statistics.events_per_day && statistics.events_per_day.length > 0 ? (
+                  <div className="h-40 flex items-end gap-1">
+                    {statistics.events_per_day.slice(-14).map((day, i) => (
+                      <div key={i} className="flex-1 flex flex-col items-center">
+                        <div
+                          className="w-full bg-blue-500 rounded-t transition-all hover:bg-blue-600"
+                          style={{
+                            height: `${(day.count / maxDailyEvents) * 100}%`,
+                            minHeight: day.count > 0 ? '4px' : '0',
+                          }}
+                          title={`${day.date}: ${day.count} events`}
+                        />
+                        <span className="text-[10px] text-gray-400 mt-1 rotate-45 origin-left">
+                          {new Date(day.date).getDate()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="h-40 flex items-center justify-center text-gray-400">
+                    No data for selected period
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Events by Type */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Events by Type</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {Object.entries(statistics.by_type || {}).map(([type, count]) => {
+                    const total = statistics.total_events || 1
+                    const percentage = (count / total) * 100
+                    return (
+                      <div key={type}>
+                        <div className="flex items-center justify-between text-sm mb-1">
+                          <span className="capitalize">{type.replace('_', ' ')}</span>
+                          <span className="text-gray-500">{count}</span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              type === 'authentication' ? 'bg-blue-500' :
+                              type === 'authorization' ? 'bg-purple-500' :
+                              type === 'user_management' ? 'bg-green-500' :
+                              type === 'configuration' ? 'bg-orange-500' :
+                              'bg-gray-500'
+                            }`}
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Outcome Distribution */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Outcome Distribution</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-8">
+                {Object.entries(statistics.by_outcome || {}).map(([outcome, count]) => {
+                  const total = statistics.total_events || 1
+                  const percentage = ((count / total) * 100).toFixed(1)
+                  return (
+                    <div key={outcome} className="flex items-center gap-3">
+                      <div className={`w-4 h-4 rounded ${
+                        outcome === 'success' ? 'bg-green-500' :
+                        outcome === 'failure' ? 'bg-red-500' :
+                        'bg-yellow-500'
+                      }`} />
+                      <div>
+                        <p className="font-medium capitalize">{outcome}</p>
+                        <p className="text-sm text-gray-500">{count} ({percentage}%)</p>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
-              <div>
-                <p className="text-2xl font-bold">{events?.length || 0}</p>
-                <p className="text-sm text-gray-500">Total Events</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       <Card>
         <CardHeader>
@@ -184,6 +421,16 @@ export function AuditLogsPage() {
                 {eventTypes.map(type => (
                   <option key={type} value={type}>{type.replace('_', ' ')}</option>
                 ))}
+              </select>
+              <select
+                value={outcomeFilter}
+                onChange={(e) => setOutcomeFilter(e.target.value)}
+                className="border rounded-md px-3 py-2 text-sm"
+              >
+                <option value="">All Outcomes</option>
+                <option value="success">Success</option>
+                <option value="failure">Failure</option>
+                <option value="pending">Pending</option>
               </select>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, ClipboardCheck, Clock, CheckCircle, XCircle, AlertTriangle, Edit } from 'lucide-react'
+import { Plus, Search, ClipboardCheck, Clock, CheckCircle, XCircle, AlertTriangle, Edit, Play, Eye, MoreHorizontal } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -11,6 +12,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
 import { api } from '../lib/api'
@@ -55,6 +62,7 @@ const typeLabels: Record<string, string> = {
 }
 
 export function AccessReviewsPage() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
@@ -162,19 +170,68 @@ export function AccessReviewsPage() {
     setEditReview(prev => ({ ...prev, [name]: value }))
   }
 
+  const updateReviewMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<AccessReview> }) =>
+      api.put(`/api/v1/governance/reviews/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
+      toast({
+        title: 'Success',
+        description: 'Access review updated successfully!',
+        variant: 'success',
+      })
+      setEditModal(false)
+      setSelectedReview(null)
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to update review: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const startReviewMutation = useMutation({
+    mutationFn: (id: string) => api.patch(`/api/v1/governance/reviews/${id}/status`, { status: 'in_progress' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
+      toast({
+        title: 'Review Started',
+        description: 'Access review has been started and items populated.',
+        variant: 'success',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to start review: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedReview) return
 
-    // Note: The governance service currently doesn't have an update endpoint
-    // For now, we'll show a message that editing is not implemented yet
-    toast({
-      title: 'Feature Not Available',
-      description: 'Editing access reviews is not yet implemented in the backend.',
-      variant: 'default',
+    updateReviewMutation.mutate({
+      id: selectedReview.id,
+      data: {
+        name: editReview.name,
+        description: editReview.description,
+        start_date: new Date(editReview.start_date).toISOString(),
+        end_date: new Date(editReview.end_date).toISOString(),
+      },
     })
-    setEditModal(false)
-    setSelectedReview(null)
+  }
+
+  const handleStartReview = (review: AccessReview) => {
+    startReviewMutation.mutate(review.id)
+  }
+
+  const handleViewReview = (review: AccessReview) => {
+    navigate(`/access-reviews/${review.id}`)
   }
 
   return (
@@ -330,14 +387,46 @@ export function AccessReviewsPage() {
                         </div>
                       </td>
                       <td className="p-3 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditReview(review)}
-                        >
-                          <Edit className="h-4 w-4 mr-1" />
-                          Edit
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleViewReview(review)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleViewReview(review)}>
+                                <Eye className="h-4 w-4 mr-2" />
+                                View Details
+                              </DropdownMenuItem>
+                              {review.status === 'pending' && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handleStartReview(review)}>
+                                    <Play className="h-4 w-4 mr-2" />
+                                    Start Review
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleEditReview(review)}>
+                                    <Edit className="h-4 w-4 mr-2" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              {review.status === 'in_progress' && (
+                                <DropdownMenuItem onClick={() => handleViewReview(review)}>
+                                  <ClipboardCheck className="h-4 w-4 mr-2" />
+                                  Continue Review
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </td>
                     </tr>
                   ))

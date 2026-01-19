@@ -5,9 +5,13 @@ import { LoginPage } from './pages/login'
 import { DashboardPage } from './pages/dashboard'
 import { UsersPage } from './pages/users'
 import { GroupsPage } from './pages/groups'
+import { RolesPage } from './pages/roles'
 import { ApplicationsPage } from './pages/applications'
 import { AccessReviewsPage } from './pages/access-reviews'
+import { ReviewDetailPage } from './pages/review-detail'
+import { PoliciesPage } from './pages/policies'
 import { AuditLogsPage } from './pages/audit-logs'
+import { ComplianceReportsPage } from './pages/compliance-reports'
 import { SettingsPage } from './pages/settings'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
@@ -48,9 +52,13 @@ export default function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="groups" element={<GroupsPage />} />
+          <Route path="roles" element={<RolesPage />} />
           <Route path="applications" element={<ApplicationsPage />} />
           <Route path="access-reviews" element={<AccessReviewsPage />} />
+          <Route path="access-reviews/:id" element={<ReviewDetailPage />} />
+          <Route path="policies" element={<PoliciesPage />} />
           <Route path="audit-logs" element={<AuditLogsPage />} />
+          <Route path="compliance-reports" element={<ComplianceReportsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
 

@@ -1,10 +1,13 @@
 -- ============================================================================
--- OpenIDX Database Schema - Complete (Merged)
+-- OpenIDX Database Schema - Complete
 -- ============================================================================
 -- This file creates all tables and seed data for OpenIDX
 -- Run automatically by PostgreSQL on container initialization
--- Combines: OAuth/OIDC, SCIM, Governance, MFA, User Roles, Applications
 -- ============================================================================
+
+-- Create separate database for Keycloak
+CREATE DATABASE keycloak;
+GRANT ALL PRIVILEGES ON DATABASE keycloak TO openidx;
 
 -- ============================================================================
 -- USERS AND GROUPS TABLES
@@ -57,11 +60,7 @@ CREATE TABLE IF NOT EXISTS roles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-<<<<<<< HEAD
--- User roles (many-to-many relationship) - from dev
-=======
 -- User roles (many-to-many relationship)
->>>>>>> origin/dev
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
@@ -70,7 +69,6 @@ CREATE TABLE IF NOT EXISTS user_roles (
     PRIMARY KEY (user_id, role_id)
 );
 
-<<<<<<< HEAD
 -- ============================================================================
 -- OAUTH 2.0 / OIDC TABLES
 -- ============================================================================
@@ -155,9 +153,6 @@ CREATE TABLE IF NOT EXISTS scim_groups (
 -- GOVERNANCE TABLES (Access Reviews & Policies)
 -- ============================================================================
 
-=======
--- Access reviews
->>>>>>> origin/dev
 CREATE TABLE IF NOT EXISTS access_reviews (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
@@ -330,7 +325,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 -- ============================================================================
--- APPLICATIONS - from dev
+-- APPLICATIONS
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS applications (
@@ -347,7 +342,7 @@ CREATE TABLE IF NOT EXISTS applications (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Application SSO settings - from dev
+-- Application SSO settings
 CREATE TABLE IF NOT EXISTS application_sso_settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
@@ -381,6 +376,21 @@ CREATE TABLE IF NOT EXISTS audit_events (
     details JSONB,
     session_id VARCHAR(255),
     request_id VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS compliance_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type VARCHAR(50) NOT NULL,
+    framework VARCHAR(100) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    start_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    generated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    generated_by UUID REFERENCES users(id),
+    summary JSONB DEFAULT '{}',
+    findings JSONB DEFAULT '[]',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -439,6 +449,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp)
 CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_type ON audit_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_events_category ON audit_events(category);
+CREATE INDEX IF NOT EXISTS idx_audit_events_outcome ON audit_events(outcome);
+
+-- Compliance Reports
+CREATE INDEX IF NOT EXISTS idx_compliance_reports_type ON compliance_reports(type);
+CREATE INDEX IF NOT EXISTS idx_compliance_reports_status ON compliance_reports(status);
+CREATE INDEX IF NOT EXISTS idx_compliance_reports_generated_at ON compliance_reports(generated_at);
+CREATE INDEX IF NOT EXISTS idx_compliance_reports_framework ON compliance_reports(framework);
 
 -- ============================================================================
 -- SEED DATA - Admin User and Sample Data
@@ -449,11 +466,7 @@ INSERT INTO users (id, username, email, first_name, last_name, enabled, email_ve
 VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', 'System', 'Admin', true, true)
 ON CONFLICT (id) DO NOTHING;
 
-<<<<<<< HEAD
--- Insert sample roles (from dev)
-=======
 -- Insert sample roles
->>>>>>> origin/dev
 INSERT INTO roles (id, name, description, is_composite) VALUES
 ('60000000-0000-0000-0000-000000000001', 'admin', 'System administrator with full access', false),
 ('60000000-0000-0000-0000-000000000002', 'user', 'Standard user role', false),
@@ -492,106 +505,25 @@ INSERT INTO group_memberships (user_id, group_id) VALUES
 ON CONFLICT DO NOTHING;
 
 -- Insert sample applications
-<<<<<<< HEAD
-=======
-CREATE TABLE IF NOT EXISTS applications (
-    id UUID PRIMARY KEY,
-    client_id VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    type VARCHAR(50) NOT NULL,
-    protocol VARCHAR(50) DEFAULT 'openid-connect',
-    base_url VARCHAR(500),
-    redirect_uris TEXT[],
-    enabled BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Application SSO settings
-CREATE TABLE IF NOT EXISTS application_sso_settings (
-    id UUID PRIMARY KEY,
-    application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
-    enabled BOOLEAN DEFAULT true,
-    use_refresh_tokens BOOLEAN DEFAULT true,
-    access_token_lifetime INTEGER DEFAULT 3600, -- seconds
-    refresh_token_lifetime INTEGER DEFAULT 86400, -- seconds
-    require_consent BOOLEAN DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(application_id)
-);
-
->>>>>>> origin/dev
-INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, enabled) VALUES
-('20000000-0000-0000-0000-000000000001', 'admin-console', 'Admin Console', 'OpenIDX Administration Console', 'web', 'openid-connect', 'http://localhost:3000', true),
-('20000000-0000-0000-0000-000000000002', 'hr-portal', 'HR Portal', 'Human Resources Management Portal', 'web', 'openid-connect', 'http://hr.example.com', true),
-('20000000-0000-0000-0000-000000000003', 'finance-app', 'Finance Application', 'Financial reporting and management', 'web', 'openid-connect', 'http://finance.example.com', true),
-('20000000-0000-0000-0000-000000000004', 'mobile-app', 'Mobile Application', 'Company mobile application', 'native', 'openid-connect', NULL, true),
-('20000000-0000-0000-0000-000000000005', 'legacy-erp', 'Legacy ERP', 'Legacy ERP system integration', 'service', 'saml', 'http://erp.example.com', false)
+INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled) VALUES
+('40000000-0000-0000-0000-000000000001', 'admin-console', 'Admin Console', 'OpenIDX Administration Console', 'web', 'openid-connect', 'http://localhost:3000', ARRAY['http://localhost:3000/callback'], true),
+('40000000-0000-0000-0000-000000000002', 'sample-spa', 'Sample SPA', 'Sample Single Page Application', 'spa', 'openid-connect', 'http://localhost:4000', ARRAY['http://localhost:4000/callback'], true),
+('40000000-0000-0000-0000-000000000003', 'api-service', 'API Service', 'Backend API Service', 'service', 'openid-connect', NULL, NULL, true)
 ON CONFLICT (id) DO NOTHING;
 
--- Insert demo OAuth client
-INSERT INTO oauth_clients (
-    id, client_id, client_secret, name, description, type,
-    redirect_uris, grant_types, response_types, scopes,
-    pkce_required, allow_refresh_token
-) VALUES (
-    '00000000-0000-0000-0000-000000000020',
-    'demo-client',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMye1234567890abcdefghijk',
-    'Demo Application',
-    'Demo OAuth 2.0 client for testing',
-    'web',
-    '["http://localhost:3000/callback", "http://localhost:8080/callback"]'::jsonb,
-    '["authorization_code", "refresh_token"]'::jsonb,
-    '["code"]'::jsonb,
-    '["openid", "profile", "email", "offline_access"]'::jsonb,
-    true,
-    true
-) ON CONFLICT (client_id) DO NOTHING;
+-- Insert sample application SSO settings
+INSERT INTO application_sso_settings (id, application_id, enabled, use_refresh_tokens, access_token_lifetime, refresh_token_lifetime, require_consent) VALUES
+('50000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', true, true, 3600, 86400, false),
+('50000000-0000-0000-0000-000000000002', '40000000-0000-0000-0000-000000000002', true, true, 1800, 43200, true),
+('50000000-0000-0000-0000-000000000003', '40000000-0000-0000-0000-000000000003', true, false, 3600, 0, false)
+ON CONFLICT (id) DO NOTHING;
 
--- Insert sample access reviews
+-- Assign admin role to admin user
+INSERT INTO user_roles (user_id, role_id, assigned_by) VALUES
+('00000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001')
+ON CONFLICT DO NOTHING;
+
+-- Insert sample access review
 INSERT INTO access_reviews (id, name, description, type, status, reviewer_id, start_date, end_date) VALUES
-('30000000-0000-0000-0000-000000000001', 'Q1 2026 Access Review', 'Quarterly access review for all users', 'user_access', 'in_progress', '00000000-0000-0000-0000-000000000001', '2026-01-01', '2026-01-31'),
-('30000000-0000-0000-0000-000000000002', 'Admin Role Review', 'Review of administrative role assignments', 'role_assignment', 'pending', '00000000-0000-0000-0000-000000000001', '2026-02-01', '2026-02-28'),
-('30000000-0000-0000-0000-000000000003', 'Finance App Access', 'Review access to finance application', 'application_access', 'completed', '00000000-0000-0000-0000-000000000001', '2025-12-01', '2025-12-31')
+('70000000-0000-0000-0000-000000000001', 'Q1 2026 Access Review', 'Quarterly access review for all users', 'user-access', 'pending', '00000000-0000-0000-0000-000000000001', '2026-01-01', '2026-03-31')
 ON CONFLICT (id) DO NOTHING;
-
--- Insert sample review items
-INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision) VALUES
-('31000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'application', '20000000-0000-0000-0000-000000000002', 'HR Portal', 'pending'),
-('31000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'application', '20000000-0000-0000-0000-000000000003', 'Finance Application', 'approved'),
-('31000000-0000-0000-0000-000000000003', '30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000004', 'group', '10000000-0000-0000-0000-000000000005', 'Finance', 'pending')
-ON CONFLICT (id) DO NOTHING;
-
--- Insert sample MFA policies
-INSERT INTO mfa_policies (id, name, description, enabled, priority, conditions, required_methods, grace_period_hours) VALUES
-('50000000-0000-0000-0000-000000000001', 'Admin MFA Required', 'Require MFA for all administrators', true, 100,
- '{"groups": ["Administrators"]}'::jsonb, '["totp", "backup_code"]'::jsonb, 24),
-('50000000-0000-0000-0000-000000000002', 'Finance Department MFA', 'Require MFA for finance department during business hours', true, 80,
- '{"groups": ["Finance"], "time_windows": [{"days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "start_hour": 9, "end_hour": 17}]}'::jsonb, '["totp"]'::jsonb, 48),
-('50000000-0000-0000-0000-000000000003', 'External Access MFA', 'Require MFA for access from external IP ranges', true, 60,
- '{"ip_ranges": ["192.168.0.0/16", "10.0.0.0/8"]}'::jsonb, '["totp", "backup_code"]'::jsonb, 0)
-ON CONFLICT (id) DO NOTHING;
-
--- Insert sample audit events
-INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome, actor_id, actor_type, actor_ip, target_id, target_type, details) VALUES
-('40000000-0000-0000-0000-000000000001', NOW() - INTERVAL '1 hour', 'authentication', 'security', 'user.login', 'success', '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.100', '00000000-0000-0000-0000-000000000001', 'user', '{"method": "password", "client": "admin-console"}'::jsonb),
-('40000000-0000-0000-0000-000000000002', NOW() - INTERVAL '2 hours', 'authentication', 'security', 'user.login', 'failure', NULL, 'anonymous', '192.168.1.101', NULL, NULL, '{"reason": "invalid_credentials", "username": "unknown"}'::jsonb),
-('40000000-0000-0000-0000-000000000003', NOW() - INTERVAL '3 hours', 'user_management', 'operational', 'user.create', 'success', '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.100', '00000000-0000-0000-0000-000000000002', 'user', '{"username": "jsmith"}'::jsonb),
-('40000000-0000-0000-0000-000000000004', NOW() - INTERVAL '4 hours', 'authorization', 'security', 'permission.granted', 'success', '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.100', '00000000-0000-0000-0000-000000000002', 'user', '{"permission": "view_reports", "resource": "finance-app"}'::jsonb),
-('40000000-0000-0000-0000-000000000005', NOW() - INTERVAL '5 hours', 'group_management', 'operational', 'group.member_added', 'success', '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.100', '10000000-0000-0000-0000-000000000002', 'group', '{"user_id": "00000000-0000-0000-0000-000000000003", "group": "Developers"}'::jsonb)
-ON CONFLICT (id) DO NOTHING;
-
--- ============================================================================
--- SUCCESS MESSAGE
--- ============================================================================
-DO $$
-BEGIN
-    RAISE NOTICE '✅ OpenIDX Database Schema Created Successfully (Merged)';
-    RAISE NOTICE '📊 Tables: users, groups, roles, oauth_clients, scim_users, applications, access_reviews, policies, audit_events, MFA, and more';
-    RAISE NOTICE '👤 Default admin user: admin@openidx.local';
-    RAISE NOTICE '🔐 Demo OAuth client: demo-client';
-    RAISE NOTICE '🎭 Sample roles: admin, user, manager, auditor, developer';
-END $$;
