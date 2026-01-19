@@ -67,10 +67,10 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:23.0
     container_name: openidx-keycloak
-    command: start-dev --import-realm -Dkeycloak.migration.strategy=OVERWRITE_EXISTING
+    command: start-dev --import-realm
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/openidx
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: openidx
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
       KC_HOSTNAME_URL: http://localhost:8180
