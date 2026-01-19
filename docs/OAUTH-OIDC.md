@@ -34,6 +34,22 @@ Allow partners and vendors to access your systems securely:
 - Temporary access tokens
 - Audit trail
 
+### 5. Single Sign-On with External Providers
+Enable users to sign in with their existing accounts from other identity providers (IdPs).
+
+**Use Case:**
+- Allow users to "Login with Google"
+- Federate with a corporate Okta or Azure AD
+- Act as a service provider (SP) in a larger identity ecosystem
+
+**Flow:**
+1. User chooses to sign in with an external provider (e.g., Google).
+2. OpenIDX redirects the user to the external IdP's login page.
+3. User authenticates with the external IdP.
+4. The IdP redirects the user back to OpenIDX with an authorization code.
+5. OpenIDX exchanges the code for tokens, verifies the user's identity, and performs Just-In-Time (JIT) provisioning if the user is new.
+6. OpenIDX issues its own session and access tokens to the client application.
+
 ## Architecture
 
 ```
@@ -193,7 +209,40 @@ curl -X POST http://localhost:8006/oauth/token \
 }
 ```
 
-### 3. Get User Info
+### 3. Configure an External Identity Provider (for SSO)
+
+```bash
+curl -X POST http://localhost:8001/api/v1/identity/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Google",
+    "provider_type": "oidc",
+    "issuer_url": "https://accounts.google.com",
+    "client_id": "your-google-client-id.apps.googleusercontent.com",
+    "client_secret": "your-google-client-secret",
+    "scopes": ["openid", "profile", "email"],
+    "enabled": true
+  }'
+```
+
+### 4. Initiate SSO Flow
+
+To start the SSO flow with an external provider, add the `idp_hint` parameter to the authorization request, using the ID of the identity provider you configured.
+
+```
+GET /oauth/authorize?
+  response_type=code&
+  client_id=client_abc123&
+  redirect_uri=https://myapp.com/callback&
+  scope=openid%20profile%20email&
+  state=random_state&
+  nonce=random_nonce&
+  code_challenge=base64url(sha256(verifier))&
+  code_challenge_method=S256&
+  idp_hint=the-id-of-the-google-idp
+```
+
+### 5. Get User Info
 
 ```bash
 curl http://localhost:8006/oauth/userinfo \

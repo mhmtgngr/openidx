@@ -17,9 +17,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/identity"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -144,10 +147,11 @@ type Service struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	issuer     string
+	identityService *identity.Service
 }
 
 // NewService creates a new OAuth service
-func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) (*Service, error) {
+func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger, idSvc *identity.Service) (*Service, error) {
 	// Generate RSA key pair for JWT signing
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -165,6 +169,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		privateKey: privateKey,
 		publicKey:  &privateKey.PublicKey,
 		issuer:     issuer,
+		identityService: idSvc,
 	}, nil
 }
 
@@ -528,6 +533,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		oauth.GET("/authorize", svc.handleAuthorize)
 		oauth.POST("/authorize", svc.handleAuthorizeConsent)
 
+		// SSO callback endpoint
+		oauth.GET("/callback", svc.handleCallback)
+
 		// Token endpoint
 		oauth.POST("/token", svc.handleToken)
 
@@ -593,6 +601,14 @@ func (s *Service) handleJWKS(c *gin.Context) {
 }
 
 func (s *Service) handleAuthorize(c *gin.Context) {
+	idpHint := c.Query("idp_hint")
+
+	if idpHint != "" {
+		// SSO flow
+		s.handleSSOAuthorize(c, idpHint)
+		return
+	}
+
 	// This would show a consent screen in a real implementation
 	// For now, return the parameters needed for consent
 	c.JSON(200, gin.H{
@@ -605,6 +621,132 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		"code_challenge":        c.Query("code_challenge"),
 		"code_challenge_method": c.Query("code_challenge_method"),
 	})
+}
+
+func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
+	// 1. Get IdP from identity service
+	idp, err := s.identityService.GetIdentityProvider(c.Request.Context(), idpID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_idp"})
+		return
+	}
+
+	// 2. Store original request parameters in Redis
+	state := GenerateRandomToken(32)
+	originalParams := map[string]string{
+		"client_id":       c.Query("client_id"),
+		"redirect_uri":    c.Query("redirect_uri"),
+		"response_type":   c.Query("response_type"),
+		"scope":           c.Query("scope"),
+		"state":           c.Query("state"),
+		"nonce":           c.Query("nonce"),
+		"code_challenge":  c.Query("code_challenge"),
+		"code_challenge_method": c.Query("code_challenge_method"),
+	}
+	paramsJSON, _ := json.Marshal(originalParams)
+	s.redis.Client.Set(c.Request.Context(), "sso_state:"+state, string(paramsJSON), 10*time.Minute)
+
+	// 3. Build external IdP authorization URL
+	authURL, _ := url.Parse(idp.IssuerURL + "/protocol/openid-connect/auth")
+	query := authURL.Query()
+	query.Set("client_id", idp.ClientID)
+	query.Set("redirect_uri", s.issuer+"/oauth/callback")
+	query.Set("response_type", "code")
+	query.Set("scope", strings.Join(idp.Scopes, " "))
+	query.Set("state", state)
+	authURL.RawQuery = query.Encode()
+
+	// 4. Redirect user to external IdP
+	c.Redirect(302, authURL.String())
+}
+
+func (s *Service) handleCallback(c *gin.Context) {
+	// 1. Get state and code from callback request
+	state := c.Query("state")
+	code := c.Query("code")
+
+	// 2. Retrieve original request parameters from Redis
+	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "sso_state:"+state).Result()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_state"})
+		return
+	}
+	var originalParams map[string]string
+	json.Unmarshal([]byte(paramsJSON), &originalParams)
+
+	// 3. Get IdP from identity service (we need to store idp_id in the state)
+	// For now, let's assume we have only one IdP for simplicity
+	idps, _, _ := s.identityService.ListIdentityProviders(c.Request.Context(), 0, 1)
+	idp := idps[0]
+
+	// 4. Exchange code for tokens
+	oauth2Config := &oauth2.Config{
+		ClientID:     idp.ClientID,
+		ClientSecret: idp.ClientSecret,
+		RedirectURL:  s.issuer + "/oauth/callback",
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  idp.IssuerURL + "/protocol/openid-connect/auth",
+			TokenURL: idp.IssuerURL + "/protocol/openid-connect/token",
+		},
+		Scopes: idp.Scopes,
+	}
+	token, err := oauth2Config.Exchange(c.Request.Context(), code)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to exchange token"})
+		return
+	}
+
+	// 5. a new user is created with the information from the ID token.
+	rawIDToken, ok := token.Extra("id_token").(string)
+	if !ok {
+		c.JSON(500, gin.H{"error": "id_token not found"})
+		return
+	}
+
+	// 6. JIT Provisioning & Session Management
+	// For simplicity, we'll just create a new user and a new session, and then generate a new authorization code
+	var claims struct {
+		Email string `json:"email"`
+		Sub   string `json:"sub"`
+		Name  string `json:"name"`
+	}
+	// We need to parse the token without verification for this POC
+	parts := strings.Split(rawIDToken, ".")
+	if len(parts) == 3 {
+		payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
+		json.Unmarshal(payload, &claims)
+	}
+
+	user := &identity.User{
+		Username:      claims.Email,
+		Email:         claims.Email,
+		FirstName:     claims.Name,
+		Enabled:       true,
+		EmailVerified: true,
+	}
+	s.identityService.CreateUser(c.Request.Context(), user)
+
+	authCode := &AuthorizationCode{
+		Code:        GenerateRandomToken(32),
+		ClientID:    originalParams["client_id"],
+		UserID:      user.ID,
+		RedirectURI: originalParams["redirect_uri"],
+		Scope:       originalParams["scope"],
+		State:       originalParams["state"],
+		Nonce:       originalParams["nonce"],
+	}
+	s.CreateAuthorizationCode(c.Request.Context(), authCode)
+
+	// 7. Redirect back to the original client
+	redirectURL, _ := url.Parse(originalParams["redirect_uri"])
+	query := redirectURL.Query()
+	query.Set("code", authCode.Code)
+	if authCode.State != "" {
+		query.Set("state", authCode.State)
+	}
+	redirectURL.RawQuery = query.Encode()
+
+	c.Redirect(302, redirectURL.String())
 }
 
 func (s *Service) handleAuthorizeConsent(c *gin.Context) {

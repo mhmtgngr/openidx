@@ -182,7 +182,36 @@ curl -X POST http://localhost:8006/api/v1/oauth/clients \
 
 Save the `client_id` and `client_secret` from the response.
 
-### 3. Create First Access Review (Optional)
+### 3. Configure SSO with an External Provider
+
+You can configure OpenIDX to use external identity providers like Google, Okta, or any other OIDC-compliant provider for Single Sign-On.
+
+**1. Create an Identity Provider:**
+
+Use the following API call to register an external provider. Replace the `issuer_url`, `client_id`, and `client_secret` with the values from your provider.
+
+```bash
+curl -X POST http://localhost:8001/api/v1/identity/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Google",
+    "provider_type": "oidc",
+    "issuer_url": "https://accounts.google.com",
+    "client_id": "your-google-client-id.apps.googleusercontent.com",
+    "client_secret": "your-google-client-secret",
+    "scopes": ["openid", "profile", "email"],
+    "enabled": true
+  }'
+```
+
+**2. Test the SSO Flow:**
+
+- Go to the Admin Console login page (`http://localhost:3000`).
+- You should now see a "Sign in with Google" button (or the name you provided).
+- Clicking this button will redirect you to Google for authentication.
+- After successful authentication, you will be redirected back and logged into the Admin Console.
+
+### 4. Create First Access Review (Optional)
 
 ```bash
 curl -X POST http://localhost:8002/api/v1/governance/reviews \
