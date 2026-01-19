@@ -3,20 +3,235 @@ package identity
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
+	"github.com/google/uuid"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // MockDB is a mock implementation of database operations
 type MockDB struct {
 	mock.Mock
 }
+
+// QueryRow implements the database.DB interface for QueryRow
+func (m *MockDB) QueryRow(ctx context.Context, query string, args ...interface{}) database.Row {
+	// Call the mock object's method and return its return value
+	// We expect the mock to be set up to return a mockRow
+	ret := m.Called(ctx, query, args)
+	return ret.Get(0).(database.Row)
+}
+
+// Exec implements the database.DB interface for Exec
+func (m *MockDB) Exec(ctx context.Context, query string, args ...interface{}) (database.CommandTag, error) {
+	ret := m.Called(ctx, query, args)
+	return database.CommandTag(ret.String(0)), ret.Error(1)
+}
+
+// Ping implements the database.DB interface for Ping
+func (m *MockDB) Ping(ctx context.Context) error {
+	ret := m.Called(ctx)
+	return ret.Error(0)
+}
+
+// Close implements the database.DB interface for Close
+func (m *MockDB) Close() {
+	m.Called()
+}
+
+// Begin implements the database.DB interface for Begin
+func (m *MockDB) Begin(ctx context.Context) (database.Tx, error) {
+	ret := m.Called(ctx)
+	return ret.Get(0).(database.Tx), ret.Error(1)
+}
+
+// Query implements the database.DB interface for Query
+func (m *MockDB) Query(ctx context.Context, query string, args ...interface{}) (database.Rows, error) {
+	ret := m.Called(ctx, query, args)
+	return ret.Get(0).(database.Rows), ret.Error(1)
+}
+
+// MockRow is a mock implementation of database.Row
+type MockRow struct {
+	mock.Mock
+	err error
+	vals []interface{}
+	idx int
+}
+
+// Scan implements the database.Row interface for Scan
+func (m *MockRow) Scan(dest ...interface{}) error {
+	if m.err != nil {
+		return m.err
+	}
+	for i, d := range dest {
+		// This is a simplified scan. In a real mock, you'd match types.
+		// For now, we assume direct assignment is okay for testing
+		if i < len(m.vals) {
+			switch d := d.(type) {
+			case *string:
+				*d = m.vals[i].(string)
+			case *bool:
+				*d = m.vals[i].(bool)
+			case *time.Time:
+				*d = m.vals[i].(time.Time)
+			case *uuid.UUID:
+				*d = m.vals[i].(uuid.UUID)
+			case *Scopes:
+				*d = m.vals[i].(Scopes)
+			case *ProviderType:
+				*d = m.vals[i].(ProviderType)
+			default:
+				return fmt.Errorf("unsupported type for mock scan: %T", d)
+			}
+		}
+	}
+	return nil
+}
+
+// MockRows is a mock implementation of database.Rows
+type MockRows struct {
+	mock.Mock
+	err  error
+	rows [][]interface{}
+	idx  int
+}
+
+// Next implements the database.Rows interface for Next
+func (m *MockRows) Next() bool {
+	m.idx++
+	return m.idx <= len(m.rows)
+}
+
+// Scan implements the database.Rows interface for Scan
+func (m *MockRows) Scan(dest ...interface{}) error {
+	if m.err != nil {
+		return m.err
+	}
+	if m.idx-1 < len(m.rows) {
+		row := m.rows[m.idx-1]
+		for i, d := range dest {
+			if i < len(row) {
+				switch d := d.(type) {
+				case *string:
+					*d = row[i].(string)
+				case *bool:
+					*d = row[i].(bool)
+				case *time.Time:
+					*d = row[i].(time.Time)
+				case *uuid.UUID:
+					*d = row[i].(uuid.UUID)
+				case *Scopes:
+					*d = row[i].(Scopes)
+				case *ProviderType:
+					*d = row[i].(ProviderType)
+				default:
+					return fmt.Errorf("unsupported type for mock scan: %T", d)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Close implements the database.Rows interface for Close
+func (m *MockRows) Close() {
+	m.Called()
+}
+
+// Err implements the database.Rows interface for Err
+func (m *MockRows) Err() error {
+	ret := m.Called()
+	return ret.Error(0)
+}
+
+func TestIdentityProviderCRUD(t *testing.T) {
+	ctx := context.Background()
+	logger := zap.NewNop()
+	cfg := &config.Config{}
+	
+	// Create a new service with mocked DB and Redis
+	mockDB := new(MockDB)
+	mockRedis := new(MockRedis)
+	service := NewService(&database.PostgresDB{Pool: mockDB.Pool}, mockRedis.Client, cfg, logger)
+
+	// Sample Identity Provider for testing
+	idp := &IdentityProvider{
+		Name:         "Test OIDC",
+		ProviderType: ProviderTypeOIDC,
+		IssuerURL:    "https://test-issuer.com",
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		Scopes:       Scopes{"openid", "profile", "email"},
+		Enabled:      true,
+	}
+
+	t.Run("CreateIdentityProvider", func(t *testing.T) {
+		// Setup mock expectation
+		mockDB.On("Exec", ctx, mock.Anything, mock.Anything).Return(database.CommandTag("INSERT 1"), nil).Once()
+
+		err := service.CreateIdentityProvider(ctx, idp)
+		assert.NoError(t, err)
+		assert.NotEqual(t, uuid.Nil, idp.ID) // ID should be set
+	})
+
+	t.Run("GetIdentityProvider", func(t *testing.T) {
+		// Setup mock expectation
+		mockRow := &MockRow{vals: []interface{}{idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt}}
+		mockDB.On("QueryRow", ctx, mock.Anything, idp.ID).Return(mockRow).Once()
+
+		retrievedIdp, err := service.GetIdentityProvider(ctx, idp.ID.String())
+		assert.NoError(t, err)
+		assert.NotNil(t, retrievedIdp)
+		assert.Equal(t, idp.Name, retrievedIdp.Name)
+	})
+
+	t.Run("ListIdentityProviders", func(t *testing.T) {
+		// Setup mock for total count
+		mockCountRow := &MockRow{vals: []interface{}{1}}
+		mockDB.On("QueryRow", ctx, "SELECT COUNT(*) FROM identity_providers").Return(mockCountRow).Once()
+		
+		// Setup mock for list query
+		mockRows := &MockRows{rows: [][]interface{}{
+			{idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt},
+		}}
+		mockDB.On("Query", ctx, mock.Anything, 0, 20).Return(mockRows, nil).Once()
+
+		idps, total, err := service.ListIdentityProviders(ctx, 0, 20)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, total)
+		assert.Len(t, idps, 1)
+		assert.Equal(t, idp.Name, idps[0].Name)
+	})
+
+	t.Run("UpdateIdentityProvider", func(t *testing.T) {
+		// Modify the IdP
+		idp.Name = "Updated Test OIDC"
+		idp.Enabled = false
+
+		// Setup mock expectation
+		mockDB.On("Exec", ctx, mock.Anything, mock.Anything).Return(database.CommandTag("UPDATE 1"), nil).Once()
+
+		err := service.UpdateIdentityProvider(ctx, idp)
+		assert.NoError(t, err)
+	})
+
+	t.Run("DeleteIdentityProvider", func(t *testing.T) {
+		// Setup mock expectation
+		mockDB.On("Exec", ctx, "DELETE FROM identity_providers WHERE id = $1", idp.ID.String()).Return(database.CommandTag("DELETE 1"), nil).Once()
+
+		err := service.DeleteIdentityProvider(ctx, idp.ID.String())
+		assert.NoError(t, err)
+	})
+}
+
 
 // MockRedis is a mock implementation of Redis operations
 type MockRedis struct {

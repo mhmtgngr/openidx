@@ -527,3 +527,57 @@ ON CONFLICT DO NOTHING;
 INSERT INTO access_reviews (id, name, description, type, status, reviewer_id, start_date, end_date) VALUES
 ('70000000-0000-0000-0000-000000000001', 'Q1 2026 Access Review', 'Quarterly access review for all users', 'user-access', 'pending', '00000000-0000-0000-0000-000000000001', '2026-01-01', '2026-03-31')
 ON CONFLICT (id) DO NOTHING;
+
+-- OpenIDX Database Schema Migration
+-- Version: 004
+-- Description: Adds support for external identity providers (OIDC/SAML) for SSO.
+
+-- ============================================================================
+-- IDENTITY PROVIDERS TABLE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS identity_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    provider_type VARCHAR(50) NOT NULL, -- 'oidc' or 'saml'
+    issuer_url VARCHAR(255) UNIQUE NOT NULL,
+    client_id VARCHAR(255) NOT NULL,
+    client_secret VARCHAR(255) NOT NULL, -- TODO: Encrypt this value at rest
+    scopes JSONB,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ============================================================================
+-- INDEXES FOR PERFORMANCE
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_identity_providers_name ON identity_providers(name);
+CREATE INDEX IF NOT EXISTS idx_identity_providers_provider_type ON identity_providers(provider_type);
+CREATE INDEX IF NOT EXISTS idx_identity_providers_issuer_url ON identity_providers(issuer_url);
+
+-- ============================================================================
+-- COMMENTS FOR DOCUMENTATION
+-- ============================================================================
+
+COMMENT ON TABLE identity_providers IS 'Configuration for external OIDC/SAML identity providers for SSO';
+COMMENT ON COLUMN identity_providers.provider_type IS 'Type of the identity provider (e.g., ''oidc'', ''saml'')';
+COMMENT ON COLUMN identity_providers.issuer_url IS 'The base URL of the external identity provider';
+COMMENT ON COLUMN identity_providers.client_secret IS 'Client secret for the external provider. This should be encrypted.';
+
+-- ============================================================================
+-- FOREIGN KEY (Optional, but recommended)
+-- Link JIT-provisioned users to the IdP that created them.
+-- ============================================================================
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS idp_id UUID REFERENCES identity_providers(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS external_user_id VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_users_idp_id ON users(idp_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id_idp_id ON users(idp_id, external_user_id) WHERE idp_id IS NOT NULL;
+
+COMMENT ON COLUMN users.idp_id IS 'Foreign key to the identity provider that provisioned this user.';
+COMMENT ON COLUMN users.external_user_id IS 'The user''s unique ID from the external identity provider.';
+

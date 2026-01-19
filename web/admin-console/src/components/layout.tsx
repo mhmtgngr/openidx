@@ -12,7 +12,8 @@ import {
   Menu,
   Scale,
   ShieldCheck,
-  ClipboardList
+  ClipboardList,
+  Key as KeyIcon
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -94,6 +95,20 @@ export function Layout() {
               {sidebarOpen && <span>{item.name}</span>}
             </NavLink>
           ))}
+          <NavLink
+              to="/identity-providers"
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`
+              }
+            >
+              <KeyIcon className="h-5 w-5 flex-shrink-0" />
+              {sidebarOpen && <span>Identity Providers</span>}
+            </NavLink>
+
         </nav>
 
         {/* User menu */}

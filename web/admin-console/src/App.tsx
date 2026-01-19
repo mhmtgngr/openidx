@@ -12,6 +12,7 @@ import { ReviewDetailPage } from './pages/review-detail'
 import { PoliciesPage } from './pages/policies'
 import { AuditLogsPage } from './pages/audit-logs'
 import { ComplianceReportsPage } from './pages/compliance-reports'
+import { IdentityProvidersPage } from './pages/identity-providers'
 import { SettingsPage } from './pages/settings'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="audit-logs" element={<AuditLogsPage />} />
           <Route path="compliance-reports" element={<ComplianceReportsPage />} />
+          <Route path="identity-providers" element={<IdentityProvidersPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
 
