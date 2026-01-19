@@ -272,6 +272,99 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	return err
 }
 
+// CreateIdentityProvider creates a new identity provider
+func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
+	s.logger.Info("Creating identity provider", zap.String("name", idp.Name))
+
+	idp.ID = uuid.New()
+	now := time.Now()
+	idp.CreatedAt = now
+	idp.UpdatedAt = now
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt)
+
+	return err
+}
+
+// GetIdentityProvider retrieves an identity provider by ID
+func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*IdentityProvider, error) {
+	s.logger.Debug("Getting identity provider", zap.String("idp_id", idpID))
+
+	var idp IdentityProvider
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
+		FROM identity_providers WHERE id = $1
+	`, idpID).Scan(
+		&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL, &idp.ClientID, &idp.ClientSecret, &idp.Scopes, &idp.Enabled, &idp.CreatedAt, &idp.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &idp, nil
+}
+
+// ListIdentityProviders retrieves identity providers with pagination
+func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) ([]IdentityProvider, int, error) {
+	s.logger.Debug("Listing identity providers", zap.Int("offset", offset), zap.Int("limit", limit))
+
+	var total int
+	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM identity_providers").Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
+		FROM identity_providers
+		ORDER BY name
+		OFFSET $1 LIMIT $2
+	`, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	idps := make([]IdentityProvider, 0)
+	for rows.Next() {
+		var idp IdentityProvider
+		if err := rows.Scan(
+			&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL, &idp.ClientID, &idp.ClientSecret, &idp.Scopes, &idp.Enabled, &idp.CreatedAt, &idp.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		idps = append(idps, idp)
+	}
+
+	return idps, total, nil
+}
+
+// UpdateIdentityProvider updates an existing identity provider
+func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
+	s.logger.Info("Updating identity provider", zap.String("idp_id", idp.ID.String()))
+	
+	idp.UpdatedAt = time.Now()
+	
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE identity_providers 
+		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9
+		WHERE id = $1
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt)
+	
+	return err
+}
+
+// DeleteIdentityProvider deletes an identity provider
+func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) error {
+	s.logger.Info("Deleting identity provider", zap.String("idp_id", idpID))
+	
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM identity_providers WHERE id = $1", idpID)
+	return err
+}
+
 // GetUserSessions retrieves active sessions for a user
 func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	s.logger.Debug("Getting sessions for user", zap.String("user_id", userID))
@@ -1545,6 +1638,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
 
+		// Identity Providers (for SSO)
+		identity.GET("/providers", svc.handleListIdentityProviders)
+		identity.POST("/providers", svc.handleCreateIdentityProvider)
+		identity.GET("/providers/:id", svc.handleGetIdentityProvider)
+		identity.PUT("/providers/:id", svc.handleUpdateIdentityProvider)
+		identity.DELETE("/providers/:id", svc.handleDeleteIdentityProvider)
+
 		// Session management
 		identity.GET("/users/:id/sessions", svc.handleGetUserSessions)
 		identity.DELETE("/sessions/:id", svc.handleTerminateSession)
@@ -1666,6 +1766,76 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 	userID := c.Param("id")
 	
 	if err := s.DeleteUser(c.Request.Context(), userID); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(204, nil)
+}
+
+func (s *Service) handleListIdentityProviders(c *gin.Context) {
+	offset := 0
+	limit := 20
+	
+	idps, total, err := s.ListIdentityProviders(c.Request.Context(), offset, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.Header("X-Total-Count", strconv.Itoa(total))
+	c.JSON(200, idps)
+}
+
+func (s *Service) handleGetIdentityProvider(c *gin.Context) {
+	idpID := c.Param("id")
+	
+	idp, err := s.GetIdentityProvider(c.Request.Context(), idpID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "identity provider not found"})
+		return
+	}
+	
+	c.JSON(200, idp)
+}
+
+func (s *Service) handleCreateIdentityProvider(c *gin.Context) {
+	var idp IdentityProvider
+	if err := c.ShouldBindJSON(&idp); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	
+	if err := s.CreateIdentityProvider(c.Request.Context(), &idp); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(201, idp)
+}
+
+func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
+	idpID := c.Param("id")
+	
+	var idp IdentityProvider
+	if err := c.ShouldBindJSON(&idp); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	
+	idp.ID, _ = uuid.Parse(idpID)
+	if err := s.UpdateIdentityProvider(c.Request.Context(), &idp); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(200, idp)
+}
+
+func (s *Service) handleDeleteIdentityProvider(c *gin.Context) {
+	idpID := c.Param("id")
+	
+	if err := s.DeleteIdentityProvider(c.Request.Context(), idpID); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
