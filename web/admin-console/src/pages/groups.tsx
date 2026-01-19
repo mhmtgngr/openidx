@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings } from 'lucide-react'
+import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -18,6 +18,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select'
 import { Label } from '../components/ui/label'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
@@ -35,6 +42,23 @@ interface Group {
   updated_at: string
 }
 
+interface GroupMember {
+  user_id: string
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  joined_at: string
+}
+
+interface User {
+  id: string
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+}
+
 export function GroupsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -47,16 +71,42 @@ export function GroupsPage() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    parent_id: '',
   })
   const [groupSettings, setGroupSettings] = useState({
     allowSelfJoin: false,
     requireApproval: false,
     maxMembers: '',
   })
+  const [memberSearch, setMemberSearch] = useState('')
+  const [userSearchQuery, setUserSearchQuery] = useState('')
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState('')
+
+  // Debounce user search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedUserSearch(userSearchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [userSearchQuery])
 
   const { data: groups, isLoading } = useQuery({
     queryKey: ['groups', search],
     queryFn: () => api.get<Group[]>('/api/v1/identity/groups'),
+  })
+
+  // Fetch group members when managing members
+  const { data: groupMembers, isLoading: membersLoading, refetch: refetchMembers } = useQuery({
+    queryKey: ['groupMembers', selectedGroup?.id],
+    queryFn: () => api.get<GroupMember[]>(`/api/v1/identity/groups/${selectedGroup?.id}/members`),
+    enabled: !!selectedGroup?.id && manageMembersModal,
+  })
+
+  // Search users for adding to group
+  const { data: searchedUsers, isLoading: searchingUsers } = useQuery({
+    queryKey: ['userSearch', debouncedUserSearch],
+    queryFn: () => api.get<User[]>(`/api/v1/identity/users/search?q=${encodeURIComponent(debouncedUserSearch)}&limit=10`),
+    enabled: debouncedUserSearch.length >= 2,
   })
 
   // Create group mutation
@@ -71,7 +121,7 @@ export function GroupsPage() {
         variant: 'success',
       })
       setCreateGroupModal(false)
-      setFormData({ name: '', description: '' })
+      setFormData({ name: '', description: '', parent_id: '' })
     },
     onError: (error: Error) => {
       toast({
@@ -94,6 +144,7 @@ export function GroupsPage() {
         variant: 'success',
       })
       setEditGroupModal(false)
+      setGroupSettingsModal(false)
       setSelectedGroup(null)
     },
     onError: (error: Error) => {
@@ -126,13 +177,84 @@ export function GroupsPage() {
     },
   })
 
+  // Add member mutation
+  const addMemberMutation = useMutation({
+    mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
+      api.post(`/api/v1/identity/groups/${groupId}/members`, { user_id: userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groupMembers', selectedGroup?.id] })
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      toast({
+        title: 'Success',
+        description: 'Member added successfully!',
+        variant: 'success',
+      })
+      setUserSearchQuery('')
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to add member: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Remove member mutation
+  const removeMemberMutation = useMutation({
+    mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
+      api.delete(`/api/v1/identity/groups/${groupId}/members/${userId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groupMembers', selectedGroup?.id] })
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      toast({
+        title: 'Success',
+        description: 'Member removed successfully!',
+        variant: 'success',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to remove member: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  // Get root groups for parent selection
+  const rootGroups = groups?.filter(g => !g.parent_id) || []
+
+  // Build hierarchy map for display
+  const getGroupHierarchy = (group: Group): string => {
+    if (!group.parent_id) return ''
+    const parent = groups?.find(g => g.id === group.parent_id)
+    if (!parent) return ''
+    const parentHierarchy = getGroupHierarchy(parent)
+    return parentHierarchy ? `${parentHierarchy} > ${parent.name}` : parent.name
+  }
+
   const filteredGroups = groups?.filter(group =>
     group.name.toLowerCase().includes(search.toLowerCase()) ||
     group.description?.toLowerCase().includes(search.toLowerCase())
   )
 
+  // Filter members based on search
+  const filteredMembers = groupMembers?.filter(member =>
+    memberSearch === '' ||
+    member.username.toLowerCase().includes(memberSearch.toLowerCase()) ||
+    member.email.toLowerCase().includes(memberSearch.toLowerCase()) ||
+    member.first_name?.toLowerCase().includes(memberSearch.toLowerCase()) ||
+    member.last_name?.toLowerCase().includes(memberSearch.toLowerCase())
+  )
+
+  // Filter out users who are already members
+  const availableUsers = searchedUsers?.filter(
+    user => !groupMembers?.some(member => member.user_id === user.id)
+  )
+
   const handleCreateGroup = () => {
-    setFormData({ name: '', description: '' })
+    setFormData({ name: '', description: '', parent_id: '' })
     setCreateGroupModal(true)
   }
 
@@ -141,6 +263,7 @@ export function GroupsPage() {
     setFormData({
       name: group.name,
       description: group.description || '',
+      parent_id: group.parent_id || '',
     })
     setEditGroupModal(true)
   }
@@ -149,6 +272,8 @@ export function GroupsPage() {
     const group = groups?.find(g => g.id === groupId)
     if (group) {
       setSelectedGroup(group)
+      setMemberSearch('')
+      setUserSearchQuery('')
       setManageMembersModal(true)
     }
   }
@@ -157,6 +282,11 @@ export function GroupsPage() {
     const group = groups?.find(g => g.id === groupId)
     if (group) {
       setSelectedGroup(group)
+      setGroupSettings({
+        allowSelfJoin: group.allow_self_join,
+        requireApproval: group.require_approval,
+        maxMembers: group.max_members?.toString() || '',
+      })
       setGroupSettingsModal(true)
     }
   }
@@ -177,30 +307,13 @@ export function GroupsPage() {
         id: selectedGroup.id,
         name: selectedGroup.name,
         description: selectedGroup.description,
+        parent_id: selectedGroup.parent_id,
         allow_self_join: groupSettings.allowSelfJoin,
         require_approval: groupSettings.requireApproval,
         max_members: maxMembers,
       })
     }
   }
-
-  // Handle group settings update success
-  React.useEffect(() => {
-    if (updateGroupMutation.isSuccess && groupSettingsModal) {
-      toast({
-        title: 'Success',
-        description: `Group settings updated for "${selectedGroup?.name}"`,
-        variant: 'success',
-      })
-      setGroupSettingsModal(false)
-      setSelectedGroup(null)
-      setGroupSettings({
-        allowSelfJoin: false,
-        requireApproval: false,
-        maxMembers: '',
-      })
-    }
-  }, [updateGroupMutation.isSuccess])
 
   const handleDeleteGroup = (groupId: string, groupName: string) => {
     if (confirm(`Are you sure you want to delete group: ${groupName}? This action cannot be undone.`)) {
@@ -215,18 +328,32 @@ export function GroupsPage() {
       createGroupMutation.mutate({
         name: formData.name,
         description: formData.description,
+        parent_id: formData.parent_id || null,
       })
     } else if (editGroupModal && selectedGroup) {
       updateGroupMutation.mutate({
         id: selectedGroup.id,
         name: formData.name,
         description: formData.description,
+        parent_id: formData.parent_id || null,
       })
     }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
+  }
+
+  const handleAddMember = (userId: string) => {
+    if (selectedGroup) {
+      addMemberMutation.mutate({ groupId: selectedGroup.id, userId })
+    }
+  }
+
+  const handleRemoveMember = (userId: string, username: string) => {
+    if (selectedGroup && confirm(`Remove ${username} from ${selectedGroup.name}?`)) {
+      removeMemberMutation.mutate({ groupId: selectedGroup.id, userId })
+    }
   }
 
   return (
@@ -288,7 +415,10 @@ export function GroupsPage() {
                           <div>
                             <p className="font-medium">{group.name}</p>
                             {group.parent_id && (
-                              <p className="text-xs text-gray-500">Subgroup</p>
+                              <p className="text-xs text-gray-500 flex items-center gap-1">
+                                <ChevronRight className="h-3 w-3" />
+                                {getGroupHierarchy(group)}
+                              </p>
                             )}
                           </div>
                         </div>
@@ -299,13 +429,21 @@ export function GroupsPage() {
                       <td className="p-3">
                         <div className="flex items-center gap-2">
                           <Users className="h-4 w-4 text-gray-400" />
-                          {group.member_count}
+                          <span>{group.member_count}</span>
+                          {group.max_members && (
+                            <span className="text-gray-400">/ {group.max_members}</span>
+                          )}
                         </div>
                       </td>
                       <td className="p-3">
-                        <Badge variant={group.parent_id ? 'secondary' : 'default'}>
-                          {group.parent_id ? 'Subgroup' : 'Root'}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={group.parent_id ? 'secondary' : 'default'}>
+                            {group.parent_id ? 'Subgroup' : 'Root'}
+                          </Badge>
+                          {group.allow_self_join && (
+                            <Badge variant="outline" className="text-xs">Self-join</Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 text-gray-500">
                         {new Date(group.created_at).toLocaleDateString()}
@@ -379,6 +517,25 @@ export function GroupsPage() {
                 placeholder="Enter group description (optional)"
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="parent_id">Parent Group (optional)</Label>
+              <Select
+                value={formData.parent_id}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, parent_id: value === 'none' ? '' : value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select parent group (creates subgroup)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No parent (root group)</SelectItem>
+                  {rootGroups.map((group) => (
+                    <SelectItem key={group.id} value={group.id}>
+                      {group.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"
@@ -423,6 +580,27 @@ export function GroupsPage() {
                 placeholder="Enter group description (optional)"
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-parent">Parent Group</Label>
+              <Select
+                value={formData.parent_id}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, parent_id: value === 'none' ? '' : value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select parent group" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No parent (root group)</SelectItem>
+                  {rootGroups
+                    .filter(g => g.id !== selectedGroup?.id)
+                    .map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"
@@ -442,43 +620,112 @@ export function GroupsPage() {
 
       {/* Manage Members Modal */}
       <Dialog open={manageMembersModal} onOpenChange={setManageMembersModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Manage Members - {selectedGroup?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="text-sm text-gray-600">
-              Current members: {selectedGroup?.member_count || 0}
-            </div>
+            {/* Add Member Section */}
             <div className="space-y-2">
               <Label>Add Member</Label>
-              <div className="flex gap-2">
-                <Input placeholder="Enter username or email" />
-                <Button type="button" size="sm">
-                  Add
-                </Button>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+                <Input
+                  placeholder="Search users by name or email..."
+                  value={userSearchQuery}
+                  onChange={(e) => setUserSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
               </div>
+              {searchingUsers && <p className="text-sm text-gray-500">Searching...</p>}
+              {availableUsers && availableUsers.length > 0 && (
+                <div className="border rounded-md max-h-40 overflow-y-auto">
+                  {availableUsers.map((user) => (
+                    <div
+                      key={user.id}
+                      className="flex items-center justify-between p-2 hover:bg-gray-50 border-b last:border-b-0"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">
+                          {user.first_name} {user.last_name}
+                        </p>
+                        <p className="text-xs text-gray-500">{user.email}</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleAddMember(user.id)}
+                        disabled={addMemberMutation.isPending}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {debouncedUserSearch.length >= 2 && availableUsers?.length === 0 && !searchingUsers && (
+                <p className="text-sm text-gray-500">No users found</p>
+              )}
             </div>
+
+            {/* Current Members Section */}
             <div className="space-y-2">
-              <Label>Current Members</Label>
-              <div className="max-h-32 overflow-y-auto space-y-1">
-                {/* Mock member list - in real app this would come from API */}
-                <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                  <span className="text-sm">john.doe@example.com</span>
-                  <Button type="button" variant="outline" size="sm">
-                    Remove
-                  </Button>
-                </div>
-                <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                  <span className="text-sm">jane.smith@example.com</span>
-                  <Button type="button" variant="outline" size="sm">
-                    Remove
-                  </Button>
-                </div>
+              <div className="flex items-center justify-between">
+                <Label>Current Members ({groupMembers?.length || 0})</Label>
+                {(groupMembers?.length || 0) > 5 && (
+                  <div className="relative w-48">
+                    <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-500" />
+                    <Input
+                      placeholder="Filter members..."
+                      value={memberSearch}
+                      onChange={(e) => setMemberSearch(e.target.value)}
+                      className="pl-7 h-8 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="border rounded-md max-h-60 overflow-y-auto">
+                {membersLoading ? (
+                  <p className="p-4 text-center text-sm text-gray-500">Loading members...</p>
+                ) : filteredMembers?.length === 0 ? (
+                  <p className="p-4 text-center text-sm text-gray-500">
+                    {memberSearch ? 'No members match your search' : 'No members in this group'}
+                  </p>
+                ) : (
+                  filteredMembers?.map((member) => (
+                    <div
+                      key={member.user_id}
+                      className="flex items-center justify-between p-2 hover:bg-gray-50 border-b last:border-b-0"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center">
+                          <span className="text-sm font-medium text-gray-600">
+                            {member.first_name?.[0] || member.username[0].toUpperCase()}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium">
+                            {member.first_name} {member.last_name}
+                          </p>
+                          <p className="text-xs text-gray-500">{member.email}</p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveMember(member.user_id, member.username)}
+                        disabled={removeMemberMutation.isPending}
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setManageMembersModal(false)}>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" onClick={() => setManageMembersModal(false)}>
                 Close
               </Button>
             </div>
@@ -523,16 +770,24 @@ export function GroupsPage() {
                 id="maxMembers"
                 name="maxMembers"
                 type="number"
+                min="1"
                 value={groupSettings.maxMembers}
                 onChange={handleSettingsChange}
                 placeholder="Leave empty for unlimited"
               />
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={() => setGroupSettingsModal(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setGroupSettingsModal(false)}
+                disabled={updateGroupMutation.isPending}
+              >
                 Cancel
               </Button>
-              <Button type="submit">Save Settings</Button>
+              <Button type="submit" disabled={updateGroupMutation.isPending}>
+                {updateGroupMutation.isPending ? 'Saving...' : 'Save Settings'}
+              </Button>
             </div>
           </form>
         </DialogContent>

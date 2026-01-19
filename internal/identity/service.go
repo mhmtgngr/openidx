@@ -445,6 +445,198 @@ func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 	return err
 }
 
+// AddGroupMember adds a user to a group
+func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) error {
+	s.logger.Info("Adding member to group", zap.String("group_id", groupID), zap.String("user_id", userID))
+
+	// Check if group exists
+	group, err := s.GetGroup(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("group not found: %w", err)
+	}
+
+	// Check max members limit if set
+	if group.MaxMembers != nil && group.MemberCount >= *group.MaxMembers {
+		return fmt.Errorf("group has reached maximum member limit of %d", *group.MaxMembers)
+	}
+
+	// Check if user exists
+	_, err = s.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	// Check if membership already exists
+	var exists bool
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)
+	`, groupID, userID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+
+	if exists {
+		return fmt.Errorf("user is already a member of this group")
+	}
+
+	// Insert membership
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO group_memberships (group_id, user_id, joined_at)
+		VALUES ($1, $2, NOW())
+	`, groupID, userID)
+
+	return err
+}
+
+// RemoveGroupMember removes a user from a group
+func (s *Service) RemoveGroupMember(ctx context.Context, groupID, userID string) error {
+	s.logger.Info("Removing member from group", zap.String("group_id", groupID), zap.String("user_id", userID))
+
+	result, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2
+	`, groupID, userID)
+
+	if err != nil {
+		return err
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user is not a member of this group")
+	}
+
+	return nil
+}
+
+// SearchUsers searches for users by username or email
+func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]User, error) {
+	s.logger.Debug("Searching users", zap.String("query", query))
+
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+
+	searchPattern := "%" + query + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, username, email, first_name, last_name, enabled, email_verified,
+		       created_at, updated_at, last_login_at, password_changed_at,
+		       password_must_change, failed_login_count, last_failed_login_at, locked_until
+		FROM users
+		WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+		ORDER BY username
+		LIMIT $2
+	`, searchPattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(
+			&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
+			&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
+			&u.PasswordChangedAt, &u.PasswordMustChange, &u.FailedLoginCount,
+			&u.LastFailedLoginAt, &u.LockedUntil,
+		); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+
+	return users, nil
+}
+
+// GetGroupMembersPaginated retrieves members of a group with pagination and search
+func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, search string, offset, limit int) ([]GroupMember, int, error) {
+	s.logger.Debug("Getting group members paginated", zap.String("group_id", groupID))
+
+	// Get total count
+	var total int
+	countQuery := `
+		SELECT COUNT(*) FROM users u
+		JOIN group_memberships gm ON u.id = gm.user_id
+		WHERE gm.group_id = $1
+	`
+	countArgs := []interface{}{groupID}
+
+	if search != "" {
+		countQuery += ` AND (u.username ILIKE $2 OR u.email ILIKE $2 OR u.first_name ILIKE $2 OR u.last_name ILIKE $2)`
+		countArgs = append(countArgs, "%"+search+"%")
+	}
+
+	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Get members
+	query := `
+		SELECT u.id, u.username, u.email, u.first_name, u.last_name, gm.joined_at
+		FROM users u
+		JOIN group_memberships gm ON u.id = gm.user_id
+		WHERE gm.group_id = $1
+	`
+	args := []interface{}{groupID}
+
+	if search != "" {
+		query += ` AND (u.username ILIKE $2 OR u.email ILIKE $2 OR u.first_name ILIKE $2 OR u.last_name ILIKE $2)`
+		args = append(args, "%"+search+"%")
+		query += ` ORDER BY gm.joined_at DESC OFFSET $3 LIMIT $4`
+		args = append(args, offset, limit)
+	} else {
+		query += ` ORDER BY gm.joined_at DESC OFFSET $2 LIMIT $3`
+		args = append(args, offset, limit)
+	}
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var members []GroupMember
+	for rows.Next() {
+		var m GroupMember
+		if err := rows.Scan(&m.UserID, &m.Username, &m.Email, &m.FirstName, &m.LastName, &m.JoinedAt); err != nil {
+			return nil, 0, err
+		}
+		members = append(members, m)
+	}
+
+	return members, total, nil
+}
+
+// GetSubgroups retrieves subgroups of a parent group
+func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, error) {
+	s.logger.Debug("Getting subgroups", zap.String("parent_id", parentID))
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+		FROM groups g
+		WHERE g.parent_id = $1
+		ORDER BY g.name
+	`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []Group
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(
+			&g.ID, &g.Name, &g.Description, &g.ParentID, &g.AllowSelfJoin, &g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+		); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+
+	return groups, nil
+}
+
 // CreateSession creates a new user session
 func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress, userAgent string, sessionDuration time.Duration) (*Session, error) {
 	s.logger.Info("Creating session", zap.String("user_id", userID), zap.String("client_id", clientID))
@@ -1149,6 +1341,91 @@ func (s *Service) ListRoles(ctx context.Context) ([]Role, error) {
 	return roles, nil
 }
 
+// GetRole retrieves a role by ID
+func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
+	s.logger.Debug("Getting role", zap.String("role_id", roleID))
+
+	var role Role
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, description, is_composite, created_at
+		FROM roles WHERE id = $1
+	`, roleID).Scan(&role.ID, &role.Name, &role.Description, &role.IsComposite, &role.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &role, nil
+}
+
+// CreateRole creates a new role
+func (s *Service) CreateRole(ctx context.Context, role *Role) error {
+	s.logger.Info("Creating role", zap.String("name", role.Name))
+
+	if role.ID == "" {
+		role.ID = uuid.New().String()
+	}
+
+	now := time.Now()
+	role.CreatedAt = now
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO roles (id, name, description, is_composite, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $5)
+	`, role.ID, role.Name, role.Description, role.IsComposite, now)
+
+	return err
+}
+
+// UpdateRole updates an existing role
+func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
+	s.logger.Info("Updating role", zap.String("role_id", role.ID))
+
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE roles
+		SET name = $2, description = $3, is_composite = $4, updated_at = $5
+		WHERE id = $1
+	`, role.ID, role.Name, role.Description, role.IsComposite, time.Now())
+
+	if err != nil {
+		return err
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("role not found")
+	}
+
+	return nil
+}
+
+// DeleteRole deletes a role
+func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
+	s.logger.Info("Deleting role", zap.String("role_id", roleID))
+
+	// First remove all user-role assignments
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1", roleID)
+	if err != nil {
+		return fmt.Errorf("failed to remove role assignments: %w", err)
+	}
+
+	// Remove composite role relationships
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM composite_roles WHERE parent_role_id = $1 OR child_role_id = $1", roleID)
+	if err != nil {
+		return fmt.Errorf("failed to remove composite role relationships: %w", err)
+	}
+
+	// Delete the role
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM roles WHERE id = $1", roleID)
+	if err != nil {
+		return err
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("role not found")
+	}
+
+	return nil
+}
+
 // GetUserRoles retrieves roles assigned to a user
 func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, error) {
 	s.logger.Debug("Getting user roles", zap.String("user_id", userID))
@@ -1263,6 +1540,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		// User management
 		identity.GET("/users", svc.handleListUsers)
 		identity.POST("/users", svc.handleCreateUser)
+		identity.GET("/users/search", svc.handleSearchUsers) // Must be before :id route
 		identity.GET("/users/:id", svc.handleGetUser)
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
@@ -1271,8 +1549,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/users/:id/sessions", svc.handleGetUserSessions)
 		identity.DELETE("/sessions/:id", svc.handleTerminateSession)
 
-		// Role management
+		// Role management (CRUD)
 		identity.GET("/roles", svc.handleListRoles)
+		identity.POST("/roles", svc.handleCreateRole)
+		identity.GET("/roles/:id", svc.handleGetRole)
+		identity.PUT("/roles/:id", svc.handleUpdateRole)
+		identity.DELETE("/roles/:id", svc.handleDeleteRole)
+
+		// User-Role assignments
 		identity.GET("/users/:id/roles", svc.handleGetUserRoles)
 		identity.POST("/users/:id/roles", svc.handleAssignUserRole)
 		identity.DELETE("/users/:id/roles/:roleId", svc.handleRemoveUserRole)
@@ -1285,6 +1569,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.PUT("/groups/:id", svc.handleUpdateGroup)
 		identity.DELETE("/groups/:id", svc.handleDeleteGroup)
 		identity.GET("/groups/:id/members", svc.handleGetGroupMembers)
+		identity.POST("/groups/:id/members", svc.handleAddGroupMember)
+		identity.DELETE("/groups/:id/members/:userId", svc.handleRemoveGroupMember)
+		identity.GET("/groups/:id/subgroups", svc.handleGetSubgroups)
 
 		// MFA management
 		identity.POST("/mfa/totp/setup", svc.handleSetupTOTP)
@@ -1417,6 +1704,70 @@ func (s *Service) handleListRoles(c *gin.Context) {
 	}
 
 	c.JSON(200, roles)
+}
+
+func (s *Service) handleGetRole(c *gin.Context) {
+	roleID := c.Param("id")
+
+	role, err := s.GetRole(c.Request.Context(), roleID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "role not found"})
+		return
+	}
+
+	c.JSON(200, role)
+}
+
+func (s *Service) handleCreateRole(c *gin.Context) {
+	var role Role
+	if err := c.ShouldBindJSON(&role); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.CreateRole(c.Request.Context(), &role); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(201, role)
+}
+
+func (s *Service) handleUpdateRole(c *gin.Context) {
+	roleID := c.Param("id")
+
+	var role Role
+	if err := c.ShouldBindJSON(&role); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	role.ID = roleID
+	if err := s.UpdateRole(c.Request.Context(), &role); err != nil {
+		if err.Error() == "role not found" {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, role)
+}
+
+func (s *Service) handleDeleteRole(c *gin.Context) {
+	roleID := c.Param("id")
+
+	if err := s.DeleteRole(c.Request.Context(), roleID); err != nil {
+		if err.Error() == "role not found" {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(204, nil)
 }
 
 func (s *Service) handleGetUserRoles(c *gin.Context) {
@@ -1578,6 +1929,81 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 	}
 
 	c.JSON(204, nil)
+}
+
+func (s *Service) handleAddGroupMember(c *gin.Context) {
+	groupID := c.Param("id")
+
+	var req struct {
+		UserID string `json:"user_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.AddGroupMember(c.Request.Context(), groupID, req.UserID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		if strings.Contains(err.Error(), "already a member") || strings.Contains(err.Error(), "maximum member limit") {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "member added"})
+}
+
+func (s *Service) handleRemoveGroupMember(c *gin.Context) {
+	groupID := c.Param("id")
+	userID := c.Param("userId")
+
+	if err := s.RemoveGroupMember(c.Request.Context(), groupID, userID); err != nil {
+		if strings.Contains(err.Error(), "not a member") {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "member removed"})
+}
+
+func (s *Service) handleGetSubgroups(c *gin.Context) {
+	parentID := c.Param("id")
+
+	subgroups, err := s.GetSubgroups(c.Request.Context(), parentID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, subgroups)
+}
+
+func (s *Service) handleSearchUsers(c *gin.Context) {
+	query := c.Query("q")
+	if query == "" {
+		c.JSON(400, gin.H{"error": "search query is required"})
+		return
+	}
+
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, _ := strconv.Atoi(limitStr)
+
+	users, err := s.SearchUsers(c.Request.Context(), query, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, users)
 }
 
 // MFA HTTP Handlers
