@@ -18,7 +18,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -557,6 +556,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		clients.PUT("/:id", svc.handleUpdateClient)
 		clients.DELETE("/:id", svc.handleDeleteClient)
 	}
+
+	// SAML Service Provider endpoints
+	svc.RegisterSAMLRoutes(router)
 }
 
 func (s *Service) handleDiscovery(c *gin.Context) {

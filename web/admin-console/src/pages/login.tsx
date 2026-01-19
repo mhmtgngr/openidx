@@ -61,9 +61,11 @@ export function LoginPage() {
     }
   }, [isAuthenticated, isLoading])
 
-  const handleKeycloakLogin = () => {
+  const { authProvider } = useAuth()
+
+  const handleLogin = () => {
     setError('')
-    login() // This is the existing Keycloak login
+    login()
   }
 
   const handleSSOLogin = (idp: IdentityProvider) => {
@@ -135,7 +137,7 @@ export function LoginPage() {
                 </div>}
 
                 <Button
-                  onClick={handleKeycloakLogin}
+                  onClick={handleLogin}
                   className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                   size="lg"
                   disabled={isLoading}
@@ -146,7 +148,7 @@ export function LoginPage() {
                       Signing in...
                     </span>
                   ) : (
-                    'Sign in with Keycloak'
+                    authProvider === 'openidx' ? 'Sign in with OpenIDX' : 'Sign in with Keycloak'
                   )}
                 </Button>
               </>
@@ -155,7 +157,7 @@ export function LoginPage() {
 
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              Secured by Keycloak authentication
+              Secured by {authProvider === 'openidx' ? 'OpenIDX' : 'Keycloak'} authentication
             </p>
           </div>
         </CardContent>
