@@ -96,7 +96,7 @@ export function GroupsPage() {
   })
 
   // Fetch group members when managing members
-  const { data: groupMembers, isLoading: membersLoading, refetch: refetchMembers } = useQuery({
+  const { data: groupMembers, isLoading: membersLoading } = useQuery({
     queryKey: ['groupMembers', selectedGroup?.id],
     queryFn: () => api.get<GroupMember[]>(`/api/v1/identity/groups/${selectedGroup?.id}/members`),
     enabled: !!selectedGroup?.id && manageMembersModal,

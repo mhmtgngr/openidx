@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -624,7 +625,7 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 }
 
 // populateReviewItems generates review items when a review is started
-func (s *Service) populateReviewItems(ctx context.Context, tx interface{ Exec(ctx context.Context, sql string, arguments ...interface{}) (interface{}, error) }, review *AccessReview) error {
+func (s *Service) populateReviewItems(ctx context.Context, tx pgx.Tx, review *AccessReview) error {
 	s.logger.Info("Populating review items", zap.String("review_id", review.ID))
 
 	switch review.Type {
@@ -645,7 +646,7 @@ func (s *Service) populateReviewItems(ctx context.Context, tx interface{ Exec(ct
 	}
 }
 
-func (s *Service) populateUserAccessItems(ctx context.Context, tx interface{ Exec(ctx context.Context, sql string, arguments ...interface{}) (interface{}, error) }, reviewID string) error {
+func (s *Service) populateUserAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
 	// Get all user-role assignments
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT ur.user_id, r.id as role_id, r.name as role_name
@@ -677,12 +678,12 @@ func (s *Service) populateUserAccessItems(ctx context.Context, tx interface{ Exe
 	return nil
 }
 
-func (s *Service) populateRoleAssignmentItems(ctx context.Context, tx interface{ Exec(ctx context.Context, sql string, arguments ...interface{}) (interface{}, error) }, reviewID string) error {
+func (s *Service) populateRoleAssignmentItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
 	// Same as user access for now
 	return s.populateUserAccessItems(ctx, tx, reviewID)
 }
 
-func (s *Service) populateApplicationAccessItems(ctx context.Context, tx interface{ Exec(ctx context.Context, sql string, arguments ...interface{}) (interface{}, error) }, reviewID string) error {
+func (s *Service) populateApplicationAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
 	// Get all users with their group memberships (groups often map to app access)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT gm.user_id, g.id as group_id, g.name as group_name
@@ -714,7 +715,7 @@ func (s *Service) populateApplicationAccessItems(ctx context.Context, tx interfa
 	return nil
 }
 
-func (s *Service) populatePrivilegedAccessItems(ctx context.Context, tx interface{ Exec(ctx context.Context, sql string, arguments ...interface{}) (interface{}, error) }, reviewID string) error {
+func (s *Service) populatePrivilegedAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
 	// Get privileged role assignments (admin, manager, etc.)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT ur.user_id, r.id as role_id, r.name as role_name

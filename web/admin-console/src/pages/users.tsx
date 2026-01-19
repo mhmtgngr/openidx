@@ -210,8 +210,10 @@ export function UsersPage() {
   const updateUserRolesMutation = useMutation({
     mutationFn: ({ userId, roleIds }: { userId: string; roleIds: string[] }) =>
       api.put(`/api/v1/identity/users/${userId}/roles`, { role_ids: roleIds }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
+      queryClient.invalidateQueries({ queryKey: ['roles'] })
+      queryClient.invalidateQueries({ queryKey: ['user-roles', variables.userId] })
       toast({
         title: 'Success',
         description: `Roles updated for user ${selectedUser?.username}`,

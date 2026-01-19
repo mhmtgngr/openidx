@@ -92,7 +92,7 @@ export function ReviewDetailPage() {
     queryFn: () => api.get<AccessReview>(`/api/v1/governance/reviews/${id}`),
   })
 
-  const { data: items, isLoading: itemsLoading, refetch: refetchItems } = useQuery({
+  const { data: items, isLoading: itemsLoading } = useQuery({
     queryKey: ['review-items', id, filter],
     queryFn: () => api.get<ReviewItem[]>(`/api/v1/governance/reviews/${id}/items${filter ? `?decision=${filter}` : ''}`),
     enabled: !!id,
