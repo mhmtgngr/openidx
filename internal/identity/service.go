@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -928,6 +930,136 @@ func (s *Service) CheckPasswordExpiry(ctx context.Context, userID string) (bool,
 	}
 
 	return false, nil
+}
+
+// ErrInvalidCredentials is returned when username or password is incorrect
+var ErrInvalidCredentials = errors.New("invalid username or password")
+
+// ErrAccountLocked is returned when the user account is locked
+var ErrAccountLocked = errors.New("account is locked")
+
+// ErrAccountDisabled is returned when the user account is disabled
+var ErrAccountDisabled = errors.New("account is disabled")
+
+// AuthenticateUser verifies username and password credentials
+func (s *Service) AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
+	s.logger.Info("Authenticating user", zap.String("username", username))
+
+	var userID, passwordHash string
+	var enabled bool
+	var lockedUntil *time.Time
+	var failedLoginCount int
+
+	// Get user by username or email
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, password_hash, enabled, locked_until, failed_login_count
+		FROM users
+		WHERE username = $1 OR email = $1
+	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount)
+
+	if err != nil {
+		s.logger.Debug("User not found", zap.String("username", username))
+		return nil, ErrInvalidCredentials
+	}
+
+	// Check if account is disabled
+	if !enabled {
+		s.logger.Warn("Login attempt on disabled account", zap.String("username", username))
+		return nil, ErrAccountDisabled
+	}
+
+	// Check if account is locked
+	if lockedUntil != nil && time.Now().Before(*lockedUntil) {
+		s.logger.Warn("Login attempt on locked account", zap.String("username", username))
+		return nil, ErrAccountLocked
+	}
+
+	// Verify password
+	if passwordHash == "" {
+		s.logger.Debug("User has no password set", zap.String("username", username))
+		return nil, ErrInvalidCredentials
+	}
+
+	hashPrefix := passwordHash
+	if len(hashPrefix) > 20 {
+		hashPrefix = hashPrefix[:20]
+	}
+	s.logger.Debug("Comparing password",
+		zap.String("username", username),
+		zap.Int("hash_len", len(passwordHash)),
+		zap.String("hash_prefix", hashPrefix),
+		zap.Int("password_len", len(password)),
+		zap.String("password_bytes", fmt.Sprintf("%v", []byte(password))))
+
+	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
+	if err != nil {
+		// Update failed login count
+		s.recordFailedLogin(ctx, userID, failedLoginCount)
+		s.logger.Debug("Invalid password", zap.String("username", username), zap.Error(err))
+		return nil, ErrInvalidCredentials
+	}
+
+	// Reset failed login count and update last login
+	now := time.Now()
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET failed_login_count = 0, last_login_at = $2, locked_until = NULL
+		WHERE id = $1
+	`, userID, now)
+	if err != nil {
+		s.logger.Error("Failed to update login stats", zap.Error(err))
+	}
+
+	// Return full user object
+	return s.GetUser(ctx, userID)
+}
+
+// recordFailedLogin records a failed login attempt and locks account if necessary
+func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentCount int) {
+	newCount := currentCount + 1
+	now := time.Now()
+
+	var lockedUntil *time.Time
+	// Lock account after 5 failed attempts for 30 minutes
+	if newCount >= 5 {
+		lockTime := now.Add(30 * time.Minute)
+		lockedUntil = &lockTime
+		s.logger.Warn("Account locked due to failed attempts", zap.String("user_id", userID))
+	}
+
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET failed_login_count = $2, last_failed_login_at = $3, locked_until = $4
+		WHERE id = $1
+	`, userID, newCount, now, lockedUntil)
+	if err != nil {
+		s.logger.Error("Failed to record failed login", zap.Error(err))
+	}
+}
+
+// SetPassword sets a new password for a user (hashes and stores)
+func (s *Service) SetPassword(ctx context.Context, userID string, password string) error {
+	s.logger.Info("Setting password", zap.String("user_id", userID))
+
+	// Validate password policy
+	if err := s.ValidatePasswordPolicy(password); err != nil {
+		return err
+	}
+
+	// Hash password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	now := time.Now()
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET password_hash = $2, password_changed_at = $3, password_must_change = false
+		WHERE id = $1
+	`, userID, string(hash), now)
+
+	return err
 }
 
 // GenerateTOTPSecret generates a new TOTP secret and QR code for enrollment

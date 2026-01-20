@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255),
     first_name VARCHAR(255),
     last_name VARCHAR(255),
     enabled BOOLEAN DEFAULT true,
@@ -76,10 +77,10 @@ CREATE TABLE IF NOT EXISTS user_roles (
 CREATE TABLE IF NOT EXISTS oauth_clients (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id VARCHAR(255) UNIQUE NOT NULL,
-    client_secret VARCHAR(255) NOT NULL,
+    client_secret VARCHAR(255),  -- NULL for public clients
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    type VARCHAR(50) NOT NULL,
+    type VARCHAR(50) NOT NULL,  -- 'public' or 'confidential'
     redirect_uris JSONB,
     grant_types JSONB,
     response_types JSONB,
@@ -461,9 +462,10 @@ CREATE INDEX IF NOT EXISTS idx_compliance_reports_framework ON compliance_report
 -- SEED DATA - Admin User and Sample Data
 -- ============================================================================
 
--- Insert default admin user
-INSERT INTO users (id, username, email, first_name, last_name, enabled, email_verified)
-VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', 'System', 'Admin', true, true)
+-- Insert default admin user (password: admin123)
+-- bcrypt hash generated with cost 10 for "admin123"
+INSERT INTO users (id, username, email, password_hash, first_name, last_name, enabled, email_verified)
+VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', '$2a$10$u1/0j1YwyqSHvwkb3m/lVexQyAh4oKFb47ojAhSk.BGk/LBt53Lfq', 'System', 'Admin', true, true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert sample roles
@@ -509,6 +511,24 @@ INSERT INTO applications (id, client_id, name, description, type, protocol, base
 ('40000000-0000-0000-0000-000000000001', 'admin-console', 'Admin Console', 'OpenIDX Administration Console', 'web', 'openid-connect', 'http://localhost:3000', ARRAY['http://localhost:3000/callback'], true),
 ('40000000-0000-0000-0000-000000000002', 'sample-spa', 'Sample SPA', 'Sample Single Page Application', 'spa', 'openid-connect', 'http://localhost:4000', ARRAY['http://localhost:4000/callback'], true),
 ('40000000-0000-0000-0000-000000000003', 'api-service', 'API Service', 'Backend API Service', 'service', 'openid-connect', NULL, NULL, true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Insert OAuth clients (public and confidential)
+INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type, redirect_uris, grant_types, response_types, scopes, pkce_required, allow_refresh_token, access_token_lifetime, refresh_token_lifetime) VALUES
+-- Admin Console - public client (no secret, PKCE required)
+('80000000-0000-0000-0000-000000000001', 'admin-console', NULL, 'Admin Console', 'OpenIDX Administration Console', 'public',
+ '["http://localhost:3000/login", "http://localhost:3000/callback"]'::jsonb,
+ '["authorization_code", "refresh_token"]'::jsonb,
+ '["code"]'::jsonb,
+ '["openid", "profile", "email", "offline_access"]'::jsonb,
+ true, true, 3600, 86400),
+-- API Service - confidential client
+('80000000-0000-0000-0000-000000000002', 'api-service', 'api-service-secret', 'API Service', 'Backend API Service', 'confidential',
+ '[]'::jsonb,
+ '["client_credentials"]'::jsonb,
+ '[]'::jsonb,
+ '["openid", "api"]'::jsonb,
+ false, false, 3600, 0)
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert sample application SSO settings
