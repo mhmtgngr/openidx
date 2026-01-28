@@ -30,16 +30,18 @@ import {
 } from './ui/dropdown-menu'
 
 const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['user', 'admin'] },
-  { name: 'Users', href: '/users', icon: Users, roles: ['admin'] },
-  { name: 'Groups', href: '/groups', icon: Users2, roles: ['admin'] },
-  { name: 'Roles', href: '/roles', icon: ShieldCheck, roles: ['admin'] },
-  { name: 'Applications', href: '/applications', icon: AppWindow, roles: ['admin'] },
-  { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, roles: ['admin'] },
-  { name: 'Policies', href: '/policies', icon: Scale, roles: ['admin'] },
-  { name: 'Audit Logs', href: '/audit-logs', icon: FileText, roles: ['admin'] },
-  { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, roles: ['admin'] },
-  { name: 'Settings', href: '/settings', icon: Settings, roles: ['admin'] },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, adminOnly: false },
+  { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
+  { name: 'Users', href: '/users', icon: Users, adminOnly: true },
+  { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
+  { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
+  { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
+  { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
+  { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
+  { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
+  { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
+  { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
+  { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
 ]
 
 export function Layout() {
@@ -81,7 +83,7 @@ export function Layout() {
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1">
           {navigation
-            .filter((item) => item.roles?.some((role) => hasRole(role)))
+            .filter((item) => !item.adminOnly || hasRole('admin'))
             .map((item) => (
               <NavLink
                 key={item.name}
@@ -98,22 +100,6 @@ export function Layout() {
                 {sidebarOpen && <span>{item.name}</span>}
               </NavLink>
             ))}
-          {hasRole('admin') && (
-            <NavLink
-              to="/identity-providers"
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                  isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`
-              }
-            >
-              <KeyIcon className="h-5 w-5 flex-shrink-0" />
-              {sidebarOpen && <span>Identity Providers</span>}
-            </NavLink>
-          )}
-
         </nav>
 
         {/* User menu */}
