@@ -3,10 +3,17 @@ package provisioning
 
 import (
 	"context"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"math/big"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -164,6 +171,173 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		config: cfg,
 		logger: logger.With(zap.String("service", "provisioning")),
 	}
+}
+
+// openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens for provisioning service
+func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "missing authorization header",
+			})
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid authorization header format",
+			})
+			return
+		}
+
+		tokenString := parts[1]
+
+		// Parse JWT token with signature validation
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validate signing method
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				s.logger.Warn("Unexpected signing method", zap.String("method", token.Header["alg"].(string)))
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+
+			// Fetch the public key from OAuth service
+			key, err := s.getOAuthPublicKey()
+			if err != nil {
+				s.logger.Error("Failed to get OAuth public key", zap.Error(err))
+				return nil, err
+			}
+			return key, nil
+		})
+
+		if err != nil {
+			s.logger.Warn("JWT parsing failed", zap.Error(err), zap.String("token_prefix", tokenString[:min(50, len(tokenString))]))
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token",
+			})
+			return
+		}
+
+		// Validate token
+		if token == nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token",
+			})
+			return
+		}
+
+		// Extract claims
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token claims",
+			})
+			return
+		}
+
+		// Validate expiration
+		if exp, ok := claims["exp"].(float64); ok {
+			if time.Now().Unix() > int64(exp) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "token expired",
+				})
+				return
+			}
+		}
+
+		// Validate issuer
+		if iss, ok := claims["iss"].(string); ok {
+			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			if iss != expectedIssuer {
+				s.logger.Warn("Invalid token issuer", zap.String("expected", expectedIssuer), zap.String("actual", iss))
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "invalid token issuer",
+				})
+				return
+			}
+		}
+
+		// Set user context
+		if sub, ok := claims["sub"].(string); ok {
+			c.Set("user_id", sub)
+		}
+		if email, ok := claims["email"].(string); ok {
+			c.Set("email", email)
+		}
+		if name, ok := claims["name"].(string); ok {
+			c.Set("name", name)
+		}
+
+		c.Next()
+	}
+}
+
+// getOAuthPublicKey fetches the OAuth service's public key for token validation
+func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
+	// In a production system, you'd cache this key with TTL
+	// For now, we'll fetch it each time (not ideal for performance)
+
+	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(jwksURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("JWKS endpoint returned status %d", resp.StatusCode)
+	}
+
+	var jwks struct {
+		Keys []struct {
+			Kty string `json:"kty"`
+			Use string `json:"use"`
+			N   string `json:"n"`
+			E   string `json:"e"`
+		} `json:"keys"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, fmt.Errorf("failed to decode JWKS: %w", err)
+	}
+
+	if len(jwks.Keys) == 0 {
+		return nil, fmt.Errorf("no keys found in JWKS")
+	}
+
+	// Use the first RSA key
+	for _, key := range jwks.Keys {
+		if key.Kty == "RSA" && key.Use == "sig" {
+			return parseRSAPublicKey(key.N, key.E)
+		}
+	}
+
+	return nil, fmt.Errorf("no valid RSA signing keys found in JWKS")
+}
+
+// parseRSAPublicKey parses RSA public key from base64url encoded n and e
+func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
+	// Decode n (modulus)
+	nBytes, err := base64.RawURLEncoding.DecodeString(nStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode n: %w", err)
+	}
+	n := new(big.Int).SetBytes(nBytes)
+
+	// Decode e (exponent)
+	eBytes, err := base64.RawURLEncoding.DecodeString(eStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode e: %w", err)
+	}
+	e := 0
+	for _, b := range eBytes {
+		e = e<<8 + int(b)
+	}
+
+	return &rsa.PublicKey{N: n, E: e}, nil
 }
 
 // SCIM 2.0 User Operations
@@ -365,6 +539,7 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 func RegisterRoutes(router *gin.Engine, svc *Service) {
 	// SCIM 2.0 endpoints
 	scim := router.Group("/scim/v2")
+	scim.Use(svc.openIDXAuthMiddleware())
 	{
 		// Users
 		scim.GET("/Users", svc.handleListUsers)

@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/dashboard'
 import { UsersPage } from './pages/users'
 import { GroupsPage } from './pages/groups'
 import { RolesPage } from './pages/roles'
+import { UserProfilePage } from './pages/user-profile'
 import { ApplicationsPage } from './pages/applications'
 import { AccessReviewsPage } from './pages/access-reviews'
 import { ReviewDetailPage } from './pages/review-detail'
@@ -35,6 +36,28 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, hasRole } = useAuth()
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <LoadingSpinner size="lg" />
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (!hasRole('admin')) {
+    return <Navigate to="/dashboard" replace />
+  }
+
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <>
@@ -51,17 +74,62 @@ export default function App() {
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="users" element={<UsersPage />} />
-          <Route path="groups" element={<GroupsPage />} />
-          <Route path="roles" element={<RolesPage />} />
-          <Route path="applications" element={<ApplicationsPage />} />
-          <Route path="access-reviews" element={<AccessReviewsPage />} />
-          <Route path="access-reviews/:id" element={<ReviewDetailPage />} />
-          <Route path="policies" element={<PoliciesPage />} />
-          <Route path="audit-logs" element={<AuditLogsPage />} />
-          <Route path="compliance-reports" element={<ComplianceReportsPage />} />
-          <Route path="identity-providers" element={<IdentityProvidersPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          <Route path="profile" element={<UserProfilePage />} />
+          <Route path="users" element={
+            <AdminRoute>
+              <UsersPage />
+            </AdminRoute>
+          } />
+          <Route path="groups" element={
+            <AdminRoute>
+              <GroupsPage />
+            </AdminRoute>
+          } />
+          <Route path="roles" element={
+            <AdminRoute>
+              <RolesPage />
+            </AdminRoute>
+          } />
+          <Route path="applications" element={
+            <AdminRoute>
+              <ApplicationsPage />
+            </AdminRoute>
+          } />
+          <Route path="access-reviews" element={
+            <AdminRoute>
+              <AccessReviewsPage />
+            </AdminRoute>
+          } />
+          <Route path="access-reviews/:id" element={
+            <AdminRoute>
+              <ReviewDetailPage />
+            </AdminRoute>
+          } />
+          <Route path="policies" element={
+            <AdminRoute>
+              <PoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="audit-logs" element={
+            <AdminRoute>
+              <AuditLogsPage />
+            </AdminRoute>
+          } />
+          <Route path="compliance-reports" element={
+            <AdminRoute>
+              <ComplianceReportsPage />
+            </AdminRoute>
+          } />
+          <Route path="identity-providers" element={
+            <AdminRoute>
+              <IdentityProvidersPage />
+            </AdminRoute>
+          } />
+          <Route path="settings" element={
+            <AdminRoute>
+              <SettingsPage />
+            </AdminRoute>
+          } />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

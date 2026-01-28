@@ -436,6 +436,25 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 // GenerateJWT generates a signed JWT access token
 func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (string, error) {
 	now := time.Now()
+
+	// Get user roles
+	var roleNames []string
+	rows, err := s.db.Pool.Query(context.Background(), `
+		SELECT r.name
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err == nil {
+				roleNames = append(roleNames, roleName)
+			}
+		}
+	}
+
 	claims := jwt.MapClaims{
 		"sub":       userID,
 		"client_id": clientID,
@@ -443,6 +462,7 @@ func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (st
 		"iss":       s.issuer,
 		"iat":       now.Unix(),
 		"exp":       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		"roles":     roleNames,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -464,6 +484,24 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 		name = firstName + " " + lastName
 	}
 
+	// Get user roles
+	var roleNames []string
+	rows, err := s.db.Pool.Query(context.Background(), `
+		SELECT r.name
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err == nil {
+				roleNames = append(roleNames, roleName)
+			}
+		}
+	}
+
 	claims := jwt.MapClaims{
 		"sub":        userID,
 		"aud":        clientID,
@@ -474,6 +512,7 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 		"name":       name,
 		"given_name": firstName,
 		"family_name": lastName,
+		"roles":      roleNames,
 	}
 
 	if nonce != "" {

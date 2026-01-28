@@ -531,6 +531,15 @@ INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type
  false, false, 3600, 0)
 ON CONFLICT (id) DO NOTHING;
 
+-- Add test client for debugging
+('80000000-0000-0000-0000-000000000003', 'test-client', 'test-secret', 'Test Client', 'Client for testing authentication flow', 'confidential',
+ '[]'::jsonb,
+ '["authorization_code", "refresh_token", "client_credentials"]'::jsonb,
+ '["code"]'::jsonb,
+ '["openid", "profile", "email"]'::jsonb,
+ false, true, 3600, 86400)
+ON CONFLICT (id) DO NOTHING;
+
 -- Insert sample application SSO settings
 INSERT INTO application_sso_settings (id, application_id, enabled, use_refresh_tokens, access_token_lifetime, refresh_token_lifetime, require_consent) VALUES
 ('50000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', true, true, 3600, 86400, false),

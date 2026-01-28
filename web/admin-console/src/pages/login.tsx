@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
-import { useAuth } from '../lib/auth'
+import { useAuth, generateCodeVerifier, generateCodeChallenge, OAUTH_URL, OAUTH_CLIENT_ID } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 
 export function LoginPage() {
@@ -75,9 +75,27 @@ export function LoginPage() {
 
   const { authProvider } = useAuth()
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setError('')
-    login()
+    if (authProvider === 'openidx') {
+      // Start OpenIDX OAuth PKCE flow
+      const codeVerifier = generateCodeVerifier()
+      sessionStorage.setItem('pkce_code_verifier', codeVerifier)
+      
+      const codeChallenge = await generateCodeChallenge(codeVerifier)
+      
+      const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
+      authUrl.searchParams.set('response_type', 'code')
+      authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
+      authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
+      authUrl.searchParams.set('scope', 'openid profile email')
+      authUrl.searchParams.set('code_challenge', codeChallenge)
+      authUrl.searchParams.set('code_challenge_method', 'S256')
+      
+      window.location.href = authUrl.toString()
+    } else {
+      login()
+    }
   }
 
   const handleSSOLogin = (idp: IdentityProvider) => {

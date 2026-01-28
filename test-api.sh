@@ -128,13 +128,20 @@ main() {
 
     test_endpoint "GET" "$IDENTITY_API/users/test-user-001/sessions" "" "200" "Get user sessions"
 
-    # Test 5: Cleanup
-    print_header "5. Cleanup"
+    # Test 5: MFA / TOTP Endpoints
+    print_header "5. MFA / TOTP Endpoints"
+
+    test_endpoint "POST" "$IDENTITY_API/mfa/totp/setup" '{"user_id":"test-user-001"}' "200" "Setup TOTP for user"
+    test_endpoint "GET" "$IDENTITY_API/mfa/totp/status?user_id=test-user-001" "" "200" "Get TOTP status"
+    test_endpoint "GET" "$IDENTITY_API/mfa/backup/count?user_id=test-user-001" "" "200" "Get backup code count"
+
+    # Test 6: Cleanup
+    print_header "6. Cleanup"
 
     test_endpoint "DELETE" "$IDENTITY_API/users/test-user-001" "" "204" "Delete test user"
 
-    # Test 6: Error Handling
-    print_header "6. Error Handling"
+    # Test 7: Error Handling
+    print_header "7. Error Handling"
 
     test_endpoint "GET" "$IDENTITY_API/users/nonexistent" "" "404" "Get non-existent user"
 

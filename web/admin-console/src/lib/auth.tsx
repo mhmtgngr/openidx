@@ -24,8 +24,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // Determine auth provider from environment
 const AUTH_PROVIDER = import.meta.env.VITE_AUTH_PROVIDER || 'keycloak'
-const OAUTH_URL = import.meta.env.VITE_OAUTH_URL || 'http://localhost:8006'
-const OAUTH_CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || 'admin-console'
+export const OAUTH_URL = import.meta.env.VITE_OAUTH_URL || 'http://localhost:8006'
+export const OAUTH_CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || 'admin-console'
 
 // Keycloak instance (only used if AUTH_PROVIDER is 'keycloak')
 const keycloak = AUTH_PROVIDER === 'keycloak' ? new Keycloak({
@@ -163,12 +163,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (parsed) {
         const exp = (parsed.exp as number) * 1000
         if (exp > Date.now()) {
-          console.log('[Auth] Valid token found')
+          console.log('[Auth] Valid token found', parsed)
+
+          // Check if token has roles field
+          const roles = parsed.roles as string[] | undefined
+          if (!roles || roles.length === 0) {
+            console.warn('[Auth] Token missing roles - logging out to re-authenticate')
+            localStorage.removeItem('token')
+            localStorage.removeItem('refresh_token')
+            setAuthInitializing(false)
+            setIsLoading(false)
+            return
+          }
+
           setUser({
             id: (parsed.sub as string) || '',
             email: (parsed.email as string) || '',
             name: (parsed.name as string) || (parsed.preferred_username as string) || '',
-            roles: (parsed.roles as string[]) || [],
+            roles: roles,
           })
           setToken(storedToken)
           setIsAuthenticated(true)
@@ -441,3 +453,6 @@ export function useAuth() {
   }
   return context
 }
+
+// Export PKCE functions for use in login component
+export { generateCodeVerifier, generateCodeChallenge }

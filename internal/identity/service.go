@@ -4,26 +4,34 @@ package identity
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/pquerna/otp/totp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"github.com/pquerna/otp/totp"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 )
+
+// Use the min function from pushmfa.go
 
 // User represents a user in the system
 type User struct {
@@ -160,6 +168,173 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cfg:    cfg,
 		logger: logger.With(zap.String("service", "identity")),
 	}
+}
+
+// openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
+func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "missing authorization header",
+			})
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid authorization header format",
+			})
+			return
+		}
+
+		tokenString := parts[1]
+
+		// Parse JWT token with signature validation
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validate signing method
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				s.logger.Warn("Unexpected signing method", zap.String("method", token.Header["alg"].(string)))
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+
+			// For now, we'll use a simplified approach - fetch the public key from OAuth service
+			// In a production system, you'd cache this key and refresh it periodically
+			key, err := s.getOAuthPublicKey()
+			if err != nil {
+				s.logger.Error("Failed to get OAuth public key", zap.Error(err))
+				return nil, err
+			}
+			return key, nil
+		})
+
+		if err != nil {
+			s.logger.Warn("JWT parsing failed", zap.Error(err), zap.String("token_prefix", tokenString[:min(50, len(tokenString))]))
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token",
+			})
+			return
+		}
+
+		// Validate token
+		if token == nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token",
+			})
+			return
+		}
+
+		// Extract claims
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token claims",
+			})
+			return
+		}
+
+		// Validate expiration
+		if exp, ok := claims["exp"].(float64); ok {
+			if time.Now().Unix() > int64(exp) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "token expired",
+				})
+				return
+			}
+		}
+
+		// Validate issuer
+		if iss, ok := claims["iss"].(string); ok {
+			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			if iss != expectedIssuer {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "invalid token issuer",
+				})
+				return
+			}
+		}
+
+		// Set user context from token claims
+		if sub, ok := claims["sub"].(string); ok {
+			c.Set("user_id", sub)
+		}
+		if email, ok := claims["email"].(string); ok {
+			c.Set("email", email)
+		}
+		if name, ok := claims["name"].(string); ok {
+			c.Set("name", name)
+		}
+
+		c.Next()
+	}
+}
+
+// getOAuthPublicKey fetches the OAuth service's public key for token validation
+func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
+	// In a production system, you'd cache this key with TTL
+	// For now, we'll fetch it each time (not ideal for performance)
+
+	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(jwksURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("JWKS endpoint returned status %d", resp.StatusCode)
+	}
+
+	var jwks struct {
+		Keys []struct {
+			Kty string `json:"kty"`
+			Use string `json:"use"`
+			N   string `json:"n"`
+			E   string `json:"e"`
+		} `json:"keys"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, fmt.Errorf("failed to decode JWKS: %w", err)
+	}
+
+	// Find the first RSA signing key
+	for _, key := range jwks.Keys {
+		if key.Kty == "RSA" && key.Use == "sig" {
+			return parseRSAPublicKey(key.N, key.E)
+		}
+	}
+
+	return nil, fmt.Errorf("no valid RSA signing key found")
+}
+
+// parseRSAPublicKey parses RSA public key from base64url encoded n and e
+func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
+	// Remove padding for base64url encoding
+	nClean := strings.TrimRight(nStr, "=")
+	eClean := strings.TrimRight(eStr, "=")
+
+	// Decode n (modulus)
+	nBytes, err := base64.RawURLEncoding.DecodeString(nClean)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode n: %w", err)
+	}
+	n := new(big.Int).SetBytes(nBytes)
+
+	// Decode e (exponent)
+	eBytes, err := base64.RawURLEncoding.DecodeString(eClean)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode e: %w", err)
+	}
+	e := 0
+	for _, b := range eBytes {
+		e = e<<8 + int(b)
+	}
+
+	return &rsa.PublicKey{N: n, E: e}, nil
 }
 
 // GetUser retrieves a user by ID
@@ -1084,6 +1259,7 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 
 	// Generate QR code URL
 	qrURL := key.URL()
+	s.logger.Info("Generated TOTP QR code URL", zap.String("qr_url", qrURL), zap.String("secret", key.Secret()))
 
 	return &TOTPEnrollment{
 		Secret:    key.Secret(),
@@ -1761,7 +1937,16 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 // RegisterRoutes registers identity service routes
 func RegisterRoutes(router *gin.Engine, svc *Service) {
 	identity := router.Group("/api/v1/identity")
+	identity.Use(svc.openIDXAuthMiddleware())
 	{
+		// User Self-Service endpoints (require authentication)
+		identity.GET("/users/me", svc.handleGetCurrentUser)
+		identity.PUT("/users/me", svc.handleUpdateCurrentUser)
+		identity.POST("/users/me/change-password", svc.handleChangePassword)
+		identity.POST("/users/me/mfa/setup", svc.handleSetupUserMFA)
+		identity.POST("/users/me/mfa/enable", svc.handleEnableUserMFA)
+		identity.POST("/users/me/mfa/disable", svc.handleDisableUserMFA)
+
 		// User management
 		identity.GET("/users", svc.handleListUsers)
 		identity.POST("/users", svc.handleCreateUser)
@@ -2467,4 +2652,232 @@ func (s *Service) handleGetBackupCodeCount(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"remaining_codes": count})
+}
+
+// User Self-Service Handlers
+
+func (s *Service) handleGetCurrentUser(c *gin.Context) {
+	userID := c.GetString("user_id") // From JWT middleware
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	user, err := s.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	// Get MFA status
+	totpStatus, err := s.GetTOTPStatus(c.Request.Context(), userID)
+	if err != nil {
+		s.logger.Warn("Failed to get MFA status", zap.Error(err))
+	}
+
+	// Build MFA methods list
+	mfaMethods := []string{}
+	if totpStatus.Enabled {
+		mfaMethods = append(mfaMethods, "totp")
+	}
+
+	// Return user profile with camelCase fields matching frontend expectations
+	c.JSON(200, gin.H{
+		"id":            user.ID,
+		"username":      user.Username,
+		"email":         user.Email,
+		"firstName":     user.FirstName,
+		"lastName":      user.LastName,
+		"enabled":       user.Enabled,
+		"emailVerified": user.EmailVerified,
+		"createdAt":     user.CreatedAt,
+		"mfaEnabled":    totpStatus.Enabled,
+		"mfaMethods":    mfaMethods,
+	})
+}
+
+func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
+	userID := c.GetString("user_id") // From JWT middleware
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	var req struct {
+		FirstName string `json:"firstName"`
+		LastName  string `json:"lastName"`
+		Email     string `json:"email"`
+		Enabled   bool   `json:"enabled"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get current user
+	user, err := s.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	// Update allowed fields
+	user.FirstName = req.FirstName
+	user.LastName = req.LastName
+	user.Email = req.Email
+	user.Enabled = req.Enabled
+
+	if err := s.UpdateUser(c.Request.Context(), user); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"id":            user.ID,
+		"username":      user.Username,
+		"email":         user.Email,
+		"firstName":     user.FirstName,
+		"lastName":      user.LastName,
+		"enabled":       user.Enabled,
+		"emailVerified": user.EmailVerified,
+		"createdAt":     user.CreatedAt,
+	})
+}
+
+func (s *Service) handleChangePassword(c *gin.Context) {
+	userID := c.GetString("user_id") // From JWT middleware
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"currentPassword" binding:"required"`
+		NewPassword     string `json:"newPassword" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get user's current password hash
+	var passwordHash string
+	err := s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT password_hash FROM users WHERE id = $1
+	`, userID).Scan(&passwordHash)
+
+	if err != nil {
+		s.logger.Error("Failed to get user password hash", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to verify password"})
+		return
+	}
+
+	// Verify current password using bcrypt directly
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.CurrentPassword)); err != nil {
+		c.JSON(400, gin.H{"error": "current password is incorrect"})
+		return
+	}
+
+	// Set new password
+	if err := s.SetPassword(c.Request.Context(), userID, req.NewPassword); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "password changed"})
+}
+
+func (s *Service) handleSetupUserMFA(c *gin.Context) {
+	userID := c.GetString("user_id") // From JWT middleware
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	enrollment, err := s.GenerateTOTPSecret(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Cache the secret in Redis so handleEnableUserMFA can retrieve it
+	cacheKey := fmt.Sprintf("mfa_setup:%s", userID)
+	if s.redis != nil {
+		s.redis.Client.Set(c.Request.Context(), cacheKey, enrollment.Secret, 10*time.Minute)
+	}
+
+	c.JSON(200, gin.H{
+		"secret":    enrollment.Secret,
+		"qrCodeUrl": enrollment.QRCodeURL,
+	})
+}
+
+func (s *Service) handleEnableUserMFA(c *gin.Context) {
+	userID := c.GetString("user_id") // From JWT middleware
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	var req struct {
+		Code string `json:"code" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Retrieve the cached secret from the setup step
+	cacheKey := fmt.Sprintf("mfa_setup:%s", userID)
+	var secret string
+	if s.redis != nil {
+		var err error
+		secret, err = s.redis.Client.Get(c.Request.Context(), cacheKey).Result()
+		if err != nil || secret == "" {
+			c.JSON(400, gin.H{"error": "MFA setup expired or not initiated. Please start setup again."})
+			return
+		}
+	} else {
+		c.JSON(500, gin.H{"error": "cache unavailable"})
+		return
+	}
+
+	err := s.EnrollTOTP(c.Request.Context(), userID, secret, req.Code)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid verification code"})
+		return
+	}
+
+	// Clear the cached secret after successful enrollment
+	s.redis.Client.Del(c.Request.Context(), cacheKey)
+
+	// Generate backup codes
+	backupCodes, err := s.GenerateBackupCodes(c.Request.Context(), userID, 10)
+	if err != nil {
+		s.logger.Warn("Failed to generate backup codes", zap.Error(err))
+	}
+
+	c.JSON(200, gin.H{
+		"status":      "mfa enabled",
+		"backupCodes": backupCodes,
+	})
+}
+
+func (s *Service) handleDisableUserMFA(c *gin.Context) {
+	userID := c.GetString("user_id") // From JWT middleware
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	err := s.DisableTOTP(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "mfa disabled"})
 }

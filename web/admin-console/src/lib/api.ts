@@ -1,5 +1,28 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios'
 
+export interface UserProfile {
+  id: string
+  username: string
+  email: string
+  firstName: string
+  lastName: string
+  enabled: boolean
+  emailVerified: boolean
+  createdAt: string
+  mfaEnabled: boolean
+  mfaMethods: string[]
+}
+
+export interface MFASetupResponse {
+  secret: string
+  qrCodeUrl: string
+}
+
+export interface MFAEnableResponse {
+  status: string
+  backupCodes: string[]
+}
+
 export interface IdentityProvider {
   id: string;
   name: string;
