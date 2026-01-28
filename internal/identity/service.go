@@ -158,6 +158,11 @@ type Service struct {
 	logger            *zap.Logger
 	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
 	pushMFASessions   sync.Map // In-memory storage for Push MFA challenges (use Redis in production)
+
+	// JWKS public key cache
+	jwksCacheMu    sync.RWMutex
+	jwksCachedKey  *rsa.PublicKey
+	jwksCacheExpiry time.Time
 }
 
 // NewService creates a new identity service
@@ -199,8 +204,7 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 
-			// For now, we'll use a simplified approach - fetch the public key from OAuth service
-			// In a production system, you'd cache this key and refresh it periodically
+			// Fetch the public key from OAuth service (cached with 5-min TTL)
 			key, err := s.getOAuthPublicKey()
 			if err != nil {
 				s.logger.Error("Failed to get OAuth public key", zap.Error(err))
@@ -246,7 +250,10 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
-			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			expectedIssuer := s.cfg.OAuthIssuer
+			if expectedIssuer == "" {
+				expectedIssuer = "http://localhost:8006"
+			}
 			if iss != expectedIssuer {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"error": "invalid token issuer",
@@ -266,16 +273,45 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 			c.Set("name", name)
 		}
 
+		// Extract roles
+		if rolesRaw, ok := claims["roles"].([]interface{}); ok {
+			var roles []string
+			for _, r := range rolesRaw {
+				if role, ok := r.(string); ok {
+					roles = append(roles, role)
+				}
+			}
+			c.Set("roles", roles)
+		}
+
 		c.Next()
 	}
 }
 
-// getOAuthPublicKey fetches the OAuth service's public key for token validation
+// getOAuthPublicKey returns the OAuth service's RSA public key, using a cache with 5-minute TTL
 func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
-	// In a production system, you'd cache this key with TTL
-	// For now, we'll fetch it each time (not ideal for performance)
+	// Check cache first (read lock)
+	s.jwksCacheMu.RLock()
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		key := s.jwksCachedKey
+		s.jwksCacheMu.RUnlock()
+		return key, nil
+	}
+	s.jwksCacheMu.RUnlock()
 
-	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+	// Cache miss or expired - fetch and update (write lock)
+	s.jwksCacheMu.Lock()
+	defer s.jwksCacheMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		return s.jwksCachedKey, nil
+	}
+
+	jwksURL := s.cfg.OAuthJWKSURL
+	if jwksURL == "" {
+		jwksURL = "http://localhost:8006/.well-known/jwks.json"
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(jwksURL)
@@ -304,7 +340,14 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 	// Find the first RSA signing key
 	for _, key := range jwks.Keys {
 		if key.Kty == "RSA" && key.Use == "sig" {
-			return parseRSAPublicKey(key.N, key.E)
+			pubKey, err := parseRSAPublicKey(key.N, key.E)
+			if err != nil {
+				return nil, err
+			}
+			s.jwksCachedKey = pubKey
+			s.jwksCacheExpiry = time.Now().Add(5 * time.Minute)
+			s.logger.Info("JWKS public key cached", zap.String("jwks_url", jwksURL))
+			return pubKey, nil
 		}
 	}
 

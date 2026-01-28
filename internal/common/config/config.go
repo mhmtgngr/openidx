@@ -30,6 +30,10 @@ type Config struct {
 	// OPA configuration
 	OPAURL string `mapstructure:"opa_url"`
 
+	// OAuth / OIDC settings
+	OAuthIssuer  string `mapstructure:"oauth_issuer"`
+	OAuthJWKSURL string `mapstructure:"oauth_jwks_url"`
+
 	// Security settings
 	JWTSecret          string `mapstructure:"jwt_secret"`
 	EncryptionKey      string `mapstructure:"encryption_key"`
@@ -161,6 +165,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("rate_limit_requests", 100)
 	v.SetDefault("rate_limit_window", 60)
 
+	// OAuth / OIDC defaults
+	v.SetDefault("oauth_issuer", "http://localhost:8006")
+	v.SetDefault("oauth_jwks_url", "http://localhost:8006/.well-known/jwks.json")
+
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
 
@@ -186,6 +194,8 @@ func bindEnvVars(v *viper.Viper) {
 		"environment":       "APP_ENV",
 		"log_level":         "LOG_LEVEL",
 		"port":              "PORT",
+		"oauth_issuer":      "OAUTH_ISSUER",
+		"oauth_jwks_url":    "OAUTH_JWKS_URL",
 	}
 
 	for key, env := range envMappings {

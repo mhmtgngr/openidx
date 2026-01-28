@@ -640,9 +640,9 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 }
 
 func (s *Service) handleJWKS(c *gin.Context) {
-	// Convert RSA public key to JWK
-	n := base64.URLEncoding.EncodeToString(s.publicKey.N.Bytes())
-	e := base64.URLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
+	// Convert RSA public key to JWK (base64url without padding per RFC 7517)
+	n := base64.RawURLEncoding.EncodeToString(s.publicKey.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
 
 	jwks := JWKS{
 		Keys: []JWK{
