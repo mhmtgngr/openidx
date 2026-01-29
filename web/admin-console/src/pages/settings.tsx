@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface Settings {
   general: {
@@ -49,6 +50,7 @@ interface Settings {
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<'general' | 'security' | 'authentication' | 'branding'>('general')
 
   const { data: settings, isLoading } = useQuery({
@@ -68,6 +70,10 @@ export function SettingsPage() {
     mutationFn: (data: Settings) => api.put('/api/v1/settings', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      toast({ title: 'Settings saved', description: 'Your changes have been saved successfully.' })
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message || 'Failed to save settings.', variant: 'destructive' })
     },
   })
 

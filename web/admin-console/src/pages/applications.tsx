@@ -20,6 +20,16 @@ import {
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import { api } from '../lib/api'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
 
 interface Application {
@@ -70,6 +80,7 @@ export function ApplicationsPage() {
   const [regenerateModal, setRegenerateModal] = useState(false)
   const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
   const [newSecret, setNewSecret] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const PAGE_SIZE = 20
@@ -263,9 +274,7 @@ export function ApplicationsPage() {
   }, [ssoSettingsModal])
 
   const handleDeleteApp = (appId: string, appName: string) => {
-    if (confirm(`Are you sure you want to delete application: ${appName}? This action cannot be undone.`)) {
-      deleteApplicationMutation.mutate(appId)
-    }
+    setDeleteTarget({ id: appId, name: appName })
   }
 
   const handleRegisterSubmit = (e: React.FormEvent) => {
@@ -845,6 +854,24 @@ export function ApplicationsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Application Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `Are you sure you want to delete application "${deleteTarget.name}"? This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteApplicationMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -19,6 +19,16 @@ import {
   DialogTitle,
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -57,8 +67,13 @@ export function UsersPage() {
     password: '',
   })
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
+  const [resetPasswordTarget, setResetPasswordTarget] = useState<{id: string, username: string} | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{id: string, username: string} | null>(null)
   const [importModal, setImportModal] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   // Fetch available roles
   const { data: availableRoles, isLoading: rolesLoading } = useQuery({
@@ -83,8 +98,16 @@ export function UsersPage() {
 
   // Fetch users
   const { data: users, isLoading } = useQuery({
-    queryKey: ['users', search],
-    queryFn: () => api.get<User[]>('/api/v1/identity/users'),
+    queryKey: ['users', page],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      const result = await api.getWithHeaders<User[]>(`/api/v1/identity/users?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   // Create user mutation
@@ -215,11 +238,24 @@ export function UsersPage() {
     setEditUserModal(true)
   }
 
-  const handleResetPassword = (userId: string) => {
-    if (confirm('Are you sure you want to reset this user\'s password?')) {
+  const handleResetPassword = (userId: string, username: string) => {
+    setResetPasswordTarget({ id: userId, username })
+  }
+
+  const executeResetPassword = async (userId: string) => {
+    try {
+      await api.post(`/api/v1/identity/users/${userId}/reset-password`)
       toast({
-        title: 'Info',
-        description: `Password reset email sent to user ${userId}`,
+        title: 'Success',
+        description: 'Password reset email sent successfully.',
+        variant: 'success',
+      })
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      toast({
+        title: 'Error',
+        description: `Failed to reset password: ${message}`,
+        variant: 'destructive',
       })
     }
   }
@@ -279,9 +315,7 @@ export function UsersPage() {
   })
 
   const handleDeleteUser = (userId: string, username: string) => {
-    if (confirm(`Are you sure you want to delete user: ${username}? This action cannot be undone.`)) {
-      deleteUserMutation.mutate(userId)
-    }
+    setDeleteTarget({ id: userId, username })
   }
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -349,7 +383,7 @@ export function UsersPage() {
               <Input
                 placeholder="Search users..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>
@@ -424,7 +458,7 @@ export function UsersPage() {
                               <Edit className="mr-2 h-4 w-4" />
                               Edit User
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleResetPassword(user.id)}>
+                            <DropdownMenuItem onClick={() => handleResetPassword(user.id, user.username)}>
                               <Key className="mr-2 h-4 w-4" />
                               Reset Password
                             </DropdownMenuItem>
@@ -450,6 +484,38 @@ export function UsersPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4 px-1">
+              <p className="text-sm text-gray-500">
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} users
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <span className="text-sm text-gray-600">
+                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={(page + 1) * PAGE_SIZE >= totalCount}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -668,6 +734,42 @@ export function UsersPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Reset Password Confirmation */}
+      <AlertDialog open={!!resetPasswordTarget} onOpenChange={(open) => !open && setResetPasswordTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {resetPasswordTarget ? `Are you sure you want to reset the password for "${resetPasswordTarget.username}"?` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (resetPasswordTarget) { executeResetPassword(resetPasswordTarget.id); setResetPasswordTarget(null) } }}>
+              Reset Password
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete User Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `Are you sure you want to delete user "${deleteTarget.username}"? This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteUserMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

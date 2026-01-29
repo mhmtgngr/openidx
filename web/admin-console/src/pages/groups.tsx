@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight } from 'lucide-react'
+import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight, ChevronLeft } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -26,6 +26,16 @@ import {
   SelectValue,
 } from '../components/ui/select'
 import { Label } from '../components/ui/label'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -78,9 +88,14 @@ export function GroupsPage() {
     requireApproval: false,
     maxMembers: '',
   })
+  const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<{userId: string, username: string} | null>(null)
   const [memberSearch, setMemberSearch] = useState('')
   const [userSearchQuery, setUserSearchQuery] = useState('')
   const [debouncedUserSearch, setDebouncedUserSearch] = useState('')
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   // Debounce user search
   useEffect(() => {
@@ -91,8 +106,16 @@ export function GroupsPage() {
   }, [userSearchQuery])
 
   const { data: groups, isLoading } = useQuery({
-    queryKey: ['groups', search],
-    queryFn: () => api.get<Group[]>('/api/v1/identity/groups'),
+    queryKey: ['groups', page],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      const result = await api.getWithHeaders<Group[]>(`/api/v1/identity/groups?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   // Fetch group members when managing members
@@ -316,9 +339,7 @@ export function GroupsPage() {
   }
 
   const handleDeleteGroup = (groupId: string, groupName: string) => {
-    if (confirm(`Are you sure you want to delete group: ${groupName}? This action cannot be undone.`)) {
-      deleteGroupMutation.mutate(groupId)
-    }
+    setDeleteTarget({ id: groupId, name: groupName })
   }
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -351,9 +372,7 @@ export function GroupsPage() {
   }
 
   const handleRemoveMember = (userId: string, username: string) => {
-    if (selectedGroup && confirm(`Remove ${username} from ${selectedGroup.name}?`)) {
-      removeMemberMutation.mutate({ groupId: selectedGroup.id, userId })
-    }
+    setRemoveMemberTarget({ userId, username })
   }
 
   return (
@@ -376,7 +395,7 @@ export function GroupsPage() {
               <Input
                 placeholder="Search groups..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>
@@ -486,6 +505,38 @@ export function GroupsPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4 px-1">
+              <p className="text-sm text-gray-500">
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} groups
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <span className="text-sm text-gray-600">
+                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={(page + 1) * PAGE_SIZE >= totalCount}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -792,6 +843,42 @@ export function GroupsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Group Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `Are you sure you want to delete group "${deleteTarget.name}"? This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteGroupMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Remove Member Confirmation */}
+      <AlertDialog open={!!removeMemberTarget} onOpenChange={(open) => !open && setRemoveMemberTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeMemberTarget && selectedGroup ? `Remove ${removeMemberTarget.username} from ${selectedGroup.name}?` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (removeMemberTarget && selectedGroup) { removeMemberMutation.mutate({ groupId: selectedGroup.id, userId: removeMemberTarget.userId }); setRemoveMemberTarget(null) } }}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -35,6 +35,16 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { api, ProvisioningRule, RuleCondition, RuleAction } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
@@ -100,6 +110,7 @@ export function ProvisioningRulesPage() {
   const [editModal, setEditModal] = useState(false)
   const [selectedRule, setSelectedRule] = useState<ProvisioningRule | null>(null)
   const [formData, setFormData] = useState<RuleFormData>(emptyForm)
+  const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
 
   const { data: rules, isLoading } = useQuery({
     queryKey: ['provisioning-rules'],
@@ -163,9 +174,7 @@ export function ProvisioningRulesPage() {
   }
 
   const handleDelete = (rule: ProvisioningRule) => {
-    if (confirm(`Delete rule "${rule.name}"?`)) {
-      deleteMutation.mutate(rule.id)
-    }
+    setDeleteTarget({ id: rule.id, name: rule.name })
   }
 
   const handleFormSubmit = () => {
@@ -468,6 +477,24 @@ export function ProvisioningRulesPage() {
           {formContent}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Rule Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `Are you sure you want to delete rule "${deleteTarget.name}"? This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

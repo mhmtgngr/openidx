@@ -1764,16 +1764,23 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 }
 
 // ListRoles retrieves all available roles
-func (s *Service) ListRoles(ctx context.Context) ([]Role, error) {
-	s.logger.Debug("Listing roles")
+func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int, error) {
+	s.logger.Debug("Listing roles", zap.Int("offset", offset), zap.Int("limit", limit))
+
+	var total int
+	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles").Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, is_composite, created_at
 		FROM roles
 		ORDER BY name
-	`)
+		OFFSET $1 LIMIT $2
+	`, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -1782,12 +1789,12 @@ func (s *Service) ListRoles(ctx context.Context) ([]Role, error) {
 		var r Role
 		err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.IsComposite, &r.CreatedAt)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		roles = append(roles, r)
 	}
 
-	return roles, nil
+	return roles, total, nil
 }
 
 // GetRole retrieves a role by ID
@@ -2085,7 +2092,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 func (s *Service) handleListUsers(c *gin.Context) {
 	offset := 0
 	limit := 20
-	
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
 	users, total, err := s.ListUsers(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2155,7 +2168,13 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 func (s *Service) handleListIdentityProviders(c *gin.Context) {
 	offset := 0
 	limit := 20
-	
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
 	idps, total, err := s.ListIdentityProviders(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2246,12 +2265,22 @@ func (s *Service) handleTerminateSession(c *gin.Context) {
 }
 
 func (s *Service) handleListRoles(c *gin.Context) {
-	roles, err := s.ListRoles(c.Request.Context())
+	offset := 0
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
+	roles, total, err := s.ListRoles(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 
+	c.Header("X-Total-Count", strconv.Itoa(total))
 	c.JSON(200, roles)
 }
 
@@ -2400,7 +2429,13 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 
 func (s *Service) handleListGroups(c *gin.Context) {
 	offset := 0
-	limit := 50
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
 
 	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit)
 	if err != nil {
