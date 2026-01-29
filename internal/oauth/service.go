@@ -613,6 +613,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		clients.GET("/:id", svc.handleGetClient)
 		clients.PUT("/:id", svc.handleUpdateClient)
 		clients.DELETE("/:id", svc.handleDeleteClient)
+		clients.POST("/:id/regenerate-secret", svc.handleRegenerateClientSecret)
 	}
 
 	// SAML Service Provider endpoints
@@ -1256,4 +1257,22 @@ func (s *Service) handleDeleteClient(c *gin.Context) {
 	}
 
 	c.JSON(204, nil)
+}
+
+func (s *Service) RegenerateClientSecret(ctx context.Context, clientID string) (string, error) {
+	newSecret := GenerateRandomToken(32)
+	_, err := s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1", clientID, newSecret)
+	if err != nil {
+		return "", err
+	}
+	return newSecret, nil
+}
+
+func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
+	secret, err := s.RegenerateClientSecret(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"client_secret": secret})
 }

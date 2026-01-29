@@ -1,0 +1,575 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Admin API
+  description: Dashboard, system settings, application management, directory integrations, and MFA configuration.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8005
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Dashboard
+  - name: Settings
+  - name: Applications
+  - name: SSO Settings
+  - name: Directories
+  - name: MFA Configuration
+
+paths:
+  /api/v1/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard statistics
+      operationId: getDashboard
+      responses:
+        '200':
+          description: Dashboard overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+
+  /api/v1/settings:
+    get:
+      tags: [Settings]
+      summary: Get system settings
+      operationId: getSettings
+      responses:
+        '200':
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+    put:
+      tags: [Settings]
+      summary: Update system settings
+      operationId: updateSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Settings'
+      responses:
+        '200':
+          description: Settings updated
+
+  /api/v1/applications:
+    get:
+      tags: [Applications]
+      summary: List applications
+      operationId: listApplications
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of applications
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Application'
+    post:
+      tags: [Applications]
+      summary: Create application
+      operationId: createApplication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationCreate'
+      responses:
+        '201':
+          description: Application created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+
+  /api/v1/applications/{id}:
+    get:
+      tags: [Applications]
+      summary: Get application
+      operationId: getApplication
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Application details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '404':
+          description: Application not found
+    put:
+      tags: [Applications]
+      summary: Update application
+      operationId: updateApplication
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationUpdate'
+      responses:
+        '200':
+          description: Application updated
+    delete:
+      tags: [Applications]
+      summary: Delete application
+      operationId: deleteApplication
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Application deleted
+        '404':
+          description: Application not found
+
+  /api/v1/applications/{id}/sso-settings:
+    get:
+      tags: [SSO Settings]
+      summary: Get application SSO settings
+      operationId: getApplicationSSOSettings
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: SSO settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationSSOSettings'
+    put:
+      tags: [SSO Settings]
+      summary: Update application SSO settings
+      operationId: updateApplicationSSOSettings
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationSSOSettings'
+      responses:
+        '200':
+          description: SSO settings updated
+
+  /api/v1/directories:
+    get:
+      tags: [Directories]
+      summary: List directory integrations
+      operationId: listDirectories
+      responses:
+        '200':
+          description: Directory integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DirectoryIntegration'
+    post:
+      tags: [Directories]
+      summary: Create directory integration
+      operationId: createDirectory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectoryIntegrationCreate'
+      responses:
+        '201':
+          description: Directory created
+
+  /api/v1/directories/{id}/sync:
+    post:
+      tags: [Directories]
+      summary: Trigger directory sync
+      operationId: syncDirectory
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Sync started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: syncing
+        '404':
+          description: Directory not found
+
+  /api/v1/mfa/methods:
+    get:
+      tags: [MFA Configuration]
+      summary: List enabled MFA methods
+      operationId: listMFAMethods
+      responses:
+        '200':
+          description: List of enabled MFA methods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                example: ["totp", "webauthn", "sms"]
+    put:
+      tags: [MFA Configuration]
+      summary: Update enabled MFA methods
+      operationId: updateMFAMethods
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+              example: ["totp", "webauthn"]
+      responses:
+        '200':
+          description: MFA methods updated
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    Dashboard:
+      type: object
+      properties:
+        total_users:
+          type: integer
+        active_users:
+          type: integer
+        total_groups:
+          type: integer
+        total_applications:
+          type: integer
+        active_sessions:
+          type: integer
+        pending_reviews:
+          type: integer
+        security_alerts:
+          type: integer
+        recent_activity:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              message:
+                type: string
+              actor_id:
+                type: string
+              actor_name:
+                type: string
+              timestamp:
+                type: string
+                format: date-time
+        auth_stats:
+          type: object
+          properties:
+            total_logins:
+              type: integer
+            successful_logins:
+              type: integer
+            failed_logins:
+              type: integer
+            mfa_usage:
+              type: integer
+            logins_by_method:
+              type: object
+              additionalProperties:
+                type: integer
+            logins_by_day:
+              type: array
+              items:
+                type: object
+                properties:
+                  date:
+                    type: string
+                  count:
+                    type: integer
+        security_alert_details:
+          type: array
+          items:
+            type: object
+            properties:
+              message:
+                type: string
+              count:
+                type: integer
+              timestamp:
+                type: string
+                format: date-time
+
+    Settings:
+      type: object
+      properties:
+        general:
+          type: object
+          properties:
+            organization_name:
+              type: string
+            support_email:
+              type: string
+              format: email
+            default_language:
+              type: string
+            default_timezone:
+              type: string
+        security:
+          type: object
+          properties:
+            password_policy:
+              type: object
+              properties:
+                min_length:
+                  type: integer
+                require_uppercase:
+                  type: boolean
+                require_lowercase:
+                  type: boolean
+                require_numbers:
+                  type: boolean
+                require_special:
+                  type: boolean
+                max_age:
+                  type: integer
+                  description: Days until password expires
+                history:
+                  type: integer
+                  description: Number of previous passwords to remember
+            session_timeout:
+              type: integer
+              description: Minutes
+            max_failed_logins:
+              type: integer
+            lockout_duration:
+              type: integer
+              description: Minutes
+            require_mfa:
+              type: boolean
+            allowed_ip_ranges:
+              type: array
+              items:
+                type: string
+        authentication:
+          type: object
+          properties:
+            allow_registration:
+              type: boolean
+            require_email_verify:
+              type: boolean
+            allowed_domains:
+              type: array
+              items:
+                type: string
+            social_providers:
+              type: array
+              items:
+                type: string
+            mfa_methods:
+              type: array
+              items:
+                type: string
+        branding:
+          type: object
+          properties:
+            logo_url:
+              type: string
+            favicon_url:
+              type: string
+            primary_color:
+              type: string
+            secondary_color:
+              type: string
+            custom_css:
+              type: string
+            login_page_title:
+              type: string
+            login_page_message:
+              type: string
+
+    Application:
+      type: object
+      properties:
+        id:
+          type: string
+        client_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [web, native, service]
+        protocol:
+          type: string
+          enum: [oidc, saml]
+        base_url:
+          type: string
+        redirect_uris:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ApplicationCreate:
+      type: object
+      required: [name, type, protocol]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [web, native, service]
+        protocol:
+          type: string
+          enum: [oidc, saml]
+        base_url:
+          type: string
+        redirect_uris:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+          default: true
+
+    ApplicationUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        base_url:
+          type: string
+        redirect_uris:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+
+    ApplicationSSOSettings:
+      type: object
+      properties:
+        id:
+          type: string
+        application_id:
+          type: string
+        enabled:
+          type: boolean
+        use_refresh_tokens:
+          type: boolean
+        access_token_lifetime:
+          type: integer
+          description: Seconds
+        refresh_token_lifetime:
+          type: integer
+          description: Seconds
+        require_consent:
+          type: boolean
+
+    DirectoryIntegration:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [ldap, azure_ad, google]
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+        sync_status:
+          type: string
+          enum: [never, syncing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DirectoryIntegrationCreate:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [ldap, azure_ad, google]
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+          default: true

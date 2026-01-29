@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
@@ -129,6 +131,10 @@ type Service struct {
 	redis  *database.RedisClient
 	config *config.Config
 	logger *zap.Logger
+
+	jwksCacheMu     sync.RWMutex
+	jwksCachedKey   *rsa.PublicKey
+	jwksCacheExpiry time.Time
 }
 
 // NewService creates a new governance service
@@ -242,9 +248,25 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 }
 
 // getOAuthPublicKey fetches the OAuth service's public key for token validation
+// with caching using a 5-minute TTL to avoid fetching on every request
 func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
-	// In a production system, you'd cache this key with TTL
-	// For now, we'll fetch it each time (not ideal for performance)
+	// Check cache with read lock
+	s.jwksCacheMu.RLock()
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		key := s.jwksCachedKey
+		s.jwksCacheMu.RUnlock()
+		return key, nil
+	}
+	s.jwksCacheMu.RUnlock()
+
+	// Cache miss: acquire write lock
+	s.jwksCacheMu.Lock()
+	defer s.jwksCacheMu.Unlock()
+
+	// Double-check: another goroutine may have populated the cache
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		return s.jwksCachedKey, nil
+	}
 
 	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
 
@@ -279,7 +301,13 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 	// Use the first RSA key
 	for _, key := range jwks.Keys {
 		if key.Kty == "RSA" && key.Use == "sig" {
-			return parseRSAPublicKey(key.N, key.E)
+			pubKey, err := parseRSAPublicKey(key.N, key.E)
+			if err != nil {
+				return nil, err
+			}
+			s.jwksCachedKey = pubKey
+			s.jwksCacheExpiry = time.Now().Add(5 * time.Minute)
+			return pubKey, nil
 		}
 	}
 
@@ -311,7 +339,10 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 // CreateAccessReview creates a new access review campaign
 func (s *Service) CreateAccessReview(ctx context.Context, review *AccessReview) error {
 	s.logger.Info("Creating access review", zap.String("name", review.Name))
-	
+
+	if review.ID == "" {
+		review.ID = uuid.New().String()
+	}
 	now := time.Now()
 	review.CreatedAt = now
 	review.Status = ReviewStatusPending
@@ -340,26 +371,48 @@ func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*Access
 	return &review, err
 }
 
-// ListAccessReviews retrieves all access reviews
-func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int) ([]AccessReview, int, error) {
+// ListAccessReviews retrieves all access reviews, optionally filtered by status
+func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, status string) ([]AccessReview, int, error) {
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM access_reviews").Scan(&total)
+	countArgs := []interface{}{}
+	countQuery := "SELECT COUNT(*) FROM access_reviews"
+
+	if status != "" {
+		countQuery += " WHERE status = $1"
+		countArgs = append(countArgs, status)
+	}
+
+	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
+	baseQuery := `
 		SELECT ar.id, ar.name, ar.description, ar.type, ar.status, ar.reviewer_id,
 		       ar.start_date, ar.end_date, ar.created_at, ar.completed_at,
 		       COUNT(ri.id) as total_items,
 		       COUNT(CASE WHEN ri.decision != 'pending' THEN 1 END) as reviewed_items
 		FROM access_reviews ar
 		LEFT JOIN review_items ri ON ar.id = ri.review_id
+	`
+
+	args := []interface{}{}
+	paramIdx := 1
+
+	if status != "" {
+		baseQuery += " WHERE ar.status = $" + strconv.Itoa(paramIdx)
+		args = append(args, status)
+		paramIdx++
+	}
+
+	baseQuery += `
 		GROUP BY ar.id, ar.name, ar.description, ar.type, ar.status, ar.reviewer_id,
 		         ar.start_date, ar.end_date, ar.created_at, ar.completed_at
 		ORDER BY ar.created_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $` + strconv.Itoa(paramIdx) + ` LIMIT $` + strconv.Itoa(paramIdx+1)
+	args = append(args, offset, limit)
+
+	rows, err := s.db.Pool.Query(ctx, baseQuery, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -401,6 +454,9 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 	s.logger.Info("Creating policy", zap.String("name", policy.Name))
 
+	if policy.ID == "" {
+		policy.ID = uuid.New().String()
+	}
 	now := time.Now()
 	policy.CreatedAt = now
 	policy.UpdatedAt = now
@@ -987,7 +1043,23 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 // HTTP Handlers
 
 func (s *Service) handleListReviews(c *gin.Context) {
-	reviews, total, err := s.ListAccessReviews(c.Request.Context(), 0, 20)
+	status := c.Query("status")
+
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil {
+			offset = parsed
+		}
+	}
+
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil {
+			limit = parsed
+		}
+	}
+
+	reviews, total, err := s.ListAccessReviews(c.Request.Context(), offset, limit, status)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

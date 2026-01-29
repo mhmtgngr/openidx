@@ -1,0 +1,39 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - unused
+    - ineffassign
+    - gofmt
+    - goimports
+    - bodyclose
+    - exportloopref
+    - misspell
+    - unconvert
+
+linters-settings:
+  govet:
+    shadow: false
+  goimports:
+    local-prefixes: github.com/openidx/openidx
+  errcheck:
+    check-type-assertions: true
+  misspell:
+    locale: US
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 5
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: cmd/
+      linters:
+        - errcheck

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Save, Building, Shield, Key, Palette } from 'lucide-react'
+import { Save, Building, Shield, Key, Palette, X, Plus } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { api } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
 
 interface Settings {
   general: {
@@ -49,6 +50,7 @@ interface Settings {
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
+  const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<'general' | 'security' | 'authentication' | 'branding'>('general')
 
   const { data: settings, isLoading } = useQuery({
@@ -57,6 +59,7 @@ export function SettingsPage() {
   })
 
   const [formData, setFormData] = useState<Settings | null>(null)
+  const [newDomain, setNewDomain] = useState('')
 
   // Initialize form data when settings load
   if (settings && !formData) {
@@ -67,6 +70,10 @@ export function SettingsPage() {
     mutationFn: (data: Settings) => api.put('/api/v1/settings', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      toast({ title: 'Settings saved', description: 'Your changes have been saved successfully.' })
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message || 'Failed to save settings.', variant: 'destructive' })
     },
   })
 
@@ -361,55 +368,150 @@ export function SettingsPage() {
           )}
 
           {activeTab === 'authentication' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Authentication Settings</CardTitle>
-                <CardDescription>Configure authentication methods and restrictions</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-4">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.authentication.allow_registration}
-                      onChange={(e) => updateAuthentication('allow_registration', e.target.checked)}
-                      className="rounded"
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Authentication Settings</CardTitle>
+                  <CardDescription>Configure authentication methods and restrictions</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-4">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.authentication.allow_registration}
+                        onChange={(e) => updateAuthentication('allow_registration', e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium">Allow Self Registration</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.authentication.require_email_verify}
+                        onChange={(e) => updateAuthentication('require_email_verify', e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium">Require Email Verification</span>
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">MFA Methods</label>
+                    <div className="flex gap-4">
+                      {['totp', 'webauthn', 'sms'].map(method => (
+                        <label key={method} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={formData.authentication.mfa_methods.includes(method)}
+                            onChange={(e) => {
+                              const methods = e.target.checked
+                                ? [...formData.authentication.mfa_methods, method]
+                                : formData.authentication.mfa_methods.filter(m => m !== method)
+                              updateAuthentication('mfa_methods', methods)
+                            }}
+                            className="rounded"
+                          />
+                          <span className="text-sm uppercase">{method}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Allowed Domains</CardTitle>
+                  <CardDescription>Restrict registration to specific email domains</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input
+                      value={newDomain}
+                      onChange={(e) => setNewDomain(e.target.value)}
+                      placeholder="e.g., example.com"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const domain = newDomain.trim().toLowerCase()
+                          if (domain && !formData.authentication.allowed_domains.includes(domain)) {
+                            updateAuthentication('allowed_domains', [...formData.authentication.allowed_domains, domain])
+                            setNewDomain('')
+                          }
+                        }
+                      }}
                     />
-                    <span className="text-sm font-medium">Allow Self Registration</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.authentication.require_email_verify}
-                      onChange={(e) => updateAuthentication('require_email_verify', e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm font-medium">Require Email Verification</span>
-                  </label>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">MFA Methods</label>
-                  <div className="flex gap-4">
-                    {['totp', 'webauthn', 'sms'].map(method => (
-                      <label key={method} className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        const domain = newDomain.trim().toLowerCase()
+                        if (domain && !formData.authentication.allowed_domains.includes(domain)) {
+                          updateAuthentication('allowed_domains', [...formData.authentication.allowed_domains, domain])
+                          setNewDomain('')
+                        }
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-1" /> Add
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(formData.authentication.allowed_domains || []).length === 0 ? (
+                      <p className="text-sm text-gray-500">No domain restrictions. All domains are allowed.</p>
+                    ) : (
+                      formData.authentication.allowed_domains.map(domain => (
+                        <span
+                          key={domain}
+                          className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-sm"
+                        >
+                          {domain}
+                          <button
+                            type="button"
+                            onClick={() => updateAuthentication('allowed_domains', formData.authentication.allowed_domains.filter(d => d !== domain))}
+                            className="hover:text-blue-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Social Providers</CardTitle>
+                  <CardDescription>Enable social login providers for user authentication</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {[
+                      { id: 'google', label: 'Google' },
+                      { id: 'github', label: 'GitHub' },
+                      { id: 'microsoft', label: 'Microsoft' },
+                      { id: 'apple', label: 'Apple' },
+                      { id: 'facebook', label: 'Facebook' },
+                    ].map(provider => (
+                      <label key={provider.id} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={formData.authentication.mfa_methods.includes(method)}
+                          checked={(formData.authentication.social_providers || []).includes(provider.id)}
                           onChange={(e) => {
-                            const methods = e.target.checked
-                              ? [...formData.authentication.mfa_methods, method]
-                              : formData.authentication.mfa_methods.filter(m => m !== method)
-                            updateAuthentication('mfa_methods', methods)
+                            const providers = e.target.checked
+                              ? [...(formData.authentication.social_providers || []), provider.id]
+                              : (formData.authentication.social_providers || []).filter(p => p !== provider.id)
+                            updateAuthentication('social_providers', providers)
                           }}
-                          className="rounded"
+                          className="rounded h-4 w-4"
                         />
-                        <span className="text-sm uppercase">{method}</span>
+                        <span className="text-sm font-medium">{provider.label}</span>
                       </label>
                     ))}
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {activeTab === 'branding' && (

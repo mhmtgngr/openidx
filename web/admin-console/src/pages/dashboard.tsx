@@ -1,15 +1,34 @@
 import { useQuery } from '@tanstack/react-query'
-import { 
-  Users, 
-  Shield, 
-  Key, 
+import { Link } from 'react-router-dom'
+import {
+  Users,
+  Shield,
+  Key,
   Activity,
   AlertTriangle,
   CheckCircle,
-  Clock
+  Clock,
+  Settings
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { api } from '../lib/api'
+
+interface ActivityItem {
+  id: string
+  type: string
+  message: string
+  actor_id?: string
+  actor_name?: string
+  timestamp: string
+}
+
+interface AuthStatistics {
+  total_logins: number
+  successful_logins: number
+  failed_logins: number
+  mfa_usage: number
+  logins_by_method: Record<string, number>
+}
 
 interface DashboardStats {
   total_users: number
@@ -19,6 +38,31 @@ interface DashboardStats {
   active_sessions: number
   pending_reviews: number
   security_alerts: number
+  recent_activity: ActivityItem[]
+  auth_stats: AuthStatistics
+  security_alert_details?: { message: string; count: number; timestamp: string }[]
+}
+
+function relativeTime(timestamp: string): string {
+  const now = Date.now()
+  const then = new Date(timestamp).getTime()
+  const seconds = Math.floor((now - then) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days > 1 ? 's' : ''} ago`
+}
+
+function activityIcon(type: string) {
+  switch (type) {
+    case 'authentication': return Shield
+    case 'user_management': return Users
+    case 'configuration': return Settings
+    default: return Activity
+  }
 }
 
 export function DashboardPage() {
@@ -34,6 +78,7 @@ export function DashboardPage() {
       description: `${stats?.active_users || 0} active`,
       icon: Users,
       color: 'text-blue-600',
+      link: '/users',
     },
     {
       title: 'Applications',
@@ -41,6 +86,7 @@ export function DashboardPage() {
       description: 'Registered apps',
       icon: Key,
       color: 'text-green-600',
+      link: '/applications',
     },
     {
       title: 'Active Sessions',
@@ -48,6 +94,7 @@ export function DashboardPage() {
       description: 'Current sessions',
       icon: Activity,
       color: 'text-purple-600',
+      link: '/audit-logs',
     },
     {
       title: 'Pending Reviews',
@@ -55,8 +102,11 @@ export function DashboardPage() {
       description: 'Access reviews',
       icon: Clock,
       color: 'text-orange-600',
+      link: '/access-reviews',
     },
   ]
+
+  const recentActivity = stats?.recent_activity || []
 
   return (
     <div className="space-y-6">
@@ -70,18 +120,20 @@ export function DashboardPage() {
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => (
-          <Card key={stat.title}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-              <stat.icon className={`h-4 w-4 ${stat.color}`} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {isLoading ? '...' : stat.value.toLocaleString()}
-              </div>
-              <p className="text-xs text-muted-foreground">{stat.description}</p>
-            </CardContent>
-          </Card>
+          <Link key={stat.title} to={stat.link} className="block transition-transform hover:scale-[1.02]">
+            <Card className="cursor-pointer hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                <stat.icon className={`h-4 w-4 ${stat.color}`} />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {isLoading ? '...' : stat.value.toLocaleString()}
+                </div>
+                <p className="text-xs text-muted-foreground">{stat.description}</p>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
 
@@ -103,10 +155,16 @@ export function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
-                  <span className="text-sm">Multiple failed login attempts</span>
-                  <span className="text-xs text-orange-600">2 hours ago</span>
-                </div>
+                {stats?.security_alert_details?.map((alert, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
+                    <span className="text-sm">{alert.message} ({alert.count}x)</span>
+                    <span className="text-xs text-orange-600">{relativeTime(alert.timestamp)}</span>
+                  </div>
+                )) || (
+                  <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
+                    <span className="text-sm">{stats?.security_alerts} failed authentication attempts (24h)</span>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -122,27 +180,22 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm">New user created</span>
-                </div>
-                <span className="text-xs text-gray-500">5 min ago</span>
-              </div>
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm">Policy updated</span>
-                </div>
-                <span className="text-xs text-gray-500">1 hour ago</span>
-              </div>
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <Key className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm">App registered</span>
-                </div>
-                <span className="text-xs text-gray-500">2 hours ago</span>
-              </div>
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-gray-500">No recent activity</p>
+              ) : (
+                recentActivity.map((item) => {
+                  const Icon = activityIcon(item.type)
+                  return (
+                    <div key={item.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm">{item.message}</span>
+                      </div>
+                      <span className="text-xs text-gray-500">{relativeTime(item.timestamp)}</span>
+                    </div>
+                  )
+                })
+              )}
             </div>
           </CardContent>
         </Card>

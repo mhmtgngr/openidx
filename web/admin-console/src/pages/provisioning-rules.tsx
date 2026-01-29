@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Edit, Trash2 } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -35,6 +35,16 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { api, ProvisioningRule, RuleCondition, RuleAction } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
@@ -46,6 +56,30 @@ const TRIGGER_OPTIONS = [
   { value: 'group_membership', label: 'Group Membership' },
   { value: 'attribute_change', label: 'Attribute Change' },
   { value: 'scheduled', label: 'Scheduled' },
+]
+
+const OPERATOR_OPTIONS = [
+  { value: 'equals', label: 'Equals' },
+  { value: 'not_equals', label: 'Not Equals' },
+  { value: 'contains', label: 'Contains' },
+  { value: 'not_contains', label: 'Not Contains' },
+  { value: 'starts_with', label: 'Starts With' },
+  { value: 'ends_with', label: 'Ends With' },
+  { value: 'regex', label: 'Regex' },
+  { value: 'greater_than', label: 'Greater Than' },
+  { value: 'less_than', label: 'Less Than' },
+]
+
+const ACTION_TYPE_OPTIONS = [
+  { value: 'add_to_group', label: 'Add to Group' },
+  { value: 'remove_from_group', label: 'Remove from Group' },
+  { value: 'assign_role', label: 'Assign Role' },
+  { value: 'remove_role', label: 'Remove Role' },
+  { value: 'set_attribute', label: 'Set Attribute' },
+  { value: 'send_email', label: 'Send Email' },
+  { value: 'notify_admin', label: 'Notify Admin' },
+  { value: 'disable_account', label: 'Disable Account' },
+  { value: 'enable_account', label: 'Enable Account' },
 ]
 
 interface RuleFormData {
@@ -76,10 +110,22 @@ export function ProvisioningRulesPage() {
   const [editModal, setEditModal] = useState(false)
   const [selectedRule, setSelectedRule] = useState<ProvisioningRule | null>(null)
   const [formData, setFormData] = useState<RuleFormData>(emptyForm)
+  const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   const { data: rules, isLoading } = useQuery({
-    queryKey: ['provisioning-rules'],
-    queryFn: () => api.getProvisioningRules(),
+    queryKey: ['provisioning-rules', page],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      const result = await api.getWithHeaders<ProvisioningRule[]>(`/api/v1/provisioning/rules?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   const createMutation = useMutation({
@@ -139,9 +185,7 @@ export function ProvisioningRulesPage() {
   }
 
   const handleDelete = (rule: ProvisioningRule) => {
-    if (confirm(`Delete rule "${rule.name}"?`)) {
-      deleteMutation.mutate(rule.id)
-    }
+    setDeleteTarget({ id: rule.id, name: rule.name })
   }
 
   const handleFormSubmit = () => {
@@ -273,12 +317,16 @@ export function ProvisioningRulesPage() {
               onChange={(e) => updateCondition(i, 'field', e.target.value)}
               className="flex-1"
             />
-            <Input
-              placeholder="Operator"
-              value={cond.operator}
-              onChange={(e) => updateCondition(i, 'operator', e.target.value)}
-              className="w-28"
-            />
+            <Select value={cond.operator} onValueChange={(v) => updateCondition(i, 'operator', v)}>
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Operator" />
+              </SelectTrigger>
+              <SelectContent>
+                {OPERATOR_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input
               placeholder="Value"
               value={cond.value}
@@ -300,12 +348,16 @@ export function ProvisioningRulesPage() {
         </div>
         {formData.actions.map((action, i) => (
           <div key={i} className="flex gap-2 mb-2">
-            <Input
-              placeholder="Type"
-              value={action.type}
-              onChange={(e) => updateAction(i, 'type', e.target.value)}
-              className="flex-1"
-            />
+            <Select value={action.type} onValueChange={(v) => updateAction(i, 'type', v)}>
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Action type" />
+              </SelectTrigger>
+              <SelectContent>
+                {ACTION_TYPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input
               placeholder="Target"
               value={action.target}
@@ -414,6 +466,21 @@ export function ProvisioningRulesPage() {
               )}
             </TableBody>
           </Table>
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4">
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -436,6 +503,24 @@ export function ProvisioningRulesPage() {
           {formContent}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Rule Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `Are you sure you want to delete rule "${deleteTarget.name}"? This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

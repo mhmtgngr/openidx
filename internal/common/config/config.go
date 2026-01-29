@@ -76,6 +76,7 @@ type PushMFAConfig struct {
 	APNSKeyID        string `mapstructure:"apns_key_id"`         // Apple Push Notification Service key ID
 	APNSTeamID       string `mapstructure:"apns_team_id"`        // Apple team ID
 	APNSKeyPath      string `mapstructure:"apns_key_path"`       // Path to APNS .p8 key file
+	APNSBundleID     string `mapstructure:"apns_bundle_id"`      // APNS bundle identifier (e.g., "com.openidx.app")
 	ChallengeTimeout int    `mapstructure:"challenge_timeout"`   // Timeout in seconds (default: 60)
 	AutoApprove      bool   `mapstructure:"auto_approve"`        // Auto-approve for development (NEVER use in production)
 }

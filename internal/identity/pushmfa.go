@@ -2,11 +2,14 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -518,26 +521,113 @@ func (s *Service) sendPushNotification(ctx context.Context, device *PushMFADevic
 }
 
 func (s *Service) sendFCMNotification(ctx context.Context, token string, payload map[string]interface{}) error {
-	// TODO: Implement Firebase Cloud Messaging
-	// This would use the Firebase Admin SDK or HTTP API
-	s.logger.Info("Sending FCM notification",
-		zap.String("token_prefix", token[:min(10, len(token))]),
-		zap.Any("payload", payload))
+	fcmKey := s.cfg.PushMFA.FCMServerKey
+	if fcmKey == "" {
+		s.logger.Warn("FCM server key not configured, skipping push notification")
+		return fmt.Errorf("FCM server key not configured")
+	}
 
-	// Placeholder for actual FCM implementation
-	// In production, this would send actual push notifications via FCM
+	s.logger.Info("Sending FCM notification",
+		zap.String("token_prefix", token[:min(10, len(token))]))
+
+	body := map[string]interface{}{
+		"to": token,
+		"notification": map[string]string{
+			"title": "Authentication Request",
+			"body":  "Approve or deny the login request",
+		},
+		"data": payload,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal FCM payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://fcm.googleapis.com/fcm/send", bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create FCM request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "key="+fcmKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Error("FCM request failed", zap.Error(err))
+		return fmt.Errorf("FCM request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Error("FCM returned non-200 status",
+			zap.Int("status", resp.StatusCode),
+			zap.String("response", string(respBody)))
+		return fmt.Errorf("FCM returned status %d", resp.StatusCode)
+	}
+
+	s.logger.Info("FCM notification sent successfully",
+		zap.String("token_prefix", token[:min(10, len(token))]))
 	return nil
 }
 
 func (s *Service) sendAPNSNotification(ctx context.Context, token string, payload map[string]interface{}) error {
-	// TODO: Implement Apple Push Notification Service
-	// This would use the APNs HTTP/2 API
-	s.logger.Info("Sending APNS notification",
-		zap.String("token_prefix", token[:min(10, len(token))]),
-		zap.Any("payload", payload))
+	bundleID := s.cfg.PushMFA.APNSBundleID
+	if bundleID == "" {
+		s.logger.Warn("APNS bundle ID not configured, skipping push notification")
+		return fmt.Errorf("APNS bundle ID not configured")
+	}
 
-	// Placeholder for actual APNS implementation
-	// In production, this would send actual push notifications via APNs
+	s.logger.Info("Sending APNS notification",
+		zap.String("token_prefix", token[:min(10, len(token))]))
+
+	apnsPayload := map[string]interface{}{
+		"aps": map[string]interface{}{
+			"alert": map[string]string{
+				"title": "Authentication Request",
+				"body":  "Approve or deny the login request",
+			},
+			"sound":             "default",
+			"content-available": 1,
+			"category":          "AUTH_CHALLENGE",
+		},
+		"data": payload,
+	}
+
+	jsonBody, err := json.Marshal(apnsPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal APNS payload: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.push.apple.com/3/device/%s", token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create APNS request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apns-topic", bundleID)
+	req.Header.Set("apns-push-type", "alert")
+	req.Header.Set("apns-priority", "10")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Error("APNS request failed", zap.Error(err))
+		return fmt.Errorf("APNS request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		s.logger.Error("APNS returned non-200 status",
+			zap.Int("status", resp.StatusCode),
+			zap.String("response", string(respBody)))
+		return fmt.Errorf("APNS returned status %d", resp.StatusCode)
+	}
+
+	s.logger.Info("APNS notification sent successfully",
+		zap.String("token_prefix", token[:min(10, len(token))]))
 	return nil
 }
 

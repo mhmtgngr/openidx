@@ -81,6 +81,10 @@ func main() {
 	router.Use(logger.GinMiddleware(log))
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestID())
+	router.Use(middleware.PrometheusMetrics("admin-api"))
+
+	// Metrics endpoint
+	router.GET("/metrics", middleware.MetricsHandler())
 
 	// Public routes
 	router.GET("/health", func(c *gin.Context) {

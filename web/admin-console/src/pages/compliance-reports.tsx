@@ -11,6 +11,8 @@ import {
   Calendar,
   Clock,
   RefreshCw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -90,10 +92,21 @@ export function ComplianceReportsPage() {
     start_date: '',
     end_date: '',
   })
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   const { data: reports, isLoading } = useQuery({
-    queryKey: ['compliance-reports'],
-    queryFn: () => api.get<ComplianceReport[]>('/api/v1/audit/reports'),
+    queryKey: ['compliance-reports', page],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      const result = await api.getWithHeaders<ComplianceReport[]>(`/api/v1/audit/reports?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   const generateReportMutation = useMutation({
@@ -348,6 +361,21 @@ export function ComplianceReportsPage() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4">
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

@@ -17,6 +17,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/governance"
 )
 
@@ -66,6 +67,10 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(logger.GinMiddleware(log))
+	router.Use(middleware.PrometheusMetrics("governance-service"))
+
+	// Metrics endpoint
+	router.GET("/metrics", middleware.MetricsHandler())
 
 	// Initialize governance service
 	governanceService := governance.NewService(db, redis, cfg, log)

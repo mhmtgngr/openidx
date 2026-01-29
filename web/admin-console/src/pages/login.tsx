@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { Shield, AlertCircle, Loader2, Globe, ArrowLeft } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -221,6 +221,12 @@ export function LoginPage() {
                 )}
               </Button>
 
+              <div className="text-center">
+                <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-800">
+                  Forgot your password?
+                </Link>
+              </div>
+
               <Button
                 type="button"
                 variant="ghost"
@@ -329,6 +335,12 @@ export function LoginPage() {
                     authProvider === 'openidx' ? 'Sign in with OpenIDX' : 'Sign in with Keycloak'
                   )}
                 </Button>
+
+                <div className="text-center">
+                  <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-800">
+                    Forgot your password?
+                  </Link>
+                </div>
               </>
             )}
           </div>

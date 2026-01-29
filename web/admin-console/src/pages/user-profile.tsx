@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,131 +11,126 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '@/hooks/use-toast'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '@/lib/api'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
-import { Shield, User, Key, Smartphone, Mail } from 'lucide-react'
+import { Shield, User, Key, Smartphone, Mail, Monitor } from 'lucide-react'
 import QRCode from 'qrcode.react'
+import { useAuth } from '@/lib/auth'
 
 interface MFASetup extends MFASetupResponse {
   backupCodes: string[]
 }
 
+interface Session {
+  id: string
+  user_id: string
+  client_id: string
+  ip_address: string
+  user_agent: string
+  started_at: string
+  last_seen_at: string
+  expires_at: string
+}
+
 export function UserProfilePage() {
-  const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [updating, setUpdating] = useState(false)
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [email, setEmail] = useState('')
+  const [profileLoaded, setProfileLoaded] = useState(false)
   const [mfaSetup, setMfaSetup] = useState<MFASetup | null>(null)
   const [showBackupCodes, setShowBackupCodes] = useState(false)
   const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
 
-  useEffect(() => {
-    console.log('UserProfilePage rendered')
-    loadUserProfile()
-  }, [])
+  const { data: profile, isLoading } = useQuery({
+    queryKey: ['user-profile'],
+    queryFn: () => api.get<UserProfile>('/api/v1/identity/users/me'),
+    select: (data) => {
+      if (!profileLoaded && data) {
+        setFirstName(data.firstName)
+        setLastName(data.lastName)
+        setEmail(data.email)
+        setProfileLoaded(true)
+      }
+      return data
+    },
+  })
 
-  const loadUserProfile = async () => {
-    try {
-      const response = await api.get<UserProfile>('/api/v1/identity/users/me')
-      setProfile(response)
-    } catch (error) {
-      console.error('Failed to load user profile', error)
-      toast({
-        title: 'Error',
-        description: 'Failed to load user profile',
-        variant: 'destructive'
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
+  const updateProfileMutation = useMutation({
+    mutationFn: (updates: Partial<UserProfile>) =>
+      api.put<UserProfile>('/api/v1/identity/users/me', updates),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-profile'] })
+      toast({ title: 'Success', description: 'Profile updated successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to update profile', variant: 'destructive' })
+    },
+  })
 
-  const updateProfile = async (updates: Partial<UserProfile>) => {
-    setUpdating(true)
-    try {
-      await api.put<UserProfile>('/api/v1/identity/users/me', updates)
-      setProfile(prev => prev ? { ...prev, ...updates } : null)
-      toast({
-        title: 'Success',
-        description: 'Profile updated successfully'
-      })
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to update profile',
-        variant: 'destructive'
-      })
-    } finally {
-      setUpdating(false)
-    }
-  }
-
-  const setupMFA = async () => {
-    try {
-      const response = await api.post<MFASetupResponse>('/api/v1/identity/users/me/mfa/setup')
+  const setupMFAMutation = useMutation({
+    mutationFn: () => api.post<MFASetupResponse>('/api/v1/identity/users/me/mfa/setup'),
+    onSuccess: (response) => {
       setMfaSetup({ ...response, backupCodes: [] })
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to setup MFA',
-        variant: 'destructive'
-      })
-    }
-  }
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to setup MFA', variant: 'destructive' })
+    },
+  })
 
-  const enableMFA = async (code: string) => {
-    try {
-      const response = await api.post<MFAEnableResponse>('/api/v1/identity/users/me/mfa/enable', { code })
-      setProfile(prev => prev ? { ...prev, mfaEnabled: true } : null)
+  const enableMFAMutation = useMutation({
+    mutationFn: (code: string) =>
+      api.post<MFAEnableResponse>('/api/v1/identity/users/me/mfa/enable', { code }),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['user-profile'] })
       setMfaSetup(prev => prev ? { ...prev, backupCodes: response.backupCodes || [] } : null)
       setShowBackupCodes(true)
-      toast({
-        title: 'Success',
-        description: 'MFA enabled successfully'
-      })
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Invalid verification code',
-        variant: 'destructive'
-      })
-    }
-  }
+      toast({ title: 'Success', description: 'MFA enabled successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Invalid verification code', variant: 'destructive' })
+    },
+  })
 
-  const disableMFA = async () => {
-    try {
-      await api.post<void>('/api/v1/identity/users/me/mfa/disable')
-      setProfile(prev => prev ? { ...prev, mfaEnabled: false, mfaMethods: [] } : null)
-      toast({
-        title: 'Success',
-        description: 'MFA disabled successfully'
-      })
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to disable MFA',
-        variant: 'destructive'
-      })
-    }
-  }
+  const disableMFAMutation = useMutation({
+    mutationFn: () => api.post<void>('/api/v1/identity/users/me/mfa/disable'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-profile'] })
+      toast({ title: 'Success', description: 'MFA disabled successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to disable MFA', variant: 'destructive' })
+    },
+  })
 
-  const changePassword = async (currentPassword: string, newPassword: string) => {
-    try {
-      await api.post<void>('/api/v1/identity/users/me/change-password', {
-        currentPassword,
-        newPassword
-      })
-      toast({
-        title: 'Success',
-        description: 'Password changed successfully'
-      })
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to change password',
-        variant: 'destructive'
-      })
-    }
-  }
+  const changePasswordMutation = useMutation({
+    mutationFn: ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) =>
+      api.post<void>('/api/v1/identity/users/me/change-password', { currentPassword, newPassword }),
+    onSuccess: () => {
+      toast({ title: 'Success', description: 'Password changed successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to change password', variant: 'destructive' })
+    },
+  })
 
-  if (loading) {
+  const { data: sessions, isLoading: sessionsLoading } = useQuery({
+    queryKey: ['sessions', user?.id],
+    queryFn: () => api.get<Session[]>(`/api/v1/identity/users/${user?.id}/sessions`),
+    enabled: !!user?.id,
+  })
+
+  const revokeSessionMutation = useMutation({
+    mutationFn: (sessionId: string) => api.delete(`/api/v1/identity/sessions/${sessionId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      toast({ title: 'Session revoked' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to revoke session', variant: 'destructive' })
+    },
+  })
+
+  if (isLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
         <LoadingSpinner size="lg" />
@@ -169,6 +165,13 @@ export function UserProfilePage() {
             <Shield className="h-4 w-4" />
             Security
           </TabsTrigger>
+          <TabsTrigger value="sessions" className="flex items-center gap-2">
+            <Monitor className="h-4 w-4" />
+            Sessions
+            {sessions && sessions.length > 0 && (
+              <Badge variant="secondary" className="ml-1">{sessions.length}</Badge>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="space-y-4">
@@ -183,16 +186,16 @@ export function UserProfilePage() {
                   <Label htmlFor="firstName">First Name</Label>
                   <Input
                     id="firstName"
-                    value={profile.firstName}
-                    onChange={(e) => setProfile(prev => prev ? { ...prev, firstName: e.target.value } : null)}
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="lastName">Last Name</Label>
                   <Input
                     id="lastName"
-                    value={profile.lastName}
-                    onChange={(e) => setProfile(prev => prev ? { ...prev, lastName: e.target.value } : null)}
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
                   />
                 </div>
               </div>
@@ -202,8 +205,8 @@ export function UserProfilePage() {
                   <Input
                     id="email"
                     type="email"
-                    value={profile.email}
-                    onChange={(e) => setProfile(prev => prev ? { ...prev, email: e.target.value } : null)}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                   />
                   {profile.emailVerified && (
                     <Badge variant="secondary" className="flex items-center gap-1">
@@ -217,19 +220,19 @@ export function UserProfilePage() {
                 <Switch
                   id="email-notifications"
                   checked={profile.enabled}
-                  onCheckedChange={(checked) => updateProfile({ enabled: checked })}
+                  onCheckedChange={(checked) => updateProfileMutation.mutate({ enabled: checked })}
                 />
                 <Label htmlFor="email-notifications">Account Enabled</Label>
               </div>
               <Button
-                onClick={() => updateProfile({
-                  firstName: profile.firstName,
-                  lastName: profile.lastName,
-                  email: profile.email
+                onClick={() => updateProfileMutation.mutate({
+                  firstName,
+                  lastName,
+                  email,
                 })}
-                disabled={updating}
+                disabled={updateProfileMutation.isPending}
               >
-                {updating ? <LoadingSpinner size="sm" /> : null}
+                {updateProfileMutation.isPending ? <LoadingSpinner size="sm" /> : null}
                 Update Profile
               </Button>
             </CardContent>
@@ -259,7 +262,7 @@ export function UserProfilePage() {
                     Enabled
                   </Badge>
                 ) : (
-                  <Button onClick={setupMFA} variant="outline">
+                  <Button onClick={() => setupMFAMutation.mutate()} variant="outline" disabled={setupMFAMutation.isPending}>
                     <Key className="h-4 w-4 mr-2" />
                     Setup MFA
                   </Button>
@@ -269,7 +272,7 @@ export function UserProfilePage() {
               {profile.mfaEnabled && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="destructive">
+                    <Button variant="destructive" disabled={disableMFAMutation.isPending}>
                       Disable MFA
                     </Button>
                   </AlertDialogTrigger>
@@ -282,7 +285,7 @@ export function UserProfilePage() {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={disableMFA}>Disable MFA</AlertDialogAction>
+                      <AlertDialogAction onClick={() => disableMFAMutation.mutate()}>Disable MFA</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
@@ -303,7 +306,7 @@ export function UserProfilePage() {
                         includeMargin={true}
                       />
                     </div>
-                    
+
                     <div className="space-y-2">
                       <Label className="text-base font-semibold">Or Enter Secret Manually:</Label>
                       <div className="bg-muted p-4 rounded-lg">
@@ -334,7 +337,7 @@ export function UserProfilePage() {
                           if (e.key === 'Enter') {
                             const code = (e.target as HTMLInputElement).value
                             if (code.length === 6) {
-                              enableMFA(code)
+                              enableMFAMutation.mutate(code)
                             }
                           }
                         }}
@@ -344,7 +347,7 @@ export function UserProfilePage() {
                       onClick={() => {
                         const code = (document.getElementById('mfa-code') as HTMLInputElement).value
                         if (code.length === 6) {
-                          enableMFA(code)
+                          enableMFAMutation.mutate(code)
                         } else {
                           toast({
                             title: 'Invalid Code',
@@ -355,6 +358,7 @@ export function UserProfilePage() {
                       }}
                       className="w-full"
                       size="lg"
+                      disabled={enableMFAMutation.isPending}
                     >
                       Verify & Enable MFA
                     </Button>
@@ -424,11 +428,92 @@ export function UserProfilePage() {
                     return
                   }
 
-                  changePassword(current, newPass)
+                  changePasswordMutation.mutate({ currentPassword: current, newPassword: newPass })
                 }}
+                disabled={changePasswordMutation.isPending}
               >
                 Change Password
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sessions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Active Sessions</CardTitle>
+                  <CardDescription>Manage your active sessions across devices</CardDescription>
+                </div>
+                {sessions && sessions.length > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      sessions.forEach((session) => revokeSessionMutation.mutate(session.id))
+                    }}
+                    disabled={revokeSessionMutation.isPending}
+                  >
+                    Revoke All Sessions
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {sessionsLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : !sessions || sessions.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">No active sessions</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 px-2 font-medium">IP Address</th>
+                        <th className="text-left py-2 px-2 font-medium">User Agent</th>
+                        <th className="text-left py-2 px-2 font-medium">Started</th>
+                        <th className="text-left py-2 px-2 font-medium">Last Seen</th>
+                        <th className="text-left py-2 px-2 font-medium">Expires</th>
+                        <th className="text-left py-2 px-2 font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sessions.map((session) => (
+                        <tr key={session.id} className="border-b">
+                          <td className="py-2 px-2 font-mono text-xs">{session.ip_address}</td>
+                          <td className="py-2 px-2 max-w-[200px] truncate" title={session.user_agent}>
+                            {session.user_agent}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(session.started_at).toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(session.last_seen_at).toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(session.expires_at).toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => revokeSessionMutation.mutate(session.id)}
+                              disabled={revokeSessionMutation.isPending}
+                            >
+                              Revoke
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

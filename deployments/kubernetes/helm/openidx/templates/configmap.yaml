@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openidx.fullname" . }}-config
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+data:
+  KEYCLOAK_URL: {{ .Values.config.keycloakUrl | default "http://keycloak:8180" | quote }}
+  OPA_URL: {{ .Values.config.opaUrl | default "http://opa:8181" | quote }}
+  ELASTICSEARCH_URL: {{ .Values.config.elasticsearchUrl | default "http://elasticsearch:9200" | quote }}
+  OAUTH_ISSUER: {{ .Values.config.oauthIssuer | default "http://oauth-service:8006" | quote }}
+  OAUTH_JWKS_URL: {{ .Values.config.oauthJwksUrl | default "http://oauth-service:8006/.well-known/jwks.json" | quote }}
+  VITE_API_URL: {{ .Values.config.viteApiUrl | default "https://api.openidx.io" | quote }}
+  VITE_OAUTH_URL: {{ .Values.config.viteOauthUrl | default "https://auth.openidx.io" | quote }}
+  VITE_OAUTH_CLIENT_ID: {{ .Values.config.viteOauthClientId | default "admin-console" | quote }}

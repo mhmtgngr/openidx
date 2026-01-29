@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -66,6 +66,33 @@ const policyTypeLabels: Record<string, string> = {
   location: 'Location-based',
 }
 
+const conditionTemplates: Record<string, { key: string; label: string; placeholder: string }[]> = {
+  separation_of_duty: [
+    { key: 'conflicting_roles', label: 'Conflicting Roles', placeholder: 'e.g., finance_approver, finance_requester' },
+  ],
+  risk_based: [
+    { key: 'min_risk_score', label: 'Min Risk Score', placeholder: 'e.g., 0' },
+    { key: 'max_risk_score', label: 'Max Risk Score', placeholder: 'e.g., 100' },
+  ],
+  timebound: [
+    { key: 'start_hour', label: 'Start Hour (0-23)', placeholder: 'e.g., 9' },
+    { key: 'end_hour', label: 'End Hour (0-23)', placeholder: 'e.g., 17' },
+    { key: 'days', label: 'Days', placeholder: 'e.g., mon,tue,wed,thu,fri' },
+  ],
+  location: [
+    { key: 'allowed_ips', label: 'Allowed IPs', placeholder: 'e.g., 10.0.0.0/8, 192.168.1.0/24' },
+    { key: 'blocked_ips', label: 'Blocked IPs', placeholder: 'e.g., 0.0.0.0/0' },
+  ],
+}
+
+const effectOptions = ['allow', 'deny', 'require_approval']
+
+interface FormRule {
+  condition: Record<string, string>
+  effect: string
+  priority: number
+}
+
 export function PoliciesPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -81,6 +108,7 @@ export function PoliciesPage() {
     enabled: true,
     priority: 0,
   })
+  const [rules, setRules] = useState<FormRule[]>([])
 
   const { data: policies, isLoading } = useQuery({
     queryKey: ['policies', search],
@@ -185,6 +213,7 @@ export function PoliciesPage() {
       enabled: true,
       priority: 0,
     })
+    setRules([])
   }
 
   const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -200,7 +229,7 @@ export function PoliciesPage() {
     createPolicyMutation.mutate({
       id: crypto.randomUUID(),
       ...formData,
-      rules: [],
+      rules: rules.map((r, i) => ({ id: crypto.randomUUID(), condition: r.condition, effect: r.effect, priority: r.priority || i })),
     })
   }
 
@@ -213,6 +242,13 @@ export function PoliciesPage() {
       enabled: policy.enabled,
       priority: policy.priority,
     })
+    setRules(
+      (policy.rules || []).map(r => ({
+        condition: Object.fromEntries(Object.entries(r.condition).map(([k, v]) => [k, String(v)])),
+        effect: r.effect,
+        priority: r.priority,
+      }))
+    )
     setEditModal(true)
   }
 
@@ -221,8 +257,98 @@ export function PoliciesPage() {
     if (!selectedPolicy) return
     updatePolicyMutation.mutate({
       id: selectedPolicy.id,
-      data: formData,
+      data: {
+        ...formData,
+        rules: rules.map((r, i) => ({ id: crypto.randomUUID(), condition: r.condition, effect: r.effect, priority: r.priority || i })),
+      },
     })
+  }
+
+  const addRule = () => {
+    const templates = conditionTemplates[formData.type] || []
+    const emptyCondition: Record<string, string> = {}
+    templates.forEach(t => { emptyCondition[t.key] = '' })
+    setRules(prev => [...prev, { condition: emptyCondition, effect: 'deny', priority: prev.length }])
+  }
+
+  const removeRule = (index: number) => {
+    setRules(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const updateRuleCondition = (ruleIndex: number, key: string, value: string) => {
+    setRules(prev => prev.map((r, i) => i === ruleIndex ? { ...r, condition: { ...r.condition, [key]: value } } : r))
+  }
+
+  const updateRuleEffect = (ruleIndex: number, effect: string) => {
+    setRules(prev => prev.map((r, i) => i === ruleIndex ? { ...r, effect } : r))
+  }
+
+  const updateRulePriority = (ruleIndex: number, priority: number) => {
+    setRules(prev => prev.map((r, i) => i === ruleIndex ? { ...r, priority } : r))
+  }
+
+  const renderRuleBuilder = () => {
+    const templates = conditionTemplates[formData.type] || []
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label className="text-base font-semibold">Rules</Label>
+          <Button type="button" variant="outline" size="sm" onClick={addRule}>
+            <Plus className="h-3 w-3 mr-1" /> Add Rule
+          </Button>
+        </div>
+        {rules.length === 0 && (
+          <p className="text-sm text-gray-500">No rules defined. Add rules to specify conditions and effects.</p>
+        )}
+        {rules.map((rule, ruleIndex) => (
+          <div key={ruleIndex} className="border rounded-lg p-3 space-y-3 relative">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Rule {ruleIndex + 1}</span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => removeRule(ruleIndex)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="grid gap-2">
+              {templates.map(template => (
+                <div key={template.key} className="grid grid-cols-3 gap-2 items-center">
+                  <Label className="text-xs">{template.label}</Label>
+                  <Input
+                    className="col-span-2 h-8 text-sm"
+                    placeholder={template.placeholder}
+                    value={rule.condition[template.key] || ''}
+                    onChange={(e) => updateRuleCondition(ruleIndex, template.key, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Effect</Label>
+                <select
+                  value={rule.effect}
+                  onChange={(e) => updateRuleEffect(ruleIndex, e.target.value)}
+                  className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {effectOptions.map(opt => (
+                    <option key={opt} value={opt}>{opt.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Priority</Label>
+                <Input
+                  type="number"
+                  className="h-8 text-sm"
+                  value={rule.priority}
+                  onChange={(e) => updateRulePriority(ruleIndex, parseInt(e.target.value) || 0)}
+                  min={0}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   const handleDeleteClick = (policy: Policy) => {
@@ -416,7 +542,7 @@ export function PoliciesPage() {
 
       {/* Create Policy Modal */}
       <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Policy</DialogTitle>
           </DialogHeader>
@@ -449,7 +575,10 @@ export function PoliciesPage() {
                 id="type"
                 name="type"
                 value={formData.type}
-                onChange={handleFormChange}
+                onChange={(e) => {
+                  handleFormChange(e)
+                  setRules([])
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               >
@@ -483,6 +612,7 @@ export function PoliciesPage() {
               />
               <Label htmlFor="enabled">Enable policy immediately</Label>
             </div>
+            {renderRuleBuilder()}
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"
@@ -502,7 +632,7 @@ export function PoliciesPage() {
 
       {/* Edit Policy Modal */}
       <Dialog open={editModal} onOpenChange={setEditModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Policy</DialogTitle>
           </DialogHeader>
@@ -533,7 +663,10 @@ export function PoliciesPage() {
                 id="edit-type"
                 name="type"
                 value={formData.type}
-                onChange={handleFormChange}
+                onChange={(e) => {
+                  handleFormChange(e)
+                  setRules([])
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               >
@@ -566,6 +699,7 @@ export function PoliciesPage() {
               />
               <Label htmlFor="edit-enabled">Policy enabled</Label>
             </div>
+            {renderRuleBuilder()}
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"

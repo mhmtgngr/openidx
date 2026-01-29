@@ -32,11 +32,14 @@ func (s *Scopes) Scan(value interface{}) error {
 		*s = nil
 		return nil
 	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return json.Unmarshal(value.([]byte), &s)
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, s)
+	case string:
+		return json.Unmarshal([]byte(v), s)
+	default:
+		return json.Unmarshal(value.([]byte), s)
 	}
-	return json.Unmarshal(bytes, &s)
 }
 
 // IdentityProvider represents an external identity provider configuration.
@@ -50,5 +53,5 @@ type IdentityProvider struct {
 	Scopes       Scopes       `json:"scopes" db:"scopes"`
 	Enabled      bool         `json:"enabled" db:"enabled"`
 	CreatedAt    time.Time    `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time    `json_:"updated_at" db:"updated_at"`
+	UpdatedAt    time.Time    `json:"updated_at" db:"updated_at"`
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Edit, Trash2 } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import {
@@ -40,6 +40,16 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { api, IdentityProvider } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
@@ -72,10 +82,20 @@ export function IdentityProvidersPage() {
   const [editModal, setEditModal] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<IdentityProvider | null>(null)
   const [formData, setFormData] = useState<ProviderFormData>(emptyForm)
+  const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   const { data: providers, isLoading } = useQuery({
-    queryKey: ['identity-providers'],
-    queryFn: () => api.getIdentityProviders(),
+    queryKey: ['identity-providers', page],
+    queryFn: async () => {
+      const { data, headers } = await api.getWithHeaders<IdentityProvider[]>(
+        `/api/v1/identity/providers?offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`
+      )
+      setTotalCount(parseInt(headers['x-total-count'] || '0', 10))
+      return data
+    },
   })
 
   const createMutation = useMutation({
@@ -153,9 +173,7 @@ export function IdentityProvidersPage() {
   }
 
   const handleDelete = (provider: IdentityProvider) => {
-    if (confirm(`Delete identity provider "${provider.name}"?`)) {
-      deleteMutation.mutate(provider.id)
-    }
+    setDeleteTarget({ id: provider.id, name: provider.name })
   }
 
   const handleFormSubmit = () => {
@@ -348,6 +366,34 @@ export function IdentityProvidersPage() {
               )}
             </TableBody>
           </Table>
+
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4">
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={(page + 1) * PAGE_SIZE >= totalCount}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -370,6 +416,24 @@ export function IdentityProvidersPage() {
           {formContent}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Provider Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `Are you sure you want to delete identity provider "${deleteTarget.name}"? This action cannot be undone.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) } }}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

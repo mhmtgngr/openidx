@@ -8,10 +8,12 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -1762,16 +1764,23 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 }
 
 // ListRoles retrieves all available roles
-func (s *Service) ListRoles(ctx context.Context) ([]Role, error) {
-	s.logger.Debug("Listing roles")
+func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int, error) {
+	s.logger.Debug("Listing roles", zap.Int("offset", offset), zap.Int("limit", limit))
+
+	var total int
+	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles").Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, is_composite, created_at
 		FROM roles
 		ORDER BY name
-	`)
+		OFFSET $1 LIMIT $2
+	`, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -1780,12 +1789,12 @@ func (s *Service) ListRoles(ctx context.Context) ([]Role, error) {
 		var r Role
 		err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.IsComposite, &r.CreatedAt)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		roles = append(roles, r)
 	}
 
-	return roles, nil
+	return roles, total, nil
 }
 
 // GetRole retrieves a role by ID
@@ -1982,6 +1991,13 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 
 // RegisterRoutes registers identity service routes
 func RegisterRoutes(router *gin.Engine, svc *Service) {
+	// Public routes (no auth required)
+	public := router.Group("/api/v1/identity")
+	{
+		public.POST("/users/forgot-password", svc.handleForgotPassword)
+		public.POST("/users/reset-password", svc.handleResetPassword)
+	}
+
 	identity := router.Group("/api/v1/identity")
 	identity.Use(svc.openIDXAuthMiddleware())
 	{
@@ -1997,6 +2013,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/users", svc.handleListUsers)
 		identity.POST("/users", svc.handleCreateUser)
 		identity.GET("/users/search", svc.handleSearchUsers) // Must be before :id route
+		identity.GET("/users/export", svc.handleExportUsersCSV)
+		identity.POST("/users/import", svc.handleImportUsersCSV)
 		identity.GET("/users/:id", svc.handleGetUser)
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
@@ -2018,6 +2036,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/roles/:id", svc.handleGetRole)
 		identity.PUT("/roles/:id", svc.handleUpdateRole)
 		identity.DELETE("/roles/:id", svc.handleDeleteRole)
+
+		// Permissions
+		identity.GET("/permissions", svc.handleListPermissions)
+		identity.GET("/roles/:id/permissions", svc.handleGetRolePermissions)
+		identity.PUT("/roles/:id/permissions", svc.handleSetRolePermissions)
 
 		// User-Role assignments
 		identity.GET("/users/:id/roles", svc.handleGetUserRoles)
@@ -2069,7 +2092,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 func (s *Service) handleListUsers(c *gin.Context) {
 	offset := 0
 	limit := 20
-	
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
 	users, total, err := s.ListUsers(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2139,7 +2168,13 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 func (s *Service) handleListIdentityProviders(c *gin.Context) {
 	offset := 0
 	limit := 20
-	
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
 	idps, total, err := s.ListIdentityProviders(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2230,12 +2265,22 @@ func (s *Service) handleTerminateSession(c *gin.Context) {
 }
 
 func (s *Service) handleListRoles(c *gin.Context) {
-	roles, err := s.ListRoles(c.Request.Context())
+	offset := 0
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
+	roles, total, err := s.ListRoles(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 
+	c.Header("X-Total-Count", strconv.Itoa(total))
 	c.JSON(200, roles)
 }
 
@@ -2384,7 +2429,13 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 
 func (s *Service) handleListGroups(c *gin.Context) {
 	offset := 0
-	limit := 50
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
 
 	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit)
 	if err != nil {
@@ -2926,4 +2977,322 @@ func (s *Service) handleDisableUserMFA(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"status": "mfa disabled"})
+}
+
+func (s *Service) handleExportUsersCSV(c *gin.Context) {
+	users, _, err := s.ListUsers(c.Request.Context(), 0, 10000)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Header("Content-Type", "text/csv")
+	c.Header("Content-Disposition", "attachment; filename=users.csv")
+
+	writer := csv.NewWriter(c.Writer)
+	writer.Write([]string{"username", "email", "first_name", "last_name", "enabled"})
+
+	for _, u := range users {
+		enabled := "true"
+		if !u.Enabled {
+			enabled = "false"
+		}
+		writer.Write([]string{u.Username, u.Email, u.FirstName, u.LastName, enabled})
+	}
+	writer.Flush()
+}
+
+func (s *Service) handleImportUsersCSV(c *gin.Context) {
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(400, gin.H{"error": "file is required"})
+		return
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	// Read header
+	header, err := reader.Read()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid CSV file"})
+		return
+	}
+
+	// Build column index map
+	colIndex := make(map[string]int)
+	for i, col := range header {
+		colIndex[strings.ToLower(strings.TrimSpace(col))] = i
+	}
+
+	var total, created, errCount int
+	var importErrors []string
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			errCount++
+			importErrors = append(importErrors, fmt.Sprintf("Row %d: invalid CSV row", total+2))
+			continue
+		}
+		total++
+
+		getField := func(name string) string {
+			if idx, ok := colIndex[name]; ok && idx < len(record) {
+				return strings.TrimSpace(record[idx])
+			}
+			return ""
+		}
+
+		username := getField("username")
+		email := getField("email")
+		if username == "" || email == "" {
+			errCount++
+			importErrors = append(importErrors, fmt.Sprintf("Row %d: username and email are required", total+1))
+			continue
+		}
+
+		user := &User{
+			Username:      username,
+			Email:         email,
+			FirstName:     getField("first_name"),
+			LastName:      getField("last_name"),
+			Enabled:       getField("enabled") != "false",
+			EmailVerified: false,
+		}
+
+		if err := s.CreateUser(c.Request.Context(), user); err != nil {
+			errCount++
+			importErrors = append(importErrors, fmt.Sprintf("Row %d: %s", total+1, err.Error()))
+			continue
+		}
+		created++
+	}
+
+	c.JSON(200, gin.H{
+		"total":   total,
+		"created": created,
+		"errors":  errCount,
+		"details": importErrors,
+	})
+}
+
+func (s *Service) handleForgotPassword(c *gin.Context) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "email is required"})
+		return
+	}
+
+	// Opportunistic cleanup of expired/used tokens
+	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL")
+
+	// Always return success to prevent email enumeration
+	// Look up user by email
+	var userID string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT id FROM users WHERE email = $1 AND enabled = true", req.Email).Scan(&userID)
+	if err != nil {
+		// User not found - still return success
+		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
+		return
+	}
+
+	// Generate token
+	tokenBytes := make([]byte, 32)
+	rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+
+	// Store token with 1 hour expiry
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, token, time.Now().Add(1*time.Hour))
+	if err != nil {
+		s.logger.Error("Failed to create password reset token", zap.Error(err))
+		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
+		return
+	}
+
+	// In dev mode, log the token so it can be used for testing
+	s.logger.Info("Password reset token created",
+		zap.String("email", req.Email),
+		zap.String("token", token),
+		zap.String("reset_url", fmt.Sprintf("http://localhost:3000/reset-password?token=%s", token)))
+
+	c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
+}
+
+func (s *Service) handleResetPassword(c *gin.Context) {
+	var req struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "token and password are required"})
+		return
+	}
+
+	if len(req.Password) < 8 {
+		c.JSON(400, gin.H{"error": "Password must be at least 8 characters"})
+		return
+	}
+
+	// Validate token
+	var userID string
+	var usedAt *time.Time
+	err := s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT user_id, used_at FROM password_reset_tokens
+		WHERE token = $1 AND expires_at > NOW()
+	`, req.Token).Scan(&userID, &usedAt)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid or expired reset token"})
+		return
+	}
+	if usedAt != nil {
+		c.JSON(400, gin.H{"error": "This reset token has already been used"})
+		return
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to process password"})
+		return
+	}
+
+	// Update password
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2",
+		string(hashedPassword), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update password"})
+		return
+	}
+
+	// Mark token as used
+	s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1", req.Token)
+
+	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
+}
+
+// Permission represents a system permission
+type Permission struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Resource    string    `json:"resource"`
+	Action      string    `json:"action"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ListPermissions returns all available permissions
+func (s *Service) ListPermissions(ctx context.Context) ([]Permission, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, description, resource, action, created_at
+		FROM permissions ORDER BY resource, action
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var perms []Permission
+	for rows.Next() {
+		var p Permission
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Resource, &p.Action, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		perms = append(perms, p)
+	}
+	return perms, nil
+}
+
+// GetRolePermissions returns permissions assigned to a role
+func (s *Service) GetRolePermissions(ctx context.Context, roleID string) ([]Permission, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT p.id, p.name, p.description, p.resource, p.action, p.created_at
+		FROM permissions p
+		JOIN role_permissions rp ON p.id = rp.permission_id
+		WHERE rp.role_id = $1
+		ORDER BY p.resource, p.action
+	`, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var perms []Permission
+	for rows.Next() {
+		var p Permission
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Resource, &p.Action, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		perms = append(perms, p)
+	}
+	return perms, nil
+}
+
+// SetRolePermissions replaces all permissions for a role
+func (s *Service) SetRolePermissions(ctx context.Context, roleID string, permissionIDs []string) error {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, "DELETE FROM role_permissions WHERE role_id = $1", roleID)
+	if err != nil {
+		return err
+	}
+
+	for _, permID := range permissionIDs {
+		_, err = tx.Exec(ctx, "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)", roleID, permID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (s *Service) handleListPermissions(c *gin.Context) {
+	perms, err := s.ListPermissions(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, perms)
+}
+
+func (s *Service) handleGetRolePermissions(c *gin.Context) {
+	roleID := c.Param("id")
+	perms, err := s.GetRolePermissions(c.Request.Context(), roleID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, perms)
+}
+
+func (s *Service) handleSetRolePermissions(c *gin.Context) {
+	roleID := c.Param("id")
+	var req struct {
+		PermissionIDs []string `json:"permission_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.SetRolePermissions(c.Request.Context(), roleID, req.PermissionIDs); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Permissions updated"})
 }

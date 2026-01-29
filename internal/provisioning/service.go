@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -161,6 +163,10 @@ type Service struct {
 	redis  *database.RedisClient
 	config *config.Config
 	logger *zap.Logger
+
+	jwksCacheMu     sync.RWMutex
+	jwksCachedKey   *rsa.PublicKey
+	jwksCacheExpiry time.Time
 }
 
 // NewService creates a new provisioning service
@@ -274,9 +280,25 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 }
 
 // getOAuthPublicKey fetches the OAuth service's public key for token validation
+// with caching using a 5-minute TTL to avoid fetching on every request
 func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
-	// In a production system, you'd cache this key with TTL
-	// For now, we'll fetch it each time (not ideal for performance)
+	// Check cache with read lock
+	s.jwksCacheMu.RLock()
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		key := s.jwksCachedKey
+		s.jwksCacheMu.RUnlock()
+		return key, nil
+	}
+	s.jwksCacheMu.RUnlock()
+
+	// Cache miss: acquire write lock
+	s.jwksCacheMu.Lock()
+	defer s.jwksCacheMu.Unlock()
+
+	// Double-check: another goroutine may have populated the cache
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		return s.jwksCachedKey, nil
+	}
 
 	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
 
@@ -311,7 +333,13 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 	// Use the first RSA key
 	for _, key := range jwks.Keys {
 		if key.Kty == "RSA" && key.Use == "sig" {
-			return parseRSAPublicKey(key.N, key.E)
+			pubKey, err := parseRSAPublicKey(key.N, key.E)
+			if err != nil {
+				return nil, err
+			}
+			s.jwksCachedKey = pubKey
+			s.jwksCacheExpiry = time.Now().Add(5 * time.Minute)
+			return pubKey, nil
 		}
 	}
 
@@ -1155,14 +1183,21 @@ func (s *Service) GetRule(ctx context.Context, id string) (*ProvisioningRule, er
 	return &rule, nil
 }
 
-// ListRules lists all provisioning rules
-func (s *Service) ListRules(ctx context.Context) ([]ProvisioningRule, error) {
+// ListRules lists provisioning rules with pagination support
+func (s *Service) ListRules(ctx context.Context, offset, limit int) ([]ProvisioningRule, int, error) {
+	var total int
+	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM provisioning_rules").Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at
 		FROM provisioning_rules ORDER BY priority ASC, created_at DESC
-	`)
+		OFFSET $1 LIMIT $2
+	`, offset, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -1184,7 +1219,7 @@ func (s *Service) ListRules(ctx context.Context) ([]ProvisioningRule, error) {
 	if rules == nil {
 		rules = []ProvisioningRule{}
 	}
-	return rules, nil
+	return rules, total, nil
 }
 
 // UpdateRule updates an existing provisioning rule
@@ -1235,11 +1270,25 @@ func (s *Service) DeleteRule(ctx context.Context, id string) error {
 // Provisioning rules handlers
 
 func (s *Service) handleListRules(c *gin.Context) {
-	rules, err := s.ListRules(c.Request.Context())
+	offset := 0
+	if v := c.Query("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	limit := 20
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	rules, total, err := s.ListRules(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to list rules: " + err.Error()})
 		return
 	}
+	c.Header("X-Total-Count", strconv.Itoa(total))
 	c.JSON(200, rules)
 }
 

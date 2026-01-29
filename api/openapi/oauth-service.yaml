@@ -1,0 +1,555 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX OAuth/OIDC Service
+  description: OAuth 2.0 authorization server with OpenID Connect and SAML 2.0 support.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8006
+    description: Local development
+
+tags:
+  - name: OIDC Discovery
+  - name: Authorization
+  - name: Token
+  - name: UserInfo
+  - name: Client Management
+
+paths:
+  # --- OIDC Discovery ---
+  /.well-known/openid-configuration:
+    get:
+      tags: [OIDC Discovery]
+      summary: OpenID Connect discovery document
+      operationId: getDiscovery
+      security: []
+      responses:
+        '200':
+          description: OIDC configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issuer:
+                    type: string
+                  authorization_endpoint:
+                    type: string
+                  token_endpoint:
+                    type: string
+                  userinfo_endpoint:
+                    type: string
+                  jwks_uri:
+                    type: string
+                  introspection_endpoint:
+                    type: string
+                  revocation_endpoint:
+                    type: string
+                  response_types_supported:
+                    type: array
+                    items:
+                      type: string
+                  grant_types_supported:
+                    type: array
+                    items:
+                      type: string
+                  subject_types_supported:
+                    type: array
+                    items:
+                      type: string
+                  id_token_signing_alg_values_supported:
+                    type: array
+                    items:
+                      type: string
+                  scopes_supported:
+                    type: array
+                    items:
+                      type: string
+                  code_challenge_methods_supported:
+                    type: array
+                    items:
+                      type: string
+
+  /.well-known/jwks.json:
+    get:
+      tags: [OIDC Discovery]
+      summary: JSON Web Key Set
+      operationId: getJWKS
+      security: []
+      responses:
+        '200':
+          description: Public keys for JWT verification
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty:
+                          type: string
+                        use:
+                          type: string
+                        n:
+                          type: string
+                        e:
+                          type: string
+                        alg:
+                          type: string
+                        kid:
+                          type: string
+
+  # --- Authorization ---
+  /oauth/authorize:
+    get:
+      tags: [Authorization]
+      summary: Authorization endpoint
+      operationId: authorize
+      security: []
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+        - name: scope
+          in: query
+          schema:
+            type: string
+            example: openid profile email
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          schema:
+            type: string
+            enum: [S256]
+      responses:
+        '302':
+          description: Redirect to login page
+        '400':
+          description: Invalid request
+    post:
+      tags: [Authorization]
+      summary: Authorization consent
+      operationId: authorizeConsent
+      security: []
+      responses:
+        '302':
+          description: Redirect to client with code
+
+  /oauth/login:
+    post:
+      tags: [Authorization]
+      summary: Resource owner login
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username, password, login_session]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                login_session:
+                  type: string
+      responses:
+        '302':
+          description: Redirect to callback with authorization code
+        '401':
+          description: Invalid credentials
+
+  /oauth/callback:
+    get:
+      tags: [Authorization]
+      summary: OAuth callback handler
+      operationId: callback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to application
+
+  # --- Token ---
+  /oauth/token:
+    post:
+      tags: [Token]
+      summary: Token endpoint
+      operationId: token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code, refresh_token, client_credentials]
+                code:
+                  type: string
+                  description: Required for authorization_code grant
+                redirect_uri:
+                  type: string
+                  description: Required for authorization_code grant
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                refresh_token:
+                  type: string
+                  description: Required for refresh_token grant
+                code_verifier:
+                  type: string
+                  description: PKCE code verifier
+                scope:
+                  type: string
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request
+        '401':
+          description: Invalid client credentials
+
+  /oauth/introspect:
+    post:
+      tags: [Token]
+      summary: Token introspection
+      operationId: introspect
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                token_type_hint:
+                  type: string
+                  enum: [access_token, refresh_token]
+      responses:
+        '200':
+          description: Token introspection result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: boolean
+                  scope:
+                    type: string
+                  client_id:
+                    type: string
+                  sub:
+                    type: string
+                  exp:
+                    type: integer
+                  iat:
+                    type: integer
+                  iss:
+                    type: string
+                  token_type:
+                    type: string
+
+  /oauth/revoke:
+    post:
+      tags: [Token]
+      summary: Token revocation
+      operationId: revoke
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                token_type_hint:
+                  type: string
+                  enum: [access_token, refresh_token]
+      responses:
+        '200':
+          description: Token revoked
+
+  # --- UserInfo ---
+  /oauth/userinfo:
+    get:
+      tags: [UserInfo]
+      summary: Get user info (GET)
+      operationId: getUserInfoGet
+      responses:
+        '200':
+          description: User profile claims
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+    post:
+      tags: [UserInfo]
+      summary: Get user info (POST)
+      operationId: getUserInfoPost
+      responses:
+        '200':
+          description: User profile claims
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+
+  # --- Client Management ---
+  /api/v1/oauth/clients:
+    get:
+      tags: [Client Management]
+      summary: List OAuth clients
+      operationId: listClients
+      responses:
+        '200':
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OAuthClient'
+    post:
+      tags: [Client Management]
+      summary: Create OAuth client
+      operationId: createClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthClientCreate'
+      responses:
+        '201':
+          description: Client created (includes client_secret)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthClient'
+
+  /api/v1/oauth/clients/{id}:
+    get:
+      tags: [Client Management]
+      summary: Get OAuth client
+      operationId: getClient
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Client details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthClient'
+    put:
+      tags: [Client Management]
+      summary: Update OAuth client
+      operationId: updateClient
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthClientCreate'
+      responses:
+        '200':
+          description: Client updated
+    delete:
+      tags: [Client Management]
+      summary: Delete OAuth client
+      operationId: deleteClient
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Client deleted
+
+  /api/v1/oauth/clients/{id}/regenerate-secret:
+    post:
+      tags: [Client Management]
+      summary: Regenerate client secret
+      operationId: regenerateClientSecret
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: New secret generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_secret:
+                    type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Seconds until expiration
+        refresh_token:
+          type: string
+        scope:
+          type: string
+        id_token:
+          type: string
+          description: OIDC ID token (when openid scope requested)
+
+    UserInfo:
+      type: object
+      properties:
+        sub:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        email_verified:
+          type: boolean
+        preferred_username:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+
+    OAuthClient:
+      type: object
+      properties:
+        id:
+          type: string
+        client_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        client_type:
+          type: string
+          enum: [public, confidential]
+        redirect_uris:
+          type: array
+          items:
+            type: string
+        grant_types:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        require_pkce:
+          type: boolean
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    OAuthClientCreate:
+      type: object
+      required: [name, client_type, redirect_uris]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        client_type:
+          type: string
+          enum: [public, confidential]
+        redirect_uris:
+          type: array
+          items:
+            type: string
+        grant_types:
+          type: array
+          items:
+            type: string
+          default: [authorization_code]
+        scopes:
+          type: array
+          items:
+            type: string
+          default: [openid, profile, email]
+        require_pkce:
+          type: boolean
+          default: false
+        enabled:
+          type: boolean
+          default: true

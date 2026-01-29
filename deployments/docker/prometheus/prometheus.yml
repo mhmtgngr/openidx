@@ -1,0 +1,57 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'identity-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['identity-service:8001']
+        labels:
+          service: identity-service
+
+  - job_name: 'governance-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['governance-service:8002']
+        labels:
+          service: governance-service
+
+  - job_name: 'provisioning-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['provisioning-service:8003']
+        labels:
+          service: provisioning-service
+
+  - job_name: 'audit-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['audit-service:8004']
+        labels:
+          service: audit-service
+
+  - job_name: 'admin-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['admin-api:8005']
+        labels:
+          service: admin-api
+
+  - job_name: 'oauth-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['oauth-service:8006']
+        labels:
+          service: oauth-service
+
+  - job_name: 'gateway-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['gateway-service:8080']
+        labels:
+          service: gateway-service
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

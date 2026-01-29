@@ -17,6 +17,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/oauth"
 )
@@ -81,6 +82,10 @@ func main() {
 
 		c.Next()
 	})
+	router.Use(middleware.PrometheusMetrics("oauth-service"))
+
+	// Metrics endpoint
+	router.GET("/metrics", middleware.MetricsHandler())
 
 	// Initialize Identity service
 	identityService := identity.NewService(db, redis, cfg, log)

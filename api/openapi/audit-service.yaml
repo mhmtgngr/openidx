@@ -1,0 +1,417 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Audit Service
+  description: Audit event logging, compliance reporting, and export.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8004
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Audit Events
+  - name: Statistics
+  - name: Compliance Reports
+  - name: Export
+
+paths:
+  /api/v1/audit/events:
+    get:
+      tags: [Audit Events]
+      summary: List audit events
+      operationId: listEvents
+      parameters:
+        - name: event_type
+          in: query
+          schema:
+            type: string
+            enum: [authentication, authorization, user_management, group_management, role_management, configuration, data_access, system]
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [security, compliance, operational, access]
+        - name: outcome
+          in: query
+          schema:
+            type: string
+            enum: [success, failure, pending]
+        - name: actor_id
+          in: query
+          schema:
+            type: string
+        - name: target_id
+          in: query
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Paginated list of audit events
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+    post:
+      tags: [Audit Events]
+      summary: Log an audit event
+      operationId: logEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditEventCreate'
+      responses:
+        '201':
+          description: Event logged
+
+  /api/v1/audit/events/{id}:
+    get:
+      tags: [Audit Events]
+      summary: Get audit event
+      operationId: getEvent
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Event details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEvent'
+        '404':
+          description: Event not found
+
+  /api/v1/audit/statistics:
+    get:
+      tags: [Statistics]
+      summary: Get audit statistics
+      operationId: getStatistics
+      parameters:
+        - name: period
+          in: query
+          description: Time period for statistics
+          schema:
+            type: string
+            enum: [24h, 7d, 30d, 90d]
+            default: 30d
+      responses:
+        '200':
+          description: Audit statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditStatistics'
+
+  /api/v1/audit/reports:
+    get:
+      tags: [Compliance Reports]
+      summary: List compliance reports
+      operationId: listReports
+      responses:
+        '200':
+          description: List of reports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ComplianceReport'
+    post:
+      tags: [Compliance Reports]
+      summary: Generate compliance report
+      operationId: generateReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type, framework, start_date, end_date]
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum: [soc2, iso27001, gdpr, hipaa, pci_dss, custom]
+                framework:
+                  type: string
+                start_date:
+                  type: string
+                  format: date-time
+                end_date:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Report generation started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceReport'
+
+  /api/v1/audit/reports/{id}:
+    get:
+      tags: [Compliance Reports]
+      summary: Get compliance report
+      operationId: getReport
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Report details with findings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceReport'
+
+  /api/v1/audit/reports/{id}/download:
+    get:
+      tags: [Compliance Reports]
+      summary: Download report as PDF
+      operationId: downloadReport
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Report PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /api/v1/audit/export:
+    post:
+      tags: [Export]
+      summary: Export audit events
+      operationId: exportEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [csv, json]
+                  default: csv
+                start_time:
+                  type: string
+                  format: date-time
+                end_time:
+                  type: string
+                  format: date-time
+                event_type:
+                  type: string
+      responses:
+        '200':
+          description: Exported events
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          enum: [authentication, authorization, user_management, group_management, role_management, configuration, data_access, system]
+        category:
+          type: string
+          enum: [security, compliance, operational, access]
+        action:
+          type: string
+        outcome:
+          type: string
+          enum: [success, failure, pending]
+        actor_id:
+          type: string
+        actor_type:
+          type: string
+        actor_ip:
+          type: string
+        target_id:
+          type: string
+        target_type:
+          type: string
+        resource_id:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        session_id:
+          type: string
+        request_id:
+          type: string
+
+    AuditEventCreate:
+      type: object
+      required: [event_type, category, action, outcome]
+      properties:
+        event_type:
+          type: string
+          enum: [authentication, authorization, user_management, group_management, role_management, configuration, data_access, system]
+        category:
+          type: string
+          enum: [security, compliance, operational, access]
+        action:
+          type: string
+        outcome:
+          type: string
+          enum: [success, failure, pending]
+        actor_id:
+          type: string
+        actor_type:
+          type: string
+        actor_ip:
+          type: string
+        target_id:
+          type: string
+        target_type:
+          type: string
+        resource_id:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    AuditStatistics:
+      type: object
+      properties:
+        total_events:
+          type: integer
+        events_by_type:
+          type: object
+          additionalProperties:
+            type: integer
+        events_by_outcome:
+          type: object
+          additionalProperties:
+            type: integer
+        events_by_day:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              count:
+                type: integer
+
+    ComplianceReport:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [soc2, iso27001, gdpr, hipaa, pci_dss, custom]
+        framework:
+          type: string
+        status:
+          type: string
+          enum: [pending, generating, completed, failed]
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        generated_at:
+          type: string
+          format: date-time
+        generated_by:
+          type: string
+        summary:
+          type: object
+          properties:
+            total_controls:
+              type: integer
+            passed_controls:
+              type: integer
+            failed_controls:
+              type: integer
+            partial_controls:
+              type: integer
+            not_applicable:
+              type: integer
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              control_id:
+                type: string
+              control_name:
+                type: string
+              status:
+                type: string
+                enum: [passed, failed, partial, not_applicable]
+              evidence:
+                type: string
+              remediation:
+                type: string

@@ -3,6 +3,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,8 +25,9 @@ type Dashboard struct {
 	ActiveSessions   int                 `json:"active_sessions"`
 	PendingReviews   int                 `json:"pending_reviews"`
 	SecurityAlerts   int                 `json:"security_alerts"`
-	RecentActivity   []ActivityItem      `json:"recent_activity"`
-	AuthStats        AuthStatistics      `json:"auth_stats"`
+	RecentActivity       []ActivityItem       `json:"recent_activity"`
+	AuthStats            AuthStatistics       `json:"auth_stats"`
+	SecurityAlertDetails []SecurityAlertDetail `json:"security_alert_details"`
 }
 
 // ActivityItem represents recent activity
@@ -54,6 +56,13 @@ type DayStats struct {
 	Count  int    `json:"count"`
 }
 
+// SecurityAlertDetail represents a security alert detail
+type SecurityAlertDetail struct {
+	Message   string    `json:"message"`
+	Count     int       `json:"count"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // Application represents a registered application/client
 type Application struct {
 	ID            string    `json:"id"`
@@ -80,6 +89,19 @@ type ApplicationSSOSettings struct {
 	RequireConsent         bool      `json:"require_consent"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
+}
+
+// DirectoryIntegration represents an external directory sync configuration
+type DirectoryIntegration struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"` // ldap, azure_ad, google
+	Config     map[string]interface{} `json:"config"`
+	Enabled    bool                   `json:"enabled"`
+	LastSyncAt *time.Time             `json:"last_sync_at,omitempty"`
+	SyncStatus string                 `json:"sync_status"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
 }
 
 // Settings represents system settings
@@ -161,15 +183,19 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	s.logger.Debug("Getting dashboard statistics")
 
-	var totalUsers, activeUsers, totalGroups, totalApps, activeSessions, pendingReviews int
+	var totalUsers, activeUsers, totalGroups, totalApps, activeSessions, pendingReviews, securityAlerts int
 
-	// Get real counts from database
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&activeUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&totalGroups)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalApps)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()").Scan(&activeSessions)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')").Scan(&pendingReviews)
+	// Get all dashboard counts in a single query
+	s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users),
+			(SELECT COUNT(*) FROM users WHERE enabled = true),
+			(SELECT COUNT(*) FROM groups),
+			(SELECT COUNT(*) FROM applications),
+			(SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()),
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')),
+			(SELECT COUNT(*) FROM audit_events WHERE outcome = 'failure' AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '24 hours')
+	`).Scan(&totalUsers, &activeUsers, &totalGroups, &totalApps, &activeSessions, &pendingReviews, &securityAlerts)
 
 	// Get recent activity from audit events
 	var recentActivity []ActivityItem
@@ -195,28 +221,113 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 		TotalApplications: totalApps,
 		ActiveSessions:    activeSessions,
 		PendingReviews:    pendingReviews,
-		SecurityAlerts:    0,
+		SecurityAlerts:    securityAlerts,
 		RecentActivity:    recentActivity,
-		AuthStats: AuthStatistics{
-			TotalLogins:      100,
-			SuccessfulLogins: 95,
-			FailedLogins:     5,
-			MFAUsage:         50,
-			LoginsByMethod: map[string]int{
-				"password": 80,
-				"sso":      15,
-				"mfa":      5,
-			},
-		},
+		AuthStats: s.getAuthStatistics(ctx),
 	}
 
+	// Get top 5 failed auth attempts grouped by actor
+	var alertDetails []SecurityAlertDetail
+	alertRows, err := s.db.Pool.Query(ctx, `
+		SELECT COALESCE(actor_id, 'unknown') as actor, COUNT(*) as cnt, MAX(timestamp) as latest
+		FROM audit_events
+		WHERE outcome = 'failure' AND event_type = 'authentication'
+		AND timestamp > NOW() - INTERVAL '24 hours'
+		GROUP BY actor_id
+		ORDER BY cnt DESC
+		LIMIT 5
+	`)
+	if err == nil {
+		defer alertRows.Close()
+		for alertRows.Next() {
+			var detail SecurityAlertDetail
+			var actor string
+			alertRows.Scan(&actor, &detail.Count, &detail.Timestamp)
+			detail.Message = fmt.Sprintf("Failed login attempts from %s", actor)
+			alertDetails = append(alertDetails, detail)
+		}
+	}
+	dashboard.SecurityAlertDetails = alertDetails
+
 	return dashboard, nil
+}
+
+// getAuthStatistics queries real authentication statistics from audit_events
+func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
+	stats := AuthStatistics{
+		LoginsByMethod: make(map[string]int),
+	}
+
+	s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
+	`).Scan(&stats.TotalLogins)
+
+	s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE event_type = 'authentication' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
+	`).Scan(&stats.SuccessfulLogins)
+
+	s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE event_type = 'authentication' AND outcome = 'failure' AND timestamp > NOW() - INTERVAL '30 days'
+	`).Scan(&stats.FailedLogins)
+
+	s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE event_type = 'mfa_verification' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
+	`).Scan(&stats.MFAUsage)
+
+	// Logins by method
+	methodRows, err := s.db.Pool.Query(ctx, `
+		SELECT COALESCE(action, 'unknown'), COUNT(*) FROM audit_events
+		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
+		GROUP BY action
+	`)
+	if err == nil {
+		defer methodRows.Close()
+		for methodRows.Next() {
+			var method string
+			var count int
+			methodRows.Scan(&method, &count)
+			stats.LoginsByMethod[method] = count
+		}
+	}
+
+	// Logins by day (last 7 days)
+	dayRows, err := s.db.Pool.Query(ctx, `
+		SELECT DATE(timestamp)::text, COUNT(*) FROM audit_events
+		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '7 days'
+		GROUP BY DATE(timestamp)
+		ORDER BY DATE(timestamp)
+	`)
+	if err == nil {
+		defer dayRows.Close()
+		for dayRows.Next() {
+			var ds DayStats
+			dayRows.Scan(&ds.Date, &ds.Count)
+			stats.LoginsByDay = append(stats.LoginsByDay, ds)
+		}
+	}
+
+	return stats
 }
 
 // GetSettings returns system settings
 func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 	s.logger.Debug("Getting system settings")
-	
+
+	var valueBytes []byte
+	err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'system'").Scan(&valueBytes)
+	if err == nil {
+		var settings Settings
+		if jsonErr := json.Unmarshal(valueBytes, &settings); jsonErr == nil {
+			return &settings, nil
+		}
+		s.logger.Warn("Failed to unmarshal settings from database, using defaults", zap.Error(err))
+	}
+
+	// Fall back to defaults
 	settings := &Settings{
 		General: GeneralSettings{
 			OrganizationName: "OpenIDX",
@@ -257,7 +368,21 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 // UpdateSettings updates system settings
 func (s *Service) UpdateSettings(ctx context.Context, settings *Settings) error {
 	s.logger.Info("Updating system settings")
-	// Store settings in database
+
+	valueBytes, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO system_settings (key, value, updated_at)
+		VALUES ('system', $1, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+	`, valueBytes)
+	if err != nil {
+		return fmt.Errorf("failed to save settings: %w", err)
+	}
+
 	return nil
 }
 
@@ -306,6 +431,12 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		}
 	}
 
+	if enabled, ok := updates["enabled"].(bool); ok {
+		setParts = append(setParts, "enabled = $"+fmt.Sprintf("%d", argCount))
+		args = append(args, enabled)
+		argCount++
+	}
+
 	if len(setParts) == 0 {
 		return fmt.Errorf("no valid fields to update")
 	}
@@ -323,18 +454,36 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 	return nil
 }
 
-// ListApplications returns all registered applications
-func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
+// ListApplications returns registered applications with optional pagination
+func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Application, int, error) {
 	s.logger.Debug("Listing applications")
 
-	rows, err := s.db.Pool.Query(ctx, `
+	var totalCount int
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalCount)
+
+	query := `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
 		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
 		FROM applications
 		ORDER BY name
-	`)
+	`
+	args := []interface{}{}
+	argCount := 1
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, limit)
+		argCount++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argCount)
+		args = append(args, offset)
+		argCount++
+	}
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -345,19 +494,36 @@ func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		apps = append(apps, app)
 	}
 
-	return apps, nil
+	return apps, totalCount, nil
 }
 
 // CreateApplication creates a new application
 func (s *Service) CreateApplication(ctx context.Context, app *Application) error {
 	s.logger.Info("Creating application", zap.String("name", app.Name))
+
+	if app.ID == "" {
+		app.ID = uuid.New().String()
+	}
+	if app.ClientID == "" {
+		app.ClientID = uuid.New().String()
+	}
 	app.CreatedAt = time.Now()
 	app.UpdatedAt = time.Now()
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, app.ID, app.ClientID, app.Name, app.Description, app.Type, app.Protocol,
+		app.BaseURL, app.RedirectURIs, app.Enabled, app.CreatedAt, app.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create application: %w", err)
+	}
+
 	return nil
 }
 
@@ -497,11 +663,21 @@ func (s *Service) handleUpdateSettings(c *gin.Context) {
 }
 
 func (s *Service) handleListApplications(c *gin.Context) {
-	apps, err := s.ListApplications(c.Request.Context())
+	offset := 0
+	limit := 0
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
+	apps, totalCount, err := s.ListApplications(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	c.Header("X-Total-Count", fmt.Sprintf("%d", totalCount))
 	c.JSON(200, apps)
 }
 
@@ -518,7 +694,23 @@ func (s *Service) handleCreateApplication(c *gin.Context) {
 	c.JSON(201, app)
 }
 
-func (s *Service) handleGetApplication(c *gin.Context)    { c.JSON(200, Application{}) }
+func (s *Service) handleGetApplication(c *gin.Context) {
+	id := c.Param("id")
+	var app Application
+	err := s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
+		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
+		FROM applications WHERE id = $1
+	`, id).Scan(
+		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
+		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
+	)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "Application not found"})
+		return
+	}
+	c.JSON(200, app)
+}
 func (s *Service) handleUpdateApplication(c *gin.Context) {
 	id := c.Param("id")
 	var updates map[string]interface{}
@@ -534,14 +726,128 @@ func (s *Service) handleUpdateApplication(c *gin.Context) {
 
 	c.JSON(200, gin.H{"message": "Application updated successfully"})
 }
-func (s *Service) handleDeleteApplication(c *gin.Context) { c.JSON(204, nil) }
+func (s *Service) handleDeleteApplication(c *gin.Context) {
+	id := c.Param("id")
+	result, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM applications WHERE id = $1", id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete application"})
+		return
+	}
+	if result.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"error": "Application not found"})
+		return
+	}
+	c.JSON(204, nil)
+}
 
-func (s *Service) handleListDirectories(c *gin.Context)   { c.JSON(200, []gin.H{}) }
-func (s *Service) handleCreateDirectory(c *gin.Context)   { c.JSON(201, gin.H{}) }
-func (s *Service) handleSyncDirectory(c *gin.Context)     { c.JSON(200, gin.H{"status": "syncing"}) }
+func (s *Service) handleListDirectories(c *gin.Context) {
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT id, name, type, config, enabled, last_sync_at, sync_status, created_at, updated_at
+		FROM directory_integrations ORDER BY name
+	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to list directories"})
+		return
+	}
+	defer rows.Close()
 
-func (s *Service) handleListMFAMethods(c *gin.Context)    { c.JSON(200, []string{"totp", "webauthn", "sms"}) }
-func (s *Service) handleUpdateMFAMethods(c *gin.Context)  { c.JSON(200, gin.H{"status": "updated"}) }
+	var dirs []DirectoryIntegration
+	for rows.Next() {
+		var d DirectoryIntegration
+		var configBytes []byte
+		if err := rows.Scan(&d.ID, &d.Name, &d.Type, &configBytes, &d.Enabled, &d.LastSyncAt, &d.SyncStatus, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			continue
+		}
+		json.Unmarshal(configBytes, &d.Config)
+		dirs = append(dirs, d)
+	}
+	if dirs == nil {
+		dirs = []DirectoryIntegration{}
+	}
+	c.JSON(200, dirs)
+}
+
+func (s *Service) handleCreateDirectory(c *gin.Context) {
+	var dir DirectoryIntegration
+	if err := c.ShouldBindJSON(&dir); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	dir.ID = uuid.New().String()
+	dir.SyncStatus = "never"
+	dir.CreatedAt = time.Now()
+	dir.UpdatedAt = time.Now()
+
+	configBytes, _ := json.Marshal(dir.Config)
+
+	_, err := s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO directory_integrations (id, name, type, config, enabled, sync_status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, dir.ID, dir.Name, dir.Type, configBytes, dir.Enabled, dir.SyncStatus, dir.CreatedAt, dir.UpdatedAt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create directory integration"})
+		return
+	}
+
+	c.JSON(201, dir)
+}
+
+func (s *Service) handleSyncDirectory(c *gin.Context) {
+	id := c.Param("id")
+	result, err := s.db.Pool.Exec(c.Request.Context(), `
+		UPDATE directory_integrations SET sync_status = 'syncing', last_sync_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to trigger sync"})
+		return
+	}
+	if result.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"error": "Directory integration not found"})
+		return
+	}
+	c.JSON(200, gin.H{"status": "syncing"})
+}
+
+func (s *Service) handleListMFAMethods(c *gin.Context) {
+	var valueBytes []byte
+	err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT value FROM system_settings WHERE key = 'mfa_methods'").Scan(&valueBytes)
+	if err == nil {
+		var methods []string
+		if json.Unmarshal(valueBytes, &methods) == nil {
+			c.JSON(200, methods)
+			return
+		}
+	}
+	c.JSON(200, []string{"totp", "webauthn", "sms"})
+}
+
+func (s *Service) handleUpdateMFAMethods(c *gin.Context) {
+	var methods []string
+	if err := c.ShouldBindJSON(&methods); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body, expected array of strings"})
+		return
+	}
+
+	valueBytes, err := json.Marshal(methods)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to marshal methods"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO system_settings (key, value, updated_at)
+		VALUES ('mfa_methods', $1, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+	`, valueBytes)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to save MFA methods"})
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "updated", "methods": methods})
+}
 
 func (s *Service) handleGetApplicationSSOSettings(c *gin.Context) {
 	applicationID := c.Param("id")
