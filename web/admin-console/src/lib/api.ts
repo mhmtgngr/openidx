@@ -1,5 +1,28 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios'
 
+export interface UserProfile {
+  id: string
+  username: string
+  email: string
+  firstName: string
+  lastName: string
+  enabled: boolean
+  emailVerified: boolean
+  createdAt: string
+  mfaEnabled: boolean
+  mfaMethods: string[]
+}
+
+export interface MFASetupResponse {
+  secret: string
+  qrCodeUrl: string
+}
+
+export interface MFAEnableResponse {
+  status: string
+  backupCodes: string[]
+}
+
 export interface IdentityProvider {
   id: string;
   name: string;
@@ -11,6 +34,31 @@ export interface IdentityProvider {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface RuleCondition {
+  field: string
+  operator: string
+  value: string
+}
+
+export interface RuleAction {
+  type: string
+  target: string
+  parameters?: Record<string, unknown>
+}
+
+export interface ProvisioningRule {
+  id: string
+  name: string
+  description: string
+  trigger: string
+  conditions: RuleCondition[]
+  actions: RuleAction[]
+  enabled: boolean
+  priority: number
+  created_at: string
+  updated_at: string
 }
 
 export const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
@@ -99,6 +147,23 @@ export const api = {
 
   deleteIdentityProvider: async (id: string): Promise<void> => {
     await api.delete<void>(`/api/v1/identity/providers/${id}`);
+  },
+
+  // Provisioning Rules API
+  getProvisioningRules: async (): Promise<ProvisioningRule[]> => {
+    return api.get<ProvisioningRule[]>('/api/v1/provisioning/rules')
+  },
+
+  createProvisioningRule: async (data: Omit<ProvisioningRule, 'id' | 'created_at' | 'updated_at'>): Promise<ProvisioningRule> => {
+    return api.post<ProvisioningRule>('/api/v1/provisioning/rules', data)
+  },
+
+  updateProvisioningRule: async (id: string, data: Partial<ProvisioningRule>): Promise<ProvisioningRule> => {
+    return api.put<ProvisioningRule>(`/api/v1/provisioning/rules/${id}`, data)
+  },
+
+  deleteProvisioningRule: async (id: string): Promise<void> => {
+    await api.delete<void>(`/api/v1/provisioning/rules/${id}`)
   },
 }
 

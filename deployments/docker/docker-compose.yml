@@ -170,6 +170,8 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
       - KEYCLOAK_URL=http://keycloak:8180
       - OPA_URL=http://opa:8181
+      - OAUTH_ISSUER=http://localhost:8006
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8001:8001"
@@ -268,6 +270,39 @@ services:
       - openidx-network
 
   #---------------------------------------------------------------------------
+  # OAuth/OIDC Service - OpenIDX Native OAuth Provider
+  #---------------------------------------------------------------------------
+
+  oauth-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.oauth-service
+    container_name: openidx-oauth-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - LOG_LEVEL=debug
+      - JWT_SECRET=${JWT_SECRET:-openidx_jwt_secret_key_change_in_production}
+      - ISSUER_URL=http://localhost:8006
+      - PORT=8006
+    ports:
+      - "8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8006/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
   # Admin Console - React Frontend
   #---------------------------------------------------------------------------
   
@@ -277,20 +312,20 @@ services:
       dockerfile: ../../deployments/docker/Dockerfile.admin-console
       args:
         - VITE_API_URL=http://localhost:8088
-        - VITE_KEYCLOAK_URL=http://localhost:8180
-        - VITE_KEYCLOAK_REALM=openidx
-        - VITE_KEYCLOAK_CLIENT_ID=admin-console
+        - VITE_OAUTH_URL=http://localhost:8006
+        - VITE_OAUTH_CLIENT_ID=admin-console
+        - VITE_AUTH_PROVIDER=openidx
     container_name: openidx-admin-console
     environment:
       - VITE_API_URL=http://localhost:8088
-      - VITE_KEYCLOAK_URL=http://localhost:8180
-      - VITE_KEYCLOAK_REALM=openidx
-      - VITE_KEYCLOAK_CLIENT_ID=admin-console
+      - VITE_OAUTH_URL=http://localhost:8006
+      - VITE_OAUTH_CLIENT_ID=admin-console
+      - VITE_AUTH_PROVIDER=openidx
     ports:
       - "3000:3000"
     depends_on:
       - admin-api
-      - keycloak
+      - oauth-service
     networks:
       - openidx-network
 

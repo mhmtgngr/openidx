@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Shield, AlertCircle, Loader2, Globe } from 'lucide-react'
+import { Shield, AlertCircle, Loader2, Globe, ArrowLeft } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
-import { useAuth } from '../lib/auth'
+import { Input } from '../components/ui/input'
+import { Label } from '../components/ui/label'
+import { useAuth, generateCodeVerifier, generateCodeChallenge, OAUTH_URL, OAUTH_CLIENT_ID } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
-import { useToast } from '../hooks/use-toast'
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -13,7 +14,23 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [identityProviders, setIdentityProviders] = useState<IdentityProvider[]>([])
   const [loadingIdPs, setLoadingIdPs] = useState(true)
-  const { toast } = useToast()
+
+  // Login form state
+  const [loginSession, setLoginSession] = useState<string | null>(null)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Check for login_session parameter on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const session = urlParams.get('login_session')
+    if (session) {
+      setLoginSession(session)
+      // Clear the URL parameter without reloading
+      window.history.replaceState({}, '', '/login')
+    }
+  }, [])
 
   // If already authenticated, redirect to dashboard
   useEffect(() => {
@@ -30,18 +47,14 @@ export function LoginPage() {
         const data = await api.getIdentityProviders()
         setIdentityProviders(data.filter(idp => idp.enabled)) // Only show enabled IdPs
       } catch (err) {
-        toast({
-          title: "Error",
-          description: "Failed to load external identity providers.",
-          variant: "destructive",
-        });
+        // Silent failure - IdPs are optional
         console.error("Failed to fetch identity providers:", err);
       } finally {
         setLoadingIdPs(false)
       }
     }
     fetchIdPs()
-  }, [toast])
+  }, [])
 
   // Check for OAuth callback parameters and handle authentication
   useEffect(() => {
@@ -49,8 +62,7 @@ export function LoginPage() {
     const hasOAuthParams = urlParams.has('code') || urlParams.has('state') || urlParams.has('session_state')
 
     if (hasOAuthParams && !isLoading) {
-      // OAuth callback - Keycloak will handle this automatically via the auth provider
-      // Just wait for authentication state to update
+      // OAuth callback - the auth provider will handle this
       const timer = setTimeout(() => {
         if (!isAuthenticated) {
           setError('Authentication failed. Please try again.')
@@ -61,19 +73,187 @@ export function LoginPage() {
     }
   }, [isAuthenticated, isLoading])
 
-  const handleKeycloakLogin = () => {
+  const { authProvider } = useAuth()
+
+  const handleLogin = async () => {
     setError('')
-    login() // This is the existing Keycloak login
+    if (authProvider === 'openidx') {
+      // Start OpenIDX OAuth PKCE flow
+      const codeVerifier = generateCodeVerifier()
+      sessionStorage.setItem('pkce_code_verifier', codeVerifier)
+      
+      const codeChallenge = await generateCodeChallenge(codeVerifier)
+      
+      const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
+      authUrl.searchParams.set('response_type', 'code')
+      authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
+      authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
+      authUrl.searchParams.set('scope', 'openid profile email')
+      authUrl.searchParams.set('code_challenge', codeChallenge)
+      authUrl.searchParams.set('code_challenge_method', 'S256')
+      
+      window.location.href = authUrl.toString()
+    } else {
+      login()
+    }
   }
 
   const handleSSOLogin = (idp: IdentityProvider) => {
     setError('')
-    // Construct the redirect URL to our OAuth service's authorize endpoint
-    // with idp_hint set to the external IdP's ID
     const redirectUrl = `${baseURL}/oauth/authorize?response_type=code&client_id=admin-console&redirect_uri=${window.location.origin}/login&scope=openid%20profile%20email&idp_hint=${idp.id}`
     window.location.href = redirectUrl
   }
 
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setIsSubmitting(true)
+
+    try {
+      const response = await fetch(`${baseURL}/oauth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username,
+          password,
+          login_session: loginSession,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error_description || 'Login failed. Please try again.')
+        return
+      }
+
+      // Redirect to the URL with the authorization code
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url
+      }
+    } catch (err) {
+      setError('Unable to connect to the server. Please try again.')
+      console.error('Login error:', err)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleBackToOptions = () => {
+    setLoginSession(null)
+    setUsername('')
+    setPassword('')
+    setError('')
+  }
+
+  // Show login form when login_session is present
+  if (loginSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+                <Shield className="h-9 w-9 text-white" />
+              </div>
+            </div>
+            <div>
+              <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                OpenIDX
+              </CardTitle>
+              <CardDescription className="text-base mt-2">
+                Sign in with your credentials
+              </CardDescription>
+            </div>
+          </CardHeader>
+
+          <CardContent>
+            <form onSubmit={handleCredentialsSubmit} className="space-y-4">
+              {error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                  <p className="text-sm text-red-600">{error}</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="username">Username or Email</Label>
+                <Input
+                  id="username"
+                  type="text"
+                  placeholder="Enter your username or email"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  autoComplete="username"
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                size="lg"
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing in...
+                  </span>
+                ) : (
+                  'Sign In'
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={handleBackToOptions}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to login options
+              </Button>
+            </form>
+          </CardContent>
+
+          <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-lg">
+            <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+              <span>Privacy</span>
+              <span>•</span>
+              <span>Terms</span>
+              <span>•</span>
+              <span>Help</span>
+            </div>
+          </div>
+        </Card>
+
+        <div className="absolute bottom-4 text-center w-full">
+          <p className="text-sm text-gray-500">
+            Powered by <span className="font-semibold text-gray-700">OpenIDX</span>
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show login options (SSO + OpenIDX button)
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       <Card className="w-full max-w-md shadow-xl">
@@ -135,7 +315,7 @@ export function LoginPage() {
                 </div>}
 
                 <Button
-                  onClick={handleKeycloakLogin}
+                  onClick={handleLogin}
                   className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                   size="lg"
                   disabled={isLoading}
@@ -146,7 +326,7 @@ export function LoginPage() {
                       Signing in...
                     </span>
                   ) : (
-                    'Sign in with Keycloak'
+                    authProvider === 'openidx' ? 'Sign in with OpenIDX' : 'Sign in with Keycloak'
                   )}
                 </Button>
               </>
@@ -155,7 +335,7 @@ export function LoginPage() {
 
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              Secured by Keycloak authentication
+              Secured by {authProvider === 'openidx' ? 'OpenIDX' : 'Keycloak'} authentication
             </p>
           </div>
         </CardContent>

@@ -18,7 +18,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -216,6 +215,8 @@ func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 // GetClient retrieves an OAuth client by client ID
 func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient, error) {
 	var client OAuthClient
+	// Use pointers to handle NULL values
+	var clientSecret, logoURI, policyURI, tosURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
 
 	err := s.db.Pool.QueryRow(ctx, `
@@ -226,15 +227,29 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 		       created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1
 	`, clientID).Scan(
-		&client.ID, &client.ClientID, &client.ClientSecret, &client.Name, &client.Description,
+		&client.ID, &client.ClientID, &clientSecret, &client.Name, &client.Description,
 		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
-		&client.LogoURI, &client.PolicyURI, &client.TOSUri, &client.PKCERequired,
+		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
 		&client.CreatedAt, &client.UpdatedAt,
 	)
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Handle NULL values
+	if clientSecret != nil {
+		client.ClientSecret = *clientSecret
+	}
+	if logoURI != nil {
+		client.LogoURI = *logoURI
+	}
+	if policyURI != nil {
+		client.PolicyURI = *policyURI
+	}
+	if tosURI != nil {
+		client.TOSUri = *tosURI
 	}
 
 	json.Unmarshal(redirectURIsJSON, &client.RedirectURIs)
@@ -421,6 +436,25 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 // GenerateJWT generates a signed JWT access token
 func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (string, error) {
 	now := time.Now()
+
+	// Get user roles
+	var roleNames []string
+	rows, err := s.db.Pool.Query(context.Background(), `
+		SELECT r.name
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err == nil {
+				roleNames = append(roleNames, roleName)
+			}
+		}
+	}
+
 	claims := jwt.MapClaims{
 		"sub":       userID,
 		"client_id": clientID,
@@ -428,6 +462,7 @@ func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (st
 		"iss":       s.issuer,
 		"iat":       now.Unix(),
 		"exp":       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		"roles":     roleNames,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -449,6 +484,24 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 		name = firstName + " " + lastName
 	}
 
+	// Get user roles
+	var roleNames []string
+	rows, err := s.db.Pool.Query(context.Background(), `
+		SELECT r.name
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var roleName string
+			if err := rows.Scan(&roleName); err == nil {
+				roleNames = append(roleNames, roleName)
+			}
+		}
+	}
+
 	claims := jwt.MapClaims{
 		"sub":        userID,
 		"aud":        clientID,
@@ -459,6 +512,7 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 		"name":       name,
 		"given_name": firstName,
 		"family_name": lastName,
+		"roles":      roleNames,
 	}
 
 	if nonce != "" {
@@ -533,6 +587,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		oauth.GET("/authorize", svc.handleAuthorize)
 		oauth.POST("/authorize", svc.handleAuthorizeConsent)
 
+		// Login endpoint for direct authentication
+		oauth.POST("/login", svc.handleLogin)
+
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
 
@@ -557,6 +614,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		clients.PUT("/:id", svc.handleUpdateClient)
 		clients.DELETE("/:id", svc.handleDeleteClient)
 	}
+
+	// SAML Service Provider endpoints
+	svc.RegisterSAMLRoutes(router)
 }
 
 func (s *Service) handleDiscovery(c *gin.Context) {
@@ -580,9 +640,9 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 }
 
 func (s *Service) handleJWKS(c *gin.Context) {
-	// Convert RSA public key to JWK
-	n := base64.URLEncoding.EncodeToString(s.publicKey.N.Bytes())
-	e := base64.URLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
+	// Convert RSA public key to JWK (base64url without padding per RFC 7517)
+	n := base64.RawURLEncoding.EncodeToString(s.publicKey.N.Bytes())
+	e := base64.RawURLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
 
 	jwks := JWKS{
 		Keys: []JWK{
@@ -604,14 +664,15 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	idpHint := c.Query("idp_hint")
 
 	if idpHint != "" {
-		// SSO flow
+		// SSO flow with external IdP
 		s.handleSSOAuthorize(c, idpHint)
 		return
 	}
 
-	// This would show a consent screen in a real implementation
-	// For now, return the parameters needed for consent
-	c.JSON(200, gin.H{
+	// Direct OpenIDX login flow
+	// Store OAuth parameters in Redis and redirect to login page
+	loginSession := GenerateRandomToken(32)
+	oauthParams := map[string]string{
 		"client_id":             c.Query("client_id"),
 		"redirect_uri":          c.Query("redirect_uri"),
 		"response_type":         c.Query("response_type"),
@@ -620,6 +681,109 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		"nonce":                 c.Query("nonce"),
 		"code_challenge":        c.Query("code_challenge"),
 		"code_challenge_method": c.Query("code_challenge_method"),
+	}
+	paramsJSON, _ := json.Marshal(oauthParams)
+	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
+
+	// Redirect to the client's login page with the login_session parameter
+	redirectURI := oauthParams["redirect_uri"]
+	if redirectURI == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri is required"})
+		return
+	}
+
+	// Parse redirect URI to add login_session parameter
+	loginURL, err := url.Parse(redirectURI)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid redirect_uri"})
+		return
+	}
+	query := loginURL.Query()
+	query.Set("login_session", loginSession)
+	loginURL.RawQuery = query.Encode()
+
+	c.Redirect(302, loginURL.String())
+}
+
+// handleLogin handles username/password login for direct OpenIDX authentication
+func (s *Service) handleLogin(c *gin.Context) {
+	var req struct {
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		LoginSession string `json:"login_session"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid request body"})
+		return
+	}
+
+	// Validate login session
+	if req.LoginSession == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "login_session is required"})
+		return
+	}
+
+	// Get OAuth parameters from Redis
+	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+req.LoginSession).Result()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid or expired login session"})
+		return
+	}
+
+	var oauthParams map[string]string
+	if err := json.Unmarshal([]byte(paramsJSON), &oauthParams); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Authenticate user
+	user, err := s.identityService.AuthenticateUser(c.Request.Context(), req.Username, req.Password)
+	if err != nil {
+		// Return appropriate error message
+		errorMsg := "Invalid username or password"
+		if err.Error() == "account is locked" {
+			errorMsg = "Account is locked. Please try again later."
+		} else if err.Error() == "account is disabled" {
+			errorMsg = "Account is disabled. Please contact your administrator."
+		}
+		c.JSON(401, gin.H{"error": "invalid_credentials", "error_description": errorMsg})
+		return
+	}
+
+	// Delete the login session from Redis
+	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+
+	// Generate authorization code
+	code := GenerateRandomToken(32)
+	authCode := &AuthorizationCode{
+		Code:                code,
+		ClientID:            oauthParams["client_id"],
+		UserID:              user.ID,
+		RedirectURI:         oauthParams["redirect_uri"],
+		Scope:               oauthParams["scope"],
+		State:               oauthParams["state"],
+		Nonce:               oauthParams["nonce"],
+		CodeChallenge:       oauthParams["code_challenge"],
+		CodeChallengeMethod: oauthParams["code_challenge_method"],
+	}
+
+	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Build redirect URL with authorization code
+	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
+	query := redirectURL.Query()
+	query.Set("code", code)
+	if oauthParams["state"] != "" {
+		query.Set("state", oauthParams["state"])
+	}
+	redirectURL.RawQuery = query.Encode()
+
+	c.JSON(200, gin.H{
+		"redirect_url": redirectURL.String(),
 	})
 }
 
@@ -823,16 +987,31 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	redirectURI := c.PostForm("redirect_uri")
 	codeVerifier := c.PostForm("code_verifier")
 
+	s.logger.Debug("Token request received",
+		zap.String("client_id", clientID),
+		zap.String("redirect_uri", redirectURI),
+		zap.Bool("has_code", code != ""),
+		zap.Bool("has_verifier", codeVerifier != ""))
+
 	// Get authorization code
 	authCode, err := s.GetAuthorizationCode(c.Request.Context(), code)
 	if err != nil {
+		s.logger.Debug("Failed to get authorization code", zap.Error(err))
 		c.JSON(400, gin.H{"error": "invalid_grant"})
 		return
 	}
 
 	// Verify client
 	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || client.ClientSecret != clientSecret {
+	if err != nil {
+		s.logger.Debug("Failed to get client", zap.String("client_id", clientID), zap.Error(err))
+		c.JSON(401, gin.H{"error": "invalid_client"})
+		return
+	}
+
+	// For confidential clients, verify client_secret
+	// For public clients, skip secret verification (use PKCE instead)
+	if client.Type == "confidential" && client.ClientSecret != clientSecret {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
@@ -843,12 +1022,16 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		return
 	}
 
-	// Verify PKCE if required
+	// Verify PKCE - required for public clients, optional for confidential
 	if authCode.CodeChallenge != "" {
 		if !VerifyPKCE(codeVerifier, authCode.CodeChallenge, authCode.CodeChallengeMethod) {
-			c.JSON(400, gin.H{"error": "invalid_grant"})
+			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE verification failed"})
 			return
 		}
+	} else if client.Type == "public" {
+		// Public clients MUST use PKCE
+		c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE required for public clients"})
+		return
 	}
 
 	// Delete authorization code (single use)
