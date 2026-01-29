@@ -683,3 +683,70 @@ INSERT INTO permissions (id, name, description, resource, action) VALUES
 ('a0000000-0000-0000-0000-000000000009', 'Write Settings', 'Modify system settings', 'settings', 'write')
 ON CONFLICT (resource, action) DO NOTHING;
 
+-- ============================================================================
+-- SYSTEM SETTINGS TABLE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    key VARCHAR(255) PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_by UUID
+);
+
+-- Seed default system settings
+INSERT INTO system_settings (key, value) VALUES
+('system', '{
+    "general": {
+        "organization_name": "OpenIDX",
+        "support_email": "support@openidx.io",
+        "default_language": "en",
+        "default_timezone": "UTC"
+    },
+    "security": {
+        "password_policy": {
+            "min_length": 12,
+            "require_uppercase": true,
+            "require_lowercase": true,
+            "require_numbers": true,
+            "require_special": true,
+            "max_age": 90,
+            "history": 5
+        },
+        "session_timeout": 30,
+        "max_failed_logins": 5,
+        "lockout_duration": 15,
+        "require_mfa": false
+    },
+    "authentication": {
+        "allow_registration": true,
+        "require_email_verify": true,
+        "mfa_methods": ["totp", "webauthn", "sms"]
+    },
+    "branding": {
+        "primary_color": "#2563eb",
+        "secondary_color": "#1e40af",
+        "login_page_title": "Welcome to OpenIDX"
+    }
+}'::jsonb),
+('mfa_methods', '["totp", "webauthn", "sms"]'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- ============================================================================
+-- DIRECTORY INTEGRATIONS TABLE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS directory_integrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL, -- ldap, azure_ad, google
+    config JSONB NOT NULL DEFAULT '{}',
+    enabled BOOLEAN DEFAULT true,
+    last_sync_at TIMESTAMP WITH TIME ZONE,
+    sync_status VARCHAR(50) DEFAULT 'never',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_directory_integrations_type ON directory_integrations(type);
+

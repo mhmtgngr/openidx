@@ -3054,6 +3054,9 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 		return
 	}
 
+	// Opportunistic cleanup of expired/used tokens
+	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL")
+
 	// Always return success to prevent email enumeration
 	// Look up user by email
 	var userID string
