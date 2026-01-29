@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -32,6 +32,7 @@ interface Application {
   base_url: string
   redirect_uris: string[]
   enabled: boolean
+  pkce_required?: boolean
   created_at: string
   updated_at: string
 }
@@ -66,6 +67,10 @@ export function ApplicationsPage() {
     scopes: 'openid,profile,email,offline_access',
     pkce_required: true,
   })
+  const [regenerateModal, setRegenerateModal] = useState(false)
+  const [regenerateApp, setRegenerateApp] = useState<Application | null>(null)
+  const [newSecret, setNewSecret] = useState<string | null>(null)
+
   const [ssoSettings, setSsoSettings] = useState({
     enabled: true,
     refreshToken: true,
@@ -134,6 +139,27 @@ export function ApplicationsPage() {
     },
   })
 
+  // Regenerate client secret mutation
+  const regenerateSecretMutation = useMutation({
+    mutationFn: (clientId: string) =>
+      api.post<{ client_secret: string }>(`/api/v1/oauth/clients/${clientId}/regenerate-secret`),
+    onSuccess: (data: { client_secret: string }) => {
+      setNewSecret(data.client_secret)
+      toast({
+        title: 'Success',
+        description: 'Client secret regenerated successfully!',
+        variant: 'success',
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to regenerate secret: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
   // Delete application mutation
   const deleteApplicationMutation = useMutation({
     mutationFn: (appId: string) =>
@@ -171,7 +197,7 @@ export function ApplicationsPage() {
       redirect_uris: app.redirect_uris?.join('\n') || '',
       grant_types: 'authorization_code,refresh_token',
       scopes: 'openid,profile,email,offline_access',
-      pkce_required: true,
+      pkce_required: app.pkce_required ?? true,
     })
     setEditAppModal(true)
   }
@@ -258,6 +284,7 @@ export function ApplicationsPage() {
           description: formData.description,
           base_url: formData.base_url,
           redirect_uris: formData.redirect_uris.split('\n').filter(uri => uri.trim()),
+          pkce_required: formData.pkce_required,
         },
       })
     }
@@ -418,6 +445,14 @@ export function ApplicationsPage() {
                               <DropdownMenuItem onClick={() => handleCopyClientId(app.client_id)}>
                                 <Copy className="mr-2 h-4 w-4" />
                                 Copy Client ID
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => {
+                                setRegenerateApp(app)
+                                setNewSecret(null)
+                                setRegenerateModal(true)
+                              }}>
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                                Regenerate Secret
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => handleSsoSettings(app)}>
                                 <Settings className="mr-2 h-4 w-4" />
@@ -607,6 +642,17 @@ export function ApplicationsPage() {
                 placeholder="https://example.com/callback&#10;https://example.com/redirect"
               />
             </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="edit_pkce_required"
+                name="pkce_required"
+                checked={formData.pkce_required}
+                onChange={(e) => setFormData(prev => ({ ...prev, pkce_required: e.target.checked }))}
+                className="rounded"
+              />
+              <Label htmlFor="edit_pkce_required">Require PKCE (Recommended for mobile/SPA)</Label>
+            </div>
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 type="button"
@@ -695,6 +741,65 @@ export function ApplicationsPage() {
               <Button type="submit">Save SSO Settings</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Regenerate Client Secret Modal */}
+      <Dialog open={regenerateModal} onOpenChange={(open) => {
+        if (!open) {
+          setRegenerateModal(false)
+          setRegenerateApp(null)
+          setNewSecret(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Regenerate Client Secret</DialogTitle>
+          </DialogHeader>
+          {newSecret ? (
+            <div className="space-y-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 text-sm text-yellow-800">
+                <p className="font-medium mb-1">Save this secret now!</p>
+                <p>This is the only time the client secret will be shown. Store it securely.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>New Client Secret</Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 p-2 bg-gray-100 rounded text-sm break-all">{newSecret}</code>
+                  <Button variant="outline" size="sm" onClick={() => {
+                    navigator.clipboard.writeText(newSecret)
+                    toast({ title: 'Copied', description: 'Secret copied to clipboard!', variant: 'success' })
+                  }}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={() => { setRegenerateModal(false); setRegenerateApp(null); setNewSecret(null) }}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Are you sure you want to regenerate the client secret for <strong>{regenerateApp?.name}</strong>?
+                This will invalidate the current secret and any integrations using it will stop working.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => { setRegenerateModal(false); setRegenerateApp(null) }}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={regenerateSecretMutation.isPending}
+                  onClick={() => regenerateApp && regenerateSecretMutation.mutate(regenerateApp.client_id)}
+                >
+                  {regenerateSecretMutation.isPending ? 'Regenerating...' : 'Regenerate Secret'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

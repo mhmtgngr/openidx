@@ -176,6 +176,13 @@ export const api = {
   deleteProvisioningRule: async (id: string): Promise<void> => {
     await api.delete<void>(`/api/v1/provisioning/rules/${id}`)
   },
+
+  postFormData: async <T>(url: string, formData: FormData): Promise<T> => {
+    const response = await axiosInstance.post<T>(url, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  },
 }
 
 export default axiosInstance

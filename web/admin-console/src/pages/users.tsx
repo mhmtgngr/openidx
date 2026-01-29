@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -57,6 +57,8 @@ export function UsersPage() {
     password: '',
   })
   const [selectedRoles, setSelectedRoles] = useState<string[]>([])
+  const [importModal, setImportModal] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
 
   // Fetch available roles
   const { data: availableRoles, isLoading: rolesLoading } = useQuery({
@@ -151,6 +153,50 @@ export function UsersPage() {
       })
     },
   })
+
+  const importUsersMutation = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      return api.postFormData<{ total: number; created: number; errors: number; details: string[] }>('/api/v1/identity/users/import', formData)
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      toast({
+        title: 'Import Complete',
+        description: `${data.created} of ${data.total} users imported. ${data.errors} errors.`,
+        variant: data.errors > 0 ? 'destructive' : 'success',
+      })
+      setImportModal(false)
+      setImportFile(null)
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Error',
+        description: `Failed to import users: ${error.message}`,
+        variant: 'destructive',
+      })
+    },
+  })
+
+  const handleExportCSV = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/identity/users/export`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+      })
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'users.csv'
+      a.click()
+      window.URL.revokeObjectURL(url)
+    } catch {
+      toast({ title: 'Error', description: 'Failed to export users', variant: 'destructive' })
+    }
+  }
 
   const handleAddUser = () => {
     setFormData({ username: '', email: '', first_name: '', last_name: '', password: '' })
@@ -282,9 +328,17 @@ export function UsersPage() {
           <h1 className="text-3xl font-bold tracking-tight">Users</h1>
           <p className="text-muted-foreground">Manage user accounts and access</p>
         </div>
-        <Button onClick={handleAddUser}>
-          <Plus className="mr-2 h-4 w-4" /> Add User
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExportCSV}>
+            <Download className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
+          <Button variant="outline" onClick={() => setImportModal(true)}>
+            <Upload className="mr-2 h-4 w-4" /> Import CSV
+          </Button>
+          <Button onClick={handleAddUser}>
+            <Plus className="mr-2 h-4 w-4" /> Add User
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -527,6 +581,41 @@ export function UsersPage() {
               </Button>
               <Button type="submit" disabled={updateUserMutation.isPending}>
                 {updateUserMutation.isPending ? 'Updating...' : 'Update User'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Users Modal */}
+      <Dialog open={importModal} onOpenChange={setImportModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Import Users from CSV</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={(e) => {
+            e.preventDefault()
+            if (importFile) importUsersMutation.mutate(importFile)
+          }} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="csv-file">CSV File</Label>
+              <Input
+                id="csv-file"
+                type="file"
+                accept=".csv"
+                onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                required
+              />
+              <p className="text-xs text-gray-500">
+                CSV file with headers: username, email, first_name, last_name, enabled
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button type="button" variant="outline" onClick={() => { setImportModal(false); setImportFile(null) }}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={importUsersMutation.isPending || !importFile}>
+                {importUsersMutation.isPending ? 'Importing...' : 'Import'}
               </Button>
             </div>
           </form>

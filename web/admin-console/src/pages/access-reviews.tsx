@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, ClipboardCheck, Clock, CheckCircle, XCircle, AlertTriangle, Edit, Play, Eye, MoreHorizontal } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -65,6 +66,7 @@ export function AccessReviewsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { user } = useAuth()
   const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [editModal, setEditModal] = useState(false)
@@ -147,7 +149,7 @@ export function AccessReviewsPage() {
       name: newReview.name,
       description: newReview.description,
       type: newReview.type,
-      reviewer_id: '00000000-0000-0000-0000-000000000001', // Default reviewer ID
+      reviewer_id: user?.id || '',
       start_date: new Date(newReview.start_date).toISOString(),
       end_date: new Date(newReview.end_date).toISOString(),
     })

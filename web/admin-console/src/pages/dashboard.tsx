@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import {
   Users,
   Shield,
@@ -39,6 +40,7 @@ interface DashboardStats {
   security_alerts: number
   recent_activity: ActivityItem[]
   auth_stats: AuthStatistics
+  security_alert_details?: { message: string; count: number; timestamp: string }[]
 }
 
 function relativeTime(timestamp: string): string {
@@ -76,6 +78,7 @@ export function DashboardPage() {
       description: `${stats?.active_users || 0} active`,
       icon: Users,
       color: 'text-blue-600',
+      link: '/users',
     },
     {
       title: 'Applications',
@@ -83,6 +86,7 @@ export function DashboardPage() {
       description: 'Registered apps',
       icon: Key,
       color: 'text-green-600',
+      link: '/applications',
     },
     {
       title: 'Active Sessions',
@@ -90,6 +94,7 @@ export function DashboardPage() {
       description: 'Current sessions',
       icon: Activity,
       color: 'text-purple-600',
+      link: '/audit-logs',
     },
     {
       title: 'Pending Reviews',
@@ -97,6 +102,7 @@ export function DashboardPage() {
       description: 'Access reviews',
       icon: Clock,
       color: 'text-orange-600',
+      link: '/access-reviews',
     },
   ]
 
@@ -114,18 +120,20 @@ export function DashboardPage() {
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => (
-          <Card key={stat.title}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-              <stat.icon className={`h-4 w-4 ${stat.color}`} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {isLoading ? '...' : stat.value.toLocaleString()}
-              </div>
-              <p className="text-xs text-muted-foreground">{stat.description}</p>
-            </CardContent>
-          </Card>
+          <Link key={stat.title} to={stat.link} className="block transition-transform hover:scale-[1.02]">
+            <Card className="cursor-pointer hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                <stat.icon className={`h-4 w-4 ${stat.color}`} />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {isLoading ? '...' : stat.value.toLocaleString()}
+                </div>
+                <p className="text-xs text-muted-foreground">{stat.description}</p>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
 
@@ -147,10 +155,16 @@ export function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
-                  <span className="text-sm">Multiple failed login attempts</span>
-                  <span className="text-xs text-orange-600">2 hours ago</span>
-                </div>
+                {stats?.security_alert_details?.map((alert, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
+                    <span className="text-sm">{alert.message} ({alert.count}x)</span>
+                    <span className="text-xs text-orange-600">{relativeTime(alert.timestamp)}</span>
+                  </div>
+                )) || (
+                  <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
+                    <span className="text-sm">{stats?.security_alerts} failed authentication attempts (24h)</span>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>

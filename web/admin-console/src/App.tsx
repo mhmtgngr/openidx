@@ -16,6 +16,8 @@ import { ComplianceReportsPage } from './pages/compliance-reports'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
 import { SettingsPage } from './pages/settings'
+import { ForgotPasswordPage } from './pages/forgot-password'
+import { ResetPasswordPage } from './pages/reset-password'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -64,6 +66,8 @@ export default function App() {
     <>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         <Route
           path="/"

@@ -24,8 +24,9 @@ type Dashboard struct {
 	ActiveSessions   int                 `json:"active_sessions"`
 	PendingReviews   int                 `json:"pending_reviews"`
 	SecurityAlerts   int                 `json:"security_alerts"`
-	RecentActivity   []ActivityItem      `json:"recent_activity"`
-	AuthStats        AuthStatistics      `json:"auth_stats"`
+	RecentActivity       []ActivityItem       `json:"recent_activity"`
+	AuthStats            AuthStatistics       `json:"auth_stats"`
+	SecurityAlertDetails []SecurityAlertDetail `json:"security_alert_details"`
 }
 
 // ActivityItem represents recent activity
@@ -52,6 +53,13 @@ type AuthStatistics struct {
 type DayStats struct {
 	Date   string `json:"date"`
 	Count  int    `json:"count"`
+}
+
+// SecurityAlertDetail represents a security alert detail
+type SecurityAlertDetail struct {
+	Message   string    `json:"message"`
+	Count     int       `json:"count"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // Application represents a registered application/client
@@ -188,6 +196,14 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 		}
 	}
 
+	// Count failed authentication events in last 24 hours
+	var securityAlerts int
+	s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE outcome = 'failure' AND event_type = 'authentication'
+		AND timestamp > NOW() - INTERVAL '24 hours'
+	`).Scan(&securityAlerts)
+
 	dashboard := &Dashboard{
 		TotalUsers:        totalUsers,
 		ActiveUsers:       activeUsers,
@@ -195,7 +211,7 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 		TotalApplications: totalApps,
 		ActiveSessions:    activeSessions,
 		PendingReviews:    pendingReviews,
-		SecurityAlerts:    0,
+		SecurityAlerts:    securityAlerts,
 		RecentActivity:    recentActivity,
 		AuthStats: AuthStatistics{
 			TotalLogins:      100,
@@ -209,6 +225,29 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 			},
 		},
 	}
+
+	// Get top 5 failed auth attempts grouped by actor
+	var alertDetails []SecurityAlertDetail
+	alertRows, err := s.db.Pool.Query(ctx, `
+		SELECT COALESCE(actor_id, 'unknown') as actor, COUNT(*) as cnt, MAX(timestamp) as latest
+		FROM audit_events
+		WHERE outcome = 'failure' AND event_type = 'authentication'
+		AND timestamp > NOW() - INTERVAL '24 hours'
+		GROUP BY actor_id
+		ORDER BY cnt DESC
+		LIMIT 5
+	`)
+	if err == nil {
+		defer alertRows.Close()
+		for alertRows.Next() {
+			var detail SecurityAlertDetail
+			var actor string
+			alertRows.Scan(&actor, &detail.Count, &detail.Timestamp)
+			detail.Message = fmt.Sprintf("Failed login attempts from %s", actor)
+			alertDetails = append(alertDetails, detail)
+		}
+	}
+	dashboard.SecurityAlertDetails = alertDetails
 
 	return dashboard, nil
 }
