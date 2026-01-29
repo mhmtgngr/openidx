@@ -462,10 +462,10 @@ CREATE INDEX IF NOT EXISTS idx_compliance_reports_framework ON compliance_report
 -- SEED DATA - Admin User and Sample Data
 -- ============================================================================
 
--- Insert default admin user (password: admin123)
--- bcrypt hash generated with cost 10 for "admin123"
+-- Insert default admin user (password: Admin@123)
+-- bcrypt hash generated with cost 12 for "Admin@123"
 INSERT INTO users (id, username, email, password_hash, first_name, last_name, enabled, email_verified)
-VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', '$2a$10$u1/0j1YwyqSHvwkb3m/lVexQyAh4oKFb47ojAhSk.BGk/LBt53Lfq', 'System', 'Admin', true, true)
+VALUES ('00000000-0000-0000-0000-000000000001', 'admin', 'admin@openidx.local', '$2b$12$oX..0F6dHbNip8vASE5VdOgXiBfyqRZ768PU5vArjeOMxG5MGEEdq', 'System', 'Admin', true, true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert sample roles

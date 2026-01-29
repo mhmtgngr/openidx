@@ -170,6 +170,8 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
       - KEYCLOAK_URL=http://keycloak:8180
       - OPA_URL=http://opa:8181
+      - OAUTH_ISSUER=http://localhost:8006
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8001:8001"

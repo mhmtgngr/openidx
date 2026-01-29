@@ -1324,6 +1324,9 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 	now := time.Now()
 	totpID := uuid.New().String()
 
+	// Remove any existing TOTP records for this user before inserting
+	_, _ = s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1`, userID)
+
 	// Insert TOTP record
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at)
