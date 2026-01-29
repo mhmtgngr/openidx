@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter, Calendar, TrendingUp, BarChart3 } from 'lucide-react'
+import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter, Calendar, TrendingUp, BarChart3, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -64,12 +64,16 @@ const outcomeIcons: Record<string, React.ReactNode> = {
   pending: <AlertTriangle className="h-4 w-4 text-yellow-600" />,
 }
 
+const PAGE_SIZE = 50
+
 export function AuditLogsPage() {
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [eventTypeFilter, setEventTypeFilter] = useState<string>('')
   const [outcomeFilter, setOutcomeFilter] = useState<string>('')
   const [showStats, setShowStats] = useState(true)
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
 
   // Date range defaults to last 30 days
   const defaultEndDate = new Date().toISOString().split('T')[0]
@@ -78,8 +82,18 @@ export function AuditLogsPage() {
   const [endDate, setEndDate] = useState(defaultEndDate)
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ['audit-events', search, eventTypeFilter, outcomeFilter],
-    queryFn: () => api.get<AuditEvent[]>('/api/v1/audit/events'),
+    queryKey: ['audit-events', page, eventTypeFilter, outcomeFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      if (eventTypeFilter) params.set('event_type', eventTypeFilter)
+      if (outcomeFilter) params.set('outcome', outcomeFilter)
+      const result = await api.getWithHeaders<AuditEvent[]>(`/api/v1/audit/events?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   const { data: statistics } = useQuery({
@@ -125,18 +139,18 @@ export function AuditLogsPage() {
     },
   })
 
+  // Client-side search filter (server handles event_type and outcome filtering)
   const filteredEvents = events?.filter(event => {
-    const matchesSearch = search === '' ||
+    if (search === '') return true
+    return (
       event.action.toLowerCase().includes(search.toLowerCase()) ||
       event.actor_id?.toLowerCase().includes(search.toLowerCase()) ||
       event.actor_ip?.toLowerCase().includes(search.toLowerCase()) ||
       event.target_id?.toLowerCase().includes(search.toLowerCase())
-
-    const matchesType = eventTypeFilter === '' || event.event_type === eventTypeFilter
-    const matchesOutcome = outcomeFilter === '' || event.outcome === outcomeFilter
-
-    return matchesSearch && matchesType && matchesOutcome
+    )
   })
+
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
   // Calculate max for chart scaling
   const maxDailyEvents = Math.max(...(statistics?.events_per_day?.map(d => d.count) || [1]))
@@ -414,7 +428,7 @@ export function AuditLogsPage() {
               <Filter className="h-4 w-4 text-gray-500" />
               <select
                 value={eventTypeFilter}
-                onChange={(e) => setEventTypeFilter(e.target.value)}
+                onChange={(e) => { setEventTypeFilter(e.target.value); setPage(0) }}
                 className="border rounded-md px-3 py-2 text-sm"
               >
                 <option value="">All Event Types</option>
@@ -424,7 +438,7 @@ export function AuditLogsPage() {
               </select>
               <select
                 value={outcomeFilter}
-                onChange={(e) => setOutcomeFilter(e.target.value)}
+                onChange={(e) => { setOutcomeFilter(e.target.value); setPage(0) }}
                 className="border rounded-md px-3 py-2 text-sm"
               >
                 <option value="">All Outcomes</option>
@@ -500,6 +514,38 @@ export function AuditLogsPage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination Controls */}
+          <div className="flex items-center justify-between pt-4">
+            <p className="text-sm text-gray-500">
+              {totalCount > 0
+                ? `Showing ${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, totalCount)} of ${totalCount} events`
+                : 'No events'}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Previous
+              </Button>
+              <span className="text-sm text-gray-600">
+                Page {page + 1}{totalPages > 0 ? ` of ${totalPages}` : ''}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => p + 1)}
+                disabled={(page + 1) >= totalPages}
+              >
+                Next
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

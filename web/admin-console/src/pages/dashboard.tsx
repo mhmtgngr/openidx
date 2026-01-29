@@ -1,15 +1,33 @@
 import { useQuery } from '@tanstack/react-query'
-import { 
-  Users, 
-  Shield, 
-  Key, 
+import {
+  Users,
+  Shield,
+  Key,
   Activity,
   AlertTriangle,
   CheckCircle,
-  Clock
+  Clock,
+  Settings
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { api } from '../lib/api'
+
+interface ActivityItem {
+  id: string
+  type: string
+  message: string
+  actor_id?: string
+  actor_name?: string
+  timestamp: string
+}
+
+interface AuthStatistics {
+  total_logins: number
+  successful_logins: number
+  failed_logins: number
+  mfa_usage: number
+  logins_by_method: Record<string, number>
+}
 
 interface DashboardStats {
   total_users: number
@@ -19,6 +37,30 @@ interface DashboardStats {
   active_sessions: number
   pending_reviews: number
   security_alerts: number
+  recent_activity: ActivityItem[]
+  auth_stats: AuthStatistics
+}
+
+function relativeTime(timestamp: string): string {
+  const now = Date.now()
+  const then = new Date(timestamp).getTime()
+  const seconds = Math.floor((now - then) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days > 1 ? 's' : ''} ago`
+}
+
+function activityIcon(type: string) {
+  switch (type) {
+    case 'authentication': return Shield
+    case 'user_management': return Users
+    case 'configuration': return Settings
+    default: return Activity
+  }
 }
 
 export function DashboardPage() {
@@ -57,6 +99,8 @@ export function DashboardPage() {
       color: 'text-orange-600',
     },
   ]
+
+  const recentActivity = stats?.recent_activity || []
 
   return (
     <div className="space-y-6">
@@ -122,27 +166,22 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm">New user created</span>
-                </div>
-                <span className="text-xs text-gray-500">5 min ago</span>
-              </div>
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm">Policy updated</span>
-                </div>
-                <span className="text-xs text-gray-500">1 hour ago</span>
-              </div>
-              <div className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <Key className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm">App registered</span>
-                </div>
-                <span className="text-xs text-gray-500">2 hours ago</span>
-              </div>
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-gray-500">No recent activity</p>
+              ) : (
+                recentActivity.map((item) => {
+                  const Icon = activityIcon(item.type)
+                  return (
+                    <div key={item.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm">{item.message}</span>
+                      </div>
+                      <span className="text-xs text-gray-500">{relativeTime(item.timestamp)}</span>
+                    </div>
+                  )
+                })
+              )}
             </div>
           </CardContent>
         </Card>

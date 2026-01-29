@@ -104,6 +104,17 @@ export const api = {
     return response.data
   },
 
+  getWithHeaders: async <T>(url: string, config?: AxiosRequestConfig): Promise<{ data: T; headers: Record<string, string> }> => {
+    const response = await axiosInstance.get<T>(url, config)
+    const headers: Record<string, string> = {}
+    if (response.headers) {
+      Object.entries(response.headers).forEach(([key, value]) => {
+        if (typeof value === 'string') headers[key] = value
+      })
+    }
+    return { data: response.data, headers }
+  },
+
   post: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> => {
     const response = await axiosInstance.post<T>(url, data, config)
     return response.data

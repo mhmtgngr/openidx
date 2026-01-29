@@ -48,6 +48,30 @@ const TRIGGER_OPTIONS = [
   { value: 'scheduled', label: 'Scheduled' },
 ]
 
+const OPERATOR_OPTIONS = [
+  { value: 'equals', label: 'Equals' },
+  { value: 'not_equals', label: 'Not Equals' },
+  { value: 'contains', label: 'Contains' },
+  { value: 'not_contains', label: 'Not Contains' },
+  { value: 'starts_with', label: 'Starts With' },
+  { value: 'ends_with', label: 'Ends With' },
+  { value: 'regex', label: 'Regex' },
+  { value: 'greater_than', label: 'Greater Than' },
+  { value: 'less_than', label: 'Less Than' },
+]
+
+const ACTION_TYPE_OPTIONS = [
+  { value: 'add_to_group', label: 'Add to Group' },
+  { value: 'remove_from_group', label: 'Remove from Group' },
+  { value: 'assign_role', label: 'Assign Role' },
+  { value: 'remove_role', label: 'Remove Role' },
+  { value: 'set_attribute', label: 'Set Attribute' },
+  { value: 'send_email', label: 'Send Email' },
+  { value: 'notify_admin', label: 'Notify Admin' },
+  { value: 'disable_account', label: 'Disable Account' },
+  { value: 'enable_account', label: 'Enable Account' },
+]
+
 interface RuleFormData {
   name: string
   description: string
@@ -273,12 +297,16 @@ export function ProvisioningRulesPage() {
               onChange={(e) => updateCondition(i, 'field', e.target.value)}
               className="flex-1"
             />
-            <Input
-              placeholder="Operator"
-              value={cond.operator}
-              onChange={(e) => updateCondition(i, 'operator', e.target.value)}
-              className="w-28"
-            />
+            <Select value={cond.operator} onValueChange={(v) => updateCondition(i, 'operator', v)}>
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Operator" />
+              </SelectTrigger>
+              <SelectContent>
+                {OPERATOR_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input
               placeholder="Value"
               value={cond.value}
@@ -300,12 +328,16 @@ export function ProvisioningRulesPage() {
         </div>
         {formData.actions.map((action, i) => (
           <div key={i} className="flex gap-2 mb-2">
-            <Input
-              placeholder="Type"
-              value={action.type}
-              onChange={(e) => updateAction(i, 'type', e.target.value)}
-              className="flex-1"
-            />
+            <Select value={action.type} onValueChange={(v) => updateAction(i, 'type', v)}>
+              <SelectTrigger className="flex-1">
+                <SelectValue placeholder="Action type" />
+              </SelectTrigger>
+              <SelectContent>
+                {ACTION_TYPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input
               placeholder="Target"
               value={action.target}
