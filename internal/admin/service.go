@@ -458,18 +458,36 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 	return nil
 }
 
-// ListApplications returns all registered applications
-func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
+// ListApplications returns registered applications with optional pagination
+func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Application, int, error) {
 	s.logger.Debug("Listing applications")
 
-	rows, err := s.db.Pool.Query(ctx, `
+	var totalCount int
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalCount)
+
+	query := `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
 		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
 		FROM applications
 		ORDER BY name
-	`)
+	`
+	args := []interface{}{}
+	argCount := 1
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, limit)
+		argCount++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argCount)
+		args = append(args, offset)
+		argCount++
+	}
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -480,12 +498,12 @@ func (s *Service) ListApplications(ctx context.Context) ([]Application, error) {
 			&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 			&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		apps = append(apps, app)
 	}
 
-	return apps, nil
+	return apps, totalCount, nil
 }
 
 // CreateApplication creates a new application
@@ -649,11 +667,21 @@ func (s *Service) handleUpdateSettings(c *gin.Context) {
 }
 
 func (s *Service) handleListApplications(c *gin.Context) {
-	apps, err := s.ListApplications(c.Request.Context())
+	offset := 0
+	limit := 0
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
+	apps, totalCount, err := s.ListApplications(c.Request.Context(), offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	c.Header("X-Total-Count", fmt.Sprintf("%d", totalCount))
 	c.JSON(200, apps)
 }
 

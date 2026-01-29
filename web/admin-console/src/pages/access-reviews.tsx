@@ -68,6 +68,7 @@ export function AccessReviewsPage() {
   const { toast } = useToast()
   const { user } = useAuth()
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [editModal, setEditModal] = useState(false)
   const [selectedReview, setSelectedReview] = useState<AccessReview | null>(null)
@@ -87,8 +88,13 @@ export function AccessReviewsPage() {
   })
 
   const { data: reviews, isLoading } = useQuery({
-    queryKey: ['access-reviews', search],
-    queryFn: () => api.get<AccessReview[]>('/api/v1/governance/reviews'),
+    queryKey: ['access-reviews', search, statusFilter],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (statusFilter) params.set('status', statusFilter)
+      const qs = params.toString()
+      return api.get<AccessReview[]>(`/api/v1/governance/reviews${qs ? `?${qs}` : ''}`)
+    },
   })
 
   // Create access review mutation
@@ -323,6 +329,17 @@ export function AccessReviewsPage() {
                 className="pl-9"
               />
             </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            >
+              <option value="">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+              <option value="expired">Expired</option>
+            </select>
           </div>
         </CardHeader>
         <CardContent>

@@ -871,7 +871,7 @@ func (s *Service) handleListEvents(c *gin.Context) {
 		}
 	}
 
-	// Parse time range
+	// Parse time range (RFC3339 format)
 	if start := c.Query("start_time"); start != "" {
 		if t, err := time.Parse(time.RFC3339, start); err == nil {
 			query.StartTime = &t
@@ -880,6 +880,19 @@ func (s *Service) handleListEvents(c *gin.Context) {
 	if end := c.Query("end_time"); end != "" {
 		if t, err := time.Parse(time.RFC3339, end); err == nil {
 			query.EndTime = &t
+		}
+	}
+
+	// Parse date range (YYYY-MM-DD format, same as statistics endpoint)
+	if start := c.Query("start"); start != "" && query.StartTime == nil {
+		if t, err := time.Parse("2006-01-02", start); err == nil {
+			query.StartTime = &t
+		}
+	}
+	if end := c.Query("end"); end != "" && query.EndTime == nil {
+		if t, err := time.Parse("2006-01-02", end); err == nil {
+			endOfDay := t.Add(24*time.Hour - time.Second)
+			query.EndTime = &endOfDay
 		}
 	}
 

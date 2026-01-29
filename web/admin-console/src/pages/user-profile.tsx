@@ -11,11 +11,23 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '@/hooks/use-toast'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '@/lib/api'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
-import { Shield, User, Key, Smartphone, Mail } from 'lucide-react'
+import { Shield, User, Key, Smartphone, Mail, Monitor } from 'lucide-react'
 import QRCode from 'qrcode.react'
+import { useAuth } from '@/lib/auth'
 
 interface MFASetup extends MFASetupResponse {
   backupCodes: string[]
+}
+
+interface Session {
+  id: string
+  user_id: string
+  client_id: string
+  ip_address: string
+  user_agent: string
+  started_at: string
+  last_seen_at: string
+  expires_at: string
 }
 
 export function UserProfilePage() {
@@ -27,6 +39,7 @@ export function UserProfilePage() {
   const [showBackupCodes, setShowBackupCodes] = useState(false)
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const { data: profile, isLoading } = useQuery({
     queryKey: ['user-profile'],
@@ -100,6 +113,23 @@ export function UserProfilePage() {
     },
   })
 
+  const { data: sessions, isLoading: sessionsLoading } = useQuery({
+    queryKey: ['sessions', user?.id],
+    queryFn: () => api.get<Session[]>(`/api/v1/identity/users/${user?.id}/sessions`),
+    enabled: !!user?.id,
+  })
+
+  const revokeSessionMutation = useMutation({
+    mutationFn: (sessionId: string) => api.delete(`/api/v1/identity/sessions/${sessionId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      toast({ title: 'Session revoked' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to revoke session', variant: 'destructive' })
+    },
+  })
+
   if (isLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
@@ -134,6 +164,13 @@ export function UserProfilePage() {
           <TabsTrigger value="security" className="flex items-center gap-2">
             <Shield className="h-4 w-4" />
             Security
+          </TabsTrigger>
+          <TabsTrigger value="sessions" className="flex items-center gap-2">
+            <Monitor className="h-4 w-4" />
+            Sessions
+            {sessions && sessions.length > 0 && (
+              <Badge variant="secondary" className="ml-1">{sessions.length}</Badge>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -397,6 +434,86 @@ export function UserProfilePage() {
               >
                 Change Password
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sessions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Active Sessions</CardTitle>
+                  <CardDescription>Manage your active sessions across devices</CardDescription>
+                </div>
+                {sessions && sessions.length > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      sessions.forEach((session) => revokeSessionMutation.mutate(session.id))
+                    }}
+                    disabled={revokeSessionMutation.isPending}
+                  >
+                    Revoke All Sessions
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {sessionsLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : !sessions || sessions.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">No active sessions</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 px-2 font-medium">IP Address</th>
+                        <th className="text-left py-2 px-2 font-medium">User Agent</th>
+                        <th className="text-left py-2 px-2 font-medium">Started</th>
+                        <th className="text-left py-2 px-2 font-medium">Last Seen</th>
+                        <th className="text-left py-2 px-2 font-medium">Expires</th>
+                        <th className="text-left py-2 px-2 font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sessions.map((session) => (
+                        <tr key={session.id} className="border-b">
+                          <td className="py-2 px-2 font-mono text-xs">{session.ip_address}</td>
+                          <td className="py-2 px-2 max-w-[200px] truncate" title={session.user_agent}>
+                            {session.user_agent}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(session.started_at).toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(session.last_seen_at).toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(session.expires_at).toLocaleString()}
+                          </td>
+                          <td className="py-2 px-2">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => revokeSessionMutation.mutate(session.id)}
+                              disabled={revokeSessionMutation.isPending}
+                            >
+                              Revoke
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

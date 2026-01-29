@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -74,6 +75,7 @@ export function AuditLogsPage() {
   const [showStats, setShowStats] = useState(true)
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
+  const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null)
 
   // Date range defaults to last 30 days
   const defaultEndDate = new Date().toISOString().split('T')[0]
@@ -82,13 +84,15 @@ export function AuditLogsPage() {
   const [endDate, setEndDate] = useState(defaultEndDate)
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ['audit-events', page, eventTypeFilter, outcomeFilter],
+    queryKey: ['audit-events', page, eventTypeFilter, outcomeFilter, startDate, endDate],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
       if (eventTypeFilter) params.set('event_type', eventTypeFilter)
       if (outcomeFilter) params.set('outcome', outcomeFilter)
+      if (startDate) params.set('start', startDate)
+      if (endDate) params.set('end', endDate)
       const result = await api.getWithHeaders<AuditEvent[]>(`/api/v1/audit/events?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -207,14 +211,14 @@ export function AuditLogsPage() {
               <Input
                 type="date"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => { setStartDate(e.target.value); setPage(0) }}
                 className="w-40"
               />
               <span className="text-gray-500">to</span>
               <Input
                 type="date"
                 value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e) => { setEndDate(e.target.value); setPage(0) }}
                 className="w-40"
               />
             </div>
@@ -225,6 +229,7 @@ export function AuditLogsPage() {
                 onClick={() => {
                   setStartDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
                   setEndDate(new Date().toISOString().split('T')[0])
+                  setPage(0)
                 }}
               >
                 Last 7 Days
@@ -235,6 +240,7 @@ export function AuditLogsPage() {
                 onClick={() => {
                   setStartDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
                   setEndDate(new Date().toISOString().split('T')[0])
+                  setPage(0)
                 }}
               >
                 Last 30 Days
@@ -245,6 +251,7 @@ export function AuditLogsPage() {
                 onClick={() => {
                   setStartDate(new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
                   setEndDate(new Date().toISOString().split('T')[0])
+                  setPage(0)
                 }}
               >
                 Last 90 Days
@@ -469,7 +476,7 @@ export function AuditLogsPage() {
                   <tr><td colSpan={6} className="p-4 text-center">No audit events found</td></tr>
                 ) : (
                   filteredEvents?.map((event) => (
-                    <tr key={event.id} className="border-b hover:bg-gray-50">
+                    <tr key={event.id} onClick={() => setSelectedEvent(event)} className="border-b hover:bg-gray-50 cursor-pointer">
                       <td className="p-3">
                         <span className="text-sm text-gray-600">
                           {formatTimestamp(event.timestamp)}
@@ -549,6 +556,113 @@ export function AuditLogsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Audit Event Detail Modal */}
+      <Dialog open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Audit Event Details</DialogTitle>
+          </DialogHeader>
+          {selectedEvent && (
+            <div className="space-y-6">
+              {/* Basic Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Timestamp</p>
+                  <p className="text-sm">{formatTimestamp(selectedEvent.timestamp)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Event Type</p>
+                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${eventTypeColors[selectedEvent.event_type] || 'bg-gray-100 text-gray-800'}`}>
+                    {eventTypeIcons[selectedEvent.event_type]}
+                    {selectedEvent.event_type.replace('_', ' ')}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Category</p>
+                  <p className="text-sm capitalize">{selectedEvent.category}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Action</p>
+                  <p className="text-sm">{selectedEvent.action}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Outcome</p>
+                  <div className="flex items-center gap-1">
+                    {outcomeIcons[selectedEvent.outcome]}
+                    <Badge variant={selectedEvent.outcome === 'success' ? 'default' : selectedEvent.outcome === 'failure' ? 'destructive' : 'secondary'}>
+                      {selectedEvent.outcome}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actor Section */}
+              <div>
+                <h3 className="text-sm font-semibold mb-2">Actor</h3>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded">
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">ID</p>
+                    <p className="text-sm break-all">{selectedEvent.actor_id || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Type</p>
+                    <p className="text-sm">{selectedEvent.actor_type || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">IP Address</p>
+                    <p className="text-sm">{selectedEvent.actor_ip || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Target Section */}
+              <div>
+                <h3 className="text-sm font-semibold mb-2">Target</h3>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded">
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">ID</p>
+                    <p className="text-sm break-all">{selectedEvent.target_id || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Type</p>
+                    <p className="text-sm">{selectedEvent.target_type || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* IDs Section */}
+              <div>
+                <h3 className="text-sm font-semibold mb-2">IDs</h3>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded">
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Resource ID</p>
+                    <p className="text-sm break-all">{selectedEvent.resource_id || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Session ID</p>
+                    <p className="text-sm break-all">{selectedEvent.session_id || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Request ID</p>
+                    <p className="text-sm break-all">{selectedEvent.request_id || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Details Section */}
+              {selectedEvent.details && Object.keys(selectedEvent.details).length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold mb-2">Details</h3>
+                  <pre className="bg-gray-50 p-3 rounded text-xs overflow-auto max-h-60">
+                    {JSON.stringify(selectedEvent.details, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

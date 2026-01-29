@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -161,6 +162,10 @@ type Service struct {
 	redis  *database.RedisClient
 	config *config.Config
 	logger *zap.Logger
+
+	jwksCacheMu     sync.RWMutex
+	jwksCachedKey   *rsa.PublicKey
+	jwksCacheExpiry time.Time
 }
 
 // NewService creates a new provisioning service
@@ -274,9 +279,25 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 }
 
 // getOAuthPublicKey fetches the OAuth service's public key for token validation
+// with caching using a 5-minute TTL to avoid fetching on every request
 func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
-	// In a production system, you'd cache this key with TTL
-	// For now, we'll fetch it each time (not ideal for performance)
+	// Check cache with read lock
+	s.jwksCacheMu.RLock()
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		key := s.jwksCachedKey
+		s.jwksCacheMu.RUnlock()
+		return key, nil
+	}
+	s.jwksCacheMu.RUnlock()
+
+	// Cache miss: acquire write lock
+	s.jwksCacheMu.Lock()
+	defer s.jwksCacheMu.Unlock()
+
+	// Double-check: another goroutine may have populated the cache
+	if s.jwksCachedKey != nil && time.Now().Before(s.jwksCacheExpiry) {
+		return s.jwksCachedKey, nil
+	}
 
 	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
 
@@ -311,7 +332,13 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 	// Use the first RSA key
 	for _, key := range jwks.Keys {
 		if key.Kty == "RSA" && key.Use == "sig" {
-			return parseRSAPublicKey(key.N, key.E)
+			pubKey, err := parseRSAPublicKey(key.N, key.E)
+			if err != nil {
+				return nil, err
+			}
+			s.jwksCachedKey = pubKey
+			s.jwksCacheExpiry = time.Now().Add(5 * time.Minute)
+			return pubKey, nil
 		}
 	}
 
