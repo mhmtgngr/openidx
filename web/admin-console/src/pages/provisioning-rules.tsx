@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Edit, Trash2 } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -111,10 +111,21 @@ export function ProvisioningRulesPage() {
   const [selectedRule, setSelectedRule] = useState<ProvisioningRule | null>(null)
   const [formData, setFormData] = useState<RuleFormData>(emptyForm)
   const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   const { data: rules, isLoading } = useQuery({
-    queryKey: ['provisioning-rules'],
-    queryFn: () => api.getProvisioningRules(),
+    queryKey: ['provisioning-rules', page],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      const result = await api.getWithHeaders<ProvisioningRule[]>(`/api/v1/provisioning/rules?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   const createMutation = useMutation({
@@ -455,6 +466,21 @@ export function ProvisioningRulesPage() {
               )}
             </TableBody>
           </Table>
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4">
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount}>
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

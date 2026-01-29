@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
@@ -338,7 +339,10 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 // CreateAccessReview creates a new access review campaign
 func (s *Service) CreateAccessReview(ctx context.Context, review *AccessReview) error {
 	s.logger.Info("Creating access review", zap.String("name", review.Name))
-	
+
+	if review.ID == "" {
+		review.ID = uuid.New().String()
+	}
 	now := time.Now()
 	review.CreatedAt = now
 	review.Status = ReviewStatusPending
@@ -450,6 +454,9 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 	s.logger.Info("Creating policy", zap.String("name", policy.Name))
 
+	if policy.ID == "" {
+		policy.ID = uuid.New().String()
+	}
 	now := time.Now()
 	policy.CreatedAt = now
 	policy.UpdatedAt = now
@@ -1038,7 +1045,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 func (s *Service) handleListReviews(c *gin.Context) {
 	status := c.Query("status")
 
-	reviews, total, err := s.ListAccessReviews(c.Request.Context(), 0, 20, status)
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil {
+			offset = parsed
+		}
+	}
+
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil {
+			limit = parsed
+		}
+	}
+
+	reviews, total, err := s.ListAccessReviews(c.Request.Context(), offset, limit, status)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

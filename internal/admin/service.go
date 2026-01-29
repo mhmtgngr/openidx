@@ -183,15 +183,19 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	s.logger.Debug("Getting dashboard statistics")
 
-	var totalUsers, activeUsers, totalGroups, totalApps, activeSessions, pendingReviews int
+	var totalUsers, activeUsers, totalGroups, totalApps, activeSessions, pendingReviews, securityAlerts int
 
-	// Get real counts from database
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&activeUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&totalGroups)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalApps)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()").Scan(&activeSessions)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')").Scan(&pendingReviews)
+	// Get all dashboard counts in a single query
+	s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users),
+			(SELECT COUNT(*) FROM users WHERE enabled = true),
+			(SELECT COUNT(*) FROM groups),
+			(SELECT COUNT(*) FROM applications),
+			(SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()),
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')),
+			(SELECT COUNT(*) FROM audit_events WHERE outcome = 'failure' AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '24 hours')
+	`).Scan(&totalUsers, &activeUsers, &totalGroups, &totalApps, &activeSessions, &pendingReviews, &securityAlerts)
 
 	// Get recent activity from audit events
 	var recentActivity []ActivityItem
@@ -209,14 +213,6 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 			recentActivity = append(recentActivity, item)
 		}
 	}
-
-	// Count failed authentication events in last 24 hours
-	var securityAlerts int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM audit_events
-		WHERE outcome = 'failure' AND event_type = 'authentication'
-		AND timestamp > NOW() - INTERVAL '24 hours'
-	`).Scan(&securityAlerts)
 
 	dashboard := &Dashboard{
 		TotalUsers:        totalUsers,
