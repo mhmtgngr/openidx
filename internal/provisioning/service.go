@@ -566,6 +566,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	
 	// Internal provisioning API
 	prov := router.Group("/api/v1/provisioning")
+	prov.Use(svc.openIDXAuthMiddleware())
 	{
 		prov.GET("/rules", svc.handleListRules)
 		prov.POST("/rules", svc.handleCreateRule)
@@ -1102,9 +1103,206 @@ func (s *Service) handleGetServiceProviderConfig(c *gin.Context) {
 	})
 }
 
+// Provisioning Rules CRUD
+
+// CreateRule creates a new provisioning rule
+func (s *Service) CreateRule(ctx context.Context, rule *ProvisioningRule) (*ProvisioningRule, error) {
+	s.logger.Info("Creating provisioning rule", zap.String("name", rule.Name))
+
+	now := time.Now()
+	conditionsJSON, err := json.Marshal(rule.Conditions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal conditions: %w", err)
+	}
+	actionsJSON, err := json.Marshal(rule.Actions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal actions: %w", err)
+	}
+
+	var id string
+	err = s.db.Pool.QueryRow(ctx, `
+		INSERT INTO provisioning_rules (name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id
+	`, rule.Name, rule.Description, string(rule.Trigger), conditionsJSON, actionsJSON, rule.Enabled, rule.Priority, now, now).Scan(&id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rule: %w", err)
+	}
+
+	rule.ID = id
+	rule.CreatedAt = now
+	rule.UpdatedAt = now
+	return rule, nil
+}
+
+// GetRule retrieves a provisioning rule by ID
+func (s *Service) GetRule(ctx context.Context, id string) (*ProvisioningRule, error) {
+	var rule ProvisioningRule
+	var conditionsJSON, actionsJSON []byte
+	var trigger string
+
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at
+		FROM provisioning_rules WHERE id = $1
+	`, id).Scan(&rule.ID, &rule.Name, &rule.Description, &trigger, &conditionsJSON, &actionsJSON, &rule.Enabled, &rule.Priority, &rule.CreatedAt, &rule.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	rule.Trigger = RuleTrigger(trigger)
+	json.Unmarshal(conditionsJSON, &rule.Conditions)
+	json.Unmarshal(actionsJSON, &rule.Actions)
+	return &rule, nil
+}
+
+// ListRules lists all provisioning rules
+func (s *Service) ListRules(ctx context.Context) ([]ProvisioningRule, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at
+		FROM provisioning_rules ORDER BY priority ASC, created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []ProvisioningRule
+	for rows.Next() {
+		var rule ProvisioningRule
+		var conditionsJSON, actionsJSON []byte
+		var trigger string
+
+		if err := rows.Scan(&rule.ID, &rule.Name, &rule.Description, &trigger, &conditionsJSON, &actionsJSON, &rule.Enabled, &rule.Priority, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
+			continue
+		}
+		rule.Trigger = RuleTrigger(trigger)
+		json.Unmarshal(conditionsJSON, &rule.Conditions)
+		json.Unmarshal(actionsJSON, &rule.Actions)
+		rules = append(rules, rule)
+	}
+
+	if rules == nil {
+		rules = []ProvisioningRule{}
+	}
+	return rules, nil
+}
+
+// UpdateRule updates an existing provisioning rule
+func (s *Service) UpdateRule(ctx context.Context, id string, rule *ProvisioningRule) (*ProvisioningRule, error) {
+	s.logger.Info("Updating provisioning rule", zap.String("id", id))
+
+	now := time.Now()
+	conditionsJSON, err := json.Marshal(rule.Conditions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal conditions: %w", err)
+	}
+	actionsJSON, err := json.Marshal(rule.Actions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal actions: %w", err)
+	}
+
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE provisioning_rules
+		SET name = $2, description = $3, trigger = $4, conditions = $5, actions = $6, enabled = $7, priority = $8, updated_at = $9
+		WHERE id = $1
+	`, id, rule.Name, rule.Description, string(rule.Trigger), conditionsJSON, actionsJSON, rule.Enabled, rule.Priority, now)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update rule: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return nil, fmt.Errorf("rule not found")
+	}
+
+	rule.ID = id
+	rule.UpdatedAt = now
+	return rule, nil
+}
+
+// DeleteRule deletes a provisioning rule
+func (s *Service) DeleteRule(ctx context.Context, id string) error {
+	s.logger.Info("Deleting provisioning rule", zap.String("id", id))
+
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM provisioning_rules WHERE id = $1", id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("rule not found")
+	}
+	return nil
+}
+
 // Provisioning rules handlers
-func (s *Service) handleListRules(c *gin.Context)   { c.JSON(200, []ProvisioningRule{}) }
-func (s *Service) handleCreateRule(c *gin.Context)  { c.JSON(201, ProvisioningRule{}) }
-func (s *Service) handleGetRule(c *gin.Context)     { c.JSON(200, ProvisioningRule{}) }
-func (s *Service) handleUpdateRule(c *gin.Context)  { c.JSON(200, ProvisioningRule{}) }
-func (s *Service) handleDeleteRule(c *gin.Context)  { c.JSON(204, nil) }
+
+func (s *Service) handleListRules(c *gin.Context) {
+	rules, err := s.ListRules(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to list rules: " + err.Error()})
+		return
+	}
+	c.JSON(200, rules)
+}
+
+func (s *Service) handleCreateRule(c *gin.Context) {
+	var rule ProvisioningRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if rule.Name == "" {
+		c.JSON(400, gin.H{"error": "name is required"})
+		return
+	}
+	if rule.Trigger == "" {
+		c.JSON(400, gin.H{"error": "trigger is required"})
+		return
+	}
+
+	created, err := s.CreateRule(c.Request.Context(), &rule)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, created)
+}
+
+func (s *Service) handleGetRule(c *gin.Context) {
+	rule, err := s.GetRule(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(404, gin.H{"error": "rule not found"})
+		return
+	}
+	c.JSON(200, rule)
+}
+
+func (s *Service) handleUpdateRule(c *gin.Context) {
+	var rule ProvisioningRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	updated, err := s.UpdateRule(c.Request.Context(), c.Param("id"), &rule)
+	if err != nil {
+		if err.Error() == "rule not found" {
+			c.JSON(404, gin.H{"error": "rule not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, updated)
+}
+
+func (s *Service) handleDeleteRule(c *gin.Context) {
+	err := s.DeleteRule(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if err.Error() == "rule not found" {
+			c.JSON(404, gin.H{"error": "rule not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(204, nil)
+}

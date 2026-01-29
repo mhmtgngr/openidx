@@ -1,0 +1,441 @@
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, MoreHorizontal, Edit, Trash2 } from 'lucide-react'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
+import { Badge } from '../components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog'
+import { Label } from '../components/ui/label'
+import { Textarea } from '../components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select'
+import { Switch } from '../components/ui/switch'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table'
+import { api, ProvisioningRule, RuleCondition, RuleAction } from '../lib/api'
+import { useToast } from '../hooks/use-toast'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
+
+const TRIGGER_OPTIONS = [
+  { value: 'user_created', label: 'User Created' },
+  { value: 'user_updated', label: 'User Updated' },
+  { value: 'user_deleted', label: 'User Deleted' },
+  { value: 'group_membership', label: 'Group Membership' },
+  { value: 'attribute_change', label: 'Attribute Change' },
+  { value: 'scheduled', label: 'Scheduled' },
+]
+
+interface RuleFormData {
+  name: string
+  description: string
+  trigger: string
+  enabled: boolean
+  priority: number
+  conditions: RuleCondition[]
+  actions: RuleAction[]
+}
+
+const emptyForm: RuleFormData = {
+  name: '',
+  description: '',
+  trigger: 'user_created',
+  enabled: true,
+  priority: 0,
+  conditions: [],
+  actions: [],
+}
+
+export function ProvisioningRulesPage() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [search, setSearch] = useState('')
+  const [addModal, setAddModal] = useState(false)
+  const [editModal, setEditModal] = useState(false)
+  const [selectedRule, setSelectedRule] = useState<ProvisioningRule | null>(null)
+  const [formData, setFormData] = useState<RuleFormData>(emptyForm)
+
+  const { data: rules, isLoading } = useQuery({
+    queryKey: ['provisioning-rules'],
+    queryFn: () => api.getProvisioningRules(),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (data: RuleFormData) => api.createProvisioningRule(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provisioning-rules'] })
+      setAddModal(false)
+      setFormData(emptyForm)
+      toast({ title: 'Rule created successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to create rule.', variant: 'destructive' })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: RuleFormData }) => api.updateProvisioningRule(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provisioning-rules'] })
+      setEditModal(false)
+      setSelectedRule(null)
+      toast({ title: 'Rule updated successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to update rule.', variant: 'destructive' })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.deleteProvisioningRule(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provisioning-rules'] })
+      toast({ title: 'Rule deleted successfully' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to delete rule.', variant: 'destructive' })
+    },
+  })
+
+  const handleAdd = () => {
+    setFormData(emptyForm)
+    setAddModal(true)
+  }
+
+  const handleEdit = (rule: ProvisioningRule) => {
+    setSelectedRule(rule)
+    setFormData({
+      name: rule.name,
+      description: rule.description,
+      trigger: rule.trigger,
+      enabled: rule.enabled,
+      priority: rule.priority,
+      conditions: rule.conditions || [],
+      actions: rule.actions || [],
+    })
+    setEditModal(true)
+  }
+
+  const handleDelete = (rule: ProvisioningRule) => {
+    if (confirm(`Delete rule "${rule.name}"?`)) {
+      deleteMutation.mutate(rule.id)
+    }
+  }
+
+  const handleFormSubmit = () => {
+    if (editModal && selectedRule) {
+      updateMutation.mutate({ id: selectedRule.id, data: formData })
+    } else {
+      createMutation.mutate(formData)
+    }
+  }
+
+  const addCondition = () => {
+    setFormData({
+      ...formData,
+      conditions: [...formData.conditions, { field: '', operator: 'equals', value: '' }],
+    })
+  }
+
+  const removeCondition = (index: number) => {
+    setFormData({
+      ...formData,
+      conditions: formData.conditions.filter((_, i) => i !== index),
+    })
+  }
+
+  const updateCondition = (index: number, field: keyof RuleCondition, value: string) => {
+    const updated = [...formData.conditions]
+    updated[index] = { ...updated[index], [field]: value }
+    setFormData({ ...formData, conditions: updated })
+  }
+
+  const addAction = () => {
+    setFormData({
+      ...formData,
+      actions: [...formData.actions, { type: '', target: '' }],
+    })
+  }
+
+  const removeAction = (index: number) => {
+    setFormData({
+      ...formData,
+      actions: formData.actions.filter((_, i) => i !== index),
+    })
+  }
+
+  const updateAction = (index: number, field: keyof RuleAction, value: string) => {
+    const updated = [...formData.actions]
+    updated[index] = { ...updated[index], [field]: value }
+    setFormData({ ...formData, actions: updated })
+  }
+
+  const filteredRules = (rules || []).filter(
+    (rule) =>
+      rule.name.toLowerCase().includes(search.toLowerCase()) ||
+      rule.trigger.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const triggerLabel = (trigger: string) =>
+    TRIGGER_OPTIONS.find((t) => t.value === trigger)?.label || trigger
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <LoadingSpinner />
+      </div>
+    )
+  }
+
+  const formContent = (
+    <div className="space-y-4">
+      <div>
+        <Label htmlFor="name">Name</Label>
+        <Input
+          id="name"
+          value={formData.name}
+          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          placeholder="Rule name"
+        />
+      </div>
+      <div>
+        <Label htmlFor="description">Description</Label>
+        <Textarea
+          id="description"
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          placeholder="Rule description"
+        />
+      </div>
+      <div>
+        <Label>Trigger</Label>
+        <Select value={formData.trigger} onValueChange={(v) => setFormData({ ...formData, trigger: v })}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TRIGGER_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label htmlFor="priority">Priority</Label>
+        <Input
+          id="priority"
+          type="number"
+          value={formData.priority}
+          onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch
+          checked={formData.enabled}
+          onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
+        />
+        <Label>Enabled</Label>
+      </div>
+
+      {/* Conditions */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <Label>Conditions</Label>
+          <Button type="button" variant="outline" size="sm" onClick={addCondition}>Add</Button>
+        </div>
+        {formData.conditions.map((cond, i) => (
+          <div key={i} className="flex gap-2 mb-2">
+            <Input
+              placeholder="Field"
+              value={cond.field}
+              onChange={(e) => updateCondition(i, 'field', e.target.value)}
+              className="flex-1"
+            />
+            <Input
+              placeholder="Operator"
+              value={cond.operator}
+              onChange={(e) => updateCondition(i, 'operator', e.target.value)}
+              className="w-28"
+            />
+            <Input
+              placeholder="Value"
+              value={cond.value}
+              onChange={(e) => updateCondition(i, 'value', e.target.value)}
+              className="flex-1"
+            />
+            <Button type="button" variant="ghost" size="sm" onClick={() => removeCondition(i)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      {/* Actions */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <Label>Actions</Label>
+          <Button type="button" variant="outline" size="sm" onClick={addAction}>Add</Button>
+        </div>
+        {formData.actions.map((action, i) => (
+          <div key={i} className="flex gap-2 mb-2">
+            <Input
+              placeholder="Type"
+              value={action.type}
+              onChange={(e) => updateAction(i, 'type', e.target.value)}
+              className="flex-1"
+            />
+            <Input
+              placeholder="Target"
+              value={action.target}
+              onChange={(e) => updateAction(i, 'target', e.target.value)}
+              className="flex-1"
+            />
+            <Button type="button" variant="ghost" size="sm" onClick={() => removeAction(i)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-end gap-2 pt-4">
+        <Button variant="outline" onClick={() => { setAddModal(false); setEditModal(false) }}>
+          Cancel
+        </Button>
+        <Button onClick={handleFormSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
+          {editModal ? 'Update' : 'Create'}
+        </Button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Provisioning Rules</h1>
+        <Button onClick={handleAdd}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Rule
+        </Button>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Automated Provisioning Rules</CardTitle>
+          <CardDescription>
+            Define rules to automate user provisioning based on triggers and conditions.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Search rules..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+          </div>
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Trigger</TableHead>
+                <TableHead>Priority</TableHead>
+                <TableHead>Enabled</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredRules.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center">
+                    No provisioning rules found.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredRules.map((rule) => (
+                  <TableRow key={rule.id}>
+                    <TableCell className="font-medium">{rule.name}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{triggerLabel(rule.trigger)}</Badge>
+                    </TableCell>
+                    <TableCell>{rule.priority}</TableCell>
+                    <TableCell>
+                      <Badge variant={rule.enabled ? 'default' : 'secondary'}>
+                        {rule.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(rule)}>
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDelete(rule)} className="text-red-600">
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Add Rule Dialog */}
+      <Dialog open={addModal} onOpenChange={setAddModal}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add Provisioning Rule</DialogTitle>
+          </DialogHeader>
+          {formContent}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Rule Dialog */}
+      <Dialog open={editModal} onOpenChange={setEditModal}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Provisioning Rule</DialogTitle>
+          </DialogHeader>
+          {formContent}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}

@@ -14,6 +14,7 @@ import { PoliciesPage } from './pages/policies'
 import { AuditLogsPage } from './pages/audit-logs'
 import { ComplianceReportsPage } from './pages/compliance-reports'
 import { IdentityProvidersPage } from './pages/identity-providers'
+import { ProvisioningRulesPage } from './pages/provisioning-rules'
 import { SettingsPage } from './pages/settings'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
@@ -123,6 +124,11 @@ export default function App() {
           <Route path="identity-providers" element={
             <AdminRoute>
               <IdentityProvidersPage />
+            </AdminRoute>
+          } />
+          <Route path="provisioning-rules" element={
+            <AdminRoute>
+              <ProvisioningRulesPage />
             </AdminRoute>
           } />
           <Route path="settings" element={

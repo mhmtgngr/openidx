@@ -14,7 +14,8 @@ import {
   ShieldCheck,
   ClipboardList,
   Key as KeyIcon,
-  User
+  User,
+  Workflow
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -37,6 +38,7 @@ const navigation = [
   { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
   { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
   { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
+  { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
   { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
   { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
   { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },

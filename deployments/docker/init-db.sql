@@ -610,3 +610,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_id_idp_id ON users(idp_id, 
 COMMENT ON COLUMN users.idp_id IS 'Foreign key to the identity provider that provisioned this user.';
 COMMENT ON COLUMN users.external_user_id IS 'The user''s unique ID from the external identity provider.';
 
+-- ============================================================================
+-- PROVISIONING RULES TABLE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS provisioning_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    trigger VARCHAR(50) NOT NULL,
+    conditions JSONB DEFAULT '[]',
+    actions JSONB DEFAULT '[]',
+    enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_provisioning_rules_trigger ON provisioning_rules(trigger);
+CREATE INDEX IF NOT EXISTS idx_provisioning_rules_enabled ON provisioning_rules(enabled);
+CREATE INDEX IF NOT EXISTS idx_provisioning_rules_priority ON provisioning_rules(priority);
+
