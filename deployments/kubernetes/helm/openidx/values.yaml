@@ -1,9 +1,46 @@
 # OpenIDX Helm Chart Values
 
+nameOverride: ""
+fullnameOverride: ""
+
+# ----- Secrets -----
+# Provide values here for development/testing only.
+# For production, use externalSecrets (below) or --set flags.
+secrets:
+  postgresPassword: ""      # REQUIRED
+  redisPassword: ""          # REQUIRED
+  jwtSecret: ""              # REQUIRED - min 32 chars
+  encryptionKey: ""          # REQUIRED - exactly 32 bytes
+  keycloakAdminPassword: ""
+  smtpPassword: ""
+
+# ----- External Secrets Operator -----
+# Enable this to pull secrets from AWS Secrets Manager, HashiCorp Vault, etc.
+externalSecrets:
+  enabled: false
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: ""
+    kind: ClusterSecretStore
+  remoteKeyPrefix: "openidx"
+
 global:
   imageRegistry: ghcr.io/openidx
   imagePullSecrets: []
   storageClass: ""
+  environment: "production"
+  logLevel: "info"
+
+# ----- Service URLs (ConfigMap) -----
+config:
+  keycloakUrl: "http://keycloak:8180"
+  opaUrl: "http://opa:8181"
+  elasticsearchUrl: "http://elasticsearch:9200"
+  oauthIssuer: "https://auth.openidx.io"
+  oauthJwksUrl: "http://oauth-service:8006/.well-known/jwks.json"
+  viteApiUrl: "https://api.openidx.io"
+  viteOauthUrl: "https://auth.openidx.io"
+  viteOauthClientId: "admin-console"
 
 # Identity Service
 identityService:
@@ -104,6 +141,30 @@ adminApi:
     limits:
       cpu: 500m
       memory: 512Mi
+
+# OAuth/OIDC Service
+oauthService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: oauth-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8006
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
 
 # Admin Console
 adminConsole:
@@ -220,6 +281,7 @@ ingress:
 serviceAccount:
   create: true
   name: openidx
+  annotations: {}
 
 # Pod Security
 podSecurityContext:

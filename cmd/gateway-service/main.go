@@ -58,6 +58,10 @@ func main() {
 	router.Use(logger.GinMiddleware(log))
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestID())
+	router.Use(middleware.PrometheusMetrics("gateway-service"))
+
+	// Metrics endpoint
+	router.GET("/metrics", middleware.MetricsHandler())
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {

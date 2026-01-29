@@ -1,0 +1,493 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Governance Service
+  description: Access reviews, certification campaigns, and policy management.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8002
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Access Reviews
+  - name: Review Items
+  - name: Policies
+
+paths:
+  /api/v1/governance/reviews:
+    get:
+      tags: [Access Reviews]
+      summary: List access reviews
+      operationId: listReviews
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, in_progress, completed, expired, canceled]
+      responses:
+        '200':
+          description: Paginated list of reviews
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccessReview'
+    post:
+      tags: [Access Reviews]
+      summary: Create access review campaign
+      operationId: createReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessReviewCreate'
+      responses:
+        '201':
+          description: Review created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessReview'
+
+  /api/v1/governance/reviews/{id}:
+    get:
+      tags: [Access Reviews]
+      summary: Get access review
+      operationId: getReview
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Review details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessReview'
+        '404':
+          description: Review not found
+    put:
+      tags: [Access Reviews]
+      summary: Update access review
+      operationId: updateReview
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessReviewCreate'
+      responses:
+        '200':
+          description: Review updated
+
+  /api/v1/governance/reviews/{id}/status:
+    patch:
+      tags: [Access Reviews]
+      summary: Update review status
+      operationId: updateReviewStatus
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [in_progress, completed, canceled]
+      responses:
+        '200':
+          description: Status updated
+
+  /api/v1/governance/reviews/{id}/items:
+    get:
+      tags: [Review Items]
+      summary: List review items
+      operationId: listReviewItems
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: List of items to review
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReviewItem'
+
+  /api/v1/governance/reviews/{id}/items/{itemId}/decision:
+    post:
+      tags: [Review Items]
+      summary: Submit decision on review item
+      operationId: submitDecision
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, revoked, flagged]
+                comments:
+                  type: string
+      responses:
+        '200':
+          description: Decision recorded
+
+  /api/v1/governance/reviews/{id}/items/batch-decision:
+    post:
+      tags: [Review Items]
+      summary: Submit batch decisions
+      operationId: batchDecision
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decisions]
+              properties:
+                decisions:
+                  type: array
+                  items:
+                    type: object
+                    required: [item_id, decision]
+                    properties:
+                      item_id:
+                        type: string
+                      decision:
+                        type: string
+                        enum: [approved, revoked, flagged]
+                      comments:
+                        type: string
+      responses:
+        '200':
+          description: Decisions recorded
+
+  /api/v1/governance/policies:
+    get:
+      tags: [Policies]
+      summary: List policies
+      operationId: listPolicies
+      responses:
+        '200':
+          description: List of policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Policy'
+    post:
+      tags: [Policies]
+      summary: Create policy
+      operationId: createPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyCreate'
+      responses:
+        '201':
+          description: Policy created
+
+  /api/v1/governance/policies/{id}:
+    get:
+      tags: [Policies]
+      summary: Get policy
+      operationId: getPolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Policy details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+    put:
+      tags: [Policies]
+      summary: Update policy
+      operationId: updatePolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyCreate'
+      responses:
+        '200':
+          description: Policy updated
+    delete:
+      tags: [Policies]
+      summary: Delete policy
+      operationId: deletePolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Policy deleted
+
+  /api/v1/governance/policies/{id}/evaluate:
+    post:
+      tags: [Policies]
+      summary: Evaluate policy against context
+      operationId: evaluatePolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                resource_id:
+                  type: string
+                action:
+                  type: string
+                context:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Evaluation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed:
+                    type: boolean
+                  reason:
+                    type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    AccessReview:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [user_access, role_assignment, application_access, privileged_access]
+        status:
+          type: string
+          enum: [pending, in_progress, completed, expired, canceled]
+        reviewer_id:
+          type: string
+        scope:
+          $ref: '#/components/schemas/ReviewScope'
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        total_items:
+          type: integer
+        reviewed_items:
+          type: integer
+
+    AccessReviewCreate:
+      type: object
+      required: [name, type, reviewer_id, start_date, end_date]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [user_access, role_assignment, application_access, privileged_access]
+        reviewer_id:
+          type: string
+        scope:
+          $ref: '#/components/schemas/ReviewScope'
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+
+    ReviewScope:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        applications:
+          type: array
+          items:
+            type: string
+        roles:
+          type: array
+          items:
+            type: string
+
+    ReviewItem:
+      type: object
+      properties:
+        id:
+          type: string
+        review_id:
+          type: string
+        user_id:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        resource_name:
+          type: string
+        decision:
+          type: string
+          enum: [pending, approved, revoked, flagged]
+        decided_by:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        comments:
+          type: string
+
+    Policy:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [separation_of_duty, risk_based, timebound, location]
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PolicyCreate:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [separation_of_duty, risk_based, timebound, location]
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+          default: 0
+
+    PolicyRule:
+      type: object
+      properties:
+        id:
+          type: string
+        condition:
+          type: object
+          additionalProperties: true
+        effect:
+          type: string
+          enum: [allow, deny]
+        priority:
+          type: integer

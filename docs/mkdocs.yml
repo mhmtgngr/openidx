@@ -1,0 +1,88 @@
+site_name: OpenIDX Documentation
+site_description: Open Source Zero Trust Access Platform
+site_url: https://openidx.github.io/openidx
+repo_url: https://github.com/openidx/openidx
+repo_name: openidx/openidx
+edit_uri: edit/main/docs/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.snippets
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: guide/quickstart.md
+      - Architecture: guide/architecture.md
+      - Configuration: guide/configuration.md
+  - Deployment:
+      - Docker Compose: deployment/docker.md
+      - Kubernetes (Helm): deployment/kubernetes.md
+      - AWS (Terraform): deployment/aws.md
+  - API Reference:
+      - Overview: api/overview.md
+      - Identity Service: api/identity.md
+      - OAuth/OIDC: api/oauth.md
+      - Governance: api/governance.md
+      - Provisioning (SCIM): api/provisioning.md
+      - Audit: api/audit.md
+      - Admin API: api/admin.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Testing: development/testing.md
+      - Observability: development/observability.md
+  - Troubleshooting: troubleshooting.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/openidx/openidx
+
+copyright: Copyright &copy; 2024 OpenIDX Contributors — Apache License 2.0

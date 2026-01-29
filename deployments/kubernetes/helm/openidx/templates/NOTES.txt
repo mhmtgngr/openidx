@@ -1,0 +1,46 @@
+OpenIDX has been deployed successfully!
+
+{{- if .Values.ingress.enabled }}
+
+API is available at:
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- end }}
+
+{{- if and .Values.adminConsole.enabled .Values.adminConsole.ingress.enabled }}
+
+Admin Console is available at:
+{{- range .Values.adminConsole.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- end }}
+
+Services deployed:
+{{- if .Values.identityService.enabled }}
+  - Identity Service    (port {{ .Values.identityService.service.port }})
+{{- end }}
+{{- if .Values.governanceService.enabled }}
+  - Governance Service  (port {{ .Values.governanceService.service.port }})
+{{- end }}
+{{- if .Values.provisioningService.enabled }}
+  - Provisioning Service (port {{ .Values.provisioningService.service.port }})
+{{- end }}
+{{- if .Values.auditService.enabled }}
+  - Audit Service       (port {{ .Values.auditService.service.port }})
+{{- end }}
+{{- if .Values.adminApi.enabled }}
+  - Admin API           (port {{ .Values.adminApi.service.port }})
+{{- end }}
+{{- if .Values.oauthService.enabled | default true }}
+  - OAuth/OIDC Service  (port {{ .Values.oauthService.service.port | default 8006 }})
+{{- end }}
+{{- if .Values.adminConsole.enabled }}
+  - Admin Console       (port {{ .Values.adminConsole.service.port }})
+{{- end }}
+
+To check the status of all pods:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+To view logs for a service:
+  kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=identity-service

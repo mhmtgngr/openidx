@@ -1,0 +1,47 @@
+{{- if and .Values.identityService.enabled (.Values.identityService.autoscaling).enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "openidx.fullname" . }}-identity-service
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: identity-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "openidx.fullname" . }}-identity-service
+  minReplicas: {{ .Values.identityService.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.identityService.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.identityService.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+---
+{{- if and .Values.oauthService.enabled ((.Values.oauthService).autoscaling).enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "openidx.fullname" . }}-oauth-service
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: oauth-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "openidx.fullname" . }}-oauth-service
+  minReplicas: {{ .Values.oauthService.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.oauthService.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.oauthService.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

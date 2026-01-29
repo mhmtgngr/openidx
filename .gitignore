@@ -26,7 +26,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-*.env
+.env.bak
+!.env.example
 
 # Logs
 *.log
@@ -49,4 +50,6 @@ temp/
 *.pem
 *.key
 credentials.json
+# Exclude generated secrets files, but not Helm templates
 secrets.yaml
+!deployments/kubernetes/helm/**/templates/secrets.yaml

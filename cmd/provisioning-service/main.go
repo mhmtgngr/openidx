@@ -17,6 +17,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/provisioning"
 )
 
@@ -60,6 +61,10 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(logger.GinMiddleware(log))
+	router.Use(middleware.PrometheusMetrics("provisioning-service"))
+
+	// Metrics endpoint
+	router.GET("/metrics", middleware.MetricsHandler())
 
 	provisioningService := provisioning.NewService(db, redis, cfg, log)
 	provisioning.RegisterRoutes(router, provisioningService)

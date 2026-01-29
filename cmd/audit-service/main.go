@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
 var (
@@ -60,6 +61,10 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(logger.GinMiddleware(log))
+	router.Use(middleware.PrometheusMetrics("audit-service"))
+
+	// Metrics endpoint
+	router.GET("/metrics", middleware.MetricsHandler())
 
 	auditService := audit.NewService(db, es, cfg, log)
 	audit.RegisterRoutes(router, auditService)

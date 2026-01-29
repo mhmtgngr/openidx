@@ -1,0 +1,165 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openidx.fullname" . }}-api
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- range .Values.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          # Identity Service
+          - path: /api/v1/identity
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-identity-service
+                port:
+                  name: http
+          # Governance Service
+          - path: /api/v1/governance
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-governance-service
+                port:
+                  name: http
+          # Provisioning Service — SCIM
+          - path: /scim
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-provisioning-service
+                port:
+                  name: http
+          # Provisioning Service — rules API
+          - path: /api/v1/provisioning
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-provisioning-service
+                port:
+                  name: http
+          # Audit Service
+          - path: /api/v1/audit
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-audit-service
+                port:
+                  name: http
+          # Admin API
+          - path: /api/v1/dashboard
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-admin-api
+                port:
+                  name: http
+          - path: /api/v1/settings
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-admin-api
+                port:
+                  name: http
+          - path: /api/v1/applications
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-admin-api
+                port:
+                  name: http
+          - path: /api/v1/directories
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-admin-api
+                port:
+                  name: http
+          - path: /api/v1/mfa
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-admin-api
+                port:
+                  name: http
+          # OAuth/OIDC Service
+          - path: /oauth
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-oauth-service
+                port:
+                  name: http
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-oauth-service
+                port:
+                  name: http
+    {{- end }}
+{{- end }}
+---
+{{- if and .Values.adminConsole.enabled .Values.adminConsole.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openidx.fullname" . }}-admin-console
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+  {{- with .Values.adminConsole.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.adminConsole.ingress.className }}
+  ingressClassName: {{ .Values.adminConsole.ingress.className }}
+  {{- end }}
+  {{- if .Values.adminConsole.ingress.tls }}
+  tls:
+    {{- range .Values.adminConsole.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.adminConsole.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "openidx.fullname" $ }}-admin-console
+                port:
+                  name: http
+          {{- end }}
+    {{- end }}
+{{- end }}
