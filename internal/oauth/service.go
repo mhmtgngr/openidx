@@ -739,8 +739,16 @@ func (s *Service) handleLogin(c *gin.Context) {
 	}
 
 	// Authenticate user
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+
 	user, err := s.identityService.AuthenticateUser(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
+		// Log failed login audit event
+		go s.logAuditEvent(context.Background(), "authentication", "security", "login_failed", "failure",
+			req.Username, clientIP, "", "user",
+			map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
+
 		// Return appropriate error message
 		errorMsg := "Invalid username or password"
 		if err.Error() == "account is locked" {
@@ -751,6 +759,11 @@ func (s *Service) handleLogin(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "invalid_credentials", "error_description": errorMsg})
 		return
 	}
+
+	// Log successful login audit event
+	go s.logAuditEvent(context.Background(), "authentication", "security", "login", "success",
+		user.ID, clientIP, user.ID, "user",
+		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
 
 	// Delete the login session from Redis
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
@@ -1275,4 +1288,18 @@ func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})
+}
+
+// logAuditEvent writes an audit event directly to the audit_events table
+func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, outcome, actorID, actorIP, targetID, targetType string, details map[string]interface{}) {
+	detailsJSON, _ := json.Marshal(details)
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
+		                          actor_id, actor_type, actor_ip, target_id, target_type,
+		                          resource_id, details)
+		VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', $6, $7, $8, $7, $9)
+	`, eventType, category, action, outcome, actorID, actorIP, targetID, targetType, detailsJSON)
+	if err != nil {
+		s.logger.Error("Failed to log audit event", zap.Error(err))
+	}
 }

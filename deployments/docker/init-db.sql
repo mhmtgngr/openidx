@@ -532,6 +532,7 @@ INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type
 ON CONFLICT (id) DO NOTHING;
 
 -- Add test client for debugging
+INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type, redirect_uris, grant_types, response_types, scopes, pkce_required, allow_refresh_token, access_token_lifetime, refresh_token_lifetime) VALUES
 ('80000000-0000-0000-0000-000000000003', 'test-client', 'test-secret', 'Test Client', 'Client for testing authentication flow', 'confidential',
  '[]'::jsonb,
  '["authorization_code", "refresh_token", "client_credentials"]'::jsonb,
@@ -749,4 +750,43 @@ CREATE TABLE IF NOT EXISTS directory_integrations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_directory_integrations_type ON directory_integrations(type);
+
+-- Seed audit events for demo/testing
+INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome, actor_id, actor_type, actor_ip, target_id, target_type, resource_id, details)
+VALUES
+  (gen_random_uuid(), NOW() - INTERVAL '6 days 14 hours', 'system', 'operational', 'system_startup', 'success',
+   'system', 'system', '127.0.0.1', '', 'system', '', '{"message": "OpenIDX platform initialized"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '6 days 13 hours', 'configuration', 'operational', 'settings_updated', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'settings', '', '{"section": "security", "change": "password policy updated"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '5 days 10 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '5 days 8 hours', 'user_management', 'operational', 'user_created', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000002', 'user', '00000000-0000-0000-0000-000000000002', '{"username": "john.doe", "email": "john@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '4 days 16 hours', 'authentication', 'security', 'login_failed', 'failure',
+   'unknown_user', 'user', '10.0.0.55', '', 'user', '', '{"reason": "invalid credentials", "username": "unknown_user"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '3 days 12 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '3 days 6 hours', 'user_management', 'operational', 'user_updated', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000002', 'user', '00000000-0000-0000-0000-000000000002', '{"changes": ["email", "display_name"]}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '2 days 9 hours', 'authentication', 'security', 'login_failed', 'failure',
+   'admin', 'user', '10.0.0.99', '', 'user', '', '{"reason": "invalid password", "username": "admin"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '1 day 15 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '1 day 4 hours', 'group_management', 'operational', 'group_created', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '', 'group', '', '{"group_name": "Engineering", "description": "Engineering team"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '12 hours', 'configuration', 'operational', 'application_created', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '', 'application', '', '{"app_name": "Internal Dashboard", "protocol": "oidc"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '6 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.20', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}');
 
