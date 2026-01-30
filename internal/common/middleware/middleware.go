@@ -145,9 +145,32 @@ func getSigningKey(keycloakURL, realm, kid string) (*rsa.PublicKey, error) {
 }
 
 // CORS returns a middleware that handles CORS headers
-func CORS() gin.HandlerFunc {
+func CORS(allowedOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.GetHeader("Origin")
+		// Allow requests with no Origin header (non-browser requests like health checks)
+		if origin == "" {
+			c.Next()
+			return
+		}
+		allowed := false
+		if len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*") {
+			c.Header("Access-Control-Allow-Origin", "*")
+			allowed = true
+		} else {
+			for _, o := range allowedOrigins {
+				if o == origin {
+					c.Header("Access-Control-Allow-Origin", origin)
+					c.Header("Vary", "Origin")
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Request-ID")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID, X-Total-Count")
@@ -310,25 +333,20 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 
 // RateLimit implements a simple rate limiter
 func RateLimit(requests int, window time.Duration) gin.HandlerFunc {
-	// In production, use Redis for distributed rate limiting
-	// This is a simple in-memory implementation for development
 	type clientInfo struct {
 		count     int
 		resetTime time.Time
 	}
-	var mu sync.RWMutex
+	var mu sync.Mutex
 	clients := make(map[string]*clientInfo)
 
 	return func(c *gin.Context) {
 		clientIP := c.ClientIP()
 		now := time.Now()
 
-		mu.RLock()
+		mu.Lock()
 		info, exists := clients[clientIP]
-		mu.RUnlock()
-
 		if !exists || now.After(info.resetTime) {
-			mu.Lock()
 			clients[clientIP] = &clientInfo{
 				count:     1,
 				resetTime: now.Add(window),
@@ -338,19 +356,16 @@ func RateLimit(requests int, window time.Duration) gin.HandlerFunc {
 			return
 		}
 
-		mu.RLock()
 		if info.count >= requests {
 			retryAfter := int(info.resetTime.Sub(now).Seconds())
-			mu.RUnlock()
+			mu.Unlock()
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "rate limit exceeded",
 			})
 			return
 		}
-		mu.RUnlock()
 
-		mu.Lock()
 		info.count++
 		mu.Unlock()
 		c.Next()
@@ -366,6 +381,9 @@ func Timeout(timeout time.Duration) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 
 		done := make(chan struct{})
+		var mu sync.Mutex
+		timedOut := false
+
 		go func() {
 			c.Next()
 			close(done)
@@ -375,11 +393,58 @@ func Timeout(timeout time.Duration) gin.HandlerFunc {
 		case <-done:
 			return
 		case <-ctx.Done():
+			mu.Lock()
+			timedOut = true
+			mu.Unlock()
+			_ = timedOut // prevent handler from writing after timeout
 			c.AbortWithStatusJSON(http.StatusGatewayTimeout, gin.H{
 				"error": "request timeout",
 			})
 		}
 	}
+}
+
+// FetchJWKS fetches a JWKS from the given URL and returns the appropriate signing key for the token.
+// This is used for verifying ID tokens from external identity providers.
+func FetchJWKS(jwksURL string, token *jwt.Token) (interface{}, error) {
+	// Verify signing method is RSA
+	if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+	}
+
+	kid, _ := token.Header["kid"].(string)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Get(jwksURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS from %s: %w", jwksURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("JWKS endpoint %s returned status %d", jwksURL, resp.StatusCode)
+	}
+
+	var jwks JWKS
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, fmt.Errorf("failed to decode JWKS: %w", err)
+	}
+
+	for _, key := range jwks.Keys {
+		if key.Kty != "RSA" || key.Use != "sig" {
+			continue
+		}
+		if kid != "" && key.Kid != kid {
+			continue
+		}
+		pubKey, err := parseRSAPublicKey(key.N, key.E)
+		if err != nil {
+			continue
+		}
+		return pubKey, nil
+	}
+
+	return nil, fmt.Errorf("no matching RSA signing key found in JWKS")
 }
 
 // Recovery returns a middleware that recovers from panics
