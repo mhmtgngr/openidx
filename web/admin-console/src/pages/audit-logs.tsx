@@ -107,17 +107,13 @@ export function AuditLogsPage() {
 
   const exportMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/v1/audit/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          start_time: new Date(startDate).toISOString(),
-          end_time: new Date(endDate + 'T23:59:59').toISOString(),
-          event_type: eventTypeFilter || undefined,
-          outcome: outcomeFilter || undefined,
-        }),
+      const data = await api.post<Blob>('/api/v1/audit/export', {
+        start_time: new Date(startDate).toISOString(),
+        end_time: new Date(endDate + 'T23:59:59').toISOString(),
+        event_type: eventTypeFilter || undefined,
+        outcome: outcomeFilter || undefined,
       })
-      const blob = await response.blob()
+      const blob = data instanceof Blob ? data : new Blob([JSON.stringify(data)], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -328,8 +324,8 @@ export function AuditLogsPage() {
               </CardHeader>
               <CardContent>
                 {statistics.events_per_day && statistics.events_per_day.length > 0 ? (
-                  <div className="h-40 flex items-end gap-1">
-                    {statistics.events_per_day.slice(-14).map((day, i) => (
+                  <div className="h-40 flex items-end gap-1 overflow-x-auto">
+                    {statistics.events_per_day.map((day, i) => (
                       <div key={i} className="flex-1 flex flex-col items-center">
                         <div
                           className="w-full bg-blue-500 rounded-t transition-all hover:bg-blue-600"

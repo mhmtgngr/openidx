@@ -277,7 +277,11 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]AuditEv
 		); err != nil {
 			return nil, 0, err
 		}
-		json.Unmarshal(details, &e.Details)
+		if len(details) > 0 {
+			if err := json.Unmarshal(details, &e.Details); err != nil {
+				s.logger.Warn("Failed to parse audit event details", zap.String("event_id", e.ID), zap.Error(err))
+			}
+		}
 		events = append(events, e)
 	}
 
@@ -341,53 +345,59 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 }
 
 func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
+	// Gather evidence counts from the database
+	var totalEvents, failedAuth, mfaUsers, totalUsers int
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2", startDate, endDate).Scan(&totalEvents)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2", startDate, endDate).Scan(&failedAuth)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_totp WHERE enabled = true").Scan(&mfaUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&totalUsers)
+
+	cc61Status := s.evaluateAccessControlStatus(ctx, startDate, endDate)
+	cc62Status := s.evaluateAuthenticationStatus(ctx, startDate, endDate)
+	cc63Status := s.evaluateAccessRevocationStatus(ctx, startDate, endDate)
+	cc72Status := s.evaluateMonitoringStatus(ctx, startDate, endDate)
+
 	findings := []ReportFinding{
-		// CC6.1 - Logical and Physical Access Controls
 		{
 			ControlID:   "CC6.1",
 			ControlName: "Logical and Physical Access Controls",
-			Status:      s.evaluateAccessControlStatus(ctx, startDate, endDate),
-			Evidence:    "Access control policies implemented; MFA enabled for privileged access",
-			Remediation: "",
+			Status:      cc61Status,
+			Evidence:    fmt.Sprintf("RBAC implemented; %d/%d users have MFA enabled; %d failed auth attempts in period", mfaUsers, totalUsers, failedAuth),
+			Remediation: func() string { if cc61Status != "passed" { return "Review and remediate excessive failed access attempts" }; return "" }(),
 		},
-		// CC6.2 - Access Authentication and Authorization
 		{
 			ControlID:   "CC6.2",
 			ControlName: "Prior to Access Authentication and Authorization",
-			Status:      s.evaluateAuthenticationStatus(ctx, startDate, endDate),
-			Evidence:    "Authentication events logged; session management implemented",
-			Remediation: "",
+			Status:      cc62Status,
+			Evidence:    fmt.Sprintf("%d authentication events logged in period; %d failures detected", totalEvents, failedAuth),
+			Remediation: func() string { if cc62Status != "passed" { return "Investigate high authentication failure rate" }; return "" }(),
 		},
-		// CC6.3 - Access Revocation
 		{
 			ControlID:   "CC6.3",
 			ControlName: "Access Removal",
-			Status:      s.evaluateAccessRevocationStatus(ctx, startDate, endDate),
+			Status:      cc63Status,
 			Evidence:    "User deprovisioning workflow active; access reviews conducted",
-			Remediation: "",
+			Remediation: func() string { if cc63Status != "passed" { return "Ensure deprovisioning workflows are active for terminated users" }; return "" }(),
 		},
-		// CC7.2 - Monitoring Activities
 		{
 			ControlID:   "CC7.2",
 			ControlName: "System Monitoring Activities",
-			Status:      s.evaluateMonitoringStatus(ctx, startDate, endDate),
-			Evidence:    "Audit logging enabled; security events monitored",
-			Remediation: "",
+			Status:      cc72Status,
+			Evidence:    fmt.Sprintf("Audit logging active; %d events recorded in period", totalEvents),
+			Remediation: func() string { if cc72Status != "passed" { return "Ensure audit logging is enabled and capturing events" }; return "" }(),
 		},
-		// CC7.3 - Evaluation of Security Events
 		{
 			ControlID:   "CC7.3",
 			ControlName: "Evaluation of Security Events",
-			Status:      "passed",
-			Evidence:    "Security event review process established",
+			Status:      s.evaluatePrivilegedAccessStatus(ctx, startDate, endDate),
+			Evidence:    "Security event review process established; privileged access monitored",
 			Remediation: "",
 		},
-		// CC8.1 - Change Management
 		{
 			ControlID:   "CC8.1",
 			ControlName: "Changes to Infrastructure and Software",
 			Status:      "passed",
-			Evidence:    "Change management process documented",
+			Evidence:    "Change management process documented; configuration changes audited",
 			Remediation: "",
 		},
 	}
@@ -528,12 +538,16 @@ func (s *Service) evaluatePCIDSSControls(ctx context.Context, startDate, endDate
 func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check for any unauthorized access attempts
 	var failedCount int
-	s.db.Pool.QueryRow(ctx, `
+	err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authorization'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
 	`, startDate, endDate).Scan(&failedCount)
+	if err != nil {
+		s.logger.Error("Failed to evaluate access control status", zap.Error(err))
+		return "not_applicable"
+	}
 
 	if failedCount > 100 {
 		return "partial"
@@ -544,18 +558,24 @@ func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, en
 func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check authentication failure rate
 	var totalAuth, failedAuth int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalAuth)
+	`, startDate, endDate).Scan(&totalAuth); err != nil {
+		s.logger.Error("Failed to evaluate authentication status", zap.Error(err))
+		return "not_applicable"
+	}
 
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedAuth)
+	`, startDate, endDate).Scan(&failedAuth); err != nil {
+		s.logger.Error("Failed to count failed auth events", zap.Error(err))
+		return "not_applicable"
+	}
 
 	if totalAuth > 0 && float64(failedAuth)/float64(totalAuth) > 0.3 {
 		return "failed"
@@ -569,23 +589,32 @@ func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, e
 func (s *Service) evaluateAccessRevocationStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check if user deprovisioning is active
 	var deactivatedCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'user_management'
-		AND action LIKE '%deactivate%' OR action LIKE '%disable%'
+		AND (action LIKE '%deactivate%' OR action LIKE '%disable%')
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&deactivatedCount)
+	`, startDate, endDate).Scan(&deactivatedCount); err != nil {
+		s.logger.Error("Failed to evaluate access revocation status", zap.Error(err))
+		return "not_applicable"
+	}
 
+	if deactivatedCount == 0 {
+		return "partial"
+	}
 	return "passed"
 }
 
 func (s *Service) evaluateMonitoringStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check if audit logging is working
 	var eventCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&eventCount)
+	`, startDate, endDate).Scan(&eventCount); err != nil {
+		s.logger.Error("Failed to evaluate monitoring status", zap.Error(err))
+		return "not_applicable"
+	}
 
 	if eventCount == 0 {
 		return "failed"
@@ -596,12 +625,18 @@ func (s *Service) evaluateMonitoringStatus(ctx context.Context, startDate, endDa
 func (s *Service) evaluatePrivilegedAccessStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check privileged access management
 	var privilegedEvents int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'role_management'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&privilegedEvents)
+	`, startDate, endDate).Scan(&privilegedEvents); err != nil {
+		s.logger.Error("Failed to evaluate privileged access status", zap.Error(err))
+		return "not_applicable"
+	}
 
+	if privilegedEvents == 0 {
+		return "partial"
+	}
 	return "passed"
 }
 
@@ -627,16 +662,22 @@ func (s *Service) calculateSummary(findings []ReportFinding) ReportSummary {
 }
 
 func (s *Service) storeComplianceReport(ctx context.Context, report *ComplianceReport) error {
-	summaryJSON, _ := json.Marshal(report.Summary)
-	findingsJSON, _ := json.Marshal(report.Findings)
+	summaryJSON, err := json.Marshal(report.Summary)
+	if err != nil {
+		return fmt.Errorf("failed to marshal summary: %w", err)
+	}
+	findingsJSON, err := json.Marshal(report.Findings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal findings: %w", err)
+	}
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, execErr := s.db.Pool.Exec(ctx, `
 		INSERT INTO compliance_reports (id, type, framework, name, status, start_date, end_date, generated_at, summary, findings)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, report.ID, report.Type, report.Framework, report.Name, report.Status,
 		report.StartDate, report.EndDate, report.GeneratedAt, summaryJSON, findingsJSON)
 
-	return err
+	return execErr
 }
 
 func generateUUID() string {
@@ -801,8 +842,16 @@ func (s *Service) ListComplianceReports(ctx context.Context, offset, limit int) 
 		); err != nil {
 			return nil, 0, err
 		}
-		json.Unmarshal(summaryJSON, &r.Summary)
-		json.Unmarshal(findingsJSON, &r.Findings)
+		if len(summaryJSON) > 0 {
+			if err := json.Unmarshal(summaryJSON, &r.Summary); err != nil {
+				s.logger.Warn("Failed to parse report summary", zap.String("report_id", r.ID), zap.Error(err))
+			}
+		}
+		if len(findingsJSON) > 0 {
+			if err := json.Unmarshal(findingsJSON, &r.Findings); err != nil {
+				s.logger.Warn("Failed to parse report findings", zap.String("report_id", r.ID), zap.Error(err))
+			}
+		}
 		reports = append(reports, r)
 	}
 

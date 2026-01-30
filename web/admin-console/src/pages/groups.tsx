@@ -107,11 +107,12 @@ export function GroupsPage() {
   }, [userSearchQuery])
 
   const { data: groups, isLoading } = useQuery({
-    queryKey: ['groups', page],
+    queryKey: ['groups', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const result = await api.getWithHeaders<Group[]>(`/api/v1/identity/groups?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -278,10 +279,8 @@ export function GroupsPage() {
     return parentHierarchy ? `${parentHierarchy} > ${parent.name}` : parent.name
   }
 
-  const filteredGroups = groups?.filter(group =>
-    group.name.toLowerCase().includes(search.toLowerCase()) ||
-    group.description?.toLowerCase().includes(search.toLowerCase())
-  )
+  // Groups are already filtered server-side via search param
+  const filteredGroups = groups
 
   // Filter members based on search
   const filteredMembers = groupMembers?.filter(member =>

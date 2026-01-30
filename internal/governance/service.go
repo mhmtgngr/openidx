@@ -222,7 +222,10 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
-			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			expectedIssuer := s.config.OAuthIssuer
+			if expectedIssuer == "" {
+				expectedIssuer = "http://localhost:8006"
+			}
 			if iss != expectedIssuer {
 				s.logger.Warn("Invalid token issuer", zap.String("expected", expectedIssuer), zap.String("actual", iss))
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -268,7 +271,10 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 		return s.jwksCachedKey, nil
 	}
 
-	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+	jwksURL := s.config.OAuthJWKSURL
+	if jwksURL == "" {
+		jwksURL = "http://openidx-oauth-service:8006/.well-known/jwks.json"
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(jwksURL)
@@ -515,6 +521,35 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 			return nil, 0, err
 		}
 		policies = append(policies, p)
+	}
+
+	// Load rules for each policy
+	for i := range policies {
+		ruleRows, err := s.db.Pool.Query(ctx, `
+			SELECT id, condition, effect, priority
+			FROM policy_rules
+			WHERE policy_id = $1
+			ORDER BY priority DESC
+		`, policies[i].ID)
+		if err != nil {
+			s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policies[i].ID), zap.Error(err))
+			continue
+		}
+		for ruleRows.Next() {
+			var rule PolicyRule
+			var conditionJSON []byte
+			if err := ruleRows.Scan(&rule.ID, &conditionJSON, &rule.Effect, &rule.Priority); err != nil {
+				s.logger.Warn("Failed to scan policy rule", zap.Error(err))
+				continue
+			}
+			if len(conditionJSON) > 0 {
+				if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
+					s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
+				}
+			}
+			policies[i].Rules = append(policies[i].Rules, rule)
+		}
+		ruleRows.Close()
 	}
 
 	return policies, total, nil

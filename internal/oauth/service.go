@@ -1226,8 +1226,67 @@ func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
 }
 
 func (s *Service) handleIntrospect(c *gin.Context) {
-	// Token introspection endpoint
-	c.JSON(200, gin.H{"active": false})
+	token := c.PostForm("token")
+	if token == "" {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
+	// Try to parse as JWT
+	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+		return s.publicKey, nil
+	})
+	if err != nil || !parsed.Valid {
+		// Check if it's a refresh token
+		var userID, clientID, scope string
+		err := s.db.Pool.QueryRow(c.Request.Context(), `
+			SELECT user_id, client_id, scope FROM refresh_tokens
+			WHERE token = $1 AND revoked = false AND expires_at > NOW()
+		`, token).Scan(&userID, &clientID, &scope)
+		if err != nil {
+			c.JSON(200, gin.H{"active": false})
+			return
+		}
+		c.JSON(200, gin.H{
+			"active":     true,
+			"token_type": "refresh_token",
+			"client_id":  clientID,
+			"sub":        userID,
+			"scope":      scope,
+		})
+		return
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
+	response := gin.H{
+		"active":     true,
+		"token_type": "access_token",
+	}
+	if sub, ok := claims["sub"].(string); ok {
+		response["sub"] = sub
+	}
+	if clientID, ok := claims["client_id"].(string); ok {
+		response["client_id"] = clientID
+	}
+	if scope, ok := claims["scope"].(string); ok {
+		response["scope"] = scope
+	}
+	if exp, ok := claims["exp"].(float64); ok {
+		response["exp"] = int64(exp)
+	}
+	if iat, ok := claims["iat"].(float64); ok {
+		response["iat"] = int64(iat)
+	}
+	if iss, ok := claims["iss"].(string); ok {
+		response["iss"] = iss
+	}
+
+	c.JSON(200, response)
 }
 
 func (s *Service) handleRevoke(c *gin.Context) {

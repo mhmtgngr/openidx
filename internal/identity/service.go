@@ -407,23 +407,54 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 }
 
 // ListUsers retrieves users with pagination
-func (s *Service) ListUsers(ctx context.Context, offset, limit int) ([]User, int, error) {
+func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...string) ([]User, int, error) {
 	s.logger.Debug("Listing users", zap.Int("offset", offset), zap.Int("limit", limit))
 
-	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
-	if err != nil {
-		return nil, 0, err
+	searchQuery := ""
+	if len(search) > 0 {
+		searchQuery = search[0]
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users
-		ORDER BY created_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+	var total int
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM users
+			WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+		`, searchPattern).Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
+	var err error
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			       created_at, updated_at, last_login_at, password_changed_at,
+			       password_must_change, failed_login_count, last_failed_login_at, locked_until
+			FROM users
+			WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+			ORDER BY created_at DESC
+			OFFSET $2 LIMIT $3
+		`, searchPattern, offset, limit)
+	} else {
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			       created_at, updated_at, last_login_at, password_changed_at,
+			       password_must_change, failed_login_count, last_failed_login_at, locked_until
+			FROM users
+			ORDER BY created_at DESC
+			OFFSET $1 LIMIT $2
+		`, offset, limit)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -627,22 +658,49 @@ func (s *Service) TerminateSession(ctx context.Context, sessionID string) error 
 }
 
 // ListGroups retrieves groups with pagination
-func (s *Service) ListGroups(ctx context.Context, offset, limit int) ([]Group, int, error) {
+func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...string) ([]Group, int, error) {
 	s.logger.Debug("Listing groups", zap.Int("offset", offset), zap.Int("limit", limit))
 
-	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
-	if err != nil {
-		return nil, 0, err
+	searchQuery := ""
+	if len(search) > 0 {
+		searchQuery = search[0]
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
-		FROM groups g
-		ORDER BY g.name
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+	var total int
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE name ILIKE $1 OR description ILIKE $1", searchPattern).Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
+	var err error
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			FROM groups g
+			WHERE g.name ILIKE $1 OR g.description ILIKE $1
+			ORDER BY g.name
+			OFFSET $2 LIMIT $3
+		`, searchPattern, offset, limit)
+	} else {
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			FROM groups g
+			ORDER BY g.name
+			OFFSET $1 LIMIT $2
+		`, offset, limit)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1015,9 +1073,23 @@ func (s *Service) RecordFailedLogin(ctx context.Context, username string) error 
 	user.FailedLoginCount++
 	user.LastFailedLoginAt = &now
 
-	// Check if account should be locked (after 5 failed attempts)
+	// Read lockout settings from system_settings, with defaults
 	maxFailures := 5
-	lockoutDuration := 15 * time.Minute // 15 minutes lockout
+	lockoutMinutes := 15
+	var settingsValue []byte
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_threshold'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			maxFailures = v
+		}
+	}
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_duration'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			lockoutMinutes = v
+		}
+	}
+	lockoutDuration := time.Duration(lockoutMinutes) * time.Minute
 
 	if user.FailedLoginCount >= maxFailures {
 		lockoutUntil := now.Add(lockoutDuration)
@@ -2363,13 +2435,14 @@ func (s *Service) handleListUsers(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
+	search := c.Query("search")
 
-	users, total, err := s.ListUsers(c.Request.Context(), offset, limit)
+	users, total, err := s.ListUsers(c.Request.Context(), offset, limit, search)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.Header("X-Total-Count", strconv.Itoa(total))
 	c.JSON(200, users)
 }
@@ -2712,8 +2785,9 @@ func (s *Service) handleListGroups(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
+	search := c.Query("search")
 
-	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit)
+	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit, search)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

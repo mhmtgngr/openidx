@@ -99,11 +99,12 @@ export function UsersPage() {
 
   // Fetch users
   const { data: users, isLoading } = useQuery({
-    queryKey: ['users', page],
+    queryKey: ['users', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const result = await api.getWithHeaders<User[]>(`/api/v1/identity/users?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -205,12 +206,8 @@ export function UsersPage() {
 
   const handleExportCSV = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/identity/users/export`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      })
-      const blob = await response.blob()
+      const data = await api.get<string>('/api/v1/identity/users/export')
+      const blob = new Blob([typeof data === 'string' ? data : JSON.stringify(data)], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -358,13 +355,8 @@ export function UsersPage() {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  // Filter users by search
-  const filteredUsers = users?.filter(user =>
-    search === '' ||
-    user.username.toLowerCase().includes(search.toLowerCase()) ||
-    user.email.toLowerCase().includes(search.toLowerCase()) ||
-    `${user.first_name} ${user.last_name}`.toLowerCase().includes(search.toLowerCase())
-  ) || []
+  // Users are already filtered server-side via search param
+  const filteredUsers = users || []
 
   return (
     <div className="space-y-6">

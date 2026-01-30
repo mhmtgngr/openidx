@@ -1101,11 +1101,76 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 
 // Schema discovery handlers
 func (s *Service) handleGetSchemas(c *gin.Context) {
-	c.JSON(200, gin.H{"schemas": []string{}})
+	schemas := []gin.H{
+		{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:User",
+			"name":        "User",
+			"description": "User Account",
+			"attributes": []gin.H{
+				{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
+				{"name": "name", "type": "complex", "multiValued": false, "subAttributes": []gin.H{
+					{"name": "givenName", "type": "string"},
+					{"name": "familyName", "type": "string"},
+				}},
+				{"name": "emails", "type": "complex", "multiValued": true, "subAttributes": []gin.H{
+					{"name": "value", "type": "string"},
+					{"name": "primary", "type": "boolean"},
+				}},
+				{"name": "active", "type": "boolean", "multiValued": false, "required": false},
+				{"name": "displayName", "type": "string", "multiValued": false},
+			},
+			"meta": gin.H{"resourceType": "Schema", "location": "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User"},
+		},
+		{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:Group",
+			"name":        "Group",
+			"description": "Group",
+			"attributes": []gin.H{
+				{"name": "displayName", "type": "string", "multiValued": false, "required": true},
+				{"name": "members", "type": "complex", "multiValued": true, "subAttributes": []gin.H{
+					{"name": "value", "type": "string"},
+					{"name": "display", "type": "string"},
+				}},
+			},
+			"meta": gin.H{"resourceType": "Schema", "location": "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group"},
+		},
+	}
+	c.JSON(200, gin.H{
+		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
+		"totalResults": len(schemas),
+		"Resources":    schemas,
+	})
 }
 
 func (s *Service) handleGetSchema(c *gin.Context) {
-	c.JSON(200, gin.H{})
+	schemaID := c.Param("id")
+	switch schemaID {
+	case "urn:ietf:params:scim:schemas:core:2.0:User":
+		c.JSON(200, gin.H{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:User",
+			"name":        "User",
+			"description": "User Account",
+			"attributes": []gin.H{
+				{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
+				{"name": "name", "type": "complex", "multiValued": false},
+				{"name": "emails", "type": "complex", "multiValued": true},
+				{"name": "active", "type": "boolean", "multiValued": false},
+				{"name": "displayName", "type": "string", "multiValued": false},
+			},
+		})
+	case "urn:ietf:params:scim:schemas:core:2.0:Group":
+		c.JSON(200, gin.H{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:Group",
+			"name":        "Group",
+			"description": "Group",
+			"attributes": []gin.H{
+				{"name": "displayName", "type": "string", "multiValued": false, "required": true},
+				{"name": "members", "type": "complex", "multiValued": true},
+			},
+		})
+	default:
+		c.JSON(404, gin.H{"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:Error"}, "detail": "Schema not found", "status": "404"})
+	}
 }
 
 func (s *Service) handleGetResourceTypes(c *gin.Context) {

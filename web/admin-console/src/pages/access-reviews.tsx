@@ -158,6 +158,10 @@ export function AccessReviewsPage() {
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (newReview.end_date && newReview.start_date && new Date(newReview.end_date) <= new Date(newReview.start_date)) {
+      toast({ title: 'Validation Error', description: 'End date must be after start date', variant: 'destructive' })
+      return
+    }
     createReviewMutation.mutate({
       name: newReview.name,
       description: newReview.description,

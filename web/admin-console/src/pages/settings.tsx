@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Save, Building, Shield, Key, Palette, X, Plus } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -62,9 +62,11 @@ export function SettingsPage() {
   const [newDomain, setNewDomain] = useState('')
 
   // Initialize form data when settings load
-  if (settings && !formData) {
-    setFormData(settings)
-  }
+  useEffect(() => {
+    if (settings && !formData) {
+      setFormData(settings)
+    }
+  }, [settings]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
     mutationFn: (data: Settings) => api.put('/api/v1/settings', data),
