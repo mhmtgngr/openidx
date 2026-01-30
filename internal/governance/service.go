@@ -585,22 +585,53 @@ func (s *Service) evaluateSoDPolicy(ctx context.Context, policy *Policy, request
 		return true, nil // No roles to check
 	}
 
-	// Check for conflicting role pairs (example: admin and auditor cannot be combined)
-	conflictPairs := map[string]string{
-		"admin":   "auditor",
-		"finance": "approver",
-	}
-
 	roleSet := make(map[string]bool)
 	for _, r := range userRoles {
 		if role, ok := r.(string); ok {
-			roleSet[role] = true
+			roleSet[strings.ToLower(role)] = true
 		}
 	}
 
-	for role1, role2 := range conflictPairs {
-		if roleSet[role1] && roleSet[role2] {
+	// Check conflict pairs from policy rules (data-driven)
+	for _, rule := range policy.Rules {
+		conflicting, ok := rule.Condition["conflicting_roles"]
+		if !ok {
+			continue
+		}
+		conflictList, ok := conflicting.([]interface{})
+		if !ok || len(conflictList) < 2 {
+			continue
+		}
+		allPresent := true
+		var conflictNames []string
+		for _, cr := range conflictList {
+			roleName, ok := cr.(string)
+			if !ok {
+				allPresent = false
+				break
+			}
+			conflictNames = append(conflictNames, roleName)
+			if !roleSet[strings.ToLower(roleName)] {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
 			s.logger.Warn("SoD policy violation detected",
+				zap.String("policy_id", policy.ID),
+				zap.Strings("conflicting_roles", conflictNames))
+			return false, nil
+		}
+	}
+
+	// Fallback: hardcoded conflict pairs for backwards compatibility
+	fallbackConflicts := map[string]string{
+		"admin":   "auditor",
+		"finance": "approver",
+	}
+	for role1, role2 := range fallbackConflicts {
+		if roleSet[role1] && roleSet[role2] {
+			s.logger.Warn("SoD policy violation detected (fallback)",
 				zap.String("policy_id", policy.ID),
 				zap.String("conflicting_roles", role1+"/"+role2))
 			return false, nil

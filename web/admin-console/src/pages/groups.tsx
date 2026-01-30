@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { isAxiosError } from 'axios'
 import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight, ChevronLeft } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -215,11 +216,21 @@ export function GroupsPage() {
       setUserSearchQuery('')
     },
     onError: (error: Error) => {
-      toast({
-        title: 'Error',
-        description: `Failed to add member: ${error.message}`,
-        variant: 'destructive',
-      })
+      if (isAxiosError(error) && error.response?.status === 403 && error.response?.data?.violations) {
+        const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
+        const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
+        toast({
+          title: 'Policy Violation',
+          description: details,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Error',
+          description: `Failed to add member: ${error.message}`,
+          variant: 'destructive',
+        })
+      }
     },
   })
 
@@ -237,11 +248,21 @@ export function GroupsPage() {
       })
     },
     onError: (error: Error) => {
-      toast({
-        title: 'Error',
-        description: `Failed to remove member: ${error.message}`,
-        variant: 'destructive',
-      })
+      if (isAxiosError(error) && error.response?.status === 403 && error.response?.data?.violations) {
+        const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
+        const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
+        toast({
+          title: 'Policy Violation',
+          description: details,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Error',
+          description: `Failed to remove member: ${error.message}`,
+          variant: 'destructive',
+        })
+      }
     },
   })
 

@@ -1911,6 +1911,271 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 	return roles, nil
 }
 
+// PolicyViolation represents a governance policy violation
+type PolicyViolation struct {
+	PolicyName string `json:"policy_name"`
+	PolicyType string `json:"policy_type"`
+	Reason     string `json:"reason"`
+	Effect     string `json:"effect"`
+}
+
+// PolicyViolationError wraps policy violations as an error
+type PolicyViolationError struct {
+	Violations []PolicyViolation
+}
+
+func (e *PolicyViolationError) Error() string {
+	if len(e.Violations) == 0 {
+		return "policy violation"
+	}
+	return fmt.Sprintf("policy violation: %s - %s", e.Violations[0].PolicyName, e.Violations[0].Reason)
+}
+
+// CheckPolicies evaluates all enabled governance policies against the given operation context.
+// Returns a PolicyViolationError if any policy denies the action, nil otherwise.
+func (s *Service) CheckPolicies(ctx context.Context, userID string, action string, targetRoleIDs []string, clientIP string) error {
+	s.logger.Debug("Checking governance policies",
+		zap.String("user_id", userID),
+		zap.String("action", action),
+		zap.Int("target_roles", len(targetRoleIDs)))
+
+	// Query all enabled policies with their rules
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT p.id, p.name, p.type, p.priority,
+		       COALESCE(json_agg(json_build_object(
+		           'id', pr.id, 'condition', pr.condition, 'effect', pr.effect, 'priority', pr.priority
+		       )) FILTER (WHERE pr.id IS NOT NULL), '[]'::json) as rules
+		FROM policies p
+		LEFT JOIN policy_rules pr ON pr.policy_id = p.id
+		WHERE p.enabled = true
+		GROUP BY p.id, p.name, p.type, p.priority
+		ORDER BY p.priority DESC
+	`)
+	if err != nil {
+		s.logger.Error("Failed to query policies", zap.Error(err))
+		return nil // Fail open: don't block if we can't check policies
+	}
+	defer rows.Close()
+
+	// Get user's current roles for SoD checks
+	var currentRoles []Role
+	if action == "assign_role" || action == "update_roles" {
+		currentRoles, err = s.GetUserRoles(ctx, userID)
+		if err != nil {
+			s.logger.Error("Failed to get user roles for policy check", zap.Error(err))
+			return nil
+		}
+	}
+
+	// Get role names for the target role IDs
+	targetRoleNames := make(map[string]string) // id -> name
+	if len(targetRoleIDs) > 0 {
+		roleRows, err := s.db.Pool.Query(ctx, `
+			SELECT id, name FROM roles WHERE id = ANY($1)
+		`, targetRoleIDs)
+		if err == nil {
+			defer roleRows.Close()
+			for roleRows.Next() {
+				var id, name string
+				if roleRows.Scan(&id, &name) == nil {
+					targetRoleNames[id] = name
+				}
+			}
+		}
+	}
+
+	var violations []PolicyViolation
+
+	for rows.Next() {
+		var policyID, policyName, policyType string
+		var priority int
+		var rulesJSON []byte
+
+		if err := rows.Scan(&policyID, &policyName, &policyType, &priority, &rulesJSON); err != nil {
+			s.logger.Error("Failed to scan policy", zap.Error(err))
+			continue
+		}
+
+		var rules []struct {
+			ID        string                 `json:"id"`
+			Condition map[string]interface{} `json:"condition"`
+			Effect    string                 `json:"effect"`
+			Priority  int                    `json:"priority"`
+		}
+		if err := json.Unmarshal(rulesJSON, &rules); err != nil {
+			s.logger.Error("Failed to parse policy rules", zap.Error(err), zap.String("policy_id", policyID))
+			continue
+		}
+
+		switch policyType {
+		case "separation_of_duty":
+			if action != "assign_role" && action != "update_roles" {
+				continue
+			}
+			// Build set of all role names (current + target)
+			allRoleNames := make(map[string]bool)
+			for _, r := range currentRoles {
+				allRoleNames[strings.ToLower(r.Name)] = true
+			}
+			for _, name := range targetRoleNames {
+				allRoleNames[strings.ToLower(name)] = true
+			}
+
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				// Check conflicting_roles from rule condition
+				conflicting, ok := rule.Condition["conflicting_roles"]
+				if !ok {
+					continue
+				}
+				conflictList, ok := conflicting.([]interface{})
+				if !ok || len(conflictList) < 2 {
+					continue
+				}
+				// Check if all conflicting roles are present
+				allPresent := true
+				var conflictNames []string
+				for _, cr := range conflictList {
+					roleName, ok := cr.(string)
+					if !ok {
+						allPresent = false
+						break
+					}
+					conflictNames = append(conflictNames, roleName)
+					if !allRoleNames[strings.ToLower(roleName)] {
+						allPresent = false
+						break
+					}
+				}
+				if allPresent {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Separation of duty conflict: roles %s cannot be assigned together", strings.Join(conflictNames, ", ")),
+						Effect:     effect,
+					})
+				}
+			}
+
+		case "timebound":
+			now := time.Now()
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				// Check business hours from condition or use defaults
+				startHour := 9
+				endHour := 18
+				if sh, ok := rule.Condition["start_hour"].(float64); ok {
+					startHour = int(sh)
+				}
+				if eh, ok := rule.Condition["end_hour"].(float64); ok {
+					endHour = int(eh)
+				}
+				// Check allowed days (default: Mon-Fri)
+				weekday := now.Weekday()
+				hour := now.Hour()
+				isWeekend := weekday == time.Saturday || weekday == time.Sunday
+				outsideHours := hour < startHour || hour >= endHour
+
+				if isWeekend || outsideHours {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Operation not allowed outside business hours (%d:00-%d:00, Mon-Fri)", startHour, endHour),
+						Effect:     effect,
+					})
+				}
+			}
+
+		case "location":
+			if clientIP == "" {
+				continue
+			}
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				// Get allowed prefixes from condition or use defaults
+				allowedPrefixes := []string{"10.", "192.168.", "172.16.", "127.0.0.1"}
+				if prefixes, ok := rule.Condition["allowed_prefixes"].([]interface{}); ok {
+					allowedPrefixes = nil
+					for _, p := range prefixes {
+						if ps, ok := p.(string); ok {
+							allowedPrefixes = append(allowedPrefixes, ps)
+						}
+					}
+				}
+				allowed := false
+				for _, prefix := range allowedPrefixes {
+					if strings.HasPrefix(clientIP, prefix) {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Operation not allowed from IP address %s", clientIP),
+						Effect:     effect,
+					})
+				}
+			}
+
+		case "risk_based":
+			// Risk-based policies evaluate contextual risk factors
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				threshold := 50
+				if t, ok := rule.Condition["risk_threshold"].(float64); ok {
+					threshold = int(t)
+				}
+				// Calculate risk score based on available context
+				riskScore := 0
+				// External IP adds risk
+				if clientIP != "" && !strings.HasPrefix(clientIP, "10.") && !strings.HasPrefix(clientIP, "192.168.") && !strings.HasPrefix(clientIP, "127.") {
+					riskScore += 30
+				}
+				// Multiple role changes add risk
+				if len(targetRoleIDs) > 3 {
+					riskScore += 20
+				}
+				if riskScore >= threshold {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Risk score %d exceeds threshold %d", riskScore, threshold),
+						Effect:     effect,
+					})
+				}
+			}
+		}
+	}
+
+	// Filter for deny violations (require_approval could be handled differently later)
+	var denyViolations []PolicyViolation
+	for _, v := range violations {
+		if v.Effect == "deny" {
+			denyViolations = append(denyViolations, v)
+		}
+	}
+
+	if len(denyViolations) > 0 {
+		return &PolicyViolationError{Violations: denyViolations}
+	}
+
+	return nil
+}
+
 // AssignUserRole assigns a role to a user
 func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, assignedBy string) error {
 	s.logger.Info("Assigning role to user",
@@ -2418,6 +2683,17 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 		assignedBy = "00000000-0000-0000-0000-000000000001" // Default admin user
 	}
 
+	// Check governance policies before updating roles
+	if err := s.CheckPolicies(c.Request.Context(), userID, "update_roles", req.RoleIDs, c.ClientIP()); err != nil {
+		if policyErr, ok := err.(*PolicyViolationError); ok {
+			c.JSON(403, gin.H{
+				"error":      "Policy violation",
+				"violations": policyErr.Violations,
+			})
+			return
+		}
+	}
+
 	err := s.UpdateUserRoles(c.Request.Context(), userID, req.RoleIDs, assignedBy)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2527,6 +2803,17 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 		return
 	}
 
+	// Check governance policies (timebound, location) before adding member
+	if err := s.CheckPolicies(c.Request.Context(), req.UserID, "add_group_member", nil, c.ClientIP()); err != nil {
+		if policyErr, ok := err.(*PolicyViolationError); ok {
+			c.JSON(403, gin.H{
+				"error":      "Policy violation",
+				"violations": policyErr.Violations,
+			})
+			return
+		}
+	}
+
 	if err := s.AddGroupMember(c.Request.Context(), groupID, req.UserID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(404, gin.H{"error": err.Error()})
@@ -2546,6 +2833,17 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 func (s *Service) handleRemoveGroupMember(c *gin.Context) {
 	groupID := c.Param("id")
 	userID := c.Param("userId")
+
+	// Check governance policies (timebound, location) before removing member
+	if err := s.CheckPolicies(c.Request.Context(), userID, "remove_group_member", nil, c.ClientIP()); err != nil {
+		if policyErr, ok := err.(*PolicyViolationError); ok {
+			c.JSON(403, gin.H{
+				"error":      "Policy violation",
+				"violations": policyErr.Violations,
+			})
+			return
+		}
+	}
 
 	if err := s.RemoveGroupMember(c.Request.Context(), groupID, userID); err != nil {
 		if strings.Contains(err.Error(), "not a member") {

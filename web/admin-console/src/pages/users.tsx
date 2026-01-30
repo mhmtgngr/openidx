@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { isAxiosError } from 'axios'
 import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -306,11 +307,21 @@ export function UsersPage() {
       setSelectedRoles([])
     },
     onError: (error: Error) => {
-      toast({
-        title: 'Error',
-        description: `Failed to update roles: ${error.message}`,
-        variant: 'destructive',
-      })
+      if (isAxiosError(error) && error.response?.status === 403 && error.response?.data?.violations) {
+        const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
+        const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
+        toast({
+          title: 'Policy Violation',
+          description: details,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Error',
+          description: `Failed to update roles: ${error.message}`,
+          variant: 'destructive',
+        })
+      }
     },
   })
 
