@@ -590,6 +590,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		// Login endpoint for direct authentication
 		oauth.POST("/login", svc.handleLogin)
 
+		// MFA verification endpoint
+		oauth.POST("/mfa-verify", svc.handleMFAVerify)
+
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
 
@@ -765,15 +768,43 @@ func (s *Service) handleLogin(c *gin.Context) {
 		user.ID, clientIP, user.ID, "user",
 		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
 
-	// Delete the login session from Redis
-	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+	// Check if user has MFA enabled
+	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
+	if totpStatus != nil && totpStatus.Enabled {
+		// MFA required — store partial auth in Redis and return MFA challenge
+		mfaSession := GenerateRandomToken(32)
+		mfaData := map[string]string{
+			"user_id": user.ID,
+		}
+		for k, v := range oauthParams {
+			mfaData[k] = v
+		}
+		mfaDataJSON, _ := json.Marshal(mfaData)
+		s.redis.Client.Set(c.Request.Context(), "mfa_session:"+mfaSession, string(mfaDataJSON), 5*time.Minute)
 
-	// Generate authorization code
+		// Delete the login session from Redis (password step is done)
+		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+
+		c.JSON(200, gin.H{
+			"mfa_required": true,
+			"mfa_session":  mfaSession,
+			"mfa_methods":  []string{"totp"},
+		})
+		return
+	}
+
+	// No MFA — proceed with authorization code
+	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+	s.issueAuthorizationCode(c, oauthParams, user.ID)
+}
+
+// issueAuthorizationCode generates an auth code and returns the redirect URL
+func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
 	code := GenerateRandomToken(32)
 	authCode := &AuthorizationCode{
 		Code:                code,
 		ClientID:            oauthParams["client_id"],
-		UserID:              user.ID,
+		UserID:              userID,
 		RedirectURI:         oauthParams["redirect_uri"],
 		Scope:               oauthParams["scope"],
 		State:               oauthParams["state"],
@@ -787,7 +818,6 @@ func (s *Service) handleLogin(c *gin.Context) {
 		return
 	}
 
-	// Build redirect URL with authorization code
 	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
 	query := redirectURL.Query()
 	query.Set("code", code)
@@ -799,6 +829,63 @@ func (s *Service) handleLogin(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"redirect_url": redirectURL.String(),
 	})
+}
+
+// handleMFAVerify handles TOTP verification after password authentication
+func (s *Service) handleMFAVerify(c *gin.Context) {
+	var req struct {
+		MFASession string `json:"mfa_session"`
+		Code       string `json:"code"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid request body"})
+		return
+	}
+
+	if req.MFASession == "" || req.Code == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "mfa_session and code are required"})
+		return
+	}
+
+	// Retrieve MFA session from Redis
+	mfaDataJSON, err := s.redis.Client.Get(c.Request.Context(), "mfa_session:"+req.MFASession).Result()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid or expired MFA session"})
+		return
+	}
+
+	var mfaData map[string]string
+	if err := json.Unmarshal([]byte(mfaDataJSON), &mfaData); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	userID := mfaData["user_id"]
+
+	// Verify TOTP code
+	valid, err := s.identityService.VerifyTOTP(c.Request.Context(), userID, req.Code)
+	if err != nil || !valid {
+		c.JSON(401, gin.H{"error": "invalid_mfa_code", "error_description": "Invalid verification code"})
+		return
+	}
+
+	// MFA verified — delete session and issue authorization code
+	s.redis.Client.Del(c.Request.Context(), "mfa_session:"+req.MFASession)
+
+	// Log MFA verification audit event
+	go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_verified", "success",
+		userID, c.ClientIP(), userID, "user",
+		map[string]interface{}{"method": "totp"})
+
+	oauthParams := make(map[string]string)
+	for k, v := range mfaData {
+		if k != "user_id" {
+			oauthParams[k] = v
+		}
+	}
+
+	s.issueAuthorizationCode(c, oauthParams, userID)
 }
 
 func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
