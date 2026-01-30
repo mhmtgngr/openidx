@@ -68,7 +68,7 @@ Complete Docker Compose setup (`/home/user/openidx/deployments/docker/docker-com
 | Elasticsearch | 9200 | ✅ Configured |
 | Keycloak | 8180 | ✅ Configured |
 | APISIX Gateway | 8088 | ✅ Configured |
-| OPA Policy Engine | 8181 | ✅ Configured |
+| OPA Policy Engine | 8281 | ✅ Configured |
 | Admin Console | 3000 | ✅ Configured |
 
 #### 4. **Database Schema**
@@ -454,7 +454,7 @@ KEYCLOAK_ADMIN_PASSWORD=admin
 KEYCLOAK_URL=http://keycloak:8180
 
 # OPA
-OPA_URL=http://opa:8181
+OPA_URL=http://opa:8281
 
 # Logging
 LOG_LEVEL=debug

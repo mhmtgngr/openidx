@@ -155,7 +155,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("keycloak_client_id", "openidx-api")
 
 	// OPA defaults
-	v.SetDefault("opa_url", "http://localhost:8181")
+	v.SetDefault("opa_url", "http://localhost:8281")
 
 	// Feature flag defaults
 	v.SetDefault("enable_mfa", true)

@@ -153,7 +153,7 @@ const { data, isLoading } = useQuery({
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://...` |
 | `REDIS_URL` | Redis connection string | `redis://...` |
 | `KEYCLOAK_URL` | Keycloak base URL | `http://localhost:8180` |
-| `OPA_URL` | OPA base URL | `http://localhost:8181` |
+| `OPA_URL` | OPA base URL | `http://localhost:8281` |
 | `LOG_LEVEL` | Logging level | `info` |
 | `APP_ENV` | Environment (dev/prod) | `development` |
 

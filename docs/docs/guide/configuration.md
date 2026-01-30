@@ -43,7 +43,7 @@ OpenIDX services are configured via environment variables. All services share a 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPA_URL` | Open Policy Agent URL | `http://localhost:8181` |
+| `OPA_URL` | Open Policy Agent URL | `http://localhost:8281` |
 
 ### Frontend
 
