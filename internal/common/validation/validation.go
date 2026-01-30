@@ -218,7 +218,7 @@ func ValidateURL(field, value string) error {
 		return nil // Use ValidateRequired for required check
 	}
 
-	urlPattern := `^https?://[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*`
+	urlPattern := `^https?://[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(:[0-9]+)?(/[^\s]*)?$`
 	matched, _ := regexp.MatchString(urlPattern, value)
 	if !matched {
 		return &ValidationError{
