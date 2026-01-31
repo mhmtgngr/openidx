@@ -53,19 +53,24 @@ type ProxyRoute struct {
 
 // ProxySession represents an active proxy session
 type ProxySession struct {
-	ID           string    `json:"id"`
-	UserID       string    `json:"user_id"`
-	RouteID      string    `json:"route_id,omitempty"`
-	SessionToken string    `json:"-"`
-	IPAddress    string    `json:"ip_address"`
-	UserAgent    string    `json:"user_agent"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	Roles        []string  `json:"roles"`
-	StartedAt    time.Time `json:"started_at"`
-	LastActiveAt time.Time `json:"last_active_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Revoked      bool      `json:"revoked"`
+	ID                string    `json:"id"`
+	UserID            string    `json:"user_id"`
+	RouteID           string    `json:"route_id,omitempty"`
+	SessionToken      string    `json:"-"`
+	IPAddress         string    `json:"ip_address"`
+	UserAgent         string    `json:"user_agent"`
+	Email             string    `json:"email"`
+	Name              string    `json:"name"`
+	Roles             []string  `json:"roles"`
+	StartedAt         time.Time `json:"started_at"`
+	LastActiveAt      time.Time `json:"last_active_at"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	Revoked           bool      `json:"revoked"`
+	DeviceFingerprint string    `json:"device_fingerprint,omitempty"`
+	RiskScore         int       `json:"risk_score,omitempty"`
+	AuthMethods       []string  `json:"auth_methods,omitempty"`
+	Location          string    `json:"location,omitempty"`
+	DeviceTrusted     bool      `json:"device_trusted,omitempty"`
 }
 
 // Service provides access proxy operations
@@ -960,13 +965,18 @@ func (s *Service) updateSessionActivity(ctx context.Context, session *ProxySessi
 func (s *Service) evaluatePolicies(c *gin.Context, route *ProxyRoute, session *ProxySession) (bool, error) {
 	for _, policyID := range route.PolicyIDs {
 		reqBody, _ := json.Marshal(map[string]interface{}{
-			"user_id": session.UserID,
-			"roles":   session.Roles,
-			"ip":      c.ClientIP(),
-			"time":    time.Now().Format(time.RFC3339),
-			"path":    c.Request.URL.Path,
-			"method":  c.Request.Method,
-			"route":   route.Name,
+			"user_id":            session.UserID,
+			"roles":              session.Roles,
+			"ip":                 c.ClientIP(),
+			"time":               time.Now().Format(time.RFC3339),
+			"path":               c.Request.URL.Path,
+			"method":             c.Request.Method,
+			"route":              route.Name,
+			"risk_score":         session.RiskScore,
+			"device_trusted":     session.DeviceTrusted,
+			"auth_methods":       session.AuthMethods,
+			"location":           session.Location,
+			"device_fingerprint": session.DeviceFingerprint,
 		})
 
 		resp, err := http.Post(
@@ -979,12 +989,16 @@ func (s *Service) evaluatePolicies(c *gin.Context, route *ProxyRoute, session *P
 		defer resp.Body.Close()
 
 		var result struct {
-			Allowed bool `json:"allowed"`
+			Allowed        bool `json:"allowed"`
+			StepUpRequired bool `json:"step_up_required"`
 		}
 		body, _ := io.ReadAll(resp.Body)
 		json.Unmarshal(body, &result)
 
 		if !result.Allowed {
+			if result.StepUpRequired {
+				c.Header("X-Step-Up-Required", "true")
+			}
 			return false, nil
 		}
 	}

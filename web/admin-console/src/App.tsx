@@ -16,6 +16,7 @@ import { ComplianceReportsPage } from './pages/compliance-reports'
 import { DirectoriesPage } from './pages/directories'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
+import { DevicesPage } from './pages/devices'
 import { ProxyRoutesPage } from './pages/proxy-routes'
 import { ZitiNetworkPage } from './pages/ziti-network'
 import { SettingsPage } from './pages/settings'
@@ -131,6 +132,11 @@ export default function App() {
           <Route path="directories" element={
             <AdminRoute>
               <DirectoriesPage />
+            </AdminRoute>
+          } />
+          <Route path="devices" element={
+            <AdminRoute>
+              <DevicesPage />
             </AdminRoute>
           } />
           <Route path="identity-providers" element={

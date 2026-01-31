@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X, ChevronLeft, ChevronRight, Fingerprint } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -50,6 +50,7 @@ const policyTypeIcons: Record<string, React.ReactNode> = {
   risk_based: <AlertTriangle className="h-4 w-4" />,
   timebound: <Clock className="h-4 w-4" />,
   location: <MapPin className="h-4 w-4" />,
+  conditional_access: <Fingerprint className="h-4 w-4" />,
 }
 
 const policyTypeColors: Record<string, string> = {
@@ -57,6 +58,7 @@ const policyTypeColors: Record<string, string> = {
   risk_based: 'bg-red-100 text-red-800',
   timebound: 'bg-blue-100 text-blue-800',
   location: 'bg-green-100 text-green-800',
+  conditional_access: 'bg-orange-100 text-orange-800',
 }
 
 const policyTypeLabels: Record<string, string> = {
@@ -64,6 +66,7 @@ const policyTypeLabels: Record<string, string> = {
   risk_based: 'Risk-based',
   timebound: 'Timebound',
   location: 'Location-based',
+  conditional_access: 'Conditional Access',
 }
 
 const conditionTemplates: Record<string, { key: string; label: string; placeholder: string }[]> = {
@@ -83,9 +86,16 @@ const conditionTemplates: Record<string, { key: string; label: string; placehold
     { key: 'allowed_ips', label: 'Allowed IPs', placeholder: 'e.g., 10.0.0.0/8, 192.168.1.0/24' },
     { key: 'blocked_ips', label: 'Blocked IPs', placeholder: 'e.g., 0.0.0.0/0' },
   ],
+  conditional_access: [
+    { key: 'require_mfa', label: 'Require MFA', placeholder: 'true or false' },
+    { key: 'device_trust_required', label: 'Require Trusted Device', placeholder: 'true or false' },
+    { key: 'allowed_locations', label: 'Allowed Countries', placeholder: 'e.g., US,CA,GB' },
+    { key: 'blocked_locations', label: 'Blocked Countries', placeholder: 'e.g., CN,RU' },
+    { key: 'max_risk_score', label: 'Max Risk Score', placeholder: 'e.g., 70' },
+  ],
 }
 
-const effectOptions = ['allow', 'deny', 'require_approval']
+const effectOptions = ['allow', 'deny', 'require_approval', 'step_up_mfa']
 
 interface FormRule {
   condition: Record<string, string>

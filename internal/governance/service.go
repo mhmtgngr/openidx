@@ -111,10 +111,11 @@ type Policy struct {
 type PolicyType string
 
 const (
-	PolicyTypeSoD       PolicyType = "separation_of_duty"
-	PolicyTypeRiskBased PolicyType = "risk_based"
-	PolicyTypeTimebound PolicyType = "timebound"
-	PolicyTypeLocation  PolicyType = "location"
+	PolicyTypeSoD              PolicyType = "separation_of_duty"
+	PolicyTypeRiskBased        PolicyType = "risk_based"
+	PolicyTypeTimebound        PolicyType = "timebound"
+	PolicyTypeLocation         PolicyType = "location"
+	PolicyTypeConditionalAccess PolicyType = "conditional_access"
 )
 
 // PolicyRule defines a rule within a policy
@@ -655,6 +656,9 @@ func (s *Service) EvaluatePolicy(ctx context.Context, policyID string, request m
 	case PolicyTypeRiskBased:
 		// Risk-based: evaluate risk score
 		return s.evaluateRiskBasedPolicy(ctx, policy, request)
+	case PolicyTypeConditionalAccess:
+		// Conditional access: device trust, geo-fencing, step-up auth
+		return s.evaluateConditionalAccessPolicy(ctx, policy, request)
 	default:
 		return true, nil
 	}
@@ -839,6 +843,106 @@ func (s *Service) evaluateRiskBasedPolicy(ctx context.Context, policy *Policy, r
 			zap.Int("risk_score", riskScore),
 			zap.Int("threshold", threshold))
 		return false, nil
+	}
+
+	return true, nil
+}
+
+func (s *Service) evaluateConditionalAccessPolicy(ctx context.Context, policy *Policy, request map[string]interface{}) (bool, error) {
+	for _, rule := range policy.Rules {
+		// Check require_mfa condition
+		if requireMFA, ok := rule.Condition["require_mfa"].(bool); ok && requireMFA {
+			authMethods, _ := request["auth_methods"].([]interface{})
+			hasMFA := false
+			for _, m := range authMethods {
+				if method, ok := m.(string); ok && (method == "totp" || method == "step_up_mfa" || method == "webauthn") {
+					hasMFA = true
+					break
+				}
+			}
+			if !hasMFA {
+				s.logger.Warn("Conditional access: MFA required but not present",
+					zap.String("policy_id", policy.ID))
+				return false, nil
+			}
+		}
+
+		// Check device_trust_required condition
+		if deviceTrustRequired, ok := rule.Condition["device_trust_required"].(bool); ok && deviceTrustRequired {
+			deviceTrusted, _ := request["device_trusted"].(bool)
+			if !deviceTrusted {
+				s.logger.Warn("Conditional access: trusted device required",
+					zap.String("policy_id", policy.ID))
+				return false, nil
+			}
+		}
+
+		// Check allowed_locations condition (country codes)
+		if allowedStr, ok := rule.Condition["allowed_locations"].(string); ok && allowedStr != "" {
+			location, _ := request["location"].(string)
+			allowed := false
+			for _, loc := range strings.Split(allowedStr, ",") {
+				loc = strings.TrimSpace(loc)
+				if strings.Contains(strings.ToUpper(location), strings.ToUpper(loc)) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				s.logger.Warn("Conditional access: location not allowed",
+					zap.String("policy_id", policy.ID),
+					zap.String("location", location))
+				return false, nil
+			}
+		}
+
+		// Check blocked_locations condition (country codes)
+		if blockedStr, ok := rule.Condition["blocked_locations"].(string); ok && blockedStr != "" {
+			location, _ := request["location"].(string)
+			for _, loc := range strings.Split(blockedStr, ",") {
+				loc = strings.TrimSpace(loc)
+				if strings.Contains(strings.ToUpper(location), strings.ToUpper(loc)) {
+					s.logger.Warn("Conditional access: location blocked",
+						zap.String("policy_id", policy.ID),
+						zap.String("location", location))
+					return false, nil
+				}
+			}
+		}
+
+		// Check max_risk_score condition
+		if maxScoreStr, ok := rule.Condition["max_risk_score"].(string); ok && maxScoreStr != "" {
+			maxScore := 100
+			fmt.Sscanf(maxScoreStr, "%d", &maxScore)
+			riskScore := 0
+			if rs, ok := request["risk_score"].(float64); ok {
+				riskScore = int(rs)
+			}
+			if riskScore > maxScore {
+				s.logger.Warn("Conditional access: risk score too high",
+					zap.String("policy_id", policy.ID),
+					zap.Int("risk_score", riskScore),
+					zap.Int("max_allowed", maxScore))
+				return false, nil
+			}
+		}
+
+		// Check effect — if step_up_mfa, check if step-up has been done
+		if rule.Effect == "step_up_mfa" {
+			authMethods, _ := request["auth_methods"].([]interface{})
+			hasStepUp := false
+			for _, m := range authMethods {
+				if method, ok := m.(string); ok && method == "step_up_mfa" {
+					hasStepUp = true
+					break
+				}
+			}
+			if !hasStepUp {
+				s.logger.Info("Conditional access: step-up MFA required",
+					zap.String("policy_id", policy.ID))
+				return false, nil
+			}
+		}
 	}
 
 	return true, nil
@@ -1449,5 +1553,19 @@ func (s *Service) handleEvaluatePolicy(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"allowed": allowed})
+
+	// For conditional access policies, check if step-up MFA should be suggested
+	response := gin.H{"allowed": allowed}
+	if !allowed {
+		policy, pErr := s.GetPolicy(c.Request.Context(), c.Param("id"))
+		if pErr == nil && policy.Type == PolicyTypeConditionalAccess {
+			for _, rule := range policy.Rules {
+				if rule.Effect == "step_up_mfa" {
+					response["step_up_required"] = true
+					break
+				}
+			}
+		}
+	}
+	c.JSON(200, response)
 }

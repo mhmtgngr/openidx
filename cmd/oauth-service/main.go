@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/oauth"
+	"github.com/openidx/openidx/internal/risk"
 )
 
 var (
@@ -90,11 +91,15 @@ func main() {
 	// Initialize Identity service
 	identityService := identity.NewService(db, redis, cfg, log)
 
+	// Initialize risk service (conditional access)
+	riskService := risk.NewService(db, redis, log)
+
 	// Initialize OAuth service
 	oauthService, err := oauth.NewService(db, redis, cfg, log, identityService)
 	if err != nil {
 		log.Fatal("Failed to initialize OAuth service", zap.Error(err))
 	}
+	oauthService.SetRiskService(riskService)
 
 	// Register routes (apply auth middleware to client management API in non-development environments)
 	if cfg.Environment != "development" {

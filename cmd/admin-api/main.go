@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/directory"
+	"github.com/openidx/openidx/internal/risk"
 )
 
 var (
@@ -112,9 +113,13 @@ func main() {
 	}
 	defer dirService.Stop()
 
+	// Initialize risk service (conditional access)
+	riskService := risk.NewService(db, redis, log)
+
 	// Initialize admin service
 	adminService := admin.NewService(db, redis, cfg, log)
 	adminService.SetDirectoryService(&directorySyncAdapter{dirService: dirService})
+	adminService.SetRiskService(&riskServiceAdapter{riskService: riskService})
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -184,4 +189,33 @@ func (a *directorySyncAdapter) GetSyncLogs(ctx context.Context, directoryID stri
 
 func (a *directorySyncAdapter) GetSyncState(ctx context.Context, directoryID string) (interface{}, error) {
 	return a.dirService.GetSyncState(ctx, directoryID)
+}
+
+// riskServiceAdapter adapts risk.Service to admin.RiskAssessor interface
+type riskServiceAdapter struct {
+	riskService *risk.Service
+}
+
+func (a *riskServiceAdapter) GetAllDevices(ctx context.Context, limit, offset int) (interface{}, int, error) {
+	return a.riskService.GetAllDevices(ctx, limit, offset)
+}
+
+func (a *riskServiceAdapter) GetUserDevices(ctx context.Context, userID string) (interface{}, error) {
+	return a.riskService.GetUserDevices(ctx, userID)
+}
+
+func (a *riskServiceAdapter) TrustDevice(ctx context.Context, deviceID string) error {
+	return a.riskService.TrustDevice(ctx, deviceID)
+}
+
+func (a *riskServiceAdapter) RevokeDevice(ctx context.Context, deviceID string) error {
+	return a.riskService.RevokeDevice(ctx, deviceID)
+}
+
+func (a *riskServiceAdapter) GetRiskStats(ctx context.Context) (map[string]interface{}, error) {
+	return a.riskService.GetRiskStats(ctx)
+}
+
+func (a *riskServiceAdapter) GetLoginHistory(ctx context.Context, userID string, limit int) (interface{}, error) {
+	return a.riskService.GetLoginHistory(ctx, userID, limit)
 }

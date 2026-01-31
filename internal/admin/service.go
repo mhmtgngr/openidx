@@ -170,12 +170,23 @@ type DirectorySyncer interface {
 }
 
 // Service provides admin operations
+// RiskAssessor defines the interface for risk/device management operations
+type RiskAssessor interface {
+	GetAllDevices(ctx context.Context, limit, offset int) (interface{}, int, error)
+	GetUserDevices(ctx context.Context, userID string) (interface{}, error)
+	TrustDevice(ctx context.Context, deviceID string) error
+	RevokeDevice(ctx context.Context, deviceID string) error
+	GetRiskStats(ctx context.Context) (map[string]interface{}, error)
+	GetLoginHistory(ctx context.Context, userID string, limit int) (interface{}, error)
+}
+
 type Service struct {
 	db               *database.PostgresDB
 	redis            *database.RedisClient
 	config           *config.Config
 	logger           *zap.Logger
 	directoryService DirectorySyncer
+	riskService      RiskAssessor
 }
 
 // NewService creates a new admin service
@@ -191,6 +202,11 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 // SetDirectoryService sets the directory service for sync operations
 func (s *Service) SetDirectoryService(ds DirectorySyncer) {
 	s.directoryService = ds
+}
+
+// SetRiskService sets the risk service for device/risk management
+func (s *Service) SetRiskService(rs RiskAssessor) {
+	s.riskService = rs
 }
 
 // GetDashboard returns dashboard statistics
@@ -660,6 +676,16 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// MFA configuration
 	router.GET("/mfa/methods", svc.handleListMFAMethods)
 	router.PUT("/mfa/methods", svc.handleUpdateMFAMethods)
+
+	// Device management (conditional access)
+	router.GET("/devices", svc.handleListDevices)
+	router.GET("/users/:id/devices", svc.handleUserDevices)
+	router.POST("/devices/:id/trust", svc.handleTrustDevice)
+	router.DELETE("/devices/:id", svc.handleRevokeDevice)
+
+	// Risk stats and login history
+	router.GET("/risk/stats", svc.handleRiskStats)
+	router.GET("/login-history", svc.handleLoginHistory)
 }
 
 // HTTP Handlers
@@ -1044,4 +1070,106 @@ func (s *Service) handleUpdateApplicationSSOSettings(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "SSO settings updated successfully"})
+}
+
+// Device management handlers
+
+func (s *Service) handleListDevices(c *gin.Context) {
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	devices, total, err := s.riskService.GetAllDevices(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"devices": devices, "total": total})
+}
+
+func (s *Service) handleUserDevices(c *gin.Context) {
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	userID := c.Param("id")
+	devices, err := s.riskService.GetUserDevices(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"devices": devices})
+}
+
+func (s *Service) handleTrustDevice(c *gin.Context) {
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	deviceID := c.Param("id")
+	if err := s.riskService.TrustDevice(c.Request.Context(), deviceID); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Device trusted"})
+}
+
+func (s *Service) handleRevokeDevice(c *gin.Context) {
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	deviceID := c.Param("id")
+	if err := s.riskService.RevokeDevice(c.Request.Context(), deviceID); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Device revoked"})
+}
+
+func (s *Service) handleRiskStats(c *gin.Context) {
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	stats, err := s.riskService.GetRiskStats(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, stats)
+}
+
+func (s *Service) handleLoginHistory(c *gin.Context) {
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	userID := c.Query("user_id")
+	limit := 50
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	history, err := s.riskService.GetLoginHistory(c.Request.Context(), userID, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"history": history})
 }

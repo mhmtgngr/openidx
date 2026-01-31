@@ -26,6 +26,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/risk"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -151,6 +152,12 @@ type Service struct {
 	publicKey  *rsa.PublicKey
 	issuer     string
 	identityService *identity.Service
+	riskService     *risk.Service
+}
+
+// SetRiskService sets the risk service for conditional access
+func (s *Service) SetRiskService(rs *risk.Service) {
+	s.riskService = rs
 }
 
 // NewService creates a new OAuth service
@@ -630,6 +637,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// MFA verification endpoint
 		oauth.POST("/mfa-verify", svc.handleMFAVerify)
 
+		// Step-up MFA endpoints (mid-session re-auth)
+		oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
+		oauth.POST("/stepup-verify", svc.handleStepUpVerify)
+
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
 
@@ -829,13 +840,61 @@ func (s *Service) handleLogin(c *gin.Context) {
 		user.ID, clientIP, user.ID, "user",
 		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
 
+	// Risk assessment (conditional access)
+	var riskScore int
+	var riskFactors []string
+	var fingerprint, location string
+	var deviceTrusted bool
+	authMethods := []string{"password"}
+
+	if s.riskService != nil {
+		fingerprint = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
+
+		// Geo-IP lookup
+		geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP)
+		var lat, lon float64
+		if geo != nil {
+			location = geo.City + ", " + geo.Country
+			lat = geo.Lat
+			lon = geo.Lon
+		}
+
+		// Register device
+		_, _, _ = s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, location)
+
+		// Check device trust
+		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
+
+		// Calculate risk score
+		riskScore, riskFactors = s.riskService.CalculateRiskScore(c.Request.Context(), user.ID, clientIP, userAgent, fingerprint, location, lat, lon)
+
+		// Record login
+		s.riskService.RecordLogin(c.Request.Context(), user.ID, clientIP, userAgent, location, lat, lon, fingerprint, true, authMethods, riskScore)
+
+		s.logger.Info("Login risk assessment",
+			zap.String("user_id", user.ID),
+			zap.Int("risk_score", riskScore),
+			zap.Strings("factors", riskFactors),
+			zap.Bool("device_trusted", deviceTrusted),
+			zap.String("location", location),
+		)
+	}
+
 	// Check if user has MFA enabled
 	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
-	if totpStatus != nil && totpStatus.Enabled {
+	mfaEnabled := totpStatus != nil && totpStatus.Enabled
+
+	// Force MFA if risk score is high (>= 70) and MFA is available
+	forceMFA := riskScore >= 70 && mfaEnabled
+
+	if mfaEnabled && (forceMFA || (totpStatus != nil && totpStatus.Enabled)) {
 		// MFA required — store partial auth in Redis and return MFA challenge
 		mfaSession := GenerateRandomToken(32)
 		mfaData := map[string]string{
-			"user_id": user.ID,
+			"user_id":     user.ID,
+			"risk_score":  fmt.Sprintf("%d", riskScore),
+			"fingerprint": fingerprint,
+			"location":    location,
 		}
 		for k, v := range oauthParams {
 			mfaData[k] = v
@@ -847,9 +906,27 @@ func (s *Service) handleLogin(c *gin.Context) {
 		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
 
 		c.JSON(200, gin.H{
-			"mfa_required": true,
-			"mfa_session":  mfaSession,
-			"mfa_methods":  []string{"totp"},
+			"mfa_required":  true,
+			"mfa_session":   mfaSession,
+			"mfa_methods":   []string{"totp"},
+			"risk_score":    riskScore,
+			"risk_factors":  riskFactors,
+			"device_trusted": deviceTrusted,
+		})
+		return
+	}
+
+	// High risk but no MFA available — deny access
+	if riskScore >= 70 && !mfaEnabled {
+		s.logger.Warn("High risk login denied — no MFA available",
+			zap.String("user_id", user.ID),
+			zap.Int("risk_score", riskScore),
+		)
+		c.JSON(403, gin.H{
+			"error":             "high_risk_login",
+			"error_description": "Login from an unrecognized device or location. Please enable MFA to continue.",
+			"risk_score":        riskScore,
+			"risk_factors":      riskFactors,
 		})
 		return
 	}
@@ -1531,6 +1608,87 @@ func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})
+}
+
+// handleStepUpChallenge creates a step-up MFA challenge for an active session
+func (s *Service) handleStepUpChallenge(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		UserID    string `json:"user_id"`
+		Reason    string `json:"reason"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	challengeID, err := s.riskService.CreateStepUpChallenge(c.Request.Context(), req.UserID, req.SessionID, req.Reason)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create challenge", "error_description": err.Error()})
+		return
+	}
+
+	// Check what MFA methods are available
+	mfaMethods := []string{}
+	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), req.UserID)
+	if totpStatus != nil && totpStatus.Enabled {
+		mfaMethods = append(mfaMethods, "totp")
+	}
+
+	c.JSON(200, gin.H{
+		"challenge_id": challengeID,
+		"mfa_methods":  mfaMethods,
+		"expires_in":   300, // 5 minutes
+	})
+}
+
+// handleStepUpVerify verifies a step-up MFA challenge
+func (s *Service) handleStepUpVerify(c *gin.Context) {
+	var req struct {
+		ChallengeID string `json:"challenge_id"`
+		UserID      string `json:"user_id"`
+		TOTPCode    string `json:"totp_code"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	// Verify TOTP code
+	valid, err := s.identityService.VerifyTOTP(c.Request.Context(), req.UserID, req.TOTPCode)
+	if err != nil || !valid {
+		c.JSON(401, gin.H{"error": "invalid_code", "error_description": "Invalid TOTP code"})
+		return
+	}
+
+	// Complete the challenge
+	if err := s.riskService.CompleteStepUpChallenge(c.Request.Context(), req.ChallengeID, req.UserID); err != nil {
+		c.JSON(400, gin.H{"error": "challenge_failed", "error_description": err.Error()})
+		return
+	}
+
+	// Update proxy session auth_methods if possible
+	s.db.Pool.Exec(c.Request.Context(),
+		`UPDATE proxy_sessions SET auth_methods = array_append(COALESCE(auth_methods, '{}'), 'step_up_mfa')
+		 WHERE user_id = $1 AND revoked = false AND expires_at > NOW()`, req.UserID)
+
+	go s.logAuditEvent(context.Background(), "authentication", "security", "step_up_mfa", "success",
+		req.UserID, c.ClientIP(), req.UserID, "user",
+		map[string]interface{}{"challenge_id": req.ChallengeID})
+
+	c.JSON(200, gin.H{"status": "verified"})
 }
 
 // logAuditEvent writes an audit event directly to the audit_events table
