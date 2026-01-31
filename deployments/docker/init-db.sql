@@ -1114,3 +1114,125 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email ON user_invitations(email);
 -- Add lifecycle columns to users
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT false;
 
+-- ============================================================================
+-- PHASE 6: REQUEST/APPROVAL WORKFLOWS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS access_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resource_type VARCHAR(50) NOT NULL,
+    resource_id UUID NOT NULL,
+    resource_name VARCHAR(255),
+    justification TEXT,
+    status VARCHAR(50) DEFAULT 'pending',
+    priority VARCHAR(20) DEFAULT 'normal',
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS access_request_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID NOT NULL REFERENCES access_requests(id) ON DELETE CASCADE,
+    approver_id UUID NOT NULL REFERENCES users(id),
+    step_order INTEGER DEFAULT 1,
+    decision VARCHAR(50) DEFAULT 'pending',
+    comments TEXT,
+    decided_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS approval_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    resource_type VARCHAR(50) NOT NULL,
+    resource_id UUID,
+    approval_steps JSONB NOT NULL DEFAULT '[]',
+    auto_approve_conditions JSONB,
+    max_wait_hours INTEGER DEFAULT 72,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_requester ON access_requests(requester_id);
+CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status);
+CREATE INDEX IF NOT EXISTS idx_request_approvals_request ON access_request_approvals(request_id);
+CREATE INDEX IF NOT EXISTS idx_request_approvals_approver ON access_request_approvals(approver_id, decision);
+CREATE INDEX IF NOT EXISTS idx_approval_policies_resource ON approval_policies(resource_type, resource_id);
+
+-- ============================================================================
+-- PHASE 6: ANOMALY DETECTION & THREAT RESPONSE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS security_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    alert_type VARCHAR(100) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    status VARCHAR(50) DEFAULT 'open',
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    details JSONB,
+    source_ip VARCHAR(45),
+    remediation_actions JSONB DEFAULT '[]',
+    resolved_by UUID REFERENCES users(id),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ip_threat_list (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ip_address VARCHAR(45) NOT NULL UNIQUE,
+    threat_type VARCHAR(50) NOT NULL,
+    reason TEXT,
+    blocked_until TIMESTAMP WITH TIME ZONE,
+    permanent BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_alerts_user ON security_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_security_alerts_status ON security_alerts(status);
+CREATE INDEX IF NOT EXISTS idx_security_alerts_severity ON security_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_security_alerts_created ON security_alerts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ip_threat_list_ip ON ip_threat_list(ip_address);
+
+-- ============================================================================
+-- PHASE 6: PASSWORD/CREDENTIAL MANAGEMENT
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS password_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS credential_rotations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_account_id UUID NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE,
+    old_key_id UUID,
+    new_key_id UUID,
+    rotation_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'completed',
+    rotated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    rotated_by UUID REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_credential_rotations_sa ON credential_rotations(service_account_id);
+
+-- ============================================================================
+-- PHASE 6: SESSION MANAGEMENT ENHANCEMENTS
+-- ============================================================================
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(255);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS location VARCHAR(255);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_type VARCHAR(50);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked BOOLEAN DEFAULT false;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_by UUID REFERENCES users(id);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoke_reason VARCHAR(255);
+

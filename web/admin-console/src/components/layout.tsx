@@ -20,6 +20,9 @@ import {
   FolderSync,
   Smartphone,
   Bell,
+  GitPullRequest,
+  ShieldAlert,
+  Monitor,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -49,6 +52,10 @@ const navigation = [
   { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
   { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
   { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
+  { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
+  { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, adminOnly: true },
+  { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
+  { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
   { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
   { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
   { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },

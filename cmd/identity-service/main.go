@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/webhooks"
 )
 
@@ -88,6 +89,9 @@ func main() {
 	// Initialize webhook service
 	webhookService := webhooks.NewService(db, redis, log)
 
+	// Initialize risk/anomaly service
+	riskService := risk.NewService(db, redis, log)
+
 	// Start background workers
 	ctx, cancelWorkers := context.WithCancel(context.Background())
 	go emailService.ProcessQueue(ctx)
@@ -100,6 +104,7 @@ func main() {
 	identityService.SetDirectoryService(dirService)
 	identityService.SetEmailService(emailService)
 	identityService.SetWebhookService(webhookService)
+	identityService.SetAnomalyDetector(&anomalyDetectorAdapter{riskService: riskService})
 
 	// Register routes
 	identity.RegisterRoutes(router, identityService)
@@ -155,4 +160,17 @@ func main() {
 	}
 
 	log.Info("Server exited")
+}
+
+// anomalyDetectorAdapter adapts risk.Service to identity.AnomalyDetector interface
+type anomalyDetectorAdapter struct {
+	riskService *risk.Service
+}
+
+func (a *anomalyDetectorAdapter) RunAnomalyCheck(ctx context.Context, userID, ip, userAgent string, lat, lon float64) interface{} {
+	return a.riskService.RunAnomalyCheck(ctx, userID, ip, userAgent, lat, lon)
+}
+
+func (a *anomalyDetectorAdapter) CheckIPThreatList(ctx context.Context, ip string) (bool, string) {
+	return a.riskService.CheckIPThreatList(ctx, ip)
 }

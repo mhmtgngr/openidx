@@ -1299,6 +1299,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		gov.PUT("/policies/:id", svc.handleUpdatePolicy)
 		gov.DELETE("/policies/:id", svc.handleDeletePolicy)
 		gov.POST("/policies/:id/evaluate", svc.handleEvaluatePolicy)
+
+		// Access request workflows
+		gov.GET("/requests", svc.handleListAccessRequests)
+		gov.POST("/requests", svc.handleCreateAccessRequest)
+		gov.GET("/requests/:id", svc.handleGetAccessRequest)
+		gov.POST("/requests/:id/approve", svc.handleApproveRequest)
+		gov.POST("/requests/:id/deny", svc.handleDenyRequest)
+		gov.POST("/requests/:id/cancel", svc.handleCancelRequest)
+		gov.GET("/my-approvals", svc.handleListPendingApprovals)
+
+		// Approval policies
+		gov.GET("/approval-policies", svc.handleListApprovalPolicies)
+		gov.POST("/approval-policies", svc.handleCreateApprovalPolicy)
+		gov.PUT("/approval-policies/:id", svc.handleUpdateApprovalPolicy)
+		gov.DELETE("/approval-policies/:id", svc.handleDeleteApprovalPolicy)
 	}
 }
 

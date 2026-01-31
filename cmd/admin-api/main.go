@@ -141,6 +141,7 @@ func main() {
 	adminService.SetRiskService(&riskServiceAdapter{riskService: riskService})
 	adminService.SetAPIKeyService(&apiKeyAdapter{svc: apiKeyService})
 	adminService.SetWebhookService(&webhookAdapter{svc: webhookService})
+	adminService.SetSecurityService(&securityAdapter{riskService: riskService})
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -306,4 +307,35 @@ func (a *webhookAdapter) RetryDelivery(ctx context.Context, deliveryID string) e
 
 func (a *webhookAdapter) Publish(ctx context.Context, eventType string, payload interface{}) error {
 	return a.svc.Publish(ctx, eventType, payload)
+}
+
+// securityAdapter adapts risk.Service to admin.SecurityService interface
+type securityAdapter struct {
+	riskService *risk.Service
+}
+
+func (a *securityAdapter) ListSecurityAlerts(ctx context.Context, status, severity, alertType string, limit, offset int) (interface{}, int, error) {
+	alerts, total, err := a.riskService.ListSecurityAlerts(ctx, status, severity, alertType, limit, offset)
+	return alerts, total, err
+}
+
+func (a *securityAdapter) GetSecurityAlert(ctx context.Context, id string) (interface{}, error) {
+	return a.riskService.GetSecurityAlert(ctx, id)
+}
+
+func (a *securityAdapter) UpdateAlertStatus(ctx context.Context, id, status, resolvedBy string) error {
+	return a.riskService.UpdateAlertStatus(ctx, id, status, resolvedBy)
+}
+
+func (a *securityAdapter) ListIPThreats(ctx context.Context, limit, offset int) (interface{}, int, error) {
+	entries, total, err := a.riskService.ListIPThreats(ctx, limit, offset)
+	return entries, total, err
+}
+
+func (a *securityAdapter) AddToThreatList(ctx context.Context, ip, threatType, reason string, permanent bool, blockedUntil *time.Time) error {
+	return a.riskService.AddToThreatList(ctx, ip, threatType, reason, permanent, blockedUntil)
+}
+
+func (a *securityAdapter) RemoveFromThreatList(ctx context.Context, id string) error {
+	return a.riskService.RemoveFromThreatList(ctx, id)
 }

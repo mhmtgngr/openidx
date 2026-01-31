@@ -19,6 +19,10 @@ import { ProvisioningRulesPage } from './pages/provisioning-rules'
 import { DevicesPage } from './pages/devices'
 import { ServiceAccountsPage } from './pages/service-accounts'
 import { WebhooksPage } from './pages/webhooks'
+import { AccessRequestsPage } from './pages/access-requests'
+import { SecurityAlertsPage } from './pages/security-alerts'
+import { SessionsAdminPage } from './pages/sessions-admin'
+import { ApprovalPoliciesPage } from './pages/approval-policies'
 import { ProxyRoutesPage } from './pages/proxy-routes'
 import { ZitiNetworkPage } from './pages/ziti-network'
 import { SettingsPage } from './pages/settings'
@@ -149,6 +153,24 @@ export default function App() {
           <Route path="webhooks" element={
             <AdminRoute>
               <WebhooksPage />
+            </AdminRoute>
+          } />
+          <Route path="access-requests" element={
+            <AccessRequestsPage />
+          } />
+          <Route path="approval-policies" element={
+            <AdminRoute>
+              <ApprovalPoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="security-alerts" element={
+            <AdminRoute>
+              <SecurityAlertsPage />
+            </AdminRoute>
+          } />
+          <Route path="sessions" element={
+            <AdminRoute>
+              <SessionsAdminPage />
             </AdminRoute>
           } />
           <Route path="identity-providers" element={

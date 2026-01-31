@@ -172,6 +172,7 @@ type Service struct {
 	directoryService  DirectoryAuthenticator
 	emailService      EmailSender
 	webhookService    WebhookPublisher
+	anomalyDetector   AnomalyDetector
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -206,6 +207,12 @@ type WebhookPublisher interface {
 	Publish(ctx context.Context, eventType string, payload interface{}) error
 }
 
+// AnomalyDetector defines the interface for anomaly detection during login
+type AnomalyDetector interface {
+	RunAnomalyCheck(ctx context.Context, userID, ip, userAgent string, lat, lon float64) interface{}
+	CheckIPThreatList(ctx context.Context, ip string) (bool, string)
+}
+
 // SetEmailService sets the email service
 func (s *Service) SetEmailService(es EmailSender) {
 	s.emailService = es
@@ -214,6 +221,11 @@ func (s *Service) SetEmailService(es EmailSender) {
 // SetWebhookService sets the webhook service
 func (s *Service) SetWebhookService(ws WebhookPublisher) {
 	s.webhookService = ws
+}
+
+// SetAnomalyDetector sets the anomaly detection service
+func (s *Service) SetAnomalyDetector(ad AnomalyDetector) {
+	s.anomalyDetector = ad
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens

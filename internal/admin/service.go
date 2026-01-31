@@ -202,6 +202,16 @@ type WebhookManager interface {
 	Publish(ctx context.Context, eventType string, payload interface{}) error
 }
 
+// SecurityService defines the interface for security alert and IP threat operations
+type SecurityService interface {
+	ListSecurityAlerts(ctx context.Context, status, severity, alertType string, limit, offset int) (interface{}, int, error)
+	GetSecurityAlert(ctx context.Context, id string) (interface{}, error)
+	UpdateAlertStatus(ctx context.Context, id, status, resolvedBy string) error
+	ListIPThreats(ctx context.Context, limit, offset int) (interface{}, int, error)
+	AddToThreatList(ctx context.Context, ip, threatType, reason string, permanent bool, blockedUntil *time.Time) error
+	RemoveFromThreatList(ctx context.Context, id string) error
+}
+
 type Service struct {
 	db               *database.PostgresDB
 	redis            *database.RedisClient
@@ -211,6 +221,7 @@ type Service struct {
 	riskService      RiskAssessor
 	apiKeyService    APIKeyManager
 	webhookService   WebhookManager
+	securityService  SecurityService
 }
 
 // NewService creates a new admin service
@@ -241,6 +252,11 @@ func (s *Service) SetAPIKeyService(aks APIKeyManager) {
 // SetWebhookService sets the webhook service for webhook management
 func (s *Service) SetWebhookService(ws WebhookManager) {
 	s.webhookService = ws
+}
+
+// SetSecurityService sets the security service for alert and IP threat management
+func (s *Service) SetSecurityService(ss SecurityService) {
+	s.securityService = ss
 }
 
 // GetDashboard returns dashboard statistics
@@ -752,6 +768,24 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/analytics/risk", svc.handleRiskAnalytics)
 	router.GET("/analytics/users", svc.handleUserAnalytics)
 	router.GET("/analytics/events", svc.handleEventAnalytics)
+
+	// Session management
+	router.GET("/sessions", svc.handleListAllSessions)
+	router.DELETE("/sessions/:id", svc.handleAdminRevokeSession)
+	router.DELETE("/users/:id/sessions", svc.handleAdminRevokeAllUserSessions)
+
+	// Security alerts
+	router.GET("/security-alerts", svc.handleListSecurityAlerts)
+	router.GET("/security-alerts/:id", svc.handleGetSecurityAlert)
+	router.PUT("/security-alerts/:id/status", svc.handleUpdateAlertStatus)
+
+	// IP threat management
+	router.GET("/ip-threats", svc.handleListIPThreats)
+	router.POST("/ip-threats", svc.handleAddIPThreat)
+	router.DELETE("/ip-threats/:id", svc.handleRemoveIPThreat)
+
+	// Service account key rotation
+	router.POST("/service-accounts/:id/rotate-key", svc.handleRotateServiceAccountKey)
 }
 
 // HTTP Handlers
