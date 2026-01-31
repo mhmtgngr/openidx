@@ -47,6 +47,8 @@ interface ProxyRoute {
   absolute_timeout: number
   enabled: boolean
   priority: number
+  ziti_enabled: boolean
+  ziti_service_name: string
   created_at: string
   updated_at: string
 }
@@ -257,6 +259,9 @@ export function ProxyRoutesPage() {
                         {route.require_auth && (
                           <Badge variant="outline">Auth Required</Badge>
                         )}
+                        {route.ziti_enabled && (
+                          <Badge variant="default" className="bg-purple-600">Ziti</Badge>
+                        )}
                         {route.priority > 0 && (
                           <Badge variant="outline">Priority: {route.priority}</Badge>
                         )}
@@ -309,6 +314,12 @@ export function ProxyRoutesPage() {
                     <span className="text-muted-foreground">To:</span>{' '}
                     <code className="bg-muted px-1.5 py-0.5 rounded text-xs">{route.to_url}</code>
                   </div>
+                  {route.ziti_enabled && route.ziti_service_name && (
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Ziti Service:</span>{' '}
+                      <code className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-xs">{route.ziti_service_name}</code>
+                    </div>
+                  )}
                   {route.allowed_roles && route.allowed_roles.length > 0 && (
                     <div>
                       <span className="text-muted-foreground">Roles:</span>{' '}

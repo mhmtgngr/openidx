@@ -794,6 +794,62 @@ CREATE INDEX IF NOT EXISTS idx_proxy_sessions_user ON proxy_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_proxy_sessions_token ON proxy_sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_proxy_sessions_expires ON proxy_sessions(expires_at);
 
+-- ============================================================================
+-- OPENZITI INTEGRATION TABLES
+-- ============================================================================
+
+-- Add Ziti columns to proxy_routes
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS ziti_enabled BOOLEAN DEFAULT false;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS ziti_service_name VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_ziti_enabled ON proxy_routes(ziti_enabled);
+
+-- Ziti services managed by OpenIDX
+CREATE TABLE IF NOT EXISTS ziti_services (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    protocol VARCHAR(20) DEFAULT 'tcp',
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL,
+    route_id UUID REFERENCES proxy_routes(id) ON DELETE SET NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ziti_services_name ON ziti_services(name);
+CREATE INDEX IF NOT EXISTS idx_ziti_services_route_id ON ziti_services(route_id);
+
+-- Ziti identities for tunneler enrollment
+CREATE TABLE IF NOT EXISTS ziti_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    identity_type VARCHAR(50) DEFAULT 'Device',
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    enrollment_jwt TEXT,
+    enrolled BOOLEAN DEFAULT false,
+    attributes JSONB DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ziti_identities_user_id ON ziti_identities(user_id);
+CREATE INDEX IF NOT EXISTS idx_ziti_identities_name ON ziti_identities(name);
+
+-- Ziti service policies (Bind/Dial)
+CREATE TABLE IF NOT EXISTS ziti_service_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    policy_type VARCHAR(10) NOT NULL,
+    service_roles JSONB DEFAULT '[]',
+    identity_roles JSONB DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Seed: Register access-proxy as an OAuth client
 INSERT INTO oauth_clients (client_id, client_secret, name, type, redirect_uris, grant_types, response_types, scopes, pkce_required)
 VALUES (

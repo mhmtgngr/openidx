@@ -16,6 +16,7 @@ import { ComplianceReportsPage } from './pages/compliance-reports'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
 import { ProxyRoutesPage } from './pages/proxy-routes'
+import { ZitiNetworkPage } from './pages/ziti-network'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
@@ -139,6 +140,11 @@ export default function App() {
           <Route path="proxy-routes" element={
             <AdminRoute>
               <ProxyRoutesPage />
+            </AdminRoute>
+          } />
+          <Route path="ziti-network" element={
+            <AdminRoute>
+              <ZitiNetworkPage />
             </AdminRoute>
           } />
           <Route path="settings" element={

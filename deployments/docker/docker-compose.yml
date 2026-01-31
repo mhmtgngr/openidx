@@ -264,6 +264,100 @@ services:
       - openidx-network
 
   #---------------------------------------------------------------------------
+  # OpenZiti Zero Trust Network Fabric
+  #---------------------------------------------------------------------------
+
+  ziti-controller:
+    image: openziti/ziti-controller:latest
+    container_name: openidx-ziti-controller
+    environment:
+      - ZITI_BOOTSTRAP=true
+      - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_PWD=${ZITI_PWD:-openidx_ziti_admin}
+      - PFXLOG_NO_JSON=true
+    volumes:
+      - ziti_controller_data:/home/ziggy
+    ports:
+      - "1280:1280"
+    healthcheck:
+      test: ["CMD", "ziti", "agent", "stats"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - openidx-network
+
+  ziti-router-init:
+    image: openziti/ziti-controller:latest
+    container_name: openidx-ziti-router-init
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        TOKEN_FILE=/ziti-shared/router.jwt
+        if [ -f "$$TOKEN_FILE" ] && [ -s "$$TOKEN_FILE" ]; then
+          echo "Router JWT already exists, skipping creation"
+          exit 0
+        fi
+        echo "Logging in to Ziti controller..."
+        ziti edge login ziti-controller:1280 -u admin -p "$${ZITI_PWD}" --yes
+        echo "Creating edge router..."
+        ziti edge create edge-router openidx-router --jwt-output-file "$$TOKEN_FILE" 2>/dev/null || \
+          echo "Router may already exist, trying to fetch JWT..."
+        if [ ! -f "$$TOKEN_FILE" ] || [ ! -s "$$TOKEN_FILE" ]; then
+          ROUTER_ID=$$(ziti edge list edge-routers 'name="openidx-router"' -j 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          if [ -n "$$ROUTER_ID" ]; then
+            echo "Re-creating router to get fresh JWT..."
+            ziti edge delete edge-router "$$ROUTER_ID" 2>/dev/null || true
+            ziti edge create edge-router openidx-router --jwt-output-file "$$TOKEN_FILE"
+          fi
+        fi
+        if [ -f "$$TOKEN_FILE" ] && [ -s "$$TOKEN_FILE" ]; then
+          chmod 644 "$$TOKEN_FILE"
+          echo "Router JWT saved to $$TOKEN_FILE"
+        else
+          echo "ERROR: Could not obtain router JWT"
+          exit 1
+        fi
+    environment:
+      - ZITI_PWD=${ZITI_PWD:-openidx_ziti_admin}
+    volumes:
+      - ziti_router_shared:/ziti-shared
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  ziti-router:
+    image: openziti/ziti-router:latest
+    container_name: openidx-ziti-router
+    environment:
+      - ZITI_BOOTSTRAP=true
+      - ZITI_BOOTSTRAP_ENROLLMENT=true
+      - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_ROUTER_ADVERTISED_ADDRESS=ziti-router
+      - ZITI_ROUTER_PORT=3022
+      - ZITI_ENROLL_TOKEN=/ziti-shared/router.jwt
+    volumes:
+      - ziti_router_data:/home/ziggy
+      - ziti_router_shared:/ziti-shared:ro
+    ports:
+      - "3022:3022"
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+      ziti-router-init:
+        condition: service_completed_successfully
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
   # Zero Trust Access Proxy Service
   #---------------------------------------------------------------------------
 
@@ -282,7 +376,14 @@ services:
       - AUDIT_URL=http://audit-service:8004
       - ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET:-openidx_access_session_secret_32b}
       - ACCESS_PROXY_DOMAIN=localhost
+      - ZITI_ENABLED=${ZITI_ENABLED:-true}
+      - ZITI_CTRL_URL=https://ziti-controller:1280
+      - ZITI_ADMIN_USER=admin
+      - ZITI_ADMIN_PASSWORD=${ZITI_PWD:-openidx_ziti_admin}
+      - ZITI_IDENTITY_DIR=/ziti
       - LOG_LEVEL=debug
+    volumes:
+      - ziti_access_proxy:/ziti
     ports:
       - "8007:8007"
     depends_on:
@@ -292,11 +393,13 @@ services:
         condition: service_healthy
       oauth-service:
         condition: service_healthy
+      ziti-controller:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8007/health || exit 1"]
       interval: 30s
       timeout: 3s
-      start_period: 5s
+      start_period: 15s
       retries: 3
     networks:
       - openidx-network
@@ -345,3 +448,7 @@ volumes:
   redis_data:
   elasticsearch_data:
   etcd_data:
+  ziti_controller_data:
+  ziti_router_data:
+  ziti_router_shared:
+  ziti_access_proxy:

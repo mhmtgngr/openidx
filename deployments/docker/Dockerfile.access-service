@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -25,6 +25,9 @@ RUN addgroup -S openidx && adduser -S openidx -G openidx
 WORKDIR /app
 
 COPY --from=builder /app/service .
+
+# Create Ziti identity directory writable by openidx user
+RUN mkdir -p /ziti && chown openidx:openidx /ziti
 
 USER openidx
 

@@ -55,6 +55,13 @@ type Config struct {
 	AccessSessionSecret string `mapstructure:"access_session_secret"`
 	AccessProxyDomain  string `mapstructure:"access_proxy_domain"`
 
+	// OpenZiti configuration
+	ZitiEnabled       bool   `mapstructure:"ziti_enabled"`
+	ZitiCtrlURL       string `mapstructure:"ziti_ctrl_url"`
+	ZitiAdminUser     string `mapstructure:"ziti_admin_user"`
+	ZitiAdminPassword string `mapstructure:"ziti_admin_password"`
+	ZitiIdentityDir   string `mapstructure:"ziti_identity_dir"`
+
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
 
@@ -172,6 +179,13 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("access_session_secret", "change-me-in-production-32bytes!")
 	v.SetDefault("access_proxy_domain", "localhost")
 
+	// OpenZiti defaults
+	v.SetDefault("ziti_enabled", false)
+	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
+	v.SetDefault("ziti_admin_user", "admin")
+	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
+	v.SetDefault("ziti_identity_dir", "/ziti")
+
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
 
@@ -202,6 +216,11 @@ func bindEnvVars(v *viper.Viper) {
 		"audit_url":              "AUDIT_URL",
 		"access_session_secret":  "ACCESS_SESSION_SECRET",
 		"access_proxy_domain":    "ACCESS_PROXY_DOMAIN",
+		"ziti_enabled":           "ZITI_ENABLED",
+		"ziti_ctrl_url":          "ZITI_CTRL_URL",
+		"ziti_admin_user":        "ZITI_ADMIN_USER",
+		"ziti_admin_password":    "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":      "ZITI_IDENTITY_DIR",
 	}
 
 	for key, env := range envMappings {

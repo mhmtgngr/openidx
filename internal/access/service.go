@@ -45,6 +45,8 @@ type ProxyRoute struct {
 	CustomHeaders      map[string]string `json:"custom_headers,omitempty"`
 	Enabled            bool            `json:"enabled"`
 	Priority           int             `json:"priority"`
+	ZitiEnabled        bool            `json:"ziti_enabled"`
+	ZitiServiceName    string          `json:"ziti_service_name,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 }
@@ -77,6 +79,12 @@ type Service struct {
 	sessionSecret []byte
 	oauthIssuer   string
 	oauthJWKSURL  string
+	zitiManager   *ZitiManager
+}
+
+// SetZitiManager sets the OpenZiti manager for the service
+func (s *Service) SetZitiManager(zm *ZitiManager) {
+	s.zitiManager = zm
 }
 
 // NewService creates a new access proxy service
@@ -123,6 +131,18 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.DELETE("/routes/:id", svc.handleDeleteRoute)
 		api.GET("/sessions", svc.handleListSessions)
 		api.DELETE("/sessions/:id", svc.handleRevokeSession)
+
+		// OpenZiti management endpoints
+		api.GET("/ziti/status", svc.handleZitiStatus)
+		api.GET("/ziti/services", svc.handleListZitiServices)
+		api.POST("/ziti/services", svc.handleCreateZitiService)
+		api.DELETE("/ziti/services/:id", svc.handleDeleteZitiService)
+		api.GET("/ziti/identities", svc.handleListZitiIdentities)
+		api.POST("/ziti/identities", svc.handleCreateZitiIdentity)
+		api.DELETE("/ziti/identities/:id", svc.handleDeleteZitiIdentity)
+		api.GET("/ziti/identities/:id/enrollment-jwt", svc.handleGetEnrollmentJWT)
+		api.POST("/ziti/routes/:id/enable", svc.handleEnableZitiOnRoute)
+		api.POST("/ziti/routes/:id/disable", svc.handleDisableZitiOnRoute)
 	}
 
 	// Catch-all reverse proxy (must be last)
@@ -148,7 +168,9 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
 		        allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
-		        cors_allowed_origins, custom_headers, enabled, priority, created_at, updated_at
+		        cors_allowed_origins, custom_headers, enabled, priority,
+		        COALESCE(ziti_enabled, false), ziti_service_name,
+		        created_at, updated_at
 		 FROM proxy_routes ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		s.logger.Error("Failed to list routes", zap.Error(err))
@@ -160,18 +182,22 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 	routes := []ProxyRoute{}
 	for rows.Next() {
 		var r ProxyRoute
-		var desc *string
+		var desc, zitiServiceName *string
 		var allowedRoles, allowedGroups, policyIDs, corsOrigins, customHeaders []byte
 		err := rows.Scan(&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
 			&r.RequireAuth, &allowedRoles, &allowedGroups, &policyIDs,
 			&r.IdleTimeout, &r.AbsoluteTimeout, &corsOrigins, &customHeaders,
-			&r.Enabled, &r.Priority, &r.CreatedAt, &r.UpdatedAt)
+			&r.Enabled, &r.Priority, &r.ZitiEnabled, &zitiServiceName,
+			&r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			s.logger.Error("Failed to scan route", zap.Error(err))
 			continue
 		}
 		if desc != nil {
 			r.Description = *desc
+		}
+		if zitiServiceName != nil {
+			r.ZitiServiceName = *zitiServiceName
 		}
 		json.Unmarshal(allowedRoles, &r.AllowedRoles)
 		json.Unmarshal(allowedGroups, &r.AllowedGroups)
@@ -670,6 +696,15 @@ func (s *Service) handleProxy(c *gin.Context) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+
+	// Use Ziti transport if the route has Ziti enabled and ZitiManager is available
+	if route.ZitiEnabled && route.ZitiServiceName != "" && s.zitiManager != nil && s.zitiManager.IsInitialized() {
+		proxy.Transport = s.zitiManager.ZitiTransport(route.ZitiServiceName)
+		s.logger.Debug("Proxying through Ziti overlay",
+			zap.String("service", route.ZitiServiceName),
+			zap.String("route", route.Name))
+	}
+
 	proxy.Director = func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host
@@ -723,23 +758,29 @@ func (s *Service) handleProxy(c *gin.Context) {
 
 func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, error) {
 	var r ProxyRoute
-	var desc *string
+	var desc, zitiServiceName *string
 	var allowedRoles, allowedGroups, policyIDs, corsOrigins, customHeaders []byte
 
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
 		        allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
-		        cors_allowed_origins, custom_headers, enabled, priority, created_at, updated_at
+		        cors_allowed_origins, custom_headers, enabled, priority,
+		        COALESCE(ziti_enabled, false), ziti_service_name,
+		        created_at, updated_at
 		 FROM proxy_routes WHERE id=$1`, id).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
 		&r.RequireAuth, &allowedRoles, &allowedGroups, &policyIDs,
 		&r.IdleTimeout, &r.AbsoluteTimeout, &corsOrigins, &customHeaders,
-		&r.Enabled, &r.Priority, &r.CreatedAt, &r.UpdatedAt)
+		&r.Enabled, &r.Priority, &r.ZitiEnabled, &zitiServiceName,
+		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if desc != nil {
 		r.Description = *desc
+	}
+	if zitiServiceName != nil {
+		r.ZitiServiceName = *zitiServiceName
 	}
 	json.Unmarshal(allowedRoles, &r.AllowedRoles)
 	json.Unmarshal(allowedGroups, &r.AllowedGroups)
@@ -752,25 +793,31 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {
 	// Try exact match first, then wildcard
 	var r ProxyRoute
-	var desc *string
+	var desc, zitiServiceName *string
 	var allowedRoles, allowedGroups, policyIDs, corsOrigins, customHeaders []byte
 
 	// Match from_url containing the host
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
 		        allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
-		        cors_allowed_origins, custom_headers, enabled, priority, created_at, updated_at
+		        cors_allowed_origins, custom_headers, enabled, priority,
+		        COALESCE(ziti_enabled, false), ziti_service_name,
+		        created_at, updated_at
 		 FROM proxy_routes WHERE from_url LIKE '%' || $1 || '%' AND enabled=true
 		 ORDER BY priority DESC LIMIT 1`, host).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
 		&r.RequireAuth, &allowedRoles, &allowedGroups, &policyIDs,
 		&r.IdleTimeout, &r.AbsoluteTimeout, &corsOrigins, &customHeaders,
-		&r.Enabled, &r.Priority, &r.CreatedAt, &r.UpdatedAt)
+		&r.Enabled, &r.Priority, &r.ZitiEnabled, &zitiServiceName,
+		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if desc != nil {
 		r.Description = *desc
+	}
+	if zitiServiceName != nil {
+		r.ZitiServiceName = *zitiServiceName
 	}
 	json.Unmarshal(allowedRoles, &r.AllowedRoles)
 	json.Unmarshal(allowedGroups, &r.AllowedGroups)

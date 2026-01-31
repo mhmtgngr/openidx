@@ -124,6 +124,21 @@ func main() {
 	// Initialize access proxy service
 	accessService := access.NewService(db, redis, cfg, log)
 
+	// Initialize OpenZiti if enabled
+	if cfg.ZitiEnabled {
+		log.Info("OpenZiti integration enabled, initializing ZitiManager...")
+		zm, err := access.NewZitiManager(cfg, db, log)
+		if err != nil {
+			log.Error("Failed to initialize ZitiManager -- Ziti features disabled", zap.Error(err))
+		} else {
+			accessService.SetZitiManager(zm)
+			defer zm.Close()
+			log.Info("OpenZiti integration ready")
+		}
+	} else {
+		log.Info("OpenZiti integration disabled (set ZITI_ENABLED=true to enable)")
+	}
+
 	// Register routes (admin API is protected in non-dev environments)
 	if cfg.Environment != "development" {
 		access.RegisterRoutes(router, accessService, middleware.Auth(cfg.OAuthJWKSURL))
