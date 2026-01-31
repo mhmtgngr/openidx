@@ -19,6 +19,7 @@ import {
   Network,
   FolderSync,
   Smartphone,
+  Bell,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -42,6 +43,8 @@ const navigation = [
   { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
   { name: 'Directories', href: '/directories', icon: FolderSync, adminOnly: true },
   { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
+  { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, adminOnly: true },
+  { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
   { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
   { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
   { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },

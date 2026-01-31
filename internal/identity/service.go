@@ -170,6 +170,8 @@ type Service struct {
 	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
 	pushMFASessions   sync.Map // In-memory storage for Push MFA challenges (use Redis in production)
 	directoryService  DirectoryAuthenticator
+	emailService      EmailSender
+	webhookService    WebhookPublisher
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -190,6 +192,28 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 // SetDirectoryService sets the directory service for LDAP auth pass-through
 func (s *Service) SetDirectoryService(ds DirectoryAuthenticator) {
 	s.directoryService = ds
+}
+
+// EmailSender defines the interface for sending emails
+type EmailSender interface {
+	SendVerificationEmail(ctx context.Context, to, userName, token, baseURL string) error
+	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
+	SendWelcomeEmail(ctx context.Context, to, userName string) error
+}
+
+// WebhookPublisher defines the interface for publishing webhook events
+type WebhookPublisher interface {
+	Publish(ctx context.Context, eventType string, payload interface{}) error
+}
+
+// SetEmailService sets the email service
+func (s *Service) SetEmailService(es EmailSender) {
+	s.emailService = es
+}
+
+// SetWebhookService sets the webhook service
+func (s *Service) SetWebhookService(ws WebhookPublisher) {
+	s.webhookService = ws
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
@@ -2382,6 +2406,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	{
 		public.POST("/users/forgot-password", svc.handleForgotPassword)
 		public.POST("/users/reset-password", svc.handleResetPassword)
+		public.POST("/verify-email", svc.handleVerifyEmail)
+		public.POST("/invitations/:token/accept", svc.handleAcceptInvitation)
 	}
 
 	identity := router.Group("/api/v1/identity")
@@ -2470,6 +2496,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/mfa/push/challenge", svc.handleCreatePushChallenge)
 		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
+
+		// Email verification
+		identity.POST("/resend-verification", svc.handleResendVerification)
+
+		// Invitations
+		identity.GET("/invitations", svc.handleListInvitations)
+		identity.POST("/invitations", svc.handleCreateInvitation)
+		identity.DELETE("/invitations/:id", svc.handleDeleteInvitation)
+
+		// User lifecycle
+		identity.POST("/users/:id/offboard", svc.handleOffboardUser)
 	}
 }
 
@@ -2519,7 +2556,26 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
+	// Send verification email (best-effort)
+	if s.emailService != nil {
+		token := uuid.New().String()
+		_, err := s.db.Pool.Exec(c.Request.Context(),
+			"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+			user.ID, token)
+		if err == nil {
+			baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+			s.emailService.SendVerificationEmail(c.Request.Context(), user.Email, user.FirstName, token, baseURL)
+		}
+	}
+
+	// Publish webhook event (best-effort)
+	if s.webhookService != nil {
+		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+			"user_id": user.ID, "username": user.Username, "email": user.Email,
+		})
+	}
+
 	c.JSON(201, user)
 }
 
@@ -3716,4 +3772,277 @@ func (s *Service) handleSetRolePermissions(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Permissions updated"})
+}
+
+// handleVerifyEmail verifies a user's email address
+func (s *Service) handleVerifyEmail(c *gin.Context) {
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	var userID string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT user_id FROM email_verification_tokens WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL",
+		req.Token).Scan(&userID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired token"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(), "UPDATE users SET email_verified = true WHERE id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to verify email"})
+		return
+	}
+
+	_, _ = s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1", req.Token)
+
+	c.JSON(200, gin.H{"message": "Email verified successfully"})
+}
+
+// handleResendVerification resends the verification email
+func (s *Service) handleResendVerification(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var email, firstName string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT email, first_name FROM users WHERE id = $1", userID).Scan(&email, &firstName)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	token := uuid.New().String()
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+		userID, token)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create verification token"})
+		return
+	}
+
+	if s.emailService != nil {
+		baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+		s.emailService.SendVerificationEmail(c.Request.Context(), email, firstName, token, baseURL)
+	}
+
+	c.JSON(200, gin.H{"message": "Verification email sent"})
+}
+
+// handleListInvitations lists pending invitations
+func (s *Service) handleListInvitations(c *gin.Context) {
+	rows, err := s.db.Pool.Query(c.Request.Context(),
+		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at
+		 FROM user_invitations ORDER BY created_at DESC LIMIT 50`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type Invitation struct {
+		ID         string     `json:"id"`
+		Email      string     `json:"email"`
+		InvitedBy  string     `json:"invited_by"`
+		Roles      []string   `json:"roles"`
+		Groups     []string   `json:"groups"`
+		Token      string     `json:"token"`
+		Status     string     `json:"status"`
+		ExpiresAt  time.Time  `json:"expires_at"`
+		AcceptedAt *time.Time `json:"accepted_at,omitempty"`
+		CreatedAt  time.Time  `json:"created_at"`
+	}
+
+	var invitations []Invitation
+	for rows.Next() {
+		var inv Invitation
+		err := rows.Scan(&inv.ID, &inv.Email, &inv.InvitedBy, &inv.Roles, &inv.Groups,
+			&inv.Token, &inv.Status, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+		if err != nil {
+			continue
+		}
+		invitations = append(invitations, inv)
+	}
+	if invitations == nil {
+		invitations = []Invitation{}
+	}
+	c.JSON(200, gin.H{"invitations": invitations})
+}
+
+// handleCreateInvitation creates a new user invitation
+func (s *Service) handleCreateInvitation(c *gin.Context) {
+	var req struct {
+		Email  string   `json:"email" binding:"required"`
+		Roles  []string `json:"roles"`
+		Groups []string `json:"groups"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	invitedBy, _ := c.Get("user_id")
+	token := uuid.New().String()
+
+	var id string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days') RETURNING id`,
+		req.Email, invitedBy, req.Roles, req.Groups, token).Scan(&id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Send invitation email
+	if s.emailService != nil {
+		inviterName, _ := c.Get("name")
+		name, _ := inviterName.(string)
+		if name == "" {
+			name = "An administrator"
+		}
+		baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+		s.emailService.SendInvitationEmail(c.Request.Context(), req.Email, name, token, baseURL)
+	}
+
+	c.JSON(201, gin.H{"id": id, "token": token, "email": req.Email})
+}
+
+// handleDeleteInvitation revokes an invitation
+func (s *Service) handleDeleteInvitation(c *gin.Context) {
+	id := c.Param("id")
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM user_invitations WHERE id = $1", id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Invitation revoked"})
+}
+
+// handleAcceptInvitation accepts an invitation and creates the user
+func (s *Service) handleAcceptInvitation(c *gin.Context) {
+	token := c.Param("token")
+
+	var req struct {
+		Username  string `json:"username" binding:"required"`
+		Password  string `json:"password" binding:"required"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Look up invitation
+	var invID, email string
+	var roles, groups []string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT id, email, roles, groups FROM user_invitations
+		 WHERE token = $1 AND status = 'pending' AND expires_at > NOW()`,
+		token).Scan(&invID, &email, &roles, &groups)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
+		return
+	}
+
+	// Create user
+	user := &User{
+		Username:      req.Username,
+		Email:         email,
+		FirstName:     req.FirstName,
+		LastName:      req.LastName,
+		Enabled:       true,
+		EmailVerified: true,
+	}
+
+	if err := s.CreateUser(c.Request.Context(), user); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Set password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err == nil {
+		s.db.Pool.Exec(c.Request.Context(),
+			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2",
+			string(hashedPassword), user.ID)
+	}
+
+	// Assign roles
+	for _, role := range roles {
+		s.db.Pool.Exec(c.Request.Context(),
+			"INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE name = $2 ON CONFLICT DO NOTHING",
+			user.ID, role)
+	}
+
+	// Add to groups
+	for _, group := range groups {
+		s.db.Pool.Exec(c.Request.Context(),
+			"INSERT INTO group_memberships (user_id, group_id) SELECT $1, id FROM groups WHERE name = $2 ON CONFLICT DO NOTHING",
+			user.ID, group)
+	}
+
+	// Mark invitation as accepted
+	s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1", invID)
+
+	// Send welcome email
+	if s.emailService != nil {
+		s.emailService.SendWelcomeEmail(c.Request.Context(), email, req.FirstName)
+	}
+
+	// Publish webhook
+	if s.webhookService != nil {
+		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+			"user_id": user.ID, "username": user.Username, "email": email, "source": "invitation",
+		})
+	}
+
+	c.JSON(201, gin.H{"message": "Account created successfully", "user_id": user.ID})
+}
+
+// handleOffboardUser deactivates a user and cleans up their access
+func (s *Service) handleOffboardUser(c *gin.Context) {
+	userID := c.Param("id")
+
+	// Disable user
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to disable user"})
+		return
+	}
+
+	// Revoke all API keys
+	s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1", userID)
+
+	// Remove from all groups
+	s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM group_memberships WHERE user_id = $1", userID)
+
+	// Remove all role assignments
+	s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM user_roles WHERE user_id = $1", userID)
+
+	// Terminate all sessions
+	s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM sessions WHERE user_id = $1", userID)
+
+	// Publish webhook
+	if s.webhookService != nil {
+		s.webhookService.Publish(c.Request.Context(), "user.deleted", map[string]interface{}{
+			"user_id": userID, "action": "offboard",
+		})
+	}
+
+	s.logger.Info("User offboarded", zap.String("user_id", userID))
+	c.JSON(200, gin.H{"message": "User offboarded successfully"})
 }

@@ -17,6 +17,8 @@ import { DirectoriesPage } from './pages/directories'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
 import { DevicesPage } from './pages/devices'
+import { ServiceAccountsPage } from './pages/service-accounts'
+import { WebhooksPage } from './pages/webhooks'
 import { ProxyRoutesPage } from './pages/proxy-routes'
 import { ZitiNetworkPage } from './pages/ziti-network'
 import { SettingsPage } from './pages/settings'
@@ -137,6 +139,16 @@ export default function App() {
           <Route path="devices" element={
             <AdminRoute>
               <DevicesPage />
+            </AdminRoute>
+          } />
+          <Route path="service-accounts" element={
+            <AdminRoute>
+              <ServiceAccountsPage />
+            </AdminRoute>
+          } />
+          <Route path="webhooks" element={
+            <AdminRoute>
+              <WebhooksPage />
             </AdminRoute>
           } />
           <Route path="identity-providers" element={

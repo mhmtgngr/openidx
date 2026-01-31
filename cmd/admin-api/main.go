@@ -16,12 +16,15 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/admin"
+	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/directory"
+	"github.com/openidx/openidx/internal/email"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -116,10 +119,28 @@ func main() {
 	// Initialize risk service (conditional access)
 	riskService := risk.NewService(db, redis, log)
 
+	// Initialize email service
+	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
+
+	// Initialize API key service
+	apiKeyService := apikeys.NewService(db, redis, log)
+
+	// Initialize webhook service
+	webhookService := webhooks.NewService(db, redis, log)
+
+	// Start background workers
+	ctx, cancelWorkers := context.WithCancel(context.Background())
+	go emailService.ProcessQueue(ctx)
+	go webhookService.ProcessDeliveries(ctx)
+	go webhookService.ProcessRetries(ctx)
+	defer cancelWorkers()
+
 	// Initialize admin service
 	adminService := admin.NewService(db, redis, cfg, log)
 	adminService.SetDirectoryService(&directorySyncAdapter{dirService: dirService})
 	adminService.SetRiskService(&riskServiceAdapter{riskService: riskService})
+	adminService.SetAPIKeyService(&apiKeyAdapter{svc: apiKeyService})
+	adminService.SetWebhookService(&webhookAdapter{svc: webhookService})
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -218,4 +239,71 @@ func (a *riskServiceAdapter) GetRiskStats(ctx context.Context) (map[string]inter
 
 func (a *riskServiceAdapter) GetLoginHistory(ctx context.Context, userID string, limit int) (interface{}, error) {
 	return a.riskService.GetLoginHistory(ctx, userID, limit)
+}
+
+// apiKeyAdapter adapts apikeys.Service to admin.APIKeyManager interface
+type apiKeyAdapter struct {
+	svc *apikeys.Service
+}
+
+func (a *apiKeyAdapter) CreateServiceAccount(ctx context.Context, name, description, ownerID string) (interface{}, error) {
+	return a.svc.CreateServiceAccount(ctx, name, description, ownerID)
+}
+
+func (a *apiKeyAdapter) ListServiceAccounts(ctx context.Context, limit, offset int) (interface{}, int, error) {
+	accounts, total, err := a.svc.ListServiceAccounts(ctx, limit, offset)
+	return accounts, total, err
+}
+
+func (a *apiKeyAdapter) GetServiceAccount(ctx context.Context, id string) (interface{}, error) {
+	return a.svc.GetServiceAccount(ctx, id)
+}
+
+func (a *apiKeyAdapter) DeleteServiceAccount(ctx context.Context, id string) error {
+	return a.svc.DeleteServiceAccount(ctx, id)
+}
+
+func (a *apiKeyAdapter) CreateAPIKey(ctx context.Context, name string, userID, serviceAccountID *string, scopes []string, expiresAt *time.Time) (string, interface{}, error) {
+	return a.svc.CreateAPIKey(ctx, name, userID, serviceAccountID, scopes, expiresAt)
+}
+
+func (a *apiKeyAdapter) ListAPIKeys(ctx context.Context, ownerID string, ownerType string) (interface{}, error) {
+	return a.svc.ListAPIKeys(ctx, ownerID, ownerType)
+}
+
+func (a *apiKeyAdapter) RevokeAPIKey(ctx context.Context, keyID string) error {
+	return a.svc.RevokeAPIKey(ctx, keyID)
+}
+
+// webhookAdapter adapts webhooks.Service to admin.WebhookManager interface
+type webhookAdapter struct {
+	svc *webhooks.Service
+}
+
+func (a *webhookAdapter) CreateSubscription(ctx context.Context, name, url, secret string, events []string, createdBy string) (interface{}, error) {
+	return a.svc.CreateSubscription(ctx, name, url, secret, events, createdBy)
+}
+
+func (a *webhookAdapter) ListSubscriptions(ctx context.Context) (interface{}, error) {
+	return a.svc.ListSubscriptions(ctx)
+}
+
+func (a *webhookAdapter) GetSubscription(ctx context.Context, id string) (interface{}, error) {
+	return a.svc.GetSubscription(ctx, id)
+}
+
+func (a *webhookAdapter) DeleteSubscription(ctx context.Context, id string) error {
+	return a.svc.DeleteSubscription(ctx, id)
+}
+
+func (a *webhookAdapter) GetDeliveryHistory(ctx context.Context, subscriptionID string, limit int) (interface{}, error) {
+	return a.svc.GetDeliveryHistory(ctx, subscriptionID, limit)
+}
+
+func (a *webhookAdapter) RetryDelivery(ctx context.Context, deliveryID string) error {
+	return a.svc.RetryDelivery(ctx, deliveryID)
+}
+
+func (a *webhookAdapter) Publish(ctx context.Context, eventType string, payload interface{}) error {
+	return a.svc.Publish(ctx, eventType, payload)
 }

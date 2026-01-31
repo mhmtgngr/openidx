@@ -19,7 +19,9 @@ import (
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/directory"
+	"github.com/openidx/openidx/internal/email"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -80,9 +82,24 @@ func main() {
 	}
 	defer dirService.Stop()
 
+	// Initialize email service
+	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
+
+	// Initialize webhook service
+	webhookService := webhooks.NewService(db, redis, log)
+
+	// Start background workers
+	ctx, cancelWorkers := context.WithCancel(context.Background())
+	go emailService.ProcessQueue(ctx)
+	go webhookService.ProcessDeliveries(ctx)
+	go webhookService.ProcessRetries(ctx)
+	defer cancelWorkers()
+
 	// Initialize identity service
 	identityService := identity.NewService(db, redis, cfg, log)
 	identityService.SetDirectoryService(dirService)
+	identityService.SetEmailService(emailService)
+	identityService.SetWebhookService(webhookService)
 
 	// Register routes
 	identity.RegisterRoutes(router, identityService)

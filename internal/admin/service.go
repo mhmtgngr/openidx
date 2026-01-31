@@ -180,6 +180,28 @@ type RiskAssessor interface {
 	GetLoginHistory(ctx context.Context, userID string, limit int) (interface{}, error)
 }
 
+// APIKeyManager defines the interface for API key operations
+type APIKeyManager interface {
+	CreateServiceAccount(ctx context.Context, name, description, ownerID string) (interface{}, error)
+	ListServiceAccounts(ctx context.Context, limit, offset int) (interface{}, int, error)
+	GetServiceAccount(ctx context.Context, id string) (interface{}, error)
+	DeleteServiceAccount(ctx context.Context, id string) error
+	CreateAPIKey(ctx context.Context, name string, userID, serviceAccountID *string, scopes []string, expiresAt *time.Time) (string, interface{}, error)
+	ListAPIKeys(ctx context.Context, ownerID string, ownerType string) (interface{}, error)
+	RevokeAPIKey(ctx context.Context, keyID string) error
+}
+
+// WebhookManager defines the interface for webhook operations
+type WebhookManager interface {
+	CreateSubscription(ctx context.Context, name, url, secret string, events []string, createdBy string) (interface{}, error)
+	ListSubscriptions(ctx context.Context) (interface{}, error)
+	GetSubscription(ctx context.Context, id string) (interface{}, error)
+	DeleteSubscription(ctx context.Context, id string) error
+	GetDeliveryHistory(ctx context.Context, subscriptionID string, limit int) (interface{}, error)
+	RetryDelivery(ctx context.Context, deliveryID string) error
+	Publish(ctx context.Context, eventType string, payload interface{}) error
+}
+
 type Service struct {
 	db               *database.PostgresDB
 	redis            *database.RedisClient
@@ -187,6 +209,8 @@ type Service struct {
 	logger           *zap.Logger
 	directoryService DirectorySyncer
 	riskService      RiskAssessor
+	apiKeyService    APIKeyManager
+	webhookService   WebhookManager
 }
 
 // NewService creates a new admin service
@@ -207,6 +231,16 @@ func (s *Service) SetDirectoryService(ds DirectorySyncer) {
 // SetRiskService sets the risk service for device/risk management
 func (s *Service) SetRiskService(rs RiskAssessor) {
 	s.riskService = rs
+}
+
+// SetAPIKeyService sets the API key service for service account/key management
+func (s *Service) SetAPIKeyService(aks APIKeyManager) {
+	s.apiKeyService = aks
+}
+
+// SetWebhookService sets the webhook service for webhook management
+func (s *Service) SetWebhookService(ws WebhookManager) {
+	s.webhookService = ws
 }
 
 // GetDashboard returns dashboard statistics
@@ -686,6 +720,38 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Risk stats and login history
 	router.GET("/risk/stats", svc.handleRiskStats)
 	router.GET("/login-history", svc.handleLoginHistory)
+
+	// Service accounts
+	router.GET("/service-accounts", svc.handleListServiceAccounts)
+	router.POST("/service-accounts", svc.handleCreateServiceAccount)
+	router.GET("/service-accounts/:id", svc.handleGetServiceAccount)
+	router.DELETE("/service-accounts/:id", svc.handleDeleteServiceAccount)
+
+	// API keys
+	router.GET("/service-accounts/:id/api-keys", svc.handleListServiceAccountAPIKeys)
+	router.POST("/service-accounts/:id/api-keys", svc.handleCreateServiceAccountAPIKey)
+	router.POST("/api-keys", svc.handleCreateUserAPIKey)
+	router.GET("/api-keys", svc.handleListUserAPIKeys)
+	router.DELETE("/api-keys/:id", svc.handleRevokeAPIKey)
+
+	// Webhooks
+	router.GET("/webhooks", svc.handleListWebhooks)
+	router.POST("/webhooks", svc.handleCreateWebhook)
+	router.GET("/webhooks/:id", svc.handleGetWebhook)
+	router.DELETE("/webhooks/:id", svc.handleDeleteWebhook)
+	router.GET("/webhooks/:id/deliveries", svc.handleWebhookDeliveries)
+	router.POST("/webhooks/deliveries/:id/retry", svc.handleRetryWebhookDelivery)
+
+	// Invitations
+	router.GET("/invitations", svc.handleListInvitations)
+	router.POST("/invitations", svc.handleCreateInvitation)
+	router.DELETE("/invitations/:id", svc.handleDeleteInvitation)
+
+	// Analytics
+	router.GET("/analytics/logins", svc.handleLoginAnalytics)
+	router.GET("/analytics/risk", svc.handleRiskAnalytics)
+	router.GET("/analytics/users", svc.handleUserAnalytics)
+	router.GET("/analytics/events", svc.handleEventAnalytics)
 }
 
 // HTTP Handlers
@@ -1172,4 +1238,549 @@ func (s *Service) handleLoginHistory(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"history": history})
+}
+
+// Service account handlers
+
+func (s *Service) handleListServiceAccounts(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	limit := 50
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	accounts, total, err := s.apiKeyService.ListServiceAccounts(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"service_accounts": accounts, "total": total})
+}
+
+func (s *Service) handleCreateServiceAccount(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	ownerID, _ := userID.(string)
+
+	account, err := s.apiKeyService.CreateServiceAccount(c.Request.Context(), req.Name, req.Description, ownerID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, account)
+}
+
+func (s *Service) handleGetServiceAccount(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	account, err := s.apiKeyService.GetServiceAccount(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "Service account not found"})
+		return
+	}
+	c.JSON(200, account)
+}
+
+func (s *Service) handleDeleteServiceAccount(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	if err := s.apiKeyService.DeleteServiceAccount(c.Request.Context(), id); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Service account deleted"})
+}
+
+// API key handlers
+
+func (s *Service) handleListServiceAccountAPIKeys(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	keys, err := s.apiKeyService.ListAPIKeys(c.Request.Context(), id, "service_account")
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"api_keys": keys})
+}
+
+func (s *Service) handleCreateServiceAccountAPIKey(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	saID := c.Param("id")
+	var req struct {
+		Name      string    `json:"name"`
+		Scopes    []string  `json:"scopes"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	plainKey, apiKey, err := s.apiKeyService.CreateAPIKey(c.Request.Context(), req.Name, nil, &saID, req.Scopes, req.ExpiresAt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, gin.H{"key": plainKey, "api_key": apiKey})
+}
+
+func (s *Service) handleCreateUserAPIKey(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	var req struct {
+		Name      string    `json:"name"`
+		Scopes    []string  `json:"scopes"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	uid, _ := userID.(string)
+
+	plainKey, apiKey, err := s.apiKeyService.CreateAPIKey(c.Request.Context(), req.Name, &uid, nil, req.Scopes, req.ExpiresAt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, gin.H{"key": plainKey, "api_key": apiKey})
+}
+
+func (s *Service) handleListUserAPIKeys(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	uid, _ := userID.(string)
+
+	keys, err := s.apiKeyService.ListAPIKeys(c.Request.Context(), uid, "user")
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"api_keys": keys})
+}
+
+func (s *Service) handleRevokeAPIKey(c *gin.Context) {
+	if s.apiKeyService == nil {
+		c.JSON(500, gin.H{"error": "API key service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	if err := s.apiKeyService.RevokeAPIKey(c.Request.Context(), id); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "API key revoked"})
+}
+
+// Webhook handlers
+
+func (s *Service) handleListWebhooks(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	subs, err := s.webhookService.ListSubscriptions(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"webhooks": subs})
+}
+
+func (s *Service) handleCreateWebhook(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	var req struct {
+		Name   string   `json:"name"`
+		URL    string   `json:"url"`
+		Secret string   `json:"secret"`
+		Events []string `json:"events"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	createdBy, _ := userID.(string)
+
+	sub, err := s.webhookService.CreateSubscription(c.Request.Context(), req.Name, req.URL, req.Secret, req.Events, createdBy)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, sub)
+}
+
+func (s *Service) handleGetWebhook(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	sub, err := s.webhookService.GetSubscription(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "Webhook not found"})
+		return
+	}
+	c.JSON(200, sub)
+}
+
+func (s *Service) handleDeleteWebhook(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	if err := s.webhookService.DeleteSubscription(c.Request.Context(), id); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Webhook deleted"})
+}
+
+func (s *Service) handleWebhookDeliveries(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	limit := 50
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	deliveries, err := s.webhookService.GetDeliveryHistory(c.Request.Context(), id, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"deliveries": deliveries})
+}
+
+func (s *Service) handleRetryWebhookDelivery(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	if err := s.webhookService.RetryDelivery(c.Request.Context(), id); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Delivery retry initiated"})
+}
+
+// Invitation handlers
+
+func (s *Service) handleListInvitations(c *gin.Context) {
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT id, email, roles, groups, token, invited_by, expires_at, created_at
+		FROM user_invitations
+		ORDER BY created_at DESC
+		LIMIT 50
+	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to list invitations"})
+		return
+	}
+	defer rows.Close()
+
+	var invitations []map[string]interface{}
+	for rows.Next() {
+		var id, email, token, invitedBy string
+		var roles, groups []string
+		var expiresAt, createdAt time.Time
+		if err := rows.Scan(&id, &email, &roles, &groups, &token, &invitedBy, &expiresAt, &createdAt); err != nil {
+			continue
+		}
+		invitations = append(invitations, map[string]interface{}{
+			"id":         id,
+			"email":      email,
+			"roles":      roles,
+			"groups":     groups,
+			"token":      token,
+			"invited_by": invitedBy,
+			"expires_at": expiresAt,
+			"created_at": createdAt,
+		})
+	}
+	if invitations == nil {
+		invitations = []map[string]interface{}{}
+	}
+	c.JSON(200, gin.H{"invitations": invitations})
+}
+
+func (s *Service) handleCreateInvitation(c *gin.Context) {
+	var req struct {
+		Email  string   `json:"email"`
+		Roles  []string `json:"roles"`
+		Groups []string `json:"groups"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	id := uuid.New().String()
+	token := uuid.New().String()
+	userID, _ := c.Get("user_id")
+	invitedBy, _ := userID.(string)
+	if invitedBy == "" {
+		invitedBy = "00000000-0000-0000-0000-000000000001" // default admin user in dev mode
+	}
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+
+	_, err := s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO user_invitations (id, email, roles, groups, token, invited_by, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+	`, id, req.Email, req.Roles, req.Groups, token, invitedBy, expiresAt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create invitation"})
+		return
+	}
+
+	c.JSON(201, gin.H{
+		"id":         id,
+		"email":      req.Email,
+		"roles":      req.Roles,
+		"groups":     req.Groups,
+		"token":      token,
+		"invited_by": invitedBy,
+		"expires_at": expiresAt,
+	})
+}
+
+func (s *Service) handleDeleteInvitation(c *gin.Context) {
+	id := c.Param("id")
+	result, err := s.db.Pool.Exec(c.Request.Context(), `DELETE FROM user_invitations WHERE id = $1`, id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete invitation"})
+		return
+	}
+	if result.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"error": "Invitation not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Invitation deleted"})
+}
+
+// Analytics handlers
+
+func parsePeriod(period string) string {
+	switch period {
+	case "7d":
+		return "7 days"
+	case "90d":
+		return "90 days"
+	default:
+		return "30 days"
+	}
+}
+
+func (s *Service) handleLoginAnalytics(c *gin.Context) {
+	interval := parsePeriod(c.Query("period"))
+
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT date_trunc('day', created_at)::date as date,
+		       COUNT(*) FILTER (WHERE success = true) as successful,
+		       COUNT(*) FILTER (WHERE success = false) as failed
+		FROM login_history
+		WHERE created_at > NOW() - $1::interval
+		GROUP BY 1 ORDER BY 1
+	`, interval)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to query login analytics"})
+		return
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var date time.Time
+		var successful, failed int
+		if err := rows.Scan(&date, &successful, &failed); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"date":       date.Format("2006-01-02"),
+			"successful": successful,
+			"failed":     failed,
+		})
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	c.JSON(200, results)
+}
+
+func (s *Service) handleRiskAnalytics(c *gin.Context) {
+	interval := parsePeriod(c.Query("period"))
+
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT
+			CASE
+				WHEN risk_score BETWEEN 0 AND 25 THEN 'low'
+				WHEN risk_score BETWEEN 26 AND 50 THEN 'medium'
+				WHEN risk_score BETWEEN 51 AND 75 THEN 'high'
+				ELSE 'critical'
+			END as level,
+			COUNT(*) as count
+		FROM login_history
+		WHERE created_at > NOW() - $1::interval
+		GROUP BY 1
+	`, interval)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to query risk analytics"})
+		return
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var level string
+		var count int
+		if err := rows.Scan(&level, &count); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"level": level,
+			"count": count,
+		})
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	c.JSON(200, results)
+}
+
+func (s *Service) handleUserAnalytics(c *gin.Context) {
+	interval := parsePeriod(c.Query("period"))
+
+	// User growth over time
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT date_trunc('day', created_at)::date as date, COUNT(*) as count
+		FROM users WHERE created_at > NOW() - $1::interval
+		GROUP BY 1 ORDER BY 1
+	`, interval)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to query user analytics"})
+		return
+	}
+	defer rows.Close()
+
+	var growth []map[string]interface{}
+	for rows.Next() {
+		var date time.Time
+		var count int
+		if err := rows.Scan(&date, &count); err != nil {
+			continue
+		}
+		growth = append(growth, map[string]interface{}{
+			"date":  date.Format("2006-01-02"),
+			"count": count,
+		})
+	}
+	if growth == nil {
+		growth = []map[string]interface{}{}
+	}
+
+	// Total and active users
+	var total, active int
+	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users").Scan(&total)
+	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&active)
+
+	c.JSON(200, gin.H{
+		"growth": growth,
+		"total":  total,
+		"active": active,
+	})
+}
+
+func (s *Service) handleEventAnalytics(c *gin.Context) {
+	interval := parsePeriod(c.Query("period"))
+
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT event_type, COUNT(*) as count
+		FROM audit_events WHERE timestamp > NOW() - $1::interval
+		GROUP BY 1 ORDER BY 2 DESC LIMIT 10
+	`, interval)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to query event analytics"})
+		return
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var eventType string
+		var count int
+		if err := rows.Scan(&eventType, &count); err != nil {
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"event_type": eventType,
+			"count":      count,
+		})
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	c.JSON(200, results)
 }

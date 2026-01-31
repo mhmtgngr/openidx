@@ -196,8 +196,26 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
+// APIKeyValidator validates API keys and returns key info
+type APIKeyValidator interface {
+	ValidateAPIKey(ctx context.Context, rawKey string) (*APIKeyInfo, error)
+}
+
+// APIKeyInfo holds validated API key information
+type APIKeyInfo struct {
+	KeyID            string
+	UserID           string
+	ServiceAccountID string
+	Scopes           []string
+}
+
 // Auth validates JWT tokens via JWKS
 func Auth(jwksURL string) gin.HandlerFunc {
+	return AuthWithAPIKey(jwksURL, nil)
+}
+
+// AuthWithAPIKey validates JWT tokens via JWKS, with optional API key support
+func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -216,6 +234,33 @@ func Auth(jwksURL string) gin.HandlerFunc {
 		}
 
 		tokenString := parts[1]
+
+		// Check if this is an API key (starts with "oidx_")
+		if strings.HasPrefix(tokenString, "oidx_") && apiKeyValidator != nil {
+			keyInfo, err := apiKeyValidator.ValidateAPIKey(c.Request.Context(), tokenString)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": fmt.Sprintf("invalid API key: %v", err),
+				})
+				return
+			}
+			// Set context from API key
+			if keyInfo.UserID != "" {
+				c.Set("user_id", keyInfo.UserID)
+			}
+			if keyInfo.ServiceAccountID != "" {
+				c.Set("service_account_id", keyInfo.ServiceAccountID)
+			}
+			c.Set("api_key_id", keyInfo.KeyID)
+			c.Set("scopes", keyInfo.Scopes)
+			c.Set("auth_method", "api_key")
+			// API keys get admin role for service accounts
+			if keyInfo.ServiceAccountID != "" {
+				c.Set("roles", []string{"service_account"})
+			}
+			c.Next()
+			return
+		}
 
 		// Parse the token with key function that fetches from JWKS
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {

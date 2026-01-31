@@ -153,11 +153,22 @@ type Service struct {
 	issuer     string
 	identityService *identity.Service
 	riskService     *risk.Service
+	webhookService  WebhookPublisher
+}
+
+// WebhookPublisher defines the interface for publishing webhook events
+type WebhookPublisher interface {
+	Publish(ctx context.Context, eventType string, payload interface{}) error
 }
 
 // SetRiskService sets the risk service for conditional access
 func (s *Service) SetRiskService(rs *risk.Service) {
 	s.riskService = rs
+}
+
+// SetWebhookService sets the webhook service for event publishing
+func (s *Service) SetWebhookService(ws WebhookPublisher) {
+	s.webhookService = ws
 }
 
 // NewService creates a new OAuth service
@@ -878,6 +889,18 @@ func (s *Service) handleLogin(c *gin.Context) {
 			zap.Bool("device_trusted", deviceTrusted),
 			zap.String("location", location),
 		)
+
+		// Publish webhook event for login
+		if s.webhookService != nil {
+			eventType := "login.success"
+			if riskScore >= 70 {
+				eventType = "login.high_risk"
+			}
+			s.webhookService.Publish(c.Request.Context(), eventType, map[string]interface{}{
+				"user_id": user.ID, "ip": clientIP, "location": location,
+				"risk_score": riskScore, "device_trusted": deviceTrusted,
+			})
+		}
 	}
 
 	// Check if user has MFA enabled

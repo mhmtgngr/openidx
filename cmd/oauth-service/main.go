@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/oauth"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -94,12 +95,20 @@ func main() {
 	// Initialize risk service (conditional access)
 	riskService := risk.NewService(db, redis, log)
 
+	// Initialize webhook service
+	webhookService := webhooks.NewService(db, redis, log)
+	ctx, cancelWorkers := context.WithCancel(context.Background())
+	go webhookService.ProcessDeliveries(ctx)
+	go webhookService.ProcessRetries(ctx)
+	defer cancelWorkers()
+
 	// Initialize OAuth service
 	oauthService, err := oauth.NewService(db, redis, cfg, log, identityService)
 	if err != nil {
 		log.Fatal("Failed to initialize OAuth service", zap.Error(err))
 	}
 	oauthService.SetRiskService(riskService)
+	oauthService.SetWebhookService(webhookService)
 
 	// Register routes (apply auth middleware to client management API in non-development environments)
 	if cfg.Environment != "development" {
