@@ -28,7 +28,7 @@ type JWKSKey struct {
 	E   string `json:"e"`
 }
 
-// JWKS represents the JSON Web Key Set from Keycloak
+// JWKS represents a JSON Web Key Set
 type JWKS struct {
 	Keys []JWKSKey `json:"keys"`
 }
@@ -45,10 +45,8 @@ var globalJWKSCache = &jwksKeyCache{
 	keys: make(map[string]*rsa.PublicKey),
 }
 
-// fetchJWKS fetches and parses JWKS from Keycloak
-func fetchJWKS(keycloakURL, realm string) (map[string]*rsa.PublicKey, error) {
-	jwksURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", keycloakURL, realm)
-
+// fetchJWKS fetches and parses JWKS from the given URL
+func fetchJWKS(jwksURL string) (map[string]*rsa.PublicKey, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(jwksURL)
 	if err != nil {
@@ -108,7 +106,7 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 }
 
 // getSigningKey retrieves the RSA public key for token validation
-func getSigningKey(keycloakURL, realm, kid string) (*rsa.PublicKey, error) {
+func getSigningKey(jwksURL, kid string) (*rsa.PublicKey, error) {
 	globalJWKSCache.mu.RLock()
 	if time.Now().Before(globalJWKSCache.expiresAt) {
 		if key, ok := globalJWKSCache.keys[kid]; ok {
@@ -129,7 +127,7 @@ func getSigningKey(keycloakURL, realm, kid string) (*rsa.PublicKey, error) {
 		}
 	}
 
-	keys, err := fetchJWKS(keycloakURL, realm)
+	keys, err := fetchJWKS(jwksURL)
 	if err != nil {
 		return nil, err
 	}
@@ -198,8 +196,8 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-// Auth validates JWT tokens from Keycloak
-func Auth(keycloakURL, realm string) gin.HandlerFunc {
+// Auth validates JWT tokens via JWKS
+func Auth(jwksURL string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -233,7 +231,7 @@ func Auth(keycloakURL, realm string) gin.HandlerFunc {
 			}
 
 			// Fetch the signing key from JWKS
-			return getSigningKey(keycloakURL, realm, kid)
+			return getSigningKey(jwksURL, kid)
 		})
 
 		if err != nil {
@@ -282,14 +280,12 @@ func Auth(keycloakURL, realm string) gin.HandlerFunc {
 		}
 
 		// Extract roles
-		if realmAccess, ok := claims["realm_access"].(map[string]interface{}); ok {
-			if roles, ok := realmAccess["roles"].([]interface{}); ok {
-				roleStrings := make([]string, len(roles))
-				for i, role := range roles {
-					roleStrings[i] = fmt.Sprint(role)
-				}
-				c.Set("roles", roleStrings)
+		if roles, ok := claims["roles"].([]interface{}); ok {
+			roleStrings := make([]string, len(roles))
+			for i, role := range roles {
+				roleStrings[i] = fmt.Sprint(role)
 			}
+			c.Set("roles", roleStrings)
 		}
 
 		c.Next()

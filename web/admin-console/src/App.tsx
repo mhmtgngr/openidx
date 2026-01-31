@@ -15,6 +15,7 @@ import { AuditLogsPage } from './pages/audit-logs'
 import { ComplianceReportsPage } from './pages/compliance-reports'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
+import { ProxyRoutesPage } from './pages/proxy-routes'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
@@ -133,6 +134,11 @@ export default function App() {
           <Route path="provisioning-rules" element={
             <AdminRoute>
               <ProvisioningRulesPage />
+            </AdminRoute>
+          } />
+          <Route path="proxy-routes" element={
+            <AdminRoute>
+              <ProxyRoutesPage />
             </AdminRoute>
           } />
           <Route path="settings" element={

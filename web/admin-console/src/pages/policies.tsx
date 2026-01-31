@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X } from 'lucide-react'
+import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -109,10 +109,22 @@ export function PoliciesPage() {
     priority: 0,
   })
   const [rules, setRules] = useState<FormRule[]>([])
+  const [page, setPage] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const PAGE_SIZE = 20
 
   const { data: policies, isLoading } = useQuery({
-    queryKey: ['policies', search],
-    queryFn: () => api.get<Policy[]>('/api/v1/governance/policies'),
+    queryKey: ['policies', search, page],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
+      const result = await api.getWithHeaders<Policy[]>(`/api/v1/governance/policies?${params.toString()}`)
+      const total = parseInt(result.headers['x-total-count'] || '0', 10)
+      if (!isNaN(total)) setTotalCount(total)
+      return result.data
+    },
   })
 
   const createPolicyMutation = useMutation({
@@ -199,11 +211,8 @@ export function PoliciesPage() {
     },
   })
 
-  const filteredPolicies = policies?.filter(policy =>
-    policy.name.toLowerCase().includes(search.toLowerCase()) ||
-    policy.description?.toLowerCase().includes(search.toLowerCase()) ||
-    policy.type.toLowerCase().includes(search.toLowerCase())
-  )
+  // Policies are filtered server-side via search param
+  const filteredPolicies = policies
 
   const resetForm = () => {
     setFormData({
@@ -444,7 +453,7 @@ export function PoliciesPage() {
               <Input
                 placeholder="Search policies..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>
@@ -537,6 +546,38 @@ export function PoliciesPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {totalCount > PAGE_SIZE && (
+            <div className="flex items-center justify-between pt-4 px-1">
+              <p className="text-sm text-gray-500">
+                Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount} policies
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <span className="text-sm text-gray-600">
+                  Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={(page + 1) * PAGE_SIZE >= totalCount}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

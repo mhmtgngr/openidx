@@ -335,9 +335,10 @@ export function UsersPage() {
         email: formData.email,
         first_name: formData.first_name,
         last_name: formData.last_name,
+        password: formData.password,
         enabled: true,
         email_verified: false,
-      })
+      } as Partial<User> & { password?: string })
     } else if (editUserModal && selectedUser) {
       updateUserMutation.mutate({
         id: selectedUser.id,

@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -21,6 +24,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/identity"
 )
 
@@ -151,14 +155,40 @@ type Service struct {
 
 // NewService creates a new OAuth service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger, idSvc *identity.Service) (*Service, error) {
-	// Generate RSA key pair for JWT signing
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+	// Try to load RSA key from database, generate if not found
+	var privateKey *rsa.PrivateKey
+	var keyPEM []byte
+	err := db.Pool.QueryRow(context.Background(),
+		"SELECT value FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&keyPEM)
+	if err == nil && len(keyPEM) > 0 {
+		block, _ := pem.Decode(keyPEM)
+		if block != nil {
+			privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err != nil {
+				logger.Warn("Failed to parse stored RSA key, generating new one", zap.Error(err))
+				privateKey = nil
+			}
+		}
+	}
+	if privateKey == nil {
+		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+		}
+		// Store the key
+		keyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
+		pemBytes := pem.EncodeToMemory(keyBlock)
+		db.Pool.Exec(context.Background(),
+			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+			pemBytes)
 	}
 
-	// Use default issuer URL
-	issuer := "http://localhost:8006"
+	// Use configured issuer URL or fall back to default
+	issuer := cfg.OAuthIssuer
+	if issuer == "" {
+		issuer = "http://localhost:8006"
+	}
 
 	return &Service{
 		db:         db,
@@ -434,12 +464,12 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 // JWT Token Generation
 
 // GenerateJWT generates a signed JWT access token
-func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (string, error) {
+func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int) (string, error) {
 	now := time.Now()
 
 	// Get user roles
 	var roleNames []string
-	rows, err := s.db.Pool.Query(context.Background(), `
+	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.name
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
@@ -470,12 +500,12 @@ func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (st
 }
 
 // GenerateIDToken generates an OIDC ID token
-func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int) (string, error) {
+func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce string, expiresIn int) (string, error) {
 	now := time.Now()
 
 	// Get user info
 	var email, firstName, lastName string
-	_ = s.db.Pool.QueryRow(context.Background(), `
+	_ = s.db.Pool.QueryRow(ctx, `
 		SELECT email, first_name, last_name FROM users WHERE id = $1
 	`, userID).Scan(&email, &firstName, &lastName)
 
@@ -486,7 +516,7 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 
 	// Get user roles
 	var roleNames []string
-	rows, err := s.db.Pool.Query(context.Background(), `
+	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.name
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
@@ -575,8 +605,9 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 
 // HTTP Handlers
 
-// RegisterRoutes registers OAuth/OIDC routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+// RegisterRoutes registers OAuth/OIDC routes.
+// authMiddleware is optional; when provided it protects the client management API and consent endpoint.
+func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.HandlerFunc) {
 	// OIDC Discovery
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
 	router.GET("/.well-known/jwks.json", svc.handleJWKS)
@@ -585,7 +616,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	{
 		// Authorization endpoint
 		oauth.GET("/authorize", svc.handleAuthorize)
-		oauth.POST("/authorize", svc.handleAuthorizeConsent)
+
+		// Consent endpoint (requires authentication)
+		if len(authMiddleware) > 0 {
+			oauth.POST("/authorize", append(authMiddleware, svc.handleAuthorizeConsent)...)
+		} else {
+			oauth.POST("/authorize", svc.handleAuthorizeConsent)
+		}
 
 		// Login endpoint for direct authentication
 		oauth.POST("/login", svc.handleLogin)
@@ -608,8 +645,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		oauth.POST("/userinfo", svc.handleUserInfo)
 	}
 
-	// Client management API
+	// Client management API (protected by auth middleware when available)
 	clients := router.Group("/api/v1/oauth/clients")
+	if len(authMiddleware) > 0 {
+		clients.Use(authMiddleware...)
+	}
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)
@@ -686,6 +726,27 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		"code_challenge":        c.Query("code_challenge"),
 		"code_challenge_method": c.Query("code_challenge_method"),
 	}
+	// Validate redirect_uri against registered client
+	clientID := oauthParams["client_id"]
+	if clientID != "" {
+		client, err := s.GetClient(c.Request.Context(), clientID)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "invalid_client"})
+			return
+		}
+		validRedirect := false
+		for _, uri := range client.RedirectURIs {
+			if uri == oauthParams["redirect_uri"] {
+				validRedirect = true
+				break
+			}
+		}
+		if !validRedirect {
+			c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+			return
+		}
+	}
+
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
@@ -941,7 +1002,11 @@ func (s *Service) handleCallback(c *gin.Context) {
 
 	// 3. Get IdP from identity service (we need to store idp_id in the state)
 	// For now, let's assume we have only one IdP for simplicity
-	idps, _, _ := s.identityService.ListIdentityProviders(c.Request.Context(), 0, 1)
+	idps, _, err := s.identityService.ListIdentityProviders(c.Request.Context(), 0, 1)
+	if err != nil || len(idps) == 0 {
+		c.JSON(500, gin.H{"error": "no identity provider configured"})
+		return
+	}
 	idp := idps[0]
 
 	// 4. Exchange code for tokens
@@ -975,21 +1040,53 @@ func (s *Service) handleCallback(c *gin.Context) {
 		Sub   string `json:"sub"`
 		Name  string `json:"name"`
 	}
-	// We need to parse the token without verification for this POC
-	parts := strings.Split(rawIDToken, ".")
-	if len(parts) == 3 {
-		payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
-		json.Unmarshal(payload, &claims)
+	// Verify the ID token signature using the IdP's JWKS
+	verifiedToken, err := jwt.Parse(rawIDToken, func(t *jwt.Token) (interface{}, error) {
+		// Fetch JWKS from the IdP
+		jwksURL := idp.IssuerURL + "/protocol/openid-connect/certs"
+		return middleware.FetchJWKS(jwksURL, t)
+	})
+	if err != nil {
+		s.logger.Error("Failed to verify ID token", zap.Error(err))
+		c.JSON(401, gin.H{"error": "invalid_id_token", "error_description": "ID token signature verification failed"})
+		return
+	}
+	if mapClaims, ok := verifiedToken.Claims.(jwt.MapClaims); ok {
+		if email, ok := mapClaims["email"].(string); ok {
+			claims.Email = email
+		}
+		if sub, ok := mapClaims["sub"].(string); ok {
+			claims.Sub = sub
+		}
+		if name, ok := mapClaims["name"].(string); ok {
+			claims.Name = name
+		}
 	}
 
-	user := &identity.User{
-		Username:      claims.Email,
-		Email:         claims.Email,
-		FirstName:     claims.Name,
-		Enabled:       true,
-		EmailVerified: true,
+	if claims.Email == "" {
+		c.JSON(400, gin.H{"error": "invalid_claims", "error_description": "email claim is required"})
+		return
 	}
-	s.identityService.CreateUser(c.Request.Context(), user)
+
+	// Check if user already exists (JIT provisioning)
+	existingUsers, _, _ := s.identityService.ListUsers(c.Request.Context(), 0, 1, claims.Email)
+	var user *identity.User
+	if len(existingUsers) > 0 {
+		user = &existingUsers[0]
+	} else {
+		user = &identity.User{
+			Username:      claims.Email,
+			Email:         claims.Email,
+			FirstName:     claims.Name,
+			Enabled:       true,
+			EmailVerified: true,
+		}
+		if err := s.identityService.CreateUser(c.Request.Context(), user); err != nil {
+			s.logger.Error("Failed to create SSO user", zap.Error(err))
+			c.JSON(500, gin.H{"error": "failed to provision user"})
+			return
+		}
+	}
 
 	authCode := &AuthorizationCode{
 		Code:        GenerateRandomToken(32),
@@ -1112,7 +1209,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// For confidential clients, verify client_secret
 	// For public clients, skip secret verification (use PKCE instead)
-	if client.Type == "confidential" && client.ClientSecret != clientSecret {
+	if client.Type == "confidential" && subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
@@ -1139,7 +1236,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	s.DeleteAuthorizationCode(c.Request.Context(), code)
 
 	// Generate tokens
-	accessToken, _ := s.GenerateJWT(authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -1150,7 +1247,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// Generate ID token if openid scope is requested
 	if strings.Contains(authCode.Scope, "openid") {
-		idToken, _ := s.GenerateIDToken(authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime)
+		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime)
 		response.IDToken = idToken
 	}
 
@@ -1177,7 +1274,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 
 	// Verify client
 	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || client.ClientSecret != clientSecret {
+	if err != nil || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
@@ -1190,7 +1287,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	}
 
 	// Generate new access token
-	accessToken, _ := s.GenerateJWT(token.UserID, clientID, token.Scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.AccessTokenLifetime)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -1209,13 +1306,13 @@ func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
 
 	// Verify client
 	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || client.ClientSecret != clientSecret {
+	if err != nil || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
 
 	// Generate access token (no user context)
-	accessToken, _ := s.GenerateJWT("", clientID, scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), "", clientID, scope, client.AccessTokenLifetime)
 
 	c.JSON(200, TokenResponse{
 		AccessToken: accessToken,

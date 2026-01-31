@@ -21,12 +21,6 @@ type Config struct {
 	RedisURL         string `mapstructure:"redis_url"`
 	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
 
-	// Keycloak configuration
-	KeycloakURL      string `mapstructure:"keycloak_url"`
-	KeycloakRealm    string `mapstructure:"keycloak_realm"`
-	KeycloakClientID string `mapstructure:"keycloak_client_id"`
-	KeycloakSecret   string `mapstructure:"keycloak_secret"`
-
 	// OPA configuration
 	OPAURL string `mapstructure:"opa_url"`
 
@@ -54,6 +48,12 @@ type Config struct {
 	SMTPUsername string `mapstructure:"smtp_username"`
 	SMTPPassword string `mapstructure:"smtp_password"`
 	SMTPFrom     string `mapstructure:"smtp_from"`
+
+	// Access Proxy settings
+	GovernanceURL      string `mapstructure:"governance_url"`
+	AuditURL           string `mapstructure:"audit_url"`
+	AccessSessionSecret string `mapstructure:"access_session_secret"`
+	AccessProxyDomain  string `mapstructure:"access_proxy_domain"`
 
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
@@ -137,6 +137,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		"audit-service":        8004,
 		"admin-api":            8005,
 		"gateway-service":      8006,
+		"access-service":       8007,
 	}
 	if port, ok := ports[serviceName]; ok {
 		v.SetDefault("port", port)
@@ -148,11 +149,6 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
 	v.SetDefault("elasticsearch_url", "http://localhost:9200")
-
-	// Keycloak defaults
-	v.SetDefault("keycloak_url", "http://localhost:8180")
-	v.SetDefault("keycloak_realm", "openidx")
-	v.SetDefault("keycloak_client_id", "openidx-api")
 
 	// OPA defaults
 	v.SetDefault("opa_url", "http://localhost:8281")
@@ -169,6 +165,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// OAuth / OIDC defaults
 	v.SetDefault("oauth_issuer", "http://localhost:8006")
 	v.SetDefault("oauth_jwks_url", "http://localhost:8006/.well-known/jwks.json")
+
+	// Access Proxy defaults
+	v.SetDefault("governance_url", "http://localhost:8002")
+	v.SetDefault("audit_url", "http://localhost:8004")
+	v.SetDefault("access_session_secret", "change-me-in-production-32bytes!")
+	v.SetDefault("access_proxy_domain", "localhost")
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
@@ -190,13 +192,16 @@ func bindEnvVars(v *viper.Viper) {
 		"database_url":      "DATABASE_URL",
 		"redis_url":         "REDIS_URL",
 		"elasticsearch_url": "ELASTICSEARCH_URL",
-		"keycloak_url":      "KEYCLOAK_URL",
 		"opa_url":           "OPA_URL",
 		"environment":       "APP_ENV",
 		"log_level":         "LOG_LEVEL",
 		"port":              "PORT",
 		"oauth_issuer":      "OAUTH_ISSUER",
-		"oauth_jwks_url":    "OAUTH_JWKS_URL",
+		"oauth_jwks_url":         "OAUTH_JWKS_URL",
+		"governance_url":         "GOVERNANCE_URL",
+		"audit_url":              "AUDIT_URL",
+		"access_session_secret":  "ACCESS_SESSION_SECRET",
+		"access_proxy_domain":    "ACCESS_PROXY_DOMAIN",
 	}
 
 	for key, env := range envMappings {

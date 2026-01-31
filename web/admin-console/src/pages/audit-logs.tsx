@@ -84,11 +84,12 @@ export function AuditLogsPage() {
   const [endDate, setEndDate] = useState(defaultEndDate)
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ['audit-events', page, eventTypeFilter, outcomeFilter, startDate, endDate],
+    queryKey: ['audit-events', page, search, eventTypeFilter, outcomeFilter, startDate, endDate],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       if (eventTypeFilter) params.set('event_type', eventTypeFilter)
       if (outcomeFilter) params.set('outcome', outcomeFilter)
       if (startDate) params.set('start', startDate)
@@ -139,16 +140,8 @@ export function AuditLogsPage() {
     },
   })
 
-  // Client-side search filter (server handles event_type and outcome filtering)
-  const filteredEvents = events?.filter(event => {
-    if (search === '') return true
-    return (
-      event.action.toLowerCase().includes(search.toLowerCase()) ||
-      event.actor_id?.toLowerCase().includes(search.toLowerCase()) ||
-      event.actor_ip?.toLowerCase().includes(search.toLowerCase()) ||
-      event.target_id?.toLowerCase().includes(search.toLowerCase())
-    )
-  })
+  // Events are filtered server-side via search param
+  const filteredEvents = events
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -167,7 +160,16 @@ export function AuditLogsPage() {
     })
   }
 
-  const eventTypes = [...new Set(events?.map(e => e.event_type) || [])]
+  const eventTypes = [
+    'authentication',
+    'authorization',
+    'user_management',
+    'group_management',
+    'role_management',
+    'configuration',
+    'data_access',
+    'system',
+  ]
 
   return (
     <div className="space-y-6">
@@ -423,7 +425,7 @@ export function AuditLogsPage() {
               <Input
                 placeholder="Search by action, actor, IP address..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>

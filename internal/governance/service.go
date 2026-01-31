@@ -472,8 +472,27 @@ func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, policy.ID, policy.Name, policy.Description, policy.Type, policy.Enabled,
 		policy.Priority, policy.CreatedAt, policy.UpdatedAt)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Persist policy rules
+	for _, rule := range policy.Rules {
+		if rule.ID == "" {
+			rule.ID = uuid.New().String()
+		}
+		ruleCondition, _ := json.Marshal(rule.Condition)
+		ruleActions, _ := json.Marshal(map[string]interface{}{"effect": rule.Effect, "priority": rule.Priority})
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, rule.ID, policy.ID, rule.Effect, ruleCondition, ruleActions, time.Now())
+		if err != nil {
+			s.logger.Error("Failed to insert policy rule", zap.Error(err))
+		}
+	}
+
+	return nil
 }
 
 // GetPolicy retrieves a policy by ID
@@ -567,15 +586,43 @@ func (s *Service) UpdatePolicy(ctx context.Context, policyID string, policy *Pol
 		SET name = $2, description = $3, type = $4, enabled = $5, priority = $6, updated_at = $7
 		WHERE id = $1
 	`, policyID, policy.Name, policy.Description, policy.Type, policy.Enabled, policy.Priority, now)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Delete old rules and re-insert new ones
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1", policyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete old policy rules: %w", err)
+	}
+	for _, rule := range policy.Rules {
+		if rule.ID == "" {
+			rule.ID = uuid.New().String()
+		}
+		ruleCondition, _ := json.Marshal(rule.Condition)
+		ruleActions, _ := json.Marshal(map[string]interface{}{"effect": rule.Effect, "priority": rule.Priority})
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, rule.ID, policyID, rule.Effect, ruleCondition, ruleActions, time.Now())
+		if err != nil {
+			s.logger.Error("Failed to insert policy rule", zap.Error(err))
+		}
+	}
+
+	return nil
 }
 
 // DeletePolicy deletes a policy
 func (s *Service) DeletePolicy(ctx context.Context, policyID string) error {
 	s.logger.Info("Deleting policy", zap.String("policy_id", policyID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1", policyID)
+	// Delete associated rules first
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1", policyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete policy rules: %w", err)
+	}
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1", policyID)
 	return err
 }
 
@@ -659,38 +706,64 @@ func (s *Service) evaluateSoDPolicy(ctx context.Context, policy *Policy, request
 		}
 	}
 
-	// Fallback: hardcoded conflict pairs for backwards compatibility
-	fallbackConflicts := map[string]string{
-		"admin":   "auditor",
-		"finance": "approver",
-	}
-	for role1, role2 := range fallbackConflicts {
-		if roleSet[role1] && roleSet[role2] {
-			s.logger.Warn("SoD policy violation detected (fallback)",
-				zap.String("policy_id", policy.ID),
-				zap.String("conflicting_roles", role1+"/"+role2))
-			return false, nil
-		}
-	}
-
 	return true, nil
 }
 
 func (s *Service) evaluateTimeboundPolicy(ctx context.Context, policy *Policy, request map[string]interface{}) (bool, error) {
-	// Check if current time is within business hours (9 AM - 6 PM, Mon-Fri)
 	now := time.Now()
 	hour := now.Hour()
 	weekday := now.Weekday()
 
-	// Weekend check
-	if weekday == time.Saturday || weekday == time.Sunday {
-		s.logger.Info("Timebound policy: access outside business days",
+	// Defaults
+	startHour := 9
+	endHour := 18
+	allowedDays := map[time.Weekday]bool{
+		time.Monday: true, time.Tuesday: true, time.Wednesday: true,
+		time.Thursday: true, time.Friday: true,
+	}
+
+	// Parse from policy rules if available
+	for _, rule := range policy.Rules {
+		if sh, ok := rule.Condition["start_hour"].(float64); ok {
+			startHour = int(sh)
+		}
+		if eh, ok := rule.Condition["end_hour"].(float64); ok {
+			endHour = int(eh)
+		}
+		if days, ok := rule.Condition["allowed_days"].([]interface{}); ok {
+			allowedDays = map[time.Weekday]bool{}
+			for _, d := range days {
+				if dayStr, ok := d.(string); ok {
+					switch strings.ToLower(dayStr) {
+					case "monday":
+						allowedDays[time.Monday] = true
+					case "tuesday":
+						allowedDays[time.Tuesday] = true
+					case "wednesday":
+						allowedDays[time.Wednesday] = true
+					case "thursday":
+						allowedDays[time.Thursday] = true
+					case "friday":
+						allowedDays[time.Friday] = true
+					case "saturday":
+						allowedDays[time.Saturday] = true
+					case "sunday":
+						allowedDays[time.Sunday] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Day check
+	if !allowedDays[weekday] {
+		s.logger.Info("Timebound policy: access outside allowed days",
 			zap.String("policy_id", policy.ID))
 		return false, nil
 	}
 
-	// Business hours check (default 9-18)
-	if hour < 9 || hour >= 18 {
+	// Business hours check
+	if hour < startHour || hour >= endHour {
 		s.logger.Info("Timebound policy: access outside business hours",
 			zap.String("policy_id", policy.ID))
 		return false, nil
@@ -706,8 +779,20 @@ func (s *Service) evaluateLocationPolicy(ctx context.Context, policy *Policy, re
 		return true, nil // No IP to check
 	}
 
-	// Example: Allow only internal IPs (10.x.x.x, 192.168.x.x, 172.16-31.x.x)
-	allowedPrefixes := []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"}
+	// Parse allowed IP prefixes from policy rules, fall back to private ranges
+	allowedPrefixes := []string{}
+	for _, rule := range policy.Rules {
+		if prefixes, ok := rule.Condition["allowed_ip_prefixes"].([]interface{}); ok {
+			for _, p := range prefixes {
+				if prefix, ok := p.(string); ok {
+					allowedPrefixes = append(allowedPrefixes, prefix)
+				}
+			}
+		}
+	}
+	if len(allowedPrefixes) == 0 {
+		allowedPrefixes = []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"}
+	}
 
 	for _, prefix := range allowedPrefixes {
 		if len(ip) >= len(prefix) && ip[:len(prefix)] == prefix {
@@ -740,12 +825,19 @@ func (s *Service) evaluateRiskBasedPolicy(ctx context.Context, policy *Policy, r
 		riskScore += int(failedAttempts) * 10
 	}
 
-	// Risk threshold (default 50)
+	// Parse threshold from policy rules, fall back to 50
 	threshold := 50
+	for _, rule := range policy.Rules {
+		if t, ok := rule.Condition["risk_threshold"].(float64); ok {
+			threshold = int(t)
+			break
+		}
+	}
 	if riskScore >= threshold {
 		s.logger.Warn("Risk-based policy: high risk score",
 			zap.String("policy_id", policy.ID),
-			zap.Int("risk_score", riskScore))
+			zap.Int("risk_score", riskScore),
+			zap.Int("threshold", threshold))
 		return false, nil
 	}
 

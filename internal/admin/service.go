@@ -186,7 +186,7 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	var totalUsers, activeUsers, totalGroups, totalApps, activeSessions, pendingReviews, securityAlerts int
 
 	// Get all dashboard counts in a single query
-	s.db.Pool.QueryRow(ctx, `
+	err := s.db.Pool.QueryRow(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM users),
 			(SELECT COUNT(*) FROM users WHERE enabled = true),
@@ -196,6 +196,9 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')),
 			(SELECT COUNT(*) FROM audit_events WHERE outcome = 'failure' AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '24 hours')
 	`).Scan(&totalUsers, &activeUsers, &totalGroups, &totalApps, &activeSessions, &pendingReviews, &securityAlerts)
+	if err != nil {
+		s.logger.Error("Failed to query dashboard stats", zap.Error(err))
+	}
 
 	// Get recent activity from audit events
 	var recentActivity []ActivityItem
@@ -258,25 +261,33 @@ func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
 		LoginsByMethod: make(map[string]int),
 	}
 
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.TotalLogins)
+	`).Scan(&stats.TotalLogins); err != nil {
+		s.logger.Error("Failed to query total logins", zap.Error(err))
+	}
 
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.SuccessfulLogins)
+	`).Scan(&stats.SuccessfulLogins); err != nil {
+		s.logger.Error("Failed to query successful logins", zap.Error(err))
+	}
 
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.FailedLogins)
+	`).Scan(&stats.FailedLogins); err != nil {
+		s.logger.Error("Failed to query failed logins", zap.Error(err))
+	}
 
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'mfa_verification' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.MFAUsage)
+	`).Scan(&stats.MFAUsage); err != nil {
+		s.logger.Error("Failed to query MFA usage", zap.Error(err))
+	}
 
 	// Logins by method
 	methodRows, err := s.db.Pool.Query(ctx, `
@@ -459,7 +470,9 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 	s.logger.Debug("Listing applications")
 
 	var totalCount int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalCount)
+	if err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalCount); err != nil {
+		s.logger.Error("Failed to query application count", zap.Error(err))
+	}
 
 	query := `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,

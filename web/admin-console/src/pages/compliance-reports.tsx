@@ -153,8 +153,10 @@ export function ComplianceReportsPage() {
 
   const handleDownloadReport = async (report: ComplianceReport) => {
     try {
-      const response = await fetch(`/api/v1/audit/reports/${report.id}/download?format=csv`)
-      const blob = await response.blob()
+      const response = await api.get<Blob>(`/api/v1/audit/reports/${report.id}/download?format=csv`, {
+        responseType: 'blob',
+      })
+      const blob = new Blob([response], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

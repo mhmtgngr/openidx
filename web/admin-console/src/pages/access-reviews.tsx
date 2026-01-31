@@ -94,6 +94,7 @@ export function AccessReviewsPage() {
     queryKey: ['access-reviews', search, statusFilter, page],
     queryFn: async () => {
       const params = new URLSearchParams()
+      if (search) params.set('search', search)
       if (statusFilter) params.set('status', statusFilter)
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
@@ -106,7 +107,7 @@ export function AccessReviewsPage() {
 
   // Create access review mutation
   const createReviewMutation = useMutation({
-    mutationFn: (reviewData: any) => api.post('/api/v1/governance/reviews', reviewData),
+    mutationFn: (reviewData: { name: string; description: string; type: string; reviewer_id: string; start_date: string; end_date: string }) => api.post('/api/v1/governance/reviews', reviewData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-reviews'] })
       toast({
@@ -132,11 +133,8 @@ export function AccessReviewsPage() {
     },
   })
 
-  const filteredReviews = reviews?.filter(review =>
-    review.name.toLowerCase().includes(search.toLowerCase()) ||
-    review.description?.toLowerCase().includes(search.toLowerCase()) ||
-    review.type.toLowerCase().includes(search.toLowerCase())
-  )
+  // Reviews are filtered server-side via search param
+  const filteredReviews = reviews
 
   const getProgress = (review: AccessReview) => {
     if (review.total_items === 0) return 0
@@ -276,7 +274,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'pending').length || 0}
                 </p>
-                <p className="text-sm text-gray-500">Pending</p>
+                <p className="text-sm text-gray-500">Pending (this page)</p>
               </div>
             </div>
           </CardContent>
@@ -291,7 +289,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'in_progress').length || 0}
                 </p>
-                <p className="text-sm text-gray-500">In Progress</p>
+                <p className="text-sm text-gray-500">In Progress (this page)</p>
               </div>
             </div>
           </CardContent>
@@ -306,7 +304,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'completed').length || 0}
                 </p>
-                <p className="text-sm text-gray-500">Completed</p>
+                <p className="text-sm text-gray-500">Completed (this page)</p>
               </div>
             </div>
           </CardContent>
@@ -321,7 +319,7 @@ export function AccessReviewsPage() {
                 <p className="text-2xl font-bold">
                   {reviews?.filter(r => r.status === 'expired' || r.status === 'canceled').length || 0}
                 </p>
-                <p className="text-sm text-gray-500">Expired/Canceled</p>
+                <p className="text-sm text-gray-500">Expired/Canceled (this page)</p>
               </div>
             </div>
           </CardContent>

@@ -116,11 +116,12 @@ export function ProvisioningRulesPage() {
   const PAGE_SIZE = 20
 
   const { data: rules, isLoading } = useQuery({
-    queryKey: ['provisioning-rules', page],
+    queryKey: ['provisioning-rules', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const result = await api.getWithHeaders<ProvisioningRule[]>(`/api/v1/provisioning/rules?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -236,11 +237,8 @@ export function ProvisioningRulesPage() {
     setFormData({ ...formData, actions: updated })
   }
 
-  const filteredRules = (rules || []).filter(
-    (rule) =>
-      rule.name.toLowerCase().includes(search.toLowerCase()) ||
-      rule.trigger.toLowerCase().includes(search.toLowerCase())
-  )
+  // Rules are filtered server-side via search param
+  const filteredRules = rules || []
 
   const triggerLabel = (trigger: string) =>
     TRIGGER_OPTIONS.find((t) => t.value === trigger)?.label || trigger
@@ -406,7 +404,7 @@ export function ProvisioningRulesPage() {
               <Input
                 placeholder="Search rules..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-10"
               />
             </div>

@@ -3,7 +3,6 @@ package audit
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -681,9 +681,7 @@ func (s *Service) storeComplianceReport(ctx context.Context, report *ComplianceR
 }
 
 func generateUUID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	return uuid.New().String()
 }
 
 // GetEventStatistics returns statistics about audit events
@@ -723,7 +721,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var eventType string
 		var count int
-		rows.Scan(&eventType, &count)
+		if err := rows.Scan(&eventType, &count); err != nil {
+			s.logger.Error("Failed to scan event type row", zap.Error(err))
+			continue
+		}
 		byType[eventType] = count
 	}
 	rows.Close()
@@ -743,7 +744,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var outcome string
 		var count int
-		rows.Scan(&outcome, &count)
+		if err := rows.Scan(&outcome, &count); err != nil {
+			s.logger.Error("Failed to scan outcome row", zap.Error(err))
+			continue
+		}
 		byOutcome[outcome] = count
 	}
 	rows.Close()
@@ -763,7 +767,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var category string
 		var count int
-		rows.Scan(&category, &count)
+		if err := rows.Scan(&category, &count); err != nil {
+			s.logger.Error("Failed to scan category row", zap.Error(err))
+			continue
+		}
 		byCategory[category] = count
 	}
 	rows.Close()
@@ -784,7 +791,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var day time.Time
 		var count int
-		rows.Scan(&day, &count)
+		if err := rows.Scan(&day, &count); err != nil {
+			s.logger.Error("Failed to scan events per day row", zap.Error(err))
+			continue
+		}
 		eventsPerDay = append(eventsPerDay, map[string]interface{}{
 			"date":  day.Format("2006-01-02"),
 			"count": count,
@@ -1138,6 +1148,20 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Use query params as fallback
+		if st := c.Query("start_time"); st != "" {
+			if t, err := time.Parse(time.RFC3339, st); err == nil {
+				req.StartTime = &t
+			}
+		}
+		if et := c.Query("end_time"); et != "" {
+			if t, err := time.Parse(time.RFC3339, et); err == nil {
+				req.EndTime = &t
+			}
+		}
+		req.EventType = EventType(c.Query("event_type"))
+		req.Category = EventCategory(c.Query("category"))
+		req.Outcome = EventOutcome(c.Query("outcome"))
+		req.Format = c.Query("format")
 	}
 
 	query := &AuditQuery{

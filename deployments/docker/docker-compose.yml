@@ -61,41 +61,6 @@ services:
       - openidx-network
 
   #---------------------------------------------------------------------------
-  # Keycloak - Identity Provider
-  #---------------------------------------------------------------------------
-  
-  keycloak:
-    image: quay.io/keycloak/keycloak:23.0
-    container_name: openidx-keycloak
-    command: start-dev --import-realm
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: openidx
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
-      KC_HOSTNAME_URL: http://localhost:8180
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
-      KC_HTTP_PORT: 8180
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-      - ./keycloak/themes:/opt/keycloak/themes:ro
-    ports:
-      - "8180:8180"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8180'"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-    networks:
-      - openidx-network
-
-  #---------------------------------------------------------------------------
   # API Gateway - Apache APISIX
   #---------------------------------------------------------------------------
   
@@ -168,7 +133,6 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - KEYCLOAK_URL=http://keycloak:8180
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=http://localhost:8006
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -180,8 +144,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      keycloak:
-        condition: service_started
     networks:
       - openidx-network
 
@@ -215,7 +177,6 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - KEYCLOAK_URL=http://keycloak:8180
       - LOG_LEVEL=debug
     ports:
       - "8003:8003"
@@ -256,8 +217,8 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - KEYCLOAK_URL=http://keycloak:8180
       - OPA_URL=http://opa:8281
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8005:8005"
@@ -295,6 +256,44 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8006/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Zero Trust Access Proxy Service
+  #---------------------------------------------------------------------------
+
+  access-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.access-service
+    container_name: openidx-access-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - OAUTH_ISSUER=http://localhost:8006
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - GOVERNANCE_URL=http://governance-service:8002
+      - AUDIT_URL=http://audit-service:8004
+      - ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET:-openidx_access_session_secret_32b}
+      - ACCESS_PROXY_DOMAIN=localhost
+      - LOG_LEVEL=debug
+    ports:
+      - "8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      oauth-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8007/health || exit 1"]
       interval: 30s
       timeout: 3s
       start_period: 5s

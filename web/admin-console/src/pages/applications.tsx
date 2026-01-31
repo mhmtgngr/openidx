@@ -94,11 +94,12 @@ export function ApplicationsPage() {
   })
 
   const { data: applications, isLoading } = useQuery({
-    queryKey: ['applications', page],
+    queryKey: ['applications', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const result = await api.getWithHeaders<Application[]>(`/api/v1/applications?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -203,11 +204,8 @@ export function ApplicationsPage() {
     },
   })
 
-  const filteredApps = applications?.filter(app =>
-    app.name.toLowerCase().includes(search.toLowerCase()) ||
-    app.client_id.toLowerCase().includes(search.toLowerCase()) ||
-    app.description?.toLowerCase().includes(search.toLowerCase())
-  )
+  // Applications are filtered server-side via search param
+  const filteredApps = applications
 
   const handleEditApp = (app: Application) => {
     setSelectedApp(app)
@@ -388,7 +386,7 @@ export function ApplicationsPage() {
               <Input
                 placeholder="Search applications..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>

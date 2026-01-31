@@ -56,7 +56,7 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(logger.GinMiddleware(log))
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS("http://localhost:3000", "http://localhost:5173"))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.PrometheusMetrics("gateway-service"))
 

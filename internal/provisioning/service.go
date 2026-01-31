@@ -254,7 +254,10 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
-			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			expectedIssuer := s.config.OAuthIssuer
+			if expectedIssuer == "" {
+				expectedIssuer = "http://localhost:8006"
+			}
 			if iss != expectedIssuer {
 				s.logger.Warn("Invalid token issuer", zap.String("expected", expectedIssuer), zap.String("actual", iss))
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{

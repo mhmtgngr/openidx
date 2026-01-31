@@ -386,7 +386,7 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	// Query from Keycloak or local cache
+	// Query from database
 	var user User
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
@@ -417,10 +417,11 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 	var total int
 	if searchQuery != "" {
-		searchPattern := "%" + searchQuery + "%"
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
+		searchPattern := "%" + escaped + "%"
 		err := s.db.Pool.QueryRow(ctx, `
 			SELECT COUNT(*) FROM users
-			WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
 		`, searchPattern).Scan(&total)
 		if err != nil {
 			return nil, 0, err
@@ -435,13 +436,14 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
 	var err error
 	if searchQuery != "" {
-		searchPattern := "%" + searchQuery + "%"
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
+		searchPattern := "%" + escaped + "%"
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT id, username, email, first_name, last_name, enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
-			WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
 			ORDER BY created_at DESC
 			OFFSET $2 LIMIT $3
 		`, searchPattern, offset, limit)
@@ -503,26 +505,37 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 // UpdateUser updates an existing user
 func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
-	
+
 	user.UpdatedAt = time.Now()
-	
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE users 
+
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
 		WHERE id = $1
 	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
 		user.Enabled, user.EmailVerified, user.UpdatedAt)
-	
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // DeleteUser deletes a user
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting user", zap.String("user_id", userID))
-	
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	return err
+
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // CreateIdentityProvider creates a new identity provider
@@ -1178,19 +1191,21 @@ func (s *Service) ValidatePasswordPolicy(password string) error {
 func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword string) error {
 	s.logger.Info("Updating password", zap.String("user_id", userID))
 
-	// Validate password policy
 	if err := s.ValidatePasswordPolicy(newPassword); err != nil {
 		return err
 	}
 
-	now := time.Now()
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
 
-	// Update password changed timestamp and clear must change flag
-	_, err := s.db.Pool.Exec(ctx, `
+	now := time.Now()
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
-		SET password_changed_at = $2, password_must_change = false
+		SET password_hash = $2, password_changed_at = $3, password_must_change = false
 		WHERE id = $1
-	`, userID, now)
+	`, userID, string(hashedPassword), now)
 
 	return err
 }
@@ -1272,16 +1287,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		return nil, ErrInvalidCredentials
 	}
 
-	hashPrefix := passwordHash
-	if len(hashPrefix) > 20 {
-		hashPrefix = hashPrefix[:20]
-	}
-	s.logger.Debug("Comparing password",
-		zap.String("username", username),
-		zap.Int("hash_len", len(passwordHash)),
-		zap.String("hash_prefix", hashPrefix),
-		zap.Int("password_len", len(password)),
-		zap.String("password_bytes", fmt.Sprintf("%v", []byte(password))))
+	s.logger.Debug("Comparing password", zap.String("username", username))
 
 	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
 	if err != nil {
@@ -1311,10 +1317,26 @@ func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentC
 	newCount := currentCount + 1
 	now := time.Now()
 
+	// Read lockout settings from system_settings
+	maxFailures := 5
+	lockoutMinutes := 15
+	var settingsValue []byte
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_threshold'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			maxFailures = v
+		}
+	}
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_duration'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			lockoutMinutes = v
+		}
+	}
+
 	var lockedUntil *time.Time
-	// Lock account after 5 failed attempts for 30 minutes
-	if newCount >= 5 {
-		lockTime := now.Add(30 * time.Minute)
+	if newCount >= maxFailures {
+		lockTime := now.Add(time.Duration(lockoutMinutes) * time.Minute)
 		lockedUntil = &lockTime
 		s.logger.Warn("Account locked due to failed attempts", zap.String("user_id", userID))
 	}
@@ -1376,7 +1398,7 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 
 	// Generate QR code URL
 	qrURL := key.URL()
-	s.logger.Info("Generated TOTP QR code URL", zap.String("qr_url", qrURL), zap.String("secret", key.Secret()))
+	s.logger.Info("Generated TOTP secret for user")
 
 	return &TOTPEnrollment{
 		Secret:    key.Secret(),

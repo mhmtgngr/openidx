@@ -88,10 +88,14 @@ export function IdentityProvidersPage() {
   const PAGE_SIZE = 20
 
   const { data: providers, isLoading } = useQuery({
-    queryKey: ['identity-providers', page],
+    queryKey: ['identity-providers', page, search],
     queryFn: async () => {
+      const params = new URLSearchParams()
+      params.set('offset', String(page * PAGE_SIZE))
+      params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const { data, headers } = await api.getWithHeaders<IdentityProvider[]>(
-        `/api/v1/identity/providers?offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`
+        `/api/v1/identity/providers?${params.toString()}`
       )
       setTotalCount(parseInt(headers['x-total-count'] || '0', 10))
       return data
@@ -184,12 +188,8 @@ export function IdentityProvidersPage() {
     }
   }
 
-  const filteredProviders = (providers || []).filter(
-    (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.provider_type.toLowerCase().includes(search.toLowerCase()) ||
-      p.issuer_url.toLowerCase().includes(search.toLowerCase())
-  )
+  // Providers are filtered server-side via search param
+  const filteredProviders = providers || []
 
   if (isLoading) {
     return (
@@ -304,7 +304,7 @@ export function IdentityProvidersPage() {
               <Input
                 placeholder="Search providers..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-10"
               />
             </div>

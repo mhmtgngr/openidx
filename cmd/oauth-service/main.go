@@ -96,8 +96,12 @@ func main() {
 		log.Fatal("Failed to initialize OAuth service", zap.Error(err))
 	}
 
-	// Register routes
-	oauth.RegisterRoutes(router, oauthService)
+	// Register routes (apply auth middleware to client management API in non-development environments)
+	if cfg.Environment != "development" {
+		oauth.RegisterRoutes(router, oauthService, middleware.Auth(cfg.OAuthJWKSURL))
+	} else {
+		oauth.RegisterRoutes(router, oauthService)
+	}
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {

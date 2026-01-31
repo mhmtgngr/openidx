@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
-import { useAuth, generateCodeVerifier, generateCodeChallenge, OAUTH_URL, OAUTH_CLIENT_ID } from '../lib/auth'
+import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 
 export function LoginPage() {
@@ -79,29 +79,9 @@ export function LoginPage() {
     }
   }, [isAuthenticated, isLoading])
 
-  const { authProvider } = useAuth()
-
   const handleLogin = async () => {
     setError('')
-    if (authProvider === 'openidx') {
-      // Start OpenIDX OAuth PKCE flow
-      const codeVerifier = generateCodeVerifier()
-      sessionStorage.setItem('pkce_code_verifier', codeVerifier)
-      
-      const codeChallenge = await generateCodeChallenge(codeVerifier)
-      
-      const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
-      authUrl.searchParams.set('response_type', 'code')
-      authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
-      authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
-      authUrl.searchParams.set('scope', 'openid profile email')
-      authUrl.searchParams.set('code_challenge', codeChallenge)
-      authUrl.searchParams.set('code_challenge_method', 'S256')
-      
-      window.location.href = authUrl.toString()
-    } else {
-      login()
-    }
+    login()
   }
 
   const handleSSOLogin = (idp: IdentityProvider) => {
@@ -481,7 +461,7 @@ export function LoginPage() {
                       Signing in...
                     </span>
                   ) : (
-                    authProvider === 'openidx' ? 'Sign in with OpenIDX' : 'Sign in with Keycloak'
+                    'Sign in with OpenIDX'
                   )}
                 </Button>
 
@@ -496,7 +476,7 @@ export function LoginPage() {
 
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              Secured by {authProvider === 'openidx' ? 'OpenIDX' : 'Keycloak'} authentication
+              Secured by OpenIDX authentication
             </p>
           </div>
         </CardContent>
