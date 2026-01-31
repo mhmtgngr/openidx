@@ -13,6 +13,7 @@ import { ReviewDetailPage } from './pages/review-detail'
 import { PoliciesPage } from './pages/policies'
 import { AuditLogsPage } from './pages/audit-logs'
 import { ComplianceReportsPage } from './pages/compliance-reports'
+import { DirectoriesPage } from './pages/directories'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
 import { ProxyRoutesPage } from './pages/proxy-routes'
@@ -125,6 +126,11 @@ export default function App() {
           <Route path="compliance-reports" element={
             <AdminRoute>
               <ComplianceReportsPage />
+            </AdminRoute>
+          } />
+          <Route path="directories" element={
+            <AdminRoute>
+              <DirectoriesPage />
             </AdminRoute>
           } />
           <Route path="identity-providers" element={

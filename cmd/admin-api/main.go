@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/directory"
 )
 
 var (
@@ -103,8 +105,16 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
+	// Initialize directory service
+	dirService := directory.NewService(db, log)
+	if err := dirService.Start(context.Background()); err != nil {
+		log.Error("Directory service failed to start", zap.Error(err))
+	}
+	defer dirService.Stop()
+
 	// Initialize admin service
 	adminService := admin.NewService(db, redis, cfg, log)
+	adminService.SetDirectoryService(&directorySyncAdapter{dirService: dirService})
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -144,4 +154,34 @@ func main() {
 	}
 
 	log.Info("Server exited")
+}
+
+// directorySyncAdapter adapts directory.Service to admin.DirectorySyncer interface
+type directorySyncAdapter struct {
+	dirService *directory.Service
+}
+
+func (a *directorySyncAdapter) TestConnection(ctx context.Context, cfg interface{}) error {
+	// Convert interface{} config to directory.LDAPConfig
+	cfgBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	var ldapCfg directory.LDAPConfig
+	if err := json.Unmarshal(cfgBytes, &ldapCfg); err != nil {
+		return fmt.Errorf("invalid LDAP config: %w", err)
+	}
+	return a.dirService.TestConnection(ctx, ldapCfg)
+}
+
+func (a *directorySyncAdapter) TriggerSync(ctx context.Context, directoryID string, fullSync bool) error {
+	return a.dirService.TriggerSync(ctx, directoryID, fullSync)
+}
+
+func (a *directorySyncAdapter) GetSyncLogs(ctx context.Context, directoryID string, limit int) (interface{}, error) {
+	return a.dirService.GetSyncLogs(ctx, directoryID, limit)
+}
+
+func (a *directorySyncAdapter) GetSyncState(ctx context.Context, directoryID string) (interface{}, error) {
+	return a.dirService.GetSyncState(ctx, directoryID)
 }

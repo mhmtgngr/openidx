@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/identity"
 )
 
@@ -72,8 +73,16 @@ func main() {
 	// Metrics endpoint
 	router.GET("/metrics", middleware.MetricsHandler())
 
+	// Initialize directory service for LDAP sync
+	dirService := directory.NewService(db, log)
+	if err := dirService.Start(context.Background()); err != nil {
+		log.Error("Directory service failed to start", zap.Error(err))
+	}
+	defer dirService.Stop()
+
 	// Initialize identity service
 	identityService := identity.NewService(db, redis, cfg, log)
+	identityService.SetDirectoryService(dirService)
 
 	// Register routes
 	identity.RegisterRoutes(router, identityService)

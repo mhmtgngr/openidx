@@ -161,12 +161,21 @@ type BrandingSettings struct {
 	LoginPageMessage string           `json:"login_page_message,omitempty"`
 }
 
+// DirectorySyncer defines the interface for directory sync operations
+type DirectorySyncer interface {
+	TestConnection(ctx context.Context, cfg interface{}) error
+	TriggerSync(ctx context.Context, directoryID string, fullSync bool) error
+	GetSyncLogs(ctx context.Context, directoryID string, limit int) (interface{}, error)
+	GetSyncState(ctx context.Context, directoryID string) (interface{}, error)
+}
+
 // Service provides admin operations
 type Service struct {
-	db     *database.PostgresDB
-	redis  *database.RedisClient
-	config *config.Config
-	logger *zap.Logger
+	db               *database.PostgresDB
+	redis            *database.RedisClient
+	config           *config.Config
+	logger           *zap.Logger
+	directoryService DirectorySyncer
 }
 
 // NewService creates a new admin service
@@ -177,6 +186,11 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		config: cfg,
 		logger: logger.With(zap.String("service", "admin")),
 	}
+}
+
+// SetDirectoryService sets the directory service for sync operations
+func (s *Service) SetDirectoryService(ds DirectorySyncer) {
+	s.directoryService = ds
 }
 
 // GetDashboard returns dashboard statistics
@@ -635,7 +649,13 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Directory integrations
 	router.GET("/directories", svc.handleListDirectories)
 	router.POST("/directories", svc.handleCreateDirectory)
+	router.GET("/directories/:id", svc.handleGetDirectory)
+	router.PUT("/directories/:id", svc.handleUpdateDirectory)
+	router.DELETE("/directories/:id", svc.handleDeleteDirectory)
 	router.POST("/directories/:id/sync", svc.handleSyncDirectory)
+	router.POST("/directories/:id/test", svc.handleTestConnection)
+	router.GET("/directories/:id/sync-logs", svc.handleGetSyncLogs)
+	router.GET("/directories/:id/sync-state", svc.handleGetSyncState)
 	
 	// MFA configuration
 	router.GET("/mfa/methods", svc.handleListMFAMethods)
@@ -810,35 +830,150 @@ func (s *Service) handleCreateDirectory(c *gin.Context) {
 	c.JSON(201, dir)
 }
 
-func (s *Service) handleSyncDirectory(c *gin.Context) {
+func (s *Service) handleGetDirectory(c *gin.Context) {
 	id := c.Param("id")
-	result, err := s.db.Pool.Exec(c.Request.Context(), `
-		UPDATE directory_integrations SET sync_status = 'syncing', last_sync_at = NOW(), updated_at = NOW()
-		WHERE id = $1
-	`, id)
+	var d DirectoryIntegration
+	var configBytes []byte
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT id, name, type, config, enabled, last_sync_at, sync_status, created_at, updated_at
+		 FROM directory_integrations WHERE id = $1`, id).Scan(
+		&d.ID, &d.Name, &d.Type, &configBytes, &d.Enabled, &d.LastSyncAt, &d.SyncStatus, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to trigger sync"})
+		c.JSON(404, gin.H{"error": "Directory not found"})
+		return
+	}
+	if len(configBytes) > 0 {
+		json.Unmarshal(configBytes, &d.Config)
+	}
+	c.JSON(200, d)
+}
+
+func (s *Service) handleUpdateDirectory(c *gin.Context) {
+	id := c.Param("id")
+	var dir DirectoryIntegration
+	if err := c.ShouldBindJSON(&dir); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	configBytes, _ := json.Marshal(dir.Config)
+
+	result, err := s.db.Pool.Exec(c.Request.Context(), `
+		UPDATE directory_integrations SET name = $2, type = $3, config = $4, enabled = $5, updated_at = NOW()
+		WHERE id = $1
+	`, id, dir.Name, dir.Type, configBytes, dir.Enabled)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update directory"})
 		return
 	}
 	if result.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"error": "Directory not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Directory updated"})
+}
+
+func (s *Service) handleDeleteDirectory(c *gin.Context) {
+	id := c.Param("id")
+	result, err := s.db.Pool.Exec(c.Request.Context(), `DELETE FROM directory_integrations WHERE id = $1`, id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete directory"})
+		return
+	}
+	if result.RowsAffected() == 0 {
+		c.JSON(404, gin.H{"error": "Directory not found"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Directory deleted"})
+}
+
+func (s *Service) handleSyncDirectory(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify directory exists
+	var exists bool
+	s.db.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1)`, id).Scan(&exists)
+	if !exists {
 		c.JSON(404, gin.H{"error": "Directory integration not found"})
 		return
 	}
 
-	// Complete the sync asynchronously (mark as synced after brief delay)
-	go func() {
-		time.Sleep(3 * time.Second)
-		ctx := context.Background()
-		_, err := s.db.Pool.Exec(ctx, `
-			UPDATE directory_integrations SET sync_status = 'synced', updated_at = NOW()
-			WHERE id = $1 AND sync_status = 'syncing'
-		`, id)
-		if err != nil {
-			s.logger.Error("Failed to complete directory sync", zap.String("id", id), zap.Error(err))
-		}
-	}()
+	fullSync := c.Query("full") == "true"
 
-	c.JSON(200, gin.H{"status": "syncing", "message": "Directory sync initiated"})
+	if s.directoryService != nil {
+		if err := s.directoryService.TriggerSync(c.Request.Context(), id, fullSync); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// Fallback: just mark as syncing if no directory service
+		s.db.Pool.Exec(c.Request.Context(), `
+			UPDATE directory_integrations SET sync_status = 'syncing', last_sync_at = NOW(), updated_at = NOW()
+			WHERE id = $1`, id)
+	}
+
+	syncType := "incremental"
+	if fullSync {
+		syncType = "full"
+	}
+
+	c.JSON(200, gin.H{"status": "syncing", "sync_type": syncType, "message": "Directory sync initiated"})
+}
+
+func (s *Service) handleTestConnection(c *gin.Context) {
+	id := c.Param("id")
+
+	var configBytes []byte
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT config FROM directory_integrations WHERE id = $1`, id).Scan(&configBytes)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "Directory not found"})
+		return
+	}
+
+	if s.directoryService != nil {
+		var cfg map[string]interface{}
+		json.Unmarshal(configBytes, &cfg)
+
+		if err := s.directoryService.TestConnection(c.Request.Context(), cfg); err != nil {
+			c.JSON(400, gin.H{"error": err.Error(), "success": false})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"success": true, "message": "Connection test successful"})
+}
+
+func (s *Service) handleGetSyncLogs(c *gin.Context) {
+	id := c.Param("id")
+
+	if s.directoryService != nil {
+		logs, err := s.directoryService.GetSyncLogs(c.Request.Context(), id, 20)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to get sync logs"})
+			return
+		}
+		c.JSON(200, logs)
+		return
+	}
+
+	c.JSON(200, []interface{}{})
+}
+
+func (s *Service) handleGetSyncState(c *gin.Context) {
+	id := c.Param("id")
+
+	if s.directoryService != nil {
+		state, err := s.directoryService.GetSyncState(c.Request.Context(), id)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to get sync state"})
+			return
+		}
+		c.JSON(200, state)
+		return
+	}
+
+	c.JSON(200, gin.H{"directory_id": id})
 }
 
 func (s *Service) handleListMFAMethods(c *gin.Context) {

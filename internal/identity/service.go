@@ -57,6 +57,10 @@ type User struct {
 	FailedLoginCount     int        `json:"failed_login_count"`
 	LastFailedLoginAt    *time.Time `json:"last_failed_login_at,omitempty"`
 	LockedUntil          *time.Time `json:"locked_until,omitempty"`
+	// Directory sync fields
+	Source               *string    `json:"source,omitempty"`
+	DirectoryID          *string    `json:"directory_id,omitempty"`
+	LdapDN               *string    `json:"ldap_dn,omitempty"`
 }
 
 // Session represents an active user session
@@ -152,6 +156,11 @@ type Role struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// DirectoryAuthenticator is an interface for LDAP auth pass-through
+type DirectoryAuthenticator interface {
+	AuthenticateUser(ctx context.Context, directoryID, username, password string) error
+}
+
 // Service provides identity management operations
 type Service struct {
 	db                *database.PostgresDB
@@ -160,6 +169,7 @@ type Service struct {
 	logger            *zap.Logger
 	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
 	pushMFASessions   sync.Map // In-memory storage for Push MFA challenges (use Redis in production)
+	directoryService  DirectoryAuthenticator
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -175,6 +185,11 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cfg:    cfg,
 		logger: logger.With(zap.String("service", "identity")),
 	}
+}
+
+// SetDirectoryService sets the directory service for LDAP auth pass-through
+func (s *Service) SetDirectoryService(ds DirectoryAuthenticator) {
+	s.directoryService = ds
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
@@ -1256,13 +1271,15 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	var enabled bool
 	var lockedUntil *time.Time
 	var failedLoginCount int
+	var source *string
+	var directoryID *string
 
 	// Get user by username or email
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, password_hash, enabled, locked_until, failed_login_count
+		SELECT id, password_hash, enabled, locked_until, failed_login_count, source, directory_id
 		FROM users
 		WHERE username = $1 OR email = $1
-	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount)
+	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount, &source, &directoryID)
 
 	if err != nil {
 		s.logger.Debug("User not found", zap.String("username", username))
@@ -1281,20 +1298,30 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		return nil, ErrAccountLocked
 	}
 
-	// Verify password
-	if passwordHash == "" {
-		s.logger.Debug("User has no password set", zap.String("username", username))
-		return nil, ErrInvalidCredentials
-	}
+	// Check if user is from an LDAP directory — authenticate against LDAP
+	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
+		s.logger.Debug("Authenticating LDAP user", zap.String("username", username), zap.String("directory_id", *directoryID))
 
-	s.logger.Debug("Comparing password", zap.String("username", username))
+		if err := s.directoryService.AuthenticateUser(ctx, *directoryID, username, password); err != nil {
+			s.recordFailedLogin(ctx, userID, failedLoginCount)
+			s.logger.Debug("LDAP authentication failed", zap.String("username", username), zap.Error(err))
+			return nil, ErrInvalidCredentials
+		}
+	} else {
+		// Local user — verify password with bcrypt
+		if passwordHash == "" {
+			s.logger.Debug("User has no password set", zap.String("username", username))
+			return nil, ErrInvalidCredentials
+		}
 
-	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
-	if err != nil {
-		// Update failed login count
-		s.recordFailedLogin(ctx, userID, failedLoginCount)
-		s.logger.Debug("Invalid password", zap.String("username", username), zap.Error(err))
-		return nil, ErrInvalidCredentials
+		s.logger.Debug("Comparing password", zap.String("username", username))
+
+		err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
+		if err != nil {
+			s.recordFailedLogin(ctx, userID, failedLoginCount)
+			s.logger.Debug("Invalid password", zap.String("username", username), zap.Error(err))
+			return nil, ErrInvalidCredentials
+		}
 	}
 
 	// Reset failed login count and update last login

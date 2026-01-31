@@ -16,7 +16,8 @@ import {
   Key as KeyIcon,
   User,
   Workflow,
-  Network
+  Network,
+  FolderSync,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -38,6 +39,7 @@ const navigation = [
   { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
   { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
   { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
+  { name: 'Directories', href: '/directories', icon: FolderSync, adminOnly: true },
   { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
   { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
   { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
