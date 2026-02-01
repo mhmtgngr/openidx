@@ -358,6 +358,33 @@ services:
       - openidx-network
 
   #---------------------------------------------------------------------------
+  # Apache Guacamole - Clientless Remote Desktop Gateway
+  #---------------------------------------------------------------------------
+
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: openidx-guacd
+    networks:
+      - openidx-network
+
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: openidx-guacamole
+    environment:
+      - GUACD_HOSTNAME=guacd
+      - POSTGRES_HOSTNAME=postgres
+      - POSTGRES_DATABASE=openidx
+      - POSTGRES_USER=openidx
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openidx_secret}
+    depends_on:
+      - guacd
+      - postgres
+    ports:
+      - "8085:8080"
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
   # Zero Trust Access Proxy Service
   #---------------------------------------------------------------------------
 
@@ -381,6 +408,11 @@ services:
       - ZITI_ADMIN_USER=admin
       - ZITI_ADMIN_PASSWORD=${ZITI_PWD:-openidx_ziti_admin}
       - ZITI_IDENTITY_DIR=/ziti
+      - GUACAMOLE_URL=http://guacamole:8080/guacamole
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASSWORD=guacadmin
+      - CONTINUOUS_VERIFY_ENABLED=${CONTINUOUS_VERIFY_ENABLED:-true}
+      - CONTINUOUS_VERIFY_INTERVAL=${CONTINUOUS_VERIFY_INTERVAL:-30}
       - LOG_LEVEL=debug
     volumes:
       - ziti_access_proxy:/ziti

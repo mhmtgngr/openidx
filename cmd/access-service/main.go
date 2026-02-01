@@ -124,6 +124,28 @@ func main() {
 	// Initialize access proxy service
 	accessService := access.NewService(db, redis, cfg, log)
 
+	// Background context for long-running goroutines
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+
+	// Initialize Apache Guacamole client if configured
+	if cfg.GuacamoleURL != "" {
+		log.Info("Initializing Apache Guacamole integration...", zap.String("url", cfg.GuacamoleURL))
+		gc, err := access.NewGuacamoleClient(cfg, db, log)
+		if err != nil {
+			log.Error("Failed to initialize Guacamole client -- remote access features disabled", zap.Error(err))
+		} else {
+			accessService.SetGuacamoleClient(gc)
+			log.Info("Apache Guacamole integration ready")
+		}
+	}
+
+	// Start continuous session verification if enabled
+	if cfg.ContinuousVerifyEnabled {
+		log.Info("Starting continuous session verifier", zap.Int("interval_seconds", cfg.ContinuousVerifyInterval))
+		accessService.StartContinuousVerification(bgCtx, cfg.ContinuousVerifyInterval)
+	}
+
 	// Initialize OpenZiti if enabled
 	if cfg.ZitiEnabled {
 		log.Info("OpenZiti integration enabled, initializing ZitiManager...")
@@ -133,7 +155,13 @@ func main() {
 		} else {
 			accessService.SetZitiManager(zm)
 			defer zm.Close()
-			log.Info("OpenZiti integration ready")
+
+			// Start background monitors
+			zitiCtx, zitiCancel := context.WithCancel(context.Background())
+			defer zitiCancel()
+			zm.StartHealthMonitor(zitiCtx)
+			zm.StartCertificateMonitor(zitiCtx)
+			log.Info("OpenZiti integration ready (health + certificate monitors started)")
 		}
 	} else {
 		log.Info("OpenZiti integration disabled (set ZITI_ENABLED=true to enable)")

@@ -62,6 +62,18 @@ type Config struct {
 	ZitiAdminPassword string `mapstructure:"ziti_admin_password"`
 	ZitiIdentityDir   string `mapstructure:"ziti_identity_dir"`
 
+	// Continuous verification
+	ContinuousVerifyEnabled  bool   `mapstructure:"continuous_verify_enabled"`
+	ContinuousVerifyInterval int    `mapstructure:"continuous_verify_interval"`
+
+	// GeoIP service (optional)
+	GeoIPServiceURL string `mapstructure:"geoip_service_url"`
+
+	// Apache Guacamole integration
+	GuacamoleURL           string `mapstructure:"guacamole_url"`
+	GuacamoleAdminUser     string `mapstructure:"guacamole_admin_user"`
+	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
+
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
 
@@ -186,6 +198,15 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
 	v.SetDefault("ziti_identity_dir", "/ziti")
 
+	// Continuous verification defaults
+	v.SetDefault("continuous_verify_enabled", false)
+	v.SetDefault("continuous_verify_interval", 30)
+
+	// Guacamole defaults
+	v.SetDefault("guacamole_url", "")
+	v.SetDefault("guacamole_admin_user", "guacadmin")
+	v.SetDefault("guacamole_admin_password", "guacadmin")
+
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
 
@@ -216,11 +237,17 @@ func bindEnvVars(v *viper.Viper) {
 		"audit_url":              "AUDIT_URL",
 		"access_session_secret":  "ACCESS_SESSION_SECRET",
 		"access_proxy_domain":    "ACCESS_PROXY_DOMAIN",
-		"ziti_enabled":           "ZITI_ENABLED",
-		"ziti_ctrl_url":          "ZITI_CTRL_URL",
-		"ziti_admin_user":        "ZITI_ADMIN_USER",
-		"ziti_admin_password":    "ZITI_ADMIN_PASSWORD",
-		"ziti_identity_dir":      "ZITI_IDENTITY_DIR",
+		"ziti_enabled":              "ZITI_ENABLED",
+		"ziti_ctrl_url":             "ZITI_CTRL_URL",
+		"ziti_admin_user":           "ZITI_ADMIN_USER",
+		"ziti_admin_password":       "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":         "ZITI_IDENTITY_DIR",
+		"continuous_verify_enabled": "CONTINUOUS_VERIFY_ENABLED",
+		"continuous_verify_interval":"CONTINUOUS_VERIFY_INTERVAL",
+		"geoip_service_url":        "GEOIP_SERVICE_URL",
+		"guacamole_url":            "GUACAMOLE_URL",
+		"guacamole_admin_user":     "GUACAMOLE_ADMIN_USER",
+		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
 	}
 
 	for key, env := range envMappings {

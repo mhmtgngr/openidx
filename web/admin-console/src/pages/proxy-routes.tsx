@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight, Terminal, Monitor } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -49,8 +49,35 @@ interface ProxyRoute {
   priority: number
   ziti_enabled: boolean
   ziti_service_name: string
+  idp_id: string
+  route_type: string
+  remote_host: string
+  remote_port: number
+  reverify_interval: number
+  posture_check_ids: string[] | null
+  inline_policy: string
+  require_device_trust: boolean
+  allowed_countries: string[] | null
+  max_risk_score: number
+  guacamole_connection_id: string
   created_at: string
   updated_at: string
+}
+
+const ROUTE_TYPES = [
+  { value: 'http', label: 'HTTP Proxy' },
+  { value: 'ssh', label: 'SSH' },
+  { value: 'rdp', label: 'RDP' },
+  { value: 'vnc', label: 'VNC' },
+  { value: 'telnet', label: 'Telnet' },
+]
+
+const routeTypeIcon = (type: string) => {
+  switch (type) {
+    case 'ssh': case 'telnet': return <Terminal className="h-5 w-5" />
+    case 'rdp': case 'vnc': return <Monitor className="h-5 w-5" />
+    default: return <Globe className="h-5 w-5" />
+  }
 }
 
 export function ProxyRoutesPage() {
@@ -78,6 +105,14 @@ export function ProxyRoutesPage() {
     absolute_timeout: 43200,
     enabled: true,
     priority: 0,
+    route_type: 'http',
+    remote_host: '',
+    remote_port: 0,
+    reverify_interval: 0,
+    inline_policy: '',
+    require_device_trust: false,
+    allowed_countries: '',
+    max_risk_score: 100,
   })
 
   const { data, isLoading } = useQuery({
@@ -147,6 +182,14 @@ export function ProxyRoutesPage() {
       absolute_timeout: 43200,
       enabled: true,
       priority: 0,
+      route_type: 'http',
+      remote_host: '',
+      remote_port: 0,
+      reverify_interval: 0,
+      inline_policy: '',
+      require_device_trust: false,
+      allowed_countries: '',
+      max_risk_score: 100,
     })
   }
 
@@ -166,6 +209,14 @@ export function ProxyRoutesPage() {
       absolute_timeout: route.absolute_timeout,
       enabled: route.enabled,
       priority: route.priority,
+      route_type: route.route_type || 'http',
+      remote_host: route.remote_host || '',
+      remote_port: route.remote_port || 0,
+      reverify_interval: route.reverify_interval || 0,
+      inline_policy: route.inline_policy || '',
+      require_device_trust: route.require_device_trust || false,
+      allowed_countries: route.allowed_countries?.join(', ') || '',
+      max_risk_score: route.max_risk_score || 100,
     })
     setEditModal(true)
   }
@@ -185,6 +236,14 @@ export function ProxyRoutesPage() {
       absolute_timeout: formData.absolute_timeout,
       enabled: formData.enabled,
       priority: formData.priority,
+      route_type: formData.route_type,
+      remote_host: formData.remote_host,
+      remote_port: formData.remote_port,
+      reverify_interval: formData.reverify_interval,
+      inline_policy: formData.inline_policy,
+      require_device_trust: formData.require_device_trust,
+      allowed_countries: formData.allowed_countries ? formData.allowed_countries.split(',').map(s => s.trim()).filter(Boolean) : [],
+      max_risk_score: formData.max_risk_score,
     }
   }
 
@@ -245,7 +304,11 @@ export function ProxyRoutesPage() {
                   <div className="flex items-center gap-3">
                     <div className={`p-2 rounded-lg ${route.enabled ? 'bg-green-100' : 'bg-gray-100'}`}>
                       {route.enabled ? (
-                        <Shield className="h-5 w-5 text-green-700" />
+                        route.route_type && route.route_type !== 'http' ? (
+                          <span className="text-green-700">{routeTypeIcon(route.route_type)}</span>
+                        ) : (
+                          <Shield className="h-5 w-5 text-green-700" />
+                        )
                       ) : (
                         <PowerOff className="h-5 w-5 text-gray-500" />
                       )}
@@ -256,8 +319,14 @@ export function ProxyRoutesPage() {
                         <Badge variant={route.enabled ? 'default' : 'secondary'}>
                           {route.enabled ? 'Active' : 'Disabled'}
                         </Badge>
+                        {route.route_type && route.route_type !== 'http' && (
+                          <Badge variant="default" className="bg-blue-600">{route.route_type.toUpperCase()}</Badge>
+                        )}
                         {route.require_auth && (
                           <Badge variant="outline">Auth Required</Badge>
+                        )}
+                        {route.require_device_trust && (
+                          <Badge variant="outline" className="border-orange-300 text-orange-700">Device Trust</Badge>
                         )}
                         {route.ziti_enabled && (
                           <Badge variant="default" className="bg-purple-600">Ziti</Badge>
@@ -314,10 +383,35 @@ export function ProxyRoutesPage() {
                     <span className="text-muted-foreground">To:</span>{' '}
                     <code className="bg-muted px-1.5 py-0.5 rounded text-xs">{route.to_url}</code>
                   </div>
+                  {route.route_type && route.route_type !== 'http' && route.remote_host && (
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Remote Target:</span>{' '}
+                      <code className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs">
+                        {route.remote_host}:{route.remote_port}
+                      </code>
+                      {route.guacamole_connection_id && (
+                        <Badge variant="outline" className="ml-2 text-xs">Guacamole Connected</Badge>
+                      )}
+                    </div>
+                  )}
                   {route.ziti_enabled && route.ziti_service_name && (
                     <div className="col-span-2">
                       <span className="text-muted-foreground">Ziti Service:</span>{' '}
                       <code className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-xs">{route.ziti_service_name}</code>
+                    </div>
+                  )}
+                  {route.inline_policy && (
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Policy:</span>{' '}
+                      <code className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-xs">{route.inline_policy}</code>
+                    </div>
+                  )}
+                  {route.allowed_countries && route.allowed_countries.length > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">Geo-fence:</span>{' '}
+                      {route.allowed_countries.map(c => (
+                        <Badge key={c} variant="outline" className="mr-1 text-xs">{c}</Badge>
+                      ))}
                     </div>
                   )}
                   {route.allowed_roles && route.allowed_roles.length > 0 && (
@@ -361,7 +455,7 @@ export function ProxyRoutesPage() {
 
       {/* Create Route Dialog */}
       <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create Proxy Route</DialogTitle>
           </DialogHeader>
@@ -377,7 +471,7 @@ export function ProxyRoutesPage() {
 
       {/* Edit Route Dialog */}
       <Dialog open={editModal} onOpenChange={setEditModal}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Proxy Route</DialogTitle>
           </DialogHeader>
@@ -436,25 +530,49 @@ function RouteForm({
     absolute_timeout: number
     enabled: boolean
     priority: number
+    route_type: string
+    remote_host: string
+    remote_port: number
+    reverify_interval: number
+    inline_policy: string
+    require_device_trust: boolean
+    allowed_countries: string
+    max_risk_score: number
   }
   setFormData: (data: typeof formData) => void
   onSubmit: () => void
   isLoading: boolean
   submitLabel: string
 }) {
+  const isRemoteAccess = formData.route_type !== 'http'
+
   return (
     <form
       onSubmit={(e) => { e.preventDefault(); onSubmit() }}
-      className="space-y-4"
+      className="space-y-4 max-h-[70vh] overflow-y-auto pr-2"
     >
-      <div className="space-y-2">
-        <Label>Name</Label>
-        <Input
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder="My Internal App"
-          required
-        />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Name</Label>
+          <Input
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            placeholder="My Internal App"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>Route Type</Label>
+          <select
+            value={formData.route_type}
+            onChange={(e) => setFormData({ ...formData, route_type: e.target.value })}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            {ROUTE_TYPES.map(t => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -487,6 +605,28 @@ function RouteForm({
         </div>
       </div>
 
+      {isRemoteAccess && (
+        <div className="grid grid-cols-2 gap-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+          <div className="space-y-2">
+            <Label>Remote Host</Label>
+            <Input
+              value={formData.remote_host}
+              onChange={(e) => setFormData({ ...formData, remote_host: e.target.value })}
+              placeholder="192.168.1.100"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Remote Port</Label>
+            <Input
+              type="number"
+              value={formData.remote_port || ''}
+              onChange={(e) => setFormData({ ...formData, remote_port: parseInt(e.target.value) || 0 })}
+              placeholder={formData.route_type === 'ssh' ? '22' : formData.route_type === 'rdp' ? '3389' : '5900'}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Allowed Roles (comma-separated)</Label>
@@ -513,6 +653,53 @@ function RouteForm({
           onChange={(e) => setFormData({ ...formData, policy_ids: e.target.value })}
           placeholder="Governance policy IDs to evaluate"
         />
+      </div>
+
+      {/* Zero Trust Context Fields */}
+      <div className="space-y-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+        <p className="text-sm font-medium text-amber-800">Context-Aware Access Policy</p>
+
+        <div className="space-y-2">
+          <Label>Inline Policy (DSL expression)</Label>
+          <textarea
+            value={formData.inline_policy}
+            onChange={(e) => setFormData({ ...formData, inline_policy: e.target.value })}
+            placeholder='user.roles in ["admin"] AND geo.country == "US"'
+            className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+            rows={2}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Allowed Countries (comma-separated)</Label>
+            <Input
+              value={formData.allowed_countries}
+              onChange={(e) => setFormData({ ...formData, allowed_countries: e.target.value })}
+              placeholder="US, GB, DE"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Max Risk Score (0-100)</Label>
+            <Input
+              type="number"
+              value={formData.max_risk_score}
+              onChange={(e) => setFormData({ ...formData, max_risk_score: parseInt(e.target.value) || 100 })}
+              min={0}
+              max={100}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Reverify Interval (seconds, 0 = disabled)</Label>
+          <Input
+            type="number"
+            value={formData.reverify_interval}
+            onChange={(e) => setFormData({ ...formData, reverify_interval: parseInt(e.target.value) || 0 })}
+            placeholder="0"
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -542,7 +729,7 @@ function RouteForm({
         </div>
       </div>
 
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-6 flex-wrap">
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -551,6 +738,15 @@ function RouteForm({
             className="rounded"
           />
           Require Authentication
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={formData.require_device_trust}
+            onChange={(e) => setFormData({ ...formData, require_device_trust: e.target.checked })}
+            className="rounded"
+          />
+          Require Device Trust
         </label>
         <label className="flex items-center gap-2 text-sm">
           <input
