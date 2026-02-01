@@ -23,6 +23,8 @@ import (
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
+	"github.com/openidx/openidx/internal/notifications"
+	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/webhooks"
 )
@@ -143,6 +145,12 @@ func main() {
 	adminService.SetWebhookService(&webhookAdapter{svc: webhookService})
 	adminService.SetSecurityService(&securityAdapter{riskService: riskService})
 
+	// Initialize organization service
+	orgService := organization.NewService(db, redis, cfg, log)
+
+	// Initialize notification service
+	notifService := notifications.NewService(db, log)
+
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	if cfg.Environment != "development" {
@@ -150,6 +158,8 @@ func main() {
 	}
 	{
 		admin.RegisterRoutes(v1, adminService)
+		organization.RegisterRoutes(v1, orgService)
+		notifications.RegisterRoutes(v1, notifService)
 	}
 
 	server := &http.Server{

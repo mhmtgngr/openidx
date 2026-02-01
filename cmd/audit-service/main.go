@@ -68,6 +68,7 @@ func main() {
 
 	auditService := audit.NewService(db, es, cfg, log)
 	audit.RegisterRoutes(router, auditService)
+	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService)
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{

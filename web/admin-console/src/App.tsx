@@ -28,6 +28,11 @@ import { ZitiNetworkPage } from './pages/ziti-network'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
+import { OrganizationsPage } from './pages/organizations'
+import { ReportsPage } from './pages/reports'
+import { AppLauncherPage } from './pages/app-launcher'
+import { MyAccessPage } from './pages/my-access'
+import { NotificationPreferencesPage } from './pages/notification-preferences'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -197,6 +202,25 @@ export default function App() {
             <AdminRoute>
               <SettingsPage />
             </AdminRoute>
+          } />
+          <Route path="organizations" element={
+            <AdminRoute>
+              <OrganizationsPage />
+            </AdminRoute>
+          } />
+          <Route path="reports" element={
+            <AdminRoute>
+              <ReportsPage />
+            </AdminRoute>
+          } />
+          <Route path="app-launcher" element={
+            <AppLauncherPage />
+          } />
+          <Route path="my-access" element={
+            <MyAccessPage />
+          } />
+          <Route path="notification-preferences" element={
+            <NotificationPreferencesPage />
           } />
         </Route>
 

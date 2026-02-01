@@ -21,6 +21,8 @@ import (
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/notifications"
+	"github.com/openidx/openidx/internal/portal"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/webhooks"
 )
@@ -106,8 +108,16 @@ func main() {
 	identityService.SetWebhookService(webhookService)
 	identityService.SetAnomalyDetector(&anomalyDetectorAdapter{riskService: riskService})
 
+	// Initialize portal service
+	portalService := portal.NewService(db, log)
+
+	// Initialize notification service
+	notifService := notifications.NewService(db, log)
+
 	// Register routes
 	identity.RegisterRoutes(router, identityService)
+	portal.RegisterRoutes(router.Group("/api/v1/identity"), portalService)
+	notifications.RegisterRoutes(router.Group("/api/v1/identity"), notifService)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {

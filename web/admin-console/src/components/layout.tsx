@@ -23,9 +23,14 @@ import {
   GitPullRequest,
   ShieldAlert,
   Monitor,
+  Building2,
+  BarChart3,
+  Rocket,
+  Eye,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
+import { NotificationBell } from './notification-bell'
 import { Button } from './ui/button'
 import { Avatar, AvatarFallback } from './ui/avatar'
 import {
@@ -40,6 +45,8 @@ import {
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, adminOnly: false },
   { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
+  { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
+  { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
   { name: 'Users', href: '/users', icon: Users, adminOnly: true },
   { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
   { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
@@ -60,6 +67,8 @@ const navigation = [
   { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
   { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
   { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
+  { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
+  { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
   { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
 ]
 
@@ -164,11 +173,17 @@ export function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <div className="p-8">
-          <Outlet />
-        </div>
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top bar with notification bell */}
+        <header className="h-16 border-b bg-white flex items-center justify-end px-8">
+          <NotificationBell />
+        </header>
+        <main className="flex-1 overflow-auto">
+          <div className="p-8">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

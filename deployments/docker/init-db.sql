@@ -1236,3 +1236,179 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZON
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_by UUID REFERENCES users(id);
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoke_reason VARCHAR(255);
 
+-- ============================================================================
+-- PHASE 7: MULTI-TENANCY
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS organizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    domain VARCHAR(255) UNIQUE,
+    plan VARCHAR(50) DEFAULT 'free',
+    status VARCHAR(50) DEFAULT 'active',
+    settings JSONB DEFAULT '{}',
+    max_users INTEGER DEFAULT 10,
+    max_applications INTEGER DEFAULT 5,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    invited_by UUID REFERENCES users(id),
+    UNIQUE(organization_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);
+CREATE INDEX IF NOT EXISTS idx_organizations_domain ON organizations(domain);
+CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);
+
+-- Add org_id to key tables
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE roles ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE policies ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE access_reviews ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE service_accounts ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE webhook_subscriptions ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE security_alerts ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+
+CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id);
+CREATE INDEX IF NOT EXISTS idx_groups_org_id ON groups(org_id);
+CREATE INDEX IF NOT EXISTS idx_roles_org_id ON roles(org_id);
+CREATE INDEX IF NOT EXISTS idx_applications_org_id ON applications(org_id);
+
+-- Default organization for backward compatibility
+INSERT INTO organizations (id, name, slug, domain, plan, status, max_users, max_applications)
+VALUES ('00000000-0000-0000-0000-000000000010', 'Default Organization', 'default', NULL, 'enterprise', 'active', 999999, 999999)
+ON CONFLICT (id) DO NOTHING;
+
+-- Assign existing data to default org
+UPDATE users SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE groups SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE roles SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE applications SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+INSERT INTO organization_members (organization_id, user_id, role)
+VALUES ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000001', 'owner')
+ON CONFLICT DO NOTHING;
+
+-- ============================================================================
+-- PHASE 7: ADVANCED REPORTING
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS scheduled_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    report_type VARCHAR(50) NOT NULL,
+    framework VARCHAR(100),
+    parameters JSONB DEFAULT '{}',
+    schedule VARCHAR(100) NOT NULL,
+    format VARCHAR(10) DEFAULT 'csv',
+    enabled BOOLEAN DEFAULT true,
+    recipients TEXT[],
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    next_run_at TIMESTAMP WITH TIME ZONE,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS report_exports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    scheduled_report_id UUID REFERENCES scheduled_reports(id) ON DELETE SET NULL,
+    name VARCHAR(255) NOT NULL,
+    report_type VARCHAR(50) NOT NULL,
+    framework VARCHAR(100),
+    format VARCHAR(10) NOT NULL,
+    status VARCHAR(50) DEFAULT 'generating',
+    file_path VARCHAR(500),
+    file_size BIGINT,
+    row_count INTEGER,
+    error_message TEXT,
+    generated_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_exports_org ON report_exports(org_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_reports_org ON scheduled_reports(org_id);
+
+-- ============================================================================
+-- PHASE 7: SELF-SERVICE PORTAL
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS group_join_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    justification TEXT,
+    status VARCHAR(50) DEFAULT 'pending',
+    reviewed_by UUID REFERENCES users(id),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    review_comments TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, group_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_application_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, application_id)
+);
+
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS allow_self_join BOOLEAN DEFAULT false;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS require_approval BOOLEAN DEFAULT true;
+
+CREATE INDEX IF NOT EXISTS idx_group_requests_user ON group_join_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_group_requests_status ON group_join_requests(status);
+CREATE INDEX IF NOT EXISTS idx_user_app_assignments_user ON user_application_assignments(user_id);
+
+-- ============================================================================
+-- PHASE 7: NOTIFICATION SYSTEM
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id UUID REFERENCES organizations(id),
+    channel VARCHAR(50) NOT NULL,
+    type VARCHAR(100) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    link VARCHAR(500),
+    read BOOLEAN DEFAULT false,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel VARCHAR(50) NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, channel, event_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_prefs_user ON notification_preferences(user_id);
+

@@ -333,6 +333,13 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			c.Set("roles", roleStrings)
 		}
 
+		// Extract org_id from claims, default to default org
+		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
+			c.Set("org_id", orgID)
+		} else {
+			c.Set("org_id", "00000000-0000-0000-0000-000000000010")
+		}
+
 		c.Next()
 	}
 }
