@@ -1527,11 +1527,11 @@ CREATE INDEX IF NOT EXISTS idx_ziti_metrics_source ON ziti_metrics(source);
 
 -- Seed default posture check types
 INSERT INTO posture_check_types (id, name, description, category, parameters) VALUES
-('a0000000-0000-0000-0000-000000000001', 'os_check', 'Operating System Version Check', 'device', '{os_types: [Windows, macOS, Linux], min_versions: {}}'),
-('a0000000-0000-0000-0000-000000000002', 'domain_check', 'Windows Domain Membership Check', 'device', '{domains: []}'),
-('a0000000-0000-0000-0000-000000000003', 'mac_address_check', 'MAC Address Allowlist Check', 'network', '{mac_addresses: []}'),
-('a0000000-0000-0000-0000-000000000004', 'mfa_check', 'Multi-Factor Authentication Check', 'authentication', '{timeout_seconds: 300}'),
-('a0000000-0000-0000-0000-000000000005', 'process_check', 'Running Process Check', 'endpoint', '{os_type: , path: , hashes: []}')
+('a0000000-0000-0000-0000-000000000001', 'os_check', 'Operating System Version Check', 'device', '{"os_types": ["Windows", "macOS", "Linux"], "min_versions": {}}'),
+('a0000000-0000-0000-0000-000000000002', 'domain_check', 'Windows Domain Membership Check', 'device', '{"domains": []}'),
+('a0000000-0000-0000-0000-000000000003', 'mac_address_check', 'MAC Address Allowlist Check', 'network', '{"mac_addresses": []}'),
+('a0000000-0000-0000-0000-000000000004', 'mfa_check', 'Multi-Factor Authentication Check', 'authentication', '{"timeout_seconds": 300}'),
+('a0000000-0000-0000-0000-000000000005', 'process_check', 'Running Process Check', 'endpoint', '{"os_type": "", "path": "", "hashes": []}')
 ON CONFLICT (id) DO NOTHING;
 
 -- Add posture_check_ids to ziti_service_policies
