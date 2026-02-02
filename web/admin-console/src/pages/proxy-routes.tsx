@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight, Terminal, Monitor } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight, Terminal, Monitor, Network } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -19,6 +19,9 @@ import {
   DialogTitle,
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { Switch } from '../components/ui/switch'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import {
   AlertDialog,
@@ -284,15 +287,16 @@ export function ProxyRoutesPage() {
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <div className="flex flex-col items-center justify-center py-12">
+          <LoadingSpinner size="lg" />
+          <p className="mt-4 text-sm text-muted-foreground">Loading proxy routes...</p>
         </div>
       ) : filtered.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Globe className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No proxy routes configured</h3>
-            <p className="text-muted-foreground mt-1">Add a route to start proxying requests to internal applications.</p>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <Network className="h-12 w-12 text-muted-foreground/40 mb-3" />
+            <p className="font-medium">No proxy routes found</p>
+            <p className="text-sm">Create a proxy route to get started</p>
           </CardContent>
         </Card>
       ) : (
@@ -563,15 +567,16 @@ function RouteForm({
         </div>
         <div className="space-y-2">
           <Label>Route Type</Label>
-          <select
-            value={formData.route_type}
-            onChange={(e) => setFormData({ ...formData, route_type: e.target.value })}
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          >
-            {ROUTE_TYPES.map(t => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
+          <Select value={formData.route_type} onValueChange={(value) => setFormData({ ...formData, route_type: value })}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select route type" />
+            </SelectTrigger>
+            <SelectContent>
+              {ROUTE_TYPES.map(t => (
+                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -731,38 +736,30 @@ function RouteForm({
 
       <div className="flex items-center gap-6 flex-wrap">
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Switch
             checked={formData.require_auth}
-            onChange={(e) => setFormData({ ...formData, require_auth: e.target.checked })}
-            className="rounded"
+            onCheckedChange={(checked) => setFormData({ ...formData, require_auth: checked })}
           />
           Require Authentication
         </label>
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Switch
             checked={formData.require_device_trust}
-            onChange={(e) => setFormData({ ...formData, require_device_trust: e.target.checked })}
-            className="rounded"
+            onCheckedChange={(checked) => setFormData({ ...formData, require_device_trust: checked })}
           />
           Require Device Trust
         </label>
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Switch
             checked={formData.preserve_host}
-            onChange={(e) => setFormData({ ...formData, preserve_host: e.target.checked })}
-            className="rounded"
+            onCheckedChange={(checked) => setFormData({ ...formData, preserve_host: checked })}
           />
           Preserve Host Header
         </label>
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <Switch
             checked={formData.enabled}
-            onChange={(e) => setFormData({ ...formData, enabled: e.target.checked })}
-            className="rounded"
+            onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
           />
           Enabled
         </label>

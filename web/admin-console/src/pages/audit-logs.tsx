@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter, Calendar, TrendingUp, BarChart3, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Download, Shield, User, Settings, Database, AlertTriangle, CheckCircle, XCircle, Filter, Calendar, TrendingUp, BarChart3, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -431,30 +433,44 @@ export function AuditLogsPage() {
             </div>
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-gray-500" />
-              <select
-                value={eventTypeFilter}
-                onChange={(e) => { setEventTypeFilter(e.target.value); setPage(0) }}
-                className="border rounded-md px-3 py-2 text-sm"
-              >
-                <option value="">All Event Types</option>
-                {eventTypes.map(type => (
-                  <option key={type} value={type}>{type.replace('_', ' ')}</option>
-                ))}
-              </select>
-              <select
-                value={outcomeFilter}
-                onChange={(e) => { setOutcomeFilter(e.target.value); setPage(0) }}
-                className="border rounded-md px-3 py-2 text-sm"
-              >
-                <option value="">All Outcomes</option>
-                <option value="success">Success</option>
-                <option value="failure">Failure</option>
-                <option value="pending">Pending</option>
-              </select>
+              <Select value={eventTypeFilter || 'all'} onValueChange={(val) => { setEventTypeFilter(val === 'all' ? '' : val); setPage(0) }}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="All Event Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Event Types</SelectItem>
+                  {eventTypes.map(type => (
+                    <SelectItem key={type} value={type}>{type.replace('_', ' ')}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={outcomeFilter || 'all'} onValueChange={(val) => { setOutcomeFilter(val === 'all' ? '' : val); setPage(0) }}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="All Outcomes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Outcomes</SelectItem>
+                  <SelectItem value="success">Success</SelectItem>
+                  <SelectItem value="failure">Failure</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading audit logs...</p>
+            </div>
+          ) : !filteredEvents || filteredEvents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <FileText className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No audit logs found</p>
+              <p className="text-sm">Audit events will appear here as activity occurs</p>
+            </div>
+          ) : (
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -468,12 +484,7 @@ export function AuditLogsPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={6} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredEvents?.length === 0 ? (
-                  <tr><td colSpan={6} className="p-4 text-center">No audit events found</td></tr>
-                ) : (
-                  filteredEvents?.map((event) => (
+                {filteredEvents.map((event) => (
                     <tr key={event.id} onClick={() => setSelectedEvent(event)} className="border-b hover:bg-gray-50 cursor-pointer">
                       <td className="p-3">
                         <span className="text-sm text-gray-600">
@@ -515,11 +526,11 @@ export function AuditLogsPage() {
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Pagination Controls */}
           <div className="flex items-center justify-between pt-4">

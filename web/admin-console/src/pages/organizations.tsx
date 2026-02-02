@@ -14,6 +14,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 
 interface Organization {
   id: string
@@ -150,8 +151,18 @@ export function OrganizationsPage() {
           <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" />All Organizations</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-           orgs.length === 0 ? <p className="text-center py-8 text-muted-foreground">No organizations</p> : (
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading organizations...</p>
+            </div>
+          ) : orgs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Building2 className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No organizations found</p>
+              <p className="text-sm">Create an organization to enable multi-tenancy</p>
+            </div>
+          ) : (
             <Table>
               <TableHeader><TableRow>
                 <TableHead>Name</TableHead><TableHead>Slug</TableHead><TableHead>Plan</TableHead>

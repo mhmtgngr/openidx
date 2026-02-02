@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Monitor, Trash2 } from 'lucide-react'
+import { Monitor, MonitorSmartphone, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Badge } from '../components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -96,8 +97,18 @@ export function SessionsAdminPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-           sessions.length === 0 ? <p className="text-center py-8 text-muted-foreground">No sessions found</p> : (
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading sessions...</p>
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <MonitorSmartphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No active sessions</p>
+              <p className="text-sm">User sessions will appear here when users log in</p>
+            </div>
+          ) : (
             <Table>
               <TableHeader><TableRow>
                 <TableHead>User</TableHead><TableHead>Device</TableHead><TableHead>Location</TableHead>

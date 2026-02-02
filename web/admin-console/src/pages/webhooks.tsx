@@ -14,6 +14,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 
 interface Subscription {
   id: string
@@ -143,9 +144,16 @@ export function WebhooksPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center py-8 text-muted-foreground">Loading...</div>
+        <div className="flex flex-col items-center justify-center py-12">
+          <LoadingSpinner size="lg" />
+          <p className="mt-4 text-sm text-muted-foreground">Loading webhooks...</p>
+        </div>
       ) : subscriptions.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">No webhook subscriptions found</div>
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <Webhook className="h-12 w-12 text-muted-foreground/40 mb-3" />
+          <p className="font-medium">No webhooks configured</p>
+          <p className="text-sm">Create a webhook to receive event notifications</p>
+        </div>
       ) : (
         <div className="space-y-4">
           {subscriptions.map((sub) => (
