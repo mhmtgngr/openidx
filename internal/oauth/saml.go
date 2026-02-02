@@ -728,6 +728,7 @@ func (s *Service) generateAccessToken(userID, email, name, clientID string, scop
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }
 
@@ -750,5 +751,6 @@ func (s *Service) generateIDToken(userID, email, name, clientID, nonce string, e
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }

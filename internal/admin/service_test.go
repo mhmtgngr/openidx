@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -203,8 +205,8 @@ func TestDirectoryIntegrationModel(t *testing.T) {
 func TestUpdateApplicationNoFields(t *testing.T) {
 	// Service with nil db will panic if it reaches the DB call,
 	// so we test that empty updates returns an error before that
-	svc := &Service{}
-	err := svc.UpdateApplication(nil, "app-1", map[string]interface{}{})
+	svc := &Service{logger: zap.NewNop()}
+	err := svc.UpdateApplication(context.Background(), "app-1", map[string]interface{}{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid fields to update")
 }
@@ -230,8 +232,8 @@ func TestUpdateApplicationFieldParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := &Service{}
-			err := svc.UpdateApplication(nil, "app-1", tt.updates)
+			svc := &Service{logger: zap.NewNop()}
+			err := svc.UpdateApplication(context.Background(), "app-1", tt.updates)
 			if tt.wantErr {
 				assert.Error(t, err)
 			}

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
@@ -10,7 +11,9 @@ import {
   Clock,
   Settings
 } from 'lucide-react'
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Button } from '../components/ui/button'
 import { api } from '../lib/api'
 
 interface ActivityItem {
@@ -66,9 +69,26 @@ function activityIcon(type: string) {
 }
 
 export function DashboardPage() {
+  const [period, setPeriod] = useState('30d')
+
   const { data: stats, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get<DashboardStats>('/api/v1/dashboard'),
+  })
+
+  const { data: loginAnalytics } = useQuery({
+    queryKey: ['analytics-logins', period],
+    queryFn: () => api.get<{ data: { date: string; successful: number; failed: number }[] }>(`/api/v1/analytics/logins?period=${period}`),
+  })
+
+  const { data: riskAnalytics } = useQuery({
+    queryKey: ['analytics-risk', period],
+    queryFn: () => api.get<{ data: { level: string; count: number }[] }>(`/api/v1/analytics/risk?period=${period}`),
+  })
+
+  const { data: eventAnalytics } = useQuery({
+    queryKey: ['analytics-events', period],
+    queryFn: () => api.get<{ data: { event_type: string; count: number }[] }>(`/api/v1/analytics/events?period=${period}`),
   })
 
   const statCards = [
@@ -197,6 +217,75 @@ export function DashboardPage() {
                 })
               )}
             </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Analytics Section */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Analytics</h2>
+        <div className="flex gap-2">
+          {['7d', '30d', '90d'].map((p) => (
+            <Button key={p} variant={period === p ? 'default' : 'outline'} size="sm" onClick={() => setPeriod(p)}>
+              {p}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Login Activity Chart */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Login Activity</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <AreaChart data={loginAnalytics?.data || []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Area type="monotone" dataKey="successful" stackId="1" stroke="#22c55e" fill="#22c55e" fillOpacity={0.3} />
+                <Area type="monotone" dataKey="failed" stackId="1" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Risk Distribution */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Risk Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={riskAnalytics?.data || []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="level" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Event Types */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Top Event Types</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={eventAnalytics?.data || []} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" tick={{ fontSize: 12 }} />
+                <YAxis type="category" dataKey="event_type" tick={{ fontSize: 11 }} width={150} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>

@@ -47,10 +47,10 @@ OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that provides enterp
 - **Styling**: Tailwind CSS
 - **State**: Zustand + React Query
 - **UI**: Radix UI primitives
-- **Auth**: keycloak-js
+- **Auth**: OpenIDX OAuth (PKCE)
 
 ### Infrastructure
-- **Identity Provider**: Keycloak
+- **OAuth/OIDC**: Native OpenIDX OAuth Service
 - **API Gateway**: Apache APISIX
 - **Policy Engine**: Open Policy Agent (OPA)
 - **Container**: Docker + Kubernetes
@@ -152,8 +152,8 @@ const { data, isLoading } = useQuery({
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | `postgres://...` |
 | `REDIS_URL` | Redis connection string | `redis://...` |
-| `KEYCLOAK_URL` | Keycloak base URL | `http://localhost:8180` |
-| `OPA_URL` | OPA base URL | `http://localhost:8181` |
+| `OAUTH_JWKS_URL` | OAuth JWKS endpoint URL | `http://localhost:8006/.well-known/jwks.json` |
+| `OPA_URL` | OPA base URL | `http://localhost:8281` |
 | `LOG_LEVEL` | Logging level | `info` |
 | `APP_ENV` | Environment (dev/prod) | `development` |
 
@@ -194,7 +194,7 @@ cd web/admin-console && npm test
 
 ### "Fix authentication issue"
 1. Check `internal/common/middleware/middleware.go` for Auth middleware
-2. Verify Keycloak config in `deployments/docker/keycloak/`
+2. Verify OAuth service config and JWKS endpoint
 3. Check APISIX routes in `deployments/docker/apisix/`
 
 ### "Add new compliance report"

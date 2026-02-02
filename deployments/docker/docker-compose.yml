@@ -61,41 +61,6 @@ services:
       - openidx-network
 
   #---------------------------------------------------------------------------
-  # Keycloak - Identity Provider
-  #---------------------------------------------------------------------------
-  
-  keycloak:
-    image: quay.io/keycloak/keycloak:23.0
-    container_name: openidx-keycloak
-    command: start-dev --import-realm
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: openidx
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
-      KC_HOSTNAME_URL: http://localhost:8180
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
-      KC_HTTP_PORT: 8180
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-      - ./keycloak/themes:/opt/keycloak/themes:ro
-    ports:
-      - "8180:8180"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8180'"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-    networks:
-      - openidx-network
-
-  #---------------------------------------------------------------------------
   # API Gateway - Apache APISIX
   #---------------------------------------------------------------------------
   
@@ -143,13 +108,13 @@ services:
     command:
       - "run"
       - "--server"
-      - "--addr=0.0.0.0:8181"
+      - "--addr=0.0.0.0:8281"
       - "--log-level=info"
       - "/policies"
     volumes:
       - ./opa/policies:/policies:ro
     ports:
-      - "8181:8181"
+      - "8281:8281"
     healthcheck:
       test: ["NONE"]
     networks:
@@ -168,10 +133,12 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - KEYCLOAK_URL=http://keycloak:8180
-      - OPA_URL=http://opa:8181
-      - OAUTH_ISSUER=http://localhost:8006
+      - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
     ports:
       - "8001:8001"
@@ -180,7 +147,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      keycloak:
+      mailpit:
         condition: service_started
     networks:
       - openidx-network
@@ -194,7 +161,9 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - OPA_URL=http://opa:8181
+      - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8002:8002"
@@ -215,7 +184,8 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - KEYCLOAK_URL=http://keycloak:8180
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8003:8003"
@@ -256,8 +226,12 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      - KEYCLOAK_URL=http://keycloak:8180
-      - OPA_URL=http://opa:8181
+      - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
     ports:
       - "8005:8005"
@@ -266,6 +240,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     networks:
       - openidx-network
 
@@ -284,7 +260,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
       - LOG_LEVEL=debug
       - JWT_SECRET=${JWT_SECRET:-openidx_jwt_secret_key_change_in_production}
-      - ISSUER_URL=http://localhost:8006
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - PORT=8006
     ports:
       - "8006:8006"
@@ -298,6 +274,768 @@ services:
       interval: 30s
       timeout: 3s
       start_period: 5s
+      retries: 3
+    networks:
+      - openidx-network
+
+  # TLS proxy for OAuth (BrowZer needs HTTPS IdP from HTTPS page)
+  oauth-tls-proxy:
+    image: nginx:alpine
+    container_name: openidx-oauth-tls-proxy
+    volumes:
+      - browzer_certs:/certs:ro
+    ports:
+      - "8446:8446"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        cat > /etc/nginx/conf.d/default.conf << 'NGINX'
+        server {
+            listen 8446 ssl;
+            server_name oauth.localtest.me localhost;
+            ssl_certificate /certs/browzer-tls.crt;
+            ssl_certificate_key /certs/browzer-tls.key;
+            location / {
+                proxy_pass http://oauth-service:8006;
+                proxy_set_header Host $$host;
+                proxy_set_header X-Real-IP $$remote_addr;
+                proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto https;
+            }
+        }
+        NGINX
+        nginx -g 'daemon off;'
+    depends_on:
+      oauth-service:
+        condition: service_healthy
+      browzer-cert-init:
+        condition: service_completed_successfully
+    networks:
+      openidx-network:
+        aliases:
+          - oauth.localtest.me
+
+  #---------------------------------------------------------------------------
+  # OpenZiti Zero Trust Network Fabric
+  #---------------------------------------------------------------------------
+
+  # TLS proxy for Ziti controller — browsers trust the mkcert cert
+  # ZBR in browser connects here; proxy forwards to controller's self-signed TLS
+  ziti-controller-proxy:
+    image: nginx:alpine
+    container_name: openidx-ziti-controller-proxy
+    volumes:
+      - browzer_certs:/certs:ro
+    ports:
+      - "1280:1280"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        cat > /etc/nginx/conf.d/default.conf << 'NGINX'
+        server {
+            listen 1280 ssl;
+            server_name ziti-controller.localtest.me;
+            ssl_certificate /certs/browzer-tls.crt;
+            ssl_certificate_key /certs/browzer-tls.key;
+            location / {
+                proxy_pass https://ziti-controller:1280;
+                proxy_ssl_verify off;
+                proxy_set_header Host $$host;
+                proxy_set_header X-Real-IP $$remote_addr;
+                proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto https;
+                proxy_read_timeout 300s;
+                proxy_send_timeout 300s;
+            }
+        }
+        NGINX
+        nginx -g 'daemon off;'
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+      browzer-cert-init:
+        condition: service_completed_successfully
+    networks:
+      - openidx-network
+
+  ziti-controller:
+    image: openziti/ziti-controller:latest
+    container_name: openidx-ziti-controller
+    environment:
+      - ZITI_BOOTSTRAP=true
+      - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_PWD=${ZITI_PWD:-openidx_ziti_admin}
+      - PFXLOG_NO_JSON=true
+    volumes:
+      - ziti_controller_data:/home/ziggy
+      - ziti_controller_pki:/ziti-controller
+      - browzer_certs:/browzer-certs:ro
+    ports:
+      - "11280:1280"
+    healthcheck:
+      test: ["CMD", "ziti", "agent", "stats"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      openidx-network:
+        aliases:
+          - ziti-controller.localtest.me
+
+  ziti-router-init:
+    image: openziti/ziti-controller:latest
+    container_name: openidx-ziti-router-init
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        TOKEN_FILE=/ziti-shared/router.jwt
+        if [ -f "$$TOKEN_FILE" ] && [ -s "$$TOKEN_FILE" ]; then
+          echo "Router JWT already exists, skipping creation"
+          exit 0
+        fi
+        echo "Logging in to Ziti controller..."
+        ziti edge login ziti-controller.localtest.me:1280 -u admin -p "$${ZITI_PWD}" --yes
+        echo "Creating edge router..."
+        ziti edge create edge-router openidx-router --jwt-output-file "$$TOKEN_FILE" 2>/dev/null || \
+          echo "Router may already exist, trying to fetch JWT..."
+        if [ ! -f "$$TOKEN_FILE" ] || [ ! -s "$$TOKEN_FILE" ]; then
+          ROUTER_ID=$$(ziti edge list edge-routers 'name="openidx-router"' -j 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          if [ -n "$$ROUTER_ID" ]; then
+            echo "Re-creating router to get fresh JWT..."
+            ziti edge delete edge-router "$$ROUTER_ID" 2>/dev/null || true
+            ziti edge create edge-router openidx-router --jwt-output-file "$$TOKEN_FILE"
+          fi
+        fi
+        if [ -f "$$TOKEN_FILE" ] && [ -s "$$TOKEN_FILE" ]; then
+          chmod 644 "$$TOKEN_FILE"
+          echo "Router JWT saved to $$TOKEN_FILE"
+        else
+          echo "ERROR: Could not obtain router JWT"
+          exit 1
+        fi
+    environment:
+      - ZITI_PWD=${ZITI_PWD:-openidx_ziti_admin}
+    volumes:
+      - ziti_router_shared:/ziti-shared
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  ziti-router:
+    image: openziti/ziti-router:latest
+    container_name: openidx-ziti-router
+    environment:
+      - ZITI_BOOTSTRAP=true
+      - ZITI_BOOTSTRAP_ENROLLMENT=true
+      - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
+      - ZITI_CTRL_ADVERTISED_PORT=1280
+      - ZITI_ROUTER_ADVERTISED_ADDRESS=ziti-router
+      - ZITI_ROUTER_PORT=3022
+      - ZITI_ENROLL_TOKEN=/ziti-shared/router.jwt
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        exec 3>/dev/null
+        CONFIG="config.yml"
+
+        # Source the bootstrap script
+        source "/bootstrap.bash"
+
+        # Step 1: Generate config (if not already present)
+        if [[ ! -s "$$CONFIG" ]]; then
+          echo "==> Generating router config..."
+          makeConfig "$$CONFIG"
+        fi
+
+        # Step 2: Patch config BEFORE enrollment (so CSR SANs include WSS hostname)
+        # Add ziti-controller.localtest.me to CSR SANs
+        if ! grep -q "ziti-controller.localtest.me" "$$CONFIG"; then
+          echo "==> Adding ziti-controller.localtest.me to CSR SANs..."
+          sed -i '/dns:/a\        - ziti-controller.localtest.me' "$$CONFIG"
+          echo "==> CSR SAN added"
+        fi
+
+        # Add WSS listener (idempotent)
+        if ! grep -q "wss:" "$$CONFIG"; then
+          echo "==> Adding WSS listener..."
+          awk '/- binding:.*tunnel/ {
+            print "  - binding: edge"
+            print "    address: wss:0.0.0.0:3023"
+            print "    options:"
+            print "      advertise: ziti-controller.localtest.me:3023"
+            print "      connectTimeoutMs: 5000"
+            print "      getSessionTimeout: 60"
+          } { print }' "$$CONFIG" > "$$CONFIG.tmp" && mv "$$CONFIG.tmp" "$$CONFIG"
+          echo "==> WSS listener added"
+        fi
+
+        # Uncomment and fill alt_server_certs (idempotent)
+        if grep -q "#alt_server_certs:" "$$CONFIG"; then
+          echo "==> Configuring alt_server_certs..."
+          sed -i 's|#alt_server_certs:|alt_server_certs:|' "$$CONFIG"
+          sed -i 's|#  - server_cert:  ""|  - server_cert: "/browzer-certs/browzer-tls.crt"|' "$$CONFIG"
+          sed -i 's|#    server_key:   ""|    server_key:  "/browzer-certs/browzer-tls.key"|' "$$CONFIG"
+          echo "==> alt_server_certs configured"
+        fi
+
+        # Uncomment transport.ws section (idempotent)
+        if grep -q "#transport:" "$$CONFIG"; then
+          echo "==> Uncommenting transport.ws..."
+          sed -i 's|^#transport:|transport:|' "$$CONFIG"
+          sed -i 's|^#  ws:|  ws:|' "$$CONFIG"
+          sed -i 's|^#    writeTimeout:|    writeTimeout:|' "$$CONFIG"
+          sed -i 's|^#    readTimeout:|    readTimeout:|' "$$CONFIG"
+          sed -i 's|^#    idleTimeout:|    idleTimeout:|' "$$CONFIG"
+          sed -i 's|^#    pongTimeout:|    pongTimeout:|' "$$CONFIG"
+          sed -i 's|^#    pingInterval:|    pingInterval:|' "$$CONFIG"
+          sed -i 's|^#    handshakeTimeout:|    handshakeTimeout:|' "$$CONFIG"
+          sed -i 's|^#    readBufferSize:|    readBufferSize:|' "$$CONFIG"
+          sed -i 's|^#    writeBufferSize:|    writeBufferSize:|' "$$CONFIG"
+          sed -i 's|^#    enableCompression:|    enableCompression:|' "$$CONFIG"
+          echo "==> transport.ws uncommented"
+        fi
+
+        echo "==> Patched config:"
+        cat "$$CONFIG"
+
+        # Step 3: Enroll (if not already enrolled)
+        if [[ "$${ZITI_BOOTSTRAP_ENROLLMENT:-}" == true ]]; then
+          enroll "$$CONFIG"
+        fi
+
+        echo "==> Starting router with WSS support..."
+        exec ziti router run "$$CONFIG"
+    volumes:
+      - ziti_router_data:/ziti-router
+      - ziti_router_shared:/ziti-shared:ro
+      - browzer_certs:/browzer-certs:ro
+    ports:
+      - "3022:3022"
+      - "3023:3023"
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+      ziti-router-init:
+        condition: service_completed_successfully
+      browzer-cert-init:
+        condition: service_completed_successfully
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # BrowZer Bootstrapper - Browser-Native Ziti Access
+  #---------------------------------------------------------------------------
+
+  browzer-cert-init:
+    image: openziti/ziti-controller:latest
+    container_name: openidx-browzer-cert-init
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        echo "Extracting Ziti CA cert..."
+        cat /ziti-pki/pki/root/certs/root.cert > /shared-certs/ziti-ca.pem
+        chmod 644 /shared-certs/ziti-ca.pem
+        echo "Generating TLS cert for browzer.localtest.me..."
+        if [ ! -f /shared-certs/browzer-tls.key ]; then
+          openssl req -x509 -newkey rsa:2048 -keyout /shared-certs/browzer-tls.key \
+            -out /shared-certs/browzer-tls.crt -days 365 -nodes \
+            -subj "/CN=browzer.localtest.me" \
+            -addext "subjectAltName=DNS:browzer.localtest.me,DNS:oauth.localtest.me,DNS:localhost,IP:127.0.0.1"
+          chmod 644 /shared-certs/browzer-tls.key /shared-certs/browzer-tls.crt
+          echo "TLS cert generated"
+        else
+          echo "TLS cert already exists"
+        fi
+        # Patch controller config to add alt_server_certs for browser-trusted TLS
+        if [ -f /shared-certs/browzer-tls.crt ] && [ -f /ziti-pki/config.yml ]; then
+          if ! grep -q "alt_server_certs:" /ziti-pki/config.yml; then
+            sed -i 's|#alt_server_certs:|alt_server_certs:|; s|#  - server_cert:  ""|  - server_cert: "/browzer-certs/browzer-tls.crt"|; s|#    server_key:   ""|    server_key: "/browzer-certs/browzer-tls.key"|' /ziti-pki/config.yml
+            echo "Patched controller config with alt_server_certs"
+          else
+            echo "Controller config already has alt_server_certs"
+          fi
+        fi
+        echo "Cert init complete"
+    volumes:
+      - ziti_controller_pki:/ziti-pki
+      - browzer_certs:/shared-certs
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+    networks:
+      - openidx-network
+
+  browzer-bootstrapper:
+    image: ghcr.io/openziti/ziti-browzer-bootstrapper:latest
+    container_name: openidx-browzer-bootstrapper
+    environment:
+      - ZITI_BROWZER_BOOTSTRAPPER_LOGLEVEL=debug
+      - ZITI_BROWZER_BOOTSTRAPPER_HOST=browzer.localtest.me
+      - ZITI_BROWZER_BOOTSTRAPPER_LISTEN_PORT=443
+      - ZITI_BROWZER_BOOTSTRAPPER_SCHEME=https
+      - ZITI_BROWZER_BOOTSTRAPPER_CERTIFICATE_PATH=/shared-certs/browzer-tls.crt
+      - ZITI_BROWZER_BOOTSTRAPPER_KEY_PATH=/shared-certs/browzer-tls.key
+      - ZITI_BROWZER_RUNTIME_LOGLEVEL=debug
+      - ZITI_BROWZER_RUNTIME_HOTKEY=alt+F12
+      - ZITI_CONTROLLER_HOST=ziti-controller.localtest.me
+      - ZITI_CONTROLLER_PORT=1280
+      - ZITI_BROWZER_BOOTSTRAPPER_TARGETS={"targetArray":[{"vhost":"browzer.localtest.me","service":"guacamole-zt","path":"/","scheme":"http","idp_issuer_base_url":"https://oauth.localtest.me:8446","idp_client_id":"browzer-client"}]}
+      - ZITI_BROWZER_OIDC_URL=http://oauth-service:8006
+      - NODE_EXTRA_CA_CERTS=/shared-certs/mkcert-rootCA.pem
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+    volumes:
+      - browzer_certs:/shared-certs
+    ports:
+      - "443:443"
+    depends_on:
+      ziti-controller:
+        condition: service_healthy
+      oauth-service:
+        condition: service_healthy
+      browzer-cert-init:
+        condition: service_completed_successfully
+    networks:
+      openidx-network:
+        aliases:
+          - browzer.localtest.me
+
+  #---------------------------------------------------------------------------
+  # BrowZer Test App - Simple HTTP service to verify BrowZer end-to-end
+  #---------------------------------------------------------------------------
+
+  browzer-test-app:
+    image: nginx:alpine
+    container_name: openidx-browzer-test-app
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mkdir -p /usr/share/nginx/html
+        cat > /usr/share/nginx/html/index.html << 'HTMLEOF'
+        <!DOCTYPE html>
+        <html>
+        <head><title>OpenIDX BrowZer Test</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #0d1117; color: #c9d1d9; }
+          h1 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 16px; }
+          .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin: 16px 0; }
+          .success { border-left: 4px solid #3fb950; }
+          .info { border-left: 4px solid #58a6ff; }
+          code { background: #0d1117; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+          #fetch-result { white-space: pre-wrap; }
+          button { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+          button:hover { background: #2ea043; }
+        </style>
+        </head>
+        <body>
+          <h1>OpenIDX Zero Trust BrowZer Test</h1>
+          <div class="card success">
+            <h3>BrowZer is working!</h3>
+            <p>This page was served through the OpenZiti overlay network via BrowZer.</p>
+            <p>Your browser is participating directly in the Ziti mesh — no VPN, no proxy agent.</p>
+          </div>
+          <div class="card info">
+            <h3>Connection Path</h3>
+            <p>Browser (ZBR Service Worker) &rarr; WSS to Edge Router &rarr; Ziti Circuit &rarr; This nginx server</p>
+          </div>
+          <div class="card info">
+            <h3>API Test</h3>
+            <button onclick="testFetch()">Fetch /api/test</button>
+            <pre id="fetch-result"></pre>
+          </div>
+          <div class="card info">
+            <h3>Request Headers (from server perspective)</h3>
+            <p>Server time: <code id="server-time">loading...</code></p>
+          </div>
+          <script>
+            document.getElementById('server-time').textContent = new Date().toISOString();
+            async function testFetch() {
+              try {
+                const r = await fetch('/api/test');
+                const t = await r.text();
+                document.getElementById('fetch-result').textContent = 'Status: ' + r.status + '\n' + t;
+              } catch(e) {
+                document.getElementById('fetch-result').textContent = 'Error: ' + e.message;
+              }
+            }
+          </script>
+        </body>
+        </html>
+        HTMLEOF
+        cat > /etc/nginx/conf.d/default.conf << 'NGINXEOF'
+        server {
+            listen 80;
+            location / {
+                root /usr/share/nginx/html;
+                index index.html;
+            }
+            location /api/test {
+                return 200 '{"status":"ok","message":"BrowZer Zero Trust connection verified","timestamp":"$time_iso8601","server":"browzer-test-app"}';
+                add_header Content-Type application/json;
+            }
+        }
+        NGINXEOF
+        nginx -g 'daemon off;'
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Apache Guacamole - Clientless Remote Desktop Gateway
+  #---------------------------------------------------------------------------
+
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: openidx-guacd
+    networks:
+      - openidx-network
+
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: openidx-guacamole
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Run all entrypoint scripts EXCEPT the Tomcat starter
+        for SCRIPT in /opt/guacamole/entrypoint.d/*.sh; do
+          [ "$$(basename "$$SCRIPT")" = "999-start-tomcat.sh" ] && continue
+          source "$$SCRIPT"
+        done
+        # Disable WebSocket tunnel — ZBR does NOT route WebSocket through Ziti
+        # (confirmed: zero WS requests reach server). Force HTTP tunnel.
+        echo "enable-websocket: false" >> "$$GUACAMOLE_HOME/guacamole.properties"
+        # Start Tomcat (replaces process via exec)
+        source /opt/guacamole/entrypoint.d/999-start-tomcat.sh
+    environment:
+      - GUACD_HOSTNAME=guacd
+      - POSTGRESQL_HOSTNAME=postgres
+      - POSTGRESQL_DATABASE=guacamole
+      - POSTGRESQL_USER=openidx
+      - POSTGRESQL_PASSWORD=${POSTGRES_PASSWORD:-openidx_secret}
+      - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+    depends_on:
+      - guacd
+      - postgres
+    ports:
+      - "8085:8080"
+    networks:
+      - openidx-network
+
+  # BrowZer-aware reverse proxy for Guacamole
+  #
+  # Key insight: fetch() + response.body.getReader() DOES stream through
+  # Service Workers (Chrome 52+), unlike XHR readyState 3 which is fundamentally
+  # broken (W3C ServiceWorker Issue #1141). ZBR's SW already creates
+  # ReadableStream-backed Response objects for non-HTML content.
+  #
+  # Solution: Inject a custom Guacamole tunnel that uses the Fetch API with
+  # ReadableStream instead of XHR. Reads stream incrementally through ZBR's SW.
+  # No more buffering. No more IOException→tunnel death. Simple proxy with
+  # long timeouts — the streaming just works.
+  guacamole-zbr-proxy:
+    image: nginx:alpine
+    container_name: openidx-guacamole-zbr-proxy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        # Write the fetch-based tunnel JavaScript to a file (avoids YAML escaping issues)
+        cat > /usr/share/nginx/html/browzer-tunnel.js << 'JSEOF'
+        (function(){
+          if(!window.Guacamole)return;
+          /* Disable WebSocket tunnel - ZBR does not route WS through Ziti */
+          Guacamole.WebSocketTunnel=function(){
+            Guacamole.Tunnel.call(this);
+            var t=this;
+            this.connect=function(){setTimeout(function(){
+              if(t.onerror)t.onerror(new Guacamole.Status(Guacamole.Status.Code.UPSTREAM_NOT_FOUND,"WebSocket disabled"));
+            },0)};
+            this.disconnect=function(){};
+            this.sendMessage=function(){};
+          };
+          Guacamole.WebSocketTunnel.prototype=new Guacamole.Tunnel();
+
+          /* Override HTTPTunnel to use fetch() + ReadableStream instead of XHR.
+           * XHR readyState 3 never fires through Service Workers (W3C Issue #1141).
+           * fetch() + response.body.getReader() DOES stream through SWs (Chrome 52+). */
+          Guacamole.HTTPTunnel=function(tunnelURL,crossDomain,extraTunnelHeaders){
+            Guacamole.Tunnel.call(this);
+            var tunnel=this;
+            var CONNECT=tunnelURL+"?connect";
+            var READ=tunnelURL+"?read:";
+            var WRITE=tunnelURL+"?write:";
+            var uuid=null;
+            var readRequestId=0;
+            var writeRequestId=0;
+            var tunnelToken=null;
+            var abortController=null;
+            var decoder=new TextDecoder();
+            var parseBuffer="";
+
+            function fireInstruction(opcode,args){
+              if(opcode===Guacamole.Tunnel.INTERNAL_DATA_OPCODE)return;
+              if(tunnel.oninstruction)tunnel.oninstruction(opcode,args);
+            }
+
+            function parseInstructions(text){
+              parseBuffer+=text;
+              var pos=0;
+              while(pos<parseBuffer.length){
+                var elemStart=pos;
+                var elements=[];
+                var complete=false;
+                while(elemStart<parseBuffer.length){
+                  var dotPos=parseBuffer.indexOf(".",elemStart);
+                  if(dotPos<0)break;
+                  var len=parseInt(parseBuffer.substring(elemStart,dotPos),10);
+                  if(isNaN(len))break;
+                  var valStart=dotPos+1;
+                  var valEnd=valStart+len;
+                  if(valEnd>parseBuffer.length)break;
+                  elements.push(parseBuffer.substring(valStart,valEnd));
+                  var delim=parseBuffer.charAt(valEnd);
+                  if(delim===";"){complete=true;elemStart=valEnd+1;break;}
+                  else if(delim===","){elemStart=valEnd+1;}
+                  else break;
+                }
+                if(!complete)break;
+                pos=elemStart;
+                if(elements.length>0)fireInstruction(elements[0],elements.slice(1));
+              }
+              parseBuffer=parseBuffer.substring(pos);
+            }
+
+            function startRead(){
+              if(tunnel.state!==Guacamole.Tunnel.State.OPEN)return;
+              var reqId=readRequestId++;
+              var url=READ+uuid+":"+reqId;
+              abortController=new AbortController();
+              var headers={};
+              if(tunnelToken)headers["Guacamole-Tunnel-Token"]=tunnelToken;
+              fetch(url,{signal:abortController.signal,headers:headers,credentials:crossDomain?"include":"same-origin"})
+              .then(function(response){
+                if(response.status!==200){
+                  tunnel.state=Guacamole.Tunnel.State.CLOSED;
+                  if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+                  if(tunnel.onerror)tunnel.onerror(new Guacamole.Status(
+                    Guacamole.Status.Code.fromHTTPStatusCode(response.status),response.statusText));
+                  return;
+                }
+                var newToken=response.headers.get("Guacamole-Tunnel-Token");
+                if(newToken)tunnelToken=newToken;
+                var reader=response.body.getReader();
+                function pump(){
+                  return reader.read().then(function(result){
+                    if(result.done){startRead();return;}
+                    var chunk=decoder.decode(result.value,{stream:true});
+                    parseInstructions(chunk);
+                    return pump();
+                  });
+                }
+                return pump();
+              })
+              .catch(function(err){
+                if(err.name==="AbortError")return;
+                console.error("[FetchTunnel] read error:",err);
+                if(tunnel.state===Guacamole.Tunnel.State.OPEN){
+                  tunnel.state=Guacamole.Tunnel.State.CLOSED;
+                  if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+                  if(tunnel.onerror)tunnel.onerror(new Guacamole.Status(
+                    Guacamole.Status.Code.SERVER_ERROR,err.message));
+                }
+              });
+            }
+
+            this.sendMessage=function(){
+              var msg="";
+              for(var i=0;i<arguments.length;i++){
+                var v=String(arguments[i]);
+                msg+=v.length+"."+v;
+                msg+=(i<arguments.length-1)?",":";";
+              }
+              var url=WRITE+uuid+":"+(writeRequestId++);
+              var headers={"Content-Type":"application/octet-stream"};
+              if(tunnelToken)headers["Guacamole-Tunnel-Token"]=tunnelToken;
+              fetch(url,{method:"POST",headers:headers,body:msg,
+                credentials:crossDomain?"include":"same-origin"});
+            };
+
+            this.connect=function(data){
+              tunnel.state=Guacamole.Tunnel.State.CONNECTING;
+              if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+              fetch(CONNECT,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},
+                body:data,credentials:crossDomain?"include":"same-origin"})
+              .then(function(response){
+                if(response.status!==200){
+                  tunnel.state=Guacamole.Tunnel.State.CLOSED;
+                  if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+                  if(tunnel.onerror)tunnel.onerror(new Guacamole.Status(
+                    Guacamole.Status.Code.fromHTTPStatusCode(response.status)));
+                  return;
+                }
+                tunnelToken=response.headers.get("Guacamole-Tunnel-Token");
+                return response.text();
+              })
+              .then(function(body){
+                if(!body)return;
+                uuid=body;
+                tunnel.uuid=uuid;
+                tunnel.state=Guacamole.Tunnel.State.OPEN;
+                if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+                startRead();
+              })
+              .catch(function(err){
+                tunnel.state=Guacamole.Tunnel.State.CLOSED;
+                if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+                if(tunnel.onerror)tunnel.onerror(new Guacamole.Status(
+                  Guacamole.Status.Code.SERVER_ERROR,err.message));
+              });
+            };
+
+            this.disconnect=function(){
+              if(abortController)abortController.abort();
+              tunnel.state=Guacamole.Tunnel.State.CLOSED;
+              if(tunnel.onstatechange)tunnel.onstatechange(tunnel.state);
+            };
+          };
+          Guacamole.HTTPTunnel.prototype=new Guacamole.Tunnel();
+          console.log("[BrowZer] Fetch-based streaming HTTP tunnel injected");
+        })();
+        JSEOF
+
+        cat > /etc/nginx/nginx.conf << 'NGINX'
+        events {
+            worker_connections 1024;
+        }
+
+        error_log /dev/stderr warn;
+
+        http {
+            include /etc/nginx/mime.types;
+
+            server {
+                listen 80;
+                server_name _;
+
+                # Serve the injected tunnel JS
+                location = /guacamole/browzer-tunnel.js {
+                    alias /usr/share/nginx/html/browzer-tunnel.js;
+                    add_header Content-Type application/javascript;
+                    add_header Cache-Control "no-cache";
+                }
+
+                # HTTP tunnel — simple proxy with long timeouts
+                location /guacamole/tunnel {
+                    proxy_pass http://guacamole:8080;
+                    proxy_http_version 1.1;
+                    proxy_set_header Host $$host;
+                    proxy_set_header X-Real-IP $$remote_addr;
+                    proxy_set_header Connection "";
+                    proxy_read_timeout 86400s;
+                    proxy_send_timeout 86400s;
+                    proxy_buffering off;
+                    proxy_request_buffering off;
+                    proxy_cache off;
+                    access_log /dev/stderr;
+                }
+
+                # Let blank.html through to Guacamole (viewport template)
+                location = /guacamole/app/element/templates/blank.html {
+                    proxy_pass http://guacamole:8080;
+                    proxy_set_header Host $$host;
+                    proxy_set_header Accept-Encoding "";
+                }
+
+                # All other Guacamole requests
+                location / {
+                    proxy_pass http://guacamole:8080;
+                    proxy_http_version 1.1;
+                    proxy_set_header Host $$host;
+                    proxy_set_header X-Real-IP $$remote_addr;
+                    proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $$scheme;
+                    proxy_set_header Accept-Encoding "";
+                    add_header Service-Worker-Allowed "/" always;
+                    proxy_read_timeout 300s;
+
+                    # Inject script tag for the fetch-based tunnel
+                    sub_filter_types text/html;
+                    sub_filter_once on;
+                    sub_filter '</body>' '<script src="/guacamole/browzer-tunnel.js"></script></body>';
+                }
+            }
+        }
+        NGINX
+        nginx -g 'daemon off;' -c /etc/nginx/nginx.conf
+    depends_on:
+      - guacamole
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Zero Trust Access Proxy Service
+  #---------------------------------------------------------------------------
+
+  access-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.access-service
+    container_name: openidx-access-service
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - GOVERNANCE_URL=http://governance-service:8002
+      - AUDIT_URL=http://audit-service:8004
+      - ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET:-openidx_access_session_secret_32b}
+      - ACCESS_PROXY_DOMAIN=localhost
+      - ZITI_ENABLED=${ZITI_ENABLED:-true}
+      - ZITI_CTRL_URL=https://ziti-controller.localtest.me:1280
+      - ZITI_ADMIN_USER=admin
+      - ZITI_ADMIN_PASSWORD=${ZITI_PWD:-openidx_ziti_admin}
+      - ZITI_IDENTITY_DIR=/ziti
+      - GUACAMOLE_URL=http://guacamole:8080/guacamole
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASSWORD=guacadmin
+      - CONTINUOUS_VERIFY_ENABLED=${CONTINUOUS_VERIFY_ENABLED:-true}
+      - CONTINUOUS_VERIFY_INTERVAL=${CONTINUOUS_VERIFY_INTERVAL:-30}
+      - BROWZER_ENABLED=${BROWZER_ENABLED:-true}
+      - BROWZER_CLIENT_ID=${BROWZER_CLIENT_ID:-browzer-client}
+      - LOG_LEVEL=debug
+    volumes:
+      - ziti_access_proxy:/ziti
+    ports:
+      - "8007:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      oauth-service:
+        condition: service_healthy
+      ziti-controller:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8007/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 15s
       retries: 3
     networks:
       - openidx-network
@@ -329,6 +1067,22 @@ services:
     networks:
       - openidx-network
 
+  #---------------------------------------------------------------------------
+  # Mailpit - Local SMTP server for development email testing
+  #---------------------------------------------------------------------------
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: openidx-mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=true
+    networks:
+      - openidx-network
+
 #---------------------------------------------------------------------------
 # Networks
 #---------------------------------------------------------------------------
@@ -346,3 +1100,9 @@ volumes:
   redis_data:
   elasticsearch_data:
   etcd_data:
+  ziti_controller_data:
+  ziti_controller_pki:
+  ziti_router_data:
+  ziti_router_shared:
+  ziti_access_proxy:
+  browzer_certs:

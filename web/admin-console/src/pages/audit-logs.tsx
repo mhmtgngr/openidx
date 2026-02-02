@@ -84,11 +84,12 @@ export function AuditLogsPage() {
   const [endDate, setEndDate] = useState(defaultEndDate)
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ['audit-events', page, eventTypeFilter, outcomeFilter, startDate, endDate],
+    queryKey: ['audit-events', page, search, eventTypeFilter, outcomeFilter, startDate, endDate],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       if (eventTypeFilter) params.set('event_type', eventTypeFilter)
       if (outcomeFilter) params.set('outcome', outcomeFilter)
       if (startDate) params.set('start', startDate)
@@ -107,17 +108,13 @@ export function AuditLogsPage() {
 
   const exportMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/v1/audit/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          start_time: new Date(startDate).toISOString(),
-          end_time: new Date(endDate + 'T23:59:59').toISOString(),
-          event_type: eventTypeFilter || undefined,
-          outcome: outcomeFilter || undefined,
-        }),
+      const data = await api.post<Blob>('/api/v1/audit/export', {
+        start_time: new Date(startDate).toISOString(),
+        end_time: new Date(endDate + 'T23:59:59').toISOString(),
+        event_type: eventTypeFilter || undefined,
+        outcome: outcomeFilter || undefined,
       })
-      const blob = await response.blob()
+      const blob = data instanceof Blob ? data : new Blob([JSON.stringify(data)], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -143,16 +140,8 @@ export function AuditLogsPage() {
     },
   })
 
-  // Client-side search filter (server handles event_type and outcome filtering)
-  const filteredEvents = events?.filter(event => {
-    if (search === '') return true
-    return (
-      event.action.toLowerCase().includes(search.toLowerCase()) ||
-      event.actor_id?.toLowerCase().includes(search.toLowerCase()) ||
-      event.actor_ip?.toLowerCase().includes(search.toLowerCase()) ||
-      event.target_id?.toLowerCase().includes(search.toLowerCase())
-    )
-  })
+  // Events are filtered server-side via search param
+  const filteredEvents = events
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -171,7 +160,16 @@ export function AuditLogsPage() {
     })
   }
 
-  const eventTypes = [...new Set(events?.map(e => e.event_type) || [])]
+  const eventTypes = [
+    'authentication',
+    'authorization',
+    'user_management',
+    'group_management',
+    'role_management',
+    'configuration',
+    'data_access',
+    'system',
+  ]
 
   return (
     <div className="space-y-6">
@@ -328,8 +326,8 @@ export function AuditLogsPage() {
               </CardHeader>
               <CardContent>
                 {statistics.events_per_day && statistics.events_per_day.length > 0 ? (
-                  <div className="h-40 flex items-end gap-1">
-                    {statistics.events_per_day.slice(-14).map((day, i) => (
+                  <div className="h-40 flex items-end gap-1 overflow-x-auto">
+                    {statistics.events_per_day.map((day, i) => (
                       <div key={i} className="flex-1 flex flex-col items-center">
                         <div
                           className="w-full bg-blue-500 rounded-t transition-all hover:bg-blue-600"
@@ -427,7 +425,7 @@ export function AuditLogsPage() {
               <Input
                 placeholder="Search by action, actor, IP address..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0) }}
                 className="pl-9"
               />
             </div>

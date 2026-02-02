@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Shield, AlertCircle, Loader2, Globe, ArrowLeft } from 'lucide-react'
+import { Shield, AlertCircle, Loader2, Globe, ArrowLeft, KeyRound } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
-import { useAuth, generateCodeVerifier, generateCodeChallenge, OAUTH_URL, OAUTH_CLIENT_ID } from '../lib/auth'
+import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 
 export function LoginPage() {
@@ -20,6 +20,12 @@ export function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // MFA state
+  const [mfaRequired, setMfaRequired] = useState(false)
+  const [mfaSession, setMfaSession] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
+  const mfaInputRef = useRef<HTMLInputElement>(null)
 
   // Check for login_session parameter on mount
   useEffect(() => {
@@ -73,29 +79,9 @@ export function LoginPage() {
     }
   }, [isAuthenticated, isLoading])
 
-  const { authProvider } = useAuth()
-
   const handleLogin = async () => {
     setError('')
-    if (authProvider === 'openidx') {
-      // Start OpenIDX OAuth PKCE flow
-      const codeVerifier = generateCodeVerifier()
-      sessionStorage.setItem('pkce_code_verifier', codeVerifier)
-      
-      const codeChallenge = await generateCodeChallenge(codeVerifier)
-      
-      const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
-      authUrl.searchParams.set('response_type', 'code')
-      authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
-      authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
-      authUrl.searchParams.set('scope', 'openid profile email')
-      authUrl.searchParams.set('code_challenge', codeChallenge)
-      authUrl.searchParams.set('code_challenge_method', 'S256')
-      
-      window.location.href = authUrl.toString()
-    } else {
-      login()
-    }
+    login()
   }
 
   const handleSSOLogin = (idp: IdentityProvider) => {
@@ -129,6 +115,16 @@ export function LoginPage() {
         return
       }
 
+      // Check if MFA is required
+      if (data.mfa_required) {
+        setMfaRequired(true)
+        setMfaSession(data.mfa_session)
+        setMfaCode('')
+        setError('')
+        setTimeout(() => mfaInputRef.current?.focus(), 100)
+        return
+      }
+
       // Redirect to the URL with the authorization code
       if (data.redirect_url) {
         window.location.href = data.redirect_url
@@ -141,11 +137,144 @@ export function LoginPage() {
     }
   }
 
+  const handleMFASubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setIsSubmitting(true)
+
+    try {
+      const response = await fetch(`${baseURL}/oauth/mfa-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mfa_session: mfaSession,
+          code: mfaCode,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error_description || 'Invalid verification code. Please try again.')
+        setMfaCode('')
+        mfaInputRef.current?.focus()
+        return
+      }
+
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url
+      }
+    } catch (err) {
+      setError('Unable to connect to the server. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleBackToOptions = () => {
     setLoginSession(null)
+    setMfaRequired(false)
+    setMfaSession('')
+    setMfaCode('')
     setUsername('')
     setPassword('')
     setError('')
+  }
+
+  // Show MFA verification form
+  if (mfaRequired && loginSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+                <KeyRound className="h-9 w-9 text-white" />
+              </div>
+            </div>
+            <div>
+              <CardTitle className="text-2xl font-bold">
+                Two-Factor Authentication
+              </CardTitle>
+              <CardDescription className="text-base mt-2">
+                Enter the 6-digit code from your authenticator app
+              </CardDescription>
+            </div>
+          </CardHeader>
+
+          <CardContent>
+            <form onSubmit={handleMFASubmit} className="space-y-4">
+              {error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                  <p className="text-sm text-red-600">{error}</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="mfa-code">Verification Code</Label>
+                <Input
+                  ref={mfaInputRef}
+                  id="mfa-code"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder="000000"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                  required
+                  autoFocus
+                  className="text-center text-2xl tracking-widest font-mono"
+                />
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                size="lg"
+                disabled={isSubmitting || mfaCode.length !== 6}
+              >
+                {isSubmitting ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Verifying...
+                  </span>
+                ) : (
+                  'Verify'
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={handleBackToOptions}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to login
+              </Button>
+            </form>
+          </CardContent>
+
+          <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-lg">
+            <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+              <span>Privacy</span>
+              <span>•</span>
+              <span>Terms</span>
+              <span>•</span>
+              <span>Help</span>
+            </div>
+          </div>
+        </Card>
+
+        <div className="absolute bottom-4 text-center w-full">
+          <p className="text-sm text-gray-500">
+            Powered by <span className="font-semibold text-gray-700">OpenIDX</span>
+          </p>
+        </div>
+      </div>
+    )
   }
 
   // Show login form when login_session is present
@@ -332,7 +461,7 @@ export function LoginPage() {
                       Signing in...
                     </span>
                   ) : (
-                    authProvider === 'openidx' ? 'Sign in with OpenIDX' : 'Sign in with Keycloak'
+                    'Sign in with OpenIDX'
                   )}
                 </Button>
 
@@ -347,7 +476,7 @@ export function LoginPage() {
 
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              Secured by {authProvider === 'openidx' ? 'OpenIDX' : 'Keycloak'} authentication
+              Secured by OpenIDX authentication
             </p>
           </div>
         </CardContent>

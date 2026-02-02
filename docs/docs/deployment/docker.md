@@ -34,7 +34,7 @@ This starts:
 - **Keycloak 23** — port 8180
 - **APISIX 3.8** — ports 8088 (HTTP), 8443 (HTTPS)
 - **etcd 3.5** — internal only
-- **OPA 0.61** — port 8181
+- **OPA 0.61** — port 8281
 - **Prometheus** — port 9090
 - **Grafana** — port 3001
 

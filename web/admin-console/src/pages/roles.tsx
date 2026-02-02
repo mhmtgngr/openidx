@@ -70,11 +70,12 @@ export function RolesPage() {
 
   // Fetch roles
   const { data: roles, isLoading } = useQuery({
-    queryKey: ['roles', page],
+    queryKey: ['roles', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const result = await api.getWithHeaders<Role[]>(`/api/v1/identity/roles?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -241,12 +242,8 @@ export function RolesPage() {
     }))
   }
 
-  // Filter roles by search
-  const filteredRoles = roles?.filter(role =>
-    search === '' ||
-    role.name.toLowerCase().includes(search.toLowerCase()) ||
-    role.description?.toLowerCase().includes(search.toLowerCase())
-  ) || []
+  // Roles are filtered server-side via search param
+  const filteredRoles = roles || []
 
   return (
     <div className="space-y-6">

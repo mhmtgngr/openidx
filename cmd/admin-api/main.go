@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,10 +16,18 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/admin"
+	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/opa"
+	"github.com/openidx/openidx/internal/directory"
+	"github.com/openidx/openidx/internal/email"
+	"github.com/openidx/openidx/internal/notifications"
+	"github.com/openidx/openidx/internal/organization"
+	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -78,8 +87,12 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
-	router.Use(middleware.CORS())
+	if cfg.EnableRateLimit {
+		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+	}
+	router.Use(middleware.CORS("http://localhost:3000", "http://localhost:5173"))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.PrometheusMetrics("admin-api"))
 
@@ -96,23 +109,75 @@ func main() {
 	})
 
 	router.GET("/ready", func(c *gin.Context) {
+		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
 		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
+			status["status"] = "not ready"
+			status["postgres"] = err.Error()
+			c.JSON(http.StatusServiceUnavailable, status)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+		if err := redis.Ping(); err != nil {
+			status["redis"] = "unhealthy"
+		}
+		c.JSON(http.StatusOK, status)
 	})
+
+	// Initialize directory service
+	dirService := directory.NewService(db, log)
+	if err := dirService.Start(context.Background()); err != nil {
+		log.Error("Directory service failed to start", zap.Error(err))
+	}
+	defer dirService.Stop()
+
+	// Initialize risk service (conditional access)
+	riskService := risk.NewService(db, redis, log)
+
+	// Initialize email service
+	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
+
+	// Initialize API key service
+	apiKeyService := apikeys.NewService(db, redis, log)
+
+	// Initialize webhook service
+	webhookService := webhooks.NewService(db, redis, log)
+
+	// Start background workers
+	ctx, cancelWorkers := context.WithCancel(context.Background())
+	go emailService.ProcessQueue(ctx)
+	go webhookService.ProcessDeliveries(ctx)
+	go webhookService.ProcessRetries(ctx)
+	defer cancelWorkers()
 
 	// Initialize admin service
 	adminService := admin.NewService(db, redis, cfg, log)
+	adminService.SetDirectoryService(&directorySyncAdapter{dirService: dirService})
+	adminService.SetRiskService(&riskServiceAdapter{riskService: riskService})
+	adminService.SetAPIKeyService(&apiKeyAdapter{svc: apiKeyService})
+	adminService.SetWebhookService(&webhookAdapter{svc: webhookService})
+	adminService.SetSecurityService(&securityAdapter{riskService: riskService})
+
+	// Initialize organization service
+	orgService := organization.NewService(db, redis, cfg, log)
+
+	// Initialize notification service
+	notifService := notifications.NewService(db, log)
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	if cfg.Environment != "development" {
-		v1.Use(middleware.Auth(cfg.KeycloakURL, cfg.KeycloakRealm))
+		v1.Use(middleware.Auth(cfg.OAuthJWKSURL))
 	}
+
+	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)
+	if cfg.EnableOPAAuthz {
+		opaClient := opa.NewClient(cfg.OPAURL, log)
+		v1.Use(middleware.OPAAuthz(opaClient, log, cfg.IsDevelopment()))
+	}
+
 	{
 		admin.RegisterRoutes(v1, adminService)
+		organization.RegisterRoutes(v1, orgService)
+		notifications.RegisterRoutes(v1, notifService)
 	}
 
 	server := &http.Server{
@@ -144,4 +209,161 @@ func main() {
 	}
 
 	log.Info("Server exited")
+}
+
+// directorySyncAdapter adapts directory.Service to admin.DirectorySyncer interface
+type directorySyncAdapter struct {
+	dirService *directory.Service
+}
+
+func (a *directorySyncAdapter) TestConnection(ctx context.Context, cfg interface{}) error {
+	// Convert interface{} config to directory.LDAPConfig
+	cfgBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	var ldapCfg directory.LDAPConfig
+	if err := json.Unmarshal(cfgBytes, &ldapCfg); err != nil {
+		return fmt.Errorf("invalid LDAP config: %w", err)
+	}
+	return a.dirService.TestConnection(ctx, ldapCfg)
+}
+
+func (a *directorySyncAdapter) TriggerSync(ctx context.Context, directoryID string, fullSync bool) error {
+	return a.dirService.TriggerSync(ctx, directoryID, fullSync)
+}
+
+func (a *directorySyncAdapter) GetSyncLogs(ctx context.Context, directoryID string, limit int) (interface{}, error) {
+	return a.dirService.GetSyncLogs(ctx, directoryID, limit)
+}
+
+func (a *directorySyncAdapter) GetSyncState(ctx context.Context, directoryID string) (interface{}, error) {
+	return a.dirService.GetSyncState(ctx, directoryID)
+}
+
+// riskServiceAdapter adapts risk.Service to admin.RiskAssessor interface
+type riskServiceAdapter struct {
+	riskService *risk.Service
+}
+
+func (a *riskServiceAdapter) GetAllDevices(ctx context.Context, limit, offset int) (interface{}, int, error) {
+	return a.riskService.GetAllDevices(ctx, limit, offset)
+}
+
+func (a *riskServiceAdapter) GetUserDevices(ctx context.Context, userID string) (interface{}, error) {
+	return a.riskService.GetUserDevices(ctx, userID)
+}
+
+func (a *riskServiceAdapter) TrustDevice(ctx context.Context, deviceID string) error {
+	return a.riskService.TrustDevice(ctx, deviceID)
+}
+
+func (a *riskServiceAdapter) RevokeDevice(ctx context.Context, deviceID string) error {
+	return a.riskService.RevokeDevice(ctx, deviceID)
+}
+
+func (a *riskServiceAdapter) GetRiskStats(ctx context.Context) (map[string]interface{}, error) {
+	return a.riskService.GetRiskStats(ctx)
+}
+
+func (a *riskServiceAdapter) GetLoginHistory(ctx context.Context, userID string, limit int) (interface{}, error) {
+	return a.riskService.GetLoginHistory(ctx, userID, limit)
+}
+
+// apiKeyAdapter adapts apikeys.Service to admin.APIKeyManager interface
+type apiKeyAdapter struct {
+	svc *apikeys.Service
+}
+
+func (a *apiKeyAdapter) CreateServiceAccount(ctx context.Context, name, description, ownerID string) (interface{}, error) {
+	return a.svc.CreateServiceAccount(ctx, name, description, ownerID)
+}
+
+func (a *apiKeyAdapter) ListServiceAccounts(ctx context.Context, limit, offset int) (interface{}, int, error) {
+	accounts, total, err := a.svc.ListServiceAccounts(ctx, limit, offset)
+	return accounts, total, err
+}
+
+func (a *apiKeyAdapter) GetServiceAccount(ctx context.Context, id string) (interface{}, error) {
+	return a.svc.GetServiceAccount(ctx, id)
+}
+
+func (a *apiKeyAdapter) DeleteServiceAccount(ctx context.Context, id string) error {
+	return a.svc.DeleteServiceAccount(ctx, id)
+}
+
+func (a *apiKeyAdapter) CreateAPIKey(ctx context.Context, name string, userID, serviceAccountID *string, scopes []string, expiresAt *time.Time) (string, interface{}, error) {
+	return a.svc.CreateAPIKey(ctx, name, userID, serviceAccountID, scopes, expiresAt)
+}
+
+func (a *apiKeyAdapter) ListAPIKeys(ctx context.Context, ownerID string, ownerType string) (interface{}, error) {
+	return a.svc.ListAPIKeys(ctx, ownerID, ownerType)
+}
+
+func (a *apiKeyAdapter) RevokeAPIKey(ctx context.Context, keyID string) error {
+	return a.svc.RevokeAPIKey(ctx, keyID)
+}
+
+// webhookAdapter adapts webhooks.Service to admin.WebhookManager interface
+type webhookAdapter struct {
+	svc *webhooks.Service
+}
+
+func (a *webhookAdapter) CreateSubscription(ctx context.Context, name, url, secret string, events []string, createdBy string) (interface{}, error) {
+	return a.svc.CreateSubscription(ctx, name, url, secret, events, createdBy)
+}
+
+func (a *webhookAdapter) ListSubscriptions(ctx context.Context) (interface{}, error) {
+	return a.svc.ListSubscriptions(ctx)
+}
+
+func (a *webhookAdapter) GetSubscription(ctx context.Context, id string) (interface{}, error) {
+	return a.svc.GetSubscription(ctx, id)
+}
+
+func (a *webhookAdapter) DeleteSubscription(ctx context.Context, id string) error {
+	return a.svc.DeleteSubscription(ctx, id)
+}
+
+func (a *webhookAdapter) GetDeliveryHistory(ctx context.Context, subscriptionID string, limit int) (interface{}, error) {
+	return a.svc.GetDeliveryHistory(ctx, subscriptionID, limit)
+}
+
+func (a *webhookAdapter) RetryDelivery(ctx context.Context, deliveryID string) error {
+	return a.svc.RetryDelivery(ctx, deliveryID)
+}
+
+func (a *webhookAdapter) Publish(ctx context.Context, eventType string, payload interface{}) error {
+	return a.svc.Publish(ctx, eventType, payload)
+}
+
+// securityAdapter adapts risk.Service to admin.SecurityService interface
+type securityAdapter struct {
+	riskService *risk.Service
+}
+
+func (a *securityAdapter) ListSecurityAlerts(ctx context.Context, status, severity, alertType string, limit, offset int) (interface{}, int, error) {
+	alerts, total, err := a.riskService.ListSecurityAlerts(ctx, status, severity, alertType, limit, offset)
+	return alerts, total, err
+}
+
+func (a *securityAdapter) GetSecurityAlert(ctx context.Context, id string) (interface{}, error) {
+	return a.riskService.GetSecurityAlert(ctx, id)
+}
+
+func (a *securityAdapter) UpdateAlertStatus(ctx context.Context, id, status, resolvedBy string) error {
+	return a.riskService.UpdateAlertStatus(ctx, id, status, resolvedBy)
+}
+
+func (a *securityAdapter) ListIPThreats(ctx context.Context, limit, offset int) (interface{}, int, error) {
+	entries, total, err := a.riskService.ListIPThreats(ctx, limit, offset)
+	return entries, total, err
+}
+
+func (a *securityAdapter) AddToThreatList(ctx context.Context, ip, threatType, reason string, permanent bool, blockedUntil *time.Time) error {
+	return a.riskService.AddToThreatList(ctx, ip, threatType, reason, permanent, blockedUntil)
+}
+
+func (a *securityAdapter) RemoveFromThreatList(ctx context.Context, id string) error {
+	return a.riskService.RemoveFromThreatList(ctx, id)
 }

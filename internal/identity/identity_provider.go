@@ -49,7 +49,7 @@ type IdentityProvider struct {
 	ProviderType ProviderType `json:"provider_type" db:"provider_type"`
 	IssuerURL    string       `json:"issuer_url" db:"issuer_url"`
 	ClientID     string       `json:"client_id" db:"client_id"`
-	ClientSecret string       `json:"client_secret" db:"client_secret"`
+	ClientSecret string       `json:"-" db:"client_secret"`
 	Scopes       Scopes       `json:"scopes" db:"scopes"`
 	Enabled      bool         `json:"enabled" db:"enabled"`
 	CreatedAt    time.Time    `json:"created_at" db:"created_at"`

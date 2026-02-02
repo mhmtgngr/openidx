@@ -18,7 +18,13 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/directory"
+	"github.com/openidx/openidx/internal/email"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/notifications"
+	"github.com/openidx/openidx/internal/portal"
+	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -66,17 +72,56 @@ func main() {
 	// Initialize router
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
+	if cfg.EnableRateLimit {
+		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+	}
 	router.Use(middleware.PrometheusMetrics("identity-service"))
 
 	// Metrics endpoint
 	router.GET("/metrics", middleware.MetricsHandler())
 
+	// Initialize directory service for LDAP sync
+	dirService := directory.NewService(db, log)
+	if err := dirService.Start(context.Background()); err != nil {
+		log.Error("Directory service failed to start", zap.Error(err))
+	}
+	defer dirService.Stop()
+
+	// Initialize email service
+	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
+
+	// Initialize webhook service
+	webhookService := webhooks.NewService(db, redis, log)
+
+	// Initialize risk/anomaly service
+	riskService := risk.NewService(db, redis, log)
+
+	// Start background workers
+	ctx, cancelWorkers := context.WithCancel(context.Background())
+	go emailService.ProcessQueue(ctx)
+	go webhookService.ProcessDeliveries(ctx)
+	go webhookService.ProcessRetries(ctx)
+	defer cancelWorkers()
+
 	// Initialize identity service
 	identityService := identity.NewService(db, redis, cfg, log)
+	identityService.SetDirectoryService(dirService)
+	identityService.SetEmailService(emailService)
+	identityService.SetWebhookService(webhookService)
+	identityService.SetAnomalyDetector(&anomalyDetectorAdapter{riskService: riskService})
+
+	// Initialize portal service
+	portalService := portal.NewService(db, log)
+
+	// Initialize notification service
+	notifService := notifications.NewService(db, log)
 
 	// Register routes
 	identity.RegisterRoutes(router, identityService)
+	portal.RegisterRoutes(router.Group("/api/v1/identity"), portalService)
+	notifications.RegisterRoutes(router.Group("/api/v1/identity"), notifService)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -89,11 +134,17 @@ func main() {
 
 	// Readiness check endpoint
 	router.GET("/ready", func(c *gin.Context) {
+		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
 		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
+			status["status"] = "not ready"
+			status["postgres"] = err.Error()
+			c.JSON(http.StatusServiceUnavailable, status)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+		if err := redis.Ping(); err != nil {
+			status["redis"] = "unhealthy"
+		}
+		c.JSON(http.StatusOK, status)
 	})
 
 	// Create HTTP server
@@ -129,4 +180,17 @@ func main() {
 	}
 
 	log.Info("Server exited")
+}
+
+// anomalyDetectorAdapter adapts risk.Service to identity.AnomalyDetector interface
+type anomalyDetectorAdapter struct {
+	riskService *risk.Service
+}
+
+func (a *anomalyDetectorAdapter) RunAnomalyCheck(ctx context.Context, userID, ip, userAgent string, lat, lon float64) interface{} {
+	return a.riskService.RunAnomalyCheck(ctx, userID, ip, userAgent, lat, lon)
+}
+
+func (a *anomalyDetectorAdapter) CheckIPThreatList(ctx context.Context, ip string) (bool, string) {
+	return a.riskService.CheckIPThreatList(ctx, ip)
 }

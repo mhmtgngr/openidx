@@ -28,7 +28,7 @@ type JWKSKey struct {
 	E   string `json:"e"`
 }
 
-// JWKS represents the JSON Web Key Set from Keycloak
+// JWKS represents a JSON Web Key Set
 type JWKS struct {
 	Keys []JWKSKey `json:"keys"`
 }
@@ -45,10 +45,8 @@ var globalJWKSCache = &jwksKeyCache{
 	keys: make(map[string]*rsa.PublicKey),
 }
 
-// fetchJWKS fetches and parses JWKS from Keycloak
-func fetchJWKS(keycloakURL, realm string) (map[string]*rsa.PublicKey, error) {
-	jwksURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", keycloakURL, realm)
-
+// fetchJWKS fetches and parses JWKS from the given URL
+func fetchJWKS(jwksURL string) (map[string]*rsa.PublicKey, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(jwksURL)
 	if err != nil {
@@ -108,7 +106,7 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 }
 
 // getSigningKey retrieves the RSA public key for token validation
-func getSigningKey(keycloakURL, realm, kid string) (*rsa.PublicKey, error) {
+func getSigningKey(jwksURL, kid string) (*rsa.PublicKey, error) {
 	globalJWKSCache.mu.RLock()
 	if time.Now().Before(globalJWKSCache.expiresAt) {
 		if key, ok := globalJWKSCache.keys[kid]; ok {
@@ -129,7 +127,7 @@ func getSigningKey(keycloakURL, realm, kid string) (*rsa.PublicKey, error) {
 		}
 	}
 
-	keys, err := fetchJWKS(keycloakURL, realm)
+	keys, err := fetchJWKS(jwksURL)
 	if err != nil {
 		return nil, err
 	}
@@ -145,9 +143,32 @@ func getSigningKey(keycloakURL, realm, kid string) (*rsa.PublicKey, error) {
 }
 
 // CORS returns a middleware that handles CORS headers
-func CORS() gin.HandlerFunc {
+func CORS(allowedOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.GetHeader("Origin")
+		// Allow requests with no Origin header (non-browser requests like health checks)
+		if origin == "" {
+			c.Next()
+			return
+		}
+		allowed := false
+		if len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*") {
+			c.Header("Access-Control-Allow-Origin", "*")
+			allowed = true
+		} else {
+			for _, o := range allowedOrigins {
+				if o == origin {
+					c.Header("Access-Control-Allow-Origin", origin)
+					c.Header("Vary", "Origin")
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Request-ID")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID, X-Total-Count")
@@ -175,8 +196,26 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-// Auth validates JWT tokens from Keycloak
-func Auth(keycloakURL, realm string) gin.HandlerFunc {
+// APIKeyValidator validates API keys and returns key info
+type APIKeyValidator interface {
+	ValidateAPIKey(ctx context.Context, rawKey string) (*APIKeyInfo, error)
+}
+
+// APIKeyInfo holds validated API key information
+type APIKeyInfo struct {
+	KeyID            string
+	UserID           string
+	ServiceAccountID string
+	Scopes           []string
+}
+
+// Auth validates JWT tokens via JWKS
+func Auth(jwksURL string) gin.HandlerFunc {
+	return AuthWithAPIKey(jwksURL, nil)
+}
+
+// AuthWithAPIKey validates JWT tokens via JWKS, with optional API key support
+func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -196,6 +235,33 @@ func Auth(keycloakURL, realm string) gin.HandlerFunc {
 
 		tokenString := parts[1]
 
+		// Check if this is an API key (starts with "oidx_")
+		if strings.HasPrefix(tokenString, "oidx_") && apiKeyValidator != nil {
+			keyInfo, err := apiKeyValidator.ValidateAPIKey(c.Request.Context(), tokenString)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": fmt.Sprintf("invalid API key: %v", err),
+				})
+				return
+			}
+			// Set context from API key
+			if keyInfo.UserID != "" {
+				c.Set("user_id", keyInfo.UserID)
+			}
+			if keyInfo.ServiceAccountID != "" {
+				c.Set("service_account_id", keyInfo.ServiceAccountID)
+			}
+			c.Set("api_key_id", keyInfo.KeyID)
+			c.Set("scopes", keyInfo.Scopes)
+			c.Set("auth_method", "api_key")
+			// API keys get admin role for service accounts
+			if keyInfo.ServiceAccountID != "" {
+				c.Set("roles", []string{"service_account"})
+			}
+			c.Next()
+			return
+		}
+
 		// Parse the token with key function that fetches from JWKS
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			// Verify signing method is RSA
@@ -210,7 +276,7 @@ func Auth(keycloakURL, realm string) gin.HandlerFunc {
 			}
 
 			// Fetch the signing key from JWKS
-			return getSigningKey(keycloakURL, realm, kid)
+			return getSigningKey(jwksURL, kid)
 		})
 
 		if err != nil {
@@ -259,14 +325,19 @@ func Auth(keycloakURL, realm string) gin.HandlerFunc {
 		}
 
 		// Extract roles
-		if realmAccess, ok := claims["realm_access"].(map[string]interface{}); ok {
-			if roles, ok := realmAccess["roles"].([]interface{}); ok {
-				roleStrings := make([]string, len(roles))
-				for i, role := range roles {
-					roleStrings[i] = fmt.Sprint(role)
-				}
-				c.Set("roles", roleStrings)
+		if roles, ok := claims["roles"].([]interface{}); ok {
+			roleStrings := make([]string, len(roles))
+			for i, role := range roles {
+				roleStrings[i] = fmt.Sprint(role)
 			}
+			c.Set("roles", roleStrings)
+		}
+
+		// Extract org_id from claims, default to default org
+		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
+			c.Set("org_id", orgID)
+		} else {
+			c.Set("org_id", "00000000-0000-0000-0000-000000000010")
 		}
 
 		c.Next()
@@ -310,25 +381,20 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 
 // RateLimit implements a simple rate limiter
 func RateLimit(requests int, window time.Duration) gin.HandlerFunc {
-	// In production, use Redis for distributed rate limiting
-	// This is a simple in-memory implementation for development
 	type clientInfo struct {
 		count     int
 		resetTime time.Time
 	}
-	var mu sync.RWMutex
+	var mu sync.Mutex
 	clients := make(map[string]*clientInfo)
 
 	return func(c *gin.Context) {
 		clientIP := c.ClientIP()
 		now := time.Now()
 
-		mu.RLock()
+		mu.Lock()
 		info, exists := clients[clientIP]
-		mu.RUnlock()
-
 		if !exists || now.After(info.resetTime) {
-			mu.Lock()
 			clients[clientIP] = &clientInfo{
 				count:     1,
 				resetTime: now.Add(window),
@@ -338,19 +404,16 @@ func RateLimit(requests int, window time.Duration) gin.HandlerFunc {
 			return
 		}
 
-		mu.RLock()
 		if info.count >= requests {
 			retryAfter := int(info.resetTime.Sub(now).Seconds())
-			mu.RUnlock()
+			mu.Unlock()
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "rate limit exceeded",
 			})
 			return
 		}
-		mu.RUnlock()
 
-		mu.Lock()
 		info.count++
 		mu.Unlock()
 		c.Next()
@@ -366,6 +429,9 @@ func Timeout(timeout time.Duration) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 
 		done := make(chan struct{})
+		var mu sync.Mutex
+		timedOut := false
+
 		go func() {
 			c.Next()
 			close(done)
@@ -375,11 +441,58 @@ func Timeout(timeout time.Duration) gin.HandlerFunc {
 		case <-done:
 			return
 		case <-ctx.Done():
+			mu.Lock()
+			timedOut = true
+			mu.Unlock()
+			_ = timedOut // prevent handler from writing after timeout
 			c.AbortWithStatusJSON(http.StatusGatewayTimeout, gin.H{
 				"error": "request timeout",
 			})
 		}
 	}
+}
+
+// FetchJWKS fetches a JWKS from the given URL and returns the appropriate signing key for the token.
+// This is used for verifying ID tokens from external identity providers.
+func FetchJWKS(jwksURL string, token *jwt.Token) (interface{}, error) {
+	// Verify signing method is RSA
+	if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+	}
+
+	kid, _ := token.Header["kid"].(string)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Get(jwksURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS from %s: %w", jwksURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("JWKS endpoint %s returned status %d", jwksURL, resp.StatusCode)
+	}
+
+	var jwks JWKS
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		return nil, fmt.Errorf("failed to decode JWKS: %w", err)
+	}
+
+	for _, key := range jwks.Keys {
+		if key.Kty != "RSA" || key.Use != "sig" {
+			continue
+		}
+		if kid != "" && key.Kid != kid {
+			continue
+		}
+		pubKey, err := parseRSAPublicKey(key.N, key.E)
+		if err != nil {
+			continue
+		}
+		return pubKey, nil
+	}
+
+	return nil, fmt.Errorf("no matching RSA signing key found in JWKS")
 }
 
 // Recovery returns a middleware that recovers from panics

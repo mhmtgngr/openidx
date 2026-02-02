@@ -1,19 +1,19 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Badge } from '@/components/ui/badge'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
-import { useToast } from '@/hooks/use-toast'
-import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '@/lib/api'
-import { LoadingSpinner } from '@/components/ui/loading-spinner'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Label } from '../components/ui/label'
+import { Switch } from '../components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Badge } from '../components/ui/badge'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '../components/ui/alert-dialog'
+import { useToast } from '../hooks/use-toast'
+import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/api'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { Shield, User, Key, Smartphone, Mail, Monitor } from 'lucide-react'
 import QRCode from 'qrcode.react'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '../lib/auth'
 
 interface MFASetup extends MFASetupResponse {
   backupCodes: string[]
@@ -37,6 +37,10 @@ export function UserProfilePage() {
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [mfaSetup, setMfaSetup] = useState<MFASetup | null>(null)
   const [showBackupCodes, setShowBackupCodes] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const { user } = useAuth()
@@ -332,22 +336,20 @@ export function UserProfilePage() {
                         maxLength={6}
                         pattern="\d*"
                         inputMode="numeric"
+                        value={mfaCode}
+                        onChange={(e) => setMfaCode(e.target.value)}
                         className="text-center text-2xl tracking-widest"
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            const code = (e.target as HTMLInputElement).value
-                            if (code.length === 6) {
-                              enableMFAMutation.mutate(code)
-                            }
+                          if (e.key === 'Enter' && mfaCode.length === 6) {
+                            enableMFAMutation.mutate(mfaCode)
                           }
                         }}
                       />
                     </div>
                     <Button
                       onClick={() => {
-                        const code = (document.getElementById('mfa-code') as HTMLInputElement).value
-                        if (code.length === 6) {
-                          enableMFAMutation.mutate(code)
+                        if (mfaCode.length === 6) {
+                          enableMFAMutation.mutate(mfaCode)
                         } else {
                           toast({
                             title: 'Invalid Code',
@@ -403,23 +405,34 @@ export function UserProfilePage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password</Label>
-                <Input id="current-password" type="password" />
+                <Input
+                  id="current-password"
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="new-password">New Password</Label>
-                <Input id="new-password" type="password" />
+                <Input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="confirm-password">Confirm New Password</Label>
-                <Input id="confirm-password" type="password" />
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
               </div>
               <Button
                 onClick={() => {
-                  const current = (document.getElementById('current-password') as HTMLInputElement).value
-                  const newPass = (document.getElementById('new-password') as HTMLInputElement).value
-                  const confirm = (document.getElementById('confirm-password') as HTMLInputElement).value
-
-                  if (newPass !== confirm) {
+                  if (newPassword !== confirmPassword) {
                     toast({
                       title: 'Error',
                       description: 'Passwords do not match',
@@ -428,7 +441,16 @@ export function UserProfilePage() {
                     return
                   }
 
-                  changePasswordMutation.mutate({ currentPassword: current, newPassword: newPass })
+                  changePasswordMutation.mutate(
+                    { currentPassword, newPassword },
+                    {
+                      onSuccess: () => {
+                        setCurrentPassword('')
+                        setNewPassword('')
+                        setConfirmPassword('')
+                      },
+                    }
+                  )
                 }}
                 disabled={changePasswordMutation.isPending}
               >

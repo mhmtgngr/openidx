@@ -54,7 +54,6 @@ const (
 	ErrConstraintViolation ErrorCode = "CONSTRAINT_VIOLATION"
 
 	// External service errors
-	ErrKeycloakError ErrorCode = "KEYCLOAK_ERROR"
 	ErrRedisError    ErrorCode = "REDIS_ERROR"
 	ErrElasticsearchError ErrorCode = "ELASTICSEARCH_ERROR"
 )

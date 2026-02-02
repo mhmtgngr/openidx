@@ -129,7 +129,7 @@ docker-compose ps
 | PostgreSQL | localhost:5432 | openidx/openidx_secret |
 | Redis | localhost:6379 | redis_secret |
 | Elasticsearch | http://localhost:9200 | - |
-| OPA | http://localhost:8181 | - |
+| OPA | http://localhost:8281 | - |
 
 ### Stop Everything
 

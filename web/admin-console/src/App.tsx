@@ -13,11 +13,26 @@ import { ReviewDetailPage } from './pages/review-detail'
 import { PoliciesPage } from './pages/policies'
 import { AuditLogsPage } from './pages/audit-logs'
 import { ComplianceReportsPage } from './pages/compliance-reports'
+import { DirectoriesPage } from './pages/directories'
 import { IdentityProvidersPage } from './pages/identity-providers'
 import { ProvisioningRulesPage } from './pages/provisioning-rules'
+import { DevicesPage } from './pages/devices'
+import { ServiceAccountsPage } from './pages/service-accounts'
+import { WebhooksPage } from './pages/webhooks'
+import { AccessRequestsPage } from './pages/access-requests'
+import { SecurityAlertsPage } from './pages/security-alerts'
+import { SessionsAdminPage } from './pages/sessions-admin'
+import { ApprovalPoliciesPage } from './pages/approval-policies'
+import { ProxyRoutesPage } from './pages/proxy-routes'
+import { ZitiNetworkPage } from './pages/ziti-network'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
+import { OrganizationsPage } from './pages/organizations'
+import { ReportsPage } from './pages/reports'
+import { AppLauncherPage } from './pages/app-launcher'
+import { MyAccessPage } from './pages/my-access'
+import { NotificationPreferencesPage } from './pages/notification-preferences'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -125,6 +140,44 @@ export default function App() {
               <ComplianceReportsPage />
             </AdminRoute>
           } />
+          <Route path="directories" element={
+            <AdminRoute>
+              <DirectoriesPage />
+            </AdminRoute>
+          } />
+          <Route path="devices" element={
+            <AdminRoute>
+              <DevicesPage />
+            </AdminRoute>
+          } />
+          <Route path="service-accounts" element={
+            <AdminRoute>
+              <ServiceAccountsPage />
+            </AdminRoute>
+          } />
+          <Route path="webhooks" element={
+            <AdminRoute>
+              <WebhooksPage />
+            </AdminRoute>
+          } />
+          <Route path="access-requests" element={
+            <AccessRequestsPage />
+          } />
+          <Route path="approval-policies" element={
+            <AdminRoute>
+              <ApprovalPoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="security-alerts" element={
+            <AdminRoute>
+              <SecurityAlertsPage />
+            </AdminRoute>
+          } />
+          <Route path="sessions" element={
+            <AdminRoute>
+              <SessionsAdminPage />
+            </AdminRoute>
+          } />
           <Route path="identity-providers" element={
             <AdminRoute>
               <IdentityProvidersPage />
@@ -135,10 +188,39 @@ export default function App() {
               <ProvisioningRulesPage />
             </AdminRoute>
           } />
+          <Route path="proxy-routes" element={
+            <AdminRoute>
+              <ProxyRoutesPage />
+            </AdminRoute>
+          } />
+          <Route path="ziti-network" element={
+            <AdminRoute>
+              <ZitiNetworkPage />
+            </AdminRoute>
+          } />
           <Route path="settings" element={
             <AdminRoute>
               <SettingsPage />
             </AdminRoute>
+          } />
+          <Route path="organizations" element={
+            <AdminRoute>
+              <OrganizationsPage />
+            </AdminRoute>
+          } />
+          <Route path="reports" element={
+            <AdminRoute>
+              <ReportsPage />
+            </AdminRoute>
+          } />
+          <Route path="app-launcher" element={
+            <AppLauncherPage />
+          } />
+          <Route path="my-access" element={
+            <MyAccessPage />
+          } />
+          <Route path="notification-preferences" element={
+            <NotificationPreferencesPage />
           } />
         </Route>
 

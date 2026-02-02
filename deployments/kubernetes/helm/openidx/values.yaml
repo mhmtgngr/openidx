@@ -34,7 +34,7 @@ global:
 # ----- Service URLs (ConfigMap) -----
 config:
   keycloakUrl: "http://keycloak:8180"
-  opaUrl: "http://opa:8181"
+  opaUrl: "http://opa:8281"
   elasticsearchUrl: "http://elasticsearch:9200"
   oauthIssuer: "https://auth.openidx.io"
   oauthJwksUrl: "http://oauth-service:8006/.well-known/jwks.json"

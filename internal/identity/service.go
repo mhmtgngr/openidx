@@ -57,6 +57,10 @@ type User struct {
 	FailedLoginCount     int        `json:"failed_login_count"`
 	LastFailedLoginAt    *time.Time `json:"last_failed_login_at,omitempty"`
 	LockedUntil          *time.Time `json:"locked_until,omitempty"`
+	// Directory sync fields
+	Source               *string    `json:"source,omitempty"`
+	DirectoryID          *string    `json:"directory_id,omitempty"`
+	LdapDN               *string    `json:"ldap_dn,omitempty"`
 }
 
 // Session represents an active user session
@@ -152,6 +156,11 @@ type Role struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// DirectoryAuthenticator is an interface for LDAP auth pass-through
+type DirectoryAuthenticator interface {
+	AuthenticateUser(ctx context.Context, directoryID, username, password string) error
+}
+
 // Service provides identity management operations
 type Service struct {
 	db                *database.PostgresDB
@@ -160,6 +169,10 @@ type Service struct {
 	logger            *zap.Logger
 	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
 	pushMFASessions   sync.Map // In-memory storage for Push MFA challenges (use Redis in production)
+	directoryService  DirectoryAuthenticator
+	emailService      EmailSender
+	webhookService    WebhookPublisher
+	anomalyDetector   AnomalyDetector
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -175,6 +188,45 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cfg:    cfg,
 		logger: logger.With(zap.String("service", "identity")),
 	}
+}
+
+// SetDirectoryService sets the directory service for LDAP auth pass-through
+func (s *Service) SetDirectoryService(ds DirectoryAuthenticator) {
+	s.directoryService = ds
+}
+
+// EmailSender defines the interface for sending emails
+type EmailSender interface {
+	SendVerificationEmail(ctx context.Context, to, userName, token, baseURL string) error
+	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
+	SendPasswordResetEmail(ctx context.Context, to, userName, token, baseURL string) error
+	SendWelcomeEmail(ctx context.Context, to, userName string) error
+}
+
+// WebhookPublisher defines the interface for publishing webhook events
+type WebhookPublisher interface {
+	Publish(ctx context.Context, eventType string, payload interface{}) error
+}
+
+// AnomalyDetector defines the interface for anomaly detection during login
+type AnomalyDetector interface {
+	RunAnomalyCheck(ctx context.Context, userID, ip, userAgent string, lat, lon float64) interface{}
+	CheckIPThreatList(ctx context.Context, ip string) (bool, string)
+}
+
+// SetEmailService sets the email service
+func (s *Service) SetEmailService(es EmailSender) {
+	s.emailService = es
+}
+
+// SetWebhookService sets the webhook service
+func (s *Service) SetWebhookService(ws WebhookPublisher) {
+	s.webhookService = ws
+}
+
+// SetAnomalyDetector sets the anomaly detection service
+func (s *Service) SetAnomalyDetector(ad AnomalyDetector) {
+	s.anomalyDetector = ad
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
@@ -386,7 +438,7 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	// Query from Keycloak or local cache
+	// Query from database
 	var user User
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
@@ -407,23 +459,56 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 }
 
 // ListUsers retrieves users with pagination
-func (s *Service) ListUsers(ctx context.Context, offset, limit int) ([]User, int, error) {
+func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...string) ([]User, int, error) {
 	s.logger.Debug("Listing users", zap.Int("offset", offset), zap.Int("limit", limit))
 
-	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
-	if err != nil {
-		return nil, 0, err
+	searchQuery := ""
+	if len(search) > 0 {
+		searchQuery = search[0]
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users
-		ORDER BY created_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+	var total int
+	if searchQuery != "" {
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
+		searchPattern := "%" + escaped + "%"
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM users
+			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
+		`, searchPattern).Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
+	var err error
+	if searchQuery != "" {
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
+		searchPattern := "%" + escaped + "%"
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			       created_at, updated_at, last_login_at, password_changed_at,
+			       password_must_change, failed_login_count, last_failed_login_at, locked_until
+			FROM users
+			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
+			ORDER BY created_at DESC
+			OFFSET $2 LIMIT $3
+		`, searchPattern, offset, limit)
+	} else {
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT id, username, email, first_name, last_name, enabled, email_verified,
+			       created_at, updated_at, last_login_at, password_changed_at,
+			       password_must_change, failed_login_count, last_failed_login_at, locked_until
+			FROM users
+			ORDER BY created_at DESC
+			OFFSET $1 LIMIT $2
+		`, offset, limit)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -472,26 +557,37 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 // UpdateUser updates an existing user
 func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
-	
+
 	user.UpdatedAt = time.Now()
-	
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE users 
+
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
 		WHERE id = $1
 	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
 		user.Enabled, user.EmailVerified, user.UpdatedAt)
-	
-	return err
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // DeleteUser deletes a user
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting user", zap.String("user_id", userID))
-	
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	return err
+
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // CreateIdentityProvider creates a new identity provider
@@ -627,22 +723,49 @@ func (s *Service) TerminateSession(ctx context.Context, sessionID string) error 
 }
 
 // ListGroups retrieves groups with pagination
-func (s *Service) ListGroups(ctx context.Context, offset, limit int) ([]Group, int, error) {
+func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...string) ([]Group, int, error) {
 	s.logger.Debug("Listing groups", zap.Int("offset", offset), zap.Int("limit", limit))
 
-	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
-	if err != nil {
-		return nil, 0, err
+	searchQuery := ""
+	if len(search) > 0 {
+		searchQuery = search[0]
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
-		FROM groups g
-		ORDER BY g.name
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+	var total int
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE name ILIKE $1 OR description ILIKE $1", searchPattern).Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
+	var err error
+	if searchQuery != "" {
+		searchPattern := "%" + searchQuery + "%"
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			FROM groups g
+			WHERE g.name ILIKE $1 OR g.description ILIKE $1
+			ORDER BY g.name
+			OFFSET $2 LIMIT $3
+		`, searchPattern, offset, limit)
+	} else {
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			FROM groups g
+			ORDER BY g.name
+			OFFSET $1 LIMIT $2
+		`, offset, limit)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1015,9 +1138,23 @@ func (s *Service) RecordFailedLogin(ctx context.Context, username string) error 
 	user.FailedLoginCount++
 	user.LastFailedLoginAt = &now
 
-	// Check if account should be locked (after 5 failed attempts)
+	// Read lockout settings from system_settings, with defaults
 	maxFailures := 5
-	lockoutDuration := 15 * time.Minute // 15 minutes lockout
+	lockoutMinutes := 15
+	var settingsValue []byte
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_threshold'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			maxFailures = v
+		}
+	}
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_duration'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			lockoutMinutes = v
+		}
+	}
+	lockoutDuration := time.Duration(lockoutMinutes) * time.Minute
 
 	if user.FailedLoginCount >= maxFailures {
 		lockoutUntil := now.Add(lockoutDuration)
@@ -1106,19 +1243,21 @@ func (s *Service) ValidatePasswordPolicy(password string) error {
 func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword string) error {
 	s.logger.Info("Updating password", zap.String("user_id", userID))
 
-	// Validate password policy
 	if err := s.ValidatePasswordPolicy(newPassword); err != nil {
 		return err
 	}
 
-	now := time.Now()
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
 
-	// Update password changed timestamp and clear must change flag
-	_, err := s.db.Pool.Exec(ctx, `
+	now := time.Now()
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
-		SET password_changed_at = $2, password_must_change = false
+		SET password_hash = $2, password_changed_at = $3, password_must_change = false
 		WHERE id = $1
-	`, userID, now)
+	`, userID, string(hashedPassword), now)
 
 	return err
 }
@@ -1169,13 +1308,15 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	var enabled bool
 	var lockedUntil *time.Time
 	var failedLoginCount int
+	var source *string
+	var directoryID *string
 
 	// Get user by username or email
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, password_hash, enabled, locked_until, failed_login_count
+		SELECT id, password_hash, enabled, locked_until, failed_login_count, source, directory_id
 		FROM users
 		WHERE username = $1 OR email = $1
-	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount)
+	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount, &source, &directoryID)
 
 	if err != nil {
 		s.logger.Debug("User not found", zap.String("username", username))
@@ -1194,29 +1335,30 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		return nil, ErrAccountLocked
 	}
 
-	// Verify password
-	if passwordHash == "" {
-		s.logger.Debug("User has no password set", zap.String("username", username))
-		return nil, ErrInvalidCredentials
-	}
+	// Check if user is from an LDAP directory — authenticate against LDAP
+	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
+		s.logger.Debug("Authenticating LDAP user", zap.String("username", username), zap.String("directory_id", *directoryID))
 
-	hashPrefix := passwordHash
-	if len(hashPrefix) > 20 {
-		hashPrefix = hashPrefix[:20]
-	}
-	s.logger.Debug("Comparing password",
-		zap.String("username", username),
-		zap.Int("hash_len", len(passwordHash)),
-		zap.String("hash_prefix", hashPrefix),
-		zap.Int("password_len", len(password)),
-		zap.String("password_bytes", fmt.Sprintf("%v", []byte(password))))
+		if err := s.directoryService.AuthenticateUser(ctx, *directoryID, username, password); err != nil {
+			s.recordFailedLogin(ctx, userID, failedLoginCount)
+			s.logger.Debug("LDAP authentication failed", zap.String("username", username), zap.Error(err))
+			return nil, ErrInvalidCredentials
+		}
+	} else {
+		// Local user — verify password with bcrypt
+		if passwordHash == "" {
+			s.logger.Debug("User has no password set", zap.String("username", username))
+			return nil, ErrInvalidCredentials
+		}
 
-	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
-	if err != nil {
-		// Update failed login count
-		s.recordFailedLogin(ctx, userID, failedLoginCount)
-		s.logger.Debug("Invalid password", zap.String("username", username), zap.Error(err))
-		return nil, ErrInvalidCredentials
+		s.logger.Debug("Comparing password", zap.String("username", username))
+
+		err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
+		if err != nil {
+			s.recordFailedLogin(ctx, userID, failedLoginCount)
+			s.logger.Debug("Invalid password", zap.String("username", username), zap.Error(err))
+			return nil, ErrInvalidCredentials
+		}
 	}
 
 	// Reset failed login count and update last login
@@ -1239,10 +1381,26 @@ func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentC
 	newCount := currentCount + 1
 	now := time.Now()
 
+	// Read lockout settings from system_settings
+	maxFailures := 5
+	lockoutMinutes := 15
+	var settingsValue []byte
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_threshold'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			maxFailures = v
+		}
+	}
+	if err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'failed_login_lockout_duration'").Scan(&settingsValue); err == nil {
+		var v int
+		if json.Unmarshal(settingsValue, &v) == nil && v > 0 {
+			lockoutMinutes = v
+		}
+	}
+
 	var lockedUntil *time.Time
-	// Lock account after 5 failed attempts for 30 minutes
-	if newCount >= 5 {
-		lockTime := now.Add(30 * time.Minute)
+	if newCount >= maxFailures {
+		lockTime := now.Add(time.Duration(lockoutMinutes) * time.Minute)
 		lockedUntil = &lockTime
 		s.logger.Warn("Account locked due to failed attempts", zap.String("user_id", userID))
 	}
@@ -1304,7 +1462,7 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 
 	// Generate QR code URL
 	qrURL := key.URL()
-	s.logger.Info("Generated TOTP QR code URL", zap.String("qr_url", qrURL), zap.String("secret", key.Secret()))
+	s.logger.Info("Generated TOTP secret for user")
 
 	return &TOTPEnrollment{
 		Secret:    key.Secret(),
@@ -1911,6 +2069,271 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 	return roles, nil
 }
 
+// PolicyViolation represents a governance policy violation
+type PolicyViolation struct {
+	PolicyName string `json:"policy_name"`
+	PolicyType string `json:"policy_type"`
+	Reason     string `json:"reason"`
+	Effect     string `json:"effect"`
+}
+
+// PolicyViolationError wraps policy violations as an error
+type PolicyViolationError struct {
+	Violations []PolicyViolation
+}
+
+func (e *PolicyViolationError) Error() string {
+	if len(e.Violations) == 0 {
+		return "policy violation"
+	}
+	return fmt.Sprintf("policy violation: %s - %s", e.Violations[0].PolicyName, e.Violations[0].Reason)
+}
+
+// CheckPolicies evaluates all enabled governance policies against the given operation context.
+// Returns a PolicyViolationError if any policy denies the action, nil otherwise.
+func (s *Service) CheckPolicies(ctx context.Context, userID string, action string, targetRoleIDs []string, clientIP string) error {
+	s.logger.Debug("Checking governance policies",
+		zap.String("user_id", userID),
+		zap.String("action", action),
+		zap.Int("target_roles", len(targetRoleIDs)))
+
+	// Query all enabled policies with their rules
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT p.id, p.name, p.type, p.priority,
+		       COALESCE(json_agg(json_build_object(
+		           'id', pr.id, 'condition', pr.condition, 'effect', pr.effect, 'priority', pr.priority
+		       )) FILTER (WHERE pr.id IS NOT NULL), '[]'::json) as rules
+		FROM policies p
+		LEFT JOIN policy_rules pr ON pr.policy_id = p.id
+		WHERE p.enabled = true
+		GROUP BY p.id, p.name, p.type, p.priority
+		ORDER BY p.priority DESC
+	`)
+	if err != nil {
+		s.logger.Error("Failed to query policies", zap.Error(err))
+		return nil // Fail open: don't block if we can't check policies
+	}
+	defer rows.Close()
+
+	// Get user's current roles for SoD checks
+	var currentRoles []Role
+	if action == "assign_role" || action == "update_roles" {
+		currentRoles, err = s.GetUserRoles(ctx, userID)
+		if err != nil {
+			s.logger.Error("Failed to get user roles for policy check", zap.Error(err))
+			return nil
+		}
+	}
+
+	// Get role names for the target role IDs
+	targetRoleNames := make(map[string]string) // id -> name
+	if len(targetRoleIDs) > 0 {
+		roleRows, err := s.db.Pool.Query(ctx, `
+			SELECT id, name FROM roles WHERE id = ANY($1)
+		`, targetRoleIDs)
+		if err == nil {
+			defer roleRows.Close()
+			for roleRows.Next() {
+				var id, name string
+				if roleRows.Scan(&id, &name) == nil {
+					targetRoleNames[id] = name
+				}
+			}
+		}
+	}
+
+	var violations []PolicyViolation
+
+	for rows.Next() {
+		var policyID, policyName, policyType string
+		var priority int
+		var rulesJSON []byte
+
+		if err := rows.Scan(&policyID, &policyName, &policyType, &priority, &rulesJSON); err != nil {
+			s.logger.Error("Failed to scan policy", zap.Error(err))
+			continue
+		}
+
+		var rules []struct {
+			ID        string                 `json:"id"`
+			Condition map[string]interface{} `json:"condition"`
+			Effect    string                 `json:"effect"`
+			Priority  int                    `json:"priority"`
+		}
+		if err := json.Unmarshal(rulesJSON, &rules); err != nil {
+			s.logger.Error("Failed to parse policy rules", zap.Error(err), zap.String("policy_id", policyID))
+			continue
+		}
+
+		switch policyType {
+		case "separation_of_duty":
+			if action != "assign_role" && action != "update_roles" {
+				continue
+			}
+			// Build set of all role names (current + target)
+			allRoleNames := make(map[string]bool)
+			for _, r := range currentRoles {
+				allRoleNames[strings.ToLower(r.Name)] = true
+			}
+			for _, name := range targetRoleNames {
+				allRoleNames[strings.ToLower(name)] = true
+			}
+
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				// Check conflicting_roles from rule condition
+				conflicting, ok := rule.Condition["conflicting_roles"]
+				if !ok {
+					continue
+				}
+				conflictList, ok := conflicting.([]interface{})
+				if !ok || len(conflictList) < 2 {
+					continue
+				}
+				// Check if all conflicting roles are present
+				allPresent := true
+				var conflictNames []string
+				for _, cr := range conflictList {
+					roleName, ok := cr.(string)
+					if !ok {
+						allPresent = false
+						break
+					}
+					conflictNames = append(conflictNames, roleName)
+					if !allRoleNames[strings.ToLower(roleName)] {
+						allPresent = false
+						break
+					}
+				}
+				if allPresent {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Separation of duty conflict: roles %s cannot be assigned together", strings.Join(conflictNames, ", ")),
+						Effect:     effect,
+					})
+				}
+			}
+
+		case "timebound":
+			now := time.Now()
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				// Check business hours from condition or use defaults
+				startHour := 9
+				endHour := 18
+				if sh, ok := rule.Condition["start_hour"].(float64); ok {
+					startHour = int(sh)
+				}
+				if eh, ok := rule.Condition["end_hour"].(float64); ok {
+					endHour = int(eh)
+				}
+				// Check allowed days (default: Mon-Fri)
+				weekday := now.Weekday()
+				hour := now.Hour()
+				isWeekend := weekday == time.Saturday || weekday == time.Sunday
+				outsideHours := hour < startHour || hour >= endHour
+
+				if isWeekend || outsideHours {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Operation not allowed outside business hours (%d:00-%d:00, Mon-Fri)", startHour, endHour),
+						Effect:     effect,
+					})
+				}
+			}
+
+		case "location":
+			if clientIP == "" {
+				continue
+			}
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				// Get allowed prefixes from condition or use defaults
+				allowedPrefixes := []string{"10.", "192.168.", "172.16.", "127.0.0.1"}
+				if prefixes, ok := rule.Condition["allowed_prefixes"].([]interface{}); ok {
+					allowedPrefixes = nil
+					for _, p := range prefixes {
+						if ps, ok := p.(string); ok {
+							allowedPrefixes = append(allowedPrefixes, ps)
+						}
+					}
+				}
+				allowed := false
+				for _, prefix := range allowedPrefixes {
+					if strings.HasPrefix(clientIP, prefix) {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Operation not allowed from IP address %s", clientIP),
+						Effect:     effect,
+					})
+				}
+			}
+
+		case "risk_based":
+			// Risk-based policies evaluate contextual risk factors
+			for _, rule := range rules {
+				effect := rule.Effect
+				if effect == "" {
+					effect = "deny"
+				}
+				threshold := 50
+				if t, ok := rule.Condition["risk_threshold"].(float64); ok {
+					threshold = int(t)
+				}
+				// Calculate risk score based on available context
+				riskScore := 0
+				// External IP adds risk
+				if clientIP != "" && !strings.HasPrefix(clientIP, "10.") && !strings.HasPrefix(clientIP, "192.168.") && !strings.HasPrefix(clientIP, "127.") {
+					riskScore += 30
+				}
+				// Multiple role changes add risk
+				if len(targetRoleIDs) > 3 {
+					riskScore += 20
+				}
+				if riskScore >= threshold {
+					violations = append(violations, PolicyViolation{
+						PolicyName: policyName,
+						PolicyType: policyType,
+						Reason:     fmt.Sprintf("Risk score %d exceeds threshold %d", riskScore, threshold),
+						Effect:     effect,
+					})
+				}
+			}
+		}
+	}
+
+	// Filter for deny violations (require_approval could be handled differently later)
+	var denyViolations []PolicyViolation
+	for _, v := range violations {
+		if v.Effect == "deny" {
+			denyViolations = append(denyViolations, v)
+		}
+	}
+
+	if len(denyViolations) > 0 {
+		return &PolicyViolationError{Violations: denyViolations}
+	}
+
+	return nil
+}
+
 // AssignUserRole assigns a role to a user
 func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, assignedBy string) error {
 	s.logger.Info("Assigning role to user",
@@ -1996,6 +2419,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	{
 		public.POST("/users/forgot-password", svc.handleForgotPassword)
 		public.POST("/users/reset-password", svc.handleResetPassword)
+		public.POST("/verify-email", svc.handleVerifyEmail)
+		public.POST("/invitations/:token/accept", svc.handleAcceptInvitation)
 	}
 
 	identity := router.Group("/api/v1/identity")
@@ -2084,6 +2509,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/mfa/push/challenge", svc.handleCreatePushChallenge)
 		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
+
+		// Email verification
+		identity.POST("/resend-verification", svc.handleResendVerification)
+
+		// Invitations
+		identity.GET("/invitations", svc.handleListInvitations)
+		identity.POST("/invitations", svc.handleCreateInvitation)
+		identity.DELETE("/invitations/:id", svc.handleDeleteInvitation)
+
+		// User lifecycle
+		identity.POST("/users/:id/offboard", svc.handleOffboardUser)
 	}
 }
 
@@ -2098,13 +2534,14 @@ func (s *Service) handleListUsers(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
+	search := c.Query("search")
 
-	users, total, err := s.ListUsers(c.Request.Context(), offset, limit)
+	users, total, err := s.ListUsers(c.Request.Context(), offset, limit, search)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.Header("X-Total-Count", strconv.Itoa(total))
 	c.JSON(200, users)
 }
@@ -2132,7 +2569,26 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	
+
+	// Send verification email (best-effort)
+	if s.emailService != nil {
+		token := uuid.New().String()
+		_, err := s.db.Pool.Exec(c.Request.Context(),
+			"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+			user.ID, token)
+		if err == nil {
+			baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+			s.emailService.SendVerificationEmail(c.Request.Context(), user.Email, user.FirstName, token, baseURL)
+		}
+	}
+
+	// Publish webhook event (best-effort)
+	if s.webhookService != nil {
+		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+			"user_id": user.ID, "username": user.Username, "email": user.Email,
+		})
+	}
+
 	c.JSON(201, user)
 }
 
@@ -2418,6 +2874,17 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 		assignedBy = "00000000-0000-0000-0000-000000000001" // Default admin user
 	}
 
+	// Check governance policies before updating roles
+	if err := s.CheckPolicies(c.Request.Context(), userID, "update_roles", req.RoleIDs, c.ClientIP()); err != nil {
+		if policyErr, ok := err.(*PolicyViolationError); ok {
+			c.JSON(403, gin.H{
+				"error":      "Policy violation",
+				"violations": policyErr.Violations,
+			})
+			return
+		}
+	}
+
 	err := s.UpdateUserRoles(c.Request.Context(), userID, req.RoleIDs, assignedBy)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -2436,8 +2903,9 @@ func (s *Service) handleListGroups(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
+	search := c.Query("search")
 
-	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit)
+	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit, search)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -2527,6 +2995,17 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 		return
 	}
 
+	// Check governance policies (timebound, location) before adding member
+	if err := s.CheckPolicies(c.Request.Context(), req.UserID, "add_group_member", nil, c.ClientIP()); err != nil {
+		if policyErr, ok := err.(*PolicyViolationError); ok {
+			c.JSON(403, gin.H{
+				"error":      "Policy violation",
+				"violations": policyErr.Violations,
+			})
+			return
+		}
+	}
+
 	if err := s.AddGroupMember(c.Request.Context(), groupID, req.UserID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(404, gin.H{"error": err.Error()})
@@ -2546,6 +3025,17 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 func (s *Service) handleRemoveGroupMember(c *gin.Context) {
 	groupID := c.Param("id")
 	userID := c.Param("userId")
+
+	// Check governance policies (timebound, location) before removing member
+	if err := s.CheckPolicies(c.Request.Context(), userID, "remove_group_member", nil, c.ClientIP()); err != nil {
+		if policyErr, ok := err.(*PolicyViolationError); ok {
+			c.JSON(403, gin.H{
+				"error":      "Policy violation",
+				"violations": policyErr.Violations,
+			})
+			return
+		}
+	}
 
 	if err := s.RemoveGroupMember(c.Request.Context(), groupID, userID); err != nil {
 		if strings.Contains(err.Error(), "not a member") {
@@ -3125,6 +3615,17 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 		zap.String("token", token),
 		zap.String("reset_url", fmt.Sprintf("http://localhost:3000/reset-password?token=%s", token)))
 
+	// Send password reset email
+	if s.emailService != nil {
+		var firstName string
+		s.db.Pool.QueryRow(c.Request.Context(),
+			"SELECT first_name FROM users WHERE id = $1", userID).Scan(&firstName)
+		baseURL := "http://localhost:3000"
+		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), req.Email, firstName, token, baseURL); err != nil {
+			s.logger.Error("Failed to send password reset email", zap.Error(err))
+		}
+	}
+
 	c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
 }
 
@@ -3295,4 +3796,277 @@ func (s *Service) handleSetRolePermissions(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Permissions updated"})
+}
+
+// handleVerifyEmail verifies a user's email address
+func (s *Service) handleVerifyEmail(c *gin.Context) {
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	var userID string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT user_id FROM email_verification_tokens WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL",
+		req.Token).Scan(&userID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired token"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(), "UPDATE users SET email_verified = true WHERE id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to verify email"})
+		return
+	}
+
+	_, _ = s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1", req.Token)
+
+	c.JSON(200, gin.H{"message": "Email verified successfully"})
+}
+
+// handleResendVerification resends the verification email
+func (s *Service) handleResendVerification(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var email, firstName string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT email, first_name FROM users WHERE id = $1", userID).Scan(&email, &firstName)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	token := uuid.New().String()
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
+		userID, token)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create verification token"})
+		return
+	}
+
+	if s.emailService != nil {
+		baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+		s.emailService.SendVerificationEmail(c.Request.Context(), email, firstName, token, baseURL)
+	}
+
+	c.JSON(200, gin.H{"message": "Verification email sent"})
+}
+
+// handleListInvitations lists pending invitations
+func (s *Service) handleListInvitations(c *gin.Context) {
+	rows, err := s.db.Pool.Query(c.Request.Context(),
+		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at
+		 FROM user_invitations ORDER BY created_at DESC LIMIT 50`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type Invitation struct {
+		ID         string     `json:"id"`
+		Email      string     `json:"email"`
+		InvitedBy  string     `json:"invited_by"`
+		Roles      []string   `json:"roles"`
+		Groups     []string   `json:"groups"`
+		Token      string     `json:"token"`
+		Status     string     `json:"status"`
+		ExpiresAt  time.Time  `json:"expires_at"`
+		AcceptedAt *time.Time `json:"accepted_at,omitempty"`
+		CreatedAt  time.Time  `json:"created_at"`
+	}
+
+	var invitations []Invitation
+	for rows.Next() {
+		var inv Invitation
+		err := rows.Scan(&inv.ID, &inv.Email, &inv.InvitedBy, &inv.Roles, &inv.Groups,
+			&inv.Token, &inv.Status, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+		if err != nil {
+			continue
+		}
+		invitations = append(invitations, inv)
+	}
+	if invitations == nil {
+		invitations = []Invitation{}
+	}
+	c.JSON(200, gin.H{"invitations": invitations})
+}
+
+// handleCreateInvitation creates a new user invitation
+func (s *Service) handleCreateInvitation(c *gin.Context) {
+	var req struct {
+		Email  string   `json:"email" binding:"required"`
+		Roles  []string `json:"roles"`
+		Groups []string `json:"groups"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	invitedBy, _ := c.Get("user_id")
+	token := uuid.New().String()
+
+	var id string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days') RETURNING id`,
+		req.Email, invitedBy, req.Roles, req.Groups, token).Scan(&id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Send invitation email
+	if s.emailService != nil {
+		inviterName, _ := c.Get("name")
+		name, _ := inviterName.(string)
+		if name == "" {
+			name = "An administrator"
+		}
+		baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+		s.emailService.SendInvitationEmail(c.Request.Context(), req.Email, name, token, baseURL)
+	}
+
+	c.JSON(201, gin.H{"id": id, "token": token, "email": req.Email})
+}
+
+// handleDeleteInvitation revokes an invitation
+func (s *Service) handleDeleteInvitation(c *gin.Context) {
+	id := c.Param("id")
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM user_invitations WHERE id = $1", id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Invitation revoked"})
+}
+
+// handleAcceptInvitation accepts an invitation and creates the user
+func (s *Service) handleAcceptInvitation(c *gin.Context) {
+	token := c.Param("token")
+
+	var req struct {
+		Username  string `json:"username" binding:"required"`
+		Password  string `json:"password" binding:"required"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Look up invitation
+	var invID, email string
+	var roles, groups []string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT id, email, roles, groups FROM user_invitations
+		 WHERE token = $1 AND status = 'pending' AND expires_at > NOW()`,
+		token).Scan(&invID, &email, &roles, &groups)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
+		return
+	}
+
+	// Create user
+	user := &User{
+		Username:      req.Username,
+		Email:         email,
+		FirstName:     req.FirstName,
+		LastName:      req.LastName,
+		Enabled:       true,
+		EmailVerified: true,
+	}
+
+	if err := s.CreateUser(c.Request.Context(), user); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Set password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err == nil {
+		s.db.Pool.Exec(c.Request.Context(),
+			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2",
+			string(hashedPassword), user.ID)
+	}
+
+	// Assign roles
+	for _, role := range roles {
+		s.db.Pool.Exec(c.Request.Context(),
+			"INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE name = $2 ON CONFLICT DO NOTHING",
+			user.ID, role)
+	}
+
+	// Add to groups
+	for _, group := range groups {
+		s.db.Pool.Exec(c.Request.Context(),
+			"INSERT INTO group_memberships (user_id, group_id) SELECT $1, id FROM groups WHERE name = $2 ON CONFLICT DO NOTHING",
+			user.ID, group)
+	}
+
+	// Mark invitation as accepted
+	s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1", invID)
+
+	// Send welcome email
+	if s.emailService != nil {
+		s.emailService.SendWelcomeEmail(c.Request.Context(), email, req.FirstName)
+	}
+
+	// Publish webhook
+	if s.webhookService != nil {
+		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
+			"user_id": user.ID, "username": user.Username, "email": email, "source": "invitation",
+		})
+	}
+
+	c.JSON(201, gin.H{"message": "Account created successfully", "user_id": user.ID})
+}
+
+// handleOffboardUser deactivates a user and cleans up their access
+func (s *Service) handleOffboardUser(c *gin.Context) {
+	userID := c.Param("id")
+
+	// Disable user
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to disable user"})
+		return
+	}
+
+	// Revoke all API keys
+	s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1", userID)
+
+	// Remove from all groups
+	s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM group_memberships WHERE user_id = $1", userID)
+
+	// Remove all role assignments
+	s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM user_roles WHERE user_id = $1", userID)
+
+	// Terminate all sessions
+	s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM sessions WHERE user_id = $1", userID)
+
+	// Publish webhook
+	if s.webhookService != nil {
+		s.webhookService.Publish(c.Request.Context(), "user.deleted", map[string]interface{}{
+			"user_id": userID, "action": "offboard",
+		})
+	}
+
+	s.logger.Info("User offboarded", zap.String("user_id", userID))
+	c.JSON(200, gin.H{"message": "User offboarded successfully"})
 }

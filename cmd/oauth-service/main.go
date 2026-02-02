@@ -20,6 +20,8 @@ import (
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/oauth"
+	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/webhooks"
 )
 
 var (
@@ -67,7 +69,11 @@ func main() {
 	// Initialize router
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
+	if cfg.EnableRateLimit {
+		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+	}
 
 	// Enable CORS for OAuth endpoints
 	router.Use(func(c *gin.Context) {
@@ -90,14 +96,30 @@ func main() {
 	// Initialize Identity service
 	identityService := identity.NewService(db, redis, cfg, log)
 
+	// Initialize risk service (conditional access)
+	riskService := risk.NewService(db, redis, log)
+
+	// Initialize webhook service
+	webhookService := webhooks.NewService(db, redis, log)
+	ctx, cancelWorkers := context.WithCancel(context.Background())
+	go webhookService.ProcessDeliveries(ctx)
+	go webhookService.ProcessRetries(ctx)
+	defer cancelWorkers()
+
 	// Initialize OAuth service
 	oauthService, err := oauth.NewService(db, redis, cfg, log, identityService)
 	if err != nil {
 		log.Fatal("Failed to initialize OAuth service", zap.Error(err))
 	}
+	oauthService.SetRiskService(riskService)
+	oauthService.SetWebhookService(webhookService)
 
-	// Register routes
-	oauth.RegisterRoutes(router, oauthService)
+	// Register routes (apply auth middleware to client management API in non-development environments)
+	if cfg.Environment != "development" {
+		oauth.RegisterRoutes(router, oauthService, middleware.Auth(cfg.OAuthJWKSURL))
+	} else {
+		oauth.RegisterRoutes(router, oauthService)
+	}
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
@@ -110,11 +132,17 @@ func main() {
 
 	// Readiness check endpoint
 	router.GET("/ready", func(c *gin.Context) {
+		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
 		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
+			status["status"] = "not ready"
+			status["postgres"] = err.Error()
+			c.JSON(http.StatusServiceUnavailable, status)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+		if err := redis.Ping(); err != nil {
+			status["redis"] = "unhealthy"
+		}
+		c.JSON(http.StatusOK, status)
 	})
 
 	// Create HTTP server

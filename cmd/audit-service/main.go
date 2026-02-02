@@ -48,10 +48,13 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize Elasticsearch client
-	es, err := database.NewElasticsearch(cfg.ElasticsearchURL)
-	if err != nil {
-		log.Fatal("Failed to connect to Elasticsearch", zap.Error(err))
+	// Initialize Elasticsearch client (best-effort — audit works without ES)
+	var es *database.ElasticsearchClient
+	if cfg.ElasticsearchURL != "" {
+		es, err = database.NewElasticsearch(cfg.ElasticsearchURL)
+		if err != nil {
+			log.Warn("Elasticsearch unavailable, full-text search disabled", zap.Error(err))
+		}
 	}
 
 	if cfg.Environment == "production" {
@@ -60,14 +63,24 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
+	if cfg.EnableRateLimit {
+		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+	}
 	router.Use(middleware.PrometheusMetrics("audit-service"))
 
 	// Metrics endpoint
 	router.GET("/metrics", middleware.MetricsHandler())
 
 	auditService := audit.NewService(db, es, cfg, log)
+	if es != nil {
+		if err := auditService.InitElasticsearch(); err != nil {
+			log.Warn("Failed to initialize ES index, search may not work", zap.Error(err))
+		}
+	}
 	audit.RegisterRoutes(router, auditService)
+	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService)
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -82,7 +95,15 @@ func main() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+		esStatus := "not configured"
+		if es != nil {
+			if err := es.Ping(); err != nil {
+				esStatus = "unhealthy"
+			} else {
+				esStatus = "healthy"
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready", "elasticsearch": esStatus})
 	})
 
 	server := &http.Server{

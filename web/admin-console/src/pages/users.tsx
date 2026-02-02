@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { isAxiosError } from 'axios'
 import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -98,11 +99,12 @@ export function UsersPage() {
 
   // Fetch users
   const { data: users, isLoading } = useQuery({
-    queryKey: ['users', page],
+    queryKey: ['users', page, search],
     queryFn: async () => {
       const params = new URLSearchParams()
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
+      if (search) params.set('search', search)
       const result = await api.getWithHeaders<User[]>(`/api/v1/identity/users?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
@@ -204,12 +206,8 @@ export function UsersPage() {
 
   const handleExportCSV = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/identity/users/export`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      })
-      const blob = await response.blob()
+      const data = await api.get<string>('/api/v1/identity/users/export')
+      const blob = new Blob([typeof data === 'string' ? data : JSON.stringify(data)], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -306,11 +304,21 @@ export function UsersPage() {
       setSelectedRoles([])
     },
     onError: (error: Error) => {
-      toast({
-        title: 'Error',
-        description: `Failed to update roles: ${error.message}`,
-        variant: 'destructive',
-      })
+      if (isAxiosError(error) && error.response?.status === 403 && error.response?.data?.violations) {
+        const violations = error.response.data.violations as Array<{ policy_name: string; reason: string }>
+        const details = violations.map((v: { policy_name: string; reason: string }) => `${v.policy_name}: ${v.reason}`).join('\n')
+        toast({
+          title: 'Policy Violation',
+          description: details,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: 'Error',
+          description: `Failed to update roles: ${error.message}`,
+          variant: 'destructive',
+        })
+      }
     },
   })
 
@@ -327,9 +335,10 @@ export function UsersPage() {
         email: formData.email,
         first_name: formData.first_name,
         last_name: formData.last_name,
+        password: formData.password,
         enabled: true,
         email_verified: false,
-      })
+      } as Partial<User> & { password?: string })
     } else if (editUserModal && selectedUser) {
       updateUserMutation.mutate({
         id: selectedUser.id,
@@ -347,13 +356,8 @@ export function UsersPage() {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  // Filter users by search
-  const filteredUsers = users?.filter(user =>
-    search === '' ||
-    user.username.toLowerCase().includes(search.toLowerCase()) ||
-    user.email.toLowerCase().includes(search.toLowerCase()) ||
-    `${user.first_name} ${user.last_name}`.toLowerCase().includes(search.toLowerCase())
-  ) || []
+  // Users are already filtered server-side via search param
+  const filteredUsers = users || []
 
   return (
     <div className="space-y-6">

@@ -254,7 +254,10 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
-			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			expectedIssuer := s.config.OAuthIssuer
+			if expectedIssuer == "" {
+				expectedIssuer = "http://localhost:8006"
+			}
 			if iss != expectedIssuer {
 				s.logger.Warn("Invalid token issuer", zap.String("expected", expectedIssuer), zap.String("actual", iss))
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -300,7 +303,10 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 		return s.jwksCachedKey, nil
 	}
 
-	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+	jwksURL := s.config.OAuthJWKSURL
+	if jwksURL == "" {
+		jwksURL = "http://oauth-service:8006/.well-known/jwks.json"
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(jwksURL)
@@ -564,10 +570,13 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 }
 
 // RegisterRoutes registers provisioning service routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// SCIM 2.0 endpoints
 	scim := router.Group("/scim/v2")
 	scim.Use(svc.openIDXAuthMiddleware())
+	for _, mw := range extraMiddleware {
+		scim.Use(mw)
+	}
 	{
 		// Users
 		scim.GET("/Users", svc.handleListUsers)
@@ -595,6 +604,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	// Internal provisioning API
 	prov := router.Group("/api/v1/provisioning")
 	prov.Use(svc.openIDXAuthMiddleware())
+	for _, mw := range extraMiddleware {
+		prov.Use(mw)
+	}
 	{
 		prov.GET("/rules", svc.handleListRules)
 		prov.POST("/rules", svc.handleCreateRule)
@@ -1101,11 +1113,76 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 
 // Schema discovery handlers
 func (s *Service) handleGetSchemas(c *gin.Context) {
-	c.JSON(200, gin.H{"schemas": []string{}})
+	schemas := []gin.H{
+		{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:User",
+			"name":        "User",
+			"description": "User Account",
+			"attributes": []gin.H{
+				{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
+				{"name": "name", "type": "complex", "multiValued": false, "subAttributes": []gin.H{
+					{"name": "givenName", "type": "string"},
+					{"name": "familyName", "type": "string"},
+				}},
+				{"name": "emails", "type": "complex", "multiValued": true, "subAttributes": []gin.H{
+					{"name": "value", "type": "string"},
+					{"name": "primary", "type": "boolean"},
+				}},
+				{"name": "active", "type": "boolean", "multiValued": false, "required": false},
+				{"name": "displayName", "type": "string", "multiValued": false},
+			},
+			"meta": gin.H{"resourceType": "Schema", "location": "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User"},
+		},
+		{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:Group",
+			"name":        "Group",
+			"description": "Group",
+			"attributes": []gin.H{
+				{"name": "displayName", "type": "string", "multiValued": false, "required": true},
+				{"name": "members", "type": "complex", "multiValued": true, "subAttributes": []gin.H{
+					{"name": "value", "type": "string"},
+					{"name": "display", "type": "string"},
+				}},
+			},
+			"meta": gin.H{"resourceType": "Schema", "location": "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group"},
+		},
+	}
+	c.JSON(200, gin.H{
+		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
+		"totalResults": len(schemas),
+		"Resources":    schemas,
+	})
 }
 
 func (s *Service) handleGetSchema(c *gin.Context) {
-	c.JSON(200, gin.H{})
+	schemaID := c.Param("id")
+	switch schemaID {
+	case "urn:ietf:params:scim:schemas:core:2.0:User":
+		c.JSON(200, gin.H{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:User",
+			"name":        "User",
+			"description": "User Account",
+			"attributes": []gin.H{
+				{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
+				{"name": "name", "type": "complex", "multiValued": false},
+				{"name": "emails", "type": "complex", "multiValued": true},
+				{"name": "active", "type": "boolean", "multiValued": false},
+				{"name": "displayName", "type": "string", "multiValued": false},
+			},
+		})
+	case "urn:ietf:params:scim:schemas:core:2.0:Group":
+		c.JSON(200, gin.H{
+			"id":          "urn:ietf:params:scim:schemas:core:2.0:Group",
+			"name":        "Group",
+			"description": "Group",
+			"attributes": []gin.H{
+				{"name": "displayName", "type": "string", "multiValued": false, "required": true},
+				{"name": "members", "type": "complex", "multiValued": true},
+			},
+		})
+	default:
+		c.JSON(404, gin.H{"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:Error"}, "detail": "Schema not found", "status": "404"})
+	}
 }
 
 func (s *Service) handleGetResourceTypes(c *gin.Context) {

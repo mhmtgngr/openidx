@@ -111,10 +111,11 @@ type Policy struct {
 type PolicyType string
 
 const (
-	PolicyTypeSoD       PolicyType = "separation_of_duty"
-	PolicyTypeRiskBased PolicyType = "risk_based"
-	PolicyTypeTimebound PolicyType = "timebound"
-	PolicyTypeLocation  PolicyType = "location"
+	PolicyTypeSoD              PolicyType = "separation_of_duty"
+	PolicyTypeRiskBased        PolicyType = "risk_based"
+	PolicyTypeTimebound        PolicyType = "timebound"
+	PolicyTypeLocation         PolicyType = "location"
+	PolicyTypeConditionalAccess PolicyType = "conditional_access"
 )
 
 // PolicyRule defines a rule within a policy
@@ -222,7 +223,10 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 
 		// Validate issuer
 		if iss, ok := claims["iss"].(string); ok {
-			expectedIssuer := "http://localhost:8006" // OAuth service issuer
+			expectedIssuer := s.config.OAuthIssuer
+			if expectedIssuer == "" {
+				expectedIssuer = "http://localhost:8006"
+			}
 			if iss != expectedIssuer {
 				s.logger.Warn("Invalid token issuer", zap.String("expected", expectedIssuer), zap.String("actual", iss))
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -268,7 +272,10 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 		return s.jwksCachedKey, nil
 	}
 
-	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+	jwksURL := s.config.OAuthJWKSURL
+	if jwksURL == "" {
+		jwksURL = "http://oauth-service:8006/.well-known/jwks.json"
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(jwksURL)
@@ -466,8 +473,27 @@ func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`, policy.ID, policy.Name, policy.Description, policy.Type, policy.Enabled,
 		policy.Priority, policy.CreatedAt, policy.UpdatedAt)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Persist policy rules
+	for _, rule := range policy.Rules {
+		if rule.ID == "" {
+			rule.ID = uuid.New().String()
+		}
+		ruleCondition, _ := json.Marshal(rule.Condition)
+		ruleActions, _ := json.Marshal(map[string]interface{}{"effect": rule.Effect, "priority": rule.Priority})
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, rule.ID, policy.ID, rule.Effect, ruleCondition, ruleActions, time.Now())
+		if err != nil {
+			s.logger.Error("Failed to insert policy rule", zap.Error(err))
+		}
+	}
+
+	return nil
 }
 
 // GetPolicy retrieves a policy by ID
@@ -517,6 +543,35 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 		policies = append(policies, p)
 	}
 
+	// Load rules for each policy
+	for i := range policies {
+		ruleRows, err := s.db.Pool.Query(ctx, `
+			SELECT id, condition, effect, priority
+			FROM policy_rules
+			WHERE policy_id = $1
+			ORDER BY priority DESC
+		`, policies[i].ID)
+		if err != nil {
+			s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policies[i].ID), zap.Error(err))
+			continue
+		}
+		for ruleRows.Next() {
+			var rule PolicyRule
+			var conditionJSON []byte
+			if err := ruleRows.Scan(&rule.ID, &conditionJSON, &rule.Effect, &rule.Priority); err != nil {
+				s.logger.Warn("Failed to scan policy rule", zap.Error(err))
+				continue
+			}
+			if len(conditionJSON) > 0 {
+				if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
+					s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
+				}
+			}
+			policies[i].Rules = append(policies[i].Rules, rule)
+		}
+		ruleRows.Close()
+	}
+
 	return policies, total, nil
 }
 
@@ -532,15 +587,43 @@ func (s *Service) UpdatePolicy(ctx context.Context, policyID string, policy *Pol
 		SET name = $2, description = $3, type = $4, enabled = $5, priority = $6, updated_at = $7
 		WHERE id = $1
 	`, policyID, policy.Name, policy.Description, policy.Type, policy.Enabled, policy.Priority, now)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Delete old rules and re-insert new ones
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1", policyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete old policy rules: %w", err)
+	}
+	for _, rule := range policy.Rules {
+		if rule.ID == "" {
+			rule.ID = uuid.New().String()
+		}
+		ruleCondition, _ := json.Marshal(rule.Condition)
+		ruleActions, _ := json.Marshal(map[string]interface{}{"effect": rule.Effect, "priority": rule.Priority})
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, rule.ID, policyID, rule.Effect, ruleCondition, ruleActions, time.Now())
+		if err != nil {
+			s.logger.Error("Failed to insert policy rule", zap.Error(err))
+		}
+	}
+
+	return nil
 }
 
 // DeletePolicy deletes a policy
 func (s *Service) DeletePolicy(ctx context.Context, policyID string) error {
 	s.logger.Info("Deleting policy", zap.String("policy_id", policyID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1", policyID)
+	// Delete associated rules first
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1", policyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete policy rules: %w", err)
+	}
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1", policyID)
 	return err
 }
 
@@ -573,6 +656,9 @@ func (s *Service) EvaluatePolicy(ctx context.Context, policyID string, request m
 	case PolicyTypeRiskBased:
 		// Risk-based: evaluate risk score
 		return s.evaluateRiskBasedPolicy(ctx, policy, request)
+	case PolicyTypeConditionalAccess:
+		// Conditional access: device trust, geo-fencing, step-up auth
+		return s.evaluateConditionalAccessPolicy(ctx, policy, request)
 	default:
 		return true, nil
 	}
@@ -585,24 +671,41 @@ func (s *Service) evaluateSoDPolicy(ctx context.Context, policy *Policy, request
 		return true, nil // No roles to check
 	}
 
-	// Check for conflicting role pairs (example: admin and auditor cannot be combined)
-	conflictPairs := map[string]string{
-		"admin":   "auditor",
-		"finance": "approver",
-	}
-
 	roleSet := make(map[string]bool)
 	for _, r := range userRoles {
 		if role, ok := r.(string); ok {
-			roleSet[role] = true
+			roleSet[strings.ToLower(role)] = true
 		}
 	}
 
-	for role1, role2 := range conflictPairs {
-		if roleSet[role1] && roleSet[role2] {
+	// Check conflict pairs from policy rules (data-driven)
+	for _, rule := range policy.Rules {
+		conflicting, ok := rule.Condition["conflicting_roles"]
+		if !ok {
+			continue
+		}
+		conflictList, ok := conflicting.([]interface{})
+		if !ok || len(conflictList) < 2 {
+			continue
+		}
+		allPresent := true
+		var conflictNames []string
+		for _, cr := range conflictList {
+			roleName, ok := cr.(string)
+			if !ok {
+				allPresent = false
+				break
+			}
+			conflictNames = append(conflictNames, roleName)
+			if !roleSet[strings.ToLower(roleName)] {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
 			s.logger.Warn("SoD policy violation detected",
 				zap.String("policy_id", policy.ID),
-				zap.String("conflicting_roles", role1+"/"+role2))
+				zap.Strings("conflicting_roles", conflictNames))
 			return false, nil
 		}
 	}
@@ -611,20 +714,60 @@ func (s *Service) evaluateSoDPolicy(ctx context.Context, policy *Policy, request
 }
 
 func (s *Service) evaluateTimeboundPolicy(ctx context.Context, policy *Policy, request map[string]interface{}) (bool, error) {
-	// Check if current time is within business hours (9 AM - 6 PM, Mon-Fri)
 	now := time.Now()
 	hour := now.Hour()
 	weekday := now.Weekday()
 
-	// Weekend check
-	if weekday == time.Saturday || weekday == time.Sunday {
-		s.logger.Info("Timebound policy: access outside business days",
+	// Defaults
+	startHour := 9
+	endHour := 18
+	allowedDays := map[time.Weekday]bool{
+		time.Monday: true, time.Tuesday: true, time.Wednesday: true,
+		time.Thursday: true, time.Friday: true,
+	}
+
+	// Parse from policy rules if available
+	for _, rule := range policy.Rules {
+		if sh, ok := rule.Condition["start_hour"].(float64); ok {
+			startHour = int(sh)
+		}
+		if eh, ok := rule.Condition["end_hour"].(float64); ok {
+			endHour = int(eh)
+		}
+		if days, ok := rule.Condition["allowed_days"].([]interface{}); ok {
+			allowedDays = map[time.Weekday]bool{}
+			for _, d := range days {
+				if dayStr, ok := d.(string); ok {
+					switch strings.ToLower(dayStr) {
+					case "monday":
+						allowedDays[time.Monday] = true
+					case "tuesday":
+						allowedDays[time.Tuesday] = true
+					case "wednesday":
+						allowedDays[time.Wednesday] = true
+					case "thursday":
+						allowedDays[time.Thursday] = true
+					case "friday":
+						allowedDays[time.Friday] = true
+					case "saturday":
+						allowedDays[time.Saturday] = true
+					case "sunday":
+						allowedDays[time.Sunday] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Day check
+	if !allowedDays[weekday] {
+		s.logger.Info("Timebound policy: access outside allowed days",
 			zap.String("policy_id", policy.ID))
 		return false, nil
 	}
 
-	// Business hours check (default 9-18)
-	if hour < 9 || hour >= 18 {
+	// Business hours check
+	if hour < startHour || hour >= endHour {
 		s.logger.Info("Timebound policy: access outside business hours",
 			zap.String("policy_id", policy.ID))
 		return false, nil
@@ -640,8 +783,20 @@ func (s *Service) evaluateLocationPolicy(ctx context.Context, policy *Policy, re
 		return true, nil // No IP to check
 	}
 
-	// Example: Allow only internal IPs (10.x.x.x, 192.168.x.x, 172.16-31.x.x)
-	allowedPrefixes := []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"}
+	// Parse allowed IP prefixes from policy rules, fall back to private ranges
+	allowedPrefixes := []string{}
+	for _, rule := range policy.Rules {
+		if prefixes, ok := rule.Condition["allowed_ip_prefixes"].([]interface{}); ok {
+			for _, p := range prefixes {
+				if prefix, ok := p.(string); ok {
+					allowedPrefixes = append(allowedPrefixes, prefix)
+				}
+			}
+		}
+	}
+	if len(allowedPrefixes) == 0 {
+		allowedPrefixes = []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"}
+	}
 
 	for _, prefix := range allowedPrefixes {
 		if len(ip) >= len(prefix) && ip[:len(prefix)] == prefix {
@@ -674,13 +829,120 @@ func (s *Service) evaluateRiskBasedPolicy(ctx context.Context, policy *Policy, r
 		riskScore += int(failedAttempts) * 10
 	}
 
-	// Risk threshold (default 50)
+	// Parse threshold from policy rules, fall back to 50
 	threshold := 50
+	for _, rule := range policy.Rules {
+		if t, ok := rule.Condition["risk_threshold"].(float64); ok {
+			threshold = int(t)
+			break
+		}
+	}
 	if riskScore >= threshold {
 		s.logger.Warn("Risk-based policy: high risk score",
 			zap.String("policy_id", policy.ID),
-			zap.Int("risk_score", riskScore))
+			zap.Int("risk_score", riskScore),
+			zap.Int("threshold", threshold))
 		return false, nil
+	}
+
+	return true, nil
+}
+
+func (s *Service) evaluateConditionalAccessPolicy(ctx context.Context, policy *Policy, request map[string]interface{}) (bool, error) {
+	for _, rule := range policy.Rules {
+		// Check require_mfa condition
+		if requireMFA, ok := rule.Condition["require_mfa"].(bool); ok && requireMFA {
+			authMethods, _ := request["auth_methods"].([]interface{})
+			hasMFA := false
+			for _, m := range authMethods {
+				if method, ok := m.(string); ok && (method == "totp" || method == "step_up_mfa" || method == "webauthn") {
+					hasMFA = true
+					break
+				}
+			}
+			if !hasMFA {
+				s.logger.Warn("Conditional access: MFA required but not present",
+					zap.String("policy_id", policy.ID))
+				return false, nil
+			}
+		}
+
+		// Check device_trust_required condition
+		if deviceTrustRequired, ok := rule.Condition["device_trust_required"].(bool); ok && deviceTrustRequired {
+			deviceTrusted, _ := request["device_trusted"].(bool)
+			if !deviceTrusted {
+				s.logger.Warn("Conditional access: trusted device required",
+					zap.String("policy_id", policy.ID))
+				return false, nil
+			}
+		}
+
+		// Check allowed_locations condition (country codes)
+		if allowedStr, ok := rule.Condition["allowed_locations"].(string); ok && allowedStr != "" {
+			location, _ := request["location"].(string)
+			allowed := false
+			for _, loc := range strings.Split(allowedStr, ",") {
+				loc = strings.TrimSpace(loc)
+				if strings.Contains(strings.ToUpper(location), strings.ToUpper(loc)) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				s.logger.Warn("Conditional access: location not allowed",
+					zap.String("policy_id", policy.ID),
+					zap.String("location", location))
+				return false, nil
+			}
+		}
+
+		// Check blocked_locations condition (country codes)
+		if blockedStr, ok := rule.Condition["blocked_locations"].(string); ok && blockedStr != "" {
+			location, _ := request["location"].(string)
+			for _, loc := range strings.Split(blockedStr, ",") {
+				loc = strings.TrimSpace(loc)
+				if strings.Contains(strings.ToUpper(location), strings.ToUpper(loc)) {
+					s.logger.Warn("Conditional access: location blocked",
+						zap.String("policy_id", policy.ID),
+						zap.String("location", location))
+					return false, nil
+				}
+			}
+		}
+
+		// Check max_risk_score condition
+		if maxScoreStr, ok := rule.Condition["max_risk_score"].(string); ok && maxScoreStr != "" {
+			maxScore := 100
+			fmt.Sscanf(maxScoreStr, "%d", &maxScore)
+			riskScore := 0
+			if rs, ok := request["risk_score"].(float64); ok {
+				riskScore = int(rs)
+			}
+			if riskScore > maxScore {
+				s.logger.Warn("Conditional access: risk score too high",
+					zap.String("policy_id", policy.ID),
+					zap.Int("risk_score", riskScore),
+					zap.Int("max_allowed", maxScore))
+				return false, nil
+			}
+		}
+
+		// Check effect — if step_up_mfa, check if step-up has been done
+		if rule.Effect == "step_up_mfa" {
+			authMethods, _ := request["auth_methods"].([]interface{})
+			hasStepUp := false
+			for _, m := range authMethods {
+				if method, ok := m.(string); ok && method == "step_up_mfa" {
+					hasStepUp = true
+					break
+				}
+			}
+			if !hasStepUp {
+				s.logger.Info("Conditional access: step-up MFA required",
+					zap.String("policy_id", policy.ID))
+				return false, nil
+			}
+		}
 	}
 
 	return true, nil
@@ -1016,9 +1278,12 @@ func (e *ServiceError) Error() string {
 }
 
 // RegisterRoutes registers governance service routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	gov := router.Group("/api/v1/governance")
 	gov.Use(svc.openIDXAuthMiddleware())
+	for _, mw := range extraMiddleware {
+		gov.Use(mw)
+	}
 	{
 		// Access reviews
 		gov.GET("/reviews", svc.handleListReviews)
@@ -1037,6 +1302,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		gov.PUT("/policies/:id", svc.handleUpdatePolicy)
 		gov.DELETE("/policies/:id", svc.handleDeletePolicy)
 		gov.POST("/policies/:id/evaluate", svc.handleEvaluatePolicy)
+
+		// Access request workflows
+		gov.GET("/requests", svc.handleListAccessRequests)
+		gov.POST("/requests", svc.handleCreateAccessRequest)
+		gov.GET("/requests/:id", svc.handleGetAccessRequest)
+		gov.POST("/requests/:id/approve", svc.handleApproveRequest)
+		gov.POST("/requests/:id/deny", svc.handleDenyRequest)
+		gov.POST("/requests/:id/cancel", svc.handleCancelRequest)
+		gov.GET("/my-approvals", svc.handleListPendingApprovals)
+
+		// Approval policies
+		gov.GET("/approval-policies", svc.handleListApprovalPolicies)
+		gov.POST("/approval-policies", svc.handleCreateApprovalPolicy)
+		gov.PUT("/approval-policies/:id", svc.handleUpdateApprovalPolicy)
+		gov.DELETE("/approval-policies/:id", svc.handleDeleteApprovalPolicy)
 	}
 }
 
@@ -1291,5 +1571,19 @@ func (s *Service) handleEvaluatePolicy(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"allowed": allowed})
+
+	// For conditional access policies, check if step-up MFA should be suggested
+	response := gin.H{"allowed": allowed}
+	if !allowed {
+		policy, pErr := s.GetPolicy(c.Request.Context(), c.Param("id"))
+		if pErr == nil && policy.Type == PolicyTypeConditionalAccess {
+			for _, rule := range policy.Rules {
+				if rule.Effect == "step_up_mfa" {
+					response["step_up_required"] = true
+					break
+				}
+			}
+		}
+	}
+	c.JSON(200, response)
 }

@@ -293,7 +293,7 @@ curl -X POST http://localhost:8004/reports/user-access \
 
 ```bash
 # Test policy evaluation
-curl -X POST http://localhost:8181/v1/data/authz/allow \
+curl -X POST http://localhost:8281/v1/data/authz/allow \
   -H "Content-Type: application/json" \
   -d '{
     "input": {
@@ -312,7 +312,7 @@ curl -X POST http://localhost:8181/v1/data/authz/allow \
 
 ```bash
 # Update policy
-curl -X PUT http://localhost:8181/v1/policies/authz \
+curl -X PUT http://localhost:8281/v1/policies/authz \
   -H "Content-Type: text/plain" \
   -d 'package authz
 

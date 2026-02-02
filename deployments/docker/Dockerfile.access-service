@@ -1,0 +1,39 @@
+# Build stage
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /app
+
+COPY . .
+
+RUN go mod tidy
+RUN go mod download
+
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION}" \
+    -o /app/service ./cmd/access-service
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+RUN addgroup -S openidx && adduser -S openidx -G openidx
+
+WORKDIR /app
+
+COPY --from=builder /app/service .
+
+# Create Ziti identity directory writable by openidx user
+RUN mkdir -p /ziti && chown openidx:openidx /ziti
+
+USER openidx
+
+EXPOSE 8007
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:8007/health || exit 1
+
+ENTRYPOINT ["./service"]

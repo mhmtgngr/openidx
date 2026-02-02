@@ -21,14 +21,9 @@ type Config struct {
 	RedisURL         string `mapstructure:"redis_url"`
 	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
 
-	// Keycloak configuration
-	KeycloakURL      string `mapstructure:"keycloak_url"`
-	KeycloakRealm    string `mapstructure:"keycloak_realm"`
-	KeycloakClientID string `mapstructure:"keycloak_client_id"`
-	KeycloakSecret   string `mapstructure:"keycloak_secret"`
-
 	// OPA configuration
-	OPAURL string `mapstructure:"opa_url"`
+	OPAURL        string `mapstructure:"opa_url"`
+	EnableOPAAuthz bool  `mapstructure:"enable_opa_authz"`
 
 	// OAuth / OIDC settings
 	OAuthIssuer  string `mapstructure:"oauth_issuer"`
@@ -54,6 +49,36 @@ type Config struct {
 	SMTPUsername string `mapstructure:"smtp_username"`
 	SMTPPassword string `mapstructure:"smtp_password"`
 	SMTPFrom     string `mapstructure:"smtp_from"`
+
+	// Access Proxy settings
+	GovernanceURL      string `mapstructure:"governance_url"`
+	AuditURL           string `mapstructure:"audit_url"`
+	AccessSessionSecret string `mapstructure:"access_session_secret"`
+	AccessProxyDomain  string `mapstructure:"access_proxy_domain"`
+
+	// OpenZiti configuration
+	ZitiEnabled       bool   `mapstructure:"ziti_enabled"`
+	ZitiCtrlURL       string `mapstructure:"ziti_ctrl_url"`
+	ZitiAdminUser     string `mapstructure:"ziti_admin_user"`
+	ZitiAdminPassword string `mapstructure:"ziti_admin_password"`
+	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
+	ZitiInsecureSkipVerify bool   `mapstructure:"ziti_insecure_skip_verify"`
+
+	// Continuous verification
+	ContinuousVerifyEnabled  bool   `mapstructure:"continuous_verify_enabled"`
+	ContinuousVerifyInterval int    `mapstructure:"continuous_verify_interval"`
+
+	// GeoIP service (optional)
+	GeoIPServiceURL string `mapstructure:"geoip_service_url"`
+
+	// Apache Guacamole integration
+	GuacamoleURL           string `mapstructure:"guacamole_url"`
+	GuacamoleAdminUser     string `mapstructure:"guacamole_admin_user"`
+	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
+
+	// BrowZer configuration (browser-native Ziti participation)
+	BrowZerEnabled  bool   `mapstructure:"browzer_enabled"`
+	BrowZerClientID string `mapstructure:"browzer_client_id"`
 
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
@@ -137,6 +162,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		"audit-service":        8004,
 		"admin-api":            8005,
 		"gateway-service":      8006,
+		"access-service":       8007,
 	}
 	if port, ok := ports[serviceName]; ok {
 		v.SetDefault("port", port)
@@ -149,13 +175,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
 	v.SetDefault("elasticsearch_url", "http://localhost:9200")
 
-	// Keycloak defaults
-	v.SetDefault("keycloak_url", "http://localhost:8180")
-	v.SetDefault("keycloak_realm", "openidx")
-	v.SetDefault("keycloak_client_id", "openidx-api")
-
 	// OPA defaults
-	v.SetDefault("opa_url", "http://localhost:8181")
+	v.SetDefault("opa_url", "http://localhost:8281")
+	v.SetDefault("enable_opa_authz", false)
 
 	// Feature flag defaults
 	v.SetDefault("enable_mfa", true)
@@ -169,6 +191,33 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// OAuth / OIDC defaults
 	v.SetDefault("oauth_issuer", "http://localhost:8006")
 	v.SetDefault("oauth_jwks_url", "http://localhost:8006/.well-known/jwks.json")
+
+	// Access Proxy defaults
+	v.SetDefault("governance_url", "http://localhost:8002")
+	v.SetDefault("audit_url", "http://localhost:8004")
+	v.SetDefault("access_session_secret", "change-me-in-production-32bytes!")
+	v.SetDefault("access_proxy_domain", "localhost")
+
+	// OpenZiti defaults
+	v.SetDefault("ziti_enabled", false)
+	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
+	v.SetDefault("ziti_admin_user", "admin")
+	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
+	v.SetDefault("ziti_identity_dir", "/ziti")
+	v.SetDefault("ziti_insecure_skip_verify", false)
+
+	// Continuous verification defaults
+	v.SetDefault("continuous_verify_enabled", false)
+	v.SetDefault("continuous_verify_interval", 30)
+
+	// Guacamole defaults
+	v.SetDefault("guacamole_url", "")
+	v.SetDefault("guacamole_admin_user", "guacadmin")
+	v.SetDefault("guacamole_admin_password", "guacadmin")
+
+	// BrowZer defaults
+	v.SetDefault("browzer_enabled", false)
+	v.SetDefault("browzer_client_id", "browzer-client")
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
@@ -190,13 +239,38 @@ func bindEnvVars(v *viper.Viper) {
 		"database_url":      "DATABASE_URL",
 		"redis_url":         "REDIS_URL",
 		"elasticsearch_url": "ELASTICSEARCH_URL",
-		"keycloak_url":      "KEYCLOAK_URL",
 		"opa_url":           "OPA_URL",
 		"environment":       "APP_ENV",
 		"log_level":         "LOG_LEVEL",
 		"port":              "PORT",
 		"oauth_issuer":      "OAUTH_ISSUER",
-		"oauth_jwks_url":    "OAUTH_JWKS_URL",
+		"oauth_jwks_url":         "OAUTH_JWKS_URL",
+		"governance_url":         "GOVERNANCE_URL",
+		"audit_url":              "AUDIT_URL",
+		"access_session_secret":  "ACCESS_SESSION_SECRET",
+		"access_proxy_domain":    "ACCESS_PROXY_DOMAIN",
+		"ziti_enabled":              "ZITI_ENABLED",
+		"ziti_ctrl_url":             "ZITI_CTRL_URL",
+		"ziti_admin_user":           "ZITI_ADMIN_USER",
+		"ziti_admin_password":       "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":            "ZITI_IDENTITY_DIR",
+		"ziti_insecure_skip_verify":    "ZITI_INSECURE_SKIP_VERIFY",
+		"continuous_verify_enabled": "CONTINUOUS_VERIFY_ENABLED",
+		"continuous_verify_interval":"CONTINUOUS_VERIFY_INTERVAL",
+		"geoip_service_url":        "GEOIP_SERVICE_URL",
+		"guacamole_url":            "GUACAMOLE_URL",
+		"guacamole_admin_user":     "GUACAMOLE_ADMIN_USER",
+		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
+		"browzer_enabled":          "BROWZER_ENABLED",
+		"browzer_client_id":        "BROWZER_CLIENT_ID",
+		"enable_opa_authz":         "ENABLE_OPA_AUTHZ",
+		"jwt_secret":               "JWT_SECRET",
+		"encryption_key":           "ENCRYPTION_KEY",
+		"smtp_host":                "SMTP_HOST",
+		"smtp_port":                "SMTP_PORT",
+		"smtp_username":            "SMTP_USERNAME",
+		"smtp_password":            "SMTP_PASSWORD",
+		"smtp_from":                "SMTP_FROM",
 	}
 
 	for key, env := range envMappings {
@@ -230,4 +304,26 @@ func (c *Config) IsDevelopment() bool {
 // IsProduction returns true if running in production mode
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production" || c.Environment == "prod"
+}
+
+// ProductionWarnings returns a list of configuration issues that should be
+// addressed before deploying to production. Returns nil if no issues found.
+func (c *Config) ProductionWarnings() []string {
+	if !c.IsProduction() {
+		return nil
+	}
+	var warnings []string
+	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
+		warnings = append(warnings, "jwt_secret uses a default or placeholder value")
+	}
+	if c.EncryptionKey == "" || strings.Contains(strings.ToLower(c.EncryptionKey), "change") {
+		warnings = append(warnings, "encryption_key uses a default or placeholder value")
+	}
+	if strings.Contains(c.AccessSessionSecret, "change-me") {
+		warnings = append(warnings, "access_session_secret uses the default placeholder")
+	}
+	if c.CORSAllowedOrigins == "*" {
+		warnings = append(warnings, "cors_allowed_origins is wildcard '*'; set specific origins for production")
+	}
+	return warnings
 }

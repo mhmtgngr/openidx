@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -21,7 +24,9 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/risk"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -147,18 +152,68 @@ type Service struct {
 	publicKey  *rsa.PublicKey
 	issuer     string
 	identityService *identity.Service
+	riskService     *risk.Service
+	webhookService  WebhookPublisher
+}
+
+// WebhookPublisher defines the interface for publishing webhook events
+type WebhookPublisher interface {
+	Publish(ctx context.Context, eventType string, payload interface{}) error
+}
+
+// SetRiskService sets the risk service for conditional access
+func (s *Service) SetRiskService(rs *risk.Service) {
+	s.riskService = rs
+}
+
+// SetWebhookService sets the webhook service for event publishing
+func (s *Service) SetWebhookService(ws WebhookPublisher) {
+	s.webhookService = ws
 }
 
 // NewService creates a new OAuth service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger, idSvc *identity.Service) (*Service, error) {
-	// Generate RSA key pair for JWT signing
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+	// Try to load RSA key from database, generate if not found
+	var privateKey *rsa.PrivateKey
+	var keyPEMStr string
+	err := db.Pool.QueryRow(context.Background(),
+		"SELECT value::text FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&keyPEMStr)
+	if err == nil && len(keyPEMStr) > 0 {
+		// value is stored as a JSON string, strip quotes
+		keyPEMStr = strings.Trim(keyPEMStr, "\"")
+		keyPEMStr = strings.ReplaceAll(keyPEMStr, "\\n", "\n")
+		block, _ := pem.Decode([]byte(keyPEMStr))
+		if block != nil {
+			privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err != nil {
+				logger.Warn("Failed to parse stored RSA key, generating new one", zap.Error(err))
+				privateKey = nil
+			}
+		}
+	}
+	if privateKey == nil {
+		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+		}
+		// Store the key as JSON string in jsonb column
+		keyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
+		pemBytes := pem.EncodeToMemory(keyBlock)
+		pemJSON, _ := json.Marshal(string(pemBytes))
+		db.Pool.Exec(context.Background(),
+			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb",
+			string(pemJSON))
+		logger.Info("RSA signing key generated and persisted to database")
+	} else {
+		logger.Info("RSA signing key loaded from database")
 	}
 
-	// Use default issuer URL
-	issuer := "http://localhost:8006"
+	// Use configured issuer URL or fall back to default
+	issuer := cfg.OAuthIssuer
+	if issuer == "" {
+		issuer = "http://localhost:8006"
+	}
 
 	return &Service{
 		db:         db,
@@ -216,7 +271,7 @@ func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient, error) {
 	var client OAuthClient
 	// Use pointers to handle NULL values
-	var clientSecret, logoURI, policyURI, tosURI *string
+	var clientSecret, description, logoURI, policyURI, tosURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
 
 	err := s.db.Pool.QueryRow(ctx, `
@@ -227,7 +282,7 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 		       created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1
 	`, clientID).Scan(
-		&client.ID, &client.ClientID, &clientSecret, &client.Name, &client.Description,
+		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
 		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
@@ -241,6 +296,9 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 	// Handle NULL values
 	if clientSecret != nil {
 		client.ClientSecret = *clientSecret
+	}
+	if description != nil {
+		client.Description = *description
 	}
 	if logoURI != nil {
 		client.LogoURI = *logoURI
@@ -282,8 +340,12 @@ func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthCl
 	var clients []OAuthClient
 	for rows.Next() {
 		var c OAuthClient
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &c.Description, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var desc *string
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &desc, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, 0, err
+		}
+		if desc != nil {
+			c.Description = *desc
 		}
 		clients = append(clients, c)
 	}
@@ -434,48 +496,68 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 // JWT Token Generation
 
 // GenerateJWT generates a signed JWT access token
-func (s *Service) GenerateJWT(userID, clientID, scope string, expiresIn int) (string, error) {
+func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int) (string, error) {
 	now := time.Now()
 
-	// Get user roles
-	var roleNames []string
-	rows, err := s.db.Pool.Query(context.Background(), `
-		SELECT r.name
-		FROM roles r
-		JOIN user_roles ur ON r.id = ur.role_id
-		WHERE ur.user_id = $1
-	`, userID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var roleName string
-			if err := rows.Scan(&roleName); err == nil {
-				roleNames = append(roleNames, roleName)
+	// Get user info for access token
+	var email, firstName, lastName string
+	if userID != "" {
+		_ = s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
+			FROM users WHERE id = $1
+		`, userID).Scan(&email, &firstName, &lastName)
+	}
+
+	name := firstName
+	if lastName != "" {
+		name = firstName + " " + lastName
+	}
+
+	// Get user roles (initialize as empty slice so JSON serializes as [] not null)
+	roleNames := make([]string, 0)
+	if userID != "" {
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT r.name
+			FROM roles r
+			JOIN user_roles ur ON r.id = ur.role_id
+			WHERE ur.user_id = $1
+		`, userID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var roleName string
+				if err := rows.Scan(&roleName); err == nil {
+					roleNames = append(roleNames, roleName)
+				}
 			}
 		}
 	}
 
 	claims := jwt.MapClaims{
 		"sub":       userID,
+		"aud":       clientID,
 		"client_id": clientID,
 		"scope":     scope,
 		"iss":       s.issuer,
 		"iat":       now.Unix(),
 		"exp":       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		"email":     email,
+		"name":      name,
 		"roles":     roleNames,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }
 
 // GenerateIDToken generates an OIDC ID token
-func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int) (string, error) {
+func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce string, expiresIn int) (string, error) {
 	now := time.Now()
 
 	// Get user info
 	var email, firstName, lastName string
-	_ = s.db.Pool.QueryRow(context.Background(), `
+	_ = s.db.Pool.QueryRow(ctx, `
 		SELECT email, first_name, last_name FROM users WHERE id = $1
 	`, userID).Scan(&email, &firstName, &lastName)
 
@@ -484,9 +566,9 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 		name = firstName + " " + lastName
 	}
 
-	// Get user roles
-	var roleNames []string
-	rows, err := s.db.Pool.Query(context.Background(), `
+	// Get user roles (initialize as empty slice so JSON serializes as [] not null)
+	roleNames := make([]string, 0)
+	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.name
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
@@ -520,6 +602,7 @@ func (s *Service) GenerateIDToken(userID, clientID, nonce string, expiresIn int)
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }
 
@@ -575,8 +658,9 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 
 // HTTP Handlers
 
-// RegisterRoutes registers OAuth/OIDC routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+// RegisterRoutes registers OAuth/OIDC routes.
+// authMiddleware is optional; when provided it protects the client management API and consent endpoint.
+func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.HandlerFunc) {
 	// OIDC Discovery
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
 	router.GET("/.well-known/jwks.json", svc.handleJWKS)
@@ -585,10 +669,26 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	{
 		// Authorization endpoint
 		oauth.GET("/authorize", svc.handleAuthorize)
-		oauth.POST("/authorize", svc.handleAuthorizeConsent)
 
-		// Login endpoint for direct authentication
+		// Consent endpoint (requires authentication)
+		if len(authMiddleware) > 0 {
+			oauth.POST("/authorize", append(authMiddleware, svc.handleAuthorizeConsent)...)
+		} else {
+			oauth.POST("/authorize", svc.handleAuthorizeConsent)
+		}
+
+		// Server-rendered login form callback (for standard OIDC clients)
+		oauth.POST("/authorize/callback", svc.handleAuthorizeCallback)
+
+		// Login endpoint for direct authentication (SPA flow)
 		oauth.POST("/login", svc.handleLogin)
+
+		// MFA verification endpoint
+		oauth.POST("/mfa-verify", svc.handleMFAVerify)
+
+		// Step-up MFA endpoints (mid-session re-auth)
+		oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
+		oauth.POST("/stepup-verify", svc.handleStepUpVerify)
 
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
@@ -605,8 +705,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		oauth.POST("/userinfo", svc.handleUserInfo)
 	}
 
-	// Client management API
+	// Client management API (protected by auth middleware when available)
 	clients := router.Group("/api/v1/oauth/clients")
+	if len(authMiddleware) > 0 {
+		clients.Use(authMiddleware...)
+	}
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)
@@ -683,10 +786,40 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 		"code_challenge":        c.Query("code_challenge"),
 		"code_challenge_method": c.Query("code_challenge_method"),
 	}
+	// Validate redirect_uri against registered client
+	clientID := oauthParams["client_id"]
+	var client *OAuthClient
+	if clientID != "" {
+		var err error
+		client, err = s.GetClient(c.Request.Context(), clientID)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "invalid_client"})
+			return
+		}
+		validRedirect := false
+		for _, uri := range client.RedirectURIs {
+			if uri == oauthParams["redirect_uri"] {
+				validRedirect = true
+				break
+			}
+		}
+		if !validRedirect {
+			c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+			return
+		}
+	}
+
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
-	// Redirect to the client's login page with the login_session parameter
+	// For public OIDC clients (like BrowZer), serve a server-rendered login page
+	// instead of redirecting back to the client with login_session
+	if client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
+		s.renderLoginPage(c, loginSession, "")
+		return
+	}
+
+	// SPA flow: redirect back to the client's login page with the login_session parameter
 	redirectURI := oauthParams["redirect_uri"]
 	if redirectURI == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri is required"})
@@ -704,6 +837,112 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	loginURL.RawQuery = query.Encode()
 
 	c.Redirect(302, loginURL.String())
+}
+
+// renderLoginPage serves a minimal HTML login form for standard OIDC clients
+func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string) {
+	errHTML := ""
+	if errorMsg != "" {
+		errHTML = `<div style="color:#ef4444;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px">` + errorMsg + `</div>`
+	}
+	html := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign In — OpenIDX</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.25)}
+h1{font-size:24px;font-weight:700;margin-bottom:8px;color:#f8fafc}
+.sub{color:#94a3b8;margin-bottom:24px;font-size:14px}
+label{display:block;font-size:13px;font-weight:500;color:#94a3b8;margin-bottom:6px}
+input{width:100%;padding:10px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:15px;outline:none;transition:border .2s}
+input:focus{border-color:#3b82f6}
+.field{margin-bottom:16px}
+button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
+button:hover{background:#2563eb}
+</style></head><body>
+<div class="card">
+<h1>Sign In</h1>
+<p class="sub">OpenIDX Zero Trust Platform</p>
+` + errHTML + `
+<form method="POST" action="/oauth/authorize/callback">
+<input type="hidden" name="login_session" value="` + loginSession + `">
+<div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>
+<div class="field"><label>Password</label><input type="password" name="password" required></div>
+<button type="submit">Sign In</button>
+</form>
+</div></body></html>`
+	c.Data(200, "text/html; charset=utf-8", []byte(html))
+}
+
+// handleAuthorizeCallback handles the server-rendered login form submission for standard OIDC clients
+func (s *Service) handleAuthorizeCallback(c *gin.Context) {
+	loginSession := c.PostForm("login_session")
+	username := c.PostForm("username")
+	password := c.PostForm("password")
+
+	if loginSession == "" || username == "" || password == "" {
+		s.renderLoginPage(c, loginSession, "All fields are required.")
+		return
+	}
+
+	// Get OAuth parameters from Redis
+	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+loginSession).Result()
+	if err != nil {
+		s.renderLoginPage(c, loginSession, "Login session expired. Please try again.")
+		return
+	}
+
+	var oauthParams map[string]string
+	if err := json.Unmarshal([]byte(paramsJSON), &oauthParams); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Authenticate user
+	user, err := s.identityService.AuthenticateUser(c.Request.Context(), username, password)
+	if err != nil {
+		errorMsg := "Invalid username or password."
+		if err.Error() == "account is locked" {
+			errorMsg = "Account is locked. Please try again later."
+		} else if err.Error() == "account is disabled" {
+			errorMsg = "Account is disabled. Contact your administrator."
+		}
+		s.renderLoginPage(c, loginSession, errorMsg)
+		return
+	}
+
+	// Clean up login session
+	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
+
+	// Generate authorization code
+	code := GenerateRandomToken(32)
+	authCode := &AuthorizationCode{
+		Code:                code,
+		ClientID:            oauthParams["client_id"],
+		UserID:              user.ID,
+		RedirectURI:         oauthParams["redirect_uri"],
+		Scope:               oauthParams["scope"],
+		State:               oauthParams["state"],
+		Nonce:               oauthParams["nonce"],
+		CodeChallenge:       oauthParams["code_challenge"],
+		CodeChallengeMethod: oauthParams["code_challenge_method"],
+	}
+
+	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// 302 redirect to client with auth code (standard OIDC flow)
+	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
+	query := redirectURL.Query()
+	query.Set("code", code)
+	if oauthParams["state"] != "" {
+		query.Set("state", oauthParams["state"])
+	}
+	redirectURL.RawQuery = query.Encode()
+
+	c.Redirect(302, redirectURL.String())
 }
 
 // handleLogin handles username/password login for direct OpenIDX authentication
@@ -739,8 +978,16 @@ func (s *Service) handleLogin(c *gin.Context) {
 	}
 
 	// Authenticate user
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+
 	user, err := s.identityService.AuthenticateUser(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
+		// Log failed login audit event
+		go s.logAuditEvent(context.Background(), "authentication", "security", "login_failed", "failure",
+			req.Username, clientIP, "", "user",
+			map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
+
 		// Return appropriate error message
 		errorMsg := "Invalid username or password"
 		if err.Error() == "account is locked" {
@@ -752,15 +999,126 @@ func (s *Service) handleLogin(c *gin.Context) {
 		return
 	}
 
-	// Delete the login session from Redis
-	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+	// Log successful login audit event
+	go s.logAuditEvent(context.Background(), "authentication", "security", "login", "success",
+		user.ID, clientIP, user.ID, "user",
+		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
 
-	// Generate authorization code
+	// Risk assessment (conditional access)
+	var riskScore int
+	var riskFactors []string
+	var fingerprint, location string
+	var deviceTrusted bool
+	authMethods := []string{"password"}
+
+	if s.riskService != nil {
+		fingerprint = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
+
+		// Geo-IP lookup
+		geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP)
+		var lat, lon float64
+		if geo != nil {
+			location = geo.City + ", " + geo.Country
+			lat = geo.Lat
+			lon = geo.Lon
+		}
+
+		// Register device
+		_, _, _ = s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, location)
+
+		// Check device trust
+		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
+
+		// Calculate risk score
+		riskScore, riskFactors = s.riskService.CalculateRiskScore(c.Request.Context(), user.ID, clientIP, userAgent, fingerprint, location, lat, lon)
+
+		// Record login
+		s.riskService.RecordLogin(c.Request.Context(), user.ID, clientIP, userAgent, location, lat, lon, fingerprint, true, authMethods, riskScore)
+
+		s.logger.Info("Login risk assessment",
+			zap.String("user_id", user.ID),
+			zap.Int("risk_score", riskScore),
+			zap.Strings("factors", riskFactors),
+			zap.Bool("device_trusted", deviceTrusted),
+			zap.String("location", location),
+		)
+
+		// Publish webhook event for login
+		if s.webhookService != nil {
+			eventType := "login.success"
+			if riskScore >= 70 {
+				eventType = "login.high_risk"
+			}
+			s.webhookService.Publish(c.Request.Context(), eventType, map[string]interface{}{
+				"user_id": user.ID, "ip": clientIP, "location": location,
+				"risk_score": riskScore, "device_trusted": deviceTrusted,
+			})
+		}
+	}
+
+	// Check if user has MFA enabled
+	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
+	mfaEnabled := totpStatus != nil && totpStatus.Enabled
+
+	// Force MFA if risk score is high (>= 70) and MFA is available
+	forceMFA := riskScore >= 70 && mfaEnabled
+
+	if mfaEnabled && (forceMFA || (totpStatus != nil && totpStatus.Enabled)) {
+		// MFA required — store partial auth in Redis and return MFA challenge
+		mfaSession := GenerateRandomToken(32)
+		mfaData := map[string]string{
+			"user_id":     user.ID,
+			"risk_score":  fmt.Sprintf("%d", riskScore),
+			"fingerprint": fingerprint,
+			"location":    location,
+		}
+		for k, v := range oauthParams {
+			mfaData[k] = v
+		}
+		mfaDataJSON, _ := json.Marshal(mfaData)
+		s.redis.Client.Set(c.Request.Context(), "mfa_session:"+mfaSession, string(mfaDataJSON), 5*time.Minute)
+
+		// Delete the login session from Redis (password step is done)
+		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+
+		c.JSON(200, gin.H{
+			"mfa_required":  true,
+			"mfa_session":   mfaSession,
+			"mfa_methods":   []string{"totp"},
+			"risk_score":    riskScore,
+			"risk_factors":  riskFactors,
+			"device_trusted": deviceTrusted,
+		})
+		return
+	}
+
+	// High risk but no MFA available — deny access
+	if riskScore >= 70 && !mfaEnabled {
+		s.logger.Warn("High risk login denied — no MFA available",
+			zap.String("user_id", user.ID),
+			zap.Int("risk_score", riskScore),
+		)
+		c.JSON(403, gin.H{
+			"error":             "high_risk_login",
+			"error_description": "Login from an unrecognized device or location. Please enable MFA to continue.",
+			"risk_score":        riskScore,
+			"risk_factors":      riskFactors,
+		})
+		return
+	}
+
+	// No MFA — proceed with authorization code
+	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
+	s.issueAuthorizationCode(c, oauthParams, user.ID)
+}
+
+// issueAuthorizationCode generates an auth code and returns the redirect URL
+func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]string, userID string) {
 	code := GenerateRandomToken(32)
 	authCode := &AuthorizationCode{
 		Code:                code,
 		ClientID:            oauthParams["client_id"],
-		UserID:              user.ID,
+		UserID:              userID,
 		RedirectURI:         oauthParams["redirect_uri"],
 		Scope:               oauthParams["scope"],
 		State:               oauthParams["state"],
@@ -774,7 +1132,6 @@ func (s *Service) handleLogin(c *gin.Context) {
 		return
 	}
 
-	// Build redirect URL with authorization code
 	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
 	query := redirectURL.Query()
 	query.Set("code", code)
@@ -786,6 +1143,63 @@ func (s *Service) handleLogin(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"redirect_url": redirectURL.String(),
 	})
+}
+
+// handleMFAVerify handles TOTP verification after password authentication
+func (s *Service) handleMFAVerify(c *gin.Context) {
+	var req struct {
+		MFASession string `json:"mfa_session"`
+		Code       string `json:"code"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid request body"})
+		return
+	}
+
+	if req.MFASession == "" || req.Code == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "mfa_session and code are required"})
+		return
+	}
+
+	// Retrieve MFA session from Redis
+	mfaDataJSON, err := s.redis.Client.Get(c.Request.Context(), "mfa_session:"+req.MFASession).Result()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid or expired MFA session"})
+		return
+	}
+
+	var mfaData map[string]string
+	if err := json.Unmarshal([]byte(mfaDataJSON), &mfaData); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	userID := mfaData["user_id"]
+
+	// Verify TOTP code
+	valid, err := s.identityService.VerifyTOTP(c.Request.Context(), userID, req.Code)
+	if err != nil || !valid {
+		c.JSON(401, gin.H{"error": "invalid_mfa_code", "error_description": "Invalid verification code"})
+		return
+	}
+
+	// MFA verified — delete session and issue authorization code
+	s.redis.Client.Del(c.Request.Context(), "mfa_session:"+req.MFASession)
+
+	// Log MFA verification audit event
+	go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_verified", "success",
+		userID, c.ClientIP(), userID, "user",
+		map[string]interface{}{"method": "totp"})
+
+	oauthParams := make(map[string]string)
+	for k, v := range mfaData {
+		if k != "user_id" {
+			oauthParams[k] = v
+		}
+	}
+
+	s.issueAuthorizationCode(c, oauthParams, userID)
 }
 
 func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
@@ -841,7 +1255,11 @@ func (s *Service) handleCallback(c *gin.Context) {
 
 	// 3. Get IdP from identity service (we need to store idp_id in the state)
 	// For now, let's assume we have only one IdP for simplicity
-	idps, _, _ := s.identityService.ListIdentityProviders(c.Request.Context(), 0, 1)
+	idps, _, err := s.identityService.ListIdentityProviders(c.Request.Context(), 0, 1)
+	if err != nil || len(idps) == 0 {
+		c.JSON(500, gin.H{"error": "no identity provider configured"})
+		return
+	}
 	idp := idps[0]
 
 	// 4. Exchange code for tokens
@@ -875,21 +1293,53 @@ func (s *Service) handleCallback(c *gin.Context) {
 		Sub   string `json:"sub"`
 		Name  string `json:"name"`
 	}
-	// We need to parse the token without verification for this POC
-	parts := strings.Split(rawIDToken, ".")
-	if len(parts) == 3 {
-		payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
-		json.Unmarshal(payload, &claims)
+	// Verify the ID token signature using the IdP's JWKS
+	verifiedToken, err := jwt.Parse(rawIDToken, func(t *jwt.Token) (interface{}, error) {
+		// Fetch JWKS from the IdP
+		jwksURL := idp.IssuerURL + "/protocol/openid-connect/certs"
+		return middleware.FetchJWKS(jwksURL, t)
+	})
+	if err != nil {
+		s.logger.Error("Failed to verify ID token", zap.Error(err))
+		c.JSON(401, gin.H{"error": "invalid_id_token", "error_description": "ID token signature verification failed"})
+		return
+	}
+	if mapClaims, ok := verifiedToken.Claims.(jwt.MapClaims); ok {
+		if email, ok := mapClaims["email"].(string); ok {
+			claims.Email = email
+		}
+		if sub, ok := mapClaims["sub"].(string); ok {
+			claims.Sub = sub
+		}
+		if name, ok := mapClaims["name"].(string); ok {
+			claims.Name = name
+		}
 	}
 
-	user := &identity.User{
-		Username:      claims.Email,
-		Email:         claims.Email,
-		FirstName:     claims.Name,
-		Enabled:       true,
-		EmailVerified: true,
+	if claims.Email == "" {
+		c.JSON(400, gin.H{"error": "invalid_claims", "error_description": "email claim is required"})
+		return
 	}
-	s.identityService.CreateUser(c.Request.Context(), user)
+
+	// Check if user already exists (JIT provisioning)
+	existingUsers, _, _ := s.identityService.ListUsers(c.Request.Context(), 0, 1, claims.Email)
+	var user *identity.User
+	if len(existingUsers) > 0 {
+		user = &existingUsers[0]
+	} else {
+		user = &identity.User{
+			Username:      claims.Email,
+			Email:         claims.Email,
+			FirstName:     claims.Name,
+			Enabled:       true,
+			EmailVerified: true,
+		}
+		if err := s.identityService.CreateUser(c.Request.Context(), user); err != nil {
+			s.logger.Error("Failed to create SSO user", zap.Error(err))
+			c.JSON(500, gin.H{"error": "failed to provision user"})
+			return
+		}
+	}
 
 	authCode := &AuthorizationCode{
 		Code:        GenerateRandomToken(32),
@@ -1012,7 +1462,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// For confidential clients, verify client_secret
 	// For public clients, skip secret verification (use PKCE instead)
-	if client.Type == "confidential" && client.ClientSecret != clientSecret {
+	if client.Type == "confidential" && subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
@@ -1039,7 +1489,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	s.DeleteAuthorizationCode(c.Request.Context(), code)
 
 	// Generate tokens
-	accessToken, _ := s.GenerateJWT(authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -1050,7 +1500,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// Generate ID token if openid scope is requested
 	if strings.Contains(authCode.Scope, "openid") {
-		idToken, _ := s.GenerateIDToken(authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime)
+		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime)
 		response.IDToken = idToken
 	}
 
@@ -1077,7 +1527,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 
 	// Verify client
 	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || client.ClientSecret != clientSecret {
+	if err != nil || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
@@ -1090,7 +1540,7 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	}
 
 	// Generate new access token
-	accessToken, _ := s.GenerateJWT(token.UserID, clientID, token.Scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.AccessTokenLifetime)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -1109,13 +1559,13 @@ func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
 
 	// Verify client
 	client, err := s.GetClient(c.Request.Context(), clientID)
-	if err != nil || client.ClientSecret != clientSecret {
+	if err != nil || subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
 		c.JSON(401, gin.H{"error": "invalid_client"})
 		return
 	}
 
 	// Generate access token (no user context)
-	accessToken, _ := s.GenerateJWT("", clientID, scope, client.AccessTokenLifetime)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), "", clientID, scope, client.AccessTokenLifetime)
 
 	c.JSON(200, TokenResponse{
 		AccessToken: accessToken,
@@ -1126,8 +1576,67 @@ func (s *Service) handleClientCredentialsGrant(c *gin.Context) {
 }
 
 func (s *Service) handleIntrospect(c *gin.Context) {
-	// Token introspection endpoint
-	c.JSON(200, gin.H{"active": false})
+	token := c.PostForm("token")
+	if token == "" {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
+	// Try to parse as JWT
+	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+		return s.publicKey, nil
+	})
+	if err != nil || !parsed.Valid {
+		// Check if it's a refresh token
+		var userID, clientID, scope string
+		err := s.db.Pool.QueryRow(c.Request.Context(), `
+			SELECT user_id, client_id, scope FROM oauth_refresh_tokens
+			WHERE token = $1 AND expires_at > NOW()
+		`, token).Scan(&userID, &clientID, &scope)
+		if err != nil {
+			c.JSON(200, gin.H{"active": false})
+			return
+		}
+		c.JSON(200, gin.H{
+			"active":     true,
+			"token_type": "refresh_token",
+			"client_id":  clientID,
+			"sub":        userID,
+			"scope":      scope,
+		})
+		return
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
+	response := gin.H{
+		"active":     true,
+		"token_type": "access_token",
+	}
+	if sub, ok := claims["sub"].(string); ok {
+		response["sub"] = sub
+	}
+	if clientID, ok := claims["client_id"].(string); ok {
+		response["client_id"] = clientID
+	}
+	if scope, ok := claims["scope"].(string); ok {
+		response["scope"] = scope
+	}
+	if exp, ok := claims["exp"].(float64); ok {
+		response["exp"] = int64(exp)
+	}
+	if iat, ok := claims["iat"].(float64); ok {
+		response["iat"] = int64(iat)
+	}
+	if iss, ok := claims["iss"].(string); ok {
+		response["iss"] = iss
+	}
+
+	c.JSON(200, response)
 }
 
 func (s *Service) handleRevoke(c *gin.Context) {
@@ -1275,4 +1784,99 @@ func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})
+}
+
+// handleStepUpChallenge creates a step-up MFA challenge for an active session
+func (s *Service) handleStepUpChallenge(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id"`
+		UserID    string `json:"user_id"`
+		Reason    string `json:"reason"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	challengeID, err := s.riskService.CreateStepUpChallenge(c.Request.Context(), req.UserID, req.SessionID, req.Reason)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create challenge", "error_description": err.Error()})
+		return
+	}
+
+	// Check what MFA methods are available
+	mfaMethods := []string{}
+	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), req.UserID)
+	if totpStatus != nil && totpStatus.Enabled {
+		mfaMethods = append(mfaMethods, "totp")
+	}
+
+	c.JSON(200, gin.H{
+		"challenge_id": challengeID,
+		"mfa_methods":  mfaMethods,
+		"expires_in":   300, // 5 minutes
+	})
+}
+
+// handleStepUpVerify verifies a step-up MFA challenge
+func (s *Service) handleStepUpVerify(c *gin.Context) {
+	var req struct {
+		ChallengeID string `json:"challenge_id"`
+		UserID      string `json:"user_id"`
+		TOTPCode    string `json:"totp_code"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	if s.riskService == nil {
+		c.JSON(500, gin.H{"error": "risk service not available"})
+		return
+	}
+
+	// Verify TOTP code
+	valid, err := s.identityService.VerifyTOTP(c.Request.Context(), req.UserID, req.TOTPCode)
+	if err != nil || !valid {
+		c.JSON(401, gin.H{"error": "invalid_code", "error_description": "Invalid TOTP code"})
+		return
+	}
+
+	// Complete the challenge
+	if err := s.riskService.CompleteStepUpChallenge(c.Request.Context(), req.ChallengeID, req.UserID); err != nil {
+		c.JSON(400, gin.H{"error": "challenge_failed", "error_description": err.Error()})
+		return
+	}
+
+	// Update proxy session auth_methods if possible
+	s.db.Pool.Exec(c.Request.Context(),
+		`UPDATE proxy_sessions SET auth_methods = array_append(COALESCE(auth_methods, '{}'), 'step_up_mfa')
+		 WHERE user_id = $1 AND revoked = false AND expires_at > NOW()`, req.UserID)
+
+	go s.logAuditEvent(context.Background(), "authentication", "security", "step_up_mfa", "success",
+		req.UserID, c.ClientIP(), req.UserID, "user",
+		map[string]interface{}{"challenge_id": req.ChallengeID})
+
+	c.JSON(200, gin.H{"status": "verified"})
+}
+
+// logAuditEvent writes an audit event directly to the audit_events table
+func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, outcome, actorID, actorIP, targetID, targetType string, details map[string]interface{}) {
+	detailsJSON, _ := json.Marshal(details)
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
+		                          actor_id, actor_type, actor_ip, target_id, target_type,
+		                          resource_id, details)
+		VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', $6, $7, $8, $7, $9)
+	`, eventType, category, action, outcome, actorID, actorIP, targetID, targetType, detailsJSON)
+	if err != nil {
+		s.logger.Error("Failed to log audit event", zap.Error(err))
+	}
 }

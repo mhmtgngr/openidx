@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import Keycloak from 'keycloak-js'
 import { setAuthInitializing } from './api'
 
 interface User {
@@ -17,26 +16,12 @@ interface AuthContextType {
   login: () => void
   logout: () => void
   hasRole: (role: string) => boolean
-  authProvider: string
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// Determine auth provider from environment
-const AUTH_PROVIDER = import.meta.env.VITE_AUTH_PROVIDER || 'keycloak'
 export const OAUTH_URL = import.meta.env.VITE_OAUTH_URL || 'http://localhost:8006'
 export const OAUTH_CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || 'admin-console'
-
-// Keycloak instance (only used if AUTH_PROVIDER is 'keycloak')
-const keycloak = AUTH_PROVIDER === 'keycloak' ? new Keycloak({
-  url: import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8180',
-  realm: import.meta.env.VITE_KEYCLOAK_REALM || 'openidx',
-  clientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'admin-console',
-}) : null
-
-// Prevent multiple initializations
-let authInitialized = false
-let authInitPromise: Promise<boolean> | null = null
 
 // Helper to parse JWT token
 function parseJwt(token: string): Record<string, unknown> | null {
@@ -82,11 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null)
 
   useEffect(() => {
-    if (AUTH_PROVIDER === 'openidx') {
-      initOpenIDXAuth()
-    } else {
-      initKeycloakAuth()
-    }
+    initOpenIDXAuth()
   }, [])
 
   // OpenIDX OAuth authentication
@@ -276,136 +257,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(refreshInterval)
   }
 
-  // Keycloak authentication (existing implementation)
-  const initKeycloakAuth = async () => {
-    if (!keycloak) return
-
-    if (authInitialized) {
-      console.log('[Auth] Keycloak already initialized, syncing state')
-      setIsAuthenticated(keycloak.authenticated || false)
-      if (keycloak.authenticated && keycloak.tokenParsed) {
-        setUser({
-          id: keycloak.tokenParsed.sub || '',
-          email: keycloak.tokenParsed.email || '',
-          name: keycloak.tokenParsed.name || keycloak.tokenParsed.preferred_username || '',
-          roles: keycloak.tokenParsed.realm_access?.roles || [],
-        })
-        setToken(keycloak.token || null)
-      }
-      setAuthInitializing(false)
-      setIsLoading(false)
-      return
-    }
-
-    if (authInitPromise) {
-      console.log('[Auth] Keycloak init in progress, waiting...')
-      await authInitPromise
-      setIsAuthenticated(keycloak.authenticated || false)
-      if (keycloak.authenticated && keycloak.tokenParsed) {
-        setUser({
-          id: keycloak.tokenParsed.sub || '',
-          email: keycloak.tokenParsed.email || '',
-          name: keycloak.tokenParsed.name || keycloak.tokenParsed.preferred_username || '',
-          roles: keycloak.tokenParsed.realm_access?.roles || [],
-        })
-        setToken(keycloak.token || null)
-      }
-      setAuthInitializing(false)
-      setIsLoading(false)
-      return
-    }
-
-    console.log('[Auth] Initializing Keycloak')
-
-    const url = new URL(window.location.href)
-    const hasOAuthParams = url.searchParams.has('code') || url.searchParams.has('state')
-
-    authInitPromise = keycloak.init({
-      onLoad: 'check-sso',
-      checkLoginIframe: false,
-      enableLogging: true,
-    })
-
-    try {
-      const authenticated = await authInitPromise
-      authInitialized = true
-      console.log('[Auth] Keycloak init complete, authenticated:', authenticated)
-
-      setIsAuthenticated(authenticated)
-      if (authenticated && keycloak.tokenParsed) {
-        setUser({
-          id: keycloak.tokenParsed.sub || '',
-          email: keycloak.tokenParsed.email || '',
-          name: keycloak.tokenParsed.name || keycloak.tokenParsed.preferred_username || '',
-          roles: keycloak.tokenParsed.realm_access?.roles || [],
-        })
-        setToken(keycloak.token || null)
-        if (keycloak.token) {
-          localStorage.setItem('token', keycloak.token)
-        }
-        if (hasOAuthParams) {
-          url.searchParams.delete('code')
-          url.searchParams.delete('state')
-          url.searchParams.delete('session_state')
-          window.history.replaceState({}, '', url.pathname + (url.search || ''))
-        }
-      } else {
-        localStorage.removeItem('token')
-      }
-      setAuthInitializing(false)
-      setIsLoading(false)
-    } catch (error) {
-      console.error('[Auth] Keycloak init failed:', error)
-      authInitialized = true
-      setAuthInitializing(false)
-      setIsLoading(false)
-    }
-
-    // Keycloak token refresh
-    const refreshInterval = setInterval(() => {
-      if (keycloak.authenticated) {
-        keycloak.updateToken(60)
-          .then((refreshed) => {
-            if (refreshed && keycloak.token) {
-              setToken(keycloak.token)
-              localStorage.setItem('token', keycloak.token)
-            }
-          })
-          .catch(() => {
-            console.error('[Auth] Token refresh failed, logging out')
-            setIsAuthenticated(false)
-            setUser(null)
-            setToken(null)
-            localStorage.removeItem('token')
-            keycloak.logout({ redirectUri: window.location.origin + '/login' })
-          })
-      }
-    }, 30000)
-
-    return () => clearInterval(refreshInterval)
-  }
-
   const login = async () => {
-    if (AUTH_PROVIDER === 'openidx') {
-      // OpenIDX OAuth login with PKCE
-      const codeVerifier = generateCodeVerifier()
-      const codeChallenge = await generateCodeChallenge(codeVerifier)
-      sessionStorage.setItem('pkce_code_verifier', codeVerifier)
+    // OpenIDX OAuth login with PKCE
+    const codeVerifier = generateCodeVerifier()
+    const codeChallenge = await generateCodeChallenge(codeVerifier)
+    sessionStorage.setItem('pkce_code_verifier', codeVerifier)
 
-      const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
-      authUrl.searchParams.set('response_type', 'code')
-      authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
-      authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
-      authUrl.searchParams.set('scope', 'openid profile email')
-      authUrl.searchParams.set('code_challenge', codeChallenge)
-      authUrl.searchParams.set('code_challenge_method', 'S256')
+    const authUrl = new URL(`${OAUTH_URL}/oauth/authorize`)
+    authUrl.searchParams.set('response_type', 'code')
+    authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID)
+    authUrl.searchParams.set('redirect_uri', window.location.origin + '/login')
+    authUrl.searchParams.set('scope', 'openid profile email')
+    authUrl.searchParams.set('code_challenge', codeChallenge)
+    authUrl.searchParams.set('code_challenge_method', 'S256')
 
-      window.location.href = authUrl.toString()
-    } else if (keycloak) {
-      keycloak.login({
-        redirectUri: window.location.origin + '/login',
-      })
-    }
+    window.location.href = authUrl.toString()
   }
 
   const logout = () => {
@@ -413,15 +279,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('refresh_token')
     sessionStorage.removeItem('pkce_code_verifier')
 
-    if (AUTH_PROVIDER === 'openidx') {
-      // For OpenIDX, just clear state and redirect to login
-      setIsAuthenticated(false)
-      setUser(null)
-      setToken(null)
-      window.location.href = window.location.origin + '/login'
-    } else if (keycloak) {
-      keycloak.logout({ redirectUri: window.location.origin })
-    }
+    setIsAuthenticated(false)
+    setUser(null)
+    setToken(null)
+    window.location.href = window.location.origin + '/login'
   }
 
   const hasRole = (role: string) => {
@@ -438,7 +299,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         hasRole,
-        authProvider: AUTH_PROVIDER,
       }}
     >
       {children}

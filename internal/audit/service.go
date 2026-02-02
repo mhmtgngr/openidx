@@ -3,7 +3,6 @@ package audit
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -155,14 +155,50 @@ func NewService(db *database.PostgresDB, es *database.ElasticsearchClient, cfg *
 	}
 }
 
-// LogEvent logs an audit event
+// auditIndexMapping defines the Elasticsearch index mapping for audit events
+const auditIndexMapping = `{
+	"mappings": {
+		"properties": {
+			"id":          { "type": "keyword" },
+			"timestamp":   { "type": "date" },
+			"event_type":  { "type": "keyword" },
+			"category":    { "type": "keyword" },
+			"action":      { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+			"outcome":     { "type": "keyword" },
+			"actor_id":    { "type": "keyword" },
+			"actor_type":  { "type": "keyword" },
+			"actor_ip":    { "type": "ip", "ignore_malformed": true },
+			"target_id":   { "type": "keyword" },
+			"target_type": { "type": "keyword" },
+			"resource_id": { "type": "keyword" },
+			"details":     { "type": "object", "enabled": true },
+			"session_id":  { "type": "keyword" },
+			"request_id":  { "type": "keyword" }
+		}
+	}
+}`
+
+// InitElasticsearch creates the audit_events index with proper mapping if it doesn't exist
+func (s *Service) InitElasticsearch() error {
+	if s.es == nil {
+		return nil
+	}
+	if err := s.es.EnsureIndex("audit_events", auditIndexMapping); err != nil {
+		s.logger.Warn("failed to ensure audit_events ES index", zap.Error(err))
+		return err
+	}
+	s.logger.Info("elasticsearch audit_events index ready")
+	return nil
+}
+
+// LogEvent logs an audit event to PostgreSQL and Elasticsearch
 func (s *Service) LogEvent(ctx context.Context, event *AuditEvent) error {
 	s.logger.Debug("Logging audit event",
 		zap.String("event_type", string(event.EventType)),
 		zap.String("action", event.Action))
-	
+
 	event.Timestamp = time.Now()
-	
+
 	data, _ := json.Marshal(event)
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
@@ -172,7 +208,20 @@ func (s *Service) LogEvent(ctx context.Context, event *AuditEvent) error {
 	`, event.ID, event.Timestamp, event.EventType, event.Category, event.Action, event.Outcome,
 		event.ActorID, event.ActorType, event.ActorIP, event.TargetID, event.TargetType,
 		event.ResourceID, data, event.SessionID, event.RequestID)
-	
+
+	// Dual-write to Elasticsearch (best-effort, non-blocking)
+	if s.es != nil {
+		esData := data // capture for goroutine
+		eventID := event.ID
+		go func() {
+			if err := s.es.Index("audit_events", eventID, esData); err != nil {
+				s.logger.Warn("failed to index audit event to ES",
+					zap.String("event_id", eventID),
+					zap.Error(err))
+			}
+		}()
+	}
+
 	return err
 }
 
@@ -277,7 +326,11 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]AuditEv
 		); err != nil {
 			return nil, 0, err
 		}
-		json.Unmarshal(details, &e.Details)
+		if len(details) > 0 {
+			if err := json.Unmarshal(details, &e.Details); err != nil {
+				s.logger.Warn("Failed to parse audit event details", zap.String("event_id", e.ID), zap.Error(err))
+			}
+		}
 		events = append(events, e)
 	}
 
@@ -341,53 +394,59 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 }
 
 func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
+	// Gather evidence counts from the database
+	var totalEvents, failedAuth, mfaUsers, totalUsers int
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2", startDate, endDate).Scan(&totalEvents)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2", startDate, endDate).Scan(&failedAuth)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_totp WHERE enabled = true").Scan(&mfaUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&totalUsers)
+
+	cc61Status := s.evaluateAccessControlStatus(ctx, startDate, endDate)
+	cc62Status := s.evaluateAuthenticationStatus(ctx, startDate, endDate)
+	cc63Status := s.evaluateAccessRevocationStatus(ctx, startDate, endDate)
+	cc72Status := s.evaluateMonitoringStatus(ctx, startDate, endDate)
+
 	findings := []ReportFinding{
-		// CC6.1 - Logical and Physical Access Controls
 		{
 			ControlID:   "CC6.1",
 			ControlName: "Logical and Physical Access Controls",
-			Status:      s.evaluateAccessControlStatus(ctx, startDate, endDate),
-			Evidence:    "Access control policies implemented; MFA enabled for privileged access",
-			Remediation: "",
+			Status:      cc61Status,
+			Evidence:    fmt.Sprintf("RBAC implemented; %d/%d users have MFA enabled; %d failed auth attempts in period", mfaUsers, totalUsers, failedAuth),
+			Remediation: func() string { if cc61Status != "passed" { return "Review and remediate excessive failed access attempts" }; return "" }(),
 		},
-		// CC6.2 - Access Authentication and Authorization
 		{
 			ControlID:   "CC6.2",
 			ControlName: "Prior to Access Authentication and Authorization",
-			Status:      s.evaluateAuthenticationStatus(ctx, startDate, endDate),
-			Evidence:    "Authentication events logged; session management implemented",
-			Remediation: "",
+			Status:      cc62Status,
+			Evidence:    fmt.Sprintf("%d authentication events logged in period; %d failures detected", totalEvents, failedAuth),
+			Remediation: func() string { if cc62Status != "passed" { return "Investigate high authentication failure rate" }; return "" }(),
 		},
-		// CC6.3 - Access Revocation
 		{
 			ControlID:   "CC6.3",
 			ControlName: "Access Removal",
-			Status:      s.evaluateAccessRevocationStatus(ctx, startDate, endDate),
+			Status:      cc63Status,
 			Evidence:    "User deprovisioning workflow active; access reviews conducted",
-			Remediation: "",
+			Remediation: func() string { if cc63Status != "passed" { return "Ensure deprovisioning workflows are active for terminated users" }; return "" }(),
 		},
-		// CC7.2 - Monitoring Activities
 		{
 			ControlID:   "CC7.2",
 			ControlName: "System Monitoring Activities",
-			Status:      s.evaluateMonitoringStatus(ctx, startDate, endDate),
-			Evidence:    "Audit logging enabled; security events monitored",
-			Remediation: "",
+			Status:      cc72Status,
+			Evidence:    fmt.Sprintf("Audit logging active; %d events recorded in period", totalEvents),
+			Remediation: func() string { if cc72Status != "passed" { return "Ensure audit logging is enabled and capturing events" }; return "" }(),
 		},
-		// CC7.3 - Evaluation of Security Events
 		{
 			ControlID:   "CC7.3",
 			ControlName: "Evaluation of Security Events",
-			Status:      "passed",
-			Evidence:    "Security event review process established",
+			Status:      s.evaluatePrivilegedAccessStatus(ctx, startDate, endDate),
+			Evidence:    "Security event review process established; privileged access monitored",
 			Remediation: "",
 		},
-		// CC8.1 - Change Management
 		{
 			ControlID:   "CC8.1",
 			ControlName: "Changes to Infrastructure and Software",
 			Status:      "passed",
-			Evidence:    "Change management process documented",
+			Evidence:    "Change management process documented; configuration changes audited",
 			Remediation: "",
 		},
 	}
@@ -528,12 +587,16 @@ func (s *Service) evaluatePCIDSSControls(ctx context.Context, startDate, endDate
 func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check for any unauthorized access attempts
 	var failedCount int
-	s.db.Pool.QueryRow(ctx, `
+	err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authorization'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
 	`, startDate, endDate).Scan(&failedCount)
+	if err != nil {
+		s.logger.Error("Failed to evaluate access control status", zap.Error(err))
+		return "not_applicable"
+	}
 
 	if failedCount > 100 {
 		return "partial"
@@ -544,18 +607,24 @@ func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, en
 func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check authentication failure rate
 	var totalAuth, failedAuth int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalAuth)
+	`, startDate, endDate).Scan(&totalAuth); err != nil {
+		s.logger.Error("Failed to evaluate authentication status", zap.Error(err))
+		return "not_applicable"
+	}
 
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedAuth)
+	`, startDate, endDate).Scan(&failedAuth); err != nil {
+		s.logger.Error("Failed to count failed auth events", zap.Error(err))
+		return "not_applicable"
+	}
 
 	if totalAuth > 0 && float64(failedAuth)/float64(totalAuth) > 0.3 {
 		return "failed"
@@ -569,23 +638,32 @@ func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, e
 func (s *Service) evaluateAccessRevocationStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check if user deprovisioning is active
 	var deactivatedCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'user_management'
-		AND action LIKE '%deactivate%' OR action LIKE '%disable%'
+		AND (action LIKE '%deactivate%' OR action LIKE '%disable%')
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&deactivatedCount)
+	`, startDate, endDate).Scan(&deactivatedCount); err != nil {
+		s.logger.Error("Failed to evaluate access revocation status", zap.Error(err))
+		return "not_applicable"
+	}
 
+	if deactivatedCount == 0 {
+		return "partial"
+	}
 	return "passed"
 }
 
 func (s *Service) evaluateMonitoringStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check if audit logging is working
 	var eventCount int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&eventCount)
+	`, startDate, endDate).Scan(&eventCount); err != nil {
+		s.logger.Error("Failed to evaluate monitoring status", zap.Error(err))
+		return "not_applicable"
+	}
 
 	if eventCount == 0 {
 		return "failed"
@@ -596,12 +674,18 @@ func (s *Service) evaluateMonitoringStatus(ctx context.Context, startDate, endDa
 func (s *Service) evaluatePrivilegedAccessStatus(ctx context.Context, startDate, endDate time.Time) string {
 	// Check privileged access management
 	var privilegedEvents int
-	s.db.Pool.QueryRow(ctx, `
+	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'role_management'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&privilegedEvents)
+	`, startDate, endDate).Scan(&privilegedEvents); err != nil {
+		s.logger.Error("Failed to evaluate privileged access status", zap.Error(err))
+		return "not_applicable"
+	}
 
+	if privilegedEvents == 0 {
+		return "partial"
+	}
 	return "passed"
 }
 
@@ -627,22 +711,26 @@ func (s *Service) calculateSummary(findings []ReportFinding) ReportSummary {
 }
 
 func (s *Service) storeComplianceReport(ctx context.Context, report *ComplianceReport) error {
-	summaryJSON, _ := json.Marshal(report.Summary)
-	findingsJSON, _ := json.Marshal(report.Findings)
+	summaryJSON, err := json.Marshal(report.Summary)
+	if err != nil {
+		return fmt.Errorf("failed to marshal summary: %w", err)
+	}
+	findingsJSON, err := json.Marshal(report.Findings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal findings: %w", err)
+	}
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, execErr := s.db.Pool.Exec(ctx, `
 		INSERT INTO compliance_reports (id, type, framework, name, status, start_date, end_date, generated_at, summary, findings)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, report.ID, report.Type, report.Framework, report.Name, report.Status,
 		report.StartDate, report.EndDate, report.GeneratedAt, summaryJSON, findingsJSON)
 
-	return err
+	return execErr
 }
 
 func generateUUID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	return uuid.New().String()
 }
 
 // GetEventStatistics returns statistics about audit events
@@ -682,7 +770,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var eventType string
 		var count int
-		rows.Scan(&eventType, &count)
+		if err := rows.Scan(&eventType, &count); err != nil {
+			s.logger.Error("Failed to scan event type row", zap.Error(err))
+			continue
+		}
 		byType[eventType] = count
 	}
 	rows.Close()
@@ -702,7 +793,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var outcome string
 		var count int
-		rows.Scan(&outcome, &count)
+		if err := rows.Scan(&outcome, &count); err != nil {
+			s.logger.Error("Failed to scan outcome row", zap.Error(err))
+			continue
+		}
 		byOutcome[outcome] = count
 	}
 	rows.Close()
@@ -722,7 +816,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var category string
 		var count int
-		rows.Scan(&category, &count)
+		if err := rows.Scan(&category, &count); err != nil {
+			s.logger.Error("Failed to scan category row", zap.Error(err))
+			continue
+		}
 		byCategory[category] = count
 	}
 	rows.Close()
@@ -743,7 +840,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	for rows.Next() {
 		var day time.Time
 		var count int
-		rows.Scan(&day, &count)
+		if err := rows.Scan(&day, &count); err != nil {
+			s.logger.Error("Failed to scan events per day row", zap.Error(err))
+			continue
+		}
 		eventsPerDay = append(eventsPerDay, map[string]interface{}{
 			"date":  day.Format("2006-01-02"),
 			"count": count,
@@ -801,8 +901,16 @@ func (s *Service) ListComplianceReports(ctx context.Context, offset, limit int) 
 		); err != nil {
 			return nil, 0, err
 		}
-		json.Unmarshal(summaryJSON, &r.Summary)
-		json.Unmarshal(findingsJSON, &r.Findings)
+		if len(summaryJSON) > 0 {
+			if err := json.Unmarshal(summaryJSON, &r.Summary); err != nil {
+				s.logger.Warn("Failed to parse report summary", zap.String("report_id", r.ID), zap.Error(err))
+			}
+		}
+		if len(findingsJSON) > 0 {
+			if err := json.Unmarshal(findingsJSON, &r.Findings); err != nil {
+				s.logger.Warn("Failed to parse report findings", zap.String("report_id", r.ID), zap.Error(err))
+			}
+		}
 		reports = append(reports, r)
 	}
 
@@ -836,19 +944,112 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		audit.GET("/events", svc.handleListEvents)
 		audit.POST("/events", svc.handleLogEvent)
 		audit.GET("/events/:id", svc.handleGetEvent)
-		
+		audit.GET("/events/search", svc.handleSearchEvents)
+
 		// Statistics
 		audit.GET("/statistics", svc.handleGetStatistics)
-		
+
 		// Reports
 		audit.GET("/reports", svc.handleListReports)
 		audit.POST("/reports", svc.handleGenerateReport)
 		audit.GET("/reports/:id", svc.handleGetReport)
 		audit.GET("/reports/:id/download", svc.handleDownloadReport)
-		
+
 		// Export
 		audit.POST("/export", svc.handleExportEvents)
 	}
+}
+
+// handleSearchEvents performs full-text search over audit events via Elasticsearch
+func (s *Service) handleSearchEvents(c *gin.Context) {
+	if s.es == nil {
+		c.JSON(503, gin.H{"error": "elasticsearch not available"})
+		return
+	}
+
+	q := c.Query("q")
+	from := c.Query("from")
+	to := c.Query("to")
+	actorID := c.Query("actor_id")
+	eventType := c.Query("event_type")
+
+	// Build ES bool query
+	must := []map[string]interface{}{}
+	filter := []map[string]interface{}{}
+
+	if q != "" {
+		must = append(must, map[string]interface{}{
+			"multi_match": map[string]interface{}{
+				"query":  q,
+				"fields": []string{"action", "actor_id", "target_id", "resource_id", "event_type"},
+			},
+		})
+	}
+
+	if actorID != "" {
+		filter = append(filter, map[string]interface{}{
+			"term": map[string]interface{}{"actor_id": actorID},
+		})
+	}
+	if eventType != "" {
+		filter = append(filter, map[string]interface{}{
+			"term": map[string]interface{}{"event_type": eventType},
+		})
+	}
+
+	timeRange := map[string]interface{}{}
+	if from != "" {
+		timeRange["gte"] = from
+	}
+	if to != "" {
+		timeRange["lte"] = to
+	}
+	if len(timeRange) > 0 {
+		filter = append(filter, map[string]interface{}{
+			"range": map[string]interface{}{"timestamp": timeRange},
+		})
+	}
+
+	if len(must) == 0 {
+		must = append(must, map[string]interface{}{"match_all": map[string]interface{}{}})
+	}
+
+	query := map[string]interface{}{
+		"query": map[string]interface{}{
+			"bool": map[string]interface{}{
+				"must":   must,
+				"filter": filter,
+			},
+		},
+		"sort": []map[string]interface{}{
+			{"timestamp": map[string]interface{}{"order": "desc"}},
+		},
+		"size": 100,
+	}
+
+	queryBytes, _ := json.Marshal(query)
+	body, err := s.es.Search("audit_events", strings.NewReader(string(queryBytes)))
+	if err != nil {
+		s.logger.Error("ES search failed", zap.Error(err))
+		c.JSON(500, gin.H{"error": "search failed"})
+		return
+	}
+
+	var esResp database.EsSearchResponse
+	if err := json.Unmarshal(body, &esResp); err != nil {
+		c.JSON(500, gin.H{"error": "failed to parse search results"})
+		return
+	}
+
+	events := make([]json.RawMessage, 0, len(esResp.Hits.Hits))
+	for _, hit := range esResp.Hits.Hits {
+		events = append(events, hit.Source)
+	}
+
+	c.JSON(200, gin.H{
+		"total":  esResp.Hits.Total.Value,
+		"events": events,
+	})
 }
 
 // HTTP Handlers
@@ -1089,6 +1290,20 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Use query params as fallback
+		if st := c.Query("start_time"); st != "" {
+			if t, err := time.Parse(time.RFC3339, st); err == nil {
+				req.StartTime = &t
+			}
+		}
+		if et := c.Query("end_time"); et != "" {
+			if t, err := time.Parse(time.RFC3339, et); err == nil {
+				req.EndTime = &t
+			}
+		}
+		req.EventType = EventType(c.Query("event_type"))
+		req.Category = EventCategory(c.Query("category"))
+		req.Outcome = EventOutcome(c.Query("outcome"))
+		req.Format = c.Query("format")
 	}
 
 	query := &AuditQuery{

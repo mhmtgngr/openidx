@@ -69,7 +69,7 @@ KEYCLOAK_CLIENT_ID=openidx-api
 KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
 
 # ----- OPA -----
-OPA_URL=http://localhost:8181
+OPA_URL=http://localhost:8281
 
 # ----- Security -----
 JWT_SECRET=${JWT_SECRET}

@@ -5,10 +5,6 @@
 -- Run automatically by PostgreSQL on container initialization
 -- ============================================================================
 
--- Create separate database for Keycloak
-CREATE DATABASE keycloak;
-GRANT ALL PRIVILEGES ON DATABASE keycloak TO openidx;
-
 -- ============================================================================
 -- USERS AND GROUPS TABLES
 -- ============================================================================
@@ -59,6 +55,13 @@ CREATE TABLE IF NOT EXISTS roles (
     description TEXT,
     is_composite BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Composite roles (role hierarchy)
+CREATE TABLE IF NOT EXISTS composite_roles (
+    parent_role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    child_role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    PRIMARY KEY (parent_role_id, child_role_id)
 );
 
 -- User roles (many-to-many relationship)
@@ -532,6 +535,7 @@ INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type
 ON CONFLICT (id) DO NOTHING;
 
 -- Add test client for debugging
+INSERT INTO oauth_clients (id, client_id, client_secret, name, description, type, redirect_uris, grant_types, response_types, scopes, pkce_required, allow_refresh_token, access_token_lifetime, refresh_token_lifetime) VALUES
 ('80000000-0000-0000-0000-000000000003', 'test-client', 'test-secret', 'Test Client', 'Client for testing authentication flow', 'confidential',
  '[]'::jsonb,
  '["authorization_code", "refresh_token", "client_credentials"]'::jsonb,
@@ -750,3 +754,883 @@ CREATE TABLE IF NOT EXISTS directory_integrations (
 
 CREATE INDEX IF NOT EXISTS idx_directory_integrations_type ON directory_integrations(type);
 
+-- ============================================================================
+-- ZERO TRUST ACCESS PROXY TABLES
+-- ============================================================================
+
+-- Proxy route configurations
+CREATE TABLE IF NOT EXISTS proxy_routes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    from_url VARCHAR(500) NOT NULL,
+    to_url VARCHAR(500) NOT NULL,
+    preserve_host BOOLEAN DEFAULT false,
+    require_auth BOOLEAN DEFAULT true,
+    allowed_roles JSONB,
+    allowed_groups JSONB,
+    policy_ids JSONB,
+    idle_timeout INTEGER DEFAULT 900,
+    absolute_timeout INTEGER DEFAULT 43200,
+    cors_allowed_origins JSONB,
+    custom_headers JSONB,
+    enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_from_url ON proxy_routes(from_url);
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_enabled ON proxy_routes(enabled);
+
+-- Proxy sessions
+CREATE TABLE IF NOT EXISTS proxy_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    route_id UUID REFERENCES proxy_routes(id),
+    session_token VARCHAR(500) UNIQUE NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_active_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    revoked BOOLEAN DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_sessions_user ON proxy_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_proxy_sessions_token ON proxy_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_proxy_sessions_expires ON proxy_sessions(expires_at);
+
+-- ============================================================================
+-- OPENZITI INTEGRATION TABLES
+-- ============================================================================
+
+-- Add Ziti columns to proxy_routes
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS ziti_enabled BOOLEAN DEFAULT false;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS ziti_service_name VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_ziti_enabled ON proxy_routes(ziti_enabled);
+
+-- Ziti services managed by OpenIDX
+CREATE TABLE IF NOT EXISTS ziti_services (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    protocol VARCHAR(20) DEFAULT 'tcp',
+    host VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL,
+    route_id UUID REFERENCES proxy_routes(id) ON DELETE SET NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ziti_services_name ON ziti_services(name);
+CREATE INDEX IF NOT EXISTS idx_ziti_services_route_id ON ziti_services(route_id);
+
+-- Ziti identities for tunneler enrollment
+CREATE TABLE IF NOT EXISTS ziti_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    identity_type VARCHAR(50) DEFAULT 'Device',
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    enrollment_jwt TEXT,
+    enrolled BOOLEAN DEFAULT false,
+    attributes JSONB DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ziti_identities_user_id ON ziti_identities(user_id);
+CREATE INDEX IF NOT EXISTS idx_ziti_identities_name ON ziti_identities(name);
+
+-- Ziti service policies (Bind/Dial)
+CREATE TABLE IF NOT EXISTS ziti_service_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    policy_type VARCHAR(10) NOT NULL,
+    service_roles JSONB DEFAULT '[]',
+    identity_roles JSONB DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Seed: Register access-proxy as an OAuth client
+INSERT INTO oauth_clients (client_id, client_secret, name, type, redirect_uris, grant_types, response_types, scopes, pkce_required)
+VALUES (
+    'access-proxy',
+    '',
+    'Zero Trust Access Proxy',
+    'public',
+    '["http://localhost:8007/access/.auth/callback"]'::jsonb,
+    '["authorization_code", "refresh_token"]'::jsonb,
+    '["code"]'::jsonb,
+    '["openid", "profile", "email"]'::jsonb,
+    true
+) ON CONFLICT (client_id) DO NOTHING;
+
+-- Seed audit events for demo/testing
+INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome, actor_id, actor_type, actor_ip, target_id, target_type, resource_id, details)
+VALUES
+  (gen_random_uuid(), NOW() - INTERVAL '6 days 14 hours', 'system', 'operational', 'system_startup', 'success',
+   'system', 'system', '127.0.0.1', '', 'system', '', '{"message": "OpenIDX platform initialized"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '6 days 13 hours', 'configuration', 'operational', 'settings_updated', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'settings', '', '{"section": "security", "change": "password policy updated"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '5 days 10 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '5 days 8 hours', 'user_management', 'operational', 'user_created', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000002', 'user', '00000000-0000-0000-0000-000000000002', '{"username": "john.doe", "email": "john@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '4 days 16 hours', 'authentication', 'security', 'login_failed', 'failure',
+   'unknown_user', 'user', '10.0.0.55', '', 'user', '', '{"reason": "invalid credentials", "username": "unknown_user"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '3 days 12 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '3 days 6 hours', 'user_management', 'operational', 'user_updated', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000002', 'user', '00000000-0000-0000-0000-000000000002', '{"changes": ["email", "display_name"]}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '2 days 9 hours', 'authentication', 'security', 'login_failed', 'failure',
+   'admin', 'user', '10.0.0.99', '', 'user', '', '{"reason": "invalid password", "username": "admin"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '1 day 15 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '1 day 4 hours', 'group_management', 'operational', 'group_created', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '', 'group', '', '{"group_name": "Engineering", "description": "Engineering team"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '12 hours', 'configuration', 'operational', 'application_created', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.10', '', 'application', '', '{"app_name": "Internal Dashboard", "protocol": "oidc"}'),
+
+  (gen_random_uuid(), NOW() - INTERVAL '6 hours', 'authentication', 'security', 'login', 'success',
+   '00000000-0000-0000-0000-000000000001', 'user', '192.168.1.20', '00000000-0000-0000-0000-000000000001', 'user', '00000000-0000-0000-0000-000000000001', '{"username": "admin", "email": "admin@openidx.local"}');
+
+-- ============================================================================
+-- DIRECTORY SYNC TABLES (Phase 3)
+-- ============================================================================
+
+-- Add directory sync columns to users
+ALTER TABLE users ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'local';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS directory_id UUID REFERENCES directory_integrations(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn VARCHAR(1024);
+
+CREATE INDEX IF NOT EXISTS idx_users_directory_id ON users(directory_id);
+CREATE INDEX IF NOT EXISTS idx_users_source ON users(source);
+
+-- Add directory sync columns to groups
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'local';
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS directory_id UUID REFERENCES directory_integrations(id) ON DELETE SET NULL;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS ldap_dn VARCHAR(1024);
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_groups_directory_id ON groups(directory_id);
+
+-- Sync state per directory (for incremental sync)
+CREATE TABLE IF NOT EXISTS directory_sync_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    directory_id UUID NOT NULL REFERENCES directory_integrations(id) ON DELETE CASCADE,
+    last_sync_at TIMESTAMP WITH TIME ZONE,
+    last_usn_changed BIGINT,
+    last_modify_timestamp VARCHAR(255),
+    users_synced INTEGER DEFAULT 0,
+    groups_synced INTEGER DEFAULT 0,
+    errors_count INTEGER DEFAULT 0,
+    sync_duration_ms INTEGER,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(directory_id)
+);
+
+-- Sync log history
+CREATE TABLE IF NOT EXISTS directory_sync_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    directory_id UUID NOT NULL REFERENCES directory_integrations(id) ON DELETE CASCADE,
+    sync_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    users_added INTEGER DEFAULT 0,
+    users_updated INTEGER DEFAULT 0,
+    users_disabled INTEGER DEFAULT 0,
+    groups_added INTEGER DEFAULT 0,
+    groups_updated INTEGER DEFAULT 0,
+    groups_deleted INTEGER DEFAULT 0,
+    error_message TEXT,
+    details JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_logs_directory ON directory_sync_logs(directory_id);
+CREATE INDEX IF NOT EXISTS idx_sync_logs_started ON directory_sync_logs(started_at DESC);
+
+-- ============================================================================
+-- CONDITIONAL ACCESS / RISK ENGINE
+-- ============================================================================
+
+-- Known/trusted devices per user
+CREATE TABLE IF NOT EXISTS known_devices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fingerprint VARCHAR(128) NOT NULL,
+    name VARCHAR(255),
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    location VARCHAR(255),
+    trusted BOOLEAN DEFAULT false,
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_known_devices_user ON known_devices(user_id);
+
+-- Login history for risk analysis
+CREATE TABLE IF NOT EXISTS login_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ip_address VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    location VARCHAR(255),
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    device_fingerprint VARCHAR(128),
+    risk_score INTEGER DEFAULT 0,
+    success BOOLEAN NOT NULL,
+    auth_methods TEXT[],
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, created_at DESC);
+
+-- Step-up MFA challenges (mid-session re-auth)
+CREATE TABLE IF NOT EXISTS stepup_challenges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id VARCHAR(255) NOT NULL,
+    reason VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_stepup_user ON stepup_challenges(user_id, status);
+
+-- Enhance proxy_sessions with risk context
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS device_fingerprint VARCHAR(128);
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS auth_methods TEXT[];
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS location VARCHAR(255);
+
+-- ============================================================================
+-- PHASE 5: API KEYS, WEBHOOKS, EMAIL VERIFICATION, INVITATIONS
+-- ============================================================================
+
+-- Service accounts (non-human identities for programmatic access)
+CREATE TABLE IF NOT EXISTS service_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    owner_id UUID REFERENCES users(id),
+    status VARCHAR(50) DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- API keys (for both users and service accounts)
+CREATE TABLE IF NOT EXISTS api_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    key_prefix VARCHAR(12) NOT NULL,
+    key_hash VARCHAR(128) NOT NULL UNIQUE,
+    user_id UUID REFERENCES users(id),
+    service_account_id UUID REFERENCES service_accounts(id),
+    scopes TEXT[],
+    expires_at TIMESTAMP WITH TIME ZONE,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(50) DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CHECK (user_id IS NOT NULL OR service_account_id IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_sa ON api_keys(service_account_id);
+
+-- Webhook subscriptions
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    url TEXT NOT NULL,
+    secret VARCHAR(255) NOT NULL,
+    events TEXT[] NOT NULL,
+    status VARCHAR(50) DEFAULT 'active',
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Webhook delivery log
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subscription_id UUID NOT NULL REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
+    event_type VARCHAR(100) NOT NULL,
+    payload JSONB NOT NULL,
+    response_status INTEGER,
+    response_body TEXT,
+    attempt INTEGER DEFAULT 1,
+    status VARCHAR(50) DEFAULT 'pending',
+    next_retry_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    delivered_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_sub ON webhook_deliveries(subscription_id);
+
+-- Email verification tokens
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User invitations
+CREATE TABLE IF NOT EXISTS user_invitations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL,
+    invited_by UUID NOT NULL REFERENCES users(id),
+    roles TEXT[],
+    groups TEXT[],
+    token VARCHAR(255) NOT NULL UNIQUE,
+    status VARCHAR(50) DEFAULT 'pending',
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    accepted_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON user_invitations(token);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON user_invitations(email);
+
+-- Add lifecycle columns to users
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT false;
+
+-- ============================================================================
+-- PHASE 6: REQUEST/APPROVAL WORKFLOWS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS access_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resource_type VARCHAR(50) NOT NULL,
+    resource_id UUID NOT NULL,
+    resource_name VARCHAR(255),
+    justification TEXT,
+    status VARCHAR(50) DEFAULT 'pending',
+    priority VARCHAR(20) DEFAULT 'normal',
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS access_request_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID NOT NULL REFERENCES access_requests(id) ON DELETE CASCADE,
+    approver_id UUID NOT NULL REFERENCES users(id),
+    step_order INTEGER DEFAULT 1,
+    decision VARCHAR(50) DEFAULT 'pending',
+    comments TEXT,
+    decided_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS approval_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    resource_type VARCHAR(50) NOT NULL,
+    resource_id UUID,
+    approval_steps JSONB NOT NULL DEFAULT '[]',
+    auto_approve_conditions JSONB,
+    max_wait_hours INTEGER DEFAULT 72,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_requests_requester ON access_requests(requester_id);
+CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status);
+CREATE INDEX IF NOT EXISTS idx_request_approvals_request ON access_request_approvals(request_id);
+CREATE INDEX IF NOT EXISTS idx_request_approvals_approver ON access_request_approvals(approver_id, decision);
+CREATE INDEX IF NOT EXISTS idx_approval_policies_resource ON approval_policies(resource_type, resource_id);
+
+-- ============================================================================
+-- PHASE 6: ANOMALY DETECTION & THREAT RESPONSE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS security_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    alert_type VARCHAR(100) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    status VARCHAR(50) DEFAULT 'open',
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    details JSONB,
+    source_ip VARCHAR(45),
+    remediation_actions JSONB DEFAULT '[]',
+    resolved_by UUID REFERENCES users(id),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ip_threat_list (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ip_address VARCHAR(45) NOT NULL UNIQUE,
+    threat_type VARCHAR(50) NOT NULL,
+    reason TEXT,
+    blocked_until TIMESTAMP WITH TIME ZONE,
+    permanent BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_alerts_user ON security_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_security_alerts_status ON security_alerts(status);
+CREATE INDEX IF NOT EXISTS idx_security_alerts_severity ON security_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_security_alerts_created ON security_alerts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ip_threat_list_ip ON ip_threat_list(ip_address);
+
+-- ============================================================================
+-- PHASE 6: PASSWORD/CREDENTIAL MANAGEMENT
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS password_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS credential_rotations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_account_id UUID NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE,
+    old_key_id UUID,
+    new_key_id UUID,
+    rotation_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'completed',
+    rotated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    rotated_by UUID REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_credential_rotations_sa ON credential_rotations(service_account_id);
+
+-- ============================================================================
+-- PHASE 6: SESSION MANAGEMENT ENHANCEMENTS
+-- ============================================================================
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(255);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS location VARCHAR(255);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_type VARCHAR(50);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked BOOLEAN DEFAULT false;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_by UUID REFERENCES users(id);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoke_reason VARCHAR(255);
+
+-- ============================================================================
+-- PHASE 7: MULTI-TENANCY
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS organizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    domain VARCHAR(255) UNIQUE,
+    plan VARCHAR(50) DEFAULT 'free',
+    status VARCHAR(50) DEFAULT 'active',
+    settings JSONB DEFAULT '{}',
+    max_users INTEGER DEFAULT 10,
+    max_applications INTEGER DEFAULT 5,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    invited_by UUID REFERENCES users(id),
+    UNIQUE(organization_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);
+CREATE INDEX IF NOT EXISTS idx_organizations_domain ON organizations(domain);
+CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);
+
+-- Add org_id to key tables
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE roles ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE policies ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE access_reviews ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE service_accounts ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE webhook_subscriptions ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+ALTER TABLE security_alerts ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+
+CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id);
+CREATE INDEX IF NOT EXISTS idx_groups_org_id ON groups(org_id);
+CREATE INDEX IF NOT EXISTS idx_roles_org_id ON roles(org_id);
+CREATE INDEX IF NOT EXISTS idx_applications_org_id ON applications(org_id);
+
+-- Default organization for backward compatibility
+INSERT INTO organizations (id, name, slug, domain, plan, status, max_users, max_applications)
+VALUES ('00000000-0000-0000-0000-000000000010', 'Default Organization', 'default', NULL, 'enterprise', 'active', 999999, 999999)
+ON CONFLICT (id) DO NOTHING;
+
+-- Assign existing data to default org
+UPDATE users SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE groups SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE roles SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE applications SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+INSERT INTO organization_members (organization_id, user_id, role)
+VALUES ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000001', 'owner')
+ON CONFLICT DO NOTHING;
+
+-- ============================================================================
+-- PHASE 7: ADVANCED REPORTING
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS scheduled_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    report_type VARCHAR(50) NOT NULL,
+    framework VARCHAR(100),
+    parameters JSONB DEFAULT '{}',
+    schedule VARCHAR(100) NOT NULL,
+    format VARCHAR(10) DEFAULT 'csv',
+    enabled BOOLEAN DEFAULT true,
+    recipients TEXT[],
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    next_run_at TIMESTAMP WITH TIME ZONE,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS report_exports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    scheduled_report_id UUID REFERENCES scheduled_reports(id) ON DELETE SET NULL,
+    name VARCHAR(255) NOT NULL,
+    report_type VARCHAR(50) NOT NULL,
+    framework VARCHAR(100),
+    format VARCHAR(10) NOT NULL,
+    status VARCHAR(50) DEFAULT 'generating',
+    file_path VARCHAR(500),
+    file_size BIGINT,
+    row_count INTEGER,
+    error_message TEXT,
+    generated_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_exports_org ON report_exports(org_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_reports_org ON scheduled_reports(org_id);
+
+-- ============================================================================
+-- PHASE 7: SELF-SERVICE PORTAL
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS group_join_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    justification TEXT,
+    status VARCHAR(50) DEFAULT 'pending',
+    reviewed_by UUID REFERENCES users(id),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    review_comments TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, group_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_application_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, application_id)
+);
+
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS allow_self_join BOOLEAN DEFAULT false;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS require_approval BOOLEAN DEFAULT true;
+
+CREATE INDEX IF NOT EXISTS idx_group_requests_user ON group_join_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_group_requests_status ON group_join_requests(status);
+CREATE INDEX IF NOT EXISTS idx_user_app_assignments_user ON user_application_assignments(user_id);
+
+-- ============================================================================
+-- PHASE 7: NOTIFICATION SYSTEM
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id UUID REFERENCES organizations(id),
+    channel VARCHAR(50) NOT NULL,
+    type VARCHAR(100) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    link VARCHAR(500),
+    read BOOLEAN DEFAULT false,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel VARCHAR(50) NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, channel, event_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_prefs_user ON notification_preferences(user_id);
+
+
+-- ============================================================================
+-- PHASE: OPENZITI ENHANCED - POSTURE CHECKS, POLICY SYNC, CERTIFICATES
+-- ============================================================================
+
+-- Device posture check types
+CREATE TABLE IF NOT EXISTS posture_check_types (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) UNIQUE NOT NULL,
+    description TEXT,
+    category VARCHAR(100) NOT NULL,
+    parameters JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Posture checks linked to Ziti
+CREATE TABLE IF NOT EXISTS posture_checks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    check_type VARCHAR(100) NOT NULL,
+    parameters JSONB DEFAULT '{}',
+    enabled BOOLEAN DEFAULT true,
+    severity VARCHAR(50) DEFAULT 'medium',
+    remediation_hint TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Device posture results
+CREATE TABLE IF NOT EXISTS device_posture_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_id UUID REFERENCES ziti_identities(id) ON DELETE CASCADE,
+    check_id UUID REFERENCES posture_checks(id) ON DELETE CASCADE,
+    passed BOOLEAN NOT NULL,
+    details JSONB DEFAULT '{}',
+    checked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_posture_results_identity ON device_posture_results(identity_id, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posture_results_check ON device_posture_results(check_id);
+
+-- Policy sync state between governance and Ziti
+CREATE TABLE IF NOT EXISTS policy_sync_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    governance_policy_id UUID NOT NULL,
+    ziti_policy_id VARCHAR(255),
+    sync_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    last_synced_at TIMESTAMP WITH TIME ZONE,
+    last_error TEXT,
+    config JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_sync_governance ON policy_sync_state(governance_policy_id);
+CREATE INDEX IF NOT EXISTS idx_policy_sync_status ON policy_sync_state(status);
+
+-- Ziti certificate management
+CREATE TABLE IF NOT EXISTS ziti_certificates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    cert_type VARCHAR(50) NOT NULL,
+    subject VARCHAR(500),
+    issuer VARCHAR(500),
+    serial_number VARCHAR(255),
+    fingerprint VARCHAR(255) UNIQUE,
+    not_before TIMESTAMP WITH TIME ZONE,
+    not_after TIMESTAMP WITH TIME ZONE,
+    auto_renew BOOLEAN DEFAULT false,
+    renewal_threshold_days INTEGER DEFAULT 30,
+    pem_data TEXT,
+    status VARCHAR(50) DEFAULT 'active',
+    associated_identity_id UUID REFERENCES ziti_identities(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ziti_certs_expiry ON ziti_certificates(not_after);
+CREATE INDEX IF NOT EXISTS idx_ziti_certs_status ON ziti_certificates(status);
+
+-- Ziti edge routers tracking
+CREATE TABLE IF NOT EXISTS ziti_edge_routers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ziti_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    hostname VARCHAR(255),
+    is_online BOOLEAN DEFAULT false,
+    is_verified BOOLEAN DEFAULT false,
+    role_attributes JSONB DEFAULT '[]',
+    os VARCHAR(100),
+    arch VARCHAR(100),
+    version VARCHAR(100),
+    last_seen_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Ziti network metrics snapshots
+CREATE TABLE IF NOT EXISTS ziti_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    metric_type VARCHAR(100) NOT NULL,
+    source VARCHAR(255) NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    labels JSONB DEFAULT '{}',
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ziti_metrics_type ON ziti_metrics(metric_type, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ziti_metrics_source ON ziti_metrics(source);
+
+-- Seed default posture check types
+INSERT INTO posture_check_types (id, name, description, category, parameters) VALUES
+('a0000000-0000-0000-0000-000000000001', 'os_check', 'Operating System Version Check', 'device', '{"os_types": ["Windows", "macOS", "Linux"], "min_versions": {}}'),
+('a0000000-0000-0000-0000-000000000002', 'domain_check', 'Windows Domain Membership Check', 'device', '{"domains": []}'),
+('a0000000-0000-0000-0000-000000000003', 'mac_address_check', 'MAC Address Allowlist Check', 'network', '{"mac_addresses": []}'),
+('a0000000-0000-0000-0000-000000000004', 'mfa_check', 'Multi-Factor Authentication Check', 'authentication', '{"timeout_seconds": 300}'),
+('a0000000-0000-0000-0000-000000000005', 'process_check', 'Running Process Check', 'endpoint', '{"os_type": "", "path": "", "hashes": []}')
+ON CONFLICT (id) DO NOTHING;
+
+-- Add posture_check_ids to ziti_service_policies
+ALTER TABLE ziti_service_policies ADD COLUMN IF NOT EXISTS posture_check_roles JSONB DEFAULT '[]';
+
+-- Add description column to ziti_services
+ALTER TABLE ziti_services ADD COLUMN IF NOT EXISTS description TEXT;
+
+-- ============================================================================
+-- POMERIUM-LIKE ZERO-TRUST ACCESS PROXY ENHANCEMENTS
+-- ============================================================================
+
+-- Add context-aware access columns to proxy_routes
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS idp_id UUID REFERENCES identity_providers(id);
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS route_type VARCHAR(20) DEFAULT 'http';
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS remote_host VARCHAR(255);
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS remote_port INTEGER;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS reverify_interval INTEGER DEFAULT 0;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS posture_check_ids JSONB;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS inline_policy TEXT;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS require_device_trust BOOLEAN DEFAULT false;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS allowed_countries JSONB;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS max_risk_score INTEGER DEFAULT 100;
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS guacamole_connection_id VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_route_type ON proxy_routes(route_type);
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_idp_id ON proxy_routes(idp_id);
+
+-- Add continuous verification columns to proxy_sessions
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS last_verified_at TIMESTAMPTZ;
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS verification_failures INTEGER DEFAULT 0;
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS geo_country VARCHAR(10);
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS geo_city VARCHAR(255);
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS idp_id UUID;
+ALTER TABLE proxy_sessions ADD COLUMN IF NOT EXISTS device_trusted BOOLEAN DEFAULT false;
+
+-- Add is_active column to ip_threat_list if not exists
+ALTER TABLE ip_threat_list ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+
+-- IP geolocation cache
+CREATE TABLE IF NOT EXISTS ip_geolocation_cache (
+    ip_address VARCHAR(45) PRIMARY KEY,
+    country_code VARCHAR(10),
+    city VARCHAR(255),
+    latitude FLOAT,
+    longitude FLOAT,
+    cached_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Guacamole connection tracking
+CREATE TABLE IF NOT EXISTS guacamole_connections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    route_id UUID REFERENCES proxy_routes(id) ON DELETE CASCADE,
+    guacamole_connection_id VARCHAR(255) NOT NULL,
+    protocol VARCHAR(20) NOT NULL,
+    hostname VARCHAR(255) NOT NULL,
+    port INTEGER NOT NULL,
+    parameters JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(route_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_guacamole_connections_route ON guacamole_connections(route_id);
+
+-- ============================================================================
+-- BROWZER CONFIGURATION
+-- ============================================================================
+
+-- BrowZer config state (single-row table)
+CREATE TABLE IF NOT EXISTS ziti_browzer_config (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_jwt_signer_id VARCHAR(255),
+    auth_policy_id VARCHAR(255),
+    dial_policy_id VARCHAR(255),
+    oidc_issuer VARCHAR(500),
+    oidc_client_id VARCHAR(255),
+    enabled BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- BrowZer-enabled flag on proxy routes
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS browzer_enabled BOOLEAN DEFAULT false;
+
+-- BrowZer OAuth client for browser-native Ziti access
+INSERT INTO oauth_clients (client_id, client_secret, name, type, redirect_uris, grant_types, response_types, scopes, pkce_required)
+VALUES (
+    'browzer-client', '', 'BrowZer Zero Trust Browser Client', 'public',
+    '["https://browzer.localtest.me/"]'::jsonb,
+    '["authorization_code","refresh_token"]'::jsonb,
+    '["code"]'::jsonb,
+    '["openid","profile","email"]'::jsonb,
+    true
+) ON CONFLICT (client_id) DO NOTHING;

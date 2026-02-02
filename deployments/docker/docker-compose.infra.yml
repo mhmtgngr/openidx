@@ -143,13 +143,13 @@ services:
     command:
       - "run"
       - "--server"
-      - "--addr=0.0.0.0:8181"
+      - "--addr=0.0.0.0:8281"
       - "--log-level=info"
       - "/policies"
     volumes:
       - ./opa/policies:/policies:ro
     ports:
-      - "8181:8181"
+      - "8281:8281"
     healthcheck:
       test: ["NONE"]
     networks:
