@@ -199,6 +199,7 @@ func (s *Service) SetDirectoryService(ds DirectoryAuthenticator) {
 type EmailSender interface {
 	SendVerificationEmail(ctx context.Context, to, userName, token, baseURL string) error
 	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
+	SendPasswordResetEmail(ctx context.Context, to, userName, token, baseURL string) error
 	SendWelcomeEmail(ctx context.Context, to, userName string) error
 }
 
@@ -3613,6 +3614,17 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 		zap.String("email", req.Email),
 		zap.String("token", token),
 		zap.String("reset_url", fmt.Sprintf("http://localhost:3000/reset-password?token=%s", token)))
+
+	// Send password reset email
+	if s.emailService != nil {
+		var firstName string
+		s.db.Pool.QueryRow(c.Request.Context(),
+			"SELECT first_name FROM users WHERE id = $1", userID).Scan(&firstName)
+		baseURL := "http://localhost:3000"
+		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), req.Email, firstName, token, baseURL); err != nil {
+			s.logger.Error("Failed to send password reset email", zap.Error(err))
+		}
+	}
 
 	c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
 }

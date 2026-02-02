@@ -570,10 +570,13 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 }
 
 // RegisterRoutes registers provisioning service routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	// SCIM 2.0 endpoints
 	scim := router.Group("/scim/v2")
 	scim.Use(svc.openIDXAuthMiddleware())
+	for _, mw := range extraMiddleware {
+		scim.Use(mw)
+	}
 	{
 		// Users
 		scim.GET("/Users", svc.handleListUsers)
@@ -601,6 +604,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	// Internal provisioning API
 	prov := router.Group("/api/v1/provisioning")
 	prov.Use(svc.openIDXAuthMiddleware())
+	for _, mw := range extraMiddleware {
+		prov.Use(mw)
+	}
 	{
 		prov.GET("/rules", svc.handleListRules)
 		prov.POST("/rules", svc.handleCreateRule)

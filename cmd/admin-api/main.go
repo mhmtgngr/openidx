@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/opa"
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
 	"github.com/openidx/openidx/internal/notifications"
@@ -156,6 +157,13 @@ func main() {
 	if cfg.Environment != "development" {
 		v1.Use(middleware.Auth(cfg.OAuthJWKSURL))
 	}
+
+	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)
+	if cfg.EnableOPAAuthz {
+		opaClient := opa.NewClient(cfg.OPAURL, log)
+		v1.Use(middleware.OPAAuthz(opaClient, log, cfg.IsDevelopment()))
+	}
+
 	{
 		admin.RegisterRoutes(v1, adminService)
 		organization.RegisterRoutes(v1, orgService)

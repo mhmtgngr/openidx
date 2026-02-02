@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/opa"
 	"github.com/openidx/openidx/internal/provisioning"
 )
 
@@ -67,7 +68,14 @@ func main() {
 	router.GET("/metrics", middleware.MetricsHandler())
 
 	provisioningService := provisioning.NewService(db, redis, cfg, log)
-	provisioning.RegisterRoutes(router, provisioningService)
+
+	// Register routes (with optional OPA authorization)
+	var opaMiddleware []gin.HandlerFunc
+	if cfg.EnableOPAAuthz {
+		opaClient := opa.NewClient(cfg.OPAURL, log)
+		opaMiddleware = append(opaMiddleware, middleware.OPAAuthz(opaClient, log, cfg.IsDevelopment()))
+	}
+	provisioning.RegisterRoutes(router, provisioningService, opaMiddleware...)
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{

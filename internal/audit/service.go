@@ -155,14 +155,50 @@ func NewService(db *database.PostgresDB, es *database.ElasticsearchClient, cfg *
 	}
 }
 
-// LogEvent logs an audit event
+// auditIndexMapping defines the Elasticsearch index mapping for audit events
+const auditIndexMapping = `{
+	"mappings": {
+		"properties": {
+			"id":          { "type": "keyword" },
+			"timestamp":   { "type": "date" },
+			"event_type":  { "type": "keyword" },
+			"category":    { "type": "keyword" },
+			"action":      { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+			"outcome":     { "type": "keyword" },
+			"actor_id":    { "type": "keyword" },
+			"actor_type":  { "type": "keyword" },
+			"actor_ip":    { "type": "ip", "ignore_malformed": true },
+			"target_id":   { "type": "keyword" },
+			"target_type": { "type": "keyword" },
+			"resource_id": { "type": "keyword" },
+			"details":     { "type": "object", "enabled": true },
+			"session_id":  { "type": "keyword" },
+			"request_id":  { "type": "keyword" }
+		}
+	}
+}`
+
+// InitElasticsearch creates the audit_events index with proper mapping if it doesn't exist
+func (s *Service) InitElasticsearch() error {
+	if s.es == nil {
+		return nil
+	}
+	if err := s.es.EnsureIndex("audit_events", auditIndexMapping); err != nil {
+		s.logger.Warn("failed to ensure audit_events ES index", zap.Error(err))
+		return err
+	}
+	s.logger.Info("elasticsearch audit_events index ready")
+	return nil
+}
+
+// LogEvent logs an audit event to PostgreSQL and Elasticsearch
 func (s *Service) LogEvent(ctx context.Context, event *AuditEvent) error {
 	s.logger.Debug("Logging audit event",
 		zap.String("event_type", string(event.EventType)),
 		zap.String("action", event.Action))
-	
+
 	event.Timestamp = time.Now()
-	
+
 	data, _ := json.Marshal(event)
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
@@ -172,7 +208,20 @@ func (s *Service) LogEvent(ctx context.Context, event *AuditEvent) error {
 	`, event.ID, event.Timestamp, event.EventType, event.Category, event.Action, event.Outcome,
 		event.ActorID, event.ActorType, event.ActorIP, event.TargetID, event.TargetType,
 		event.ResourceID, data, event.SessionID, event.RequestID)
-	
+
+	// Dual-write to Elasticsearch (best-effort, non-blocking)
+	if s.es != nil {
+		esData := data // capture for goroutine
+		eventID := event.ID
+		go func() {
+			if err := s.es.Index("audit_events", eventID, esData); err != nil {
+				s.logger.Warn("failed to index audit event to ES",
+					zap.String("event_id", eventID),
+					zap.Error(err))
+			}
+		}()
+	}
+
 	return err
 }
 
@@ -895,19 +944,112 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		audit.GET("/events", svc.handleListEvents)
 		audit.POST("/events", svc.handleLogEvent)
 		audit.GET("/events/:id", svc.handleGetEvent)
-		
+		audit.GET("/events/search", svc.handleSearchEvents)
+
 		// Statistics
 		audit.GET("/statistics", svc.handleGetStatistics)
-		
+
 		// Reports
 		audit.GET("/reports", svc.handleListReports)
 		audit.POST("/reports", svc.handleGenerateReport)
 		audit.GET("/reports/:id", svc.handleGetReport)
 		audit.GET("/reports/:id/download", svc.handleDownloadReport)
-		
+
 		// Export
 		audit.POST("/export", svc.handleExportEvents)
 	}
+}
+
+// handleSearchEvents performs full-text search over audit events via Elasticsearch
+func (s *Service) handleSearchEvents(c *gin.Context) {
+	if s.es == nil {
+		c.JSON(503, gin.H{"error": "elasticsearch not available"})
+		return
+	}
+
+	q := c.Query("q")
+	from := c.Query("from")
+	to := c.Query("to")
+	actorID := c.Query("actor_id")
+	eventType := c.Query("event_type")
+
+	// Build ES bool query
+	must := []map[string]interface{}{}
+	filter := []map[string]interface{}{}
+
+	if q != "" {
+		must = append(must, map[string]interface{}{
+			"multi_match": map[string]interface{}{
+				"query":  q,
+				"fields": []string{"action", "actor_id", "target_id", "resource_id", "event_type"},
+			},
+		})
+	}
+
+	if actorID != "" {
+		filter = append(filter, map[string]interface{}{
+			"term": map[string]interface{}{"actor_id": actorID},
+		})
+	}
+	if eventType != "" {
+		filter = append(filter, map[string]interface{}{
+			"term": map[string]interface{}{"event_type": eventType},
+		})
+	}
+
+	timeRange := map[string]interface{}{}
+	if from != "" {
+		timeRange["gte"] = from
+	}
+	if to != "" {
+		timeRange["lte"] = to
+	}
+	if len(timeRange) > 0 {
+		filter = append(filter, map[string]interface{}{
+			"range": map[string]interface{}{"timestamp": timeRange},
+		})
+	}
+
+	if len(must) == 0 {
+		must = append(must, map[string]interface{}{"match_all": map[string]interface{}{}})
+	}
+
+	query := map[string]interface{}{
+		"query": map[string]interface{}{
+			"bool": map[string]interface{}{
+				"must":   must,
+				"filter": filter,
+			},
+		},
+		"sort": []map[string]interface{}{
+			{"timestamp": map[string]interface{}{"order": "desc"}},
+		},
+		"size": 100,
+	}
+
+	queryBytes, _ := json.Marshal(query)
+	body, err := s.es.Search("audit_events", strings.NewReader(string(queryBytes)))
+	if err != nil {
+		s.logger.Error("ES search failed", zap.Error(err))
+		c.JSON(500, gin.H{"error": "search failed"})
+		return
+	}
+
+	var esResp database.EsSearchResponse
+	if err := json.Unmarshal(body, &esResp); err != nil {
+		c.JSON(500, gin.H{"error": "failed to parse search results"})
+		return
+	}
+
+	events := make([]json.RawMessage, 0, len(esResp.Hits.Hits))
+	for _, hit := range esResp.Hits.Hits {
+		events = append(events, hit.Source)
+	}
+
+	c.JSON(200, gin.H{
+		"total":  esResp.Hits.Total.Value,
+		"events": events,
+	})
 }
 
 // HTTP Handlers

@@ -5,6 +5,7 @@ go 1.24.7
 toolchain go1.24.12
 
 require (
+	github.com/elastic/go-elasticsearch/v8 v8.19.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/go-webauthn/webauthn v0.10.2
@@ -34,6 +35,7 @@ require (
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/elastic/elastic-transport-go/v8 v8.8.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fullsailor/pkcs7 v0.0.0-20190404230743-d7302db945fa // indirect

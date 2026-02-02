@@ -1278,9 +1278,12 @@ func (e *ServiceError) Error() string {
 }
 
 // RegisterRoutes registers governance service routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
 	gov := router.Group("/api/v1/governance")
 	gov.Use(svc.openIDXAuthMiddleware())
+	for _, mw := range extraMiddleware {
+		gov.Use(mw)
+	}
 	{
 		// Access reviews
 		gov.GET("/reviews", svc.handleListReviews)

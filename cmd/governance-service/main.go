@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/opa"
 	"github.com/openidx/openidx/internal/governance"
 )
 
@@ -75,8 +76,13 @@ func main() {
 	// Initialize governance service
 	governanceService := governance.NewService(db, redis, cfg, log)
 
-	// Register routes
-	governance.RegisterRoutes(router, governanceService)
+	// Register routes (with optional OPA authorization)
+	var opaMiddleware []gin.HandlerFunc
+	if cfg.EnableOPAAuthz {
+		opaClient := opa.NewClient(cfg.OPAURL, log)
+		opaMiddleware = append(opaMiddleware, middleware.OPAAuthz(opaClient, log, cfg.IsDevelopment()))
+	}
+	governance.RegisterRoutes(router, governanceService, opaMiddleware...)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {

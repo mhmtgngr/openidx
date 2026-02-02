@@ -22,7 +22,8 @@ type Config struct {
 	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
 
 	// OPA configuration
-	OPAURL string `mapstructure:"opa_url"`
+	OPAURL        string `mapstructure:"opa_url"`
+	EnableOPAAuthz bool  `mapstructure:"enable_opa_authz"`
 
 	// OAuth / OIDC settings
 	OAuthIssuer  string `mapstructure:"oauth_issuer"`
@@ -175,6 +176,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// OPA defaults
 	v.SetDefault("opa_url", "http://localhost:8281")
+	v.SetDefault("enable_opa_authz", false)
 
 	// Feature flag defaults
 	v.SetDefault("enable_mfa", true)
@@ -258,6 +260,7 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
 		"browzer_enabled":          "BROWZER_ENABLED",
 		"browzer_client_id":        "BROWZER_CLIENT_ID",
+		"enable_opa_authz":         "ENABLE_OPA_AUTHZ",
 		"jwt_secret":               "JWT_SECRET",
 		"encryption_key":           "ENCRYPTION_KEY",
 		"smtp_host":                "SMTP_HOST",

@@ -136,6 +136,9 @@ services:
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
     ports:
       - "8001:8001"
@@ -144,6 +147,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     networks:
       - openidx-network
 
@@ -224,6 +229,9 @@ services:
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
     ports:
       - "8005:8005"
@@ -232,6 +240,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     networks:
       - openidx-network
 
@@ -1054,6 +1064,22 @@ services:
     depends_on:
       - admin-api
       - oauth-service
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Mailpit - Local SMTP server for development email testing
+  #---------------------------------------------------------------------------
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: openidx-mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=true
+      - MP_SMTP_AUTH_ALLOW_INSECURE=true
     networks:
       - openidx-network
 
