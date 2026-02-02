@@ -157,6 +157,8 @@ services:
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
       - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8002:8002"
@@ -177,6 +179,8 @@ services:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:
       - "8003:8003"
@@ -218,6 +222,7 @@ services:
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
       - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
     ports:

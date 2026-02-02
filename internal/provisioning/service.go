@@ -303,7 +303,10 @@ func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 		return s.jwksCachedKey, nil
 	}
 
-	jwksURL := "http://openidx-oauth-service:8006/.well-known/jwks.json"
+	jwksURL := s.config.OAuthJWKSURL
+	if jwksURL == "" {
+		jwksURL = "http://oauth-service:8006/.well-known/jwks.json"
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(jwksURL)

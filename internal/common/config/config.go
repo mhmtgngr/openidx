@@ -258,6 +258,13 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
 		"browzer_enabled":          "BROWZER_ENABLED",
 		"browzer_client_id":        "BROWZER_CLIENT_ID",
+		"jwt_secret":               "JWT_SECRET",
+		"encryption_key":           "ENCRYPTION_KEY",
+		"smtp_host":                "SMTP_HOST",
+		"smtp_port":                "SMTP_PORT",
+		"smtp_username":            "SMTP_USERNAME",
+		"smtp_password":            "SMTP_PASSWORD",
+		"smtp_from":                "SMTP_FROM",
 	}
 
 	for key, env := range envMappings {
