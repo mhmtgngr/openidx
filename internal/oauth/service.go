@@ -499,20 +499,36 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int) (string, error) {
 	now := time.Now()
 
-	// Get user roles
-	var roleNames []string
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT r.name
-		FROM roles r
-		JOIN user_roles ur ON r.id = ur.role_id
-		WHERE ur.user_id = $1
-	`, userID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var roleName string
-			if err := rows.Scan(&roleName); err == nil {
-				roleNames = append(roleNames, roleName)
+	// Get user info for access token
+	var email, firstName, lastName string
+	if userID != "" {
+		_ = s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
+			FROM users WHERE id = $1
+		`, userID).Scan(&email, &firstName, &lastName)
+	}
+
+	name := firstName
+	if lastName != "" {
+		name = firstName + " " + lastName
+	}
+
+	// Get user roles (initialize as empty slice so JSON serializes as [] not null)
+	roleNames := make([]string, 0)
+	if userID != "" {
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT r.name
+			FROM roles r
+			JOIN user_roles ur ON r.id = ur.role_id
+			WHERE ur.user_id = $1
+		`, userID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var roleName string
+				if err := rows.Scan(&roleName); err == nil {
+					roleNames = append(roleNames, roleName)
+				}
 			}
 		}
 	}
@@ -525,6 +541,8 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		"iss":       s.issuer,
 		"iat":       now.Unix(),
 		"exp":       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		"email":     email,
+		"name":      name,
 		"roles":     roleNames,
 	}
 
@@ -548,8 +566,8 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		name = firstName + " " + lastName
 	}
 
-	// Get user roles
-	var roleNames []string
+	// Get user roles (initialize as empty slice so JSON serializes as [] not null)
+	roleNames := make([]string, 0)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.name
 		FROM roles r

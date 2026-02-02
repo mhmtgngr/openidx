@@ -42,34 +42,89 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu'
 
-const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, adminOnly: false },
-  { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
-  { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
-  { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
-  { name: 'Users', href: '/users', icon: Users, adminOnly: true },
-  { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
-  { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
-  { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
-  { name: 'Directories', href: '/directories', icon: FolderSync, adminOnly: true },
-  { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
-  { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, adminOnly: true },
-  { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
-  { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
-  { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
-  { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
-  { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
-  { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
-  { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, adminOnly: true },
-  { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
-  { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
-  { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
-  { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
-  { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
-  { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
-  { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
-  { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
-  { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
+interface NavItem {
+  name: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+  adminOnly: boolean
+}
+
+interface NavSection {
+  label: string
+  adminOnly: boolean
+  items: NavItem[]
+}
+
+const navigationSections: NavSection[] = [
+  {
+    label: '',
+    adminOnly: false,
+    items: [
+      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, adminOnly: false },
+      { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
+      { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
+      { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
+      { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
+    ],
+  },
+  {
+    label: 'Identity',
+    adminOnly: true,
+    items: [
+      { name: 'Users', href: '/users', icon: Users, adminOnly: true },
+      { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
+      { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
+      { name: 'Directories', href: '/directories', icon: FolderSync, adminOnly: true },
+      { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Applications',
+    adminOnly: true,
+    items: [
+      { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
+      { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
+      { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Network & Access',
+    adminOnly: true,
+    items: [
+      { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
+      { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
+      { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Governance',
+    adminOnly: true,
+    items: [
+      { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
+      { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, adminOnly: true },
+      { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
+      { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
+      { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Audit & Reports',
+    adminOnly: true,
+    items: [
+      { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
+      { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
+      { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
+    ],
+  },
+  {
+    label: 'System',
+    adminOnly: true,
+    items: [
+      { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
+      { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
+      { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
+    ],
+  },
 ]
 
 export function Layout() {
@@ -109,25 +164,41 @@ export function Layout() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1">
-          {navigation
-            .filter((item) => !item.adminOnly || hasRole('admin'))
-            .map((item) => (
-              <NavLink
-                key={item.name}
-                to={item.href}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`
-                }
-              >
-                <item.icon className="h-5 w-5 flex-shrink-0" />
-                {sidebarOpen && <span>{item.name}</span>}
-              </NavLink>
-            ))}
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+          {navigationSections
+            .filter((section) => !section.adminOnly || hasRole('admin'))
+            .map((section, sIdx) => {
+              const visibleItems = section.items.filter(
+                (item) => !item.adminOnly || hasRole('admin')
+              )
+              if (visibleItems.length === 0) return null
+              return (
+                <div key={sIdx}>
+                  {section.label && sidebarOpen && (
+                    <div className="px-3 pt-4 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                      {section.label}
+                    </div>
+                  )}
+                  {!section.label && sIdx > 0 && <div className="my-2 border-t" />}
+                  {visibleItems.map((item) => (
+                    <NavLink
+                      key={item.name}
+                      to={item.href}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                          isActive
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`
+                      }
+                    >
+                      <item.icon className="h-5 w-5 flex-shrink-0" />
+                      {sidebarOpen && <span className="text-sm">{item.name}</span>}
+                    </NavLink>
+                  ))}
+                </div>
+              )
+            })}
         </nav>
 
         {/* User menu */}
@@ -150,7 +221,14 @@ export function Layout() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
+              <DropdownMenuLabel>
+                <div>My Account</div>
+                {user?.roles && user.roles.length > 0 && (
+                  <div className="text-xs font-normal text-gray-500 mt-0.5">
+                    {user.roles.join(', ')}
+                  </div>
+                )}
+              </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => navigate('/profile')}>
                 <User className="mr-2 h-4 w-4" />

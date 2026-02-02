@@ -1,37 +1,36 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Network, Server, Users2, Copy, CheckCircle, XCircle, Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle, Monitor, ExternalLink } from 'lucide-react'
+import {
+  Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
+  Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
+  Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
+  LayoutDashboard,
+} from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Switch } from '../components/ui/switch'
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '../components/ui/table'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ZitiService {
   id: string
@@ -127,142 +126,332 @@ interface Certificate {
   days_until_expiry: number
 }
 
-type TabType = 'status' | 'services' | 'identities' | 'routers' | 'posture' | 'policy-sync' | 'certificates' | 'remote-access' | 'browzer'
-
-const TAB_LABELS: Record<TabType, string> = {
-  status: 'Status',
-  services: 'Services',
-  identities: 'Identities',
-  routers: 'Routers',
-  posture: 'Posture',
-  'policy-sync': 'Policy Sync',
-  certificates: 'Certificates',
-  'remote-access': 'Remote Access',
-  browzer: 'BrowZer',
+interface GuacConnection {
+  id: string
+  route_id: string
+  guacamole_connection_id: string
+  protocol: string
+  hostname: string
+  port: number
+  parameters: Record<string, string>
+  created_at: string
+  updated_at: string
 }
 
-export function ZitiNetworkPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('status')
+interface BrowZerStatus {
+  enabled: boolean
+  configured?: boolean
+  external_jwt_signer_id?: string
+  auth_policy_id?: string
+  dial_policy_id?: string
+  oidc_issuer?: string
+  oidc_client_id?: string
+  bootstrapper_url?: string
+  reason?: string
+}
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function TruncatedId({ value, label }: { value: string; label?: string }) {
+  const { toast } = useToast()
+  const short = value.length > 12 ? value.slice(0, 8) + '...' : value
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Ziti Network</h1>
-        <p className="text-muted-foreground">Manage OpenZiti zero-trust network overlay</p>
-      </div>
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(value)
+        toast({ title: 'Copied', description: `${label || 'ID'} copied to clipboard.` })
+      }}
+      className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
+      title={value}
+    >
+      {short}
+      <Copy className="h-3 w-3" />
+    </button>
+  )
+}
 
-      <div className="flex gap-2 border-b">
-        {(Object.keys(TAB_LABELS) as TabType[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {TAB_LABELS[tab]}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'status' && <StatusTab />}
-      {activeTab === 'services' && <ServicesTab />}
-      {activeTab === 'identities' && <IdentitiesTab />}
-      {activeTab === 'routers' && <RoutersTab />}
-      {activeTab === 'posture' && <PostureTab />}
-      {activeTab === 'policy-sync' && <PolicySyncTab />}
-      {activeTab === 'certificates' && <CertificatesTab />}
-      {activeTab === 'remote-access' && <RemoteAccessTab />}
-      {activeTab === 'browzer' && <BrowZerTab />}
+function Spinner() {
+  return (
+    <div className="flex justify-center py-12">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
     </div>
   )
 }
 
-function StatusTab() {
-  const { data: status, isLoading } = useQuery({
+function EmptyState({ icon: Icon, title, description }: { icon: React.ElementType; title: string; description: string }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-center justify-center py-12">
+        <Icon className="h-12 w-12 text-muted-foreground mb-4" />
+        <h3 className="text-lg font-medium">{title}</h3>
+        <p className="text-muted-foreground mt-1 text-center max-w-md">{description}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <div className="relative flex-1 max-w-sm">
+      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="pl-9"
+      />
+    </div>
+  )
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+export function ZitiNetworkPage() {
+  const [activeTab, setActiveTab] = useState('overview')
+
+  const { data: status } = useQuery({
     queryKey: ['ziti-status'],
     queryFn: () => api.get<ZitiStatus>('/api/v1/access/ziti/status'),
     refetchInterval: 10000,
   })
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
-  }
-
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">Integration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2">
-            {status?.enabled ? (
-              <CheckCircle className="h-5 w-5 text-green-500" />
-            ) : (
-              <XCircle className="h-5 w-5 text-red-500" />
-            )}
-            <span className="text-lg font-semibold">
-              {status?.enabled ? 'Enabled' : 'Disabled'}
-            </span>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            SDK: {status?.sdk_ready ? 'Ready' : 'Not Ready'}
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">Controller</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2">
-            {status?.controller_reachable ? (
-              <CheckCircle className="h-5 w-5 text-green-500" />
-            ) : (
-              <XCircle className="h-5 w-5 text-red-500" />
-            )}
-            <span className="text-lg font-semibold">
-              {status?.controller_reachable ? 'Connected' : 'Unreachable'}
-            </span>
-          </div>
-          {status?.controller_error && (
-            <p className="text-sm text-red-500 mt-1">{status.controller_error}</p>
+    <div className="space-y-6">
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Ziti Network</h1>
+          <p className="text-muted-foreground">Manage your OpenZiti zero-trust network overlay</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {status && (
+            <>
+              <div className="flex items-center gap-1.5 text-sm">
+                {status.controller_reachable ? (
+                  <span className="flex items-center gap-1.5 text-green-600">
+                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                    Connected
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-red-500">
+                    <span className="h-2 w-2 rounded-full bg-red-500" />
+                    Disconnected
+                  </span>
+                )}
+              </div>
+              <Badge variant="outline">{status.services_count} services</Badge>
+              <Badge variant="outline">{status.identities_count} identities</Badge>
+            </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground">Resources</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-6">
-            <div>
-              <p className="text-2xl font-bold">{status?.services_count || 0}</p>
-              <p className="text-sm text-muted-foreground">Services</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{status?.identities_count || 0}</p>
-              <p className="text-sm text-muted-foreground">Identities</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="overview" className="gap-1.5">
+            <LayoutDashboard className="h-4 w-4" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="services" className="gap-1.5">
+            <Server className="h-4 w-4" />
+            Services
+          </TabsTrigger>
+          <TabsTrigger value="identities" className="gap-1.5">
+            <Users2 className="h-4 w-4" />
+            Identities
+          </TabsTrigger>
+          <TabsTrigger value="security" className="gap-1.5">
+            <Shield className="h-4 w-4" />
+            Security
+          </TabsTrigger>
+          <TabsTrigger value="remote-access" className="gap-1.5">
+            <Monitor className="h-4 w-4" />
+            Remote Access
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview">
+          <OverviewTab onNavigate={setActiveTab} />
+        </TabsContent>
+        <TabsContent value="services">
+          <ServicesTab />
+        </TabsContent>
+        <TabsContent value="identities">
+          <IdentitiesTab />
+        </TabsContent>
+        <TabsContent value="security">
+          <SecurityTab />
+        </TabsContent>
+        <TabsContent value="remote-access">
+          <RemoteAccessTab />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
 
+// ─── Overview Tab ────────────────────────────────────────────────────────────
+
+function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  const { toast } = useToast()
+
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ['ziti-status'],
+    queryFn: () => api.get<ZitiStatus>('/api/v1/access/ziti/status'),
+    refetchInterval: 10000,
+  })
+
+  const { data: overview } = useQuery({
+    queryKey: ['ziti-fabric-overview'],
+    queryFn: () => api.get<FabricOverview>('/api/v1/access/ziti/fabric/overview'),
+    refetchInterval: 15000,
+  })
+
+  const { data: routersData } = useQuery({
+    queryKey: ['ziti-fabric-routers'],
+    queryFn: () => api.get<FabricRouter[]>('/api/v1/access/ziti/fabric/routers'),
+  })
+
+  const reconnectMutation = useMutation({
+    mutationFn: () => api.post('/api/v1/access/ziti/fabric/reconnect', {}),
+    onSuccess: () => toast({ title: 'Reconnect initiated', description: 'Fabric reconnect has been triggered.' }),
+    onError: () => toast({ title: 'Error', description: 'Failed to trigger reconnect.', variant: 'destructive' }),
+  })
+
+  const healthCheckMutation = useMutation({
+    mutationFn: () => api.get('/api/v1/access/ziti/fabric/health'),
+    onSuccess: () => toast({ title: 'Health check passed', description: 'Fabric health check completed successfully.' }),
+    onError: () => toast({ title: 'Health check failed', description: 'Fabric health check reported issues.', variant: 'destructive' }),
+  })
+
+  const routers = Array.isArray(routersData) ? routersData : []
+
+  if (statusLoading) return <Spinner />
+
+  const statCards = [
+    {
+      title: 'Controller',
+      value: overview?.controller_online || status?.controller_reachable ? 'Online' : 'Offline',
+      description: status?.sdk_ready ? 'SDK Ready' : 'SDK Not Ready',
+      icon: Network,
+      color: (overview?.controller_online || status?.controller_reachable) ? 'text-green-600' : 'text-red-500',
+      isStatus: true,
+    },
+    {
+      title: 'Routers',
+      value: overview?.router_count || 0,
+      description: `${overview?.healthy_routers || 0} healthy, ${overview?.unhealthy_routers || 0} unhealthy`,
+      icon: Router,
+      color: 'text-blue-600',
+    },
+    {
+      title: 'Services',
+      value: status?.services_count || 0,
+      description: 'Registered services',
+      icon: Server,
+      color: 'text-purple-600',
+      onClick: () => onNavigate('services'),
+    },
+    {
+      title: 'Identities',
+      value: status?.identities_count || 0,
+      description: 'Registered identities',
+      icon: Users2,
+      color: 'text-orange-600',
+      onClick: () => onNavigate('identities'),
+    },
+  ]
+
+  return (
+    <div className="space-y-6 mt-4">
+      {/* Stat cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {statCards.map((stat) => (
+          <Card
+            key={stat.title}
+            className={stat.onClick ? 'cursor-pointer hover:shadow-md transition-all hover:scale-[1.02]' : ''}
+            onClick={stat.onClick}
+          >
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+              <stat.icon className={`h-4 w-4 ${stat.color}`} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {stat.isStatus ? (
+                  <span className={stat.color}>{stat.value}</span>
+                ) : (
+                  String(stat.value)
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">{stat.description}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Routers section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Edge Routers</h3>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => healthCheckMutation.mutate()} disabled={healthCheckMutation.isPending}>
+              <CheckCircle className="mr-2 h-4 w-4" />
+              {healthCheckMutation.isPending ? 'Checking...' : 'Health Check'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => reconnectMutation.mutate()} disabled={reconnectMutation.isPending}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              {reconnectMutation.isPending ? 'Reconnecting...' : 'Reconnect'}
+            </Button>
+          </div>
+        </div>
+
+        {routers.length === 0 ? (
+          <EmptyState icon={Router} title="No edge routers" description="No routers are registered in the Ziti fabric." />
+        ) : (
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Hostname</TableHead>
+                  <TableHead>Fingerprint</TableHead>
+                  <TableHead>Created</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {routers.map((router) => (
+                  <TableRow key={router.id} className="hover:bg-muted/50">
+                    <TableCell className="font-medium">{router.name}</TableCell>
+                    <TableCell>
+                      <Badge variant={router.is_online ? 'default' : 'destructive'}>
+                        {router.is_online ? 'Online' : 'Offline'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{router.hostname}</TableCell>
+                    <TableCell><TruncatedId value={router.fingerprint} label="Fingerprint" /></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(router.created_at).toLocaleDateString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Services Tab ────────────────────────────────────────────────────────────
+
 function ServicesTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ZitiService | null>(null)
   const [form, setForm] = useState({ name: '', description: '', host: '', port: 8080, protocol: 'tcp' })
@@ -281,9 +470,7 @@ function ServicesTab() {
       setForm({ name: '', description: '', host: '', port: 8080, protocol: 'tcp' })
       toast({ title: 'Service created', description: 'Ziti service has been created.' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to create Ziti service.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create Ziti service.', variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -294,73 +481,97 @@ function ServicesTab() {
       setDeleteTarget(null)
       toast({ title: 'Service deleted', description: 'Ziti service has been deleted.' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to delete Ziti service.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to delete Ziti service.', variant: 'destructive' }),
   })
 
-  const services = data?.services || []
+  const services = (data?.services || []).filter((svc) =>
+    !search || svc.name.toLowerCase().includes(search.toLowerCase()) ||
+    svc.host.toLowerCase().includes(search.toLowerCase()) ||
+    svc.description?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  if (isLoading) return <Spinner />
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{services.length} Ziti services registered</p>
+    <div className="space-y-4 mt-4">
+      <div className="flex items-center justify-between gap-4">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search services..." />
         <Button onClick={() => setCreateModal(true)}>
           <Plus className="mr-2 h-4 w-4" /> Add Service
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-        </div>
-      ) : services.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Server className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No Ziti services</h3>
-            <p className="text-muted-foreground mt-1">Register upstream services to route traffic through the Ziti overlay.</p>
-          </CardContent>
-        </Card>
+      {services.length === 0 ? (
+        <EmptyState
+          icon={Server}
+          title={search ? 'No matching services' : 'No Ziti services'}
+          description={search ? 'Try a different search term.' : 'Register upstream services to route traffic through the Ziti overlay.'}
+        />
       ) : (
-        <div className="space-y-3">
-          {services.map((svc) => (
-            <Card key={svc.id}>
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-purple-100">
-                    <Network className="h-5 w-5 text-purple-700" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold">{svc.name}</h3>
-                      <Badge variant="outline">{svc.protocol}</Badge>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Service</TableHead>
+                <TableHead>Protocol</TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead>Ziti ID</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-[50px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {services.map((svc) => (
+                <TableRow key={svc.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div>
+                      <p className="font-medium">{svc.name}</p>
+                      {svc.description && (
+                        <p className="text-xs text-muted-foreground">{svc.description}</p>
+                      )}
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {svc.host}:{svc.port}
-                      {svc.description && ` - ${svc.description}`}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Ziti ID: {svc.ziti_id}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-red-600"
-                  onClick={() => setDeleteTarget(svc)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{svc.protocol.toUpperCase()}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{svc.host}:{svc.port}</code>
+                  </TableCell>
+                  <TableCell><TruncatedId value={svc.ziti_id} label="Ziti ID" /></TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(svc.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => {
+                          navigator.clipboard.writeText(svc.ziti_id)
+                          toast({ title: 'Copied', description: 'Ziti ID copied to clipboard.' })
+                        }}>
+                          <Copy className="mr-2 h-4 w-4" /> Copy Ziti ID
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(svc)}>
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       )}
 
+      {/* Create Dialog */}
       <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create Ziti Service</DialogTitle>
           </DialogHeader>
@@ -384,10 +595,18 @@ function ServicesTab() {
               </div>
               <div className="space-y-2">
                 <Label>Protocol</Label>
-                <Input value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value })} placeholder="tcp" />
+                <select
+                  value={form.protocol}
+                  onChange={(e) => setForm({ ...form, protocol: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                </select>
               </div>
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
               <Button type="submit" disabled={createMutation.isPending}>
                 {createMutation.isPending ? 'Creating...' : 'Create Service'}
               </Button>
@@ -396,20 +615,18 @@ function ServicesTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Ziti Service</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{deleteTarget?.name}"? This will remove it from the Ziti controller.
+              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? This will remove it from the Ziti controller.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-            >
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -419,9 +636,12 @@ function ServicesTab() {
   )
 }
 
+// ─── Identities Tab ──────────────────────────────────────────────────────────
+
 function IdentitiesTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ZitiIdentity | null>(null)
   const [jwtModal, setJwtModal] = useState<{ jwt: string; name: string } | null>(null)
@@ -447,16 +667,13 @@ function IdentitiesTab() {
       queryClient.invalidateQueries({ queryKey: ['ziti-status'] })
       setCreateModal(false)
       setForm({ name: '', identity_type: 'Device', user_id: '', attributes: '' })
-
       const data = result as { enrollment_jwt?: string; name?: string }
       if (data.enrollment_jwt) {
         setJwtModal({ jwt: data.enrollment_jwt, name: data.name || form.name })
       }
       toast({ title: 'Identity created', description: 'Ziti identity has been created.' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to create Ziti identity.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create Ziti identity.', variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -467,9 +684,7 @@ function IdentitiesTab() {
       setDeleteTarget(null)
       toast({ title: 'Identity deleted', description: 'Ziti identity has been deleted.' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to delete Ziti identity.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to delete Ziti identity.', variant: 'destructive' }),
   })
 
   const fetchJWT = async (identity: ZitiIdentity) => {
@@ -485,80 +700,101 @@ function IdentitiesTab() {
     }
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
-  }
+  const identities = (data?.identities || []).filter((ident) =>
+    !search || ident.name.toLowerCase().includes(search.toLowerCase()) ||
+    ident.identity_type.toLowerCase().includes(search.toLowerCase())
+  )
 
-  const identities = data?.identities || []
+  if (isLoading) return <Spinner />
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{identities.length} Ziti identities registered</p>
+    <div className="space-y-4 mt-4">
+      <div className="flex items-center justify-between gap-4">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search identities..." />
         <Button onClick={() => setCreateModal(true)}>
           <Plus className="mr-2 h-4 w-4" /> Add Identity
         </Button>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-        </div>
-      ) : identities.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Users2 className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No Ziti identities</h3>
-            <p className="text-muted-foreground mt-1">Create identities for desktop tunneler enrollment.</p>
-          </CardContent>
-        </Card>
+      {identities.length === 0 ? (
+        <EmptyState
+          icon={Users2}
+          title={search ? 'No matching identities' : 'No Ziti identities'}
+          description={search ? 'Try a different search term.' : 'Create identities for desktop tunneler enrollment.'}
+        />
       ) : (
-        <div className="space-y-3">
-          {identities.map((ident) => (
-            <Card key={ident.id}>
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${ident.enrolled ? 'bg-green-100' : 'bg-yellow-100'}`}>
-                    <Shield className={`h-5 w-5 ${ident.enrolled ? 'text-green-700' : 'text-yellow-700'}`} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold">{ident.name}</h3>
-                      <Badge variant="outline">{ident.identity_type}</Badge>
-                      <Badge variant={ident.enrolled ? 'default' : 'secondary'}>
-                        {ident.enrolled ? 'Enrolled' : 'Pending'}
-                      </Badge>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Identity</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Ziti ID</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-[50px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {identities.map((ident) => (
+                <TableRow key={ident.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <div className={`h-8 w-8 rounded-full flex items-center justify-center ${ident.enrolled ? 'bg-green-100' : 'bg-yellow-100'}`}>
+                        <Shield className={`h-4 w-4 ${ident.enrolled ? 'text-green-700' : 'text-yellow-700'}`} />
+                      </div>
+                      <div>
+                        <p className="font-medium">{ident.name}</p>
+                        {ident.user_id && <p className="text-xs text-muted-foreground">User: {ident.user_id.slice(0, 8)}...</p>}
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Ziti ID: {ident.ziti_id}
-                      {ident.user_id && ` | User: ${ident.user_id}`}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  {!ident.enrolled && (
-                    <Button variant="outline" size="sm" onClick={() => fetchJWT(ident)}>
-                      <Copy className="h-4 w-4 mr-1" /> JWT
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-red-600"
-                    onClick={() => setDeleteTarget(ident)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                  </TableCell>
+                  <TableCell><Badge variant="outline">{ident.identity_type}</Badge></TableCell>
+                  <TableCell>
+                    <Badge variant={ident.enrolled ? 'default' : 'secondary'}>
+                      {ident.enrolled ? 'Enrolled' : 'Pending'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell><TruncatedId value={ident.ziti_id} label="Ziti ID" /></TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(ident.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => {
+                          navigator.clipboard.writeText(ident.ziti_id)
+                          toast({ title: 'Copied', description: 'Ziti ID copied to clipboard.' })
+                        }}>
+                          <Copy className="mr-2 h-4 w-4" /> Copy Ziti ID
+                        </DropdownMenuItem>
+                        {!ident.enrolled && (
+                          <DropdownMenuItem onClick={() => fetchJWT(ident)}>
+                            <FileKey className="mr-2 h-4 w-4" /> Get Enrollment JWT
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(ident)}>
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       )}
 
+      {/* Create Dialog */}
       <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create Ziti Identity</DialogTitle>
           </DialogHeader>
@@ -589,7 +825,8 @@ function IdentitiesTab() {
               <Label>Role Attributes (comma-separated)</Label>
               <Input value={form.attributes} onChange={(e) => setForm({ ...form, attributes: e.target.value })} placeholder="developers, vpn-users" />
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
               <Button type="submit" disabled={createMutation.isPending}>
                 {createMutation.isPending ? 'Creating...' : 'Create Identity'}
               </Button>
@@ -598,7 +835,7 @@ function IdentitiesTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Enrollment JWT Modal */}
+      {/* JWT Modal */}
       <Dialog open={!!jwtModal} onOpenChange={() => setJwtModal(null)}>
         <DialogContent>
           <DialogHeader>
@@ -618,7 +855,12 @@ function IdentitiesTab() {
                 variant="outline"
                 size="sm"
                 className="absolute top-2 right-2"
-                onClick={() => jwtModal && copyToClipboard(jwtModal.jwt)}
+                onClick={() => {
+                  if (jwtModal) {
+                    navigator.clipboard.writeText(jwtModal.jwt)
+                    toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
+                  }
+                }}
               >
                 <Copy className="h-4 w-4" />
               </Button>
@@ -627,20 +869,18 @@ function IdentitiesTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Ziti Identity</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{deleteTarget?.name}"? This will revoke the identity from the Ziti controller.
+              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? This will revoke the identity from the Ziti controller.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-            >
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -650,180 +890,48 @@ function IdentitiesTab() {
   )
 }
 
-// ==================== ROUTERS TAB ====================
+// ─── Security Tab ────────────────────────────────────────────────────────────
 
-function RoutersTab() {
-  const { toast } = useToast()
-
-  const { data: overview, isLoading: overviewLoading } = useQuery({
-    queryKey: ['ziti-fabric-overview'],
-    queryFn: () => api.get<FabricOverview>('/api/v1/access/ziti/fabric/overview'),
-    refetchInterval: 15000,
-  })
-
-  const { data: routersData, isLoading: routersLoading } = useQuery({
-    queryKey: ['ziti-fabric-routers'],
-    queryFn: () => api.get<FabricRouter[]>('/api/v1/access/ziti/fabric/routers'),
-  })
-
-  const reconnectMutation = useMutation({
-    mutationFn: () => api.post('/api/v1/access/ziti/fabric/reconnect', {}),
-    onSuccess: () => {
-      toast({ title: 'Reconnect initiated', description: 'Fabric reconnect has been triggered.' })
-    },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to trigger reconnect.', variant: 'destructive' })
-    },
-  })
-
-  const healthCheckMutation = useMutation({
-    mutationFn: () => api.get('/api/v1/access/ziti/fabric/health'),
-    onSuccess: () => {
-      toast({ title: 'Health check passed', description: 'Fabric health check completed successfully.' })
-    },
-    onError: () => {
-      toast({ title: 'Health check failed', description: 'Fabric health check reported issues.', variant: 'destructive' })
-    },
-  })
-
-  const routers = Array.isArray(routersData) ? routersData : []
-  const isLoading = overviewLoading || routersLoading
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
-  }
-
+function CollapsibleSection({ title, count, icon: Icon, defaultOpen, children }: {
+  title: string; count: number; icon: React.ElementType; defaultOpen?: boolean; children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? true)
   return (
-    <div className="space-y-4">
-      {/* Overview cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Controller</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              {overview?.controller_online ? (
-                <CheckCircle className="h-5 w-5 text-green-500" />
-              ) : (
-                <XCircle className="h-5 w-5 text-red-500" />
-              )}
-              <span className="text-lg font-semibold">
-                {overview?.controller_online ? 'Online' : 'Offline'}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Routers</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{overview?.router_count || 0}</p>
-            <p className="text-sm text-muted-foreground">
-              {overview?.healthy_routers || 0} healthy / {overview?.unhealthy_routers || 0} unhealthy
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Services</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{overview?.service_count || 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Identities</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{overview?.identity_count || 0}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Actions */}
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{routers.length} fabric routers</p>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => healthCheckMutation.mutate()} disabled={healthCheckMutation.isPending}>
-            <CheckCircle className="mr-2 h-4 w-4" />
-            {healthCheckMutation.isPending ? 'Checking...' : 'Health Check'}
-          </Button>
-          <Button variant="outline" onClick={() => reconnectMutation.mutate()} disabled={reconnectMutation.isPending}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            {reconnectMutation.isPending ? 'Reconnecting...' : 'Reconnect'}
-          </Button>
+    <div className="border rounded-lg">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          <span className="font-semibold">{title}</span>
+          <Badge variant="secondary" className="ml-1">{count}</Badge>
         </div>
-      </div>
-
-      {/* Router list */}
-      {routers.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Router className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No fabric routers</h3>
-            <p className="text-muted-foreground mt-1">No routers are registered in the Ziti fabric.</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Hostname</TableHead>
-                <TableHead>Fingerprint</TableHead>
-                <TableHead>Created</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {routers.map((router) => (
-                <TableRow key={router.id}>
-                  <TableCell className="font-medium">{router.name}</TableCell>
-                  <TableCell>
-                    <Badge variant={router.is_online ? 'default' : 'destructive'}>
-                      {router.is_online ? 'Online' : 'Offline'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{router.hostname}</TableCell>
-                  <TableCell className="text-xs font-mono text-muted-foreground max-w-[200px] truncate">
-                    {router.fingerprint}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(router.created_at).toLocaleDateString()}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
+        {open ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+      </button>
+      {open && <div className="px-4 pb-4 pt-1">{children}</div>}
     </div>
   )
 }
 
-// ==================== POSTURE TAB ====================
+function SecurityTab() {
+  return (
+    <div className="space-y-4 mt-4">
+      <PostureSection />
+      <CertificatesSection />
+      <PolicySyncSection />
+    </div>
+  )
+}
 
-function PostureTab() {
+function PostureSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [editTarget, setEditTarget] = useState<PostureCheck | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<PostureCheck | null>(null)
-  const [form, setForm] = useState({
-    name: '',
-    check_type: 'OS',
-    parameters: '{}',
-    severity: 'medium',
-    enabled: true,
-  })
+  const [form, setForm] = useState({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true })
 
   const { data: summary } = useQuery({
     queryKey: ['ziti-posture-summary'],
@@ -836,43 +944,28 @@ function PostureTab() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof form) => {
-      const payload = {
-        ...data,
-        parameters: JSON.parse(data.parameters),
-      }
-      return api.post('/api/v1/access/ziti/posture/checks', payload)
-    },
+    mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/posture/checks', { ...data, parameters: JSON.parse(data.parameters) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setCreateModal(false)
       resetForm()
-      toast({ title: 'Posture check created', description: 'Posture check has been created.' })
+      toast({ title: 'Posture check created' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to create posture check.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create posture check.', variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: typeof form }) => {
-      const payload = {
-        ...data,
-        parameters: JSON.parse(data.parameters),
-      }
-      return api.put(`/api/v1/access/ziti/posture/checks/${id}`, payload)
-    },
+    mutationFn: ({ id, data }: { id: string; data: typeof form }) =>
+      api.put(`/api/v1/access/ziti/posture/checks/${id}`, { ...data, parameters: JSON.parse(data.parameters) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setEditTarget(null)
       resetForm()
-      toast({ title: 'Posture check updated', description: 'Posture check has been updated.' })
+      toast({ title: 'Posture check updated' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to update posture check.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to update posture check.', variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -881,16 +974,12 @@ function PostureTab() {
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-checks'] })
       queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
       setDeleteTarget(null)
-      toast({ title: 'Posture check deleted', description: 'Posture check has been deleted.' })
+      toast({ title: 'Posture check deleted' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to delete posture check.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to delete posture check.', variant: 'destructive' }),
   })
 
-  const resetForm = () => {
-    setForm({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true })
-  }
+  const resetForm = () => setForm({ name: '', check_type: 'OS', parameters: '{}', severity: 'medium', enabled: true })
 
   const openEditModal = (check: PostureCheck) => {
     setForm({
@@ -903,83 +992,40 @@ function PostureTab() {
     setEditTarget(check)
   }
 
-  const checks = Array.isArray(checksData) ? checksData : []
+  const checks = (Array.isArray(checksData) ? checksData : []).filter((c) =>
+    !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.check_type.toLowerCase().includes(search.toLowerCase())
+  )
 
-  const severityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'destructive'
-      case 'high': return 'destructive'
-      case 'medium': return 'default'
-      case 'low': return 'secondary'
-      default: return 'outline'
-    }
+  const severityColor = (severity: string): 'default' | 'destructive' | 'secondary' | 'outline' => {
+    if (severity === 'critical' || severity === 'high') return 'destructive'
+    if (severity === 'medium') return 'default'
+    return 'secondary'
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
-  }
+  const totalChecks = summary?.total_checks || (Array.isArray(checksData) ? checksData.length : 0)
 
   return (
-    <div className="space-y-4">
-      {/* Posture summary */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Checks</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{summary?.total_checks || 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Enabled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-green-600">{summary?.enabled_checks || 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Disabled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-muted-foreground">{summary?.disabled_checks || 0}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">By Type</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-1">
-              {summary?.by_type && Object.entries(summary.by_type).map(([type, count]) => (
-                <Badge key={type} variant="outline">{type}: {count}</Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+    <CollapsibleSection title="Posture Checks" count={totalChecks} icon={Fingerprint} defaultOpen>
+      {/* Summary row */}
+      {summary && (
+        <div className="flex gap-4 mb-4 text-sm">
+          <span className="text-green-600 font-medium">{summary.enabled_checks} enabled</span>
+          <span className="text-muted-foreground">{summary.disabled_checks} disabled</span>
+          {summary.by_type && Object.entries(summary.by_type).map(([type, count]) => (
+            <Badge key={type} variant="outline" className="text-xs">{type}: {count}</Badge>
+          ))}
+        </div>
+      )}
 
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{checks.length} posture checks configured</p>
-        <Button onClick={() => { resetForm(); setCreateModal(true) }}>
-          <Plus className="mr-2 h-4 w-4" /> Add Posture Check
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search posture checks..." />
+        <Button size="sm" onClick={() => { resetForm(); setCreateModal(true) }}>
+          <Plus className="mr-2 h-4 w-4" /> Add Check
         </Button>
       </div>
 
-      {checks.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Fingerprint className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No posture checks</h3>
-            <p className="text-muted-foreground mt-1">Create posture checks to enforce device compliance.</p>
-          </CardContent>
-        </Card>
+      {isLoading ? <Spinner /> : checks.length === 0 ? (
+        <EmptyState icon={Fingerprint} title="No posture checks" description="Create posture checks to enforce device compliance." />
       ) : (
         <Card>
           <Table>
@@ -990,19 +1036,15 @@ function PostureTab() {
                 <TableHead>Severity</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {checks.map((check) => (
-                <TableRow key={check.id}>
+                <TableRow key={check.id} className="hover:bg-muted/50">
                   <TableCell className="font-medium">{check.name}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{check.check_type}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={severityColor(check.severity)}>{check.severity}</Badge>
-                  </TableCell>
+                  <TableCell><Badge variant="outline">{check.check_type}</Badge></TableCell>
+                  <TableCell><Badge variant={severityColor(check.severity)}>{check.severity}</Badge></TableCell>
                   <TableCell>
                     <Badge variant={check.enabled ? 'default' : 'secondary'}>
                       {check.enabled ? 'Enabled' : 'Disabled'}
@@ -1011,15 +1053,21 @@ function PostureTab() {
                   <TableCell className="text-sm text-muted-foreground">
                     {new Date(check.created_at).toLocaleDateString()}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" onClick={() => openEditModal(check)}>
-                        Edit
-                      </Button>
-                      <Button variant="ghost" size="sm" className="text-red-600" onClick={() => setDeleteTarget(check)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openEditModal(check)}>Edit</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(check)}>
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1028,374 +1076,81 @@ function PostureTab() {
         </Card>
       )}
 
-      {/* Create Dialog */}
-      <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Posture Check</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Posture check name" required />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+      {/* Create/Edit Dialogs */}
+      {[
+        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Posture Check', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Check' },
+        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: 'Edit Posture Check', onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: 'Update Check' },
+      ].map((dlg, i) => (
+        <Dialog key={i} open={dlg.open} onOpenChange={dlg.onOpenChange}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>{dlg.title}</DialogTitle></DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); dlg.onSubmit() }} className="space-y-4">
               <div className="space-y-2">
-                <Label>Check Type</Label>
-                <select
-                  value={form.check_type}
-                  onChange={(e) => setForm({ ...form, check_type: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="OS">OS</option>
-                  <option value="Domain">Domain</option>
-                  <option value="MFA">MFA</option>
-                  <option value="Process">Process</option>
-                  <option value="MAC">MAC</option>
-                </select>
+                <Label>Name</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Posture check name" required />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Check Type</Label>
+                  <select value={form.check_type} onChange={(e) => setForm({ ...form, check_type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    <option value="OS">OS</option>
+                    <option value="Domain">Domain</option>
+                    <option value="MFA">MFA</option>
+                    <option value="Process">Process</option>
+                    <option value="MAC">MAC</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Severity</Label>
+                  <select value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
               </div>
               <div className="space-y-2">
-                <Label>Severity</Label>
-                <select
-                  value={form.severity}
-                  onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
-                </select>
+                <Label>Parameters (JSON)</Label>
+                <textarea
+                  value={form.parameters}
+                  onChange={(e) => setForm({ ...form, parameters: e.target.value })}
+                  className="w-full h-24 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                  placeholder='{"os_type": "Windows", "min_version": "10"}'
+                />
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Parameters (JSON)</Label>
-              <textarea
-                value={form.parameters}
-                onChange={(e) => setForm({ ...form, parameters: e.target.value })}
-                className="w-full h-24 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-                placeholder='{"os_type": "Windows", "min_version": "10"}'
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="posture-enabled"
-                checked={form.enabled}
-                onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-                className="rounded border-input"
-              />
-              <Label htmlFor="posture-enabled">Enabled</Label>
-            </div>
-            <div className="flex justify-end">
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Creating...' : 'Create Check'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+              <div className="flex items-center gap-2">
+                <Switch checked={form.enabled} onCheckedChange={(checked) => setForm({ ...form, enabled: checked })} />
+                <Label>Enabled</Label>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
+                <Button type="submit" disabled={dlg.pending}>
+                  {dlg.pending ? 'Saving...' : dlg.submitLabel}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ))}
 
-      {/* Edit Dialog */}
-      <Dialog open={!!editTarget} onOpenChange={() => { setEditTarget(null); resetForm() }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit Posture Check</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); editTarget && updateMutation.mutate({ id: editTarget.id, data: form }) }} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Check Type</Label>
-                <select
-                  value={form.check_type}
-                  onChange={(e) => setForm({ ...form, check_type: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="OS">OS</option>
-                  <option value="Domain">Domain</option>
-                  <option value="MFA">MFA</option>
-                  <option value="Process">Process</option>
-                  <option value="MAC">MAC</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Severity</Label>
-                <select
-                  value={form.severity}
-                  onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
-                </select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Parameters (JSON)</Label>
-              <textarea
-                value={form.parameters}
-                onChange={(e) => setForm({ ...form, parameters: e.target.value })}
-                className="w-full h-24 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="posture-enabled-edit"
-                checked={form.enabled}
-                onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-                className="rounded border-input"
-              />
-              <Label htmlFor="posture-enabled-edit">Enabled</Label>
-            </div>
-            <div className="flex justify-end">
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Updating...' : 'Update Check'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Posture Check</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deleteTarget?.name}"? This action cannot be undone.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Are you sure you want to delete &quot;{deleteTarget?.name}&quot;?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-            >
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </CollapsibleSection>
   )
 }
 
-// ==================== POLICY SYNC TAB ====================
-
-function PolicySyncTab() {
-  const queryClient = useQueryClient()
-  const { toast } = useToast()
-  const [createModal, setCreateModal] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<PolicySync | null>(null)
-  const [form, setForm] = useState({ governance_policy_id: '', config: '{}' })
-
-  const { data: syncsData, isLoading } = useQuery({
-    queryKey: ['ziti-policy-sync'],
-    queryFn: () => api.get<PolicySync[]>('/api/v1/access/ziti/policy-sync'),
-  })
-
-  const createMutation = useMutation({
-    mutationFn: (data: typeof form) => {
-      const payload = {
-        governance_policy_id: data.governance_policy_id,
-        config: JSON.parse(data.config),
-      }
-      return api.post('/api/v1/access/ziti/policy-sync', payload)
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
-      setCreateModal(false)
-      setForm({ governance_policy_id: '', config: '{}' })
-      toast({ title: 'Policy sync created', description: 'Policy sync mapping has been created.' })
-    },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to create policy sync.', variant: 'destructive' })
-    },
-  })
-
-  const triggerMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/access/ziti/policy-sync/${id}/trigger`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
-      toast({ title: 'Re-sync triggered', description: 'Policy re-sync has been triggered.' })
-    },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to trigger re-sync.', variant: 'destructive' })
-    },
-  })
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/policy-sync/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
-      setDeleteTarget(null)
-      toast({ title: 'Policy sync deleted', description: 'Policy sync mapping has been deleted.' })
-    },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to delete policy sync.', variant: 'destructive' })
-    },
-  })
-
-  const syncs = Array.isArray(syncsData) ? syncsData : []
-
-  const statusBadgeVariant = (status: string): 'default' | 'destructive' | 'secondary' | 'outline' => {
-    switch (status) {
-      case 'synced': return 'default'
-      case 'error': return 'destructive'
-      case 'pending': return 'secondary'
-      default: return 'outline'
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{syncs.length} policy sync mappings</p>
-        <Button onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Sync Policy
-        </Button>
-      </div>
-
-      {syncs.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <RefreshCw className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No policy sync mappings</h3>
-            <p className="text-muted-foreground mt-1">Sync governance policies to Ziti network policies.</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Governance Policy ID</TableHead>
-                <TableHead>Ziti Policy ID</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Synced</TableHead>
-                <TableHead>Error</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {syncs.map((sync) => (
-                <TableRow key={sync.id}>
-                  <TableCell className="font-mono text-sm">{sync.governance_policy_id}</TableCell>
-                  <TableCell className="font-mono text-sm">{sync.ziti_policy_id || '-'}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusBadgeVariant(sync.sync_status)}>
-                      {sync.sync_status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {sync.last_synced_at ? new Date(sync.last_synced_at).toLocaleString() : 'Never'}
-                  </TableCell>
-                  <TableCell className="text-sm text-red-500 max-w-[200px] truncate">
-                    {sync.error_message || '-'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => triggerMutation.mutate(sync.id)}
-                        disabled={triggerMutation.isPending}
-                      >
-                        <RefreshCw className="h-4 w-4 mr-1" /> Re-sync
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-red-600"
-                        onClick={() => setDeleteTarget(sync)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
-
-      {/* Create Dialog */}
-      <Dialog open={createModal} onOpenChange={setCreateModal}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Sync Policy to Ziti</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Governance Policy ID</Label>
-              <Input
-                value={form.governance_policy_id}
-                onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })}
-                placeholder="UUID of governance policy"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Config (JSON)</Label>
-              <textarea
-                value={form.config}
-                onChange={(e) => setForm({ ...form, config: e.target.value })}
-                className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-                placeholder='{"action": "allow", "service_roles": ["#web"]}'
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Syncing...' : 'Sync Policy'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Policy Sync</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this policy sync mapping? The Ziti policy will also be removed.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  )
-}
-
-// ==================== CERTIFICATES TAB ====================
-
-function CertificatesTab() {
+function CertificatesSection() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -1416,84 +1171,47 @@ function CertificatesTab() {
       queryClient.invalidateQueries({ queryKey: ['ziti-certificates-expiry'] })
       toast({ title: 'Certificate rotated', description: 'Certificate rotation has been initiated.' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to rotate certificate.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to rotate certificate.', variant: 'destructive' }),
   })
 
   const certs = Array.isArray(certsData) ? certsData : []
   const alerts = Array.isArray(expiryAlerts) ? expiryAlerts : []
 
-  const expiryBadgeVariant = (days: number): 'default' | 'destructive' | 'secondary' | 'outline' => {
-    if (days < 30) return 'destructive'
-    if (days <= 60) return 'secondary'
-    return 'default'
-  }
-
-  const expiryBadgeLabel = (days: number) => {
-    if (days < 0) return 'Expired'
-    if (days === 0) return 'Expires today'
-    return `${days}d remaining`
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
+  const expiryBadge = (days: number) => {
+    const variant: 'default' | 'destructive' | 'secondary' = days < 30 ? 'destructive' : days <= 60 ? 'secondary' : 'default'
+    const label = days < 0 ? 'Expired' : days === 0 ? 'Expires today' : `${days}d remaining`
+    return <Badge variant={variant}>{label}</Badge>
   }
 
   return (
-    <div className="space-y-4">
+    <CollapsibleSection title="Certificates" count={certs.length} icon={FileKey}>
       {/* Expiry alerts */}
       {alerts.length > 0 && (
-        <Card className="border-yellow-300 bg-yellow-50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-yellow-800">
-              <AlertTriangle className="h-4 w-4" />
-              Certificates Expiring Soon ({alerts.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1">
-              {alerts.map((cert) => (
-                <div key={cert.id} className="flex items-center justify-between text-sm">
-                  <span className="font-medium text-yellow-900">{cert.name}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-yellow-700">
-                      {cert.days_until_expiry < 0
-                        ? `Expired ${Math.abs(cert.days_until_expiry)} days ago`
-                        : `Expires in ${cert.days_until_expiry} days`}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => rotateMutation.mutate(cert.id)}
-                      disabled={rotateMutation.isPending}
-                    >
-                      Rotate
-                    </Button>
-                  </div>
+        <div className="mb-4 p-3 rounded-lg border border-yellow-300 bg-yellow-50">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <span className="text-sm font-medium text-yellow-800">Certificates Expiring Soon ({alerts.length})</span>
+          </div>
+          <div className="space-y-1">
+            {alerts.map((cert) => (
+              <div key={cert.id} className="flex items-center justify-between text-sm">
+                <span className="font-medium text-yellow-900">{cert.name}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-yellow-700">
+                    {cert.days_until_expiry < 0 ? `Expired ${Math.abs(cert.days_until_expiry)} days ago` : `${cert.days_until_expiry} days left`}
+                  </span>
+                  <Button variant="outline" size="sm" onClick={() => rotateMutation.mutate(cert.id)} disabled={rotateMutation.isPending}>
+                    Rotate
+                  </Button>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{certs.length} certificates managed</p>
-      </div>
-
-      {certs.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <FileKey className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium">No certificates</h3>
-            <p className="text-muted-foreground mt-1">No Ziti certificates are being managed.</p>
-          </CardContent>
-        </Card>
+      {isLoading ? <Spinner /> : certs.length === 0 ? (
+        <EmptyState icon={FileKey} title="No certificates" description="No Ziti certificates are being managed." />
       ) : (
         <Card>
           <Table>
@@ -1502,48 +1220,38 @@ function CertificatesTab() {
                 <TableHead>Name</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Subject</TableHead>
-                <TableHead>Issuer</TableHead>
                 <TableHead>Expiry</TableHead>
                 <TableHead>Auto Renew</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-[50px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {certs.map((cert) => (
-                <TableRow key={cert.id}>
+                <TableRow key={cert.id} className="hover:bg-muted/50">
                   <TableCell className="font-medium">{cert.name}</TableCell>
+                  <TableCell><Badge variant="outline">{cert.cert_type}</Badge></TableCell>
+                  <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate" title={cert.subject}>{cert.subject}</TableCell>
+                  <TableCell>{expiryBadge(cert.days_until_expiry)}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{cert.cert_type}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground max-w-[150px] truncate">
-                    {cert.subject}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground max-w-[150px] truncate">
-                    {cert.issuer}
+                    <Badge variant={cert.auto_renew ? 'default' : 'secondary'}>{cert.auto_renew ? 'Yes' : 'No'}</Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={expiryBadgeVariant(cert.days_until_expiry)}>
-                      {expiryBadgeLabel(cert.days_until_expiry)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={cert.auto_renew ? 'default' : 'secondary'}>
-                      {cert.auto_renew ? 'Yes' : 'No'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{cert.status}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => rotateMutation.mutate(cert.id)}
-                      disabled={rotateMutation.isPending}
-                    >
-                      <RefreshCw className="h-4 w-4 mr-1" /> Rotate
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => {
+                          navigator.clipboard.writeText(cert.fingerprint)
+                          toast({ title: 'Copied', description: 'Fingerprint copied.' })
+                        }}>
+                          <Copy className="mr-2 h-4 w-4" /> Copy Fingerprint
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => rotateMutation.mutate(cert.id)}>
+                          <RefreshCw className="mr-2 h-4 w-4" /> Rotate
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1551,354 +1259,394 @@ function CertificatesTab() {
           </Table>
         </Card>
       )}
-    </div>
+    </CollapsibleSection>
   )
 }
 
-// ---- Remote Access Tab (Guacamole Connections) ----
-
-interface GuacConnection {
-  id: string
-  route_id: string
-  guacamole_connection_id: string
-  protocol: string
-  hostname: string
-  port: number
-  parameters: Record<string, string>
-  created_at: string
-  updated_at: string
-}
-
-function RemoteAccessTab() {
+function PolicySyncSection() {
+  const queryClient = useQueryClient()
   const { toast } = useToast()
+  const [createModal, setCreateModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<PolicySync | null>(null)
+  const [form, setForm] = useState({ governance_policy_id: '', config: '{}' })
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['guacamole-connections'],
-    queryFn: async () => {
-      return api.get<{ connections: GuacConnection[] }>('/api/v1/access/guacamole/connections')
-    },
+  const { data: syncsData, isLoading } = useQuery({
+    queryKey: ['ziti-policy-sync'],
+    queryFn: () => api.get<PolicySync[]>('/api/v1/access/ziti/policy-sync'),
   })
 
-  const connectMutation = useMutation({
-    mutationFn: async (routeId: string) => {
-      return api.post<{ connect_url: string; connection_id: string }>(`/api/v1/access/guacamole/connections/${routeId}/connect`, {})
+  const createMutation = useMutation({
+    mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/policy-sync', { governance_policy_id: data.governance_policy_id, config: JSON.parse(data.config) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
+      setCreateModal(false)
+      setForm({ governance_policy_id: '', config: '{}' })
+      toast({ title: 'Policy sync created' })
     },
-    onSuccess: (resp) => {
-      const connectUrl = (resp as Record<string, string>)?.connect_url
-      if (connectUrl) {
-        window.open(connectUrl, '_blank')
-      }
-    },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to get connection URL.', variant: 'destructive' })
-    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create policy sync.', variant: 'destructive' }),
   })
 
-  const connections = data?.connections || []
+  const triggerMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/access/ziti/policy-sync/${id}/trigger`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
+      toast({ title: 'Re-sync triggered' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to trigger re-sync.', variant: 'destructive' }),
+  })
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
-  }
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/policy-sync/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
+      setDeleteTarget(null)
+      toast({ title: 'Policy sync deleted' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to delete policy sync.', variant: 'destructive' }),
+  })
 
-  if (connections.length === 0) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center py-12">
-          <Monitor className="h-12 w-12 text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium">No remote access connections</h3>
-          <p className="text-muted-foreground mt-1">
-            Create a proxy route with type SSH, RDP, or VNC to auto-provision Guacamole connections.
-          </p>
-        </CardContent>
-      </Card>
-    )
+  const syncs = Array.isArray(syncsData) ? syncsData : []
+
+  const statusVariant = (status: string): 'default' | 'destructive' | 'secondary' => {
+    if (status === 'synced') return 'default'
+    if (status === 'error') return 'destructive'
+    return 'secondary'
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Apache Guacamole provides clientless remote access to SSH, RDP, VNC, and Telnet targets through the browser.
-        </p>
-        <Badge variant="outline">{connections.length} connections</Badge>
+    <CollapsibleSection title="Policy Sync" count={syncs.length} icon={RefreshCw} defaultOpen={false}>
+      <div className="flex items-center justify-end mb-3">
+        <Button size="sm" onClick={() => setCreateModal(true)}>
+          <Plus className="mr-2 h-4 w-4" /> Sync Policy
+        </Button>
       </div>
 
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Protocol</TableHead>
-              <TableHead>Target</TableHead>
-              <TableHead>Guacamole ID</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {connections.map((conn) => (
-              <TableRow key={conn.id}>
-                <TableCell>
-                  <Badge variant="default" className={
-                    conn.protocol === 'ssh' ? 'bg-green-600' :
-                    conn.protocol === 'rdp' ? 'bg-blue-600' :
-                    conn.protocol === 'vnc' ? 'bg-purple-600' : 'bg-gray-600'
-                  }>
-                    {conn.protocol.toUpperCase()}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <code className="text-sm">{conn.hostname}:{conn.port}</code>
-                </TableCell>
-                <TableCell>
-                  <code className="text-xs text-muted-foreground">{conn.guacamole_connection_id}</code>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {new Date(conn.created_at).toLocaleDateString()}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    onClick={() => connectMutation.mutate(conn.route_id)}
-                    disabled={connectMutation.isPending}
-                  >
-                    <ExternalLink className="mr-1 h-3 w-3" />
-                    Connect
-                  </Button>
-                </TableCell>
+      {isLoading ? <Spinner /> : syncs.length === 0 ? (
+        <EmptyState icon={RefreshCw} title="No policy sync mappings" description="Sync governance policies to Ziti network policies." />
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Governance Policy</TableHead>
+                <TableHead>Ziti Policy</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Last Synced</TableHead>
+                <TableHead className="w-[50px]" />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
-    </div>
+            </TableHeader>
+            <TableBody>
+              {syncs.map((sync) => (
+                <TableRow key={sync.id} className="hover:bg-muted/50">
+                  <TableCell><TruncatedId value={sync.governance_policy_id} label="Governance Policy ID" /></TableCell>
+                  <TableCell>
+                    {sync.ziti_policy_id ? <TruncatedId value={sync.ziti_policy_id} label="Ziti Policy ID" /> : <span className="text-muted-foreground">-</span>}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(sync.sync_status)}>{sync.sync_status}</Badge>
+                    {sync.error_message && (
+                      <p className="text-xs text-red-500 mt-0.5 max-w-[200px] truncate" title={sync.error_message}>{sync.error_message}</p>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {sync.last_synced_at ? new Date(sync.last_synced_at).toLocaleString() : 'Never'}
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => triggerMutation.mutate(sync.id)}>
+                          <RefreshCw className="mr-2 h-4 w-4" /> Re-sync
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(sync)}>
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      {/* Create Dialog */}
+      <Dialog open={createModal} onOpenChange={setCreateModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Sync Policy to Ziti</DialogTitle></DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Governance Policy ID</Label>
+              <Input value={form.governance_policy_id} onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })} placeholder="UUID of governance policy" required />
+            </div>
+            <div className="space-y-2">
+              <Label>Config (JSON)</Label>
+              <textarea
+                value={form.config}
+                onChange={(e) => setForm({ ...form, config: e.target.value })}
+                className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                placeholder='{"action": "allow", "service_roles": ["#web"]}'
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? 'Syncing...' : 'Sync Policy'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Policy Sync</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure? The Ziti policy will also be removed.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </CollapsibleSection>
   )
 }
 
-// ---- BrowZer Tab ----
+// ─── Remote Access Tab ───────────────────────────────────────────────────────
 
-interface BrowZerStatus {
-  enabled: boolean
-  configured?: boolean
-  external_jwt_signer_id?: string
-  auth_policy_id?: string
-  dial_policy_id?: string
-  oidc_issuer?: string
-  oidc_client_id?: string
-  bootstrapper_url?: string
-  reason?: string
-}
-
-function BrowZerTab() {
+function RemoteAccessTab() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
-  const { data: browzerStatus, isLoading } = useQuery<BrowZerStatus>({
+  // BrowZer status
+  const { data: browzerStatus, isLoading: browzerLoading } = useQuery<BrowZerStatus>({
     queryKey: ['browzer-status'],
     queryFn: () => api.get<BrowZerStatus>('/api/v1/access/ziti/browzer/status'),
   })
 
-  const { data: services } = useQuery<ZitiService[]>({
+  // Guacamole connections
+  const { data: connData, isLoading: connLoading } = useQuery({
+    queryKey: ['guacamole-connections'],
+    queryFn: () => api.get<{ connections: GuacConnection[] }>('/api/v1/access/guacamole/connections'),
+  })
+
+  // Services for per-service BrowZer toggle
+  const { data: servicesData } = useQuery<ZitiService[]>({
     queryKey: ['ziti-services-browzer'],
     queryFn: () => api.get<ZitiService[]>('/api/v1/access/ziti/services'),
   })
 
   const enableMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/browzer/enable'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['browzer-status'] })
-      toast({ title: 'BrowZer enabled' })
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: 'BrowZer enabled' }) },
     onError: () => toast({ title: 'Failed to enable BrowZer', variant: 'destructive' }),
   })
 
   const disableMutation = useMutation({
     mutationFn: () => api.post('/api/v1/access/ziti/browzer/disable'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['browzer-status'] })
-      toast({ title: 'BrowZer disabled' })
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['browzer-status'] }); toast({ title: 'BrowZer disabled' }) },
     onError: () => toast({ title: 'Failed to disable BrowZer', variant: 'destructive' }),
+  })
+
+  const connectMutation = useMutation({
+    mutationFn: async (routeId: string) => api.post<{ connect_url: string }>(`/api/v1/access/guacamole/connections/${routeId}/connect`, {}),
+    onSuccess: (resp) => {
+      const connectUrl = (resp as Record<string, string>)?.connect_url
+      if (connectUrl) window.open(connectUrl, '_blank')
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to get connection URL.', variant: 'destructive' }),
   })
 
   const enableOnServiceMutation = useMutation({
     mutationFn: (serviceId: string) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/enable`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
-      toast({ title: 'BrowZer enabled on service' })
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-services'] }); toast({ title: 'BrowZer enabled on service' }) },
     onError: () => toast({ title: 'Failed to enable BrowZer on service', variant: 'destructive' }),
   })
 
   const disableOnServiceMutation = useMutation({
     mutationFn: (serviceId: string) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/disable`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
-      toast({ title: 'BrowZer disabled on service' })
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-services'] }); toast({ title: 'BrowZer disabled on service' }) },
     onError: () => toast({ title: 'Failed to disable BrowZer on service', variant: 'destructive' }),
   })
 
-  if (isLoading) {
-    return <div className="text-muted-foreground p-4">Loading BrowZer status...</div>
+  const connections = connData?.connections || []
+  const services = Array.isArray(servicesData) ? servicesData : []
+  const [showHowItWorks, setShowHowItWorks] = useState(false)
+
+  if (browzerLoading || connLoading) return <Spinner />
+
+  const protocolColor = (protocol: string) => {
+    switch (protocol.toLowerCase()) {
+      case 'ssh': return 'bg-green-600'
+      case 'rdp': return 'bg-blue-600'
+      case 'vnc': return 'bg-purple-600'
+      default: return 'bg-gray-600'
+    }
   }
 
   return (
     <div className="space-y-6 mt-4">
-      {/* Status Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Monitor className="h-5 w-5" />
-            BrowZer - Browser-Native Ziti Access
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            BrowZer injects the Ziti runtime directly into the browser via a Service Worker.
-            Users authenticate via OIDC and get an ephemeral Ziti identity. All traffic flows
-            through the encrypted Ziti overlay — no client software install needed.
-          </p>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <span className="text-sm text-muted-foreground">Status</span>
-              <div className="flex items-center gap-2 mt-1">
-                {browzerStatus?.enabled ? (
-                  <Badge className="bg-green-500/10 text-green-500">Enabled</Badge>
-                ) : (
-                  <Badge variant="secondary">Disabled</Badge>
-                )}
-              </div>
+      {/* BrowZer Status Banner */}
+      <Card className={browzerStatus?.enabled ? 'border-green-200 bg-green-50/50' : ''}>
+        <CardContent className="flex items-center justify-between py-4">
+          <div className="flex items-center gap-4">
+            <div className={`p-2.5 rounded-lg ${browzerStatus?.enabled ? 'bg-green-100' : 'bg-muted'}`}>
+              <Monitor className={`h-5 w-5 ${browzerStatus?.enabled ? 'text-green-700' : 'text-muted-foreground'}`} />
             </div>
             <div>
-              <span className="text-sm text-muted-foreground">Bootstrapper URL</span>
-              <div className="flex items-center gap-2 mt-1">
-                <code className="text-sm bg-muted px-2 py-1 rounded">
-                  {browzerStatus?.bootstrapper_url || 'http://localhost:1408'}
-                </code>
-                {browzerStatus?.enabled && (
-                  <a
-                    href={browzerStatus?.bootstrapper_url || 'http://localhost:1408'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                )}
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold">BrowZer</h3>
+                <Badge variant={browzerStatus?.enabled ? 'default' : 'secondary'}>
+                  {browzerStatus?.enabled ? 'Enabled' : 'Disabled'}
+                </Badge>
               </div>
+              <p className="text-sm text-muted-foreground">
+                Browser-native zero-trust access via Ziti Service Worker
+              </p>
             </div>
-            {browzerStatus?.external_jwt_signer_id && (
-              <div>
-                <span className="text-sm text-muted-foreground">JWT Signer ID</span>
-                <div className="mt-1">
-                  <code className="text-xs bg-muted px-2 py-1 rounded">{browzerStatus.external_jwt_signer_id}</code>
-                </div>
-              </div>
-            )}
-            {browzerStatus?.auth_policy_id && (
-              <div>
-                <span className="text-sm text-muted-foreground">Auth Policy ID</span>
-                <div className="mt-1">
-                  <code className="text-xs bg-muted px-2 py-1 rounded">{browzerStatus.auth_policy_id}</code>
-                </div>
-              </div>
-            )}
-            {browzerStatus?.oidc_issuer && (
-              <div>
-                <span className="text-sm text-muted-foreground">OIDC Issuer</span>
-                <div className="mt-1">
-                  <code className="text-sm bg-muted px-2 py-1 rounded">{browzerStatus.oidc_issuer}</code>
-                </div>
-              </div>
-            )}
-            {browzerStatus?.oidc_client_id && (
-              <div>
-                <span className="text-sm text-muted-foreground">OIDC Client ID</span>
-                <div className="mt-1">
-                  <code className="text-sm bg-muted px-2 py-1 rounded">{browzerStatus.oidc_client_id}</code>
-                </div>
-              </div>
-            )}
           </div>
-
-          <div className="flex gap-2 pt-2">
-            {browzerStatus?.enabled ? (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => disableMutation.mutate()}
-                disabled={disableMutation.isPending}
+          <div className="flex items-center gap-3">
+            {browzerStatus?.enabled && browzerStatus.bootstrapper_url && (
+              <a
+                href={browzerStatus.bootstrapper_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-sm text-primary hover:underline"
               >
-                Disable BrowZer
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={() => enableMutation.mutate()}
-                disabled={enableMutation.isPending}
-              >
-                Enable BrowZer
-              </Button>
+                Open Bootstrapper <ExternalLink className="h-3 w-3" />
+              </a>
             )}
+            <Button
+              variant={browzerStatus?.enabled ? 'destructive' : 'default'}
+              size="sm"
+              onClick={() => browzerStatus?.enabled ? disableMutation.mutate() : enableMutation.mutate()}
+              disabled={enableMutation.isPending || disableMutation.isPending}
+            >
+              {browzerStatus?.enabled ? 'Disable' : 'Enable'}
+            </Button>
           </div>
         </CardContent>
       </Card>
 
+      {/* BrowZer Config Details (when enabled) */}
+      {browzerStatus?.enabled && (browzerStatus.oidc_issuer || browzerStatus.external_jwt_signer_id) && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {browzerStatus.bootstrapper_url && (
+            <div className="text-sm">
+              <span className="text-muted-foreground block text-xs">Bootstrapper URL</span>
+              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{browzerStatus.bootstrapper_url}</code>
+            </div>
+          )}
+          {browzerStatus.oidc_issuer && (
+            <div className="text-sm">
+              <span className="text-muted-foreground block text-xs">OIDC Issuer</span>
+              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{browzerStatus.oidc_issuer}</code>
+            </div>
+          )}
+          {browzerStatus.oidc_client_id && (
+            <div className="text-sm">
+              <span className="text-muted-foreground block text-xs">OIDC Client ID</span>
+              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{browzerStatus.oidc_client_id}</code>
+            </div>
+          )}
+          {browzerStatus.external_jwt_signer_id && (
+            <div className="text-sm">
+              <span className="text-muted-foreground block text-xs">JWT Signer</span>
+              <TruncatedId value={browzerStatus.external_jwt_signer_id} label="JWT Signer ID" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Guacamole Connections */}
+      <div className="space-y-3">
+        <h3 className="text-lg font-semibold">Connections</h3>
+        {connections.length === 0 ? (
+          <EmptyState
+            icon={Monitor}
+            title="No remote access connections"
+            description="Create a proxy route with type SSH, RDP, or VNC to auto-provision Guacamole connections."
+          />
+        ) : (
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Protocol</TableHead>
+                  <TableHead>Target</TableHead>
+                  <TableHead>Guacamole ID</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {connections.map((conn) => (
+                  <TableRow key={conn.id} className="hover:bg-muted/50">
+                    <TableCell>
+                      <Badge variant="default" className={protocolColor(conn.protocol)}>
+                        {conn.protocol.toUpperCase()}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <code className="text-sm bg-muted px-1.5 py-0.5 rounded">{conn.hostname}:{conn.port}</code>
+                    </TableCell>
+                    <TableCell><TruncatedId value={conn.guacamole_connection_id} label="Guacamole ID" /></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(conn.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" onClick={() => connectMutation.mutate(conn.route_id)} disabled={connectMutation.isPending}>
+                        <ExternalLink className="mr-1 h-3 w-3" /> Connect
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+      </div>
+
       {/* Per-Service BrowZer Toggle */}
-      {browzerStatus?.enabled && services && services.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Network className="h-5 w-5" />
-              BrowZer-Enabled Services
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              Toggle BrowZer access per service. Services with BrowZer enabled get the
-              &quot;browzer-enabled&quot; role attribute so browser identities can dial them.
-            </p>
+      {browzerStatus?.enabled && services.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold">BrowZer-Enabled Services</h3>
+          <p className="text-sm text-muted-foreground">
+            Toggle BrowZer access per service. Enabled services get the &quot;browzer-enabled&quot; role attribute.
+          </p>
+          <Card>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Service</TableHead>
-                  <TableHead>Host</TableHead>
-                  <TableHead>Port</TableHead>
+                  <TableHead>Target</TableHead>
                   <TableHead>BrowZer</TableHead>
-                  <TableHead>Action</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {services.map((svc) => {
-                  const isBrowzerEnabled = false // Would check roleAttributes if available
+                  const isBrowzerEnabled = false
                   return (
-                    <TableRow key={svc.id}>
+                    <TableRow key={svc.id} className="hover:bg-muted/50">
                       <TableCell className="font-medium">{svc.name}</TableCell>
-                      <TableCell>{svc.host}</TableCell>
-                      <TableCell>{svc.port}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{svc.host}:{svc.port}</TableCell>
                       <TableCell>
-                        {isBrowzerEnabled ? (
-                          <Badge className="bg-green-500/10 text-green-500">Enabled</Badge>
-                        ) : (
-                          <Badge variant="secondary">Disabled</Badge>
-                        )}
+                        <Badge variant={isBrowzerEnabled ? 'default' : 'secondary'}>
+                          {isBrowzerEnabled ? 'Enabled' : 'Disabled'}
+                        </Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-right">
                         <Button
                           size="sm"
-                          variant={isBrowzerEnabled ? 'destructive' : 'default'}
-                          onClick={() => {
-                            if (isBrowzerEnabled) {
-                              disableOnServiceMutation.mutate(svc.ziti_id)
-                            } else {
-                              enableOnServiceMutation.mutate(svc.ziti_id)
-                            }
-                          }}
+                          variant={isBrowzerEnabled ? 'destructive' : 'outline'}
+                          onClick={() => isBrowzerEnabled ? disableOnServiceMutation.mutate(svc.ziti_id) : enableOnServiceMutation.mutate(svc.ziti_id)}
                         >
                           {isBrowzerEnabled ? 'Disable' : 'Enable'}
                         </Button>
@@ -1908,33 +1656,39 @@ function BrowZerTab() {
                 })}
               </TableBody>
             </Table>
+          </Card>
+        </div>
+      )}
+
+      {/* How it works - collapsible */}
+      <button
+        onClick={() => setShowHowItWorks(!showHowItWorks)}
+        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {showHowItWorks ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        How BrowZer Works
+      </button>
+      {showHowItWorks && (
+        <Card>
+          <CardContent className="pt-4 space-y-3">
+            <ol className="text-sm space-y-1.5 list-decimal list-inside text-muted-foreground">
+              <li>User visits the BrowZer Bootstrapper URL</li>
+              <li>Bootstrapper redirects to OpenIDX OAuth for OIDC login</li>
+              <li>After authentication, the Ziti BrowZer Runtime (ZBR) is injected into the browser</li>
+              <li>ZBR registers a Service Worker that intercepts HTTP requests</li>
+              <li>The browser gets an ephemeral Ziti identity from the JWT token</li>
+              <li>All traffic flows through the Ziti overlay via WebSocket to the edge router</li>
+              <li>Press <kbd className="bg-muted px-1 py-0.5 rounded text-xs">Alt+F12</kbd> to open the ZBR debug panel</li>
+            </ol>
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-xs font-medium mb-1">Connection Flow</p>
+              <code className="text-xs text-muted-foreground">
+                Browser (ZBR + SW) &rarr; WSS &rarr; Edge Router &rarr; Ziti Circuit &rarr; Access Service &rarr; Upstream
+              </code>
+            </div>
           </CardContent>
         </Card>
       )}
-
-      {/* Instructions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>How BrowZer Works</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="text-sm space-y-2">
-            <p><strong>1.</strong> User visits the BrowZer Bootstrapper URL (http://localhost:1408)</p>
-            <p><strong>2.</strong> Bootstrapper redirects to OpenIDX OAuth for OIDC login</p>
-            <p><strong>3.</strong> After authentication, the Ziti BrowZer Runtime (ZBR) JavaScript is injected into the browser</p>
-            <p><strong>4.</strong> ZBR registers a Service Worker that intercepts HTTP requests</p>
-            <p><strong>5.</strong> The browser gets an ephemeral Ziti identity from the JWT token</p>
-            <p><strong>6.</strong> All traffic flows through the Ziti overlay via WebSocket to the edge router</p>
-            <p><strong>7.</strong> Press <kbd className="bg-muted px-1 rounded">Alt+F12</kbd> to open the ZBR debug panel</p>
-          </div>
-          <div className="mt-4 p-3 bg-muted rounded-lg">
-            <p className="text-sm font-medium">Connection Flow:</p>
-            <code className="text-xs text-muted-foreground">
-              Browser (ZBR + Service Worker) → WebSocket/mTLS → Edge Router → Ziti Circuit → Access Service (Listen) → Upstream
-            </code>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   )
 }
