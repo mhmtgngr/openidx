@@ -74,6 +74,10 @@ type Config struct {
 	GuacamoleAdminUser     string `mapstructure:"guacamole_admin_user"`
 	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
 
+	// BrowZer configuration (browser-native Ziti participation)
+	BrowZerEnabled  bool   `mapstructure:"browzer_enabled"`
+	BrowZerClientID string `mapstructure:"browzer_client_id"`
+
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
 
@@ -207,6 +211,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("guacamole_admin_user", "guacadmin")
 	v.SetDefault("guacamole_admin_password", "guacadmin")
 
+	// BrowZer defaults
+	v.SetDefault("browzer_enabled", false)
+	v.SetDefault("browzer_client_id", "browzer-client")
+
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
 
@@ -248,6 +256,8 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_url":            "GUACAMOLE_URL",
 		"guacamole_admin_user":     "GUACAMOLE_ADMIN_USER",
 		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
+		"browzer_enabled":          "BROWZER_ENABLED",
+		"browzer_client_id":        "BROWZER_CLIENT_ID",
 	}
 
 	for key, env := range envMappings {

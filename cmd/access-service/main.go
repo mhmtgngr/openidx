@@ -161,7 +161,21 @@ func main() {
 			defer zitiCancel()
 			zm.StartHealthMonitor(zitiCtx)
 			zm.StartCertificateMonitor(zitiCtx)
-			log.Info("OpenZiti integration ready (health + certificate monitors started)")
+
+			// Host all Ziti-enabled services (creates terminators so Dial works)
+			zm.HostAllServices(zitiCtx)
+
+			// Bootstrap BrowZer if enabled
+			if cfg.BrowZerEnabled {
+				log.Info("Bootstrapping BrowZer configuration...")
+				if err := zm.BootstrapBrowZer(zitiCtx, cfg.OAuthIssuer, cfg.OAuthJWKSURL, cfg.BrowZerClientID); err != nil {
+					log.Error("BrowZer bootstrap failed -- BrowZer features disabled", zap.Error(err))
+				} else {
+					log.Info("BrowZer bootstrap complete")
+				}
+			}
+
+			log.Info("OpenZiti integration ready (health + certificate monitors started, services hosted)")
 		}
 	} else {
 		log.Info("OpenZiti integration disabled (set ZITI_ENABLED=true to enable)")

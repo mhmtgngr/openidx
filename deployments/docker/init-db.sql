@@ -1596,3 +1596,34 @@ CREATE TABLE IF NOT EXISTS guacamole_connections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_guacamole_connections_route ON guacamole_connections(route_id);
+
+-- ============================================================================
+-- BROWZER CONFIGURATION
+-- ============================================================================
+
+-- BrowZer config state (single-row table)
+CREATE TABLE IF NOT EXISTS ziti_browzer_config (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_jwt_signer_id VARCHAR(255),
+    auth_policy_id VARCHAR(255),
+    dial_policy_id VARCHAR(255),
+    oidc_issuer VARCHAR(500),
+    oidc_client_id VARCHAR(255),
+    enabled BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- BrowZer-enabled flag on proxy routes
+ALTER TABLE proxy_routes ADD COLUMN IF NOT EXISTS browzer_enabled BOOLEAN DEFAULT false;
+
+-- BrowZer OAuth client for browser-native Ziti access
+INSERT INTO oauth_clients (client_id, client_secret, name, type, redirect_uris, grant_types, response_types, scopes, pkce_required)
+VALUES (
+    'browzer-client', '', 'BrowZer Zero Trust Browser Client', 'public',
+    '["https://browzer.localtest.me/"]'::jsonb,
+    '["authorization_code","refresh_token"]'::jsonb,
+    '["code"]'::jsonb,
+    '["openid","profile","email"]'::jsonb,
+    true
+) ON CONFLICT (client_id) DO NOTHING;

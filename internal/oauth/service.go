@@ -175,11 +175,14 @@ func (s *Service) SetWebhookService(ws WebhookPublisher) {
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger, idSvc *identity.Service) (*Service, error) {
 	// Try to load RSA key from database, generate if not found
 	var privateKey *rsa.PrivateKey
-	var keyPEM []byte
+	var keyPEMStr string
 	err := db.Pool.QueryRow(context.Background(),
-		"SELECT value FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&keyPEM)
-	if err == nil && len(keyPEM) > 0 {
-		block, _ := pem.Decode(keyPEM)
+		"SELECT value::text FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&keyPEMStr)
+	if err == nil && len(keyPEMStr) > 0 {
+		// value is stored as a JSON string, strip quotes
+		keyPEMStr = strings.Trim(keyPEMStr, "\"")
+		keyPEMStr = strings.ReplaceAll(keyPEMStr, "\\n", "\n")
+		block, _ := pem.Decode([]byte(keyPEMStr))
 		if block != nil {
 			privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 			if err != nil {
@@ -193,13 +196,17 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
 		}
-		// Store the key
+		// Store the key as JSON string in jsonb column
 		keyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
 		pemBytes := pem.EncodeToMemory(keyBlock)
+		pemJSON, _ := json.Marshal(string(pemBytes))
 		db.Pool.Exec(context.Background(),
-			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-			pemBytes)
+			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb",
+			string(pemJSON))
+		logger.Info("RSA signing key generated and persisted to database")
+	} else {
+		logger.Info("RSA signing key loaded from database")
 	}
 
 	// Use configured issuer URL or fall back to default
@@ -264,7 +271,7 @@ func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient, error) {
 	var client OAuthClient
 	// Use pointers to handle NULL values
-	var clientSecret, logoURI, policyURI, tosURI *string
+	var clientSecret, description, logoURI, policyURI, tosURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
 
 	err := s.db.Pool.QueryRow(ctx, `
@@ -275,7 +282,7 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 		       created_at, updated_at
 		FROM oauth_clients WHERE client_id = $1
 	`, clientID).Scan(
-		&client.ID, &client.ClientID, &clientSecret, &client.Name, &client.Description,
+		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
 		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
 		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
@@ -289,6 +296,9 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 	// Handle NULL values
 	if clientSecret != nil {
 		client.ClientSecret = *clientSecret
+	}
+	if description != nil {
+		client.Description = *description
 	}
 	if logoURI != nil {
 		client.LogoURI = *logoURI
@@ -330,8 +340,12 @@ func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthCl
 	var clients []OAuthClient
 	for rows.Next() {
 		var c OAuthClient
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &c.Description, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		var desc *string
+		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &desc, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, 0, err
+		}
+		if desc != nil {
+			c.Description = *desc
 		}
 		clients = append(clients, c)
 	}
@@ -505,6 +519,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 
 	claims := jwt.MapClaims{
 		"sub":       userID,
+		"aud":       clientID,
 		"client_id": clientID,
 		"scope":     scope,
 		"iss":       s.issuer,
@@ -514,6 +529,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }
 
@@ -568,6 +584,7 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }
 
@@ -642,7 +659,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 			oauth.POST("/authorize", svc.handleAuthorizeConsent)
 		}
 
-		// Login endpoint for direct authentication
+		// Server-rendered login form callback (for standard OIDC clients)
+		oauth.POST("/authorize/callback", svc.handleAuthorizeCallback)
+
+		// Login endpoint for direct authentication (SPA flow)
 		oauth.POST("/login", svc.handleLogin)
 
 		// MFA verification endpoint
@@ -750,8 +770,10 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	}
 	// Validate redirect_uri against registered client
 	clientID := oauthParams["client_id"]
+	var client *OAuthClient
 	if clientID != "" {
-		client, err := s.GetClient(c.Request.Context(), clientID)
+		var err error
+		client, err = s.GetClient(c.Request.Context(), clientID)
 		if err != nil {
 			c.JSON(400, gin.H{"error": "invalid_client"})
 			return
@@ -772,7 +794,14 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	paramsJSON, _ := json.Marshal(oauthParams)
 	s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute)
 
-	// Redirect to the client's login page with the login_session parameter
+	// For public OIDC clients (like BrowZer), serve a server-rendered login page
+	// instead of redirecting back to the client with login_session
+	if client != nil && client.Type == "public" && c.GetHeader("Accept") != "application/json" {
+		s.renderLoginPage(c, loginSession, "")
+		return
+	}
+
+	// SPA flow: redirect back to the client's login page with the login_session parameter
 	redirectURI := oauthParams["redirect_uri"]
 	if redirectURI == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri is required"})
@@ -790,6 +819,112 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	loginURL.RawQuery = query.Encode()
 
 	c.Redirect(302, loginURL.String())
+}
+
+// renderLoginPage serves a minimal HTML login form for standard OIDC clients
+func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string) {
+	errHTML := ""
+	if errorMsg != "" {
+		errHTML = `<div style="color:#ef4444;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px">` + errorMsg + `</div>`
+	}
+	html := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign In — OpenIDX</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.25)}
+h1{font-size:24px;font-weight:700;margin-bottom:8px;color:#f8fafc}
+.sub{color:#94a3b8;margin-bottom:24px;font-size:14px}
+label{display:block;font-size:13px;font-weight:500;color:#94a3b8;margin-bottom:6px}
+input{width:100%;padding:10px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:15px;outline:none;transition:border .2s}
+input:focus{border-color:#3b82f6}
+.field{margin-bottom:16px}
+button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
+button:hover{background:#2563eb}
+</style></head><body>
+<div class="card">
+<h1>Sign In</h1>
+<p class="sub">OpenIDX Zero Trust Platform</p>
+` + errHTML + `
+<form method="POST" action="/oauth/authorize/callback">
+<input type="hidden" name="login_session" value="` + loginSession + `">
+<div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>
+<div class="field"><label>Password</label><input type="password" name="password" required></div>
+<button type="submit">Sign In</button>
+</form>
+</div></body></html>`
+	c.Data(200, "text/html; charset=utf-8", []byte(html))
+}
+
+// handleAuthorizeCallback handles the server-rendered login form submission for standard OIDC clients
+func (s *Service) handleAuthorizeCallback(c *gin.Context) {
+	loginSession := c.PostForm("login_session")
+	username := c.PostForm("username")
+	password := c.PostForm("password")
+
+	if loginSession == "" || username == "" || password == "" {
+		s.renderLoginPage(c, loginSession, "All fields are required.")
+		return
+	}
+
+	// Get OAuth parameters from Redis
+	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+loginSession).Result()
+	if err != nil {
+		s.renderLoginPage(c, loginSession, "Login session expired. Please try again.")
+		return
+	}
+
+	var oauthParams map[string]string
+	if err := json.Unmarshal([]byte(paramsJSON), &oauthParams); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Authenticate user
+	user, err := s.identityService.AuthenticateUser(c.Request.Context(), username, password)
+	if err != nil {
+		errorMsg := "Invalid username or password."
+		if err.Error() == "account is locked" {
+			errorMsg = "Account is locked. Please try again later."
+		} else if err.Error() == "account is disabled" {
+			errorMsg = "Account is disabled. Contact your administrator."
+		}
+		s.renderLoginPage(c, loginSession, errorMsg)
+		return
+	}
+
+	// Clean up login session
+	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
+
+	// Generate authorization code
+	code := GenerateRandomToken(32)
+	authCode := &AuthorizationCode{
+		Code:                code,
+		ClientID:            oauthParams["client_id"],
+		UserID:              user.ID,
+		RedirectURI:         oauthParams["redirect_uri"],
+		Scope:               oauthParams["scope"],
+		State:               oauthParams["state"],
+		Nonce:               oauthParams["nonce"],
+		CodeChallenge:       oauthParams["code_challenge"],
+		CodeChallengeMethod: oauthParams["code_challenge_method"],
+	}
+
+	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// 302 redirect to client with auth code (standard OIDC flow)
+	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
+	query := redirectURL.Query()
+	query.Set("code", code)
+	if oauthParams["state"] != "" {
+		query.Set("state", oauthParams["state"])
+	}
+	redirectURL.RawQuery = query.Encode()
+
+	c.Redirect(302, redirectURL.String())
 }
 
 // handleLogin handles username/password login for direct OpenIDX authentication

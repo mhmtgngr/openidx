@@ -10,8 +10,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +36,16 @@ type ZitiManager struct {
 	mgmtClient  *http.Client
 	mu          sync.RWMutex
 	initialized bool
+
+	// Service hosting: listeners that bind services and forward to upstream
+	hostedMu       sync.Mutex
+	hostedServices map[string]*hostedService // keyed by service name
+}
+
+// hostedService tracks a Ziti service listener that forwards to an upstream target
+type hostedService struct {
+	listener net.Listener
+	cancel   context.CancelFunc
 }
 
 // zitiAPIResponse represents a generic Ziti Management API response
@@ -70,9 +83,10 @@ type ZitiIdentityInfo struct {
 // NewZitiManager creates and initializes the ZitiManager
 func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*ZitiManager, error) {
 	zm := &ZitiManager{
-		cfg:    cfg,
-		logger: logger.With(zap.String("component", "ziti")),
-		db:     db,
+		cfg:            cfg,
+		logger:         logger.With(zap.String("component", "ziti")),
+		db:             db,
+		hostedServices: make(map[string]*hostedService),
 		mgmtClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -124,9 +138,187 @@ func (zm *ZitiManager) IsInitialized() bool {
 
 // Close cleans up Ziti resources
 func (zm *ZitiManager) Close() {
+	// Stop all hosted services
+	zm.hostedMu.Lock()
+	for name, hs := range zm.hostedServices {
+		zm.logger.Info("Stopping hosted service", zap.String("service", name))
+		hs.cancel()
+		hs.listener.Close()
+	}
+	zm.hostedServices = make(map[string]*hostedService)
+	zm.hostedMu.Unlock()
+
 	if zm.zitiCtx != nil {
 		zm.zitiCtx.Close()
 	}
+}
+
+// HostService binds a Ziti service and forwards incoming connections to the upstream target.
+// This creates a terminator so that Dial calls can reach the service.
+func (zm *ZitiManager) HostService(serviceName, targetHost string, targetPort int) error {
+	if !zm.initialized {
+		return fmt.Errorf("ziti SDK not initialized, cannot host service")
+	}
+
+	zm.hostedMu.Lock()
+	if _, exists := zm.hostedServices[serviceName]; exists {
+		zm.hostedMu.Unlock()
+		zm.logger.Info("Service already hosted", zap.String("service", serviceName))
+		return nil
+	}
+	zm.hostedMu.Unlock()
+
+	listener, err := zm.zitiCtx.Listen(serviceName)
+	if err != nil {
+		return fmt.Errorf("failed to listen on ziti service %q: %w", serviceName, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	zm.hostedMu.Lock()
+	zm.hostedServices[serviceName] = &hostedService{
+		listener: listener,
+		cancel:   cancel,
+	}
+	zm.hostedMu.Unlock()
+
+	targetAddr := fmt.Sprintf("%s:%d", targetHost, targetPort)
+	zm.logger.Info("Hosting Ziti service",
+		zap.String("service", serviceName),
+		zap.String("target", targetAddr))
+
+	// Accept connections in a background goroutine
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					zm.logger.Info("Stopped hosting service", zap.String("service", serviceName))
+					return
+				default:
+					zm.logger.Error("Accept failed on hosted service",
+						zap.String("service", serviceName), zap.Error(err))
+					return
+				}
+			}
+
+			go zm.forwardConnection(conn, targetAddr, serviceName)
+		}
+	}()
+
+	return nil
+}
+
+// StopHostingService stops hosting a specific service
+func (zm *ZitiManager) StopHostingService(serviceName string) {
+	zm.hostedMu.Lock()
+	defer zm.hostedMu.Unlock()
+
+	if hs, exists := zm.hostedServices[serviceName]; exists {
+		hs.cancel()
+		hs.listener.Close()
+		delete(zm.hostedServices, serviceName)
+		zm.logger.Info("Stopped hosting service", zap.String("service", serviceName))
+	}
+}
+
+// HostAllServices loads all Ziti-enabled routes from DB and starts hosting them
+func (zm *ZitiManager) HostAllServices(ctx context.Context) {
+	if !zm.initialized {
+		zm.logger.Warn("Ziti SDK not initialized, skipping service hosting")
+		return
+	}
+
+	rows, err := zm.db.Pool.Query(ctx,
+		`SELECT ziti_service_name, to_url FROM proxy_routes
+		 WHERE ziti_enabled = true AND ziti_service_name IS NOT NULL AND ziti_service_name != ''`)
+	if err != nil {
+		zm.logger.Error("Failed to query Ziti-enabled routes", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var serviceName, toURL string
+		if err := rows.Scan(&serviceName, &toURL); err != nil {
+			zm.logger.Error("Failed to scan route row", zap.Error(err))
+			continue
+		}
+
+		// Parse the upstream URL to get host and port
+		host, port := parseHostPort(toURL)
+		if host == "" || port == 0 {
+			zm.logger.Warn("Could not parse upstream for Ziti hosting",
+				zap.String("service", serviceName), zap.String("to_url", toURL))
+			continue
+		}
+
+		if err := zm.HostService(serviceName, host, port); err != nil {
+			zm.logger.Error("Failed to host Ziti service",
+				zap.String("service", serviceName), zap.Error(err))
+		}
+	}
+}
+
+// forwardConnection copies data between a Ziti connection and a TCP upstream
+func (zm *ZitiManager) forwardConnection(zitiConn net.Conn, targetAddr, serviceName string) {
+	defer zitiConn.Close()
+
+	upstream, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
+	if err != nil {
+		zm.logger.Error("Failed to connect to upstream for hosted service",
+			zap.String("service", serviceName),
+			zap.String("target", targetAddr),
+			zap.Error(err))
+		return
+	}
+	defer upstream.Close()
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+	go func() {
+		io.Copy(upstream, zitiConn)
+		done <- struct{}{}
+	}()
+	go func() {
+		io.Copy(zitiConn, upstream)
+		done <- struct{}{}
+	}()
+
+	// Wait for either direction to finish
+	<-done
+}
+
+// parseHostPort extracts host and port from a URL string
+func parseHostPort(rawURL string) (string, int) {
+	// Handle URLs like http://host:port/path
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "http://" + rawURL
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", 0
+	}
+
+	host := parsed.Hostname()
+	portStr := parsed.Port()
+	if portStr == "" {
+		switch parsed.Scheme {
+		case "https":
+			return host, 443
+		default:
+			return host, 80
+		}
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0
+	}
+
+	return host, port
 }
 
 // ---- Management API Authentication ----
@@ -533,6 +725,7 @@ func (zm *ZitiManager) CreateServicePolicy(ctx context.Context, name, policyType
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          name,
 		"type":          policyType, // "Bind" or "Dial"
+		"semantic":      "AnyOf",
 		"serviceRoles":  serviceRoles,
 		"identityRoles": identityRoles,
 	})
@@ -615,11 +808,79 @@ func (zm *ZitiManager) ListIdentities(ctx context.Context) ([]ZitiIdentityInfo, 
 
 // SetupZitiForRoute creates all Ziti resources needed for a proxy route
 func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceName, host string, port int) error {
-	// 1. Create the Ziti service
-	zitiServiceID, err := zm.CreateService(ctx, serviceName, []string{serviceName})
+	// 1. Create the Ziti service with host.v1 config so the tunneler knows where to forward
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":               serviceName,
+		"roleAttributes":     []string{serviceName},
+		"encryptionRequired": true,
+		"configs":            []string{}, // will attach config after creating it
+	})
+
+	// Create a host.v1 config that tells Ziti where to forward traffic
+	configBody, _ := json.Marshal(map[string]interface{}{
+		"name":     fmt.Sprintf("openidx-host-%s", serviceName),
+		"configTypeId": "NH5p4FpGR",  // host.v1 config type
+		"data": map[string]interface{}{
+			"protocol":       "tcp",
+			"address":        host,
+			"port":           port,
+			"forwardProtocol": true,
+			"allowedProtocols": []string{"tcp"},
+			"forwardAddress":  true,
+			"allowedAddresses": []string{host},
+			"forwardPort":     true,
+			"allowedPortRanges": []map[string]int{
+				{"low": port, "high": port},
+			},
+		},
+	})
+
+	configData, configStatus, err := zm.mgmtRequest("POST", "/edge/management/v1/configs", configBody)
+	var configID string
+	if err == nil && (configStatus == http.StatusCreated || configStatus == http.StatusOK) {
+		var configResp struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(configData, &configResp) == nil {
+			configID = configResp.Data.ID
+			zm.logger.Info("Created host.v1 config", zap.String("id", configID))
+		}
+	} else {
+		zm.logger.Warn("Failed to create host.v1 config, creating service without it",
+			zap.Int("status", configStatus), zap.Error(err))
+	}
+
+	// Create service, optionally attaching the config
+	svcPayload := map[string]interface{}{
+		"name":               serviceName,
+		"roleAttributes":     []string{serviceName},
+		"encryptionRequired": true,
+	}
+	if configID != "" {
+		svcPayload["configs"] = []string{configID}
+	}
+	body, _ = json.Marshal(svcPayload)
+
+	respData, statusCode, err := zm.mgmtRequest("POST", "/edge/management/v1/services", body)
 	if err != nil {
 		return fmt.Errorf("failed to create ziti service: %w", err)
 	}
+	if statusCode != http.StatusCreated && statusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d creating service: %s", statusCode, string(respData))
+	}
+
+	var svcResp struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &svcResp); err != nil {
+		return fmt.Errorf("failed to parse service response: %w", err)
+	}
+	zitiServiceID := svcResp.Data.ID
+	zm.logger.Info("Created Ziti service", zap.String("name", serviceName), zap.String("id", zitiServiceID))
 
 	// 2. Persist to ziti_services table
 	_, err = zm.db.Pool.Exec(ctx,
@@ -630,11 +891,28 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 		zm.logger.Error("Failed to persist ziti service to DB", zap.Error(err))
 	}
 
-	// 3. Create Dial policy: access-proxy-clients can dial this service
+	// 3. Create Bind policy: access-proxy can host this service
+	// Use "#" prefix for role-based matching (the service has roleAttributes=[serviceName])
+	bindPolicyID, err := zm.CreateServicePolicy(ctx,
+		fmt.Sprintf("openidx-bind-%s", serviceName),
+		"Bind",
+		[]string{"#" + serviceName},
+		[]string{"#access-proxy-clients"})
+	if err != nil {
+		zm.logger.Warn("Failed to create Bind policy", zap.Error(err))
+	} else {
+		zm.db.Pool.Exec(ctx,
+			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
+			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+			bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
+			`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+	}
+
+	// 4. Create Dial policy: access-proxy can dial this service
 	dialPolicyID, err := zm.CreateServicePolicy(ctx,
 		fmt.Sprintf("openidx-dial-%s", serviceName),
 		"Dial",
-		[]string{"@" + serviceName},
+		[]string{"#" + serviceName},
 		[]string{"#access-proxy-clients"})
 	if err != nil {
 		zm.logger.Warn("Failed to create Dial policy", zap.Error(err))
@@ -643,15 +921,47 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
 			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
 			dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
-			`["@`+serviceName+`"]`, `["#access-proxy-clients"]`)
+			`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
 	}
 
-	// 4. Update the proxy route
+	// 5. Create Service Edge Router Policy so the service is available on all edge routers
+	serBody, _ := json.Marshal(map[string]interface{}{
+		"name":            fmt.Sprintf("openidx-serp-%s", serviceName),
+		"semantic":        "AnyOf",
+		"serviceRoles":    []string{"#" + serviceName},
+		"edgeRouterRoles": []string{"#all"},
+	})
+	_, serpStatus, serpErr := zm.mgmtRequest("POST", "/edge/management/v1/service-edge-router-policies", serBody)
+	if serpErr != nil || (serpStatus != http.StatusCreated && serpStatus != http.StatusOK) {
+		zm.logger.Warn("Failed to create service edge router policy", zap.Error(serpErr), zap.Int("status", serpStatus))
+	}
+
+	// 6. Ensure an Edge Router Policy exists so identities can use routers
+	erpBody, _ := json.Marshal(map[string]interface{}{
+		"name":            "openidx-erp-access-proxy",
+		"semantic":        "AnyOf",
+		"edgeRouterRoles": []string{"#all"},
+		"identityRoles":   []string{"#access-proxy-clients"},
+	})
+	_, erpStatus, erpErr := zm.mgmtRequest("POST", "/edge/management/v1/edge-router-policies", erpBody)
+	if erpErr != nil || (erpStatus != http.StatusCreated && erpStatus != http.StatusOK) {
+		// May already exist, which is fine
+		zm.logger.Debug("Edge router policy creation returned", zap.Int("status", erpStatus))
+	}
+
+	// 7. Update the proxy route
 	_, err = zm.db.Pool.Exec(ctx,
 		"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2",
 		serviceName, routeID)
 	if err != nil {
 		return fmt.Errorf("failed to update proxy route: %w", err)
+	}
+
+	// 8. Start hosting the service so it has a terminator
+	if err := zm.HostService(serviceName, host, port); err != nil {
+		zm.logger.Error("Failed to host service (no terminator will exist)",
+			zap.String("service", serviceName), zap.Error(err))
+		// Don't fail the setup — management resources are created, hosting can be retried
 	}
 
 	zm.logger.Info("Ziti setup complete for route",
@@ -669,6 +979,8 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 	if err != nil {
 		zm.logger.Debug("No ziti service found for route", zap.String("route_id", routeID))
 	} else {
+		// Stop hosting the service first
+		zm.StopHostingService(serviceName)
 		// Delete service policies first
 		rows, _ := zm.db.Pool.Query(ctx,
 			"SELECT ziti_id FROM ziti_service_policies WHERE name LIKE $1",

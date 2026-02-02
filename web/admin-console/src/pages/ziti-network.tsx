@@ -127,7 +127,7 @@ interface Certificate {
   days_until_expiry: number
 }
 
-type TabType = 'status' | 'services' | 'identities' | 'routers' | 'posture' | 'policy-sync' | 'certificates' | 'remote-access'
+type TabType = 'status' | 'services' | 'identities' | 'routers' | 'posture' | 'policy-sync' | 'certificates' | 'remote-access' | 'browzer'
 
 const TAB_LABELS: Record<TabType, string> = {
   status: 'Status',
@@ -138,6 +138,7 @@ const TAB_LABELS: Record<TabType, string> = {
   'policy-sync': 'Policy Sync',
   certificates: 'Certificates',
   'remote-access': 'Remote Access',
+  browzer: 'BrowZer',
 }
 
 export function ZitiNetworkPage() {
@@ -174,6 +175,7 @@ export function ZitiNetworkPage() {
       {activeTab === 'policy-sync' && <PolicySyncTab />}
       {activeTab === 'certificates' && <CertificatesTab />}
       {activeTab === 'remote-access' && <RemoteAccessTab />}
+      {activeTab === 'browzer' && <BrowZerTab />}
     </div>
   )
 }
@@ -1671,6 +1673,267 @@ function RemoteAccessTab() {
             ))}
           </TableBody>
         </Table>
+      </Card>
+    </div>
+  )
+}
+
+// ---- BrowZer Tab ----
+
+interface BrowZerStatus {
+  enabled: boolean
+  configured?: boolean
+  external_jwt_signer_id?: string
+  auth_policy_id?: string
+  dial_policy_id?: string
+  oidc_issuer?: string
+  oidc_client_id?: string
+  bootstrapper_url?: string
+  reason?: string
+}
+
+function BrowZerTab() {
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+
+  const { data: browzerStatus, isLoading } = useQuery<BrowZerStatus>({
+    queryKey: ['browzer-status'],
+    queryFn: () => api.get<BrowZerStatus>('/api/v1/access/ziti/browzer/status'),
+  })
+
+  const { data: services } = useQuery<ZitiService[]>({
+    queryKey: ['ziti-services-browzer'],
+    queryFn: () => api.get<ZitiService[]>('/api/v1/access/ziti/services'),
+  })
+
+  const enableMutation = useMutation({
+    mutationFn: () => api.post('/api/v1/access/ziti/browzer/enable'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['browzer-status'] })
+      toast({ title: 'BrowZer enabled' })
+    },
+    onError: () => toast({ title: 'Failed to enable BrowZer', variant: 'destructive' }),
+  })
+
+  const disableMutation = useMutation({
+    mutationFn: () => api.post('/api/v1/access/ziti/browzer/disable'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['browzer-status'] })
+      toast({ title: 'BrowZer disabled' })
+    },
+    onError: () => toast({ title: 'Failed to disable BrowZer', variant: 'destructive' }),
+  })
+
+  const enableOnServiceMutation = useMutation({
+    mutationFn: (serviceId: string) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/enable`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
+      toast({ title: 'BrowZer enabled on service' })
+    },
+    onError: () => toast({ title: 'Failed to enable BrowZer on service', variant: 'destructive' }),
+  })
+
+  const disableOnServiceMutation = useMutation({
+    mutationFn: (serviceId: string) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/disable`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
+      toast({ title: 'BrowZer disabled on service' })
+    },
+    onError: () => toast({ title: 'Failed to disable BrowZer on service', variant: 'destructive' }),
+  })
+
+  if (isLoading) {
+    return <div className="text-muted-foreground p-4">Loading BrowZer status...</div>
+  }
+
+  return (
+    <div className="space-y-6 mt-4">
+      {/* Status Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Monitor className="h-5 w-5" />
+            BrowZer - Browser-Native Ziti Access
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            BrowZer injects the Ziti runtime directly into the browser via a Service Worker.
+            Users authenticate via OIDC and get an ephemeral Ziti identity. All traffic flows
+            through the encrypted Ziti overlay — no client software install needed.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <span className="text-sm text-muted-foreground">Status</span>
+              <div className="flex items-center gap-2 mt-1">
+                {browzerStatus?.enabled ? (
+                  <Badge className="bg-green-500/10 text-green-500">Enabled</Badge>
+                ) : (
+                  <Badge variant="secondary">Disabled</Badge>
+                )}
+              </div>
+            </div>
+            <div>
+              <span className="text-sm text-muted-foreground">Bootstrapper URL</span>
+              <div className="flex items-center gap-2 mt-1">
+                <code className="text-sm bg-muted px-2 py-1 rounded">
+                  {browzerStatus?.bootstrapper_url || 'http://localhost:1408'}
+                </code>
+                {browzerStatus?.enabled && (
+                  <a
+                    href={browzerStatus?.bootstrapper_url || 'http://localhost:1408'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                )}
+              </div>
+            </div>
+            {browzerStatus?.external_jwt_signer_id && (
+              <div>
+                <span className="text-sm text-muted-foreground">JWT Signer ID</span>
+                <div className="mt-1">
+                  <code className="text-xs bg-muted px-2 py-1 rounded">{browzerStatus.external_jwt_signer_id}</code>
+                </div>
+              </div>
+            )}
+            {browzerStatus?.auth_policy_id && (
+              <div>
+                <span className="text-sm text-muted-foreground">Auth Policy ID</span>
+                <div className="mt-1">
+                  <code className="text-xs bg-muted px-2 py-1 rounded">{browzerStatus.auth_policy_id}</code>
+                </div>
+              </div>
+            )}
+            {browzerStatus?.oidc_issuer && (
+              <div>
+                <span className="text-sm text-muted-foreground">OIDC Issuer</span>
+                <div className="mt-1">
+                  <code className="text-sm bg-muted px-2 py-1 rounded">{browzerStatus.oidc_issuer}</code>
+                </div>
+              </div>
+            )}
+            {browzerStatus?.oidc_client_id && (
+              <div>
+                <span className="text-sm text-muted-foreground">OIDC Client ID</span>
+                <div className="mt-1">
+                  <code className="text-sm bg-muted px-2 py-1 rounded">{browzerStatus.oidc_client_id}</code>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            {browzerStatus?.enabled ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => disableMutation.mutate()}
+                disabled={disableMutation.isPending}
+              >
+                Disable BrowZer
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => enableMutation.mutate()}
+                disabled={enableMutation.isPending}
+              >
+                Enable BrowZer
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Per-Service BrowZer Toggle */}
+      {browzerStatus?.enabled && services && services.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Network className="h-5 w-5" />
+              BrowZer-Enabled Services
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-4">
+              Toggle BrowZer access per service. Services with BrowZer enabled get the
+              &quot;browzer-enabled&quot; role attribute so browser identities can dial them.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Service</TableHead>
+                  <TableHead>Host</TableHead>
+                  <TableHead>Port</TableHead>
+                  <TableHead>BrowZer</TableHead>
+                  <TableHead>Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {services.map((svc) => {
+                  const isBrowzerEnabled = false // Would check roleAttributes if available
+                  return (
+                    <TableRow key={svc.id}>
+                      <TableCell className="font-medium">{svc.name}</TableCell>
+                      <TableCell>{svc.host}</TableCell>
+                      <TableCell>{svc.port}</TableCell>
+                      <TableCell>
+                        {isBrowzerEnabled ? (
+                          <Badge className="bg-green-500/10 text-green-500">Enabled</Badge>
+                        ) : (
+                          <Badge variant="secondary">Disabled</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant={isBrowzerEnabled ? 'destructive' : 'default'}
+                          onClick={() => {
+                            if (isBrowzerEnabled) {
+                              disableOnServiceMutation.mutate(svc.ziti_id)
+                            } else {
+                              enableOnServiceMutation.mutate(svc.ziti_id)
+                            }
+                          }}
+                        >
+                          {isBrowzerEnabled ? 'Disable' : 'Enable'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Instructions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>How BrowZer Works</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="text-sm space-y-2">
+            <p><strong>1.</strong> User visits the BrowZer Bootstrapper URL (http://localhost:1408)</p>
+            <p><strong>2.</strong> Bootstrapper redirects to OpenIDX OAuth for OIDC login</p>
+            <p><strong>3.</strong> After authentication, the Ziti BrowZer Runtime (ZBR) JavaScript is injected into the browser</p>
+            <p><strong>4.</strong> ZBR registers a Service Worker that intercepts HTTP requests</p>
+            <p><strong>5.</strong> The browser gets an ephemeral Ziti identity from the JWT token</p>
+            <p><strong>6.</strong> All traffic flows through the Ziti overlay via WebSocket to the edge router</p>
+            <p><strong>7.</strong> Press <kbd className="bg-muted px-1 rounded">Alt+F12</kbd> to open the ZBR debug panel</p>
+          </div>
+          <div className="mt-4 p-3 bg-muted rounded-lg">
+            <p className="text-sm font-medium">Connection Flow:</p>
+            <code className="text-xs text-muted-foreground">
+              Browser (ZBR + Service Worker) → WebSocket/mTLS → Edge Router → Ziti Circuit → Access Service (Listen) → Upstream
+            </code>
+          </div>
+        </CardContent>
       </Card>
     </div>
   )

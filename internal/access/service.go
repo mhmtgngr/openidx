@@ -93,8 +93,9 @@ type Service struct {
 	governanceURL   string
 	auditURL        string
 	sessionSecret   []byte
-	oauthIssuer     string
-	oauthJWKSURL    string
+	oauthIssuer      string
+	oauthInternalURL string // Docker-internal URL for server-to-server calls
+	oauthJWKSURL     string
 	zitiManager     *ZitiManager
 	guacamoleClient *GuacamoleClient
 }
@@ -116,16 +117,26 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		secret = secret + strings.Repeat("0", 32-len(secret))
 	}
 
+	// Derive internal OAuth URL from JWKS URL for server-to-server calls
+	// JWKS URL is like http://oauth-service:8006/.well-known/jwks.json
+	oauthInternal := cfg.OAuthIssuer
+	if cfg.OAuthJWKSURL != "" {
+		if parsed, err := url.Parse(cfg.OAuthJWKSURL); err == nil {
+			oauthInternal = parsed.Scheme + "://" + parsed.Host
+		}
+	}
+
 	return &Service{
-		db:            db,
-		redis:         redis,
-		config:        cfg,
-		logger:        logger.With(zap.String("service", "access")),
-		governanceURL: cfg.GovernanceURL,
-		auditURL:      cfg.AuditURL,
-		sessionSecret: []byte(secret[:32]),
-		oauthIssuer:   cfg.OAuthIssuer,
-		oauthJWKSURL:  cfg.OAuthJWKSURL,
+		db:               db,
+		redis:            redis,
+		config:           cfg,
+		logger:           logger.With(zap.String("service", "access")),
+		governanceURL:    cfg.GovernanceURL,
+		auditURL:         cfg.AuditURL,
+		sessionSecret:    []byte(secret[:32]),
+		oauthIssuer:      cfg.OAuthIssuer,
+		oauthInternalURL: oauthInternal,
+		oauthJWKSURL:     cfg.OAuthJWKSURL,
 	}
 }
 
@@ -195,6 +206,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/certificates", svc.handleListCertificates)
 		api.GET("/ziti/certificates/expiry-alerts", svc.handleGetCertExpiryAlerts)
 		api.POST("/ziti/certificates/:id/rotate", svc.handleRotateCertificate)
+
+		// BrowZer management endpoints
+		api.GET("/ziti/browzer/status", svc.handleBrowZerStatus)
+		api.POST("/ziti/browzer/enable", svc.handleEnableBrowZer)
+		api.POST("/ziti/browzer/disable", svc.handleDisableBrowZer)
+		api.POST("/ziti/browzer/services/:id/enable", svc.handleEnableBrowZerOnService)
+		api.POST("/ziti/browzer/services/:id/disable", svc.handleDisableBrowZerOnService)
 
 		// Forward-auth endpoint for APISIX
 		api.POST("/auth/decide", svc.handleAuthDecide)
@@ -691,7 +709,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 	// Store verifier and original URL in Redis
 	redirectURL := c.Query("redirect_url")
 	if redirectURL == "" {
-		redirectURL = "/"
+		redirectURL = "/access/.auth/session"
 	}
 
 	sessionData, _ := json.Marshal(map[string]string{
@@ -714,6 +732,13 @@ func (s *Service) handleLogin(c *gin.Context) {
 }
 
 func (s *Service) handleCallback(c *gin.Context) {
+	// If login_session is present, the OAuth service is asking us to show a login form
+	loginSession := c.Query("login_session")
+	if loginSession != "" {
+		s.serveLoginPage(c, loginSession)
+		return
+	}
+
 	code := c.Query("code")
 	state := c.Query("state")
 
@@ -793,6 +818,122 @@ func (s *Service) handleCallback(c *gin.Context) {
 		redirectURL = "/"
 	}
 	c.Redirect(http.StatusFound, redirectURL)
+}
+
+func (s *Service) serveLoginPage(c *gin.Context, loginSession string) {
+	oauthURL := s.oauthIssuer
+	html := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenIDX - Sign In</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#1e293b;border-radius:12px;padding:2.5rem;width:100%%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.3)}
+h1{font-size:1.5rem;text-align:center;margin-bottom:.5rem;color:#f8fafc}
+.subtitle{text-align:center;color:#94a3b8;margin-bottom:2rem;font-size:.875rem}
+label{display:block;font-size:.875rem;color:#94a3b8;margin-bottom:.375rem}
+input{width:100%%;padding:.75rem 1rem;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:1rem;margin-bottom:1rem;outline:none;transition:border-color .2s}
+input:focus{border-color:#3b82f6}
+button{width:100%%;padding:.75rem;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s}
+button:hover{background:#2563eb}
+button:disabled{opacity:.6;cursor:not-allowed}
+.error{background:#7f1d1d;border:1px solid #991b1b;color:#fca5a5;padding:.75rem;border-radius:8px;margin-bottom:1rem;font-size:.875rem;display:none}
+.mfa-section{display:none}
+.logo{text-align:center;margin-bottom:1.5rem;font-size:2rem}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="logo">&#x1f510;</div>
+<h1>OpenIDX Access</h1>
+<p class="subtitle">Sign in to continue to your application</p>
+<div id="error" class="error"></div>
+<form id="loginForm">
+<div id="credentials-section">
+<label for="username">Username or Email</label>
+<input type="text" id="username" name="username" required autocomplete="username" autofocus>
+<label for="password">Password</label>
+<input type="password" id="password" name="password" required autocomplete="current-password">
+</div>
+<div id="mfa-section" class="mfa-section">
+<label for="mfa_code">MFA Verification Code</label>
+<input type="text" id="mfa_code" name="mfa_code" placeholder="Enter 6-digit code" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+</div>
+<button type="submit" id="submitBtn">Sign In</button>
+</form>
+</div>
+<script>
+const loginSession = %q;
+const oauthURL = %q;
+let mfaSession = '';
+
+document.getElementById('loginForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('error');
+  errEl.style.display = 'none';
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+
+  try {
+    if (mfaSession) {
+      const resp = await fetch(oauthURL + '/oauth/mfa/verify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mfa_session: mfaSession, code: document.getElementById('mfa_code').value})
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error_description || data.error || 'MFA verification failed');
+      }
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+    } else {
+      const resp = await fetch(oauthURL + '/oauth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          username: document.getElementById('username').value,
+          password: document.getElementById('password').value,
+          login_session: loginSession
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error_description || data.error || 'Authentication failed');
+      }
+      if (data.mfa_required) {
+        mfaSession = data.mfa_session;
+        document.getElementById('credentials-section').style.display = 'none';
+        document.getElementById('mfa-section').style.display = 'block';
+        document.getElementById('mfa_code').focus();
+        btn.disabled = false;
+        btn.textContent = 'Verify';
+        return;
+      }
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+        return;
+      }
+    }
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.textContent = mfaSession ? 'Verify' : 'Sign In';
+});
+</script>
+</body>
+</html>`, loginSession, oauthURL)
+
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, html)
 }
 
 func (s *Service) handleLogout(c *gin.Context) {
@@ -1299,7 +1440,7 @@ func (s *Service) exchangeCode(ctx context.Context, code, verifier, redirectURI 
 		"code_verifier": {verifier},
 	}
 
-	resp, err := http.PostForm(s.oauthIssuer+"/oauth/token", data)
+	resp, err := http.PostForm(s.oauthInternalURL+"/oauth/token", data)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange failed: %w", err)
 	}
