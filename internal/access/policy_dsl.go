@@ -130,11 +130,14 @@ func compareValues(left interface{}, op string, right interface{}) (bool, error)
 		if !ok {
 			return false, fmt.Errorf("matches operator requires a string pattern")
 		}
-		matched, err := regexp.MatchString(pattern, fmt.Sprintf("%v", left))
+		if len(pattern) > 200 {
+			return false, fmt.Errorf("regex pattern too long (%d chars, max 200)", len(pattern))
+		}
+		re, err := regexp.Compile(pattern)
 		if err != nil {
 			return false, fmt.Errorf("invalid regex pattern %q: %w", pattern, err)
 		}
-		return matched, nil
+		return re.MatchString(fmt.Sprintf("%v", left)), nil
 	case ">", "<", ">=", "<=":
 		return evalNumericComparison(left, op, right)
 	default:

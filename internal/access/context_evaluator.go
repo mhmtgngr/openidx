@@ -27,6 +27,8 @@ type AccessContext struct {
 	PostureScore   float64
 	PostureResults []PostureCheckResult
 	Timestamp      time.Time
+	OriginalMethod string
+	OriginalURI    string
 }
 
 // AccessDecision is the result of context-aware evaluation
@@ -175,6 +177,11 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		}
 	}
 
+	// Cap risk score at 100
+	if riskScore > 100 {
+		riskScore = 100
+	}
+
 	// 6. Risk score threshold
 	if ac.Route.MaxRiskScore > 0 && riskScore > ac.Route.MaxRiskScore {
 		return &AccessDecision{
@@ -196,6 +203,8 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 			TimeHour:      ac.Timestamp.Hour(),
 			GeoCountry:    ac.GeoCountry,
 			RiskScore:     riskScore,
+			RequestMethod: ac.OriginalMethod,
+			RequestPath:   ac.OriginalURI,
 		}
 
 		allowed, err := EvaluatePolicyString(ac.Route.InlinePolicy, policyCtx)
@@ -344,10 +353,10 @@ func extractOSFamily(ua string) string {
 	switch {
 	case strings.Contains(lower, "windows"):
 		return "windows"
-	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os"):
-		return "macos"
 	case strings.Contains(lower, "iphone") || strings.Contains(lower, "ipad"):
 		return "ios"
+	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os"):
+		return "macos"
 	case strings.Contains(lower, "android"):
 		return "android"
 	case strings.Contains(lower, "linux"):
@@ -448,11 +457,8 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 	}
 
 	// Set request method/path in context for DSL evaluation
-	if accessCtx.Route.InlinePolicy != "" {
-		// These are used by the policy DSL
-		_ = originalMethod
-		_ = originalURI
-	}
+	accessCtx.OriginalMethod = originalMethod
+	accessCtx.OriginalURI = originalURI
 
 	decision := s.evaluateAccessContext(accessCtx)
 	if !decision.Allowed {

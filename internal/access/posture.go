@@ -188,7 +188,9 @@ func (zm *ZitiManager) ListPostureChecks(ctx context.Context) ([]PostureCheck, e
 			return nil, fmt.Errorf("failed to scan posture check row: %w", err)
 		}
 		if paramsJSON != nil {
-			json.Unmarshal(paramsJSON, &c.Parameters)
+			if err := json.Unmarshal(paramsJSON, &c.Parameters); err != nil {
+				zm.logger.Warn("Failed to unmarshal posture check parameters", zap.String("check_id", c.ID), zap.Error(err))
+			}
 		}
 		if c.Parameters == nil {
 			c.Parameters = make(map[string]interface{})
@@ -338,7 +340,9 @@ func (zm *ZitiManager) GetIdentityPostureStatus(ctx context.Context, identityID 
 			return nil, fmt.Errorf("failed to scan posture result row: %w", err)
 		}
 		if detailsJSON != nil {
-			json.Unmarshal(detailsJSON, &r.Details)
+			if err := json.Unmarshal(detailsJSON, &r.Details); err != nil {
+				zm.logger.Warn("Failed to unmarshal posture result details", zap.String("result_id", r.ID), zap.Error(err))
+			}
 		}
 		if r.Details == nil {
 			r.Details = make(map[string]interface{})
@@ -610,7 +614,9 @@ func (zm *ZitiManager) ListPolicySyncStates(ctx context.Context) ([]PolicySyncSt
 			return nil, fmt.Errorf("failed to scan policy sync state row: %w", err)
 		}
 		if configJSON != nil {
-			json.Unmarshal(configJSON, &s.Config)
+			if err := json.Unmarshal(configJSON, &s.Config); err != nil {
+				zm.logger.Warn("Failed to unmarshal policy sync config", zap.String("sync_id", s.ID), zap.Error(err))
+			}
 		}
 		if s.Config == nil {
 			s.Config = make(map[string]interface{})
@@ -637,7 +643,9 @@ func (zm *ZitiManager) TriggerPolicySync(ctx context.Context, syncID string) err
 
 	var config map[string]interface{}
 	if configJSON != nil {
-		json.Unmarshal(configJSON, &config)
+		if err := json.Unmarshal(configJSON, &config); err != nil {
+			zm.logger.Warn("Failed to unmarshal trigger sync config", zap.String("sync_id", syncID), zap.Error(err))
+		}
 	}
 	if config == nil {
 		config = make(map[string]interface{})

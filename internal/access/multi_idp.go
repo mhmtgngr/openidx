@@ -45,7 +45,9 @@ func (s *Service) getRouteIDP(ctx context.Context, route *ProxyRoute) (*IDPConfi
 	}
 
 	if scopesJSON != nil {
-		json.Unmarshal(scopesJSON, &idp.Scopes)
+		if err := json.Unmarshal(scopesJSON, &idp.Scopes); err != nil {
+			s.logger.Warn("Failed to unmarshal IDP scopes", zap.String("idp_id", idp.ID), zap.Error(err))
+		}
 	}
 	if len(idp.Scopes) == 0 {
 		idp.Scopes = []string{"openid", "profile", "email"}
@@ -171,7 +173,9 @@ func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 		return
 	}
 	if scopesJSON != nil {
-		json.Unmarshal(scopesJSON, &idp.Scopes)
+		if err := json.Unmarshal(scopesJSON, &idp.Scopes); err != nil {
+			s.logger.Warn("Failed to unmarshal IDP scopes", zap.String("idp_id", idp.ID), zap.Error(err))
+		}
 	}
 	if len(idp.Scopes) == 0 {
 		idp.Scopes = []string{"openid", "profile", "email"}

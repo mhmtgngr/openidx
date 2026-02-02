@@ -304,13 +304,48 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		if guacConnID != nil {
 			r.GuacamoleConnectionID = *guacConnID
 		}
-		json.Unmarshal(allowedRoles, &r.AllowedRoles)
-		json.Unmarshal(allowedGroups, &r.AllowedGroups)
-		json.Unmarshal(policyIDs, &r.PolicyIDs)
-		json.Unmarshal(corsOrigins, &r.CORSAllowedOrigins)
-		json.Unmarshal(customHeaders, &r.CustomHeaders)
-		json.Unmarshal(postureCheckIDs, &r.PostureCheckIDs)
-		json.Unmarshal(allowedCountries, &r.AllowedCountries)
+		if err := json.Unmarshal(allowedRoles, &r.AllowedRoles); err != nil && allowedRoles != nil {
+			s.logger.Warn("Failed to unmarshal allowed_roles", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if err := json.Unmarshal(allowedGroups, &r.AllowedGroups); err != nil && allowedGroups != nil {
+			s.logger.Warn("Failed to unmarshal allowed_groups", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if err := json.Unmarshal(policyIDs, &r.PolicyIDs); err != nil && policyIDs != nil {
+			s.logger.Warn("Failed to unmarshal policy_ids", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if err := json.Unmarshal(corsOrigins, &r.CORSAllowedOrigins); err != nil && corsOrigins != nil {
+			s.logger.Warn("Failed to unmarshal cors_allowed_origins", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if err := json.Unmarshal(customHeaders, &r.CustomHeaders); err != nil && customHeaders != nil {
+			s.logger.Warn("Failed to unmarshal custom_headers", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if err := json.Unmarshal(postureCheckIDs, &r.PostureCheckIDs); err != nil && postureCheckIDs != nil {
+			s.logger.Warn("Failed to unmarshal posture_check_ids", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if err := json.Unmarshal(allowedCountries, &r.AllowedCountries); err != nil && allowedCountries != nil {
+			s.logger.Warn("Failed to unmarshal allowed_countries", zap.String("route_id", r.ID), zap.Error(err))
+		}
+		if r.AllowedRoles == nil {
+			r.AllowedRoles = []string{}
+		}
+		if r.AllowedGroups == nil {
+			r.AllowedGroups = []string{}
+		}
+		if r.PolicyIDs == nil {
+			r.PolicyIDs = []string{}
+		}
+		if r.CORSAllowedOrigins == nil {
+			r.CORSAllowedOrigins = []string{}
+		}
+		if r.CustomHeaders == nil {
+			r.CustomHeaders = map[string]string{}
+		}
+		if r.PostureCheckIDs == nil {
+			r.PostureCheckIDs = []string{}
+		}
+		if r.AllowedCountries == nil {
+			r.AllowedCountries = []string{}
+		}
 		routes = append(routes, r)
 	}
 
@@ -1184,13 +1219,48 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 	if guacConnID != nil {
 		r.GuacamoleConnectionID = *guacConnID
 	}
-	json.Unmarshal(allowedRoles, &r.AllowedRoles)
-	json.Unmarshal(allowedGroups, &r.AllowedGroups)
-	json.Unmarshal(policyIDs, &r.PolicyIDs)
-	json.Unmarshal(corsOrigins, &r.CORSAllowedOrigins)
-	json.Unmarshal(customHeaders, &r.CustomHeaders)
-	json.Unmarshal(postureCheckIDs, &r.PostureCheckIDs)
-	json.Unmarshal(allowedCountries, &r.AllowedCountries)
+	if err := json.Unmarshal(allowedRoles, &r.AllowedRoles); err != nil && allowedRoles != nil {
+		s.logger.Warn("Failed to unmarshal allowed_roles", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(allowedGroups, &r.AllowedGroups); err != nil && allowedGroups != nil {
+		s.logger.Warn("Failed to unmarshal allowed_groups", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(policyIDs, &r.PolicyIDs); err != nil && policyIDs != nil {
+		s.logger.Warn("Failed to unmarshal policy_ids", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(corsOrigins, &r.CORSAllowedOrigins); err != nil && corsOrigins != nil {
+		s.logger.Warn("Failed to unmarshal cors_allowed_origins", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(customHeaders, &r.CustomHeaders); err != nil && customHeaders != nil {
+		s.logger.Warn("Failed to unmarshal custom_headers", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(postureCheckIDs, &r.PostureCheckIDs); err != nil && postureCheckIDs != nil {
+		s.logger.Warn("Failed to unmarshal posture_check_ids", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(allowedCountries, &r.AllowedCountries); err != nil && allowedCountries != nil {
+		s.logger.Warn("Failed to unmarshal allowed_countries", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if r.AllowedRoles == nil {
+		r.AllowedRoles = []string{}
+	}
+	if r.AllowedGroups == nil {
+		r.AllowedGroups = []string{}
+	}
+	if r.PolicyIDs == nil {
+		r.PolicyIDs = []string{}
+	}
+	if r.CORSAllowedOrigins == nil {
+		r.CORSAllowedOrigins = []string{}
+	}
+	if r.CustomHeaders == nil {
+		r.CustomHeaders = map[string]string{}
+	}
+	if r.PostureCheckIDs == nil {
+		r.PostureCheckIDs = []string{}
+	}
+	if r.AllowedCountries == nil {
+		r.AllowedCountries = []string{}
+	}
 	return &r, nil
 }
 
@@ -1247,13 +1317,48 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 	if guacConnID != nil {
 		r.GuacamoleConnectionID = *guacConnID
 	}
-	json.Unmarshal(allowedRoles, &r.AllowedRoles)
-	json.Unmarshal(allowedGroups, &r.AllowedGroups)
-	json.Unmarshal(policyIDs, &r.PolicyIDs)
-	json.Unmarshal(corsOrigins, &r.CORSAllowedOrigins)
-	json.Unmarshal(customHeaders, &r.CustomHeaders)
-	json.Unmarshal(postureCheckIDs, &r.PostureCheckIDs)
-	json.Unmarshal(allowedCountries, &r.AllowedCountries)
+	if err := json.Unmarshal(allowedRoles, &r.AllowedRoles); err != nil && allowedRoles != nil {
+		s.logger.Warn("Failed to unmarshal allowed_roles", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(allowedGroups, &r.AllowedGroups); err != nil && allowedGroups != nil {
+		s.logger.Warn("Failed to unmarshal allowed_groups", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(policyIDs, &r.PolicyIDs); err != nil && policyIDs != nil {
+		s.logger.Warn("Failed to unmarshal policy_ids", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(corsOrigins, &r.CORSAllowedOrigins); err != nil && corsOrigins != nil {
+		s.logger.Warn("Failed to unmarshal cors_allowed_origins", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(customHeaders, &r.CustomHeaders); err != nil && customHeaders != nil {
+		s.logger.Warn("Failed to unmarshal custom_headers", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(postureCheckIDs, &r.PostureCheckIDs); err != nil && postureCheckIDs != nil {
+		s.logger.Warn("Failed to unmarshal posture_check_ids", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if err := json.Unmarshal(allowedCountries, &r.AllowedCountries); err != nil && allowedCountries != nil {
+		s.logger.Warn("Failed to unmarshal allowed_countries", zap.String("route_id", r.ID), zap.Error(err))
+	}
+	if r.AllowedRoles == nil {
+		r.AllowedRoles = []string{}
+	}
+	if r.AllowedGroups == nil {
+		r.AllowedGroups = []string{}
+	}
+	if r.PolicyIDs == nil {
+		r.PolicyIDs = []string{}
+	}
+	if r.CORSAllowedOrigins == nil {
+		r.CORSAllowedOrigins = []string{}
+	}
+	if r.CustomHeaders == nil {
+		r.CustomHeaders = map[string]string{}
+	}
+	if r.PostureCheckIDs == nil {
+		r.PostureCheckIDs = []string{}
+	}
+	if r.AllowedCountries == nil {
+		r.AllowedCountries = []string{}
+	}
 	return &r, nil
 }
 

@@ -21,6 +21,8 @@ import (
 // GuacamoleClient communicates with the Apache Guacamole REST API to manage connections
 type GuacamoleClient struct {
 	baseURL    string
+	username   string
+	password   string
 	authToken  string
 	dataSource string
 	httpClient *http.Client
@@ -49,6 +51,8 @@ func NewGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 
 	gc := &GuacamoleClient{
 		baseURL:    strings.TrimRight(cfg.GuacamoleURL, "/"),
+		username:   cfg.GuacamoleAdminUser,
+		password:   cfg.GuacamoleAdminPassword,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		db:         db,
 		logger:     logger.With(zap.String("component", "guacamole")),
@@ -126,7 +130,7 @@ func (gc *GuacamoleClient) apiRequest(method, path string, body interface{}) ([]
 
 	// Re-authenticate on 403 and retry once
 	if resp.StatusCode == http.StatusForbidden {
-		if err := gc.authenticate("guacadmin", "guacadmin"); err != nil {
+		if err := gc.authenticate(gc.username, gc.password); err != nil {
 			return respBody, resp.StatusCode, fmt.Errorf("re-authentication failed: %w", err)
 		}
 

@@ -61,7 +61,8 @@ type Config struct {
 	ZitiCtrlURL       string `mapstructure:"ziti_ctrl_url"`
 	ZitiAdminUser     string `mapstructure:"ziti_admin_user"`
 	ZitiAdminPassword string `mapstructure:"ziti_admin_password"`
-	ZitiIdentityDir   string `mapstructure:"ziti_identity_dir"`
+	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
+	ZitiInsecureSkipVerify bool   `mapstructure:"ziti_insecure_skip_verify"`
 
 	// Continuous verification
 	ContinuousVerifyEnabled  bool   `mapstructure:"continuous_verify_enabled"`
@@ -203,6 +204,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("ziti_admin_user", "admin")
 	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
 	v.SetDefault("ziti_identity_dir", "/ziti")
+	v.SetDefault("ziti_insecure_skip_verify", false)
 
 	// Continuous verification defaults
 	v.SetDefault("continuous_verify_enabled", false)
@@ -251,7 +253,8 @@ func bindEnvVars(v *viper.Viper) {
 		"ziti_ctrl_url":             "ZITI_CTRL_URL",
 		"ziti_admin_user":           "ZITI_ADMIN_USER",
 		"ziti_admin_password":       "ZITI_ADMIN_PASSWORD",
-		"ziti_identity_dir":         "ZITI_IDENTITY_DIR",
+		"ziti_identity_dir":            "ZITI_IDENTITY_DIR",
+		"ziti_insecure_skip_verify":    "ZITI_INSECURE_SKIP_VERIFY",
 		"continuous_verify_enabled": "CONTINUOUS_VERIFY_ENABLED",
 		"continuous_verify_interval":"CONTINUOUS_VERIFY_INTERVAL",
 		"geoip_service_url":        "GEOIP_SERVICE_URL",
