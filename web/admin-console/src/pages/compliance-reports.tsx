@@ -13,10 +13,17 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
+  Eye,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -25,6 +32,7 @@ import {
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
 import { Input } from '../components/ui/input'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -274,7 +282,10 @@ export function ComplianceReportsPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center py-8">Loading reports...</div>
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading reports...</p>
+            </div>
           ) : reports?.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               <FileText className="mx-auto h-12 w-12 text-gray-300 mb-4" />
@@ -286,83 +297,84 @@ export function ComplianceReportsPage() {
             </div>
           ) : (
             <div className="rounded-md border">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-gray-50">
-                    <th className="p-3 text-left text-sm font-medium">Report</th>
-                    <th className="p-3 text-left text-sm font-medium">Framework</th>
-                    <th className="p-3 text-left text-sm font-medium">Period</th>
-                    <th className="p-3 text-left text-sm font-medium">Score</th>
-                    <th className="p-3 text-left text-sm font-medium">Status</th>
-                    <th className="p-3 text-right text-sm font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Report</TableHead>
+                    <TableHead>Framework</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead>Score</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="w-[50px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {reports?.map((report) => {
                     const score = calculateComplianceScore(report.summary)
                     return (
-                      <tr key={report.id} className="border-b hover:bg-gray-50">
-                        <td className="p-3">
+                      <TableRow key={report.id}>
+                        <TableCell>
                           <div className="flex items-center gap-3">
                             <div className={`h-10 w-10 rounded-lg ${reportTypeColors[report.type]?.split(' ')[0] || 'bg-gray-100'} flex items-center justify-center`}>
                               <Shield className="h-5 w-5" />
                             </div>
                             <div>
                               <p className="font-medium">{report.name || reportTypeLabels[report.type]}</p>
-                              <p className="text-sm text-gray-500">Generated {formatDate(report.generated_at)}</p>
+                              <p className="text-sm text-muted-foreground">Generated {formatDate(report.generated_at)}</p>
                             </div>
                           </div>
-                        </td>
-                        <td className="p-3">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${reportTypeColors[report.type]}`}>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={reportTypeColors[report.type]}>
                             {report.framework || reportTypeLabels[report.type]}
-                          </span>
-                        </td>
-                        <td className="p-3">
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
                           <div className="text-sm">
                             <p>{formatDate(report.start_date)}</p>
-                            <p className="text-gray-500">to {formatDate(report.end_date)}</p>
+                            <p className="text-muted-foreground">to {formatDate(report.end_date)}</p>
                           </div>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell>
                           <div className="flex items-center gap-2">
                             <span className={`text-2xl font-bold ${getScoreColor(score)}`}>{score}%</span>
-                            <div className="text-xs text-gray-500">
+                            <div className="text-xs text-muted-foreground">
                               <p>{report.summary.passed_controls}/{report.summary.total_controls - report.summary.not_applicable} passed</p>
                             </div>
                           </div>
-                        </td>
-                        <td className="p-3">
+                        </TableCell>
+                        <TableCell>
                           <div className="flex items-center gap-1">
                             {statusIcons[report.status]}
                             <Badge variant={report.status === 'completed' ? 'default' : 'secondary'}>
                               {report.status}
                             </Badge>
                           </div>
-                        </td>
-                        <td className="p-3 text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleViewReport(report)}
-                            >
-                              View
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleDownloadReport(report)}
-                            >
-                              <Download className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleViewReport(report)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View Report
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleDownloadReport(report)}>
+                                <Download className="mr-2 h-4 w-4" />
+                                Download CSV
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
                     )
                   })}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
           {totalCount > PAGE_SIZE && (

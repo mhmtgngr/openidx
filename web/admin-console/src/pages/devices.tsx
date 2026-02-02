@@ -1,10 +1,15 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Smartphone, ShieldCheck, ShieldX, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Smartphone, Monitor, Tablet, MoreHorizontal, ShieldCheck, ShieldX, Trash2, Copy, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -84,13 +90,32 @@ export function DevicesPage() {
       d.fingerprint.includes(search)
   )
 
+  const deviceIcon = (userAgent: string) => {
+    const ua = userAgent.toLowerCase()
+    if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone'))
+      return <Smartphone className="h-4 w-4 text-muted-foreground" />
+    if (ua.includes('tablet') || ua.includes('ipad'))
+      return <Tablet className="h-4 w-4 text-muted-foreground" />
+    return <Monitor className="h-4 w-4 text-muted-foreground" />
+  }
+
+  const deviceType = (userAgent: string) => {
+    const ua = userAgent.toLowerCase()
+    if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'Mobile'
+    if (ua.includes('tablet') || ua.includes('ipad')) return 'Tablet'
+    return 'Desktop'
+  }
+
+  const copyFingerprint = (fp: string) => {
+    navigator.clipboard.writeText(fp)
+    toast({ title: 'Fingerprint copied to clipboard' })
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Devices</h1>
-          <p className="text-gray-500">Manage known devices and trust status for conditional access</p>
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Devices</h1>
+        <p className="text-muted-foreground">Manage known devices and trust status for conditional access</p>
       </div>
 
       {/* Risk Stats */}
@@ -99,36 +124,36 @@ export function DevicesPage() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">{riskStats.total_devices ?? 0}</div>
-              <p className="text-xs text-gray-500">Total Devices</p>
+              <p className="text-xs text-muted-foreground">Total Devices</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold text-green-600">{riskStats.trusted_devices ?? 0}</div>
-              <p className="text-xs text-gray-500">Trusted Devices</p>
+              <p className="text-xs text-muted-foreground">Trusted Devices</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold text-blue-600">{riskStats.new_devices_today ?? 0}</div>
-              <p className="text-xs text-gray-500">New Devices Today</p>
+              <p className="text-xs text-muted-foreground">New Devices Today</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold text-red-600">{riskStats.high_risk_logins_today ?? 0}</div>
-              <p className="text-xs text-gray-500">High-Risk Logins Today</p>
+              <p className="text-xs text-muted-foreground">High-Risk Logins Today</p>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Search */}
+      {/* Device Table */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search by name, IP, location, or fingerprint..."
                 className="pl-10"
@@ -140,94 +165,112 @@ export function DevicesPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center py-8 text-gray-500">Loading devices...</div>
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading devices...</p>
+            </div>
           ) : filteredDevices.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Smartphone className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-              <p>No devices found</p>
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Smartphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No devices found</p>
               <p className="text-sm">Devices will appear here when users log in</p>
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b text-left text-sm text-gray-500">
-                      <th className="pb-3 pr-4">Device</th>
-                      <th className="pb-3 pr-4">IP Address</th>
-                      <th className="pb-3 pr-4">Location</th>
-                      <th className="pb-3 pr-4">Status</th>
-                      <th className="pb-3 pr-4">Fingerprint</th>
-                      <th className="pb-3 pr-4">Last Seen</th>
-                      <th className="pb-3 pr-4">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Device</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>IP Address</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Fingerprint</TableHead>
+                      <TableHead>Last Seen</TableHead>
+                      <TableHead className="w-[50px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {filteredDevices.map((device: Device) => (
-                      <tr key={device.id} className="text-sm">
-                        <td className="py-3 pr-4">
+                      <TableRow key={device.id}>
+                        <TableCell>
                           <div className="flex items-center gap-2">
-                            <Smartphone className="h-4 w-4 text-gray-400" />
+                            {deviceIcon(device.user_agent)}
                             <span className="font-medium">{device.name || 'Unknown Device'}</span>
                           </div>
-                        </td>
-                        <td className="py-3 pr-4 font-mono text-xs">{device.ip_address}</td>
-                        <td className="py-3 pr-4">{device.location || 'Unknown'}</td>
-                        <td className="py-3 pr-4">
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{deviceType(device.user_agent)}</Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{device.ip_address}</TableCell>
+                        <TableCell>{device.location || 'Unknown'}</TableCell>
+                        <TableCell>
                           {device.trusted ? (
                             <Badge className="bg-green-100 text-green-800">Trusted</Badge>
                           ) : (
                             <Badge variant="outline">Untrusted</Badge>
                           )}
-                        </td>
-                        <td className="py-3 pr-4 font-mono text-xs text-gray-500">
-                          {device.fingerprint.substring(0, 12)}...
-                        </td>
-                        <td className="py-3 pr-4 text-gray-500">
+                        </TableCell>
+                        <TableCell>
+                          <button
+                            onClick={() => copyFingerprint(device.fingerprint)}
+                            className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
+                            title="Click to copy full fingerprint"
+                          >
+                            {device.fingerprint.substring(0, 12)}...
+                            <Copy className="h-3 w-3" />
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
                           {new Date(device.last_seen_at).toLocaleString()}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <div className="flex items-center gap-1">
-                            {!device.trusted ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => trustMutation.mutate(device.id)}
-                                disabled={trustMutation.isPending}
-                                title="Trust device"
-                              >
-                                <ShieldCheck className="h-4 w-4 text-green-600" />
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreHorizontal className="h-4 w-4" />
                               </Button>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled
-                                title="Device is trusted"
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {!device.trusted ? (
+                                <DropdownMenuItem
+                                  onClick={() => trustMutation.mutate(device.id)}
+                                  disabled={trustMutation.isPending}
+                                >
+                                  <ShieldCheck className="mr-2 h-4 w-4 text-green-600" />
+                                  Trust Device
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  onClick={() => trustMutation.mutate(device.id)}
+                                  disabled={trustMutation.isPending}
+                                >
+                                  <ShieldX className="mr-2 h-4 w-4 text-yellow-600" />
+                                  Revoke Trust
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => setDeleteDevice(device)}
+                                className="text-red-600 focus:text-red-600"
                               >
-                                <ShieldX className="h-4 w-4 text-gray-300" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setDeleteDevice(device)}
-                              title="Remove device"
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete Device
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
 
               {/* Pagination */}
               {totalPages > 1 && (
                 <div className="flex items-center justify-between mt-4">
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total} devices
                   </p>
                   <div className="flex items-center gap-2">

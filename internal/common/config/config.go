@@ -302,3 +302,25 @@ func (c *Config) IsDevelopment() bool {
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production" || c.Environment == "prod"
 }
+
+// ProductionWarnings returns a list of configuration issues that should be
+// addressed before deploying to production. Returns nil if no issues found.
+func (c *Config) ProductionWarnings() []string {
+	if !c.IsProduction() {
+		return nil
+	}
+	var warnings []string
+	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
+		warnings = append(warnings, "jwt_secret uses a default or placeholder value")
+	}
+	if c.EncryptionKey == "" || strings.Contains(strings.ToLower(c.EncryptionKey), "change") {
+		warnings = append(warnings, "encryption_key uses a default or placeholder value")
+	}
+	if strings.Contains(c.AccessSessionSecret, "change-me") {
+		warnings = append(warnings, "access_session_secret uses the default placeholder")
+	}
+	if c.CORSAllowedOrigins == "*" {
+		warnings = append(warnings, "cors_allowed_origins is wildcard '*'; set specific origins for production")
+	}
+	return warnings
+}

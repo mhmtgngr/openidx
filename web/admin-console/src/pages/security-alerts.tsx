@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ShieldAlert, Plus, Trash2 } from 'lucide-react'
+import { ShieldAlert, Plus, Trash2, MoreHorizontal, CheckCircle, Search as SearchIcon, Eye } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -9,6 +9,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -169,34 +174,70 @@ export function SecurityAlertsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {alertsLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-               alerts.length === 0 ? <p className="text-center py-8 text-muted-foreground">No alerts found</p> : (
-                <Table>
-                  <TableHeader><TableRow>
-                    <TableHead>Severity</TableHead><TableHead>Type</TableHead><TableHead>Title</TableHead>
-                    <TableHead>Source IP</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {alerts.map(a => (
-                      <TableRow key={a.id} className="cursor-pointer" onClick={() => setDetailAlert(a)}>
-                        <TableCell><span className={`px-2 py-1 rounded-full text-xs font-medium ${severityBadge(a.severity)}`}>{a.severity}</span></TableCell>
-                        <TableCell><Badge variant="outline">{a.alert_type}</Badge></TableCell>
-                        <TableCell className="font-medium">{a.title}</TableCell>
-                        <TableCell className="font-mono text-sm">{a.source_ip}</TableCell>
-                        <TableCell><span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(a.status)}`}>{a.status}</span></TableCell>
-                        <TableCell className="text-sm">{formatDate(a.created_at)}</TableCell>
-                        <TableCell>
-                          {a.status === 'open' && (
-                            <Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); updateStatusMutation.mutate({ id: a.id, status: 'resolved' }) }}>
-                              Resolve
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              {alertsLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <LoadingSpinner size="lg" />
+                  <p className="mt-4 text-sm text-muted-foreground">Loading alerts...</p>
+                </div>
+              ) : alerts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <ShieldAlert className="h-12 w-12 text-muted-foreground/40 mb-3" />
+                  <p className="font-medium">No alerts found</p>
+                  <p className="text-sm">Security alerts will appear here when threats are detected</p>
+                </div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead>Severity</TableHead><TableHead>Type</TableHead><TableHead>Title</TableHead>
+                      <TableHead>Source IP</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead>
+                      <TableHead className="w-[50px]"></TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {alerts.map(a => (
+                        <TableRow key={a.id}>
+                          <TableCell><Badge className={severityBadge(a.severity)}>{a.severity}</Badge></TableCell>
+                          <TableCell><Badge variant="outline">{a.alert_type}</Badge></TableCell>
+                          <TableCell className="font-medium">{a.title}</TableCell>
+                          <TableCell className="font-mono text-sm">{a.source_ip}</TableCell>
+                          <TableCell><Badge className={statusBadge(a.status)}>{a.status}</Badge></TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{formatDate(a.created_at)}</TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => setDetailAlert(a)}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View Details
+                                </DropdownMenuItem>
+                                {a.status === 'open' && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={() => updateStatusMutation.mutate({ id: a.id, status: 'investigating' })}>
+                                      <SearchIcon className="mr-2 h-4 w-4" />
+                                      Investigating
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => updateStatusMutation.mutate({ id: a.id, status: 'resolved' })}>
+                                      <CheckCircle className="mr-2 h-4 w-4 text-green-600" />
+                                      Resolve
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => updateStatusMutation.mutate({ id: a.id, status: 'false_positive' })}>
+                                      False Positive
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -211,8 +252,18 @@ export function SecurityAlertsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {threatsLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-               threats.length === 0 ? <p className="text-center py-8 text-muted-foreground">No blocked IPs</p> : (
+              {threatsLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <LoadingSpinner size="lg" />
+                  <p className="mt-4 text-sm text-muted-foreground">Loading threat list...</p>
+                </div>
+              ) : threats.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <ShieldAlert className="h-12 w-12 text-muted-foreground/40 mb-3" />
+                  <p className="font-medium">No blocked IPs</p>
+                  <p className="text-sm">Blocked IP addresses will appear here</p>
+                </div>
+              ) : (
                 <Table>
                   <TableHeader><TableRow>
                     <TableHead>IP Address</TableHead><TableHead>Type</TableHead><TableHead>Reason</TableHead>

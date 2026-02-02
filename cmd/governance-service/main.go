@@ -67,7 +67,11 @@ func main() {
 	// Initialize router
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
+	if cfg.EnableRateLimit {
+		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+	}
 	router.Use(middleware.PrometheusMetrics("governance-service"))
 
 	// Metrics endpoint
@@ -95,11 +99,17 @@ func main() {
 
 	// Readiness check endpoint
 	router.GET("/ready", func(c *gin.Context) {
+		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
 		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
+			status["status"] = "not ready"
+			status["postgres"] = err.Error()
+			c.JSON(http.StatusServiceUnavailable, status)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+		if err := redis.Ping(); err != nil {
+			status["redis"] = "unhealthy"
+		}
+		c.JSON(http.StatusOK, status)
 	})
 
 	// Create HTTP server

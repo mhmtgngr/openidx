@@ -63,7 +63,11 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
+	if cfg.EnableRateLimit {
+		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+	}
 	router.Use(middleware.PrometheusMetrics("audit-service"))
 
 	// Metrics endpoint
