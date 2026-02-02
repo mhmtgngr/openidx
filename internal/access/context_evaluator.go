@@ -131,7 +131,25 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		}
 	}
 
-	// 3. Device trust check
+	// 3. User-Agent pinning — detect session hijacking via UA change
+	if ac.Session.UserAgent != "" && ac.UserAgent != "" && ac.UserAgent != ac.Session.UserAgent {
+		// Classify severity: major change (different browser/OS) vs minor (version bump)
+		if isMajorUAChange(ac.Session.UserAgent, ac.UserAgent) {
+			s.logger.Warn("User-Agent major change detected — possible session hijacking",
+				zap.String("session_id", ac.Session.ID),
+				zap.String("original_ua", ac.Session.UserAgent),
+				zap.String("current_ua", ac.UserAgent),
+			)
+			riskScore += 35
+		} else {
+			s.logger.Info("User-Agent minor change detected",
+				zap.String("session_id", ac.Session.ID),
+			)
+			riskScore += 10
+		}
+	}
+
+	// 4. Device trust check
 	if ac.Route.RequireDeviceTrust && !ac.DeviceTrusted {
 		return &AccessDecision{
 			Allowed:        false,
@@ -144,7 +162,7 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		riskScore += 15
 	}
 
-	// 4. Posture score check (route must have posture_check_ids configured)
+	// 5. Posture score check (route must have posture_check_ids configured)
 	if len(ac.Route.PostureCheckIDs) > 0 && ac.PostureScore < 0.5 {
 		riskScore += 25
 		if ac.PostureScore == 0 {
@@ -157,7 +175,7 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		}
 	}
 
-	// 5. Risk score threshold
+	// 6. Risk score threshold
 	if ac.Route.MaxRiskScore > 0 && riskScore > ac.Route.MaxRiskScore {
 		return &AccessDecision{
 			Allowed:        false,
@@ -167,7 +185,7 @@ func (s *Service) evaluateAccessContext(ac *AccessContext) *AccessDecision {
 		}
 	}
 
-	// 6. Inline policy DSL evaluation
+	// 7. Inline policy DSL evaluation
 	if ac.Route.InlinePolicy != "" {
 		policyCtx := &PolicyContext{
 			UserEmail:     ac.Session.Email,
@@ -274,6 +292,71 @@ func (s *Service) fetchGeoIP(ctx context.Context, ip string) (country, city stri
 		return result.CountryCode, result.City
 	}
 	return "", ""
+}
+
+// isMajorUAChange detects whether the user-agent changed in a way that indicates
+// a different browser or OS entirely (likely session hijacking), as opposed to a
+// minor version bump from an auto-update.
+//
+// Heuristic: extract the browser family token (Chrome, Firefox, Safari, Edge, OPR)
+// and the OS family token (Windows, Macintosh, Linux, Android, iPhone, iPad).
+// If either the browser or the OS family changed, it's a major change.
+func isMajorUAChange(original, current string) bool {
+	origBrowser := extractBrowserFamily(original)
+	currBrowser := extractBrowserFamily(current)
+	origOS := extractOSFamily(original)
+	currOS := extractOSFamily(current)
+
+	if origBrowser != "" && currBrowser != "" && origBrowser != currBrowser {
+		return true
+	}
+	if origOS != "" && currOS != "" && origOS != currOS {
+		return true
+	}
+	return false
+}
+
+// extractBrowserFamily returns a normalized browser family string from a user-agent.
+func extractBrowserFamily(ua string) string {
+	lower := strings.ToLower(ua)
+	// Order matters: Edge contains "chrome", OPR contains "chrome"
+	switch {
+	case strings.Contains(lower, "edg/") || strings.Contains(lower, "edga/") || strings.Contains(lower, "edgios/"):
+		return "edge"
+	case strings.Contains(lower, "opr/") || strings.Contains(lower, "opera"):
+		return "opera"
+	case strings.Contains(lower, "firefox/"):
+		return "firefox"
+	case strings.Contains(lower, "chrome/") && strings.Contains(lower, "safari/"):
+		return "chrome"
+	case strings.Contains(lower, "safari/") && !strings.Contains(lower, "chrome/"):
+		return "safari"
+	case strings.Contains(lower, "curl/"):
+		return "curl"
+	default:
+		return ""
+	}
+}
+
+// extractOSFamily returns a normalized OS family string from a user-agent.
+func extractOSFamily(ua string) string {
+	lower := strings.ToLower(ua)
+	switch {
+	case strings.Contains(lower, "windows"):
+		return "windows"
+	case strings.Contains(lower, "macintosh") || strings.Contains(lower, "mac os"):
+		return "macos"
+	case strings.Contains(lower, "iphone") || strings.Contains(lower, "ipad"):
+		return "ios"
+	case strings.Contains(lower, "android"):
+		return "android"
+	case strings.Contains(lower, "linux"):
+		return "linux"
+	case strings.Contains(lower, "chromeos") || strings.Contains(lower, "cros"):
+		return "chromeos"
+	default:
+		return ""
+	}
 }
 
 // checkIPThreat checks if an IP is in the threat list
