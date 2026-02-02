@@ -1590,8 +1590,8 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		// Check if it's a refresh token
 		var userID, clientID, scope string
 		err := s.db.Pool.QueryRow(c.Request.Context(), `
-			SELECT user_id, client_id, scope FROM refresh_tokens
-			WHERE token = $1 AND revoked = false AND expires_at > NOW()
+			SELECT user_id, client_id, scope FROM oauth_refresh_tokens
+			WHERE token = $1 AND expires_at > NOW()
 		`, token).Scan(&userID, &clientID, &scope)
 		if err != nil {
 			c.JSON(200, gin.H{"active": false})

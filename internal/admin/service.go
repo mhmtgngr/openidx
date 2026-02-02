@@ -1431,6 +1431,10 @@ func (s *Service) handleListUserAPIKeys(c *gin.Context) {
 
 	userID, _ := c.Get("user_id")
 	uid, _ := userID.(string)
+	if uid == "" {
+		c.JSON(200, gin.H{"api_keys": []interface{}{}})
+		return
+	}
 
 	keys, err := s.apiKeyService.ListAPIKeys(c.Request.Context(), uid, "user")
 	if err != nil {

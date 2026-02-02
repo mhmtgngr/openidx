@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS roles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Composite roles (role hierarchy)
+CREATE TABLE IF NOT EXISTS composite_roles (
+    parent_role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    child_role_id UUID REFERENCES roles(id) ON DELETE CASCADE,
+    PRIMARY KEY (parent_role_id, child_role_id)
+);
+
 -- User roles (many-to-many relationship)
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
