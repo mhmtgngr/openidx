@@ -75,7 +75,7 @@ test.describe('Groups Page', () => {
 
     await expect(page.locator('text=Administrators')).toBeVisible();
     await expect(page.locator('text=Developers')).toBeVisible();
-    await expect(page.locator('text=Marketing')).toBeVisible();
+    await expect(page.getByText('Marketing', { exact: true })).toBeVisible();
   });
 
   test('should have Add Group button', async ({ page }) => {
@@ -231,9 +231,10 @@ test.describe('Access Reviews Page', () => {
   test('should display review status', async ({ page }) => {
     await page.goto('/access-reviews');
 
-    await expect(page.locator('text=in_progress').or(page.locator('text=In Progress'))).toBeVisible();
-    await expect(page.locator('text=pending').or(page.locator('text=Pending'))).toBeVisible();
-    await expect(page.locator('text=completed').or(page.locator('text=Completed'))).toBeVisible();
+    // Use first() to handle multiple matches (e.g., status badges vs filter options)
+    await expect(page.getByText('in progress', { exact: true }).or(page.getByText('In Progress', { exact: true })).first()).toBeVisible();
+    await expect(page.getByText('pending', { exact: true }).or(page.getByText('Pending', { exact: true })).first()).toBeVisible();
+    await expect(page.getByText('completed', { exact: true }).or(page.getByText('Completed', { exact: true })).first()).toBeVisible();
   });
 });
 

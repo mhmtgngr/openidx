@@ -4,7 +4,7 @@ import {
   Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
   Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
   Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
-  LayoutDashboard,
+  LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -148,6 +148,31 @@ interface BrowZerStatus {
   oidc_client_id?: string
   bootstrapper_url?: string
   reason?: string
+}
+
+interface TempAccessLink {
+  id: string
+  token: string
+  name: string
+  description?: string
+  protocol: string
+  target_host: string
+  target_port: number
+  username?: string
+  created_by: string
+  created_by_email: string
+  expires_at: string
+  max_uses: number
+  current_uses: number
+  allowed_ips?: string[]
+  require_mfa: boolean
+  notify_on_use: boolean
+  notify_email?: string
+  access_url: string
+  status: 'active' | 'expired' | 'revoked' | 'used'
+  last_used_at?: string
+  last_used_ip?: string
+  created_at: string
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1660,6 +1685,9 @@ function RemoteAccessTab() {
         </div>
       )}
 
+      {/* Temporary Access Links Section */}
+      <TempAccessLinksSection />
+
       {/* How it works - collapsible */}
       <button
         onClick={() => setShowHowItWorks(!showHowItWorks)}
@@ -1689,6 +1717,405 @@ function RemoteAccessTab() {
           </CardContent>
         </Card>
       )}
+    </div>
+  )
+}
+
+// ─── Temporary Access Links Section ──────────────────────────────────────────
+
+function TempAccessLinksSection() {
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const [createModal, setCreateModal] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<TempAccessLink | null>(null)
+
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    protocol: 'ssh',
+    target_host: '',
+    target_port: 22,
+    username: '',
+    duration_mins: 120,
+    max_uses: 0,
+    allowed_ips: '',
+    notify_on_use: false,
+    notify_email: '',
+  })
+
+  // Fetch temp access links
+  const { data: linksData, isLoading } = useQuery({
+    queryKey: ['temp-access-links'],
+    queryFn: () => api.get<{ links: TempAccessLink[] }>('/api/v1/access/temp-access'),
+  })
+
+  // Create mutation
+  const createMutation = useMutation({
+    mutationFn: (data: typeof form) => api.post<TempAccessLink>('/api/v1/access/temp-access', {
+      ...data,
+      target_port: Number(data.target_port),
+      duration_mins: Number(data.duration_mins),
+      max_uses: Number(data.max_uses),
+      allowed_ips: data.allowed_ips ? data.allowed_ips.split(',').map(ip => ip.trim()).filter(Boolean) : [],
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['temp-access-links'] })
+      setCreateModal(false)
+      resetForm()
+      toast({ title: 'Temporary access link created', description: 'Share the URL with your support vendor.' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create access link.', variant: 'destructive' }),
+  })
+
+  // Revoke mutation
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/temp-access/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['temp-access-links'] })
+      setDeleteTarget(null)
+      toast({ title: 'Access link revoked' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to revoke access link.', variant: 'destructive' }),
+  })
+
+  const resetForm = () => setForm({
+    name: '',
+    description: '',
+    protocol: 'ssh',
+    target_host: '',
+    target_port: 22,
+    username: '',
+    duration_mins: 120,
+    max_uses: 0,
+    allowed_ips: '',
+    notify_on_use: false,
+    notify_email: '',
+  })
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedId(id)
+    toast({ title: 'Copied to clipboard' })
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+
+  const links = linksData?.links || []
+
+  const getStatusBadge = (link: TempAccessLink) => {
+    const now = new Date()
+    const expires = new Date(link.expires_at)
+    if (link.status === 'revoked') return <Badge variant="destructive">Revoked</Badge>
+    if (link.status === 'expired' || expires < now) return <Badge variant="secondary">Expired</Badge>
+    if (link.max_uses > 0 && link.current_uses >= link.max_uses) return <Badge variant="secondary">Used</Badge>
+    return <Badge className="bg-green-600">Active</Badge>
+  }
+
+  const getTimeRemaining = (expiresAt: string) => {
+    const now = new Date()
+    const expires = new Date(expiresAt)
+    const diff = expires.getTime() - now.getTime()
+    if (diff <= 0) return 'Expired'
+    const hours = Math.floor(diff / (1000 * 60 * 60))
+    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+    if (hours > 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`
+    if (hours > 0) return `${hours}h ${mins}m`
+    return `${mins}m`
+  }
+
+  const protocolIcon = (protocol: string) => {
+    switch (protocol) {
+      case 'ssh': return <Terminal className="h-4 w-4" />
+      case 'rdp': return <MonitorPlay className="h-4 w-4" />
+      case 'vnc': return <Monitor className="h-4 w-4" />
+      default: return <Server className="h-4 w-4" />
+    }
+  }
+
+  const protocolColor = (protocol: string) => {
+    switch (protocol) {
+      case 'ssh': return 'bg-green-600'
+      case 'rdp': return 'bg-blue-600'
+      case 'vnc': return 'bg-purple-600'
+      default: return 'bg-gray-600'
+    }
+  }
+
+  return (
+    <div className="space-y-4" data-testid="temp-access-section">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Key className="h-5 w-5 text-muted-foreground" />
+          <h3 className="text-lg font-semibold">Temporary Access Links</h3>
+          <Badge variant="outline" className="ml-2">{links.length}</Badge>
+        </div>
+        <Button size="sm" onClick={() => setCreateModal(true)}>
+          <Plus className="h-4 w-4 mr-1" />
+          Create Temp Access
+        </Button>
+      </div>
+
+      <p className="text-sm text-muted-foreground">
+        Generate time-limited access URLs for support vendors or temporary access needs.
+      </p>
+
+      {isLoading ? (
+        <Spinner />
+      ) : links.length === 0 ? (
+        <EmptyState
+          icon={Link2}
+          title="No temporary access links"
+          description="Create a temporary access link to share with support vendors."
+        />
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Usage</TableHead>
+                <TableHead>Expires</TableHead>
+                <TableHead>Access URL</TableHead>
+                <TableHead className="w-[50px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {links.map((link) => (
+                <TableRow key={link.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded ${protocolColor(link.protocol)}`}>
+                        {protocolIcon(link.protocol)}
+                      </div>
+                      <div>
+                        <p className="font-medium">{link.name}</p>
+                        {link.description && (
+                          <p className="text-xs text-muted-foreground">{link.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-sm bg-muted px-1.5 py-0.5 rounded">
+                      {link.target_host}:{link.target_port}
+                    </code>
+                  </TableCell>
+                  <TableCell>{getStatusBadge(link)}</TableCell>
+                  <TableCell>
+                    <span className="text-sm">
+                      {link.current_uses}{link.max_uses > 0 ? `/${link.max_uses}` : ''} uses
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-sm">{getTimeRemaining(link.expires_at)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded max-w-[200px] truncate">
+                        {link.access_url}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => copyToClipboard(link.access_url, link.id)}
+                      >
+                        {copiedId === link.id ? (
+                          <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => copyToClipboard(link.access_url, link.id)}>
+                          <Copy className="h-4 w-4 mr-2" />
+                          Copy URL
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => window.open(link.access_url, '_blank')}>
+                          <ExternalLink className="h-4 w-4 mr-2" />
+                          Open Link
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-red-600"
+                          onClick={() => setDeleteTarget(link)}
+                          disabled={link.status !== 'active'}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Revoke Access
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      {/* Create Dialog */}
+      <Dialog open={createModal} onOpenChange={setCreateModal}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Temporary Access Link</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <Label>Name</Label>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Vendor SSH Access"
+                  required
+                />
+              </div>
+              <div className="col-span-2">
+                <Label>Description (optional)</Label>
+                <Input
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  placeholder="Temporary access for ABC Corp support"
+                />
+              </div>
+              <div>
+                <Label>Protocol</Label>
+                <select
+                  value={form.protocol}
+                  onChange={(e) => {
+                    const proto = e.target.value
+                    const port = proto === 'ssh' ? 22 : proto === 'rdp' ? 3389 : proto === 'vnc' ? 5900 : 22
+                    setForm({ ...form, protocol: proto, target_port: port })
+                  }}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="ssh">SSH</option>
+                  <option value="rdp">RDP</option>
+                  <option value="vnc">VNC</option>
+                </select>
+              </div>
+              <div>
+                <Label>Target Host</Label>
+                <Input
+                  value={form.target_host}
+                  onChange={(e) => setForm({ ...form, target_host: e.target.value })}
+                  placeholder="192.168.31.76"
+                  required
+                />
+              </div>
+              <div>
+                <Label>Port</Label>
+                <Input
+                  type="number"
+                  value={form.target_port}
+                  onChange={(e) => setForm({ ...form, target_port: parseInt(e.target.value) || 22 })}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Username (optional)</Label>
+                <Input
+                  value={form.username}
+                  onChange={(e) => setForm({ ...form, username: e.target.value })}
+                  placeholder="support"
+                />
+              </div>
+              <div>
+                <Label>Duration (minutes)</Label>
+                <Input
+                  type="number"
+                  value={form.duration_mins}
+                  onChange={(e) => setForm({ ...form, duration_mins: parseInt(e.target.value) || 120 })}
+                  min={5}
+                  max={10080}
+                  required
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {form.duration_mins >= 60 ? `${Math.floor(form.duration_mins / 60)}h ${form.duration_mins % 60}m` : `${form.duration_mins}m`}
+                </p>
+              </div>
+              <div>
+                <Label>Max Uses (0 = unlimited)</Label>
+                <Input
+                  type="number"
+                  value={form.max_uses}
+                  onChange={(e) => setForm({ ...form, max_uses: parseInt(e.target.value) || 0 })}
+                  min={0}
+                />
+              </div>
+              <div className="col-span-2">
+                <Label>Allowed IPs (comma-separated, optional)</Label>
+                <Input
+                  value={form.allowed_ips}
+                  onChange={(e) => setForm({ ...form, allowed_ips: e.target.value })}
+                  placeholder="1.2.3.4, 5.6.7.8"
+                />
+              </div>
+              <div className="col-span-2 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={form.notify_on_use}
+                    onCheckedChange={(v) => setForm({ ...form, notify_on_use: v })}
+                  />
+                  <Label className="text-sm">Notify on use</Label>
+                </div>
+                {form.notify_on_use && (
+                  <Input
+                    value={form.notify_email}
+                    onChange={(e) => setForm({ ...form, notify_email: e.target.value })}
+                    placeholder="admin@company.com"
+                    className="flex-1"
+                  />
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => { setCreateModal(false); resetForm() }}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? 'Creating...' : 'Create Access Link'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revoke Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke Temporary Access</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to revoke &quot;{deleteTarget?.name}&quot;? The link will no longer work.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={() => deleteTarget && revokeMutation.mutate(deleteTarget.id)}
+            >
+              Revoke Access
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

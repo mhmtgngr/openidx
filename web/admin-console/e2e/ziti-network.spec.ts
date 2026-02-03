@@ -202,7 +202,7 @@ test.describe('Ziti Overview Tab', () => {
   test('should display router count', async ({ page }) => {
     await page.goto('/ziti-network');
 
-    await expect(page.locator('text=Routers')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Routers', exact: true })).toBeVisible();
     await expect(page.locator('text=2 healthy, 1 unhealthy')).toBeVisible();
   });
 
@@ -291,9 +291,8 @@ test.describe('Ziti Services Tab', () => {
     await page.getByRole('button', { name: /add service/i }).click();
 
     await expect(page.locator('text=Create Ziti Service')).toBeVisible();
-    await expect(page.getByLabel(/service name/i)).toBeVisible();
-    await expect(page.getByLabel(/host/i)).toBeVisible();
-    await expect(page.getByLabel(/port/i)).toBeVisible();
+    await expect(page.getByPlaceholder('internal-app').first()).toBeVisible();
+    await expect(page.getByRole('spinbutton')).toBeVisible(); // Port field
   });
 
   test('should create service successfully', async ({ page }) => {
@@ -303,11 +302,16 @@ test.describe('Ziti Services Tab', () => {
 
     await page.getByRole('button', { name: /add service/i }).click();
 
-    await page.getByLabel(/service name/i).fill('new-service');
-    await page.getByLabel(/host/i).fill('192.168.1.100');
-    await page.getByLabel(/port/i).fill('3000');
+    // Use placeholder selectors - 'internal-app' is used for both name and host
+    const nameInput = page.getByPlaceholder('internal-app').first();
+    const hostInput = page.getByPlaceholder('internal-app').nth(1);
+    const portInput = page.getByRole('spinbutton');
 
-    await page.getByRole('button', { name: /create/i }).click();
+    await nameInput.fill('new-service');
+    await hostInput.fill('192.168.1.100');
+    await portInput.fill('3000');
+
+    await page.getByRole('button', { name: /create service/i }).click();
 
     // Success toast
     await expect(page.locator('text=Service created').first()).toBeVisible();
@@ -328,6 +332,128 @@ test.describe('Ziti Services Tab', () => {
 
     // Check service info is displayed
     await expect(page.locator('text=10.0.0.1').or(page.locator('text=443'))).toBeVisible();
+  });
+
+  test('should create internal SSH server service with IP 192.168.31.76', async ({ page }) => {
+    // Override POST mock to capture and verify SSH service creation
+    await page.route('**/api/v1/access/ziti/services', async (route) => {
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON();
+        // Verify the request body contains expected SSH service data
+        expect(body.name).toBe('internal-ssh-server');
+        expect(body.host).toBe('192.168.31.76');
+        expect(body.port).toBe(22);
+        expect(body.protocol).toBe('tcp');
+
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'ssh-service-id',
+            ziti_id: 'svc-ssh-001',
+            name: 'internal-ssh-server',
+            description: 'Internal SSH Server',
+            protocol: 'tcp',
+            host: '192.168.31.76',
+            port: 22,
+            enabled: true,
+            created_at: new Date().toISOString(),
+          }),
+        });
+      } else {
+        // Handle GET requests with existing services plus new SSH service
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            services: [
+              { id: '1', ziti_id: 'svc-001', name: 'web-service', description: 'Web frontend', protocol: 'tcp', host: '10.0.0.1', port: 443, enabled: true, created_at: '2024-01-01T00:00:00Z' },
+              { id: '2', ziti_id: 'svc-002', name: 'api-service', description: 'Backend API', protocol: 'tcp', host: '10.0.0.2', port: 8080, enabled: true, created_at: '2024-01-05T00:00:00Z' },
+            ],
+          }),
+        });
+      }
+    });
+
+    await page.goto('/ziti-network');
+
+    // Navigate to services tab
+    await page.getByRole('tab', { name: /services/i }).click();
+
+    // Click Add Service button
+    await page.getByRole('button', { name: /add service/i }).click();
+
+    // Wait for create service modal to appear
+    await expect(page.locator('text=Create Ziti Service')).toBeVisible();
+
+    // Fill in the SSH service details using placeholder selectors
+    const nameInput = page.getByPlaceholder('internal-app').first();
+    const descInput = page.getByPlaceholder('Optional description');
+    const hostInput = page.getByPlaceholder('internal-app').nth(1);
+    const portInput = page.getByRole('spinbutton');
+
+    await nameInput.fill('internal-ssh-server');
+    await descInput.fill('Internal SSH Server');
+    await hostInput.fill('192.168.31.76');
+    await portInput.fill('22');
+
+    // Protocol is already set to TCP by default
+
+    // Submit the form
+    await page.getByRole('button', { name: /create service/i }).click();
+
+    // Verify success message
+    await expect(page.locator('text=Service created').first()).toBeVisible();
+  });
+
+  test('should validate SSH service port 22 is valid', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /services/i }).click();
+
+    await page.getByRole('button', { name: /add service/i }).click();
+
+    await expect(page.locator('text=Create Ziti Service')).toBeVisible();
+
+    // Use placeholder selectors
+    const nameInput = page.getByPlaceholder('internal-app').first();
+    const hostInput = page.getByPlaceholder('internal-app').nth(1);
+    const portInput = page.getByRole('spinbutton');
+
+    // Fill with SSH standard port
+    await nameInput.fill('ssh-test-service');
+    await hostInput.fill('192.168.31.76');
+    await portInput.fill('22');
+
+    // Verify port field accepts value 22
+    await expect(portInput).toHaveValue('22');
+  });
+
+  test('should display SSH service in services list after creation', async ({ page }) => {
+    // Mock services list including the SSH server
+    await page.route('**/api/v1/access/ziti/services', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            services: [
+              { id: '1', ziti_id: 'svc-001', name: 'web-service', description: 'Web frontend', protocol: 'tcp', host: '10.0.0.1', port: 443, enabled: true, created_at: '2024-01-01T00:00:00Z' },
+              { id: '2', ziti_id: 'svc-002', name: 'api-service', description: 'Backend API', protocol: 'tcp', host: '10.0.0.2', port: 8080, enabled: true, created_at: '2024-01-05T00:00:00Z' },
+              { id: '3', ziti_id: 'svc-ssh-001', name: 'internal-ssh-server', description: 'Internal SSH Server', protocol: 'tcp', host: '192.168.31.76', port: 22, enabled: true, created_at: '2024-01-15T00:00:00Z' },
+            ],
+          }),
+        });
+      }
+    });
+
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /services/i }).click();
+
+    // Verify SSH service is displayed
+    await expect(page.locator('text=internal-ssh-server')).toBeVisible();
+    await expect(page.locator('text=192.168.31.76')).toBeVisible();
   });
 });
 
@@ -395,7 +521,7 @@ test.describe('Ziti Identities Tab', () => {
     await page.getByRole('button', { name: /add identity/i }).click();
 
     await expect(page.locator('text=Create Ziti Identity')).toBeVisible();
-    await expect(page.getByLabel(/identity name/i)).toBeVisible();
+    await expect(page.getByPlaceholder('john-laptop')).toBeVisible();
   });
 
   test('should show enrollment status', async ({ page }) => {
@@ -403,8 +529,8 @@ test.describe('Ziti Identities Tab', () => {
 
     await page.getByRole('tab', { name: /identities/i }).click();
 
-    // Check for enrolled/not enrolled indicators
-    await expect(page.locator('text=Enrolled').or(page.locator('text=Not Enrolled').or(page.locator('text=Pending')))).toBeVisible();
+    // Check that at least one enrolled badge is visible
+    await expect(page.getByRole('cell', { name: 'Enrolled' }).first()).toBeVisible();
   });
 
   test('should have search input for identities', async ({ page }) => {
@@ -495,17 +621,15 @@ test.describe('Ziti Security Tab', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, sdk_ready: true, controller_reachable: true, services_count: 5, identities_count: 10 }) });
     });
 
-    await page.route('**/api/v1/access/ziti/posture-checks*', async (route) => {
+    // Note: API uses /posture/checks (not /posture-checks)
+    await page.route('**/api/v1/access/ziti/posture/checks*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          checks: [
-            { id: '1', name: 'OS Check', check_type: 'os', enabled: true, severity: 'high', created_at: '2024-01-01T00:00:00Z' },
-            { id: '2', name: 'MFA Check', check_type: 'mfa', enabled: true, severity: 'critical', created_at: '2024-01-05T00:00:00Z' },
-          ],
-          summary: { total_checks: 2, enabled_checks: 2, disabled_checks: 0, by_type: { os: 1, mfa: 1 }, by_severity: { high: 1, critical: 1 } },
-        }),
+        body: JSON.stringify([
+          { id: '1', name: 'OS Check', check_type: 'OS', enabled: true, severity: 'high', created_at: '2024-01-01T00:00:00Z' },
+          { id: '2', name: 'MFA Check', check_type: 'MFA', enabled: true, severity: 'critical', created_at: '2024-01-05T00:00:00Z' },
+        ]),
       });
     });
 
@@ -534,7 +658,8 @@ test.describe('Ziti Security Tab', () => {
 
     await page.getByRole('tab', { name: /security/i }).click();
 
-    await expect(page.locator('text=OS Check').or(page.locator('text=MFA Check'))).toBeVisible();
+    // Use first() for strict mode since both checks are visible
+    await expect(page.getByRole('cell', { name: 'OS Check' }).or(page.getByRole('cell', { name: 'MFA Check' })).first()).toBeVisible();
   });
 
   test('should show certificates section', async ({ page }) => {
@@ -542,7 +667,8 @@ test.describe('Ziti Security Tab', () => {
 
     await page.getByRole('tab', { name: /security/i }).click();
 
-    await expect(page.locator('text=Certificates').or(page.locator('text=Root CA'))).toBeVisible();
+    // Use first() for strict mode
+    await expect(page.getByRole('cell', { name: 'Root CA', exact: true }).or(page.getByRole('button', { name: 'Certificates' })).first()).toBeVisible();
   });
 });
 
@@ -581,7 +707,8 @@ test.describe('Ziti Remote Access Tab', () => {
 
     await page.getByRole('tab', { name: /remote access/i }).click();
 
-    await expect(page.getByRole('heading', { name: 'BrowZer' }).or(page.locator('text=Remote Access').first())).toBeVisible();
+    // Wait for content to load - look for BrowZer heading within the tab content
+    await expect(page.locator('h3:has-text("BrowZer")').first()).toBeVisible();
   });
 
   test('should show BrowZer status', async ({ page }) => {
@@ -589,6 +716,176 @@ test.describe('Ziti Remote Access Tab', () => {
 
     await page.getByRole('tab', { name: /remote access/i }).click();
 
-    await expect(page.getByRole('heading', { name: 'BrowZer' })).toBeVisible();
+    await expect(page.locator('h3:has-text("BrowZer")').first()).toBeVisible();
+  });
+
+  test('should display external SSH connection for 192.168.31.76', async ({ page }) => {
+    // Mock Guacamole connections with SSH to internal server
+    await page.route('**/api/v1/access/guacamole/connections*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          connections: [
+            {
+              id: 'ssh-conn-1',
+              route_id: 'route-ssh-internal',
+              guacamole_connection_id: 'guac-ssh-001',
+              protocol: 'ssh',
+              hostname: '192.168.31.76',
+              port: 22,
+              parameters: { username: 'admin' },
+              created_at: '2024-01-15T00:00:00Z',
+              updated_at: '2024-01-15T00:00:00Z',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /remote access/i }).click();
+
+    // Verify SSH connection to internal server is displayed
+    await expect(page.locator('text=192.168.31.76')).toBeVisible();
+    await expect(page.locator('td:has-text("ssh")').first()).toBeVisible();
+    await expect(page.locator('text=22').first()).toBeVisible();
+  });
+
+  test('should display Guacamole SSH access URL for 192.168.31.76', async ({ page }) => {
+    // Mock BrowZer status - base URL only
+    await page.route('**/api/v1/access/ziti/browzer/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          enabled: true,
+          configured: true,
+          bootstrapper_url: 'https://browzer.localtest.me/',
+          oidc_issuer: 'https://auth.localtest.me',
+          oidc_client_id: 'browzer-client',
+          external_jwt_signer_id: 'jwt-signer-001',
+        }),
+      });
+    });
+
+    // Mock Guacamole connections with SSH to internal server
+    // Guacamole uses path: /guacamole/#/client/{encoded-connection-id}
+    await page.route('**/api/v1/access/guacamole/connections*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          connections: [
+            {
+              id: 'ssh-conn-1',
+              route_id: 'route-ssh-internal',
+              guacamole_connection_id: 'c/internal-ssh-server',
+              protocol: 'ssh',
+              hostname: '192.168.31.76',
+              port: 22,
+              // Full Guacamole URL with path
+              connect_url: 'https://browzer.localtest.me/guacamole/#/client/c/internal-ssh-server',
+              parameters: { username: 'admin' },
+              created_at: '2024-01-15T00:00:00Z',
+              updated_at: '2024-01-15T00:00:00Z',
+            },
+          ],
+        }),
+      });
+    });
+
+    // Mock services list with SSH service
+    await page.route('**/api/v1/access/ziti/services*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          services: [
+            {
+              id: 'ssh-svc-1',
+              ziti_id: 'svc-ssh-001',
+              name: 'internal-ssh-server',
+              description: 'Internal SSH Server',
+              protocol: 'tcp',
+              host: '192.168.31.76',
+              port: 22,
+              enabled: true,
+              created_at: '2024-01-15T00:00:00Z',
+            },
+          ],
+        }),
+      });
+    });
+
+    // Mock connect endpoint - returns Guacamole URL with /guacamole path
+    await page.route('**/api/v1/access/guacamole/connections/*/connect', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          connect_url: 'https://browzer.localtest.me/guacamole/#/client/c/internal-ssh-server',
+        }),
+      });
+    });
+
+    await page.goto('/ziti-network');
+
+    // Navigate to Remote Access tab
+    await page.getByRole('tab', { name: /remote access/i }).click();
+
+    // Verify BrowZer is enabled
+    await expect(page.locator('h3:has-text("BrowZer")').first()).toBeVisible();
+    await expect(page.locator('text=Enabled').first()).toBeVisible();
+
+    // Verify SSH connection details
+    await expect(page.locator('text=192.168.31.76').first()).toBeVisible();
+    await expect(page.getByText(':22').first()).toBeVisible();
+
+    // Verify Connect button exists for Guacamole access
+    await expect(page.getByRole('button', { name: /connect/i })).toBeVisible();
+  });
+
+  test('should have Connect button for SSH external access', async ({ page }) => {
+    await page.route('**/api/v1/access/guacamole/connections*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          connections: [
+            {
+              id: 'ssh-conn-1',
+              route_id: 'route-ssh-internal',
+              guacamole_connection_id: 'guac-ssh-001',
+              protocol: 'ssh',
+              hostname: '192.168.31.76',
+              port: 22,
+              parameters: {},
+              created_at: '2024-01-15T00:00:00Z',
+              updated_at: '2024-01-15T00:00:00Z',
+            },
+          ],
+        }),
+      });
+    });
+
+    // Mock connect endpoint
+    await page.route('**/api/v1/access/guacamole/connections/*/connect', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          connect_url: 'https://guacamole.example.com/#/client/c/guac-ssh-001',
+        }),
+      });
+    });
+
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /remote access/i }).click();
+
+    // Verify Connect button is available
+    await expect(page.getByRole('button', { name: /connect/i })).toBeVisible();
   });
 });

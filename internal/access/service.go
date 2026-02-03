@@ -224,7 +224,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guacamole remote access
 		api.GET("/guacamole/connections", svc.handleListGuacamoleConnections)
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
+
+		// Temporary access links for support/vendor access
+		api.GET("/temp-access", svc.handleListTempAccess)
+		api.POST("/temp-access", svc.handleCreateTempAccess)
+		api.GET("/temp-access/:id", svc.handleGetTempAccess)
+		api.DELETE("/temp-access/:id", svc.handleRevokeTempAccess)
+		api.GET("/temp-access/:id/usage", svc.handleGetTempAccessUsage)
 	}
+
+	// Temp access public endpoint (no auth - uses token)
+	router.GET("/temp-access/:token", svc.handleUseTempAccess)
 
 	// Catch-all reverse proxy (must be last)
 	router.NoRoute(svc.handleProxy)
