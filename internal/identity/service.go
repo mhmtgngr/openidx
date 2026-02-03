@@ -2634,6 +2634,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/biometric/policies", svc.handleCreateBiometricPolicy)
 		identity.PUT("/biometric/policies/:policy_id", svc.handleUpdateBiometricPolicy)
 		identity.DELETE("/biometric/policies/:policy_id", svc.handleDeleteBiometricPolicy)
+
+		// Risk Policies (Admin)
+		identity.GET("/risk/policies", svc.handleListRiskPolicies)
+		identity.POST("/risk/policies", svc.handleCreateRiskPolicy)
+		identity.GET("/risk/policies/:id", svc.handleGetRiskPolicy)
+		identity.PUT("/risk/policies/:id", svc.handleUpdateRiskPolicy)
+		identity.DELETE("/risk/policies/:id", svc.handleDeleteRiskPolicy)
+		identity.PATCH("/risk/policies/:id/toggle", svc.handleToggleRiskPolicy)
+		identity.POST("/risk/evaluate", svc.handleEvaluateRisk)
+		identity.GET("/risk/stats", svc.handleGetRiskStats)
+		identity.GET("/risk/login-history", svc.handleGetLoginHistory)
 	}
 }
 

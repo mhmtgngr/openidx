@@ -38,6 +38,8 @@ import { HardwareTokensPage } from './pages/hardware-tokens'
 import { DeviceTrustApprovalPage } from './pages/device-trust-approval'
 import { MFABypassCodesPage } from './pages/mfa-bypass-codes'
 import { PasswordlessSettingsPage } from './pages/passwordless-settings'
+import { RiskPoliciesPage } from './pages/risk-policies'
+import { TrustedBrowsersPage } from './pages/trusted-browsers'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -230,6 +232,9 @@ export default function App() {
           <Route path="notification-preferences" element={
             <NotificationPreferencesPage />
           } />
+          <Route path="trusted-browsers" element={
+            <TrustedBrowsersPage />
+          } />
           <Route path="hardware-tokens" element={
             <AdminRoute>
               <HardwareTokensPage />
@@ -248,6 +253,11 @@ export default function App() {
           <Route path="passwordless-settings" element={
             <AdminRoute>
               <PasswordlessSettingsPage />
+            </AdminRoute>
+          } />
+          <Route path="risk-policies" element={
+            <AdminRoute>
+              <RiskPoliciesPage />
             </AdminRoute>
           } />
         </Route>

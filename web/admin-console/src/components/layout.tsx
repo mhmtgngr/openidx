@@ -31,6 +31,7 @@ import {
   KeyRound,
   ShieldOff,
   Link2,
+  Activity,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -69,6 +70,7 @@ const navigationSections: NavSection[] = [
       { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
       { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
       { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
+      { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, adminOnly: false },
       { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
     ],
   },
@@ -116,6 +118,7 @@ const navigationSections: NavSection[] = [
     label: 'Security & MFA',
     adminOnly: true,
     items: [
+      { name: 'Risk Policies', href: '/risk-policies', icon: Activity, adminOnly: true },
       { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, adminOnly: true },
       { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
       { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },

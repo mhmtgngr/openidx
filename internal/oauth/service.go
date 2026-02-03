@@ -1056,14 +1056,50 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 	}
 
-	// Check if user has MFA enabled
+	// Check if user has MFA enabled and get available methods
 	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
 	mfaEnabled := totpStatus != nil && totpStatus.Enabled
 
-	// Force MFA if risk score is high (>= 70) and MFA is available
-	forceMFA := riskScore >= 70 && mfaEnabled
+	// Gather available MFA methods
+	var availableMFAMethods []string
+	if totpStatus != nil && totpStatus.Enabled {
+		availableMFAMethods = append(availableMFAMethods, "totp")
+	}
+	// Check for backup codes
+	backupCount, _ := s.identityService.GetBackupCodeCount(c.Request.Context(), user.ID)
+	if backupCount > 0 {
+		availableMFAMethods = append(availableMFAMethods, "backup")
+	}
+	// Check for active bypass codes (admin-generated)
+	hasActiveBypass, _ := s.identityService.HasActiveBypassCode(c.Request.Context(), user.ID)
+	if hasActiveBypass {
+		availableMFAMethods = append(availableMFAMethods, "bypass")
+	}
+	// Check for WebAuthn credentials
+	webauthnCreds, _ := s.identityService.GetWebAuthnCredentials(c.Request.Context(), user.ID)
+	if len(webauthnCreds) > 0 {
+		availableMFAMethods = append(availableMFAMethods, "webauthn")
+	}
+	// Check for push MFA devices
+	pushDevices, _ := s.identityService.GetPushDevices(c.Request.Context(), user.ID)
+	if len(pushDevices) > 0 {
+		availableMFAMethods = append(availableMFAMethods, "push")
+	}
 
-	if mfaEnabled && (forceMFA || (totpStatus != nil && totpStatus.Enabled)) {
+	// Check for trusted browser — skip MFA if browser is trusted
+	var browserTrusted bool
+	if fingerprint != "" && s.identityService != nil {
+		tb, _ := s.identityService.IsTrustedBrowser(c.Request.Context(), user.ID, fingerprint)
+		browserTrusted = tb != nil
+	}
+
+	// Force MFA if risk score is high (>= 70) and MFA is available, unless browser is trusted
+	forceMFA := riskScore >= 70 && mfaEnabled && !browserTrusted
+
+	// Skip MFA if browser is trusted (unless high risk)
+	skipMFA := browserTrusted && riskScore < 70
+
+	if mfaEnabled && !skipMFA && (forceMFA || (totpStatus != nil && totpStatus.Enabled)) {
 		// MFA required — store partial auth in Redis and return MFA challenge
 		mfaSession := GenerateRandomToken(32)
 		mfaData := map[string]string{
@@ -1082,14 +1118,26 @@ func (s *Service) handleLogin(c *gin.Context) {
 		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
 
 		c.JSON(200, gin.H{
-			"mfa_required":  true,
-			"mfa_session":   mfaSession,
-			"mfa_methods":   []string{"totp"},
-			"risk_score":    riskScore,
-			"risk_factors":  riskFactors,
+			"mfa_required":   true,
+			"mfa_session":    mfaSession,
+			"mfa_methods":    availableMFAMethods,
+			"risk_score":     riskScore,
+			"risk_factors":   riskFactors,
 			"device_trusted": deviceTrusted,
+			"can_trust_browser": !browserTrusted, // Offer to trust if not already trusted
 		})
 		return
+	}
+
+	// Log if MFA was skipped due to trusted browser
+	if skipMFA && mfaEnabled {
+		s.logger.Info("MFA skipped due to trusted browser",
+			zap.String("user_id", user.ID),
+			zap.String("fingerprint", fingerprint),
+		)
+		go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_skipped", "success",
+			user.ID, clientIP, user.ID, "user",
+			map[string]interface{}{"reason": "trusted_browser", "fingerprint": fingerprint})
 	}
 
 	// High risk but no MFA available — deny access
@@ -1107,7 +1155,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 		return
 	}
 
-	// No MFA — proceed with authorization code
+	// No MFA required — proceed with authorization code
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
 	s.issueAuthorizationCode(c, oauthParams, user.ID)
 }
@@ -1145,11 +1193,14 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 	})
 }
 
-// handleMFAVerify handles TOTP verification after password authentication
+// handleMFAVerify handles MFA verification after password authentication
+// Supports TOTP, backup codes, bypass codes, and trusted browser option
 func (s *Service) handleMFAVerify(c *gin.Context) {
 	var req struct {
-		MFASession string `json:"mfa_session"`
-		Code       string `json:"code"`
+		MFASession   string `json:"mfa_session"`
+		Code         string `json:"code"`
+		Method       string `json:"method"`        // "totp", "backup", "bypass"
+		TrustBrowser bool   `json:"trust_browser"` // Request to trust this browser
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1160,6 +1211,11 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 	if req.MFASession == "" || req.Code == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "mfa_session and code are required"})
 		return
+	}
+
+	// Default method is TOTP
+	if req.Method == "" {
+		req.Method = "totp"
 	}
 
 	// Retrieve MFA session from Redis
@@ -1176,30 +1232,125 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 	}
 
 	userID := mfaData["user_id"]
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
 
-	// Verify TOTP code
-	valid, err := s.identityService.VerifyTOTP(c.Request.Context(), userID, req.Code)
-	if err != nil || !valid {
+	var valid bool
+	var verifyErr error
+
+	switch req.Method {
+	case "totp":
+		// Verify TOTP code
+		valid, verifyErr = s.identityService.VerifyTOTP(c.Request.Context(), userID, req.Code)
+
+	case "backup":
+		// Verify backup code
+		valid, verifyErr = s.identityService.VerifyBackupCode(c.Request.Context(), userID, req.Code)
+
+	case "bypass":
+		// Verify admin-generated bypass code
+		valid, verifyErr = s.identityService.VerifyBypassCode(c.Request.Context(), userID, req.Code, clientIP, userAgent)
+
+	default:
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "unsupported MFA method"})
+		return
+	}
+
+	if verifyErr != nil || !valid {
+		// Log failed MFA attempt
+		go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_failed", "failure",
+			userID, clientIP, userID, "user",
+			map[string]interface{}{"method": req.Method, "error": verifyErr})
+
 		c.JSON(401, gin.H{"error": "invalid_mfa_code", "error_description": "Invalid verification code"})
 		return
 	}
 
-	// MFA verified — delete session and issue authorization code
+	// MFA verified — delete session
 	s.redis.Client.Del(c.Request.Context(), "mfa_session:"+req.MFASession)
 
 	// Log MFA verification audit event
 	go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_verified", "success",
-		userID, c.ClientIP(), userID, "user",
-		map[string]interface{}{"method": "totp"})
+		userID, clientIP, userID, "user",
+		map[string]interface{}{"method": req.Method, "trust_browser": req.TrustBrowser})
+
+	// Handle trusted browser request
+	var trustedBrowserID string
+	if req.TrustBrowser {
+		browserHash := ""
+		if s.riskService != nil {
+			browserHash = s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
+		}
+		browserName := parseBrowserNameFromUA(userAgent)
+
+		tb, err := s.identityService.TrustBrowser(c.Request.Context(), userID, browserHash, browserName, clientIP, userAgent)
+		if err == nil && tb != nil {
+			trustedBrowserID = tb.ID
+			s.logger.Info("Browser trusted after MFA",
+				zap.String("user_id", userID),
+				zap.String("browser_id", tb.ID))
+		}
+	}
 
 	oauthParams := make(map[string]string)
 	for k, v := range mfaData {
-		if k != "user_id" {
+		if k != "user_id" && k != "risk_score" && k != "fingerprint" && k != "location" {
 			oauthParams[k] = v
 		}
 	}
 
-	s.issueAuthorizationCode(c, oauthParams, userID)
+	// Issue authorization code with optional trusted browser info
+	s.issueAuthorizationCodeWithTrust(c, oauthParams, userID, trustedBrowserID)
+}
+
+// issueAuthorizationCodeWithTrust issues auth code and includes trusted browser info
+func (s *Service) issueAuthorizationCodeWithTrust(c *gin.Context, params map[string]string, userID, trustedBrowserID string) {
+	// Generate authorization code
+	authCode := GenerateRandomToken(32)
+
+	// Store code in Redis with user info
+	codeData := map[string]string{
+		"user_id":      userID,
+		"client_id":    params["client_id"],
+		"redirect_uri": params["redirect_uri"],
+		"scope":        params["scope"],
+		"nonce":        params["nonce"],
+	}
+	if params["code_challenge"] != "" {
+		codeData["code_challenge"] = params["code_challenge"]
+		codeData["code_challenge_method"] = params["code_challenge_method"]
+	}
+
+	codeDataJSON, _ := json.Marshal(codeData)
+	s.redis.Client.Set(c.Request.Context(), "auth_code:"+authCode, string(codeDataJSON), 10*time.Minute)
+
+	response := gin.H{
+		"code":  authCode,
+		"state": params["state"],
+	}
+
+	if trustedBrowserID != "" {
+		response["trusted_browser_id"] = trustedBrowserID
+	}
+
+	c.JSON(200, response)
+}
+
+// parseBrowserNameFromUA extracts browser name from user agent
+func parseBrowserNameFromUA(userAgent string) string {
+	ua := strings.ToLower(userAgent)
+	switch {
+	case strings.Contains(ua, "edg"):
+		return "Microsoft Edge"
+	case strings.Contains(ua, "chrome"):
+		return "Google Chrome"
+	case strings.Contains(ua, "firefox"):
+		return "Mozilla Firefox"
+	case strings.Contains(ua, "safari"):
+		return "Apple Safari"
+	default:
+		return "Unknown Browser"
+	}
 }
 
 func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
