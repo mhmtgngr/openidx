@@ -2645,6 +2645,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/risk/evaluate", svc.handleEvaluateRisk)
 		identity.GET("/risk/stats", svc.handleGetRiskStats)
 		identity.GET("/risk/login-history", svc.handleGetLoginHistory)
+
+		// Login Analytics (Admin)
+		identity.GET("/analytics/logins", svc.handleGetLoginAnalytics)
 	}
 }
 

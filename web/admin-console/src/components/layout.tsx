@@ -130,6 +130,7 @@ const navigationSections: NavSection[] = [
     adminOnly: true,
     items: [
       { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
+      { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
       { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
       { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
     ],

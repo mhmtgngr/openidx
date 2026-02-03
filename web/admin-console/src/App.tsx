@@ -40,6 +40,7 @@ import { MFABypassCodesPage } from './pages/mfa-bypass-codes'
 import { PasswordlessSettingsPage } from './pages/passwordless-settings'
 import { RiskPoliciesPage } from './pages/risk-policies'
 import { TrustedBrowsersPage } from './pages/trusted-browsers'
+import { LoginAnalyticsPage } from './pages/login-analytics'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -258,6 +259,11 @@ export default function App() {
           <Route path="risk-policies" element={
             <AdminRoute>
               <RiskPoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="login-analytics" element={
+            <AdminRoute>
+              <LoginAnalyticsPage />
             </AdminRoute>
           } />
         </Route>
