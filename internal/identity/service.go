@@ -2461,6 +2461,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/users/:id", svc.handleGetUser)
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
+		identity.POST("/users/:id/reset-password", svc.handleAdminResetPassword)
 
 		// Identity Providers (for SSO)
 		identity.GET("/providers", svc.handleListIdentityProviders)
@@ -3809,6 +3810,55 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1", req.Token)
 
 	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
+}
+
+// handleAdminResetPassword allows admins to trigger a password reset email for a user
+func (s *Service) handleAdminResetPassword(c *gin.Context) {
+	userID := c.Param("id")
+
+	// Get user email
+	var email, firstName string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT email, first_name FROM users WHERE id = $1 AND enabled = true", userID).Scan(&email, &firstName)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Generate reset token
+	tokenBytes := make([]byte, 32)
+	rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+
+	// Store token with 24 hour expiry (longer for admin-triggered resets)
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, token, time.Now().Add(24*time.Hour))
+	if err != nil {
+		s.logger.Error("Failed to create password reset token", zap.Error(err))
+		c.JSON(500, gin.H{"error": "Failed to create reset token"})
+		return
+	}
+
+	// Log the admin action
+	adminID, _ := c.Get("user_id")
+	s.logger.Info("Admin triggered password reset",
+		zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+		zap.String("target_user_id", userID),
+		zap.String("target_email", email))
+
+	// Send password reset email
+	if s.emailService != nil {
+		baseURL := "http://localhost:3000"
+		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), email, firstName, token, baseURL); err != nil {
+			s.logger.Error("Failed to send password reset email", zap.Error(err))
+			c.JSON(500, gin.H{"error": "Failed to send reset email"})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"message": "Password reset email sent successfully"})
 }
 
 // Permission represents a system permission
