@@ -85,6 +85,12 @@ type Config struct {
 
 	// Push MFA configuration
 	PushMFA PushMFAConfig `mapstructure:"push_mfa"`
+
+	// SMS MFA configuration
+	SMS SMSConfig `mapstructure:"sms"`
+
+	// Adaptive MFA / Risk-based authentication
+	AdaptiveMFA AdaptiveMFAConfig `mapstructure:"adaptive_mfa"`
 }
 
 // WebAuthnConfig holds WebAuthn/FIDO2 configuration
@@ -104,6 +110,39 @@ type PushMFAConfig struct {
 	APNSBundleID     string `mapstructure:"apns_bundle_id"`      // APNS bundle identifier (e.g., "com.openidx.app")
 	ChallengeTimeout int    `mapstructure:"challenge_timeout"`   // Timeout in seconds (default: 60)
 	AutoApprove      bool   `mapstructure:"auto_approve"`        // Auto-approve for development (NEVER use in production)
+}
+
+// SMSConfig holds SMS MFA configuration
+type SMSConfig struct {
+	Enabled       bool   `mapstructure:"enabled"`         // Enable SMS MFA
+	Provider      string `mapstructure:"provider"`        // twilio, aws_sns, webhook, mock
+	TwilioSID     string `mapstructure:"twilio_sid"`      // Twilio Account SID
+	TwilioToken   string `mapstructure:"twilio_token"`    // Twilio Auth Token
+	TwilioFrom    string `mapstructure:"twilio_from"`     // Twilio From Number
+	AWSRegion     string `mapstructure:"aws_region"`      // AWS Region for SNS
+	AWSAccessKey  string `mapstructure:"aws_access_key"`  // AWS Access Key (optional, uses IAM role if empty)
+	AWSSecretKey  string `mapstructure:"aws_secret_key"`  // AWS Secret Key (optional, uses IAM role if empty)
+	WebhookURL    string `mapstructure:"webhook_url"`     // Custom webhook URL for SMS delivery
+	WebhookAPIKey string `mapstructure:"webhook_api_key"` // API key for webhook authentication
+	MessagePrefix string `mapstructure:"message_prefix"`  // Prefix for OTP messages (default: "OpenIDX")
+	OTPLength     int    `mapstructure:"otp_length"`      // Length of OTP code (default: 6)
+	OTPExpiry     int    `mapstructure:"otp_expiry"`      // OTP expiry in seconds (default: 300)
+	MaxAttempts   int    `mapstructure:"max_attempts"`    // Max verification attempts (default: 3)
+}
+
+// AdaptiveMFAConfig holds adaptive/risk-based MFA configuration
+type AdaptiveMFAConfig struct {
+	Enabled                  bool `mapstructure:"enabled"`                     // Enable adaptive MFA
+	NewDeviceRiskScore       int  `mapstructure:"new_device_risk_score"`       // Risk score for new device (default: 30)
+	NewLocationRiskScore     int  `mapstructure:"new_location_risk_score"`     // Risk score for new location (default: 20)
+	ImpossibleTravelRiskScore int `mapstructure:"impossible_travel_risk_score"` // Risk score for impossible travel (default: 50)
+	BlockedIPRiskScore       int  `mapstructure:"blocked_ip_risk_score"`       // Risk score for blocked IP (default: 40)
+	FailedLoginRiskScore     int  `mapstructure:"failed_login_risk_score"`     // Risk score per recent failed login (default: 10)
+	TrustedBrowserDays       int  `mapstructure:"trusted_browser_days"`        // Days to trust a browser (default: 30)
+	LowRiskThreshold         int  `mapstructure:"low_risk_threshold"`          // Below this: skip MFA (default: 30)
+	MediumRiskThreshold      int  `mapstructure:"medium_risk_threshold"`       // Below this: standard MFA (default: 50)
+	HighRiskThreshold        int  `mapstructure:"high_risk_threshold"`         // Below this: strong MFA (default: 70)
+	// Above high_risk_threshold: step-up auth + admin notification
 }
 
 // Load reads configuration from file and environment variables
@@ -231,6 +270,26 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("push_mfa.enabled", true)
 	v.SetDefault("push_mfa.challenge_timeout", 60)
 	v.SetDefault("push_mfa.auto_approve", false)
+
+	// SMS MFA defaults
+	v.SetDefault("sms.enabled", false)
+	v.SetDefault("sms.provider", "mock")
+	v.SetDefault("sms.message_prefix", "OpenIDX")
+	v.SetDefault("sms.otp_length", 6)
+	v.SetDefault("sms.otp_expiry", 300)
+	v.SetDefault("sms.max_attempts", 3)
+
+	// Adaptive MFA defaults
+	v.SetDefault("adaptive_mfa.enabled", true)
+	v.SetDefault("adaptive_mfa.new_device_risk_score", 30)
+	v.SetDefault("adaptive_mfa.new_location_risk_score", 20)
+	v.SetDefault("adaptive_mfa.impossible_travel_risk_score", 50)
+	v.SetDefault("adaptive_mfa.blocked_ip_risk_score", 40)
+	v.SetDefault("adaptive_mfa.failed_login_risk_score", 10)
+	v.SetDefault("adaptive_mfa.trusted_browser_days", 30)
+	v.SetDefault("adaptive_mfa.low_risk_threshold", 30)
+	v.SetDefault("adaptive_mfa.medium_risk_threshold", 50)
+	v.SetDefault("adaptive_mfa.high_risk_threshold", 70)
 }
 
 func bindEnvVars(v *viper.Viper) {
@@ -271,6 +330,17 @@ func bindEnvVars(v *viper.Viper) {
 		"smtp_username":            "SMTP_USERNAME",
 		"smtp_password":            "SMTP_PASSWORD",
 		"smtp_from":                "SMTP_FROM",
+		"sms.enabled":              "SMS_ENABLED",
+		"sms.provider":             "SMS_PROVIDER",
+		"sms.twilio_sid":           "TWILIO_ACCOUNT_SID",
+		"sms.twilio_token":         "TWILIO_AUTH_TOKEN",
+		"sms.twilio_from":          "TWILIO_FROM_NUMBER",
+		"sms.aws_region":           "AWS_REGION",
+		"sms.aws_access_key":       "AWS_ACCESS_KEY_ID",
+		"sms.aws_secret_key":       "AWS_SECRET_ACCESS_KEY",
+		"sms.webhook_url":          "SMS_WEBHOOK_URL",
+		"sms.webhook_api_key":      "SMS_WEBHOOK_API_KEY",
+		"adaptive_mfa.enabled":     "ADAPTIVE_MFA_ENABLED",
 	}
 
 	for key, env := range envMappings {

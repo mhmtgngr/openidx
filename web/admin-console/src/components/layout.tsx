@@ -64,6 +64,7 @@ const navigationSections: NavSection[] = [
       { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
       { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
       { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
+      { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
       { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
     ],
   },

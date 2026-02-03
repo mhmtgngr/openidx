@@ -32,6 +32,7 @@ import { OrganizationsPage } from './pages/organizations'
 import { ReportsPage } from './pages/reports'
 import { AppLauncherPage } from './pages/app-launcher'
 import { MyAccessPage } from './pages/my-access'
+import { MyDevicesPage } from './pages/my-devices'
 import { NotificationPreferencesPage } from './pages/notification-preferences'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
@@ -218,6 +219,9 @@ export default function App() {
           } />
           <Route path="my-access" element={
             <MyAccessPage />
+          } />
+          <Route path="my-devices" element={
+            <MyDevicesPage />
           } />
           <Route path="notification-preferences" element={
             <NotificationPreferencesPage />

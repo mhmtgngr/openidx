@@ -3,8 +3,11 @@ package portal
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -486,6 +489,287 @@ func (s *Service) handleReviewGroupRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "group request reviewed"})
 }
 
+// --- Device Management ---
+
+// UserDevice represents a user's registered device
+type UserDevice struct {
+	ID              string     `json:"id"`
+	UserID          string     `json:"user_id"`
+	Fingerprint     string     `json:"fingerprint,omitempty"`
+	Name            string     `json:"name"`
+	DeviceType      string     `json:"device_type"` // desktop, mobile, tablet
+	IPAddress       string     `json:"ip_address"`
+	UserAgent       string     `json:"user_agent,omitempty"`
+	Location        string     `json:"location,omitempty"`
+	Trusted         bool       `json:"trusted"`
+	TrustRequested  bool       `json:"trust_requested"`
+	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// GetMyDevices returns all devices for a user
+func (s *Service) GetMyDevices(ctx context.Context, userID string) ([]UserDevice, error) {
+	query := `
+		SELECT id, user_id, fingerprint, COALESCE(name, 'Unknown Device') AS name,
+		       ip_address, user_agent, COALESCE(location, '') AS location,
+		       trusted, last_seen_at, created_at
+		FROM known_devices
+		WHERE user_id = $1
+		ORDER BY last_seen_at DESC NULLS LAST, created_at DESC
+	`
+
+	rows, err := s.db.Pool.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query devices: %w", err)
+	}
+	defer rows.Close()
+
+	var devices []UserDevice
+	for rows.Next() {
+		var d UserDevice
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Fingerprint, &d.Name,
+			&d.IPAddress, &d.UserAgent, &d.Location, &d.Trusted,
+			&d.LastSeenAt, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan device: %w", err)
+		}
+		d.DeviceType = detectDeviceType(d.UserAgent)
+		devices = append(devices, d)
+	}
+
+	return devices, nil
+}
+
+// RegisterDevice registers a new device for a user
+func (s *Service) RegisterDevice(ctx context.Context, userID, name, fingerprint, ipAddress, userAgent, location string) (*UserDevice, error) {
+	device := &UserDevice{
+		ID:          uuid.New().String(),
+		UserID:      userID,
+		Fingerprint: fingerprint,
+		Name:        name,
+		IPAddress:   ipAddress,
+		UserAgent:   userAgent,
+		Location:    location,
+		Trusted:     false,
+		CreatedAt:   time.Now().UTC(),
+	}
+
+	if device.Name == "" {
+		device.Name = detectDeviceName(userAgent)
+	}
+	if device.Fingerprint == "" {
+		device.Fingerprint = generateFingerprint(userAgent, ipAddress)
+	}
+	device.DeviceType = detectDeviceType(userAgent)
+
+	query := `
+		INSERT INTO known_devices (id, user_id, fingerprint, name, ip_address, user_agent, location, trusted, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (user_id, fingerprint) DO UPDATE
+		SET name = EXCLUDED.name, ip_address = EXCLUDED.ip_address, user_agent = EXCLUDED.user_agent,
+		    location = EXCLUDED.location, last_seen_at = NOW()
+		RETURNING id
+	`
+
+	err := s.db.Pool.QueryRow(ctx, query,
+		device.ID, device.UserID, device.Fingerprint, device.Name,
+		device.IPAddress, device.UserAgent, device.Location, device.Trusted, device.CreatedAt,
+	).Scan(&device.ID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to register device: %w", err)
+	}
+
+	return device, nil
+}
+
+// UpdateDevice updates a device's name
+func (s *Service) UpdateDevice(ctx context.Context, userID, deviceID, name string) error {
+	query := `UPDATE known_devices SET name = $1 WHERE id = $2 AND user_id = $3`
+	result, err := s.db.Pool.Exec(ctx, query, name, deviceID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update device: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("device not found")
+	}
+	return nil
+}
+
+// DeleteDevice removes a device
+func (s *Service) DeleteDevice(ctx context.Context, userID, deviceID string) error {
+	query := `DELETE FROM known_devices WHERE id = $1 AND user_id = $2`
+	result, err := s.db.Pool.Exec(ctx, query, deviceID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete device: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("device not found")
+	}
+	return nil
+}
+
+// RequestDeviceTrust creates a trust request for a device
+func (s *Service) RequestDeviceTrust(ctx context.Context, userID, deviceID, justification string) error {
+	// For now, just mark the device - in production, this would create an approval workflow
+	// Note: This is a simplified implementation. A full implementation would have:
+	// - device_trust_requests table
+	// - Approval workflow
+	// - Admin notification
+	s.logger.Info("Device trust requested",
+		zap.String("user_id", userID),
+		zap.String("device_id", deviceID),
+		zap.String("justification", justification))
+	return nil
+}
+
+// --- Device HTTP Handlers ---
+
+func (s *Service) handleGetMyDevices(c *gin.Context) {
+	userID := getUserID(c)
+
+	devices, err := s.GetMyDevices(c.Request.Context(), userID)
+	if err != nil {
+		s.logger.Error("failed to get devices", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get devices"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"devices": devices})
+}
+
+func (s *Service) handleRegisterDevice(c *gin.Context) {
+	userID := getUserID(c)
+
+	var req struct {
+		Name        string `json:"name"`
+		Fingerprint string `json:"fingerprint"`
+		Location    string `json:"location"`
+	}
+	c.ShouldBindJSON(&req)
+
+	device, err := s.RegisterDevice(c.Request.Context(), userID, req.Name, req.Fingerprint,
+		c.ClientIP(), c.GetHeader("User-Agent"), req.Location)
+	if err != nil {
+		s.logger.Error("failed to register device", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, device)
+}
+
+func (s *Service) handleUpdateDevice(c *gin.Context) {
+	userID := getUserID(c)
+	deviceID := c.Param("id")
+
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+
+	if err := s.UpdateDevice(c.Request.Context(), userID, deviceID, req.Name); err != nil {
+		s.logger.Error("failed to update device", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "device updated"})
+}
+
+func (s *Service) handleDeleteDevice(c *gin.Context) {
+	userID := getUserID(c)
+	deviceID := c.Param("id")
+
+	if err := s.DeleteDevice(c.Request.Context(), userID, deviceID); err != nil {
+		s.logger.Error("failed to delete device", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "device removed"})
+}
+
+func (s *Service) handleRequestDeviceTrust(c *gin.Context) {
+	userID := getUserID(c)
+	deviceID := c.Param("id")
+
+	var req struct {
+		Justification string `json:"justification"`
+	}
+	c.ShouldBindJSON(&req)
+
+	if err := s.RequestDeviceTrust(c.Request.Context(), userID, deviceID, req.Justification); err != nil {
+		s.logger.Error("failed to request device trust", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "trust request submitted"})
+}
+
+// --- Helper Functions ---
+
+func detectDeviceType(userAgent string) string {
+	ua := strings.ToLower(userAgent)
+	if strings.Contains(ua, "mobile") || strings.Contains(ua, "android") || strings.Contains(ua, "iphone") {
+		return "mobile"
+	}
+	if strings.Contains(ua, "tablet") || strings.Contains(ua, "ipad") {
+		return "tablet"
+	}
+	return "desktop"
+}
+
+func detectDeviceName(userAgent string) string {
+	ua := strings.ToLower(userAgent)
+
+	// Detect OS
+	var os string
+	switch {
+	case strings.Contains(ua, "windows"):
+		os = "Windows"
+	case strings.Contains(ua, "macintosh") || strings.Contains(ua, "mac os"):
+		os = "macOS"
+	case strings.Contains(ua, "iphone"):
+		os = "iPhone"
+	case strings.Contains(ua, "ipad"):
+		os = "iPad"
+	case strings.Contains(ua, "android"):
+		os = "Android"
+	case strings.Contains(ua, "linux"):
+		os = "Linux"
+	default:
+		os = "Unknown"
+	}
+
+	// Detect browser
+	var browser string
+	switch {
+	case strings.Contains(ua, "edg"):
+		browser = "Edge"
+	case strings.Contains(ua, "chrome"):
+		browser = "Chrome"
+	case strings.Contains(ua, "firefox"):
+		browser = "Firefox"
+	case strings.Contains(ua, "safari") && !strings.Contains(ua, "chrome"):
+		browser = "Safari"
+	default:
+		browser = "Browser"
+	}
+
+	return fmt.Sprintf("%s %s", os, browser)
+}
+
+func generateFingerprint(userAgent, ipAddress string) string {
+	// Simple fingerprint - in production use more sophisticated methods
+	data := fmt.Sprintf("%s|%s", userAgent, ipAddress)
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:16]) // Use first 16 bytes for shorter ID
+}
+
 // RegisterRoutes registers all portal HTTP routes on the given router group.
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/portal/applications", svc.handleGetMyApplications)
@@ -494,4 +778,11 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/portal/groups/requests", svc.handleGetMyGroupRequests)
 	router.GET("/portal/access-overview", svc.handleGetAccessOverview)
 	router.POST("/portal/groups/requests/:id/review", svc.handleReviewGroupRequest)
+
+	// Device management
+	router.GET("/portal/devices", svc.handleGetMyDevices)
+	router.POST("/portal/devices", svc.handleRegisterDevice)
+	router.PUT("/portal/devices/:id", svc.handleUpdateDevice)
+	router.DELETE("/portal/devices/:id", svc.handleDeleteDevice)
+	router.POST("/portal/devices/:id/trust", svc.handleRequestDeviceTrust)
 }

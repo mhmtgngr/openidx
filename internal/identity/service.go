@@ -173,6 +173,7 @@ type Service struct {
 	emailService      EmailSender
 	webhookService    WebhookPublisher
 	anomalyDetector   AnomalyDetector
+	smsProvider       SMSProvider // SMS OTP provider
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -214,6 +215,12 @@ type AnomalyDetector interface {
 	CheckIPThreatList(ctx context.Context, ip string) (bool, string)
 }
 
+// SMSProvider defines the interface for sending SMS messages
+type SMSProvider interface {
+	SendOTP(ctx context.Context, phoneNumber, code string) error
+	SendMessage(ctx context.Context, phoneNumber, message string) error
+}
+
 // SetEmailService sets the email service
 func (s *Service) SetEmailService(es EmailSender) {
 	s.emailService = es
@@ -227,6 +234,11 @@ func (s *Service) SetWebhookService(ws WebhookPublisher) {
 // SetAnomalyDetector sets the anomaly detection service
 func (s *Service) SetAnomalyDetector(ad AnomalyDetector) {
 	s.anomalyDetector = ad
+}
+
+// SetSMSProvider sets the SMS provider for OTP delivery
+func (s *Service) SetSMSProvider(sp SMSProvider) {
+	s.smsProvider = sp
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
@@ -2509,6 +2521,35 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/mfa/push/challenge", svc.handleCreatePushChallenge)
 		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
+
+		// SMS OTP MFA
+		identity.POST("/mfa/sms/enroll", svc.handleEnrollSMS)
+		identity.POST("/mfa/sms/verify", svc.handleVerifySMSEnrollment)
+		identity.GET("/mfa/sms/status", svc.handleGetSMSStatus)
+		identity.DELETE("/mfa/sms", svc.handleDeleteSMS)
+		identity.POST("/mfa/sms/challenge", svc.handleCreateSMSChallenge)
+
+		// Email OTP MFA
+		identity.POST("/mfa/email/enroll", svc.handleEnrollEmailOTP)
+		identity.GET("/mfa/email/status", svc.handleGetEmailOTPStatus)
+		identity.DELETE("/mfa/email", svc.handleDeleteEmailOTP)
+		identity.POST("/mfa/email/challenge", svc.handleCreateEmailOTPChallenge)
+
+		// Common OTP verification (works for both SMS and Email)
+		identity.POST("/mfa/otp/verify", svc.handleVerifyOTP)
+
+		// Get all enrolled MFA methods for current user
+		identity.GET("/mfa/methods", svc.handleGetMFAMethods)
+
+		// Trusted browsers (remember this device)
+		identity.POST("/trusted-browsers", svc.handleTrustBrowser)
+		identity.GET("/trusted-browsers", svc.handleGetTrustedBrowsers)
+		identity.DELETE("/trusted-browsers/:browser_id", svc.handleRevokeTrustedBrowser)
+		identity.DELETE("/trusted-browsers", svc.handleRevokeAllTrustedBrowsers)
+		identity.GET("/trusted-browsers/check", svc.handleCheckTrustedBrowser)
+
+		// Risk assessment
+		identity.GET("/risk-assessment", svc.handleGetRiskAssessment)
 
 		// Email verification
 		identity.POST("/resend-verification", svc.handleResendVerification)
