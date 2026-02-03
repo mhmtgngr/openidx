@@ -117,7 +117,7 @@ func (s *Service) GenerateMFABypassCode(ctx context.Context, req *GenerateBypass
 	}
 
 	// Log audit event
-	s.logBypassAudit(ctx, bypassID, req.UserID, "generated", adminID, adminIP, "", map[string]interface{}{
+	s.logBypassAudit(ctx, bypassID, req.UserID, "generated", &adminID, adminIP, "", map[string]interface{}{
 		"reason":      req.Reason,
 		"valid_hours": validHours,
 		"max_uses":    maxUses,

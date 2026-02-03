@@ -31,6 +31,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/risk"
 )
 
 // Use the min function from pushmfa.go
@@ -175,6 +176,7 @@ type Service struct {
 	anomalyDetector   AnomalyDetector
 	smsProvider       SMSProvider       // SMS OTP provider
 	phoneCallProvider PhoneCallProvider // Phone call MFA provider
+	risk              RiskService       // Risk evaluation service
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -203,6 +205,7 @@ type EmailSender interface {
 	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
 	SendPasswordResetEmail(ctx context.Context, to, userName, token, baseURL string) error
 	SendWelcomeEmail(ctx context.Context, to, userName string) error
+	SendAsync(ctx context.Context, to, subject, templateName string, data map[string]interface{}) error
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -245,6 +248,29 @@ func (s *Service) SetSMSProvider(sp SMSProvider) {
 // SetPhoneCallProvider sets the phone call provider for voice MFA
 func (s *Service) SetPhoneCallProvider(pcp PhoneCallProvider) {
 	s.phoneCallProvider = pcp
+}
+
+// RiskService defines the interface for risk evaluation
+type RiskService interface {
+	ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]risk.RiskPolicy, error)
+	GetRiskPolicy(ctx context.Context, policyID string) (*risk.RiskPolicy, error)
+	CreateRiskPolicy(ctx context.Context, req risk.CreateRiskPolicyRequest) (*risk.RiskPolicy, error)
+	UpdateRiskPolicy(ctx context.Context, policyID string, req risk.CreateRiskPolicyRequest) (*risk.RiskPolicy, error)
+	DeleteRiskPolicy(ctx context.Context, policyID string) error
+	ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error
+	GeoIPLookup(ctx context.Context, ip string) (*risk.GeoResult, error)
+	ComputeDeviceFingerprint(ipAddress, userAgent string) string
+	RegisterDevice(ctx context.Context, userID, fingerprint, ipAddress, userAgent, location string) (string, bool, error)
+	IsDeviceTrusted(ctx context.Context, userID, fingerprint string) bool
+	GetRecentFailedAttempts(ctx context.Context, userID string) int
+	EvaluateRiskPolicies(ctx context.Context, loginCtx risk.EvaluateLoginContext) (*risk.PolicyEvaluationResult, error)
+	GetRiskStats(ctx context.Context) (map[string]interface{}, error)
+	GetLoginHistory(ctx context.Context, userID string, limit int) ([]risk.LoginRecord, error)
+}
+
+// SetRiskService sets the risk service
+func (s *Service) SetRiskService(rs RiskService) {
+	s.risk = rs
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens

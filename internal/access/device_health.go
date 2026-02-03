@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // DeviceHealthCheck represents an enhanced device health check
@@ -116,7 +118,12 @@ func (zm *ZitiManager) EvaluateDeviceHealth(ctx context.Context, identityID stri
 		}
 
 		// Store result in database
-		zm.RecordPostureResult(ctx, identityID, check.ID, result.Passed, result.Details)
+		zm.RecordPostureResult(ctx, &PostureCheckResult{
+			IdentityID: identityID,
+			CheckID:    check.ID,
+			Passed:     result.Passed,
+			Details:    result.Details,
+		})
 	}
 
 	// Calculate score
@@ -710,7 +717,8 @@ func (zm *ZitiManager) SeedEnhancedPostureChecks(ctx context.Context) error {
 
 		if err := zm.CreatePostureCheck(ctx, &check); err != nil {
 			zm.logger.Warn("Failed to seed posture check",
-				zm.logger.With([]interface{}{"name", check.Name, "error", err.Error()}...).Sugar())
+				zap.String("name", check.Name),
+				zap.Error(err))
 		}
 	}
 
