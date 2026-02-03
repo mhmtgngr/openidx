@@ -1,12 +1,18 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Shield, AlertCircle, Loader2, Globe, ArrowLeft, KeyRound } from 'lucide-react'
+import { Shield, AlertCircle, Loader2, Globe, ArrowLeft, KeyRound, Smartphone, Mail, Phone, Check } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
+
+interface MFAOption {
+  method: string
+  label: string
+  icon: React.ReactNode
+}
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -25,7 +31,16 @@ export function LoginPage() {
   const [mfaRequired, setMfaRequired] = useState(false)
   const [mfaSession, setMfaSession] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+  const [mfaMethods, setMfaMethods] = useState<string[]>([])
+  const [selectedMfaMethod, setSelectedMfaMethod] = useState<string>('')
+  const [mfaMethodSelectionStep, setMfaMethodSelectionStep] = useState(false)
+  const [otpSent, setOtpSent] = useState(false)
   const mfaInputRef = useRef<HTMLInputElement>(null)
+
+  // Trust browser state
+  const [showTrustPrompt, setShowTrustPrompt] = useState(false)
+  const [trustBrowser, setTrustBrowser] = useState(false)
+  const [pendingRedirectUrl, setPendingRedirectUrl] = useState('')
 
   // Check for login_session parameter on mount
   useEffect(() => {
@@ -121,7 +136,24 @@ export function LoginPage() {
         setMfaSession(data.mfa_session)
         setMfaCode('')
         setError('')
-        setTimeout(() => mfaInputRef.current?.focus(), 100)
+
+        // Check if multiple MFA methods are available
+        const methods = data.mfa_methods || ['totp']
+        setMfaMethods(methods)
+
+        if (methods.length > 1) {
+          // Show method selection
+          setMfaMethodSelectionStep(true)
+        } else {
+          // Single method - proceed directly
+          setSelectedMfaMethod(methods[0])
+          if (methods[0] === 'sms' || methods[0] === 'email') {
+            // Need to send OTP first
+            sendOTP(data.mfa_session, methods[0])
+          } else {
+            setTimeout(() => mfaInputRef.current?.focus(), 100)
+          }
+        }
         return
       }
 
@@ -137,6 +169,43 @@ export function LoginPage() {
     }
   }
 
+  // Send OTP for SMS/Email methods
+  const sendOTP = async (session: string, method: string) => {
+    try {
+      const response = await fetch(`${baseURL}/oauth/mfa-send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mfa_session: session,
+          method: method,
+        }),
+      })
+
+      if (response.ok) {
+        setOtpSent(true)
+        setTimeout(() => mfaInputRef.current?.focus(), 100)
+      } else {
+        const data = await response.json()
+        setError(data.error_description || 'Failed to send verification code.')
+      }
+    } catch (err) {
+      setError('Unable to send verification code. Please try again.')
+    }
+  }
+
+  // Select MFA method when multiple are available
+  const selectMfaMethod = (method: string) => {
+    setSelectedMfaMethod(method)
+    setMfaMethodSelectionStep(false)
+    setMfaCode('')
+
+    if (method === 'sms' || method === 'email') {
+      sendOTP(mfaSession, method)
+    } else {
+      setTimeout(() => mfaInputRef.current?.focus(), 100)
+    }
+  }
+
   const handleMFASubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
@@ -149,6 +218,8 @@ export function LoginPage() {
         body: JSON.stringify({
           mfa_session: mfaSession,
           code: mfaCode,
+          method: selectedMfaMethod || 'totp',
+          trust_browser: trustBrowser,
         }),
       })
 
@@ -158,6 +229,13 @@ export function LoginPage() {
         setError(data.error_description || 'Invalid verification code. Please try again.')
         setMfaCode('')
         mfaInputRef.current?.focus()
+        return
+      }
+
+      // Check if we should show trust browser prompt
+      if (data.can_trust_browser && !trustBrowser) {
+        setPendingRedirectUrl(data.redirect_url)
+        setShowTrustPrompt(true)
         return
       }
 
@@ -171,33 +249,224 @@ export function LoginPage() {
     }
   }
 
+  // Handle trust browser decision
+  const handleTrustDecision = async (trust: boolean) => {
+    if (trust) {
+      try {
+        await fetch(`${baseURL}/api/v1/identity/trusted-browsers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        })
+      } catch (err) {
+        console.error('Failed to trust browser:', err)
+      }
+    }
+    window.location.href = pendingRedirectUrl
+  }
+
   const handleBackToOptions = () => {
     setLoginSession(null)
     setMfaRequired(false)
     setMfaSession('')
     setMfaCode('')
+    setMfaMethods([])
+    setSelectedMfaMethod('')
+    setMfaMethodSelectionStep(false)
+    setOtpSent(false)
     setUsername('')
     setPassword('')
     setError('')
+    setShowTrustPrompt(false)
+    setTrustBrowser(false)
+    setPendingRedirectUrl('')
   }
 
-  // Show MFA verification form
-  if (mfaRequired && loginSession) {
+  const getMfaMethodInfo = (method: string): MFAOption => {
+    switch (method) {
+      case 'totp':
+        return { method: 'totp', label: 'Authenticator App', icon: <Smartphone className="h-5 w-5" /> }
+      case 'sms':
+        return { method: 'sms', label: 'SMS Code', icon: <Phone className="h-5 w-5" /> }
+      case 'email':
+        return { method: 'email', label: 'Email Code', icon: <Mail className="h-5 w-5" /> }
+      case 'webauthn':
+        return { method: 'webauthn', label: 'Security Key', icon: <KeyRound className="h-5 w-5" /> }
+      default:
+        return { method, label: method.toUpperCase(), icon: <Shield className="h-5 w-5" /> }
+    }
+  }
+
+  // Show trust browser prompt
+  if (showTrustPrompt) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg">
+                <Check className="h-9 w-9 text-white" />
+              </div>
+            </div>
+            <div>
+              <CardTitle className="text-2xl font-bold">
+                Authentication Successful
+              </CardTitle>
+              <CardDescription className="text-base mt-2">
+                Would you like to trust this browser?
+              </CardDescription>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-blue-800">
+                Trusting this browser will skip MFA verification for the next 30 days on this device.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <Button
+                onClick={() => handleTrustDecision(true)}
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                size="lg"
+              >
+                <Check className="mr-2 h-4 w-4" />
+                Trust This Browser
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => handleTrustDecision(false)}
+                className="w-full"
+                size="lg"
+              >
+                No, Don't Trust
+              </Button>
+            </div>
+          </CardContent>
+
+          <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-lg">
+            <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+              <span>Privacy</span>
+              <span>•</span>
+              <span>Terms</span>
+              <span>•</span>
+              <span>Help</span>
+            </div>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
+  // Show MFA method selection
+  if (mfaRequired && loginSession && mfaMethodSelectionStep) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
               <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
-                <KeyRound className="h-9 w-9 text-white" />
+                <Shield className="h-9 w-9 text-white" />
               </div>
             </div>
             <div>
               <CardTitle className="text-2xl font-bold">
-                Two-Factor Authentication
+                Choose Verification Method
               </CardTitle>
               <CardDescription className="text-base mt-2">
-                Enter the 6-digit code from your authenticator app
+                Select how you want to verify your identity
+              </CardDescription>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-3">
+            {error && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
+
+            {mfaMethods.map((method) => {
+              const info = getMfaMethodInfo(method)
+              return (
+                <Button
+                  key={method}
+                  variant="outline"
+                  className="w-full h-auto py-4 justify-start"
+                  onClick={() => selectMfaMethod(method)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                      {info.icon}
+                    </div>
+                    <div className="text-left">
+                      <p className="font-medium">{info.label}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {method === 'totp' && 'Enter code from your authenticator app'}
+                        {method === 'sms' && 'Receive a code via text message'}
+                        {method === 'email' && 'Receive a code via email'}
+                        {method === 'webauthn' && 'Use your security key or biometrics'}
+                      </p>
+                    </div>
+                  </div>
+                </Button>
+              )
+            })}
+
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full mt-4"
+              onClick={handleBackToOptions}
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to login
+            </Button>
+          </CardContent>
+
+          <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-lg">
+            <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
+              <span>Privacy</span>
+              <span>•</span>
+              <span>Terms</span>
+              <span>•</span>
+              <span>Help</span>
+            </div>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
+  // Show MFA verification form
+  if (mfaRequired && loginSession) {
+    const methodInfo = getMfaMethodInfo(selectedMfaMethod || 'totp')
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <Card className="w-full max-w-md shadow-xl">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+                {methodInfo.icon ? (
+                  <div className="text-white [&>svg]:h-9 [&>svg]:w-9">{methodInfo.icon}</div>
+                ) : (
+                  <KeyRound className="h-9 w-9 text-white" />
+                )}
+              </div>
+            </div>
+            <div>
+              <CardTitle className="text-2xl font-bold">
+                {methodInfo.label}
+              </CardTitle>
+              <CardDescription className="text-base mt-2">
+                {selectedMfaMethod === 'totp' && 'Enter the 6-digit code from your authenticator app'}
+                {selectedMfaMethod === 'sms' && (otpSent ? 'Enter the code sent to your phone' : 'Sending code to your phone...')}
+                {selectedMfaMethod === 'email' && (otpSent ? 'Enter the code sent to your email' : 'Sending code to your email...')}
+                {!selectedMfaMethod && 'Enter the 6-digit code from your authenticator app'}
               </CardDescription>
             </div>
           </CardHeader>
@@ -229,6 +498,18 @@ export function LoginPage() {
                 />
               </div>
 
+              {(selectedMfaMethod === 'sms' || selectedMfaMethod === 'email') && (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="w-full text-sm"
+                  onClick={() => sendOTP(mfaSession, selectedMfaMethod)}
+                  disabled={isSubmitting}
+                >
+                  Resend Code
+                </Button>
+              )}
+
               <Button
                 type="submit"
                 className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
@@ -244,6 +525,21 @@ export function LoginPage() {
                   'Verify'
                 )}
               </Button>
+
+              {mfaMethods.length > 1 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setMfaMethodSelectionStep(true)
+                    setMfaCode('')
+                    setOtpSent(false)
+                  }}
+                >
+                  Use a different method
+                </Button>
+              )}
 
               <Button
                 type="button"

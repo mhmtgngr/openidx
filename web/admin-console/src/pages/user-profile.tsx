@@ -11,9 +11,27 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '../hooks/use-toast'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/api'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
-import { Shield, User, Key, Smartphone, Mail, Monitor } from 'lucide-react'
+import { Shield, User, Key, Smartphone, Mail, Monitor, Phone, Globe, Trash2, Check, X } from 'lucide-react'
 import QRCode from 'qrcode.react'
 import { useAuth } from '../lib/auth'
+
+interface MFAMethod {
+  method: string
+  enabled: boolean
+  verified: boolean
+  enrolled_at?: string
+}
+
+interface TrustedBrowser {
+  id: string
+  name: string
+  ip_address: string
+  trusted_at: string
+  expires_at: string
+  last_used_at?: string
+  revoked: boolean
+  active: boolean
+}
 
 interface MFASetup extends MFASetupResponse {
   backupCodes: string[]
@@ -41,6 +59,17 @@ export function UserProfilePage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+
+  // SMS MFA state
+  const [smsEnrollStep, setSmsEnrollStep] = useState<'idle' | 'enter-phone' | 'verify'>('idle')
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [countryCode, setCountryCode] = useState('+1')
+  const [smsVerifyCode, setSmsVerifyCode] = useState('')
+
+  // Email OTP state
+  const [emailOtpEnrollStep, setEmailOtpEnrollStep] = useState<'idle' | 'verify'>('idle')
+  const [emailOtpCode, setEmailOtpCode] = useState('')
+
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const { user } = useAuth()
@@ -122,6 +151,123 @@ export function UserProfilePage() {
     queryFn: () => api.get<Session[]>(`/api/v1/identity/users/${user?.id}/sessions`),
     enabled: !!user?.id,
   })
+
+  // Fetch MFA methods
+  const { data: mfaMethods } = useQuery({
+    queryKey: ['mfa-methods'],
+    queryFn: () => api.get<MFAMethod[]>('/api/v1/identity/mfa/methods'),
+  })
+
+  // Fetch trusted browsers
+  const { data: trustedBrowsers } = useQuery({
+    queryKey: ['trusted-browsers'],
+    queryFn: () => api.get<TrustedBrowser[]>('/api/v1/identity/trusted-browsers'),
+  })
+
+  // SMS MFA mutations
+  const enrollSMSMutation = useMutation({
+    mutationFn: (data: { phone_number: string; country_code: string }) =>
+      api.post('/api/v1/identity/mfa/sms/enroll', data),
+    onSuccess: () => {
+      setSmsEnrollStep('verify')
+      toast({ title: 'Code Sent', description: 'A verification code has been sent to your phone.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to send verification code.', variant: 'destructive' })
+    },
+  })
+
+  const verifySMSMutation = useMutation({
+    mutationFn: (code: string) =>
+      api.post('/api/v1/identity/mfa/sms/verify', { code }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
+      setSmsEnrollStep('idle')
+      setPhoneNumber('')
+      setSmsVerifyCode('')
+      toast({ title: 'SMS MFA Enabled', description: 'Your phone has been verified for SMS authentication.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Invalid verification code.', variant: 'destructive' })
+    },
+  })
+
+  const deleteSMSMutation = useMutation({
+    mutationFn: () => api.delete('/api/v1/identity/mfa/sms'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
+      toast({ title: 'SMS MFA Disabled', description: 'SMS authentication has been removed.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to disable SMS MFA.', variant: 'destructive' })
+    },
+  })
+
+  // Email OTP mutations
+  const enrollEmailOTPMutation = useMutation({
+    mutationFn: () => api.post('/api/v1/identity/mfa/email/enroll'),
+    onSuccess: () => {
+      setEmailOtpEnrollStep('verify')
+      toast({ title: 'Code Sent', description: 'A verification code has been sent to your email.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to send verification code.', variant: 'destructive' })
+    },
+  })
+
+  const verifyEmailOTPMutation = useMutation({
+    mutationFn: (code: string) =>
+      api.post('/api/v1/identity/mfa/email/verify', { code }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
+      setEmailOtpEnrollStep('idle')
+      setEmailOtpCode('')
+      toast({ title: 'Email OTP Enabled', description: 'Your email has been verified for OTP authentication.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Invalid verification code.', variant: 'destructive' })
+    },
+  })
+
+  const deleteEmailOTPMutation = useMutation({
+    mutationFn: () => api.delete('/api/v1/identity/mfa/email'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mfa-methods'] })
+      toast({ title: 'Email OTP Disabled', description: 'Email OTP authentication has been removed.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to disable Email OTP.', variant: 'destructive' })
+    },
+  })
+
+  // Trusted browser mutations
+  const revokeBrowserMutation = useMutation({
+    mutationFn: (browserId: string) =>
+      api.delete(`/api/v1/identity/trusted-browsers/${browserId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
+      toast({ title: 'Browser Revoked', description: 'The trusted browser has been removed.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to revoke browser.', variant: 'destructive' })
+    },
+  })
+
+  const revokeAllBrowsersMutation = useMutation({
+    mutationFn: () => api.delete('/api/v1/identity/trusted-browsers'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['trusted-browsers'] })
+      toast({ title: 'All Browsers Revoked', description: 'All trusted browsers have been removed.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to revoke browsers.', variant: 'destructive' })
+    },
+  })
+
+  // Helper to check if a method is enabled
+  const isMethodEnabled = (method: string) => {
+    return mfaMethods?.some(m => m.method === method && m.enabled && m.verified)
+  }
 
   const revokeSessionMutation = useMutation({
     mutationFn: (sessionId: string) => api.delete(`/api/v1/identity/sessions/${sessionId}`),
@@ -393,6 +539,302 @@ export function UserProfilePage() {
                     </Button>
                   </CardContent>
                 </Card>
+              )}
+
+              {/* SMS MFA Section */}
+              <div className="border-t pt-4 mt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Phone className="h-5 w-5" />
+                    <div>
+                      <p className="font-medium">SMS Authentication</p>
+                      <p className="text-sm text-muted-foreground">
+                        Receive verification codes via text message
+                      </p>
+                    </div>
+                  </div>
+                  {isMethodEnabled('sms') ? (
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="flex items-center gap-1">
+                        <Check className="h-3 w-3" />
+                        Enabled
+                      </Badge>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" size="sm">Remove</Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Remove SMS Authentication?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              You will no longer be able to use SMS codes for authentication.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => deleteSMSMutation.mutate()}>Remove</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  ) : (
+                    <Button variant="outline" onClick={() => setSmsEnrollStep('enter-phone')}>
+                      <Phone className="h-4 w-4 mr-2" />
+                      Setup SMS
+                    </Button>
+                  )}
+                </div>
+
+                {smsEnrollStep === 'enter-phone' && (
+                  <Card className="mt-4 border-orange-200">
+                    <CardHeader>
+                      <CardTitle className="text-orange-900">Setup SMS Authentication</CardTitle>
+                      <CardDescription>Enter your phone number to receive codes</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex gap-2">
+                        <div className="w-24">
+                          <Label htmlFor="country-code">Country</Label>
+                          <Input
+                            id="country-code"
+                            value={countryCode}
+                            onChange={(e) => setCountryCode(e.target.value)}
+                            placeholder="+1"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <Label htmlFor="phone-number">Phone Number</Label>
+                          <Input
+                            id="phone-number"
+                            value={phoneNumber}
+                            onChange={(e) => setPhoneNumber(e.target.value)}
+                            placeholder="555-123-4567"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSmsEnrollStep('idle')
+                            setPhoneNumber('')
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => enrollSMSMutation.mutate({ phone_number: phoneNumber, country_code: countryCode })}
+                          disabled={enrollSMSMutation.isPending || !phoneNumber}
+                        >
+                          {enrollSMSMutation.isPending ? <LoadingSpinner size="sm" /> : 'Send Code'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {smsEnrollStep === 'verify' && (
+                  <Card className="mt-4 border-orange-200">
+                    <CardHeader>
+                      <CardTitle className="text-orange-900">Verify Your Phone</CardTitle>
+                      <CardDescription>Enter the 6-digit code sent to your phone</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="sms-code">Verification Code</Label>
+                        <Input
+                          id="sms-code"
+                          value={smsVerifyCode}
+                          onChange={(e) => setSmsVerifyCode(e.target.value)}
+                          placeholder="000000"
+                          maxLength={6}
+                          className="text-center text-2xl tracking-widest"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSmsEnrollStep('idle')
+                            setSmsVerifyCode('')
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => verifySMSMutation.mutate(smsVerifyCode)}
+                          disabled={verifySMSMutation.isPending || smsVerifyCode.length !== 6}
+                        >
+                          {verifySMSMutation.isPending ? <LoadingSpinner size="sm" /> : 'Verify & Enable'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              {/* Email OTP Section */}
+              <div className="border-t pt-4 mt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Mail className="h-5 w-5" />
+                    <div>
+                      <p className="font-medium">Email OTP</p>
+                      <p className="text-sm text-muted-foreground">
+                        Receive verification codes via email
+                      </p>
+                    </div>
+                  </div>
+                  {isMethodEnabled('email') ? (
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="flex items-center gap-1">
+                        <Check className="h-3 w-3" />
+                        Enabled
+                      </Badge>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" size="sm">Remove</Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Remove Email OTP?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              You will no longer be able to use email codes for authentication.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => deleteEmailOTPMutation.mutate()}>Remove</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  ) : (
+                    <Button variant="outline" onClick={() => enrollEmailOTPMutation.mutate()}>
+                      <Mail className="h-4 w-4 mr-2" />
+                      Setup Email OTP
+                    </Button>
+                  )}
+                </div>
+
+                {emailOtpEnrollStep === 'verify' && (
+                  <Card className="mt-4 border-orange-200">
+                    <CardHeader>
+                      <CardTitle className="text-orange-900">Verify Your Email</CardTitle>
+                      <CardDescription>Enter the 6-digit code sent to {profile?.email}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="email-otp-code">Verification Code</Label>
+                        <Input
+                          id="email-otp-code"
+                          value={emailOtpCode}
+                          onChange={(e) => setEmailOtpCode(e.target.value)}
+                          placeholder="000000"
+                          maxLength={6}
+                          className="text-center text-2xl tracking-widest"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setEmailOtpEnrollStep('idle')
+                            setEmailOtpCode('')
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => verifyEmailOTPMutation.mutate(emailOtpCode)}
+                          disabled={verifyEmailOTPMutation.isPending || emailOtpCode.length !== 6}
+                        >
+                          {verifyEmailOTPMutation.isPending ? <LoadingSpinner size="sm" /> : 'Verify & Enable'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Trusted Browsers Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Trusted Browsers</CardTitle>
+                  <CardDescription>Browsers where MFA can be skipped</CardDescription>
+                </div>
+                {trustedBrowsers && trustedBrowsers.filter(b => b.active).length > 0 && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" size="sm">
+                        Revoke All
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Revoke All Trusted Browsers?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          You will need to complete MFA on all browsers again.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => revokeAllBrowsersMutation.mutate()}>
+                          Revoke All
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!trustedBrowsers || trustedBrowsers.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Globe className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                  <p>No trusted browsers</p>
+                  <p className="text-sm">Complete MFA and choose to trust your browser</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {trustedBrowsers.map((browser) => (
+                    <div
+                      key={browser.id}
+                      className={`flex items-center justify-between p-3 border rounded-lg ${
+                        browser.active ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Globe className={`h-5 w-5 ${browser.active ? 'text-green-600' : 'text-gray-400'}`} />
+                        <div>
+                          <p className="font-medium">{browser.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {browser.ip_address} • Trusted {new Date(browser.trusted_at).toLocaleDateString()}
+                          </p>
+                          {!browser.active && (
+                            <Badge variant="secondary" className="mt-1">
+                              {browser.revoked ? 'Revoked' : 'Expired'}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      {browser.active && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => revokeBrowserMutation.mutate(browser.id)}
+                          disabled={revokeBrowserMutation.isPending}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
