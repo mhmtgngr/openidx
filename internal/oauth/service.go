@@ -661,9 +661,11 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 // RegisterRoutes registers OAuth/OIDC routes.
 // authMiddleware is optional; when provided it protects the client management API and consent endpoint.
 func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.HandlerFunc) {
-	// OIDC Discovery
+	// OIDC Discovery - include OPTIONS for CORS preflight (required for BrowZer and browser-based OIDC clients)
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
+	router.OPTIONS("/.well-known/openid-configuration", svc.handleDiscovery)
 	router.GET("/.well-known/jwks.json", svc.handleJWKS)
+	router.OPTIONS("/.well-known/jwks.json", svc.handleJWKS)
 
 	oauth := router.Group("/oauth")
 	{
@@ -693,16 +695,18 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
 
-		// Token endpoint
+		// Token endpoint (with OPTIONS for CORS preflight)
 		oauth.POST("/token", svc.handleToken)
+		oauth.OPTIONS("/token", svc.handleToken)
 
 		// Token introspection & revocation
 		oauth.POST("/introspect", svc.handleIntrospect)
 		oauth.POST("/revoke", svc.handleRevoke)
 
-		// UserInfo endpoint
+		// UserInfo endpoint (with OPTIONS for CORS preflight)
 		oauth.GET("/userinfo", svc.handleUserInfo)
 		oauth.POST("/userinfo", svc.handleUserInfo)
+		oauth.OPTIONS("/userinfo", svc.handleUserInfo)
 	}
 
 	// Client management API (protected by auth middleware when available)
@@ -724,6 +728,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 }
 
 func (s *Service) handleDiscovery(c *gin.Context) {
+	// CORS headers for BrowZer and other browser-based clients
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	c.Header("Cache-Control", "public, max-age=3600")
+
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(204)
+		return
+	}
+
 	discovery := OIDCDiscovery{
 		Issuer:                s.issuer,
 		AuthorizationEndpoint: s.issuer + "/oauth/authorize",
@@ -744,6 +759,17 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 }
 
 func (s *Service) handleJWKS(c *gin.Context) {
+	// CORS headers for BrowZer and other browser-based clients
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	c.Header("Cache-Control", "public, max-age=3600")
+
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(204)
+		return
+	}
+
 	// Convert RSA public key to JWK (base64url without padding per RFC 7517)
 	n := base64.RawURLEncoding.EncodeToString(s.publicKey.N.Bytes())
 	e := base64.RawURLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
@@ -1568,6 +1594,16 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 }
 
 func (s *Service) handleToken(c *gin.Context) {
+	// CORS headers for BrowZer and other browser-based clients
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(204)
+		return
+	}
+
 	grantType := c.PostForm("grant_type")
 
 	switch grantType {
@@ -1800,6 +1836,16 @@ func (s *Service) handleRevoke(c *gin.Context) {
 }
 
 func (s *Service) handleUserInfo(c *gin.Context) {
+	// CORS headers for BrowZer and other browser-based clients
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(204)
+		return
+	}
+
 	// Extract access token from Authorization header
 	authHeader := c.GetHeader("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
