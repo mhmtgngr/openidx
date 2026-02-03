@@ -27,6 +27,10 @@ import {
   BarChart3,
   Rocket,
   Eye,
+  Fingerprint,
+  KeyRound,
+  ShieldOff,
+  Link2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -106,6 +110,16 @@ const navigationSections: NavSection[] = [
       { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
       { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
       { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Security & MFA',
+    adminOnly: true,
+    items: [
+      { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, adminOnly: true },
+      { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
+      { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },
+      { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, adminOnly: true },
     ],
   },
   {

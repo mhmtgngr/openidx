@@ -173,7 +173,8 @@ type Service struct {
 	emailService      EmailSender
 	webhookService    WebhookPublisher
 	anomalyDetector   AnomalyDetector
-	smsProvider       SMSProvider // SMS OTP provider
+	smsProvider       SMSProvider       // SMS OTP provider
+	phoneCallProvider PhoneCallProvider // Phone call MFA provider
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -239,6 +240,11 @@ func (s *Service) SetAnomalyDetector(ad AnomalyDetector) {
 // SetSMSProvider sets the SMS provider for OTP delivery
 func (s *Service) SetSMSProvider(sp SMSProvider) {
 	s.smsProvider = sp
+}
+
+// SetPhoneCallProvider sets the phone call provider for voice MFA
+func (s *Service) SetPhoneCallProvider(pcp PhoneCallProvider) {
+	s.phoneCallProvider = pcp
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
@@ -2561,6 +2567,73 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 
 		// User lifecycle
 		identity.POST("/users/:id/offboard", svc.handleOffboardUser)
+
+		// ========================================
+		// Advanced MFA Features
+		// ========================================
+
+		// Hardware Tokens (Admin)
+		identity.GET("/hardware-tokens", svc.handleListHardwareTokens)
+		identity.POST("/hardware-tokens", svc.handleCreateHardwareToken)
+		identity.GET("/hardware-tokens/:token_id", svc.handleGetHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/assign", svc.handleAssignHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/unassign", svc.handleUnassignHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/revoke", svc.handleRevokeHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/report-lost", svc.handleReportTokenLost)
+		identity.GET("/hardware-tokens/:token_id/events", svc.handleGetTokenEvents)
+
+		// Hardware Token (User)
+		identity.GET("/mfa/hardware-token", svc.handleGetUserHardwareToken)
+		identity.POST("/mfa/hardware-token/verify", svc.handleVerifyHardwareToken)
+
+		// Phone Call MFA
+		identity.POST("/mfa/phone/enroll", svc.handleEnrollPhoneCall)
+		identity.POST("/mfa/phone/verify", svc.handleVerifyPhoneCallEnrollment)
+		identity.GET("/mfa/phone/status", svc.handleGetPhoneCallStatus)
+		identity.DELETE("/mfa/phone", svc.handleDeletePhoneCall)
+		identity.POST("/mfa/phone/callback", svc.handleRequestCallback)
+
+		// Device Trust Approval (Admin)
+		identity.GET("/device-trust-requests", svc.handleListDeviceTrustRequests)
+		identity.POST("/device-trust-requests/:request_id/approve", svc.handleApproveDeviceTrust)
+		identity.POST("/device-trust-requests/:request_id/reject", svc.handleRejectDeviceTrust)
+		identity.POST("/device-trust-requests/bulk-approve", svc.handleBulkApproveDeviceTrust)
+		identity.POST("/device-trust-requests/bulk-reject", svc.handleBulkRejectDeviceTrust)
+		identity.GET("/device-trust-requests/pending-count", svc.handleGetPendingTrustCount)
+		identity.GET("/device-trust-settings", svc.handleGetDeviceTrustSettings)
+		identity.PUT("/device-trust-settings", svc.handleUpdateDeviceTrustSettings)
+
+		// MFA Bypass Codes (Admin)
+		identity.POST("/mfa/bypass-codes", svc.handleGenerateBypassCode)
+		identity.GET("/mfa/bypass-codes", svc.handleListBypassCodes)
+		identity.DELETE("/mfa/bypass-codes/:code_id", svc.handleRevokeBypassCode)
+		identity.DELETE("/users/:user_id/bypass-codes", svc.handleRevokeAllBypassCodes)
+		identity.POST("/mfa/bypass-codes/verify", svc.handleVerifyBypassCode)
+		identity.GET("/mfa/bypass-codes/audit", svc.handleGetBypassAuditLog)
+
+		// Passwordless Authentication
+		identity.POST("/passwordless/magic-link", svc.handleCreateMagicLink)
+		identity.POST("/passwordless/magic-link/verify", svc.handleVerifyMagicLink)
+		identity.POST("/passwordless/qr-login", svc.handleCreateQRLoginSession)
+		identity.POST("/passwordless/qr-login/scan", svc.handleScanQRLogin)
+		identity.POST("/passwordless/qr-login/approve", svc.handleApproveQRLogin)
+		identity.POST("/passwordless/qr-login/reject", svc.handleRejectQRLogin)
+		identity.GET("/passwordless/qr-login/poll", svc.handlePollQRLoginSession)
+		identity.GET("/passwordless/preferences", svc.handleGetPasswordlessPreferences)
+		identity.PUT("/passwordless/preferences", svc.handleUpdatePasswordlessPreferences)
+
+		// Biometric Authentication
+		identity.GET("/biometric/preferences", svc.handleGetBiometricPreferences)
+		identity.PUT("/biometric/preferences", svc.handleUpdateBiometricPreferences)
+		identity.POST("/biometric/enable-only", svc.handleEnableBiometricOnly)
+		identity.POST("/biometric/disable-only", svc.handleDisableBiometricOnly)
+		identity.GET("/biometric/authenticators", svc.handleGetPlatformAuthenticators)
+
+		// Biometric Policies (Admin)
+		identity.GET("/biometric/policies", svc.handleListBiometricPolicies)
+		identity.POST("/biometric/policies", svc.handleCreateBiometricPolicy)
+		identity.PUT("/biometric/policies/:policy_id", svc.handleUpdateBiometricPolicy)
+		identity.DELETE("/biometric/policies/:policy_id", svc.handleDeleteBiometricPolicy)
 	}
 }
 

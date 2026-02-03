@@ -1,0 +1,398 @@
+// Package identity - Admin Device Trust Approval Workflow
+package identity
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// DeviceTrustRequest represents a request for device trust approval
+type DeviceTrustRequest struct {
+	ID                string     `json:"id"`
+	UserID            string     `json:"user_id"`
+	UserEmail         string     `json:"user_email,omitempty"`
+	UserName          string     `json:"user_name,omitempty"`
+	DeviceID          string     `json:"device_id"`
+	DeviceFingerprint string     `json:"device_fingerprint"`
+	DeviceName        string     `json:"device_name"`
+	DeviceType        string     `json:"device_type"`
+	IPAddress         string     `json:"ip_address"`
+	UserAgent         string     `json:"user_agent,omitempty"`
+	Justification     string     `json:"justification"`
+	Status            string     `json:"status"` // pending, approved, rejected, expired
+	ReviewedBy        *string    `json:"reviewed_by,omitempty"`
+	ReviewedAt        *time.Time `json:"reviewed_at,omitempty"`
+	ReviewNotes       string     `json:"review_notes,omitempty"`
+	AutoExpireAt      *time.Time `json:"auto_expire_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+}
+
+// DeviceTrustSettings represents organization settings for device trust
+type DeviceTrustSettings struct {
+	ID                        string    `json:"id"`
+	OrgID                     *string   `json:"org_id,omitempty"`
+	RequireApproval           bool      `json:"require_approval"`
+	AutoApproveKnownIPs       bool      `json:"auto_approve_known_ips"`
+	AutoApproveCorporateDevs  bool      `json:"auto_approve_corporate_devices"`
+	RequestExpiryHours        int       `json:"request_expiry_hours"`
+	NotifyAdmins              bool      `json:"notify_admins"`
+	NotifyUserOnDecision      bool      `json:"notify_user_on_decision"`
+	UpdatedAt                 time.Time `json:"updated_at"`
+}
+
+// CreateDeviceTrustRequest creates a new trust request
+func (s *Service) CreateDeviceTrustRequest(ctx context.Context, userID, deviceID, deviceFingerprint, deviceName, deviceType, ipAddress, userAgent, justification string) (*DeviceTrustRequest, error) {
+	// Check if there's already a pending request for this device
+	var existing string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM device_trust_requests
+		WHERE user_id = $1 AND device_fingerprint = $2 AND status = 'pending'`,
+		userID, deviceFingerprint,
+	).Scan(&existing)
+	if err == nil {
+		return nil, errors.New("a trust request for this device is already pending")
+	}
+
+	// Get settings
+	settings, _ := s.GetDeviceTrustSettings(ctx)
+
+	requestID := uuid.New().String()
+	var autoExpireAt *time.Time
+	if settings != nil && settings.RequestExpiryHours > 0 {
+		exp := time.Now().Add(time.Duration(settings.RequestExpiryHours) * time.Hour)
+		autoExpireAt = &exp
+	}
+
+	// Check for auto-approval conditions
+	status := "pending"
+	var reviewedAt *time.Time
+	var reviewNotes string
+
+	if settings != nil {
+		if settings.AutoApproveKnownIPs && s.isKnownIP(ctx, userID, ipAddress) {
+			status = "approved"
+			now := time.Now()
+			reviewedAt = &now
+			reviewNotes = "Auto-approved: Known IP address"
+		} else if settings.AutoApproveCorporateDevs && s.isCorporateDevice(ctx, deviceFingerprint) {
+			status = "approved"
+			now := time.Now()
+			reviewedAt = &now
+			reviewNotes = "Auto-approved: Corporate device"
+		}
+	}
+
+	// Create request
+	query := `
+		INSERT INTO device_trust_requests (
+			id, user_id, device_id, device_fingerprint, device_name, device_type,
+			ip_address, user_agent, justification, status, reviewed_at, review_notes,
+			auto_expire_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+		RETURNING created_at
+	`
+
+	var createdAt time.Time
+	err = s.db.Pool.QueryRow(ctx, query,
+		requestID, userID, deviceID, deviceFingerprint, deviceName, deviceType,
+		ipAddress, userAgent, justification, status, reviewedAt, reviewNotes,
+		autoExpireAt,
+	).Scan(&createdAt)
+	if err != nil {
+		return nil, err
+	}
+
+	// If auto-approved, also trust the device
+	if status == "approved" {
+		s.trustDevice(ctx, userID, deviceFingerprint)
+	}
+
+	// Notify admins if configured
+	if settings != nil && settings.NotifyAdmins && status == "pending" {
+		s.notifyAdminsOfTrustRequest(ctx, userID, deviceName)
+	}
+
+	return &DeviceTrustRequest{
+		ID:                requestID,
+		UserID:            userID,
+		DeviceID:          deviceID,
+		DeviceFingerprint: deviceFingerprint,
+		DeviceName:        deviceName,
+		DeviceType:        deviceType,
+		IPAddress:         ipAddress,
+		UserAgent:         userAgent,
+		Justification:     justification,
+		Status:            status,
+		ReviewedAt:        reviewedAt,
+		ReviewNotes:       reviewNotes,
+		AutoExpireAt:      autoExpireAt,
+		CreatedAt:         createdAt,
+	}, nil
+}
+
+// ListDeviceTrustRequests returns trust requests with optional filtering
+func (s *Service) ListDeviceTrustRequests(ctx context.Context, status string, userID string, limit, offset int) ([]DeviceTrustRequest, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Count total
+	countQuery := `
+		SELECT COUNT(*) FROM device_trust_requests
+		WHERE ($1 = '' OR status = $1)
+		  AND ($2 = '' OR user_id::text = $2)
+	`
+	var total int
+	s.db.Pool.QueryRow(ctx, countQuery, status, userID).Scan(&total)
+
+	// Get requests with user info
+	query := `
+		SELECT
+			dtr.id, dtr.user_id, u.email, u.first_name || ' ' || u.last_name,
+			dtr.device_id, dtr.device_fingerprint, dtr.device_name, dtr.device_type,
+			dtr.ip_address, dtr.user_agent, dtr.justification, dtr.status,
+			dtr.reviewed_by, dtr.reviewed_at, dtr.review_notes, dtr.auto_expire_at, dtr.created_at
+		FROM device_trust_requests dtr
+		JOIN users u ON dtr.user_id = u.id
+		WHERE ($1 = '' OR dtr.status = $1)
+		  AND ($2 = '' OR dtr.user_id::text = $2)
+		ORDER BY dtr.created_at DESC
+		LIMIT $3 OFFSET $4
+	`
+
+	rows, err := s.db.Pool.Query(ctx, query, status, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var requests []DeviceTrustRequest
+	for rows.Next() {
+		var r DeviceTrustRequest
+		err := rows.Scan(
+			&r.ID, &r.UserID, &r.UserEmail, &r.UserName,
+			&r.DeviceID, &r.DeviceFingerprint, &r.DeviceName, &r.DeviceType,
+			&r.IPAddress, &r.UserAgent, &r.Justification, &r.Status,
+			&r.ReviewedBy, &r.ReviewedAt, &r.ReviewNotes, &r.AutoExpireAt, &r.CreatedAt,
+		)
+		if err != nil {
+			continue
+		}
+		requests = append(requests, r)
+	}
+
+	return requests, total, nil
+}
+
+// ApproveDeviceTrustRequest approves a trust request
+func (s *Service) ApproveDeviceTrustRequest(ctx context.Context, requestID, adminID, notes string) error {
+	// Get request details
+	var userID, fingerprint, status string
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT user_id, device_fingerprint, status FROM device_trust_requests WHERE id = $1",
+		requestID,
+	).Scan(&userID, &fingerprint, &status)
+	if err != nil {
+		return errors.New("request not found")
+	}
+
+	if status != "pending" {
+		return errors.New("request is not pending")
+	}
+
+	// Update request
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE device_trust_requests
+		SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2
+		WHERE id = $3`,
+		adminID, notes, requestID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Trust the device
+	s.trustDevice(ctx, userID, fingerprint)
+
+	// Notify user
+	settings, _ := s.GetDeviceTrustSettings(ctx)
+	if settings != nil && settings.NotifyUserOnDecision {
+		s.notifyUserOfTrustDecision(ctx, userID, "approved", notes)
+	}
+
+	return nil
+}
+
+// RejectDeviceTrustRequest rejects a trust request
+func (s *Service) RejectDeviceTrustRequest(ctx context.Context, requestID, adminID, notes string) error {
+	var userID, status string
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT user_id, status FROM device_trust_requests WHERE id = $1",
+		requestID,
+	).Scan(&userID, &status)
+	if err != nil {
+		return errors.New("request not found")
+	}
+
+	if status != "pending" {
+		return errors.New("request is not pending")
+	}
+
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE device_trust_requests
+		SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2
+		WHERE id = $3`,
+		adminID, notes, requestID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Notify user
+	settings, _ := s.GetDeviceTrustSettings(ctx)
+	if settings != nil && settings.NotifyUserOnDecision {
+		s.notifyUserOfTrustDecision(ctx, userID, "rejected", notes)
+	}
+
+	return nil
+}
+
+// BulkApproveDeviceTrustRequests approves multiple requests
+func (s *Service) BulkApproveDeviceTrustRequests(ctx context.Context, requestIDs []string, adminID, notes string) (int, int, error) {
+	approved := 0
+	failed := 0
+
+	for _, id := range requestIDs {
+		err := s.ApproveDeviceTrustRequest(ctx, id, adminID, notes)
+		if err != nil {
+			failed++
+		} else {
+			approved++
+		}
+	}
+
+	return approved, failed, nil
+}
+
+// BulkRejectDeviceTrustRequests rejects multiple requests
+func (s *Service) BulkRejectDeviceTrustRequests(ctx context.Context, requestIDs []string, adminID, notes string) (int, int, error) {
+	rejected := 0
+	failed := 0
+
+	for _, id := range requestIDs {
+		err := s.RejectDeviceTrustRequest(ctx, id, adminID, notes)
+		if err != nil {
+			failed++
+		} else {
+			rejected++
+		}
+	}
+
+	return rejected, failed, nil
+}
+
+// GetDeviceTrustSettings returns the current settings
+func (s *Service) GetDeviceTrustSettings(ctx context.Context) (*DeviceTrustSettings, error) {
+	query := `
+		SELECT id, org_id, require_approval, auto_approve_known_ips, auto_approve_corporate_devices,
+			request_expiry_hours, notify_admins, notify_user_on_decision, updated_at
+		FROM device_trust_settings
+		LIMIT 1
+	`
+
+	var settings DeviceTrustSettings
+	err := s.db.Pool.QueryRow(ctx, query).Scan(
+		&settings.ID, &settings.OrgID, &settings.RequireApproval, &settings.AutoApproveKnownIPs,
+		&settings.AutoApproveCorporateDevs, &settings.RequestExpiryHours, &settings.NotifyAdmins,
+		&settings.NotifyUserOnDecision, &settings.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &settings, nil
+}
+
+// UpdateDeviceTrustSettings updates the settings
+func (s *Service) UpdateDeviceTrustSettings(ctx context.Context, settings *DeviceTrustSettings) error {
+	query := `
+		UPDATE device_trust_settings
+		SET require_approval = $1, auto_approve_known_ips = $2, auto_approve_corporate_devices = $3,
+			request_expiry_hours = $4, notify_admins = $5, notify_user_on_decision = $6, updated_at = NOW()
+		WHERE id = $7
+	`
+
+	_, err := s.db.Pool.Exec(ctx, query,
+		settings.RequireApproval, settings.AutoApproveKnownIPs, settings.AutoApproveCorporateDevs,
+		settings.RequestExpiryHours, settings.NotifyAdmins, settings.NotifyUserOnDecision,
+		settings.ID,
+	)
+
+	return err
+}
+
+// GetPendingRequestCount returns count of pending requests
+func (s *Service) GetPendingRequestCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM device_trust_requests WHERE status = 'pending'",
+	).Scan(&count)
+	return count, err
+}
+
+// ExpireOldRequests expires requests past their auto_expire_at
+func (s *Service) ExpireOldRequests(ctx context.Context) (int, error) {
+	result, err := s.db.Pool.Exec(ctx,
+		`UPDATE device_trust_requests
+		SET status = 'expired'
+		WHERE status = 'pending' AND auto_expire_at IS NOT NULL AND auto_expire_at < NOW()`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
+}
+
+// Helper functions
+
+func (s *Service) trustDevice(ctx context.Context, userID, fingerprint string) {
+	s.db.Pool.Exec(ctx,
+		"UPDATE known_devices SET trusted = true WHERE user_id = $1 AND fingerprint = $2",
+		userID, fingerprint,
+	)
+}
+
+func (s *Service) isKnownIP(ctx context.Context, userID, ipAddress string) bool {
+	var count int
+	s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM known_devices
+		WHERE user_id = $1 AND ip_address = $2 AND trusted = true`,
+		userID, ipAddress,
+	).Scan(&count)
+	return count > 0
+}
+
+func (s *Service) isCorporateDevice(ctx context.Context, fingerprint string) bool {
+	// Check if device matches corporate device criteria
+	// This could check domain membership, MDM enrollment, etc.
+	var count int
+	s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM known_devices
+		WHERE fingerprint = $1 AND (device_type = 'corporate' OR name LIKE '%Corporate%')`,
+		fingerprint,
+	).Scan(&count)
+	return count > 0
+}
+
+func (s *Service) notifyAdminsOfTrustRequest(ctx context.Context, userID, deviceName string) {
+	// Send notification to admins
+	// This would integrate with the notification system
+}
+
+func (s *Service) notifyUserOfTrustDecision(ctx context.Context, userID, decision, notes string) {
+	// Send notification to user about decision
+	// This would integrate with the notification system
+}

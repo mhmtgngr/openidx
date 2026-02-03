@@ -34,6 +34,10 @@ import { AppLauncherPage } from './pages/app-launcher'
 import { MyAccessPage } from './pages/my-access'
 import { MyDevicesPage } from './pages/my-devices'
 import { NotificationPreferencesPage } from './pages/notification-preferences'
+import { HardwareTokensPage } from './pages/hardware-tokens'
+import { DeviceTrustApprovalPage } from './pages/device-trust-approval'
+import { MFABypassCodesPage } from './pages/mfa-bypass-codes'
+import { PasswordlessSettingsPage } from './pages/passwordless-settings'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -225,6 +229,26 @@ export default function App() {
           } />
           <Route path="notification-preferences" element={
             <NotificationPreferencesPage />
+          } />
+          <Route path="hardware-tokens" element={
+            <AdminRoute>
+              <HardwareTokensPage />
+            </AdminRoute>
+          } />
+          <Route path="device-trust-approval" element={
+            <AdminRoute>
+              <DeviceTrustApprovalPage />
+            </AdminRoute>
+          } />
+          <Route path="mfa-bypass-codes" element={
+            <AdminRoute>
+              <MFABypassCodesPage />
+            </AdminRoute>
+          } />
+          <Route path="passwordless-settings" element={
+            <AdminRoute>
+              <PasswordlessSettingsPage />
+            </AdminRoute>
           } />
         </Route>
 
