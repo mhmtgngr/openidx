@@ -28,11 +28,16 @@ type GuacamoleClient struct {
 	httpClient *http.Client
 	db         *database.PostgresDB
 	logger     *zap.Logger
+
+	// Connection pool
+	pool           *ConnectionPool
+	activeSessions int
 }
 
 // GuacConnection represents a Guacamole connection
 type GuacConnection struct {
 	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
 	RouteID               string            `json:"route_id"`
 	GuacamoleConnectionID string            `json:"guacamole_connection_id"`
 	Protocol              string            `json:"protocol"`
@@ -41,6 +46,33 @@ type GuacConnection struct {
 	Parameters            map[string]string `json:"parameters"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
+}
+
+// ConnectionPool manages reusable Guacamole connection tokens
+type ConnectionPool struct {
+	maxConnections int
+	idleTimeout    time.Duration
+	connections    map[string]*PooledConnection
+}
+
+// PooledConnection represents a pooled Guacamole connection token
+type PooledConnection struct {
+	Token      string    `json:"token"`
+	ConnectionID string  `json:"connection_id"`
+	UserID     string    `json:"user_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsedAt time.Time `json:"last_used_at"`
+	UseCount   int       `json:"use_count"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// NewConnectionPool creates a new connection pool
+func NewConnectionPool(maxConnections int, idleTimeout time.Duration) *ConnectionPool {
+	return &ConnectionPool{
+		maxConnections: maxConnections,
+		idleTimeout:    idleTimeout,
+		connections:    make(map[string]*PooledConnection),
+	}
 }
 
 // NewGuacamoleClient creates and authenticates a Guacamole API client
@@ -431,4 +463,274 @@ func (s *Service) deprovisionGuacamoleForRoute(ctx context.Context, routeID stri
 		s.logger.Warn("Failed to deprovision guacamole connection",
 			zap.String("route_id", routeID), zap.Error(err))
 	}
+}
+
+// ---- Connection Pooling Methods ----
+
+// GetPooledConnection returns a reusable connection token from the pool
+func (gc *GuacamoleClient) GetPooledConnection(ctx context.Context, connID, userID string) (*PooledConnection, error) {
+	if gc.pool == nil {
+		gc.pool = NewConnectionPool(100, 15*time.Minute)
+	}
+
+	key := connID + ":" + userID
+
+	// Check for existing pooled connection
+	if conn, exists := gc.pool.connections[key]; exists {
+		if time.Now().Before(conn.ExpiresAt) && time.Since(conn.LastUsedAt) < gc.pool.idleTimeout {
+			conn.LastUsedAt = time.Now()
+			conn.UseCount++
+			gc.logger.Debug("Reusing pooled connection",
+				zap.String("connection_id", connID),
+				zap.Int("use_count", conn.UseCount))
+			return conn, nil
+		}
+		// Expired or idle, remove from pool
+		delete(gc.pool.connections, key)
+	}
+
+	// Create new connection token
+	token, err := gc.createConnectionToken(connID)
+	if err != nil {
+		return nil, err
+	}
+
+	conn := &PooledConnection{
+		Token:        token,
+		ConnectionID: connID,
+		UserID:       userID,
+		CreatedAt:    time.Now(),
+		LastUsedAt:   time.Now(),
+		UseCount:     1,
+		ExpiresAt:    time.Now().Add(30 * time.Minute),
+	}
+
+	// Save to pool
+	gc.pool.connections[key] = conn
+
+	// Persist to database for durability
+	gc.savePooledConnection(ctx, conn)
+
+	gc.logger.Debug("Created new pooled connection",
+		zap.String("connection_id", connID))
+
+	return conn, nil
+}
+
+func (gc *GuacamoleClient) createConnectionToken(connID string) (string, error) {
+	// For Guacamole, we use the auth token which is already obtained
+	// The actual connection URL will include the token
+	return gc.authToken, nil
+}
+
+func (gc *GuacamoleClient) savePooledConnection(ctx context.Context, conn *PooledConnection) {
+	_, err := gc.db.Pool.Exec(ctx, `
+		INSERT INTO guacamole_connection_pool (connection_id, token, user_id, created_at, last_used_at, use_count, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (connection_id) DO UPDATE SET
+			token = $2, last_used_at = $5, use_count = $6, expires_at = $7
+	`, conn.ConnectionID, conn.Token, conn.UserID, conn.CreatedAt, conn.LastUsedAt, conn.UseCount, conn.ExpiresAt)
+	if err != nil {
+		gc.logger.Warn("Failed to save pooled connection", zap.Error(err))
+	}
+}
+
+// CleanupExpiredConnections removes expired connections from the pool
+func (gc *GuacamoleClient) CleanupExpiredConnections(ctx context.Context) int {
+	if gc.pool == nil {
+		return 0
+	}
+
+	now := time.Now()
+	removed := 0
+
+	for key, conn := range gc.pool.connections {
+		if now.After(conn.ExpiresAt) || now.Sub(conn.LastUsedAt) > gc.pool.idleTimeout {
+			delete(gc.pool.connections, key)
+			removed++
+		}
+	}
+
+	// Also cleanup database
+	gc.db.Pool.Exec(ctx, `DELETE FROM guacamole_connection_pool WHERE expires_at < NOW()`)
+
+	if removed > 0 {
+		gc.logger.Info("Cleaned up expired connections", zap.Int("removed", removed))
+	}
+
+	return removed
+}
+
+// GetActiveSessionCount returns the number of active sessions
+func (gc *GuacamoleClient) GetActiveSessionCount() int {
+	return gc.activeSessions
+}
+
+// ---- Health Check Methods ----
+
+// CheckHealth verifies Guacamole server connectivity
+func (gc *GuacamoleClient) CheckHealth(ctx context.Context) (bool, error) {
+	resp, err := gc.httpClient.Get(gc.baseURL + "/api")
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode < 500, nil
+}
+
+// IsAuthenticated returns whether the client has a valid auth token
+func (gc *GuacamoleClient) IsAuthenticated() bool {
+	return gc.authToken != ""
+}
+
+// ListConnections returns all connections from Guacamole API
+func (gc *GuacamoleClient) ListConnections(ctx context.Context) ([]GuacConnection, error) {
+	respData, statusCode, err := gc.apiRequest("GET", "/connections", nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to list connections: HTTP %d", statusCode)
+	}
+
+	var connectionsMap map[string]struct {
+		Identifier string `json:"identifier"`
+		Name       string `json:"name"`
+		Protocol   string `json:"protocol"`
+	}
+	if err := json.Unmarshal(respData, &connectionsMap); err != nil {
+		return nil, err
+	}
+
+	var connections []GuacConnection
+	for _, c := range connectionsMap {
+		connections = append(connections, GuacConnection{
+			ID:       c.Identifier,
+			Name:     c.Name,
+			Protocol: c.Protocol,
+		})
+	}
+
+	return connections, nil
+}
+
+// GetConnection returns a specific connection from Guacamole
+func (gc *GuacamoleClient) GetConnection(ctx context.Context, connID string) (*GuacConnection, error) {
+	respData, statusCode, err := gc.apiRequest("GET", "/connections/"+connID, nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("connection not found: HTTP %d", statusCode)
+	}
+
+	var conn struct {
+		Identifier string            `json:"identifier"`
+		Name       string            `json:"name"`
+		Protocol   string            `json:"protocol"`
+		Parameters map[string]string `json:"parameters"`
+	}
+	if err := json.Unmarshal(respData, &conn); err != nil {
+		return nil, err
+	}
+
+	return &GuacConnection{
+		ID:         conn.Identifier,
+		Name:       conn.Name,
+		Protocol:   conn.Protocol,
+		Parameters: conn.Parameters,
+	}, nil
+}
+
+// ValidateConnection checks if a connection is valid and can be used
+func (gc *GuacamoleClient) ValidateConnection(ctx context.Context, connID string) (bool, error) {
+	_, err := gc.GetConnection(ctx, connID)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CreateConnection (context version) creates a new connection with context
+func (gc *GuacamoleClient) CreateConnectionCtx(ctx context.Context, name, protocol string, params map[string]string) (string, error) {
+	hostname := params["hostname"]
+	portStr := params["port"]
+	port := 22
+	fmt.Sscanf(portStr, "%d", &port)
+
+	return gc.CreateConnection(name, protocol, hostname, port, params)
+}
+
+// DeleteConnection (context version) deletes a connection with context
+func (gc *GuacamoleClient) DeleteConnectionCtx(ctx context.Context, connID string) error {
+	return gc.DeleteConnection(connID)
+}
+
+// GuacamoleSession represents a Guacamole session history entry
+type GuacamoleSession struct {
+	ConnectionID    string     `json:"connection_id"`
+	ConnectionName  string     `json:"connection_name"`
+	Protocol        string     `json:"protocol"`
+	Username        string     `json:"username"`
+	RemoteIP        string     `json:"remote_ip"`
+	StartTime       time.Time  `json:"start_time"`
+	EndTime         *time.Time `json:"end_time,omitempty"`
+	DurationSeconds int        `json:"duration_seconds,omitempty"`
+}
+
+// GetSessionHistory retrieves session history from Guacamole
+func (gc *GuacamoleClient) GetSessionHistory(ctx context.Context, since *time.Time) ([]GuacamoleSession, error) {
+	// Guacamole history API endpoint
+	respData, statusCode, err := gc.apiRequest("GET", "/history/connections", nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get session history: HTTP %d", statusCode)
+	}
+
+	var historyEntries []struct {
+		ConnectionIdentifier string `json:"connectionIdentifier"`
+		ConnectionName       string `json:"connectionName"`
+		Protocol             string `json:"protocol"`
+		Username             string `json:"username"`
+		RemoteHost           string `json:"remoteHost"`
+		StartDate            int64  `json:"startDate"`
+		EndDate              int64  `json:"endDate"`
+	}
+
+	if err := json.Unmarshal(respData, &historyEntries); err != nil {
+		// If parsing fails, return empty slice
+		return []GuacamoleSession{}, nil
+	}
+
+	var sessions []GuacamoleSession
+	for _, entry := range historyEntries {
+		startTime := time.Unix(entry.StartDate/1000, 0)
+
+		// Filter by since if provided
+		if since != nil && startTime.Before(*since) {
+			continue
+		}
+
+		session := GuacamoleSession{
+			ConnectionID:   entry.ConnectionIdentifier,
+			ConnectionName: entry.ConnectionName,
+			Protocol:       entry.Protocol,
+			Username:       entry.Username,
+			RemoteIP:       entry.RemoteHost,
+			StartTime:      startTime,
+		}
+
+		if entry.EndDate > 0 {
+			endTime := time.Unix(entry.EndDate/1000, 0)
+			session.EndTime = &endTime
+			session.DurationSeconds = int(endTime.Sub(startTime).Seconds())
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
 }

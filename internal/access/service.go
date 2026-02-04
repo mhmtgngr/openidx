@@ -98,16 +98,52 @@ type Service struct {
 	oauthJWKSURL     string
 	zitiManager     *ZitiManager
 	guacamoleClient *GuacamoleClient
+	featureManager  *FeatureManager
+	auditService    *UnifiedAuditService
 }
 
 // SetGuacamoleClient sets the Guacamole client for the service
 func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	s.guacamoleClient = gc
+	if s.featureManager != nil {
+		s.featureManager.SetGuacamoleClient(gc)
+	}
+	if s.auditService != nil {
+		s.auditService.SetGuacamoleClient(gc)
+	}
 }
 
 // SetZitiManager sets the OpenZiti manager for the service
 func (s *Service) SetZitiManager(zm *ZitiManager) {
 	s.zitiManager = zm
+	if s.featureManager != nil {
+		s.featureManager.SetZitiManager(zm)
+	}
+	if s.auditService != nil {
+		s.auditService.SetZitiManager(zm)
+	}
+}
+
+// SetFeatureManager sets the feature manager for the service
+func (s *Service) SetFeatureManager(fm *FeatureManager) {
+	s.featureManager = fm
+	if s.zitiManager != nil {
+		fm.SetZitiManager(s.zitiManager)
+	}
+	if s.guacamoleClient != nil {
+		fm.SetGuacamoleClient(s.guacamoleClient)
+	}
+}
+
+// SetAuditService sets the unified audit service
+func (s *Service) SetAuditService(as *UnifiedAuditService) {
+	s.auditService = as
+	if s.zitiManager != nil {
+		as.SetZitiManager(s.zitiManager)
+	}
+	if s.guacamoleClient != nil {
+		as.SetGuacamoleClient(s.guacamoleClient)
+	}
 }
 
 // NewService creates a new access proxy service
@@ -231,6 +267,40 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/temp-access/:id", svc.handleGetTempAccess)
 		api.DELETE("/temp-access/:id", svc.handleRevokeTempAccess)
 		api.GET("/temp-access/:id/usage", svc.handleGetTempAccessUsage)
+
+		// Service feature management endpoints
+		api.GET("/services/:id/features", svc.handleGetServiceFeatures)
+		api.GET("/services/:id/status", svc.handleGetServiceStatus)
+		api.GET("/services/status", svc.handleGetAllServicesStatus)
+		api.POST("/services/:id/features/ziti/enable", svc.handleEnableZitiFeature)
+		api.POST("/services/:id/features/ziti/disable", svc.handleDisableZitiFeature)
+		api.POST("/services/:id/features/browzer/enable", svc.handleEnableBrowZerFeature)
+		api.POST("/services/:id/features/browzer/disable", svc.handleDisableBrowZerFeature)
+		api.POST("/services/:id/features/guacamole/enable", svc.handleEnableGuacamoleFeature)
+		api.POST("/services/:id/features/guacamole/disable", svc.handleDisableGuacamoleFeature)
+
+		// Health check endpoints
+		api.GET("/health/integrations", svc.handleHealthIntegrations)
+		api.GET("/health/ziti", svc.handleHealthZiti)
+		api.GET("/health/guacamole", svc.handleHealthGuacamole)
+		api.GET("/health/browzer", svc.handleHealthBrowZer)
+		api.GET("/services/:id/health", svc.handleHealthService)
+
+		// Connection test endpoints
+		api.POST("/services/:id/test-connection", svc.handleTestConnection)
+		api.GET("/services/:id/test-history", svc.handleGetConnectionTestHistory)
+
+		// Ziti discovery and import
+		api.GET("/ziti/discover", svc.handleDiscoverZitiServices)
+		api.POST("/ziti/import", svc.handleImportZitiService)
+		api.POST("/ziti/import/bulk", svc.handleBulkImportZitiServices)
+		api.GET("/ziti/unmanaged/count", svc.handleGetUnmanagedServicesCount)
+
+		// Unified audit log
+		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)
+		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
+		api.POST("/audit/unified/sync", svc.handleSyncExternalAuditEvents)
+		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
 	}
 
 	// Temp access public endpoint (no auth - uses token)

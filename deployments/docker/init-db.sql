@@ -1634,3 +1634,98 @@ VALUES (
     '["openid","profile","email"]'::jsonb,
     true
 ) ON CONFLICT (client_id) DO NOTHING;
+
+-- ============================================================================
+-- UNIFIED SERVICE MANAGEMENT - PHASE 1
+-- ============================================================================
+
+-- Service features tracking (toggleable features per route)
+CREATE TABLE IF NOT EXISTS service_features (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    route_id UUID NOT NULL REFERENCES proxy_routes(id) ON DELETE CASCADE,
+    feature_name VARCHAR(50) NOT NULL,
+    enabled BOOLEAN DEFAULT false,
+    config JSONB DEFAULT '{}',
+    resource_ids JSONB DEFAULT '{}',
+    status VARCHAR(50) DEFAULT 'disabled',
+    error_message TEXT,
+    last_health_check TIMESTAMPTZ,
+    health_status VARCHAR(20) DEFAULT 'unknown',
+    enabled_at TIMESTAMPTZ,
+    enabled_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(route_id, feature_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_features_route ON service_features(route_id);
+CREATE INDEX IF NOT EXISTS idx_service_features_feature ON service_features(feature_name);
+CREATE INDEX IF NOT EXISTS idx_service_features_enabled ON service_features(enabled);
+CREATE INDEX IF NOT EXISTS idx_service_features_health ON service_features(health_status);
+
+-- Connection test results
+CREATE TABLE IF NOT EXISTS connection_tests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    route_id UUID NOT NULL REFERENCES proxy_routes(id) ON DELETE CASCADE,
+    test_type VARCHAR(50) NOT NULL,
+    success BOOLEAN NOT NULL,
+    latency_ms INTEGER,
+    error_message TEXT,
+    details JSONB DEFAULT '{}',
+    tested_at TIMESTAMPTZ DEFAULT NOW(),
+    tested_by UUID REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_connection_tests_route ON connection_tests(route_id);
+CREATE INDEX IF NOT EXISTS idx_connection_tests_type ON connection_tests(test_type);
+CREATE INDEX IF NOT EXISTS idx_connection_tests_tested_at ON connection_tests(tested_at DESC);
+
+-- Unified audit events (aggregates from OpenIDX, Ziti, Guacamole)
+CREATE TABLE IF NOT EXISTS unified_audit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source VARCHAR(50) NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    route_id UUID REFERENCES proxy_routes(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    actor_ip VARCHAR(45),
+    details JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_unified_audit_source ON unified_audit_events(source, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_unified_audit_route ON unified_audit_events(route_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_unified_audit_user ON unified_audit_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_unified_audit_event_type ON unified_audit_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_unified_audit_created ON unified_audit_events(created_at DESC);
+
+-- Guacamole connection pool tracking
+CREATE TABLE IF NOT EXISTS guacamole_connection_pool (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    connection_id VARCHAR(255) NOT NULL,
+    token VARCHAR(500) NOT NULL,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ DEFAULT NOW(),
+    use_count INTEGER DEFAULT 1,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_guac_pool_connection ON guacamole_connection_pool(connection_id);
+CREATE INDEX IF NOT EXISTS idx_guac_pool_user ON guacamole_connection_pool(user_id);
+CREATE INDEX IF NOT EXISTS idx_guac_pool_expires ON guacamole_connection_pool(expires_at);
+
+-- External audit sync state (tracks last sync from Ziti/Guacamole)
+CREATE TABLE IF NOT EXISTS external_audit_sync_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source VARCHAR(50) UNIQUE NOT NULL,
+    last_sync_at TIMESTAMPTZ,
+    last_event_id VARCHAR(255),
+    sync_cursor JSONB DEFAULT '{}',
+    error_message TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO external_audit_sync_state (source, last_sync_at) VALUES
+    ('ziti', NULL),
+    ('guacamole', NULL)
+ON CONFLICT (source) DO NOTHING;

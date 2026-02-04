@@ -32,6 +32,8 @@ import {
   ShieldOff,
   Link2,
   Activity,
+  Search,
+  Layers,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -100,6 +102,7 @@ const navigationSections: NavSection[] = [
     items: [
       { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
       { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
+      { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },
       { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
     ],
   },
@@ -130,6 +133,7 @@ const navigationSections: NavSection[] = [
     adminOnly: true,
     items: [
       { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
+      { name: 'Unified Audit', href: '/unified-audit', icon: Layers, adminOnly: true },
       { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
       { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
       { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },

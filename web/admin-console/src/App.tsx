@@ -25,6 +25,8 @@ import { SessionsAdminPage } from './pages/sessions-admin'
 import { ApprovalPoliciesPage } from './pages/approval-policies'
 import { ProxyRoutesPage } from './pages/proxy-routes'
 import { ZitiNetworkPage } from './pages/ziti-network'
+import { UnifiedAuditPage } from './pages/unified-audit'
+import { ZitiDiscoveryPage } from './pages/ziti-discovery'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
@@ -204,6 +206,16 @@ export default function App() {
           <Route path="ziti-network" element={
             <AdminRoute>
               <ZitiNetworkPage />
+            </AdminRoute>
+          } />
+          <Route path="ziti-discovery" element={
+            <AdminRoute>
+              <ZitiDiscoveryPage />
+            </AdminRoute>
+          } />
+          <Route path="unified-audit" element={
+            <AdminRoute>
+              <UnifiedAuditPage />
             </AdminRoute>
           } />
           <Route path="settings" element={

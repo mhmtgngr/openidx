@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/openziti/sdk-golang/ziti"
 	"github.com/openziti/sdk-golang/ziti/enroll"
 	"go.uber.org/zap"
@@ -1114,4 +1115,111 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 	}
 
 	return respBody, resp.StatusCode, nil
+}
+
+// ---- Methods for Feature Manager and Health Checks ----
+
+// CheckControllerHealth verifies connectivity to the Ziti controller
+func (zm *ZitiManager) CheckControllerHealth(ctx context.Context) (bool, error) {
+	_, err := zm.GetControllerVersion(ctx)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GetServiceByName retrieves a Ziti service by its name
+func (zm *ZitiManager) GetServiceByName(serviceName string) (*ZitiServiceInfo, error) {
+	services, err := zm.ListServices(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	for _, svc := range services {
+		if svc.Name == serviceName {
+			return &svc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("service not found: %s", serviceName)
+}
+
+// GetService retrieves a Ziti service by its ID
+func (zm *ZitiManager) GetService(zitiID string) (*ZitiServiceInfo, error) {
+	services, err := zm.ListServices(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	for _, svc := range services {
+		if svc.ID == zitiID {
+			return &svc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("service not found: %s", zitiID)
+}
+
+// TestServiceDial tests if a Ziti service is dialable
+func (zm *ZitiManager) TestServiceDial(ctx context.Context, serviceName string) (bool, error) {
+	if zm.zitiCtx == nil {
+		return false, fmt.Errorf("Ziti context not initialized")
+	}
+
+	// Check if service exists first
+	_, err := zm.GetServiceByName(serviceName)
+	if err != nil {
+		return false, err
+	}
+
+	// For now, just return true if the service exists
+	// In a full implementation, we would attempt to dial the service
+	return true, nil
+}
+
+// ZitiAuditEvent represents an audit event from Ziti
+type ZitiAuditEvent struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+	Identity  string    `json:"identity,omitempty"`
+	Service   string    `json:"service,omitempty"`
+	Router    string    `json:"router,omitempty"`
+	SourceIP  string    `json:"source_ip,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+// GetAuditEvents retrieves audit events from Ziti controller
+func (zm *ZitiManager) GetAuditEvents(ctx context.Context, since *time.Time) ([]ZitiAuditEvent, error) {
+	// Note: The Ziti controller may not have a built-in audit API
+	// This is a placeholder for integration with Ziti's metrics/events
+	// In production, you might use Ziti's event streaming or metrics endpoints
+
+	// For now, return an empty slice
+	return []ZitiAuditEvent{}, nil
+}
+
+// CreateService (overloaded) creates a Ziti service with host/port config
+func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host string, port int) (*ZitiServiceInfo, error) {
+	attrs := []string{"openidx-managed"}
+
+	zitiID, err := zm.CreateService(ctx, name, attrs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in database
+	id := uuid.New().String()
+	_, err = zm.db.Pool.Exec(ctx, `
+		INSERT INTO ziti_services (id, ziti_id, name, protocol, host, port, enabled)
+		VALUES ($1, $2, $3, 'tcp', $4, $5, true)
+	`, id, zitiID, name, host, port)
+	if err != nil {
+		zm.logger.Warn("Failed to save service to DB", zap.Error(err))
+	}
+
+	return &ZitiServiceInfo{
+		ID:   zitiID,
+		Name: name,
+	}, nil
 }

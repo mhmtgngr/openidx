@@ -144,6 +144,16 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
+	// Initialize Feature Manager for unified service management
+	featureManager := access.NewFeatureManager(db, log)
+	accessService.SetFeatureManager(featureManager)
+	log.Info("Feature Manager initialized")
+
+	// Initialize Unified Audit Service
+	auditService := access.NewUnifiedAuditService(db, log)
+	accessService.SetAuditService(auditService)
+	log.Info("Unified Audit Service initialized")
+
 	// Initialize Apache Guacamole client if configured
 	if cfg.GuacamoleURL != "" {
 		log.Info("Initializing Apache Guacamole integration...", zap.String("url", cfg.GuacamoleURL))
@@ -152,6 +162,8 @@ func main() {
 			log.Error("Failed to initialize Guacamole client -- remote access features disabled", zap.Error(err))
 		} else {
 			accessService.SetGuacamoleClient(gc)
+			featureManager.SetGuacamoleClient(gc)
+			auditService.SetGuacamoleClient(gc)
 			log.Info("Apache Guacamole integration ready")
 		}
 	}
@@ -170,6 +182,8 @@ func main() {
 			log.Error("Failed to initialize ZitiManager -- Ziti features disabled", zap.Error(err))
 		} else {
 			accessService.SetZitiManager(zm)
+			featureManager.SetZitiManager(zm)
+			auditService.SetZitiManager(zm)
 			defer zm.Close()
 
 			// Start background monitors
@@ -196,6 +210,32 @@ func main() {
 	} else {
 		log.Info("OpenZiti integration disabled (set ZITI_ENABLED=true to enable)")
 	}
+
+	// Start background audit event sync (every 5 minutes)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		// Initial sync after 30 seconds
+		time.Sleep(30 * time.Second)
+		if err := auditService.SyncExternalAuditEvents(bgCtx); err != nil {
+			log.Warn("Initial external audit sync failed", zap.Error(err))
+		} else {
+			log.Info("Initial external audit sync completed")
+		}
+
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				if err := auditService.SyncExternalAuditEvents(bgCtx); err != nil {
+					log.Warn("External audit sync failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	log.Info("Background audit sync scheduled (every 5 minutes)")
 
 	// Register routes (admin API is protected in non-dev environments)
 	if cfg.Environment != "development" {
