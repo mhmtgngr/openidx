@@ -209,7 +209,7 @@ test.describe('Ziti Overview Tab', () => {
   test('should display edge routers table', async ({ page }) => {
     await page.goto('/ziti-network');
 
-    await expect(page.locator('text=Edge Routers')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Edge Routers', exact: true })).toBeVisible();
     await expect(page.locator('text=edge-router-1')).toBeVisible();
     await expect(page.locator('text=edge-router-2')).toBeVisible();
   });

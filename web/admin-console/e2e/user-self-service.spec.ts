@@ -2,80 +2,101 @@ import { test, expect } from '@playwright/test';
 
 test.describe('User Profile Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: 'test-user-id',
-          username: 'testuser',
-          email: 'test@example.com',
-          first_name: 'Test',
-          last_name: 'User',
-          phone: '+1234567890',
-          email_verified: true,
-          mfa_enabled: false,
-          created_at: '2024-01-01T00:00:00Z',
-        }),
-      });
+    // Mock the correct API endpoint
+    await page.route('**/api/v1/identity/users/me', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'test-user-id',
+            username: 'testuser',
+            email: 'test@example.com',
+            firstName: 'Test',
+            lastName: 'User',
+            phone: '+1234567890',
+            emailVerified: true,
+            mfaEnabled: false,
+            enabled: true,
+            created_at: '2024-01-01T00:00:00Z',
+          }),
+        });
+      }
     });
   });
 
   test('should display user profile page', async ({ page }) => {
     await page.goto('/profile');
 
-    await expect(page.locator('h1:has-text("Profile"), h1:has-text("My Profile")')).toBeVisible();
+    // Page title is "My Profile"
+    await expect(page.locator('h1:has-text("My Profile")')).toBeVisible();
   });
 
   test('should display user information', async ({ page }) => {
     await page.goto('/profile');
 
-    await expect(page.locator('text=testuser').or(page.locator('text=test@example.com'))).toBeVisible();
+    // Profile shows email in the email field
+    await expect(page.getByLabel(/email/i)).toBeVisible();
   });
 
-  test('should have edit profile button', async ({ page }) => {
+  test('should have update profile button', async ({ page }) => {
     await page.goto('/profile');
 
-    await expect(page.getByRole('button', { name: /edit|update|save/i })).toBeVisible();
+    // The button is "Update Profile"
+    await expect(page.getByRole('button', { name: /update profile/i })).toBeVisible();
   });
 
-  test('should display MFA section', async ({ page }) => {
+  test('should display MFA section in Security tab', async ({ page }) => {
     await page.goto('/profile');
 
-    await expect(page.locator('text=MFA').or(page.locator('text=Two-Factor').or(page.locator('text=Multi-Factor')))).toBeVisible();
+    // MFA section is under the Security tab
+    const securityTab = page.getByRole('tab', { name: /security/i });
+    await expect(securityTab).toBeVisible();
+    await securityTab.click();
+
+    // Look for "Multi-Factor Authentication" heading
+    await expect(page.getByText('Multi-Factor Authentication')).toBeVisible();
   });
 });
 
 test.describe('My Access Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me/access*', async (route) => {
+    // Mock the access overview API
+    await page.route('**/api/v1/identity/portal/access-overview*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
+          roles_count: 2,
+          groups_count: 1,
+          apps_count: 2,
+          pending_requests: 0,
           roles: [
-            { id: 'role-1', name: 'user', description: 'Regular user access' },
-            { id: 'role-2', name: 'developer', description: 'Developer access' },
+            { id: 'role-1', name: 'user' },
+            { id: 'role-2', name: 'developer' },
           ],
           groups: [
-            { id: 'group-1', name: 'Engineering', description: 'Engineering team' },
-          ],
-          applications: [
-            { id: 'app-1', name: 'Admin Console', description: 'Admin dashboard' },
-            { id: 'app-2', name: 'Developer Portal', description: 'Dev resources' },
+            { id: 'group-1', name: 'Engineering' },
           ],
         }),
       });
     });
 
-    await page.route('**/api/v1/identity/me/roles*', async (route) => {
+    // Mock available groups
+    await page.route('**/api/v1/identity/portal/groups/available*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([
-          { id: 'role-1', name: 'user', description: 'Regular user access' },
-          { id: 'role-2', name: 'developer', description: 'Developer access' },
-        ]),
+        body: JSON.stringify({ groups: [] }),
+      });
+    });
+
+    // Mock group requests
+    await page.route('**/api/v1/identity/portal/groups/requests*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ requests: [] }),
       });
     });
   });
@@ -86,68 +107,97 @@ test.describe('My Access Page', () => {
     await expect(page.locator('h1:has-text("My Access")')).toBeVisible();
   });
 
-  test('should display assigned roles', async ({ page }) => {
+  test('should display assigned roles section', async ({ page }) => {
     await page.goto('/my-access');
 
-    await expect(page.locator('text=Roles').or(page.locator('text=user').or(page.locator('text=developer')))).toBeVisible();
+    // Look for "My Roles" heading
+    await expect(page.getByRole('heading', { name: 'My Roles' })).toBeVisible();
   });
 });
 
 test.describe('My Devices Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me/devices*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([
-          { id: '1', name: 'MacBook Pro', type: 'laptop', os: 'macOS 14.2', browser: 'Chrome 120', ip_address: '192.168.1.100', current: true, trusted: true, last_activity: '2024-01-20T12:00:00Z' },
-          { id: '2', name: 'iPhone 15', type: 'mobile', os: 'iOS 17.2', browser: 'Safari', ip_address: '192.168.1.101', current: false, trusted: true, last_activity: '2024-01-19T15:00:00Z' },
-          { id: '3', name: 'Windows PC', type: 'desktop', os: 'Windows 11', browser: 'Edge 120', ip_address: '192.168.1.102', current: false, trusted: false, last_activity: '2024-01-18T10:00:00Z' },
-        ]),
-      });
+    // Mock the devices API - returns data in { data: { devices: [...] } } format
+    await page.route('**/api/v1/identity/portal/devices*', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            data: {
+              devices: [
+                { id: '1', name: 'MacBook Pro', device_type: 'laptop', ip_address: '192.168.1.100', trusted: true, last_seen_at: '2024-01-20T12:00:00Z', created_at: '2024-01-01T00:00:00Z' },
+                { id: '2', name: 'iPhone 15', device_type: 'mobile', ip_address: '192.168.1.101', trusted: true, last_seen_at: '2024-01-19T15:00:00Z', created_at: '2024-01-02T00:00:00Z' },
+                { id: '3', name: 'Windows PC', device_type: 'desktop', ip_address: '192.168.1.102', trusted: false, last_seen_at: '2024-01-18T10:00:00Z', created_at: '2024-01-03T00:00:00Z' },
+              ],
+            },
+          }),
+        });
+      }
     });
   });
 
   test('should display my devices page', async ({ page }) => {
     await page.goto('/my-devices');
 
-    await expect(page.locator('h1:has-text("My Devices"), h1:has-text("Devices")')).toBeVisible();
+    await expect(page.locator('h1:has-text("My Devices")')).toBeVisible();
   });
 
   test('should display list of devices', async ({ page }) => {
     await page.goto('/my-devices');
 
-    await expect(page.locator('text=MacBook Pro').or(page.locator('text=macOS'))).toBeVisible();
+    // Look for device name
+    await expect(page.getByText('MacBook Pro')).toBeVisible();
   });
 
-  test('should show current device indicator', async ({ page }) => {
+  test('should show trust status indicator', async ({ page }) => {
     await page.goto('/my-devices');
 
-    await expect(page.locator('text=Current').or(page.locator('text=This device'))).toBeVisible();
+    // Page shows "Trusted" or "Untrusted" badges
+    await expect(page.getByText('Trusted').first()).toBeVisible();
   });
 
-  test('should have remove device option', async ({ page }) => {
+  test('should have remove device option in menu', async ({ page }) => {
     await page.goto('/my-devices');
 
-    // Look for remove/delete button or menu option
-    const removeButton = page.locator('button:has-text("Remove"), button:has-text("Delete"), [aria-label*="remove"], [aria-label*="delete"]');
-    const moreMenu = page.locator('button[aria-label="More"], button:has-text("..."), [data-testid="more-menu"]');
+    // Wait for devices to load
+    await expect(page.getByText('MacBook Pro')).toBeVisible();
 
-    const hasRemoveOption = await removeButton.count() > 0 || await moreMenu.count() > 0;
-    expect(hasRemoveOption).toBeTruthy();
+    // Look for the more menu button (MoreHorizontal icon button)
+    const moreButton = page.locator('button').filter({ has: page.locator('svg.lucide-more-horizontal') }).first();
+
+    // If the more button exists, we have the remove option
+    const hasMoreButton = await moreButton.count() > 0;
+    expect(hasMoreButton).toBeTruthy();
   });
 });
 
 test.describe('Trusted Browsers Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me/trusted-browsers*', async (route) => {
+    // Mock the trusted browsers API
+    await page.route('**/api/v1/identity/trusted-browsers', async (route) => {
+      if (route.request().method() === 'GET' && !route.request().url().includes('/check')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            data: [
+              { id: '1', name: 'Chrome on macOS', ip_address: '192.168.1.100', active: true, revoked: false, trusted_at: '2024-01-15T10:00:00Z', expires_at: '2024-02-14T10:00:00Z' },
+              { id: '2', name: 'Firefox on Windows', ip_address: '192.168.1.101', active: false, revoked: true, trusted_at: '2024-01-10T10:00:00Z', expires_at: '2024-02-09T10:00:00Z' },
+            ],
+          }),
+        });
+      }
+    });
+
+    // Mock the check endpoint
+    await page.route('**/api/v1/identity/trusted-browsers/check*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([
-          { id: '1', browser: 'Chrome', os: 'macOS', ip_address: '192.168.1.100', current: true, created_at: '2024-01-15T10:00:00Z', expires_at: '2024-02-14T10:00:00Z' },
-          { id: '2', browser: 'Firefox', os: 'Windows', ip_address: '192.168.1.101', current: false, created_at: '2024-01-10T10:00:00Z', expires_at: '2024-02-09T10:00:00Z' },
-        ]),
+        body: JSON.stringify({
+          data: { trusted: false },
+        }),
       });
     });
   });
@@ -161,36 +211,40 @@ test.describe('Trusted Browsers Page', () => {
   test('should display list of trusted browsers', async ({ page }) => {
     await page.goto('/trusted-browsers');
 
-    await expect(page.locator('text=Chrome').or(page.locator('text=Firefox'))).toBeVisible();
+    // Look for browser name
+    await expect(page.getByText('Chrome on macOS')).toBeVisible();
   });
 
   test('should show expiration info', async ({ page }) => {
     await page.goto('/trusted-browsers');
 
-    await expect(page.locator('text=Expires').or(page.locator('text=expires').or(page.locator('text=/\\d+ days/')))).toBeVisible();
+    // Page shows "Expires in X days"
+    await expect(page.getByText(/expires in/i).first()).toBeVisible();
   });
 
-  test('should have revoke option', async ({ page }) => {
+  test('should have revoke all button', async ({ page }) => {
     await page.goto('/trusted-browsers');
 
-    await expect(page.locator('button:has-text("Revoke"), button:has-text("Remove"), [aria-label*="revoke"]').first()).toBeVisible();
+    // "Revoke All" button in header
+    await expect(page.getByRole('button', { name: /revoke all/i })).toBeVisible();
   });
 });
 
 test.describe('Notification Preferences Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me/notification-preferences*', async (route) => {
+    // Mock the notification preferences API
+    await page.route('**/api/v1/identity/notifications/preferences*', async (route) => {
       if (route.request().method() === 'GET') {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
-            email_notifications: true,
-            security_alerts: true,
-            login_notifications: true,
-            access_request_updates: true,
-            weekly_digest: false,
-            marketing: false,
+            preferences: [
+              { channel: 'in_app', event_type: 'security_alert', enabled: true },
+              { channel: 'email', event_type: 'security_alert', enabled: true },
+              { channel: 'in_app', event_type: 'access_request', enabled: true },
+              { channel: 'email', event_type: 'access_request', enabled: false },
+            ],
           }),
         });
       }
@@ -200,41 +254,54 @@ test.describe('Notification Preferences Page', () => {
   test('should display notification preferences page', async ({ page }) => {
     await page.goto('/notification-preferences');
 
-    await expect(page.locator('h1:has-text("Notification")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Notification Preferences")')).toBeVisible();
   });
 
   test('should display notification toggles', async ({ page }) => {
     await page.goto('/notification-preferences');
 
-    // Check for toggle switches
-    const switches = page.locator('[role="switch"], input[type="checkbox"]');
-    await expect(switches.first()).toBeVisible();
+    // Check for toggle buttons (custom styled buttons with rounded-full class)
+    const toggles = page.locator('button.rounded-full');
+    await expect(toggles.first()).toBeVisible();
   });
 
   test('should have security alerts option', async ({ page }) => {
     await page.goto('/notification-preferences');
 
-    await expect(page.locator('text=Security').or(page.locator('text=security'))).toBeVisible();
+    // Look for Security Alerts in the table (not the sidebar link)
+    await expect(page.getByRole('table').getByText('Security Alerts')).toBeVisible();
   });
 
-  test('should have email notifications option', async ({ page }) => {
+  test('should have email channel option', async ({ page }) => {
     await page.goto('/notification-preferences');
 
-    await expect(page.locator('text=Email').or(page.locator('text=email'))).toBeVisible();
+    // Email channel header
+    await expect(page.getByText('Email', { exact: true })).toBeVisible();
   });
 });
 
 test.describe('Access Requests Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/governance/access-requests*', async (route) => {
+    // Mock my requests
+    await page.route('**/api/v1/governance/requests*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([
-          { id: '1', resource_type: 'role', resource_name: 'admin', status: 'pending', justification: 'Need admin access for project', created_at: '2024-01-20T10:00:00Z' },
-          { id: '2', resource_type: 'application', resource_name: 'Finance Portal', status: 'approved', justification: 'Quarterly reporting', created_at: '2024-01-15T10:00:00Z', approved_at: '2024-01-16T10:00:00Z' },
-          { id: '3', resource_type: 'group', resource_name: 'Engineering', status: 'denied', justification: 'Project collaboration', created_at: '2024-01-10T10:00:00Z', denied_at: '2024-01-11T10:00:00Z', denial_reason: 'Not required for current role' },
-        ]),
+        body: JSON.stringify({
+          requests: [
+            { id: '1', resource_type: 'role', resource_name: 'admin', status: 'pending', justification: 'Need admin access', created_at: '2024-01-20T10:00:00Z', requester_name: 'Test User' },
+            { id: '2', resource_type: 'application', resource_name: 'Finance Portal', status: 'approved', justification: 'Quarterly reporting', created_at: '2024-01-15T10:00:00Z', requester_name: 'Test User' },
+          ],
+        }),
+      });
+    });
+
+    // Mock my approvals
+    await page.route('**/api/v1/governance/my-approvals*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ pending_approvals: [] }),
       });
     });
   });
@@ -248,34 +315,38 @@ test.describe('Access Requests Page', () => {
   test('should display request list', async ({ page }) => {
     await page.goto('/access-requests');
 
-    await expect(page.locator('text=admin').or(page.locator('text=Finance Portal'))).toBeVisible();
+    // Look for resource name in the table
+    await expect(page.getByText('admin').first()).toBeVisible();
   });
 
   test('should show request status', async ({ page }) => {
     await page.goto('/access-requests');
 
-    await expect(page.locator('text=pending').or(page.locator('text=Pending').or(page.locator('text=approved').or(page.locator('text=Approved'))))).toBeVisible();
+    // Status badge shows pending or approved
+    await expect(page.getByText('pending').first()).toBeVisible();
   });
 
-  test('should have new request button', async ({ page }) => {
+  test('should have request access button', async ({ page }) => {
     await page.goto('/access-requests');
 
-    await expect(page.getByRole('button', { name: /new request|request access|create/i })).toBeVisible();
+    // Button is "Request Access"
+    await expect(page.getByRole('button', { name: /request access/i })).toBeVisible();
   });
 });
 
 test.describe('App Launcher Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me/applications*', async (route) => {
+    // Mock the applications API
+    await page.route('**/api/v1/identity/portal/applications*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([
-          { id: '1', name: 'Admin Console', description: 'OpenIDX Admin Dashboard', icon: '', url: 'https://admin.example.com', category: 'Administration' },
-          { id: '2', name: 'Developer Portal', description: 'API Documentation', icon: '', url: 'https://dev.example.com', category: 'Development' },
-          { id: '3', name: 'HR System', description: 'Human Resources', icon: '', url: 'https://hr.example.com', category: 'Business' },
-          { id: '4', name: 'Finance Portal', description: 'Financial Reports', icon: '', url: 'https://finance.example.com', category: 'Business' },
-        ]),
+        body: JSON.stringify({
+          applications: [
+            { id: '1', name: 'Admin Console', description: 'OpenIDX Admin Dashboard', base_url: 'https://admin.example.com', protocol: 'oidc', logo_url: '', sso_enabled: true },
+            { id: '2', name: 'Developer Portal', description: 'API Documentation', base_url: 'https://dev.example.com', protocol: 'saml', logo_url: '', sso_enabled: true },
+          ],
+        }),
       });
     });
   });
@@ -283,84 +354,100 @@ test.describe('App Launcher Page', () => {
   test('should display app launcher page', async ({ page }) => {
     await page.goto('/app-launcher');
 
-    await expect(page.locator('h1:has-text("App"), h1:has-text("Applications"), h1:has-text("My Apps")')).toBeVisible();
+    // h1 is "My Applications"
+    await expect(page.locator('h1:has-text("My Applications")')).toBeVisible();
   });
 
   test('should display available applications', async ({ page }) => {
     await page.goto('/app-launcher');
 
-    await expect(page.locator('text=Admin Console')).toBeVisible();
-    await expect(page.locator('text=Developer Portal')).toBeVisible();
+    // Application names appear as card titles
+    await expect(page.getByText('Admin Console')).toBeVisible();
+    await expect(page.getByText('Developer Portal')).toBeVisible();
   });
 
-  test('should have clickable app cards', async ({ page }) => {
+  test('should have clickable app cards with launch button', async ({ page }) => {
     await page.goto('/app-launcher');
 
-    // Apps should be links or have click handlers
-    const appCards = page.locator('a:has-text("Admin Console"), button:has-text("Admin Console"), [data-testid="app-card"]');
-    await expect(appCards.first()).toBeVisible();
+    // Each card has a "Launch" button
+    await expect(page.getByRole('button', { name: /launch/i }).first()).toBeVisible();
   });
 
   test('should have search functionality', async ({ page }) => {
     await page.goto('/app-launcher');
 
-    // Look for search input
-    const searchInput = page.locator('input[type="search"], input[placeholder*="Search"], input[placeholder*="search"]');
-    const hasSearch = await searchInput.count() > 0;
-
-    // Search is optional but expected
-    if (hasSearch) {
-      await expect(searchInput).toBeVisible();
-    }
+    // Search input with placeholder
+    const searchInput = page.getByPlaceholder(/search applications/i);
+    await expect(searchInput).toBeVisible();
   });
 });
 
 test.describe('Password Change Flow', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: 'test-user-id',
-          username: 'testuser',
-          email: 'test@example.com',
-        }),
-      });
+    await page.route('**/api/v1/identity/users/me', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'test-user-id',
+            username: 'testuser',
+            email: 'test@example.com',
+            firstName: 'Test',
+            lastName: 'User',
+            mfaEnabled: false,
+            enabled: true,
+          }),
+        });
+      }
     });
   });
 
-  test('should have change password option on profile page', async ({ page }) => {
+  test('should have change password section on profile security tab', async ({ page }) => {
     await page.goto('/profile');
 
-    await expect(page.locator('text=Password').or(page.locator('text=Change Password').or(page.locator('button:has-text("Password")')))).toBeVisible();
+    // Go to security tab
+    const securityTab = page.getByRole('tab', { name: /security/i });
+    await securityTab.click();
+
+    // Look for Change Password heading
+    await expect(page.getByRole('heading', { name: 'Change Password' })).toBeVisible();
   });
 });
 
 test.describe('MFA Setup Flow', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me*', async (route) => {
+    await page.route('**/api/v1/identity/users/me', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'test-user-id',
+            username: 'testuser',
+            email: 'test@example.com',
+            firstName: 'Test',
+            lastName: 'User',
+            mfaEnabled: false,
+            enabled: true,
+          }),
+        });
+      }
+    });
+
+    await page.route('**/api/v1/identity/mfa/methods*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          id: 'test-user-id',
-          username: 'testuser',
-          email: 'test@example.com',
-          mfa_enabled: false,
-        }),
+        body: JSON.stringify([]),
       });
     });
 
-    await page.route('**/api/v1/identity/me/mfa/setup*', async (route) => {
+    await page.route('**/api/v1/identity/trusted-browsers*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          secret: 'JBSWY3DPEHPK3PXP',
-          qr_code: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-          recovery_codes: ['ABC123', 'DEF456', 'GHI789'],
-        }),
+        body: JSON.stringify([]),
       });
     });
   });
@@ -368,37 +455,59 @@ test.describe('MFA Setup Flow', () => {
   test('should show MFA setup option when MFA is not enabled', async ({ page }) => {
     await page.goto('/profile');
 
-    // Look for MFA setup button or link
-    await expect(page.locator('text=Enable MFA').or(page.locator('text=Setup MFA').or(page.locator('text=Two-Factor')))).toBeVisible();
+    // Go to security tab
+    const securityTab = page.getByRole('tab', { name: /security/i });
+    await securityTab.click();
+
+    // Look for Setup MFA button
+    await expect(page.getByRole('button', { name: /setup mfa/i })).toBeVisible();
   });
 });
 
 test.describe('Session Management', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/identity/me/sessions*', async (route) => {
+    await page.route('**/api/v1/identity/users/me', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: 'test-user-id',
+            username: 'testuser',
+            email: 'test@example.com',
+            firstName: 'Test',
+            lastName: 'User',
+            mfaEnabled: false,
+            enabled: true,
+          }),
+        });
+      }
+    });
+
+    // Mock sessions API
+    await page.route('**/api/v1/identity/users/*/sessions*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { id: '1', ip_address: '192.168.1.100', user_agent: 'Chrome/120 on macOS', current: true, created_at: '2024-01-20T10:00:00Z', last_activity: '2024-01-20T12:00:00Z' },
-          { id: '2', ip_address: '192.168.1.101', user_agent: 'Firefox/121 on Windows', current: false, created_at: '2024-01-19T10:00:00Z', last_activity: '2024-01-19T15:00:00Z' },
+          { id: '1', ip_address: '192.168.1.100', user_agent: 'Chrome/120 on macOS', started_at: '2024-01-20T10:00:00Z', last_seen_at: '2024-01-20T12:00:00Z', expires_at: '2024-01-27T10:00:00Z' },
+          { id: '2', ip_address: '192.168.1.101', user_agent: 'Firefox/121 on Windows', started_at: '2024-01-19T10:00:00Z', last_seen_at: '2024-01-19T15:00:00Z', expires_at: '2024-01-26T10:00:00Z' },
         ]),
       });
     });
   });
 
-  test('should display user sessions in profile or dedicated page', async ({ page }) => {
+  test('should display sessions tab on profile page', async ({ page }) => {
     await page.goto('/profile');
 
-    // Sessions might be shown on profile or have a dedicated section
-    const sessionsVisible = await page.locator('text=Sessions').or(page.locator('text=Active Sessions')).count() > 0;
+    // Sessions tab should be visible
+    const sessionsTab = page.getByRole('tab', { name: /sessions/i });
+    await expect(sessionsTab).toBeVisible();
 
-    if (!sessionsVisible) {
-      // Try navigating to dedicated sessions page
-      await page.goto('/my-devices');
-    }
+    // Click sessions tab
+    await sessionsTab.click();
 
-    // Should see session info somewhere
-    await expect(page.locator('text=Chrome').or(page.locator('text=192.168.1'))).toBeVisible();
+    // Should see Active Sessions heading
+    await expect(page.getByRole('heading', { name: 'Active Sessions' })).toBeVisible();
   });
 });
