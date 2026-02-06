@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '../hooks/use-toast'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/api'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
-import { Shield, User, Key, Smartphone, Mail, Monitor, Phone, Globe, Trash2, Check, X } from 'lucide-react'
+import { Shield, User, Key, Smartphone, Mail, Monitor, Phone, Globe, Trash2, Check } from 'lucide-react'
 import QRCode from 'qrcode.react'
 import { useAuth } from '../lib/auth'
 
@@ -155,7 +155,16 @@ export function UserProfilePage() {
   // Fetch MFA methods
   const { data: mfaMethods } = useQuery({
     queryKey: ['mfa-methods'],
-    queryFn: () => api.get<MFAMethod[]>('/api/v1/identity/mfa/methods'),
+    queryFn: async () => {
+      const response = await api.get<{ methods: Record<string, boolean>; enabled_count: number; mfa_enabled: boolean }>('/api/v1/identity/mfa/methods')
+      // Transform the map response into the MFAMethod[] format the UI expects
+      const methods = response?.methods || {}
+      return Object.entries(methods).map(([method, enabled]) => ({
+        method,
+        enabled: !!enabled,
+        verified: !!enabled,
+      })) as MFAMethod[]
+    },
   })
 
   // Fetch trusted browsers

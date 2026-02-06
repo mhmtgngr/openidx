@@ -1729,3 +1729,448 @@ INSERT INTO external_audit_sync_state (source, last_sync_at) VALUES
     ('ziti', NULL),
     ('guacamole', NULL)
 ON CONFLICT (source) DO NOTHING;
+
+-- ============================================================================
+-- MIGRATION 004: SMS/Email OTP, Risk Policies, Trusted Browsers
+-- ============================================================================
+
+-- SMS MFA enrollment
+CREATE TABLE IF NOT EXISTS mfa_sms (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    phone_number VARCHAR(20) NOT NULL,
+    country_code VARCHAR(5) NOT NULL DEFAULT '+1',
+    verified BOOLEAN DEFAULT false,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    verified_at TIMESTAMP WITH TIME ZONE,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_sms_user_id ON mfa_sms(user_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_sms_phone ON mfa_sms(phone_number);
+
+-- Email OTP enrollment
+CREATE TABLE IF NOT EXISTS mfa_email_otp (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email_address VARCHAR(255) NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_email_otp_user_id ON mfa_email_otp(user_id);
+
+-- OTP challenges (shared for both SMS and Email)
+CREATE TABLE IF NOT EXISTS mfa_otp_challenges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    method VARCHAR(20) NOT NULL,
+    recipient VARCHAR(255) NOT NULL,
+    code_hash VARCHAR(255) NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    status VARCHAR(20) DEFAULT 'pending',
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    verified_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_otp_challenges_user_id ON mfa_otp_challenges(user_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_otp_challenges_status ON mfa_otp_challenges(status, expires_at);
+
+-- Risk-based MFA policies
+CREATE TABLE IF NOT EXISTS risk_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 100,
+    conditions JSONB NOT NULL DEFAULT '{}',
+    actions JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_risk_policies_enabled ON risk_policies(enabled, priority);
+
+-- Trusted browsers (remember this device)
+CREATE TABLE IF NOT EXISTS trusted_browsers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    browser_hash VARCHAR(128) NOT NULL,
+    name VARCHAR(255),
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    trusted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    revoked BOOLEAN DEFAULT false,
+    UNIQUE(user_id, browser_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trusted_browsers_user_id ON trusted_browsers(user_id);
+CREATE INDEX IF NOT EXISTS idx_trusted_browsers_hash ON trusted_browsers(browser_hash);
+CREATE INDEX IF NOT EXISTS idx_trusted_browsers_active ON trusted_browsers(user_id, revoked, expires_at);
+
+-- Insert default risk policies
+INSERT INTO risk_policies (name, description, priority, conditions, actions) VALUES
+(
+    'New Device MFA',
+    'Require MFA when logging in from a new device',
+    100,
+    '{"new_device": true}',
+    '{"require_mfa": true, "mfa_methods": ["any"]}'
+),
+(
+    'New Location MFA',
+    'Require MFA when logging in from a new location',
+    90,
+    '{"new_location": true}',
+    '{"require_mfa": true, "mfa_methods": ["any"]}'
+),
+(
+    'High Risk Score',
+    'Require strong MFA for high-risk logins',
+    80,
+    '{"risk_score_min": 50}',
+    '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true}'
+),
+(
+    'Impossible Travel',
+    'Block or require step-up auth for impossible travel',
+    70,
+    '{"impossible_travel": true}',
+    '{"require_mfa": true, "mfa_methods": ["webauthn", "push"], "step_up": true, "notify_admin": true}'
+),
+(
+    'Blocked IP',
+    'Deny access from blocked IP addresses',
+    60,
+    '{"ip_blocked": true}',
+    '{"deny": true, "notify_admin": true}'
+)
+ON CONFLICT DO NOTHING;
+
+-- MFA methods view
+CREATE OR REPLACE VIEW user_mfa_methods AS
+SELECT
+    u.id AS user_id,
+    u.username,
+    COALESCE(t.enabled, false) AS totp_enabled,
+    COALESCE(s.enabled AND s.verified, false) AS sms_enabled,
+    COALESCE(e.enabled, false) AS email_otp_enabled,
+    EXISTS(SELECT 1 FROM mfa_push_devices p WHERE p.user_id = u.id AND p.enabled) AS push_enabled,
+    EXISTS(SELECT 1 FROM mfa_webauthn w WHERE w.user_id = u.id) AS webauthn_enabled,
+    (SELECT COUNT(*) FROM mfa_backup_codes b WHERE b.user_id = u.id AND NOT b.used) AS backup_codes_remaining
+FROM users u
+LEFT JOIN mfa_totp t ON t.user_id = u.id
+LEFT JOIN mfa_sms s ON s.user_id = u.id
+LEFT JOIN mfa_email_otp e ON e.user_id = u.id;
+
+-- ============================================================================
+-- MIGRATION 005: Advanced MFA Features
+-- ============================================================================
+
+-- Hardware Tokens
+CREATE TABLE IF NOT EXISTS hardware_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    serial_number VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    token_type VARCHAR(50) NOT NULL DEFAULT 'yubikey',
+    secret_key VARCHAR(255) NOT NULL,
+    counter BIGINT DEFAULT 0,
+    manufacturer VARCHAR(100),
+    model VARCHAR(100),
+    firmware_version VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'available',
+    assigned_to UUID REFERENCES users(id) ON DELETE SET NULL,
+    assigned_at TIMESTAMP WITH TIME ZONE,
+    assigned_by UUID REFERENCES users(id),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    use_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_hardware_tokens_serial ON hardware_tokens(serial_number);
+CREATE INDEX IF NOT EXISTS idx_hardware_tokens_assigned ON hardware_tokens(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_hardware_tokens_status ON hardware_tokens(status);
+
+-- Token usage audit log
+CREATE TABLE IF NOT EXISTS hardware_token_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_id UUID REFERENCES hardware_tokens(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    event_type VARCHAR(50) NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_events_token ON hardware_token_events(token_id);
+CREATE INDEX IF NOT EXISTS idx_token_events_user ON hardware_token_events(user_id);
+
+-- Biometric preferences
+CREATE TABLE IF NOT EXISTS biometric_preferences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    platform_authenticator_preferred BOOLEAN DEFAULT true,
+    allow_cross_platform BOOLEAN DEFAULT true,
+    require_user_verification BOOLEAN DEFAULT true,
+    biometric_only_enabled BOOLEAN DEFAULT false,
+    resident_key_required BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Biometric policies
+CREATE TABLE IF NOT EXISTS biometric_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    enabled BOOLEAN DEFAULT true,
+    applies_to_groups UUID[],
+    applies_to_roles VARCHAR(100)[],
+    require_platform_authenticator BOOLEAN DEFAULT false,
+    allowed_authenticator_types VARCHAR(50)[] DEFAULT ARRAY['platform', 'cross-platform'],
+    min_authenticator_level VARCHAR(50) DEFAULT 'any',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Phone Call Verification
+CREATE TABLE IF NOT EXISTS mfa_phone_call (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    phone_number VARCHAR(20) NOT NULL,
+    country_code VARCHAR(5) NOT NULL,
+    verified BOOLEAN DEFAULT false,
+    enabled BOOLEAN DEFAULT true,
+    voice_language VARCHAR(10) DEFAULT 'en-US',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS phone_call_challenges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    phone_number VARCHAR(25) NOT NULL,
+    code_hash VARCHAR(255) NOT NULL,
+    call_type VARCHAR(20) DEFAULT 'outbound',
+    call_sid VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'pending',
+    attempts INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    verified_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_challenges_user ON phone_call_challenges(user_id);
+CREATE INDEX IF NOT EXISTS idx_phone_challenges_status ON phone_call_challenges(status);
+
+-- Device Trust Approval
+CREATE TABLE IF NOT EXISTS device_trust_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL,
+    device_fingerprint VARCHAR(255) NOT NULL,
+    device_name VARCHAR(255),
+    device_type VARCHAR(50),
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    justification TEXT,
+    status VARCHAR(20) DEFAULT 'pending',
+    reviewed_by UUID REFERENCES users(id),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    review_notes TEXT,
+    auto_expire_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_trust_requests_user ON device_trust_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_trust_requests_status ON device_trust_requests(status);
+CREATE INDEX IF NOT EXISTS idx_trust_requests_pending ON device_trust_requests(status) WHERE status = 'pending';
+
+-- Device trust settings
+CREATE TABLE IF NOT EXISTS device_trust_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID,
+    require_approval BOOLEAN DEFAULT false,
+    auto_approve_known_ips BOOLEAN DEFAULT false,
+    auto_approve_corporate_devices BOOLEAN DEFAULT false,
+    request_expiry_hours INTEGER DEFAULT 72,
+    notify_admins BOOLEAN DEFAULT true,
+    notify_user_on_decision BOOLEAN DEFAULT true,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+INSERT INTO device_trust_settings (id, require_approval, auto_approve_known_ips, request_expiry_hours)
+VALUES (gen_random_uuid(), false, false, 72)
+ON CONFLICT DO NOTHING;
+
+-- MFA Bypass Codes
+CREATE TABLE IF NOT EXISTS mfa_bypass_codes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    code_hash VARCHAR(255) NOT NULL,
+    reason TEXT NOT NULL,
+    generated_by UUID REFERENCES users(id) NOT NULL,
+    valid_from TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    valid_until TIMESTAMP WITH TIME ZONE NOT NULL,
+    max_uses INTEGER DEFAULT 1,
+    use_count INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'active',
+    used_at TIMESTAMP WITH TIME ZONE,
+    used_from_ip VARCHAR(45),
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    revoked_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bypass_codes_user ON mfa_bypass_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_bypass_codes_status ON mfa_bypass_codes(status);
+
+-- Bypass code audit log
+CREATE TABLE IF NOT EXISTS mfa_bypass_audit (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    bypass_code_id UUID REFERENCES mfa_bypass_codes(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(50) NOT NULL,
+    performed_by UUID REFERENCES users(id),
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bypass_audit_user ON mfa_bypass_audit(user_id);
+
+-- Magic link tokens
+CREATE TABLE IF NOT EXISTS magic_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    email VARCHAR(255) NOT NULL,
+    token_hash VARCHAR(255) NOT NULL,
+    purpose VARCHAR(50) DEFAULT 'login',
+    redirect_url TEXT,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_magic_links_token ON magic_links(token_hash);
+CREATE INDEX IF NOT EXISTS idx_magic_links_user ON magic_links(user_id);
+CREATE INDEX IF NOT EXISTS idx_magic_links_email ON magic_links(email);
+
+-- QR code login sessions
+CREATE TABLE IF NOT EXISTS qr_login_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_token VARCHAR(255) NOT NULL UNIQUE,
+    qr_code_data TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending',
+    user_id UUID REFERENCES users(id),
+    browser_info JSONB,
+    mobile_info JSONB,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    scanned_at TIMESTAMP WITH TIME ZONE,
+    approved_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_qr_sessions_token ON qr_login_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_qr_sessions_status ON qr_login_sessions(status);
+
+-- Passwordless user preferences
+CREATE TABLE IF NOT EXISTS passwordless_preferences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    webauthn_only BOOLEAN DEFAULT false,
+    magic_link_enabled BOOLEAN DEFAULT true,
+    qr_login_enabled BOOLEAN DEFAULT true,
+    preferred_method VARCHAR(50) DEFAULT 'webauthn',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================================================
+-- MIGRATION 006: Add missing columns
+-- ============================================================================
+
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_trusted BOOLEAN DEFAULT false;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS auth_methods TEXT[];
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_name VARCHAR(255);
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_type VARCHAR(50);
+ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS location VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_device_trusted ON user_sessions(device_trusted);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_risk_score ON user_sessions(risk_score);
+
+-- ============================================================================
+-- MIGRATION 007: Temporary Access Links
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS temp_access_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    protocol VARCHAR(20) NOT NULL CHECK (protocol IN ('ssh', 'rdp', 'vnc')),
+    target_host VARCHAR(255) NOT NULL,
+    target_port INTEGER NOT NULL CHECK (target_port > 0 AND target_port <= 65535),
+    username VARCHAR(255),
+    created_by UUID NOT NULL,
+    created_by_email VARCHAR(255),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    max_uses INTEGER DEFAULT 0,
+    current_uses INTEGER DEFAULT 0,
+    allowed_ips TEXT[],
+    require_mfa BOOLEAN DEFAULT FALSE,
+    notify_on_use BOOLEAN DEFAULT FALSE,
+    notify_email VARCHAR(255),
+    route_id UUID REFERENCES proxy_routes(id) ON DELETE SET NULL,
+    guacamole_connection_id VARCHAR(255),
+    access_url TEXT,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'expired', 'revoked', 'used')),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    last_used_ip VARCHAR(45),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_temp_access_token ON temp_access_links(token);
+CREATE INDEX IF NOT EXISTS idx_temp_access_status ON temp_access_links(status);
+CREATE INDEX IF NOT EXISTS idx_temp_access_expires ON temp_access_links(expires_at);
+CREATE INDEX IF NOT EXISTS idx_temp_access_created_by ON temp_access_links(created_by);
+
+CREATE TABLE IF NOT EXISTS temp_access_usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    link_id UUID NOT NULL REFERENCES temp_access_links(id) ON DELETE CASCADE,
+    ip_address VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    connected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    disconnected_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_temp_access_usage_link ON temp_access_usage(link_id);
+CREATE INDEX IF NOT EXISTS idx_temp_access_usage_time ON temp_access_usage(connected_at);
+
+CREATE OR REPLACE FUNCTION expire_temp_access_links()
+RETURNS void AS $$
+BEGIN
+    UPDATE temp_access_links
+    SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+    WHERE status = 'active' AND expires_at < CURRENT_TIMESTAMP;
+END;
+$$ LANGUAGE plpgsql;
