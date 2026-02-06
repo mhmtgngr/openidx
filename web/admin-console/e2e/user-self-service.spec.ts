@@ -117,20 +117,18 @@ test.describe('My Access Page', () => {
 
 test.describe('My Devices Page', () => {
   test.beforeEach(async ({ page }) => {
-    // Mock the devices API - returns data in { data: { devices: [...] } } format
+    // Mock the devices API - returns { devices: [...] } format
     await page.route('**/api/v1/identity/portal/devices*', async (route) => {
       if (route.request().method() === 'GET') {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
-            data: {
-              devices: [
-                { id: '1', name: 'MacBook Pro', device_type: 'laptop', ip_address: '192.168.1.100', trusted: true, last_seen_at: '2024-01-20T12:00:00Z', created_at: '2024-01-01T00:00:00Z' },
-                { id: '2', name: 'iPhone 15', device_type: 'mobile', ip_address: '192.168.1.101', trusted: true, last_seen_at: '2024-01-19T15:00:00Z', created_at: '2024-01-02T00:00:00Z' },
-                { id: '3', name: 'Windows PC', device_type: 'desktop', ip_address: '192.168.1.102', trusted: false, last_seen_at: '2024-01-18T10:00:00Z', created_at: '2024-01-03T00:00:00Z' },
-              ],
-            },
+            devices: [
+              { id: '1', name: 'MacBook Pro', device_type: 'laptop', ip_address: '192.168.1.100', trusted: true, last_seen_at: '2024-01-20T12:00:00Z', created_at: '2024-01-01T00:00:00Z' },
+              { id: '2', name: 'iPhone 15', device_type: 'mobile', ip_address: '192.168.1.101', trusted: true, last_seen_at: '2024-01-19T15:00:00Z', created_at: '2024-01-02T00:00:00Z' },
+              { id: '3', name: 'Windows PC', device_type: 'desktop', ip_address: '192.168.1.102', trusted: false, last_seen_at: '2024-01-18T10:00:00Z', created_at: '2024-01-03T00:00:00Z' },
+            ],
           }),
         });
       }
@@ -198,30 +196,26 @@ test.describe('My Devices Page', () => {
 
 test.describe('Trusted Browsers Page', () => {
   test.beforeEach(async ({ page }) => {
-    // Mock the trusted browsers API
+    // Mock the trusted browsers API - returns array directly
     await page.route('**/api/v1/identity/trusted-browsers', async (route) => {
       if (route.request().method() === 'GET' && !route.request().url().includes('/check')) {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({
-            data: [
-              { id: '1', name: 'Chrome on macOS', ip_address: '192.168.1.100', active: true, revoked: false, trusted_at: '2024-01-15T10:00:00Z', expires_at: '2024-02-14T10:00:00Z' },
-              { id: '2', name: 'Firefox on Windows', ip_address: '192.168.1.101', active: false, revoked: true, trusted_at: '2024-01-10T10:00:00Z', expires_at: '2024-02-09T10:00:00Z' },
-            ],
-          }),
+          body: JSON.stringify([
+            { id: '1', name: 'Chrome on macOS', ip_address: '192.168.1.100', active: true, revoked: false, trusted_at: '2024-01-15T10:00:00Z', expires_at: '2024-02-14T10:00:00Z' },
+            { id: '2', name: 'Firefox on Windows', ip_address: '192.168.1.101', active: false, revoked: true, trusted_at: '2024-01-10T10:00:00Z', expires_at: '2024-02-09T10:00:00Z' },
+          ]),
         });
       }
     });
 
-    // Mock the check endpoint
+    // Mock the check endpoint - returns object directly
     await page.route('**/api/v1/identity/trusted-browsers/check*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          data: { trusted: false },
-        }),
+        body: JSON.stringify({ trusted: false }),
       });
     });
   });
