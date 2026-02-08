@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # BrowZer bootstrapper entrypoint wrapper.
 # Watches /shared-config/config.json for changes and gracefully restarts
 # the node process when the targets configuration is updated.
@@ -53,7 +53,7 @@ load_config() {
 start_node() {
     load_config
     echo "[entrypoint] Starting bootstrapper..."
-    node /home/node/app/index.js &
+    cd /home/node/ziti-browzer-bootstrapper && node index.js &
     NODE_PID=$!
     echo "[entrypoint] Bootstrapper started with PID $NODE_PID"
 }

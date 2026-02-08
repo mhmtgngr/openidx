@@ -589,7 +589,7 @@ services:
   browzer-bootstrapper:
     image: ghcr.io/openziti/ziti-browzer-bootstrapper:latest
     container_name: openidx-browzer-bootstrapper
-    entrypoint: ["/bin/sh", "/browzer-entrypoint.sh"]
+    entrypoint: ["/bin/bash", "/browzer-entrypoint.sh"]
     environment:
       - ZITI_BROWZER_BOOTSTRAPPER_LOGLEVEL=debug
       - ZITI_BROWZER_BOOTSTRAPPER_HOST=browzer.localtest.me
