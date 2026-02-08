@@ -205,6 +205,9 @@ func main() {
 				}
 			}
 
+			// Ensure Ziti services exist for seeded routes (e.g., demo-app)
+			go accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
+
 			log.Info("OpenZiti integration ready (health + certificate monitors started, services hosted)")
 		}
 	} else {

@@ -139,14 +139,13 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 
 	// Create Guacamole connection for this temp access
 	if s.guacamoleClient != nil {
-		connID, err := s.guacamoleClient.CreateConnection(GuacamoleConnectionRequest{
-			Name:       fmt.Sprintf("temp-%s-%s", req.Protocol, token[:8]),
-			Protocol:   req.Protocol,
-			Hostname:   req.TargetHost,
-			Port:       port,
-			Username:   req.Username,
-			Parameters: map[string]string{},
-		})
+		connID, err := s.guacamoleClient.CreateConnection(
+			fmt.Sprintf("temp-%s-%s", req.Protocol, token[:8]),
+			req.Protocol,
+			req.TargetHost,
+			port,
+			map[string]string{},
+		)
 		if err != nil {
 			s.logger.Warn("failed to create guacamole connection", zap.Error(err))
 		} else {
@@ -155,11 +154,11 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 	}
 
 	// Build access URL
-	baseURL := s.config.GetString("access.base_url")
+	baseURL := s.config.AccessProxyDomain
 	if baseURL == "" {
-		baseURL = "https://browzer.localtest.me"
+		baseURL = "browzer.localtest.me"
 	}
-	link.AccessURL = fmt.Sprintf("%s/temp-access/%s", baseURL, token)
+	link.AccessURL = fmt.Sprintf("https://%s/temp-access/%s", baseURL, token)
 
 	// Store in database
 	query := `

@@ -136,7 +136,7 @@ func (s *Service) handleBulkImportZitiServices(c *gin.Context) {
 
 func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, error) {
 	// Get all services from Ziti controller
-	zitiServices, err := s.zitiManager.ListServices()
+	zitiServices, err := s.zitiManager.ListServices(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list Ziti services: %w", err)
 	}

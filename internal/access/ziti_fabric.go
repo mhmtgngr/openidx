@@ -16,15 +16,24 @@ import (
 
 // ZitiEdgeRouterInfo represents a Ziti edge router from the management API
 type ZitiEdgeRouterInfo struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Hostname       string   `json:"hostname"`
-	IsOnline       bool     `json:"isOnline"`
-	IsVerified     bool     `json:"isVerified"`
-	RoleAttributes []string `json:"roleAttributes"`
-	Os             string   `json:"os,omitempty"`
-	Arch           string   `json:"arch,omitempty"`
-	Version        string   `json:"versionInfo,omitempty"`
+	ID             string                `json:"id"`
+	Name           string                `json:"name"`
+	Hostname       string                `json:"hostname"`
+	IsOnline       bool                  `json:"isOnline"`
+	IsVerified     bool                  `json:"isVerified"`
+	RoleAttributes []string              `json:"roleAttributes"`
+	VersionInfo    *ZitiEdgeRouterVersion `json:"versionInfo,omitempty"`
+	// Computed fields for DB sync / display
+	Os      string `json:"-"`
+	Arch    string `json:"-"`
+	Version string `json:"-"`
+}
+
+// ZitiEdgeRouterVersion represents the nested versionInfo object from the Ziti API
+type ZitiEdgeRouterVersion struct {
+	Os      string `json:"os"`
+	Arch    string `json:"arch"`
+	Version string `json:"version"`
 }
 
 // ZitiServicePolicyInfo represents a Ziti service policy from the management API
@@ -36,8 +45,8 @@ type ZitiServicePolicyInfo struct {
 	IdentityRoles []string `json:"identityRoles"`
 }
 
-// HealthStatus represents the health of the Ziti fabric
-type HealthStatus struct {
+// FabricHealthStatus represents the health of the Ziti fabric
+type FabricHealthStatus struct {
 	ControllerReachable bool                   `json:"controller_reachable"`
 	ControllerVersion   string                 `json:"controller_version"`
 	SDKReady            bool                   `json:"sdk_ready"`
@@ -52,7 +61,7 @@ type HealthStatus struct {
 
 // FabricOverview provides a high-level summary of the Ziti fabric state
 type FabricOverview struct {
-	Health        HealthStatus         `json:"health"`
+	Health        FabricHealthStatus   `json:"health"`
 	RecentMetrics []ZitiMetric         `json:"recent_metrics"`
 	Routers       []ZitiEdgeRouterInfo `json:"routers"`
 }
@@ -84,6 +93,15 @@ func (zm *ZitiManager) ListEdgeRouters(ctx context.Context) ([]ZitiEdgeRouterInf
 	}
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse edge routers response: %w", err)
+	}
+
+	// Populate computed fields from nested versionInfo
+	for i := range resp.Data {
+		if resp.Data[i].VersionInfo != nil {
+			resp.Data[i].Os = resp.Data[i].VersionInfo.Os
+			resp.Data[i].Arch = resp.Data[i].VersionInfo.Arch
+			resp.Data[i].Version = resp.Data[i].VersionInfo.Version
+		}
 	}
 
 	// Sync routers to database
@@ -123,6 +141,12 @@ func (zm *ZitiManager) GetEdgeRouter(ctx context.Context, routerID string) (*Zit
 	}
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse edge router response: %w", err)
+	}
+
+	if resp.Data.VersionInfo != nil {
+		resp.Data.Os = resp.Data.VersionInfo.Os
+		resp.Data.Arch = resp.Data.VersionInfo.Arch
+		resp.Data.Version = resp.Data.VersionInfo.Version
 	}
 
 	return &resp.Data, nil
@@ -175,8 +199,8 @@ func (zm *ZitiManager) ListEdgeRouterPolicies(ctx context.Context) ([]ZitiServic
 // ---- Health Monitoring ----
 
 // HealthCheck performs a comprehensive health check of the Ziti fabric
-func (zm *ZitiManager) HealthCheck(ctx context.Context) (*HealthStatus, error) {
-	status := &HealthStatus{
+func (zm *ZitiManager) HealthCheck(ctx context.Context) (*FabricHealthStatus, error) {
+	status := &FabricHealthStatus{
 		LastChecked: time.Now(),
 		Details:     make(map[string]interface{}),
 	}

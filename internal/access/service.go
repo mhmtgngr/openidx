@@ -834,8 +834,22 @@ func (s *Service) handleLogin(c *gin.Context) {
 	s.redis.Client.Set(c.Request.Context(), "access_oauth_state:"+state, sessionData, 10*time.Minute)
 
 	// Build OAuth authorization URL
-	callbackURL := fmt.Sprintf("http://%s:%d/access/.auth/callback",
-		s.config.AccessProxyDomain, s.config.Port)
+	// Determine the callback host: prefer the request Host (preserves port from pass_host),
+	// then X-Forwarded-Host, then extract from redirect_url.
+	callbackHost := c.Request.Host
+	if callbackHost == "" || callbackHost == fmt.Sprintf("access-service:%d", s.config.Port) {
+		callbackHost = c.GetHeader("X-Forwarded-Host")
+	}
+	if callbackHost == "" {
+		// Extract host from redirect_url if it's a full URL (e.g., http://demo.localtest.me:8088/)
+		if parsed, err := url.Parse(redirectURL); err == nil && parsed.Host != "" {
+			callbackHost = parsed.Host
+		}
+	}
+	if callbackHost == "" {
+		callbackHost = fmt.Sprintf("%s:%d", s.config.AccessProxyDomain, s.config.Port)
+	}
+	callbackURL := fmt.Sprintf("http://%s/access/.auth/callback", callbackHost)
 
 	authURL := fmt.Sprintf("%s/oauth/authorize?client_id=access-proxy&response_type=code&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&state=%s&scope=openid+profile+email",
 		s.oauthIssuer,
@@ -884,9 +898,20 @@ func (s *Service) handleCallback(c *gin.Context) {
 		return
 	}
 
-	// Exchange code for tokens
-	callbackURL := fmt.Sprintf("http://%s:%d/access/.auth/callback",
-		s.config.AccessProxyDomain, s.config.Port)
+	// Exchange code for tokens (callback URL must match what was sent to the authorize endpoint)
+	callbackHost := c.Request.Host
+	if callbackHost == "" || callbackHost == fmt.Sprintf("access-service:%d", s.config.Port) {
+		callbackHost = c.GetHeader("X-Forwarded-Host")
+	}
+	if callbackHost == "" {
+		if parsed, err := url.Parse(storedState.RedirectURL); err == nil && parsed.Host != "" {
+			callbackHost = parsed.Host
+		}
+	}
+	if callbackHost == "" {
+		callbackHost = fmt.Sprintf("%s:%d", s.config.AccessProxyDomain, s.config.Port)
+	}
+	callbackURL := fmt.Sprintf("http://%s/access/.auth/callback", callbackHost)
 
 	tokenResp, err := s.exchangeCode(c.Request.Context(), code, storedState.Verifier, callbackURL)
 	if err != nil {
@@ -1342,6 +1367,102 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		r.AllowedCountries = []string{}
 	}
 	return &r, nil
+}
+
+// EnsureZitiServicesForRoutes checks for Ziti-enabled proxy routes that don't have
+// a corresponding Ziti service on the controller and creates them. This handles
+// routes seeded via init-db.sql that need Ziti resources provisioned on first boot.
+func (s *Service) EnsureZitiServicesForRoutes(ctx context.Context, zm *ZitiManager) {
+	if zm == nil {
+		return
+	}
+
+	// Wait for Ziti controller to be fully ready
+	time.Sleep(15 * time.Second)
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT pr.id, pr.ziti_service_name, pr.to_url, COALESCE(pr.browzer_enabled, false)
+		 FROM proxy_routes pr
+		 WHERE pr.ziti_enabled = true
+		   AND pr.ziti_service_name IS NOT NULL
+		   AND pr.ziti_service_name != ''
+		   AND NOT EXISTS (SELECT 1 FROM ziti_services zs WHERE zs.name = pr.ziti_service_name)`)
+	if err != nil {
+		s.logger.Error("Failed to query routes needing Ziti setup", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var routeID, serviceName, toURL string
+		var browzerEnabled bool
+		if err := rows.Scan(&routeID, &serviceName, &toURL, &browzerEnabled); err != nil {
+			s.logger.Error("Failed to scan route", zap.Error(err))
+			continue
+		}
+
+		host, port := parseHostPort(toURL)
+		if host == "" || port == 0 {
+			s.logger.Warn("Could not parse upstream for Ziti setup",
+				zap.String("service", serviceName), zap.String("to_url", toURL))
+			continue
+		}
+
+		// Check if the service already exists on the Ziti controller
+		existingSvc, _ := zm.GetServiceByName(serviceName)
+		if existingSvc != nil {
+			s.logger.Info("Ziti service already exists, ensuring hosting",
+				zap.String("service", serviceName))
+			// Ensure it's being hosted
+			zm.HostService(serviceName, host, port)
+			// Add browzer-enabled if needed
+			if browzerEnabled {
+				s.ensureBrowZerAttribute(ctx, zm, existingSvc.ID)
+			}
+			continue
+		}
+
+		s.logger.Info("Creating Ziti service for seeded route",
+			zap.String("route_id", routeID),
+			zap.String("service", serviceName),
+			zap.String("target", fmt.Sprintf("%s:%d", host, port)))
+
+		if err := zm.SetupZitiForRoute(ctx, routeID, serviceName, host, port); err != nil {
+			s.logger.Error("Failed to setup Ziti for seeded route",
+				zap.String("service", serviceName), zap.Error(err))
+			continue
+		}
+
+		// Add browzer-enabled attribute if route has browzer_enabled=true
+		if browzerEnabled {
+			svc, _ := zm.GetServiceByName(serviceName)
+			if svc != nil {
+				s.ensureBrowZerAttribute(ctx, zm, svc.ID)
+			}
+		}
+
+		s.logger.Info("Ziti service created for seeded route", zap.String("service", serviceName))
+	}
+}
+
+// ensureBrowZerAttribute adds the "browzer-enabled" role attribute to a Ziti service if not present
+func (s *Service) ensureBrowZerAttribute(ctx context.Context, zm *ZitiManager, zitiServiceID string) {
+	attrs, err := zm.GetServiceRoleAttributes(ctx, zitiServiceID)
+	if err != nil {
+		s.logger.Warn("Failed to get service role attributes", zap.Error(err))
+		return
+	}
+	for _, a := range attrs {
+		if a == "browzer-enabled" {
+			return // already has it
+		}
+	}
+	attrs = append(attrs, "browzer-enabled")
+	if err := zm.PatchServiceRoleAttributes(ctx, zitiServiceID, attrs); err != nil {
+		s.logger.Error("Failed to add browzer-enabled attribute", zap.Error(err))
+	} else {
+		s.logger.Info("Added browzer-enabled attribute to service", zap.String("ziti_id", zitiServiceID))
+	}
 }
 
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {

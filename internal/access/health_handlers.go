@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
 // IntegrationHealth represents the health of a single integration
@@ -260,13 +259,13 @@ func (s *Service) checkZitiHealth(ctx context.Context) *ZitiHealth {
 	}
 
 	// Get counts
-	services, _ := s.zitiManager.ListServices()
+	services, _ := s.zitiManager.ListServices(ctx)
 	health.ServicesCount = len(services)
 
-	identities, _ := s.zitiManager.ListIdentities()
+	identities, _ := s.zitiManager.ListIdentities(ctx)
 	health.IdentitiesCount = len(identities)
 
-	routers, _ := s.zitiManager.ListEdgeRouters()
+	routers, _ := s.zitiManager.ListEdgeRouters(ctx)
 	health.RoutersTotal = len(routers)
 	for _, r := range routers {
 		if r.IsOnline {

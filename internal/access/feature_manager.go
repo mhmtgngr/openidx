@@ -151,6 +151,12 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 	resourceJSON, _ := json.Marshal(resourceIDs)
 	now := time.Now()
 
+	// Convert empty userID to nil for UUID column compatibility
+	var enabledBy interface{}
+	if userID != "" {
+		enabledBy = userID
+	}
+
 	_, err = fm.db.Pool.Exec(ctx, `
 		UPDATE service_features
 		SET enabled = true,
@@ -162,7 +168,7 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 		    enabled_by = $5,
 		    updated_at = NOW()
 		WHERE id = $6
-	`, configJSON, resourceJSON, FeatureStatusEnabled, now, userID, featureRecord.ID)
+	`, configJSON, resourceJSON, FeatureStatusEnabled, now, enabledBy, featureRecord.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update feature record: %w", err)

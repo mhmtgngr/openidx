@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/openziti/sdk-golang/ziti"
+	"github.com/openziti/sdk-golang/ziti/edge"
 	"github.com/openziti/sdk-golang/ziti/enroll"
 	"go.uber.org/zap"
 
@@ -46,7 +48,7 @@ type ZitiManager struct {
 
 // hostedService tracks a Ziti service listener that forwards to an upstream target
 type hostedService struct {
-	listener net.Listener
+	listener edge.Listener
 	cancel   context.CancelFunc
 }
 
@@ -63,10 +65,19 @@ type zitiAPIError struct {
 }
 
 // ZitiServiceInfo represents a Ziti service from the management API
+// ZitiServiceConfigInfo represents a service intercept/host config
+type ZitiServiceConfigInfo struct {
+	Protocol string `json:"protocol"`
+	Address  string `json:"address"`
+}
+
 type ZitiServiceInfo struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Attributes []string `json:"roleAttributes"`
+	ID             string                  `json:"id"`
+	Name           string                  `json:"name"`
+	Attributes     []string                `json:"roleAttributes"`
+	Protocol       string                  `json:"protocol,omitempty"`
+	RoleAttributes []string                `json:"role_attributes,omitempty"`
+	Configs        []ZitiServiceConfigInfo `json:"configs,omitempty"`
 }
 
 // ZitiIdentityInfo represents a Ziti identity from the management API
@@ -191,16 +202,22 @@ func (zm *ZitiManager) HostService(serviceName, targetHost string, targetPort in
 	}
 	zm.hostedMu.Unlock()
 
-	listener, err := zm.zitiCtx.Listen(serviceName)
+	netListener, err := zm.zitiCtx.Listen(serviceName)
 	if err != nil {
 		return fmt.Errorf("failed to listen on ziti service %q: %w", serviceName, err)
+	}
+
+	edgeListener, ok := netListener.(edge.Listener)
+	if !ok {
+		netListener.Close()
+		return fmt.Errorf("listener for %q does not implement edge.Listener", serviceName)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	zm.hostedMu.Lock()
 	zm.hostedServices[serviceName] = &hostedService{
-		listener: listener,
+		listener: edgeListener,
 		cancel:   cancel,
 	}
 	zm.hostedMu.Unlock()
@@ -213,7 +230,7 @@ func (zm *ZitiManager) HostService(serviceName, targetHost string, targetPort in
 	// Accept connections in a background goroutine
 	go func() {
 		for {
-			conn, err := listener.Accept()
+			conn, err := edgeListener.AcceptEdge()
 			if err != nil {
 				select {
 				case <-ctx.Done():
@@ -226,7 +243,7 @@ func (zm *ZitiManager) HostService(serviceName, targetHost string, targetPort in
 				}
 			}
 
-			go zm.forwardConnection(conn, targetAddr, serviceName)
+			go zm.forwardHTTPConnection(conn, targetAddr, serviceName)
 		}
 	}()
 
@@ -284,33 +301,169 @@ func (zm *ZitiManager) HostAllServices(ctx context.Context) {
 	}
 }
 
-// forwardConnection copies data between a Ziti connection and a TCP upstream
-func (zm *ZitiManager) forwardConnection(zitiConn net.Conn, targetAddr, serviceName string) {
-	defer zitiConn.Close()
+// forwardHTTPConnection serves HTTP on a Ziti edge connection, injecting identity headers
+// from the caller's Ziti identity before forwarding to the upstream target.
+func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, serviceName string) {
+	callerID := zitiConn.SourceIdentifier()
 
-	upstream, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
-	if err != nil {
-		zm.logger.Error("Failed to connect to upstream for hosted service",
-			zap.String("service", serviceName),
-			zap.String("target", targetAddr),
-			zap.Error(err))
-		return
+	// BrowZer JS SDK doesn't set SourceIdentifier — resolve via management API
+	if callerID == "" {
+		callerID = zm.resolveCallerFromSessions(serviceName)
 	}
-	defer upstream.Close()
 
-	// Bidirectional copy
-	done := make(chan struct{}, 2)
-	go func() {
-		io.Copy(upstream, zitiConn)
-		done <- struct{}{}
-	}()
-	go func() {
-		io.Copy(zitiConn, upstream)
-		done <- struct{}{}
-	}()
+	// Look up user info from the Ziti identity name (which is the OpenIDX user ID)
+	var email, name, roles string
+	if callerID != "" {
+		err := zm.db.Pool.QueryRow(context.Background(),
+			`SELECT COALESCE(u.email,''), COALESCE(u.first_name||' '||u.last_name,''), COALESCE(string_agg(r.name,','),'')
+			 FROM users u
+			 LEFT JOIN user_roles ur ON ur.user_id = u.id
+			 LEFT JOIN roles r ON r.id = ur.role_id
+			 WHERE u.id = $1
+			 GROUP BY u.id`, callerID).Scan(&email, &name, &roles)
+		if err != nil {
+			zm.logger.Warn("Failed to lookup user for Ziti identity",
+				zap.String("caller_id", callerID), zap.Error(err))
+		}
+	}
 
-	// Wait for either direction to finish
-	<-done
+	zm.logger.Debug("Accepted Ziti connection with identity",
+		zap.String("service", serviceName),
+		zap.String("caller_id", callerID),
+		zap.String("email", email))
+
+	// Create reverse proxy to upstream
+	target, _ := url.Parse("http://" + targetAddr)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	origDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		origDirector(req)
+		if callerID != "" {
+			req.Header.Set("X-Forwarded-User", callerID)
+			req.Header.Set("X-Forwarded-Email", email)
+			req.Header.Set("X-Forwarded-Name", strings.TrimSpace(name))
+			req.Header.Set("X-Forwarded-Roles", roles)
+			req.Header.Set("X-Ziti-Identity", callerID)
+		}
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		zm.logger.Error("Ziti HTTP proxy error",
+			zap.String("service", serviceName), zap.Error(err))
+		w.WriteHeader(http.StatusBadGateway)
+	}
+
+	// Serve HTTP on the single Ziti connection
+	server := &http.Server{
+		Handler:     proxy,
+		ReadTimeout: 30 * time.Second,
+	}
+	ln := &singleConnListener{ch: make(chan net.Conn, 1)}
+	ln.ch <- zitiConn
+	server.Serve(ln)
+}
+
+// singleConnListener wraps a single net.Conn as a net.Listener for http.Server.Serve
+type singleConnListener struct {
+	ch   chan net.Conn
+	once sync.Once
+	addr net.Addr
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	conn, ok := <-l.ch
+	if !ok || conn == nil {
+		return nil, io.EOF
+	}
+	l.addr = conn.LocalAddr()
+	// Close the channel after first accept so the server stops after this connection
+	l.once.Do(func() { close(l.ch) })
+	return conn, nil
+}
+
+func (l *singleConnListener) Close() error { return nil }
+func (l *singleConnListener) Addr() net.Addr {
+	if l.addr != nil {
+		return l.addr
+	}
+	return &net.TCPAddr{}
+}
+
+// resolveCallerFromSessions queries the Ziti management API to find the identity
+// that created the most recent Dial session for the given service. This is used as
+// a fallback when SourceIdentifier() is empty (e.g., BrowZer JS SDK connections).
+func (zm *ZitiManager) resolveCallerFromSessions(serviceName string) string {
+	if zm.mgmtToken == "" {
+		zm.logger.Warn("mgmtToken is empty, cannot resolve BrowZer caller")
+		return ""
+	}
+
+	// Query Dial sessions (Ziti API doesn't support service.name filter or sort)
+	filter := url.QueryEscape(`type="Dial"`)
+	reqURL := fmt.Sprintf("%s/edge/management/v1/sessions?filter=%s&limit=1",
+		zm.cfg.ZitiCtrlURL, filter)
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		zm.logger.Warn("Failed to create sessions request", zap.Error(err))
+		return ""
+	}
+	req.Header.Set("zt-session", zm.mgmtToken)
+
+	resp, err := zm.mgmtClient.Do(req)
+	if err != nil {
+		zm.logger.Warn("Failed to query Ziti sessions for caller resolution", zap.Error(err))
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	zm.logger.Debug("Sessions API response",
+		zap.Int("status", resp.StatusCode),
+		zap.String("body", string(body[:min(len(body), 500)])))
+
+	var result struct {
+		Data []struct {
+			IdentityID string `json:"identityId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil || len(result.Data) == 0 {
+		zm.logger.Warn("No sessions found or parse error",
+			zap.Error(err), zap.Int("count", len(result.Data)))
+		return ""
+	}
+
+	zitiIdentityID := result.Data[0].IdentityID
+
+	// Look up the identity name (which is the OpenIDX user ID) from the Ziti identity ID
+	identityReqURL := fmt.Sprintf("%s/edge/management/v1/identities/%s",
+		zm.cfg.ZitiCtrlURL, zitiIdentityID)
+	identReq, err := http.NewRequest("GET", identityReqURL, nil)
+	if err != nil {
+		return ""
+	}
+	identReq.Header.Set("zt-session", zm.mgmtToken)
+
+	identResp, err := zm.mgmtClient.Do(identReq)
+	if err != nil {
+		zm.logger.Warn("Failed to get identity details", zap.Error(err))
+		return ""
+	}
+	defer identResp.Body.Close()
+
+	var identResult struct {
+		Data struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(identResp.Body).Decode(&identResult); err != nil {
+		return ""
+	}
+
+	zm.logger.Info("Resolved BrowZer caller from Ziti session",
+		zap.String("ziti_identity_id", zitiIdentityID),
+		zap.String("user_id", identResult.Data.Name))
+
+	return identResult.Data.Name
 }
 
 // parseHostPort extracts host and port from a URL string

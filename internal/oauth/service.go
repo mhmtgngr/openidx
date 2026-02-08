@@ -227,6 +227,92 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	}, nil
 }
 
+// getBlockedCountries returns the list of blocked country codes from system settings.
+// Results are cached in Redis for 5 minutes. Returns nil on any error (fail-open).
+func (s *Service) getBlockedCountries(ctx context.Context) []string {
+	// Check Redis cache
+	cacheKey := "oauth:blocked_countries"
+	cached, err := s.redis.Client.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var countries []string
+		if json.Unmarshal([]byte(cached), &countries) == nil {
+			return countries
+		}
+	}
+
+	// Cache miss — query system_settings table
+	var valueBytes []byte
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT value FROM system_settings WHERE key = 'system'").Scan(&valueBytes)
+	if err != nil {
+		s.logger.Debug("Failed to load system settings for country block", zap.Error(err))
+		return nil
+	}
+
+	var settings struct {
+		Security struct {
+			BlockedCountries []string `json:"blocked_countries"`
+		} `json:"security"`
+	}
+	if err := json.Unmarshal(valueBytes, &settings); err != nil {
+		s.logger.Debug("Failed to parse system settings for country block", zap.Error(err))
+		return nil
+	}
+
+	// Cache for 5 minutes
+	if data, err := json.Marshal(settings.Security.BlockedCountries); err == nil {
+		s.redis.Client.Set(ctx, cacheKey, string(data), 5*time.Minute)
+	}
+
+	return settings.Security.BlockedCountries
+}
+
+// checkCountryBlock checks if a login attempt should be blocked based on the client's country.
+// Returns a non-nil error if the country is blocked. Fails open on lookup errors.
+func (s *Service) checkCountryBlock(ctx context.Context, clientIP, userID, username string) error {
+	if s.riskService == nil {
+		return nil
+	}
+
+	blockedCountries := s.getBlockedCountries(ctx)
+	if len(blockedCountries) == 0 {
+		return nil
+	}
+
+	geo, err := s.riskService.GeoIPLookup(ctx, clientIP)
+	if err != nil || geo == nil || geo.CountryCode == "" {
+		s.logger.Debug("Geo-IP lookup unavailable, allowing login",
+			zap.String("ip", clientIP), zap.Error(err))
+		return nil
+	}
+
+	for _, blocked := range blockedCountries {
+		if strings.EqualFold(blocked, geo.CountryCode) {
+			go s.logAuditEvent(context.Background(), "authentication", "security",
+				"login_blocked_country", "failure", userID, clientIP, userID, "user",
+				map[string]interface{}{
+					"username":     username,
+					"country_code": geo.CountryCode,
+					"country":      geo.Country,
+					"city":         geo.City,
+					"reason":       "country_blocked",
+				})
+
+			s.logger.Warn("Login blocked: country restriction",
+				zap.String("user_id", userID),
+				zap.String("username", username),
+				zap.String("country_code", geo.CountryCode),
+				zap.String("country", geo.Country),
+				zap.String("ip", clientIP),
+			)
+
+			return fmt.Errorf("access denied from your location")
+		}
+	}
+
+	return nil
+}
+
 // OAuth Client Management
 
 // CreateClient creates a new OAuth client
@@ -937,6 +1023,12 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 		return
 	}
 
+	// Country-based login blocking
+	if err := s.checkCountryBlock(c.Request.Context(), c.ClientIP(), user.ID, username); err != nil {
+		s.renderLoginPage(c, loginSession, "Authentication is not available from your location.")
+		return
+	}
+
 	// Clean up login session
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
 
@@ -1029,6 +1121,15 @@ func (s *Service) handleLogin(c *gin.Context) {
 	go s.logAuditEvent(context.Background(), "authentication", "security", "login", "success",
 		user.ID, clientIP, user.ID, "user",
 		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
+
+	// Country-based login blocking
+	if err := s.checkCountryBlock(c.Request.Context(), clientIP, user.ID, user.Username); err != nil {
+		c.JSON(403, gin.H{
+			"error":             "access_denied",
+			"error_description": "Authentication is not available from your location.",
+		})
+		return
+	}
 
 	// Risk assessment (conditional access)
 	var riskScore int
