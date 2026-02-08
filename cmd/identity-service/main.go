@@ -157,6 +157,9 @@ func main() {
 	identityService.SetRiskService(riskService)
 	identityService.SetSMSProvider(smsService)
 
+	// Start SMS config watcher (polls DB every 30s for admin console changes)
+	go identityService.StartSMSConfigWatcher(ctx, 30*time.Second)
+
 	// Initialize portal service
 	portalService := portal.NewService(db, log)
 

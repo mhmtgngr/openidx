@@ -641,15 +641,16 @@ func (s *Service) countRecentOTPChallenges(ctx context.Context, userID, method s
 }
 
 func (s *Service) sendSMSOTP(ctx context.Context, phoneNumber, code string) error {
-	// Check if SMS provider is configured
-	if s.smsProvider == nil {
+	// Check if SMS provider is configured (thread-safe)
+	provider := s.getSMSProvider()
+	if provider == nil {
 		s.logger.Warn("SMS provider not configured, OTP code not sent",
 			zap.String("phone", maskPhone(phoneNumber)),
 			zap.String("code", code)) // Only log in dev mode
 		return nil
 	}
 
-	return s.smsProvider.SendOTP(ctx, phoneNumber, code)
+	return provider.SendOTP(ctx, phoneNumber, code)
 }
 
 func (s *Service) sendEmailOTP(ctx context.Context, email, code string) error {

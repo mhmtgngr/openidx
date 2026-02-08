@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/common/database"
 )
 
@@ -806,6 +807,11 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Settings
 	router.GET("/settings", svc.handleGetSettings)
 	router.PUT("/settings", svc.handleUpdateSettings)
+
+	// SMS Settings (separate from main settings due to credential sensitivity)
+	router.GET("/settings/sms", svc.handleGetSMSSettings)
+	router.PUT("/settings/sms", svc.handleUpdateSMSSettings)
+	router.POST("/settings/sms/test", svc.handleTestSMS)
 	
 	// Applications
 	router.GET("/applications", svc.handleListApplications)
@@ -951,6 +957,113 @@ func (s *Service) handleUpdateSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(200, settings)
+}
+
+func (s *Service) handleGetSMSSettings(c *gin.Context) {
+	var valueBytes []byte
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&valueBytes)
+
+	var settings *sms.DBSMSSettings
+	if err == nil {
+		settings = &sms.DBSMSSettings{}
+		if jsonErr := json.Unmarshal(valueBytes, settings); jsonErr != nil {
+			settings = sms.DefaultDBSMSSettings()
+		}
+	} else {
+		settings = sms.DefaultDBSMSSettings()
+	}
+
+	sms.MaskCredentials(settings)
+	c.JSON(200, settings)
+}
+
+func (s *Service) handleUpdateSMSSettings(c *gin.Context) {
+	var incoming sms.DBSMSSettings
+	if err := c.ShouldBindJSON(&incoming); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Load existing settings to merge masked credentials
+	var existingBytes []byte
+	var existing *sms.DBSMSSettings
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&existingBytes)
+	if err == nil {
+		existing = &sms.DBSMSSettings{}
+		json.Unmarshal(existingBytes, existing)
+	}
+
+	sms.MergeCredentials(&incoming, existing)
+	sms.ValidateOTPSettings(&incoming)
+
+	valueBytes, err := json.Marshal(&incoming)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to marshal SMS settings"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO system_settings (key, value, updated_at)
+		VALUES ('sms_config', $1, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+	`, valueBytes)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to save SMS settings"})
+		return
+	}
+
+	sms.MaskCredentials(&incoming)
+	c.JSON(200, incoming)
+}
+
+func (s *Service) handleTestSMS(c *gin.Context) {
+	var req struct {
+		PhoneNumber string              `json:"phone_number"`
+		Settings    sms.DBSMSSettings   `json:"settings"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if req.PhoneNumber == "" {
+		c.JSON(400, gin.H{"error": "phone_number is required"})
+		return
+	}
+
+	// Merge masked credentials from DB before testing
+	var existingBytes []byte
+	var existing *sms.DBSMSSettings
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&existingBytes)
+	if err == nil {
+		existing = &sms.DBSMSSettings{}
+		json.Unmarshal(existingBytes, existing)
+	}
+	sms.MergeCredentials(&req.Settings, existing)
+
+	// Force enabled for test
+	cfg := req.Settings.ToConfig()
+	cfg.Enabled = true
+
+	smsService, err := sms.NewService(cfg, s.logger)
+	if err != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("failed to create SMS service: %v", err), "success": false})
+		return
+	}
+
+	prefix := req.Settings.MessagePrefix
+	if prefix == "" {
+		prefix = "OpenIDX"
+	}
+	msg := fmt.Sprintf("%s: This is a test message. If you received this, SMS is configured correctly.", prefix)
+	if err := smsService.SendMessage(c.Request.Context(), req.PhoneNumber, msg); err != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("failed to send test SMS: %v", err), "success": false})
+		return
+	}
+
+	c.JSON(200, gin.H{"success": true, "message": "Test SMS sent successfully"})
 }
 
 func (s *Service) handleListApplications(c *gin.Context) {

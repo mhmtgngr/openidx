@@ -175,6 +175,7 @@ type Service struct {
 	webhookService    WebhookPublisher
 	anomalyDetector   AnomalyDetector
 	smsProvider       SMSProvider       // SMS OTP provider
+	smsProviderMu     sync.RWMutex     // Protects smsProvider for runtime hot-swap
 	phoneCallProvider PhoneCallProvider // Phone call MFA provider
 	risk              RiskService       // Risk evaluation service
 
@@ -240,9 +241,18 @@ func (s *Service) SetAnomalyDetector(ad AnomalyDetector) {
 	s.anomalyDetector = ad
 }
 
-// SetSMSProvider sets the SMS provider for OTP delivery
+// SetSMSProvider sets the SMS provider for OTP delivery (thread-safe for runtime hot-swap)
 func (s *Service) SetSMSProvider(sp SMSProvider) {
+	s.smsProviderMu.Lock()
+	defer s.smsProviderMu.Unlock()
 	s.smsProvider = sp
+}
+
+// getSMSProvider returns the current SMS provider (thread-safe)
+func (s *Service) getSMSProvider() SMSProvider {
+	s.smsProviderMu.RLock()
+	defer s.smsProviderMu.RUnlock()
+	return s.smsProvider
 }
 
 // SetPhoneCallProvider sets the phone call provider for voice MFA
@@ -1692,6 +1702,21 @@ func (s *Service) GetRemainingBackupCodes(ctx context.Context, userID string) (i
 	return count, err
 }
 
+// GetBackupCodeCount returns count of unused backup codes (alias for GetRemainingBackupCodes)
+func (s *Service) GetBackupCodeCount(ctx context.Context, userID string) (int, error) {
+	return s.GetRemainingBackupCodes(ctx, userID)
+}
+
+// VerifyBackupCode validates a backup code and marks it as used (alias for ValidateBackupCode)
+func (s *Service) VerifyBackupCode(ctx context.Context, userID, code string) (bool, error) {
+	return s.ValidateBackupCode(ctx, userID, code)
+}
+
+// GetPushDevices returns push MFA devices for a user (alias for GetPushMFADevices)
+func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFADevice, error) {
+	return s.GetPushMFADevices(ctx, userID)
+}
+
 // IsMFARequired checks if MFA is required for a user based on policies
 func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
@@ -2634,7 +2659,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/mfa/bypass-codes", svc.handleGenerateBypassCode)
 		identity.GET("/mfa/bypass-codes", svc.handleListBypassCodes)
 		identity.DELETE("/mfa/bypass-codes/:code_id", svc.handleRevokeBypassCode)
-		identity.DELETE("/users/:user_id/bypass-codes", svc.handleRevokeAllBypassCodes)
+		identity.DELETE("/users/:id/bypass-codes", svc.handleRevokeAllBypassCodes)
 		identity.POST("/mfa/bypass-codes/verify", svc.handleVerifyBypassCode)
 		identity.GET("/mfa/bypass-codes/audit", svc.handleGetBypassAuditLog)
 
