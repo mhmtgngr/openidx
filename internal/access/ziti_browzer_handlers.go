@@ -2,6 +2,7 @@
 package access
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -104,6 +105,11 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		return
 	}
 
+	// Regenerate BrowZer bootstrapper targets config
+	if s.browzerTargetManager != nil {
+		go s.browzerTargetManager.WriteBrowZerTargets(context.Background())
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer enabled on service", "role_attributes": attrs})
 }
 
@@ -134,6 +140,11 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 		s.logger.Error("Failed to disable BrowZer on service", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Regenerate BrowZer bootstrapper targets config
+	if s.browzerTargetManager != nil {
+		go s.browzerTargetManager.WriteBrowZerTargets(context.Background())
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer disabled on service", "role_attributes": filtered})

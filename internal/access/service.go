@@ -96,10 +96,11 @@ type Service struct {
 	oauthIssuer      string
 	oauthInternalURL string // Docker-internal URL for server-to-server calls
 	oauthJWKSURL     string
-	zitiManager     *ZitiManager
-	guacamoleClient *GuacamoleClient
-	featureManager  *FeatureManager
-	auditService    *UnifiedAuditService
+	zitiManager          *ZitiManager
+	guacamoleClient      *GuacamoleClient
+	featureManager       *FeatureManager
+	auditService         *UnifiedAuditService
+	browzerTargetManager *BrowZerTargetManager
 }
 
 // SetGuacamoleClient sets the Guacamole client for the service
@@ -133,6 +134,11 @@ func (s *Service) SetFeatureManager(fm *FeatureManager) {
 	if s.guacamoleClient != nil {
 		fm.SetGuacamoleClient(s.guacamoleClient)
 	}
+}
+
+// SetBrowZerTargetManager sets the BrowZer target manager
+func (s *Service) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
+	s.browzerTargetManager = btm
 }
 
 // SetAuditService sets the unified audit service
@@ -267,6 +273,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/temp-access/:id", svc.handleGetTempAccess)
 		api.DELETE("/temp-access/:id", svc.handleRevokeTempAccess)
 		api.GET("/temp-access/:id/usage", svc.handleGetTempAccessUsage)
+
+		// Quick service creation (route + Ziti + BrowZer in one call)
+		api.POST("/services/quick-create", svc.handleQuickCreate)
 
 		// Service feature management endpoints
 		api.GET("/services/:id/features", svc.handleGetServiceFeatures)
@@ -1463,6 +1472,125 @@ func (s *Service) ensureBrowZerAttribute(ctx context.Context, zm *ZitiManager, z
 	} else {
 		s.logger.Info("Added browzer-enabled attribute to service", zap.String("ziti_id", zitiServiceID))
 	}
+}
+
+// handleQuickCreate creates a proxy route with Ziti and BrowZer enabled in a single API call.
+// This eliminates the multi-step process of creating a route, enabling Ziti, and enabling BrowZer separately.
+func (s *Service) handleQuickCreate(c *gin.Context) {
+	var req struct {
+		Name           string   `json:"name" binding:"required"`
+		TargetURL      string   `json:"target_url" binding:"required"`
+		Domain         string   `json:"domain" binding:"required"`
+		ZitiEnabled    bool     `json:"ziti_enabled"`
+		BrowzerEnabled bool     `json:"browzer_enabled"`
+		AllowedRoles   []string `json:"allowed_roles"`
+		AllowedGroups  []string `json:"allowed_groups"`
+		RouteType      string   `json:"route_type"`
+		RequireAuth    *bool    `json:"require_auth"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// BrowZer implies Ziti
+	if req.BrowzerEnabled {
+		req.ZitiEnabled = true
+	}
+
+	if req.RouteType == "" {
+		req.RouteType = "http"
+	}
+	requireAuth := true
+	if req.RequireAuth != nil {
+		requireAuth = *req.RequireAuth
+	}
+
+	// Build from_url from domain
+	fromURL := "http://" + req.Domain
+
+	// Create the proxy route
+	routeID := uuid.New().String()
+	rolesJSON, _ := json.Marshal(req.AllowedRoles)
+	groupsJSON, _ := json.Marshal(req.AllowedGroups)
+
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		`INSERT INTO proxy_routes (id, name, from_url, to_url, require_auth, enabled, priority,
+		  route_type, allowed_roles, allowed_groups,
+		  idle_timeout, absolute_timeout, max_risk_score,
+		  allowed_countries, cors_allowed_origins, custom_headers, policy_ids, posture_check_ids)
+		 VALUES ($1, $2, $3, $4, $5, true, 0,
+		         $6, $7, $8,
+		         900, 43200, 100,
+		         '[]', '[]', '{}', '[]', '[]')`,
+		routeID, req.Name, fromURL, req.TargetURL, requireAuth,
+		req.RouteType, rolesJSON, groupsJSON)
+	if err != nil {
+		s.logger.Error("Failed to create route", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
+		return
+	}
+
+	s.logger.Info("Quick-create: route created", zap.String("route_id", routeID), zap.String("name", req.Name))
+
+	// Get user ID from context
+	userID := ""
+	if uid, exists := c.Get("user_id"); exists {
+		userID = uid.(string)
+	}
+
+	result := gin.H{
+		"id":      routeID,
+		"name":    req.Name,
+		"domain":  req.Domain,
+		"message": "route created",
+	}
+
+	// Enable Ziti if requested
+	if req.ZitiEnabled && s.featureManager != nil {
+		// Parse target URL to get host/port for Ziti
+		host, port := parseHostPort(req.TargetURL)
+		serviceName := fmt.Sprintf("openidx-%s", req.Name)
+
+		zitiConfig := &FeatureConfig{
+			ZitiServiceName: serviceName,
+			ZitiHost:        host,
+			ZitiPort:        port,
+		}
+
+		if err := s.featureManager.EnableFeature(c.Request.Context(), routeID, FeatureZiti, zitiConfig, userID); err != nil {
+			s.logger.Error("Quick-create: failed to enable Ziti", zap.Error(err))
+			result["ziti_error"] = err.Error()
+		} else {
+			result["ziti_enabled"] = true
+			result["ziti_service_name"] = serviceName
+			s.logger.Info("Quick-create: Ziti enabled", zap.String("service", serviceName))
+		}
+	}
+
+	// Enable BrowZer if requested (Ziti must have succeeded)
+	if req.BrowzerEnabled && s.featureManager != nil && result["ziti_error"] == nil {
+		if err := s.featureManager.EnableFeature(c.Request.Context(), routeID, FeatureBrowZer, &FeatureConfig{}, userID); err != nil {
+			s.logger.Error("Quick-create: failed to enable BrowZer", zap.Error(err))
+			result["browzer_error"] = err.Error()
+		} else {
+			result["browzer_enabled"] = true
+			s.logger.Info("Quick-create: BrowZer enabled")
+		}
+
+		// Note about network alias requirement for Docker Compose
+		result["note"] = fmt.Sprintf("For Docker Compose: add '%s' as a network alias to the browzer-bootstrapper service", req.Domain)
+	}
+
+	s.logAuditEvent(c, "service_quick_created", routeID, "proxy_route", map[string]interface{}{
+		"name":            req.Name,
+		"domain":          req.Domain,
+		"ziti_enabled":    req.ZitiEnabled,
+		"browzer_enabled": req.BrowzerEnabled,
+	})
+
+	c.JSON(http.StatusCreated, result)
 }
 
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {

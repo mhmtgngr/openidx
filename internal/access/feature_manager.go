@@ -87,10 +87,11 @@ type FeatureConfig struct {
 
 // FeatureManager handles feature toggle operations
 type FeatureManager struct {
-	db              *database.PostgresDB
-	logger          *zap.Logger
-	zitiManager     *ZitiManager
-	guacamoleClient *GuacamoleClient
+	db                   *database.PostgresDB
+	logger               *zap.Logger
+	zitiManager          *ZitiManager
+	guacamoleClient      *GuacamoleClient
+	browzerTargetManager *BrowZerTargetManager
 }
 
 // NewFeatureManager creates a new FeatureManager
@@ -109,6 +110,11 @@ func (fm *FeatureManager) SetZitiManager(zm *ZitiManager) {
 // SetGuacamoleClient sets the Guacamole client
 func (fm *FeatureManager) SetGuacamoleClient(gc *GuacamoleClient) {
 	fm.guacamoleClient = gc
+}
+
+// SetBrowZerTargetManager sets the BrowZer target manager for config file generation
+func (fm *FeatureManager) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
+	fm.browzerTargetManager = btm
 }
 
 // EnableFeature enables a feature on a route
@@ -521,8 +527,46 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		resourceIDs["ziti_service_name"] = zitiService.Name
 
 	case FeatureBrowZer:
-		// BrowZer is configured at the Ziti level, we just mark it enabled
+		if fm.zitiManager == nil || !fm.zitiManager.IsInitialized() {
+			return nil, fmt.Errorf("Ziti manager not available")
+		}
+
+		// Get the Ziti service ID for this route so we can add the browzer-enabled role attribute
+		var zitiServiceID string
+		err := fm.db.Pool.QueryRow(ctx,
+			`SELECT zs.ziti_id FROM ziti_services zs
+			 JOIN proxy_routes pr ON pr.ziti_service_name = zs.name
+			 WHERE pr.id = $1`, routeID).Scan(&zitiServiceID)
+		if err != nil {
+			return nil, fmt.Errorf("no Ziti service found for route (enable Ziti first): %w", err)
+		}
+
+		// Add browzer-enabled role attribute to the Ziti service on the controller
+		attrs, err := fm.zitiManager.GetServiceRoleAttributes(ctx, zitiServiceID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get service attributes: %w", err)
+		}
+		hasBrowzer := false
+		for _, a := range attrs {
+			if a == "browzer-enabled" {
+				hasBrowzer = true
+				break
+			}
+		}
+		if !hasBrowzer {
+			attrs = append(attrs, "browzer-enabled")
+			if err := fm.zitiManager.PatchServiceRoleAttributes(ctx, zitiServiceID, attrs); err != nil {
+				return nil, fmt.Errorf("failed to add browzer-enabled attribute: %w", err)
+			}
+		}
+
 		resourceIDs["browzer_enabled"] = "true"
+		resourceIDs["ziti_service_id"] = zitiServiceID
+
+		// Regenerate BrowZer bootstrapper targets config
+		if fm.browzerTargetManager != nil {
+			go fm.browzerTargetManager.WriteBrowZerTargets(context.Background())
+		}
 
 	case FeatureGuacamole:
 		if fm.guacamoleClient == nil {
@@ -586,7 +630,27 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 		}
 
 	case FeatureBrowZer:
-		// Nothing to deprovision for BrowZer
+		// Remove browzer-enabled role attribute from Ziti service
+		if fm.zitiManager != nil && fm.zitiManager.IsInitialized() {
+			if zitiServiceID, ok := resourceIDs["ziti_service_id"]; ok && zitiServiceID != "" {
+				attrs, err := fm.zitiManager.GetServiceRoleAttributes(ctx, zitiServiceID)
+				if err == nil {
+					filtered := make([]string, 0, len(attrs))
+					for _, a := range attrs {
+						if a != "browzer-enabled" {
+							filtered = append(filtered, a)
+						}
+					}
+					if err := fm.zitiManager.PatchServiceRoleAttributes(ctx, zitiServiceID, filtered); err != nil {
+						fm.logger.Warn("Failed to remove browzer-enabled attribute", zap.Error(err))
+					}
+				}
+			}
+		}
+		// Regenerate BrowZer bootstrapper targets config
+		if fm.browzerTargetManager != nil {
+			go fm.browzerTargetManager.WriteBrowZerTargets(context.Background())
+		}
 
 	case FeatureGuacamole:
 		if fm.guacamoleClient != nil {

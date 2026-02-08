@@ -77,8 +77,9 @@ type Config struct {
 	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
 
 	// BrowZer configuration (browser-native Ziti participation)
-	BrowZerEnabled  bool   `mapstructure:"browzer_enabled"`
-	BrowZerClientID string `mapstructure:"browzer_client_id"`
+	BrowZerEnabled     bool   `mapstructure:"browzer_enabled"`
+	BrowZerClientID    string `mapstructure:"browzer_client_id"`
+	BrowZerTargetsPath string `mapstructure:"browzer_targets_path"`
 
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
@@ -346,6 +347,7 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
 		"browzer_enabled":          "BROWZER_ENABLED",
 		"browzer_client_id":        "BROWZER_CLIENT_ID",
+		"browzer_targets_path":     "BROWZER_TARGETS_PATH",
 		"enable_opa_authz":         "ENABLE_OPA_AUTHZ",
 		"jwt_secret":               "JWT_SECRET",
 		"encryption_key":           "ENCRYPTION_KEY",

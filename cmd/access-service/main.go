@@ -144,8 +144,19 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
+	// Initialize BrowZer Target Manager for dynamic bootstrapper config
+	var browzerTargetManager *access.BrowZerTargetManager
+	if cfg.BrowZerTargetsPath != "" {
+		browzerTargetManager = access.NewBrowZerTargetManager(db, log, cfg.BrowZerTargetsPath)
+		accessService.SetBrowZerTargetManager(browzerTargetManager)
+		log.Info("BrowZer Target Manager initialized", zap.String("path", cfg.BrowZerTargetsPath))
+	}
+
 	// Initialize Feature Manager for unified service management
 	featureManager := access.NewFeatureManager(db, log)
+	if browzerTargetManager != nil {
+		featureManager.SetBrowZerTargetManager(browzerTargetManager)
+	}
 	accessService.SetFeatureManager(featureManager)
 	log.Info("Feature Manager initialized")
 
@@ -206,7 +217,17 @@ func main() {
 			}
 
 			// Ensure Ziti services exist for seeded routes (e.g., demo-app)
-			go accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
+			// After that completes, generate initial BrowZer targets file
+			go func() {
+				accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
+				if browzerTargetManager != nil {
+					if err := browzerTargetManager.WriteBrowZerTargets(zitiCtx); err != nil {
+						log.Warn("Failed to write initial BrowZer targets", zap.Error(err))
+					} else {
+						log.Info("Initial BrowZer targets file generated")
+					}
+				}
+			}()
 
 			log.Info("OpenZiti integration ready (health + certificate monitors started, services hosted)")
 		}
