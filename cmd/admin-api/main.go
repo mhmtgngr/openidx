@@ -166,6 +166,9 @@ func main() {
 	v1 := router.Group("/api/v1")
 	if cfg.Environment != "development" {
 		v1.Use(middleware.Auth(cfg.OAuthJWKSURL))
+	} else {
+		// In dev mode, use soft auth to identify caller without blocking
+		v1.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
 	}
 
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)

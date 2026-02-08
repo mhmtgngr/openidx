@@ -371,14 +371,24 @@ func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID,
 	return nil
 }
 
-// getUserID extracts the user ID from the Gin context, falling back to a default.
+// getUserID extracts the user ID from the Gin context.
+// Returns the user ID or empty string if not authenticated.
 func getUserID(c *gin.Context) string {
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
-	if userIDStr == "" {
-		userIDStr = "00000000-0000-0000-0000-000000000001"
-	}
 	return userIDStr
+}
+
+// requireUserID extracts the user ID and returns 401 if not present.
+// Returns the user ID and true if valid, empty string and false if not.
+func requireUserID(c *gin.Context) (string, bool) {
+	uid := getUserID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.Abort()
+		return "", false
+	}
+	return uid, true
 }
 
 // handleGetMyApplications handles GET /portal/applications
@@ -411,7 +421,10 @@ func (s *Service) handleGetAvailableGroups(c *gin.Context) {
 
 // handleRequestGroupJoin handles POST /portal/groups/request
 func (s *Service) handleRequestGroupJoin(c *gin.Context) {
-	userIDStr := getUserID(c)
+	userIDStr, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req struct {
 		GroupID       string `json:"group_id" binding:"required"`
@@ -468,7 +481,10 @@ func (s *Service) handleReviewGroupRequest(c *gin.Context) {
 		return
 	}
 
-	reviewerID := getUserID(c)
+	reviewerID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req struct {
 		Decision string `json:"decision" binding:"required"`
@@ -638,7 +654,10 @@ func (s *Service) handleGetMyDevices(c *gin.Context) {
 }
 
 func (s *Service) handleRegisterDevice(c *gin.Context) {
-	userID := getUserID(c)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 
 	var req struct {
 		Name        string `json:"name"`
@@ -659,7 +678,10 @@ func (s *Service) handleRegisterDevice(c *gin.Context) {
 }
 
 func (s *Service) handleUpdateDevice(c *gin.Context) {
-	userID := getUserID(c)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	deviceID := c.Param("id")
 
 	var req struct {
@@ -680,7 +702,10 @@ func (s *Service) handleUpdateDevice(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteDevice(c *gin.Context) {
-	userID := getUserID(c)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	deviceID := c.Param("id")
 
 	if err := s.DeleteDevice(c.Request.Context(), userID, deviceID); err != nil {
@@ -693,7 +718,10 @@ func (s *Service) handleDeleteDevice(c *gin.Context) {
 }
 
 func (s *Service) handleRequestDeviceTrust(c *gin.Context) {
-	userID := getUserID(c)
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
 	deviceID := c.Param("id")
 
 	var req struct {

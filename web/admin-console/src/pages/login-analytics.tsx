@@ -2,11 +2,9 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
-  Users,
   Shield,
   AlertTriangle,
   Globe,
-  Clock,
   Monitor,
   Smartphone,
   TrendingUp,
@@ -95,8 +93,7 @@ export function LoginAnalyticsPage() {
   const { data, isLoading } = useQuery<{ analytics: LoginAnalytics }>({
     queryKey: ['login-analytics', period],
     queryFn: async () => {
-      const response = await api.get(`/api/v1/identity/analytics/logins?period=${period}`)
-      return response.data
+      return api.get<{ analytics: LoginAnalytics }>(`/api/v1/identity/analytics/logins?period=${period}`)
     }
   })
 

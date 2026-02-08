@@ -66,8 +66,8 @@ export function MyDevicesPage() {
   const { data: devicesData, isLoading } = useQuery({
     queryKey: ['my-devices'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/portal/devices')
-      return response.data.devices as Device[]
+      const data = await api.get<{ devices: Device[] }>('/api/v1/identity/portal/devices')
+      return data.devices
     }
   })
 

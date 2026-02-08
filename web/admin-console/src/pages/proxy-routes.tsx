@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight, Terminal, Monitor, Network } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Shield, Edit, Trash2, Power, PowerOff, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Terminal, Monitor, Network, Zap } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -34,6 +34,8 @@ import {
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
+import { ServiceFeaturePanel } from '../components/ServiceFeaturePanel'
+import { ConnectionTestButton } from '../components/ConnectionTestButton'
 
 interface ProxyRoute {
   id: string
@@ -88,8 +90,10 @@ export function ProxyRoutesPage() {
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
+  const [quickCreateModal, setQuickCreateModal] = useState(false)
   const [editModal, setEditModal] = useState(false)
   const [deleteModal, setDeleteModal] = useState(false)
+  const [expandedRoute, setExpandedRoute] = useState<string | null>(null)
   const [selectedRoute, setSelectedRoute] = useState<ProxyRoute | null>(null)
   const [page, setPage] = useState(0)
   const pageSize = 20
@@ -116,6 +120,45 @@ export function ProxyRoutesPage() {
     require_device_trust: false,
     allowed_countries: '',
     max_risk_score: 100,
+  })
+
+  const [quickFormData, setQuickFormData] = useState({
+    name: '',
+    target_url: '',
+    domain: '',
+    path_prefix: '',
+    ziti_enabled: true,
+    browzer_enabled: true,
+    allowed_roles: '',
+    allowed_groups: '',
+  })
+
+  const resetQuickForm = () => {
+    setQuickFormData({
+      name: '',
+      target_url: '',
+      domain: '',
+      path_prefix: '',
+      ziti_enabled: true,
+      browzer_enabled: true,
+      allowed_roles: '',
+      allowed_groups: '',
+    })
+  }
+
+  const quickCreateMutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      return api.post('/api/v1/access/services/quick-create', data)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
+      setQuickCreateModal(false)
+      resetQuickForm()
+      toast({ title: 'Service created', description: 'BrowZer service has been created with Ziti integration.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to create service.', variant: 'destructive' })
+    },
   })
 
   const { data, isLoading } = useQuery({
@@ -267,10 +310,16 @@ export function ProxyRoutesPage() {
           <h1 className="text-2xl font-bold">Proxy Routes</h1>
           <p className="text-muted-foreground">Manage zero trust access proxy routes for internal applications</p>
         </div>
-        <Button onClick={() => { resetForm(); setCreateModal(true) }}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Route
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { resetQuickForm(); setQuickCreateModal(true) }}>
+            <Zap className="mr-2 h-4 w-4" />
+            Quick Create
+          </Button>
+          <Button onClick={() => { resetForm(); setCreateModal(true) }}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Route
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -435,6 +484,30 @@ export function ProxyRoutesPage() {
                     </div>
                   )}
                 </div>
+                <div className="flex items-center gap-2 mt-3 pt-3 border-t">
+                  <ConnectionTestButton routeId={route.id} size="sm" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setExpandedRoute(expandedRoute === route.id ? null : route.id)}
+                  >
+                    {expandedRoute === route.id ? (
+                      <ChevronUp className="h-4 w-4 mr-1" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 mr-1" />
+                    )}
+                    Features
+                  </Button>
+                </div>
+                {expandedRoute === route.id && (
+                  <div className="mt-3 pt-3 border-t">
+                    <ServiceFeaturePanel
+                      routeId={route.id}
+                      routeType={route.route_type || 'http'}
+                      onUpdate={() => queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })}
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -509,6 +582,122 @@ export function ProxyRoutesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Quick Create Dialog */}
+      <Dialog open={quickCreateModal} onOpenChange={setQuickCreateModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Quick Create BrowZer Service</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              quickCreateMutation.mutate({
+                name: quickFormData.name,
+                target_url: quickFormData.target_url,
+                domain: quickFormData.domain,
+                path_prefix: quickFormData.path_prefix || undefined,
+                ziti_enabled: quickFormData.ziti_enabled,
+                browzer_enabled: quickFormData.browzer_enabled,
+                allowed_roles: quickFormData.allowed_roles ? quickFormData.allowed_roles.split(',').map(s => s.trim()).filter(Boolean) : [],
+                allowed_groups: quickFormData.allowed_groups ? quickFormData.allowed_groups.split(',').map(s => s.trim()).filter(Boolean) : [],
+              })
+            }}
+            className="space-y-4"
+          >
+            <p className="text-sm text-muted-foreground">
+              Create a route with Ziti + BrowZer in one step. This provisions the Ziti service, policies, and bootstrapper target automatically.
+            </p>
+            <div className="space-y-2">
+              <Label>Service Name</Label>
+              <Input
+                value={quickFormData.name}
+                onChange={(e) => setQuickFormData({ ...quickFormData, name: e.target.value })}
+                placeholder="my-internal-app"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Target URL</Label>
+              <Input
+                value={quickFormData.target_url}
+                onChange={(e) => setQuickFormData({ ...quickFormData, target_url: e.target.value })}
+                placeholder="http://internal-app:8080"
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Domain (BrowZer vhost)</Label>
+                <Input
+                  value={quickFormData.domain}
+                  onChange={(e) => setQuickFormData({ ...quickFormData, domain: e.target.value })}
+                  placeholder="browzer.localtest.me"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Path Prefix</Label>
+                <Input
+                  value={quickFormData.path_prefix}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setQuickFormData({
+                      ...quickFormData,
+                      path_prefix: val,
+                      domain: val ? 'browzer.localtest.me' : quickFormData.domain,
+                    })
+                  }}
+                  placeholder="/demo"
+                />
+                {quickFormData.path_prefix && (
+                  <p className="text-xs text-muted-foreground">Path-based routing on shared domain</p>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Allowed Roles</Label>
+                <Input
+                  value={quickFormData.allowed_roles}
+                  onChange={(e) => setQuickFormData({ ...quickFormData, allowed_roles: e.target.value })}
+                  placeholder="admin, user"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Allowed Groups</Label>
+                <Input
+                  value={quickFormData.allowed_groups}
+                  onChange={(e) => setQuickFormData({ ...quickFormData, allowed_groups: e.target.value })}
+                  placeholder="engineering"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={quickFormData.ziti_enabled}
+                  onCheckedChange={(checked) => setQuickFormData({ ...quickFormData, ziti_enabled: checked, browzer_enabled: checked ? quickFormData.browzer_enabled : false })}
+                />
+                Ziti Network
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={quickFormData.browzer_enabled}
+                  onCheckedChange={(checked) => setQuickFormData({ ...quickFormData, browzer_enabled: checked, ziti_enabled: checked ? true : quickFormData.ziti_enabled })}
+                />
+                BrowZer Access
+              </label>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button type="button" variant="outline" onClick={() => setQuickCreateModal(false)}>Cancel</Button>
+              <Button type="submit" disabled={quickCreateMutation.isPending}>
+                {quickCreateMutation.isPending ? 'Creating...' : 'Create Service'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

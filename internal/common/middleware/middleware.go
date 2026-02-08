@@ -142,6 +142,41 @@ func getSigningKey(jwksURL, kid string) (*rsa.PublicKey, error) {
 	return nil, fmt.Errorf("key with kid %s not found in JWKS", kid)
 }
 
+// getFirstSigningKey returns the first RSA signing key from JWKS (for tokens without kid)
+func getFirstSigningKey(jwksURL string) (*rsa.PublicKey, error) {
+	globalJWKSCache.mu.RLock()
+	if time.Now().Before(globalJWKSCache.expiresAt) && len(globalJWKSCache.keys) > 0 {
+		for _, key := range globalJWKSCache.keys {
+			globalJWKSCache.mu.RUnlock()
+			return key, nil
+		}
+	}
+	globalJWKSCache.mu.RUnlock()
+
+	globalJWKSCache.mu.Lock()
+	defer globalJWKSCache.mu.Unlock()
+
+	if time.Now().Before(globalJWKSCache.expiresAt) && len(globalJWKSCache.keys) > 0 {
+		for _, key := range globalJWKSCache.keys {
+			return key, nil
+		}
+	}
+
+	keys, err := fetchJWKS(jwksURL)
+	if err != nil {
+		return nil, err
+	}
+
+	globalJWKSCache.keys = keys
+	globalJWKSCache.expiresAt = time.Now().Add(1 * time.Hour)
+
+	for _, key := range keys {
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("no signing keys found in JWKS")
+}
+
 // CORS returns a middleware that handles CORS headers
 func CORS(allowedOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -334,6 +369,71 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 		}
 
 		// Extract org_id from claims, default to default org
+		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
+			c.Set("org_id", orgID)
+		} else {
+			c.Set("org_id", "00000000-0000-0000-0000-000000000010")
+		}
+
+		c.Next()
+	}
+}
+
+// SoftAuth parses JWT if present but does not block unauthenticated requests.
+// Used in dev mode so endpoints can optionally identify the caller.
+func SoftAuth(jwksURL string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.Next()
+			return
+		}
+
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			c.Next()
+			return
+		}
+
+		token, err := jwt.Parse(parts[1], func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			kid, _ := token.Header["kid"].(string)
+			if kid != "" {
+				return getSigningKey(jwksURL, kid)
+			}
+			// No kid header - use the first available RSA key
+			return getFirstSigningKey(jwksURL)
+		})
+
+		if err != nil || token == nil || !token.Valid {
+			c.Next()
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.Next()
+			return
+		}
+
+		if sub, ok := claims["sub"].(string); ok {
+			c.Set("user_id", sub)
+		}
+		if email, ok := claims["email"].(string); ok {
+			c.Set("email", email)
+		}
+		if name, ok := claims["name"].(string); ok {
+			c.Set("name", name)
+		}
+		if roles, ok := claims["roles"].([]interface{}); ok {
+			roleStrings := make([]string, len(roles))
+			for i, role := range roles {
+				roleStrings[i] = fmt.Sprint(role)
+			}
+			c.Set("roles", roleStrings)
+		}
 		if orgID, ok := claims["org_id"].(string); ok && orgID != "" {
 			c.Set("org_id", orgID)
 		} else {

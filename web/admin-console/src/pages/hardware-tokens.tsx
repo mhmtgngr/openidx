@@ -73,8 +73,7 @@ export function HardwareTokensPage() {
     queryFn: async () => {
       const params = new URLSearchParams()
       if (statusFilter) params.append('status', statusFilter)
-      const response = await api.get(`/api/v1/identity/hardware-tokens?${params}`)
-      return response.data
+      return api.get<{ tokens: HardwareToken[] }>(`/api/v1/identity/hardware-tokens?${params}`)
     }
   })
 

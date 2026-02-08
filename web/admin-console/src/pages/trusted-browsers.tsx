@@ -56,8 +56,7 @@ export function TrustedBrowsersPage() {
   const { data: browsers = [], isLoading } = useQuery<TrustedBrowser[]>({
     queryKey: ['trusted-browsers'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/trusted-browsers')
-      return response.data
+      return api.get<TrustedBrowser[]>('/api/v1/identity/trusted-browsers')
     }
   })
 
@@ -65,8 +64,7 @@ export function TrustedBrowsersPage() {
   const { data: checkResult } = useQuery<CheckResult>({
     queryKey: ['trusted-browser-check'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/trusted-browsers/check')
-      return response.data
+      return api.get<CheckResult>('/api/v1/identity/trusted-browsers/check')
     }
   })
 

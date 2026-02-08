@@ -12,7 +12,7 @@ RUN go mod download
 
 ARG VERSION=dev
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN GOMAXPROCS=1 GOMEMLIMIT=1GiB CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s -X main.Version=${VERSION}" \
     -o /app/service ./cmd/provisioning-service
 

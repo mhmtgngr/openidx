@@ -69,8 +69,7 @@ export function DeviceTrustApprovalPage() {
     queryFn: async () => {
       const params = new URLSearchParams()
       if (statusFilter) params.append('status', statusFilter)
-      const response = await api.get(`/api/v1/identity/device-trust-requests?${params}`)
-      return response.data
+      return api.get<{ requests: TrustRequest[] }>(`/api/v1/identity/device-trust-requests?${params}`)
     }
   })
 
@@ -80,8 +79,7 @@ export function DeviceTrustApprovalPage() {
   const { data: settings } = useQuery({
     queryKey: ['device-trust-settings'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/device-trust-settings')
-      return response.data as TrustSettings
+      return api.get<TrustSettings>('/api/v1/identity/device-trust-settings')
     }
   })
 
@@ -89,8 +87,7 @@ export function DeviceTrustApprovalPage() {
   const { data: pendingData } = useQuery({
     queryKey: ['device-trust-pending-count'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/device-trust-requests/pending-count')
-      return response.data
+      return api.get<{ count: number }>('/api/v1/identity/device-trust-requests/pending-count')
     }
   })
 
@@ -121,22 +118,22 @@ export function DeviceTrustApprovalPage() {
 
   const bulkApproveMutation = useMutation({
     mutationFn: (requestIds: string[]) =>
-      api.post('/api/v1/identity/device-trust-requests/bulk-approve', { request_ids: requestIds, notes: 'Bulk approved' }),
+      api.post<{ approved: number }>('/api/v1/identity/device-trust-requests/bulk-approve', { request_ids: requestIds, notes: 'Bulk approved' }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      toast({ title: 'Bulk Approve', description: `Approved ${data.data.approved} requests.` })
+      toast({ title: 'Bulk Approve', description: `Approved ${data.approved} requests.` })
       setSelectedRequests([])
     }
   })
 
   const bulkRejectMutation = useMutation({
     mutationFn: (requestIds: string[]) =>
-      api.post('/api/v1/identity/device-trust-requests/bulk-reject', { request_ids: requestIds, notes: 'Bulk rejected' }),
+      api.post<{ rejected: number }>('/api/v1/identity/device-trust-requests/bulk-reject', { request_ids: requestIds, notes: 'Bulk rejected' }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      toast({ title: 'Bulk Reject', description: `Rejected ${data.data.rejected} requests.` })
+      toast({ title: 'Bulk Reject', description: `Rejected ${data.rejected} requests.` })
       setSelectedRequests([])
     }
   })

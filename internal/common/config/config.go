@@ -79,7 +79,8 @@ type Config struct {
 	// BrowZer configuration (browser-native Ziti participation)
 	BrowZerEnabled     bool   `mapstructure:"browzer_enabled"`
 	BrowZerClientID    string `mapstructure:"browzer_client_id"`
-	BrowZerTargetsPath string `mapstructure:"browzer_targets_path"`
+	BrowZerTargetsPath      string `mapstructure:"browzer_targets_path"`
+	BrowZerRouterConfigPath string `mapstructure:"browzer_router_config_path"`
 
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`

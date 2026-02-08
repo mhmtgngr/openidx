@@ -148,8 +148,13 @@ func main() {
 	var browzerTargetManager *access.BrowZerTargetManager
 	if cfg.BrowZerTargetsPath != "" {
 		browzerTargetManager = access.NewBrowZerTargetManager(db, log, cfg.BrowZerTargetsPath)
+		if cfg.BrowZerRouterConfigPath != "" {
+			browzerTargetManager.SetRouterConfigPath(cfg.BrowZerRouterConfigPath)
+		}
 		accessService.SetBrowZerTargetManager(browzerTargetManager)
-		log.Info("BrowZer Target Manager initialized", zap.String("path", cfg.BrowZerTargetsPath))
+		log.Info("BrowZer Target Manager initialized",
+			zap.String("targets_path", cfg.BrowZerTargetsPath),
+			zap.String("router_config_path", cfg.BrowZerRouterConfigPath))
 	}
 
 	// Initialize Feature Manager for unified service management
@@ -217,14 +222,24 @@ func main() {
 			}
 
 			// Ensure Ziti services exist for seeded routes (e.g., demo-app)
-			// After that completes, generate initial BrowZer targets file
+			// Also create the browzer-router-zt service for path-based routing
+			// After that completes, generate initial BrowZer targets + router config
 			go func() {
 				accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
+
+				// Ensure browzer-router-zt Ziti service exists for path-based routing
+				accessService.EnsureBrowZerRouterService(zitiCtx, zm)
+
 				if browzerTargetManager != nil {
 					if err := browzerTargetManager.WriteBrowZerTargets(zitiCtx); err != nil {
 						log.Warn("Failed to write initial BrowZer targets", zap.Error(err))
 					} else {
 						log.Info("Initial BrowZer targets file generated")
+					}
+					if err := browzerTargetManager.WriteBrowZerRouterConfig(zitiCtx); err != nil {
+						log.Warn("Failed to write initial BrowZer router config", zap.Error(err))
+					} else {
+						log.Info("Initial BrowZer router config generated")
 					}
 				}
 			}()

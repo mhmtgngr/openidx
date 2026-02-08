@@ -2185,12 +2185,28 @@ VALUES (
     'a0000000-0000-0000-0000-000000000100',
     'demo-app',
     'OpenIDX Demo App - demonstrates authenticated user identity via forward-auth and BrowZer zero-trust access',
-    'http://demo.localtest.me',
+    'http://browzer.localtest.me/demo',
     'http://demo-app:8090',
     true,
     true,
     10,
     true,
     'demo-app-zt',
+    true
+) ON CONFLICT (id) DO NOTHING;
+
+-- GUACAMOLE - BrowZer route for path-based Guacamole access
+INSERT INTO proxy_routes (id, name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled)
+VALUES (
+    'a0000000-0000-0000-0000-000000000101',
+    'guacamole',
+    'Apache Guacamole remote desktop via BrowZer zero-trust access',
+    'http://browzer.localtest.me/guacamole',
+    'http://guacamole:8080',
+    true,
+    true,
+    10,
+    true,
+    'guacamole-zt',
     true
 ) ON CONFLICT (id) DO NOTHING;

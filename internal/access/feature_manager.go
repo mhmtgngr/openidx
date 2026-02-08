@@ -563,9 +563,13 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		resourceIDs["browzer_enabled"] = "true"
 		resourceIDs["ziti_service_id"] = zitiServiceID
 
-		// Regenerate BrowZer bootstrapper targets config
+		// Regenerate BrowZer bootstrapper targets and router config
 		if fm.browzerTargetManager != nil {
-			go fm.browzerTargetManager.WriteBrowZerTargets(context.Background())
+			go func() {
+				bgCtx := context.Background()
+				fm.browzerTargetManager.WriteBrowZerTargets(bgCtx)
+				fm.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
+			}()
 		}
 
 	case FeatureGuacamole:
@@ -647,9 +651,13 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 				}
 			}
 		}
-		// Regenerate BrowZer bootstrapper targets config
+		// Regenerate BrowZer bootstrapper targets and router config
 		if fm.browzerTargetManager != nil {
-			go fm.browzerTargetManager.WriteBrowZerTargets(context.Background())
+			go func() {
+				bgCtx := context.Background()
+				fm.browzerTargetManager.WriteBrowZerTargets(bgCtx)
+				fm.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
+			}()
 		}
 
 	case FeatureGuacamole:

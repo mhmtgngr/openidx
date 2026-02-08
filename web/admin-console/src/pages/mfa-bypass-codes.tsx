@@ -80,8 +80,7 @@ export function MFABypassCodesPage() {
       const params = new URLSearchParams()
       if (statusFilter) params.append('status', statusFilter)
       if (userFilter) params.append('user_id', userFilter)
-      const response = await api.get(`/api/v1/identity/mfa/bypass-codes?${params}`)
-      return response.data
+      return api.get<{ codes: BypassCode[] }>(`/api/v1/identity/mfa/bypass-codes?${params}`)
     }
   })
 
@@ -91,8 +90,7 @@ export function MFABypassCodesPage() {
   const { data: auditData } = useQuery({
     queryKey: ['bypass-codes-audit'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/mfa/bypass-codes/audit')
-      return response.data
+      return api.get<{ entries: AuditEntry[] }>('/api/v1/identity/mfa/bypass-codes/audit')
     },
     enabled: auditDialog
   })
@@ -102,10 +100,10 @@ export function MFABypassCodesPage() {
   // Mutations
   const generateMutation = useMutation({
     mutationFn: (data: typeof newCode) =>
-      api.post('/api/v1/identity/mfa/bypass-codes', data),
+      api.post<BypassCode>('/api/v1/identity/mfa/bypass-codes', data),
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['bypass-codes'] })
-      setGeneratedCode(response.data)
+      setGeneratedCode(response)
       setCreateDialog(false)
       setCodeDialog(true)
       setNewCode({ user_id: '', reason: '', valid_hours: 24, max_uses: 1 })

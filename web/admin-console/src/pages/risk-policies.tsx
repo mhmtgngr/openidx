@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Shield, Plus, Edit2, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Activity, Info } from 'lucide-react'
+import { Shield, Plus, Edit2, Trash2, AlertTriangle, Activity, Info } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -103,8 +103,7 @@ export function RiskPoliciesPage() {
   const { data: policiesData, isLoading } = useQuery({
     queryKey: ['risk-policies'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/risk/policies')
-      return response.data
+      return api.get<{ policies: RiskPolicy[] }>('/api/v1/identity/risk/policies')
     }
   })
 
@@ -114,8 +113,7 @@ export function RiskPoliciesPage() {
   const { data: statsData } = useQuery({
     queryKey: ['risk-stats'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/risk/stats')
-      return response.data
+      return api.get<{ stats: RiskStats }>('/api/v1/identity/risk/stats')
     }
   })
 
@@ -177,9 +175,9 @@ export function RiskPoliciesPage() {
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null)
   const testMutation = useMutation({
     mutationFn: (data: typeof testForm) =>
-      api.post('/api/v1/identity/risk/evaluate', data),
+      api.post<Record<string, unknown>>('/api/v1/identity/risk/evaluate', data),
     onSuccess: (response) => {
-      setTestResult(response.data)
+      setTestResult(response)
     },
     onError: (error: Error) => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' })

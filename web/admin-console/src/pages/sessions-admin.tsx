@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Monitor, MonitorSmartphone, Trash2, Globe, Shield, AlertTriangle, Clock, Users, Activity } from 'lucide-react'
+import { Monitor, MonitorSmartphone, Trash2, Globe, Shield, AlertTriangle, Users } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -190,7 +190,7 @@ export function SessionsAdminPage() {
                           {s.device_type && <div className="text-xs text-muted-foreground">{s.device_type}</div>}
                         </div>
                         {s.device_trusted && (
-                          <Shield className="h-4 w-4 text-green-500" title="Trusted device" />
+                          <Shield className="h-4 w-4 text-green-500" />
                         )}
                       </div>
                     </TableCell>

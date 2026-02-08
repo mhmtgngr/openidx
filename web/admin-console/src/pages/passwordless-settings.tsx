@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link2, QrCode, Mail, Shield, Settings2, Clock, Users, CheckCircle2, XCircle } from 'lucide-react'
+import { Link2, QrCode, Mail, Shield, Settings2, Users, CheckCircle2, XCircle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -14,13 +14,6 @@ import {
   DialogFooter,
   DialogDescription,
 } from '../components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../components/ui/select'
 import { Label } from '../components/ui/label'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
@@ -55,8 +48,7 @@ export function PasswordlessSettingsPage() {
   const { data: settingsData, isLoading: settingsLoading } = useQuery({
     queryKey: ['passwordless-settings'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/passwordless/settings')
-      return response.data
+      return api.get<{ settings: PasswordlessSettings }>('/api/v1/identity/passwordless/settings')
     }
   })
 
@@ -75,8 +67,7 @@ export function PasswordlessSettingsPage() {
   const { data: statsData } = useQuery({
     queryKey: ['passwordless-stats'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/identity/passwordless/stats')
-      return response.data
+      return api.get<{ stats: PasswordlessStats }>('/api/v1/identity/passwordless/stats')
     }
   })
 

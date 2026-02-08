@@ -1474,6 +1474,38 @@ func (s *Service) ensureBrowZerAttribute(ctx context.Context, zm *ZitiManager, z
 	}
 }
 
+// EnsureBrowZerRouterService creates the browzer-router-zt Ziti service if it doesn't exist.
+// This is the Ziti service that fronts the nginx path-based router for single-domain BrowZer routing.
+func (s *Service) EnsureBrowZerRouterService(ctx context.Context, zm *ZitiManager) {
+	if zm == nil {
+		return
+	}
+
+	existingSvc, _ := zm.GetServiceByName(BrowZerRouterServiceName)
+	if existingSvc != nil {
+		s.logger.Info("BrowZer router Ziti service already exists, ensuring hosting",
+			zap.String("service", BrowZerRouterServiceName))
+		zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
+		s.ensureBrowZerAttribute(ctx, zm, existingSvc.ID)
+		return
+	}
+
+	s.logger.Info("Creating BrowZer router Ziti service",
+		zap.String("service", BrowZerRouterServiceName),
+		zap.String("host", BrowZerRouterHost),
+		zap.Int("port", BrowZerRouterPort))
+
+	svcInfo, err := zm.CreateServiceWithConfig(ctx, BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
+	if err != nil {
+		s.logger.Error("Failed to create BrowZer router Ziti service", zap.Error(err))
+		return
+	}
+
+	zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
+	s.ensureBrowZerAttribute(ctx, zm, svcInfo.ID)
+	s.logger.Info("BrowZer router Ziti service created", zap.String("ziti_id", svcInfo.ID))
+}
+
 // handleQuickCreate creates a proxy route with Ziti and BrowZer enabled in a single API call.
 // This eliminates the multi-step process of creating a route, enabling Ziti, and enabling BrowZer separately.
 func (s *Service) handleQuickCreate(c *gin.Context) {
@@ -1481,6 +1513,7 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 		Name           string   `json:"name" binding:"required"`
 		TargetURL      string   `json:"target_url" binding:"required"`
 		Domain         string   `json:"domain" binding:"required"`
+		PathPrefix     string   `json:"path_prefix"`
 		ZitiEnabled    bool     `json:"ziti_enabled"`
 		BrowzerEnabled bool     `json:"browzer_enabled"`
 		AllowedRoles   []string `json:"allowed_roles"`
@@ -1507,8 +1540,17 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 		requireAuth = *req.RequireAuth
 	}
 
-	// Build from_url from domain
+	// Validate path_prefix if set
+	if req.PathPrefix != "" && !strings.HasPrefix(req.PathPrefix, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path_prefix must start with /"})
+		return
+	}
+
+	// Build from_url from domain + optional path prefix
 	fromURL := "http://" + req.Domain
+	if req.PathPrefix != "" {
+		fromURL += req.PathPrefix
+	}
 
 	// Create the proxy route
 	routeID := uuid.New().String()
@@ -1579,13 +1621,18 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 			s.logger.Info("Quick-create: BrowZer enabled")
 		}
 
-		// Note about network alias requirement for Docker Compose
-		result["note"] = fmt.Sprintf("For Docker Compose: add '%s' as a network alias to the browzer-bootstrapper service", req.Domain)
+		if req.PathPrefix != "" {
+			result["path_prefix"] = req.PathPrefix
+			result["note"] = fmt.Sprintf("Path-based BrowZer routing: %s%s → router → backend", req.Domain, req.PathPrefix)
+		} else {
+			result["note"] = fmt.Sprintf("For Docker Compose: add '%s' as a network alias to the browzer-bootstrapper service", req.Domain)
+		}
 	}
 
 	s.logAuditEvent(c, "service_quick_created", routeID, "proxy_route", map[string]interface{}{
 		"name":            req.Name,
 		"domain":          req.Domain,
+		"path_prefix":     req.PathPrefix,
 		"ziti_enabled":    req.ZitiEnabled,
 		"browzer_enabled": req.BrowzerEnabled,
 	})
