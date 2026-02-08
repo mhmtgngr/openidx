@@ -24,6 +24,7 @@ import (
 	"github.com/openidx/openidx/internal/notifications"
 	"github.com/openidx/openidx/internal/portal"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/webhooks"
 )
 
@@ -98,6 +99,48 @@ func main() {
 	// Initialize risk/anomaly service
 	riskService := risk.NewService(db, redis, log)
 
+	// Initialize SMS service
+	smsConfig := sms.Config{
+		Provider:           cfg.SMS.Provider,
+		Enabled:            cfg.SMS.Enabled,
+		MessagePrefix:      cfg.SMS.MessagePrefix,
+		TwilioSID:          cfg.SMS.TwilioSID,
+		TwilioToken:        cfg.SMS.TwilioToken,
+		TwilioFrom:         cfg.SMS.TwilioFrom,
+		AWSRegion:          cfg.SMS.AWSRegion,
+		AWSAccessKey:       cfg.SMS.AWSAccessKey,
+		AWSSecretKey:       cfg.SMS.AWSSecretKey,
+		WebhookURL:         cfg.SMS.WebhookURL,
+		WebhookAPIKey:      cfg.SMS.WebhookAPIKey,
+		NetGSMUserCode:     cfg.SMS.NetGSMUserCode,
+		NetGSMPassword:     cfg.SMS.NetGSMPassword,
+		NetGSMHeader:       cfg.SMS.NetGSMHeader,
+		IletiMerkeziKey:    cfg.SMS.IletiMerkeziKey,
+		IletiMerkeziSecret: cfg.SMS.IletiMerkeziSecret,
+		IletiMerkeziSender: cfg.SMS.IletiMerkeziSender,
+		VerimorUsername:     cfg.SMS.VerimorUsername,
+		VerimorPassword:     cfg.SMS.VerimorPassword,
+		VerimorSourceAddr:   cfg.SMS.VerimorSourceAddr,
+		TurkcellUsername:    cfg.SMS.TurkcellUsername,
+		TurkcellPassword:    cfg.SMS.TurkcellPassword,
+		TurkcellSender:      cfg.SMS.TurkcellSender,
+		VodafoneAPIKey:      cfg.SMS.VodafoneAPIKey,
+		VodafoneSecret:      cfg.SMS.VodafoneSecret,
+		VodafoneSender:      cfg.SMS.VodafoneSender,
+		TurkTelekomAPIKey:   cfg.SMS.TurkTelekomAPIKey,
+		TurkTelekomSecret:   cfg.SMS.TurkTelekomSecret,
+		TurkTelekomSender:   cfg.SMS.TurkTelekomSender,
+		MutlucellUsername:   cfg.SMS.MutlucellUsername,
+		MutlucellPassword:   cfg.SMS.MutlucellPassword,
+		MutlucellAPIKey:     cfg.SMS.MutlucellAPIKey,
+		MutlucellSender:     cfg.SMS.MutlucellSender,
+	}
+	smsService, err := sms.NewService(smsConfig, log)
+	if err != nil {
+		log.Error("Failed to initialize SMS service, falling back to mock", zap.Error(err))
+		smsService, _ = sms.NewService(sms.DefaultConfig(), log)
+	}
+
 	// Start background workers
 	ctx, cancelWorkers := context.WithCancel(context.Background())
 	go emailService.ProcessQueue(ctx)
@@ -111,6 +154,8 @@ func main() {
 	identityService.SetEmailService(emailService)
 	identityService.SetWebhookService(webhookService)
 	identityService.SetAnomalyDetector(&anomalyDetectorAdapter{riskService: riskService})
+	identityService.SetRiskService(riskService)
+	identityService.SetSMSProvider(smsService)
 
 	// Initialize portal service
 	portalService := portal.NewService(db, log)
@@ -120,8 +165,15 @@ func main() {
 
 	// Register routes
 	identity.RegisterRoutes(router, identityService)
-	portal.RegisterRoutes(router.Group("/api/v1/identity"), portalService)
-	notifications.RegisterRoutes(router.Group("/api/v1/identity"), notifService)
+
+	// Portal and notification routes need auth middleware to identify the caller
+	portalGroup := router.Group("/api/v1/identity")
+	portalGroup.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
+	portal.RegisterRoutes(portalGroup, portalService)
+
+	notifGroup := router.Group("/api/v1/identity")
+	notifGroup.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
+	notifications.RegisterRoutes(notifGroup, notifService)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {

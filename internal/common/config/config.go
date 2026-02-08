@@ -115,7 +115,7 @@ type PushMFAConfig struct {
 // SMSConfig holds SMS MFA configuration
 type SMSConfig struct {
 	Enabled       bool   `mapstructure:"enabled"`         // Enable SMS MFA
-	Provider      string `mapstructure:"provider"`        // twilio, aws_sns, webhook, mock
+	Provider      string `mapstructure:"provider"`        // twilio, aws_sns, netgsm, ileti_merkezi, verimor, turkcell, vodafone, turk_telekom, mutlucell, webhook, mock
 	TwilioSID     string `mapstructure:"twilio_sid"`      // Twilio Account SID
 	TwilioToken   string `mapstructure:"twilio_token"`    // Twilio Auth Token
 	TwilioFrom    string `mapstructure:"twilio_from"`     // Twilio From Number
@@ -128,6 +128,30 @@ type SMSConfig struct {
 	OTPLength     int    `mapstructure:"otp_length"`      // Length of OTP code (default: 6)
 	OTPExpiry     int    `mapstructure:"otp_expiry"`      // OTP expiry in seconds (default: 300)
 	MaxAttempts   int    `mapstructure:"max_attempts"`    // Max verification attempts (default: 3)
+
+	// Turkish SMS gateway providers
+	NetGSMUserCode     string `mapstructure:"netgsm_usercode"`     // NetGSM user code
+	NetGSMPassword     string `mapstructure:"netgsm_password"`     // NetGSM password
+	NetGSMHeader       string `mapstructure:"netgsm_header"`       // NetGSM sender header (message originator)
+	IletiMerkeziKey    string `mapstructure:"iletimerkezi_key"`    // İleti Merkezi API key
+	IletiMerkeziSecret string `mapstructure:"iletimerkezi_secret"` // İleti Merkezi API secret
+	IletiMerkeziSender string `mapstructure:"iletimerkezi_sender"` // İleti Merkezi sender name
+	VerimorUsername     string `mapstructure:"verimor_username"`    // Verimor username (908501234567 format)
+	VerimorPassword     string `mapstructure:"verimor_password"`    // Verimor API password
+	VerimorSourceAddr   string `mapstructure:"verimor_source_addr"` // Verimor sender ID
+	TurkcellUsername    string `mapstructure:"turkcell_username"`   // Turkcell Mesajüssü username
+	TurkcellPassword    string `mapstructure:"turkcell_password"`   // Turkcell Mesajüssü password
+	TurkcellSender      string `mapstructure:"turkcell_sender"`     // Turkcell sender name
+	VodafoneAPIKey      string `mapstructure:"vodafone_api_key"`    // Vodafone API key (OAuth2 client_id)
+	VodafoneSecret      string `mapstructure:"vodafone_secret"`     // Vodafone API secret (OAuth2 client_secret)
+	VodafoneSender      string `mapstructure:"vodafone_sender"`     // Vodafone sender address
+	TurkTelekomAPIKey   string `mapstructure:"turktelekom_api_key"` // Türk Telekom API key
+	TurkTelekomSecret   string `mapstructure:"turktelekom_secret"`  // Türk Telekom API secret
+	TurkTelekomSender   string `mapstructure:"turktelekom_sender"`  // Türk Telekom sender name
+	MutlucellUsername   string `mapstructure:"mutlucell_username"`  // Mutlucell username
+	MutlucellPassword   string `mapstructure:"mutlucell_password"`  // Mutlucell password
+	MutlucellAPIKey     string `mapstructure:"mutlucell_api_key"`   // Mutlucell API key
+	MutlucellSender     string `mapstructure:"mutlucell_sender"`    // Mutlucell sender name
 }
 
 // AdaptiveMFAConfig holds adaptive/risk-based MFA configuration
@@ -340,6 +364,29 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.aws_secret_key":       "AWS_SECRET_ACCESS_KEY",
 		"sms.webhook_url":          "SMS_WEBHOOK_URL",
 		"sms.webhook_api_key":      "SMS_WEBHOOK_API_KEY",
+		// Turkish SMS providers
+		"sms.netgsm_usercode":      "NETGSM_USERCODE",
+		"sms.netgsm_password":      "NETGSM_PASSWORD",
+		"sms.netgsm_header":        "NETGSM_HEADER",
+		"sms.iletimerkezi_key":     "ILETIMERKEZI_API_KEY",
+		"sms.iletimerkezi_secret":  "ILETIMERKEZI_API_SECRET",
+		"sms.iletimerkezi_sender":  "ILETIMERKEZI_SENDER",
+		"sms.verimor_username":     "VERIMOR_USERNAME",
+		"sms.verimor_password":     "VERIMOR_PASSWORD",
+		"sms.verimor_source_addr":  "VERIMOR_SOURCE_ADDR",
+		"sms.turkcell_username":    "TURKCELL_SMS_USERNAME",
+		"sms.turkcell_password":    "TURKCELL_SMS_PASSWORD",
+		"sms.turkcell_sender":      "TURKCELL_SMS_SENDER",
+		"sms.vodafone_api_key":     "VODAFONE_SMS_API_KEY",
+		"sms.vodafone_secret":      "VODAFONE_SMS_SECRET",
+		"sms.vodafone_sender":      "VODAFONE_SMS_SENDER",
+		"sms.turktelekom_api_key":  "TURKTELEKOM_SMS_API_KEY",
+		"sms.turktelekom_secret":   "TURKTELEKOM_SMS_SECRET",
+		"sms.turktelekom_sender":   "TURKTELEKOM_SMS_SENDER",
+		"sms.mutlucell_username":   "MUTLUCELL_USERNAME",
+		"sms.mutlucell_password":   "MUTLUCELL_PASSWORD",
+		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
+		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
 		"adaptive_mfa.enabled":     "ADAPTIVE_MFA_ENABLED",
 	}
 

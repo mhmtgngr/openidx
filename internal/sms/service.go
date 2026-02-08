@@ -24,7 +24,7 @@ type Provider interface {
 
 // Config holds SMS service configuration
 type Config struct {
-	Provider      string `mapstructure:"provider"`       // twilio, aws_sns, mock
+	Provider      string `mapstructure:"provider"`       // twilio, aws_sns, netgsm, ileti_merkezi, verimor, turkcell, vodafone, turk_telekom, mutlucell, webhook, mock
 	TwilioSID     string `mapstructure:"twilio_sid"`     // Twilio Account SID
 	TwilioToken   string `mapstructure:"twilio_token"`   // Twilio Auth Token
 	TwilioFrom    string `mapstructure:"twilio_from"`    // Twilio From Number
@@ -33,6 +33,40 @@ type Config struct {
 	AWSSecretKey  string `mapstructure:"aws_secret_key"` // AWS Secret Key
 	MessagePrefix string `mapstructure:"message_prefix"` // Prefix for OTP messages
 	Enabled       bool   `mapstructure:"enabled"`        // Enable/disable SMS sending
+
+	// Turkish SMS gateway providers
+	NetGSMUserCode string `mapstructure:"netgsm_usercode"`  // NetGSM user code
+	NetGSMPassword string `mapstructure:"netgsm_password"`  // NetGSM password
+	NetGSMHeader   string `mapstructure:"netgsm_header"`    // NetGSM sender header
+
+	IletiMerkeziKey    string `mapstructure:"iletimerkezi_key"`    // İleti Merkezi API key
+	IletiMerkeziSecret string `mapstructure:"iletimerkezi_secret"` // İleti Merkezi API secret
+	IletiMerkeziSender string `mapstructure:"iletimerkezi_sender"` // İleti Merkezi sender name
+
+	VerimorUsername   string `mapstructure:"verimor_username"`    // Verimor username (phone number)
+	VerimorPassword   string `mapstructure:"verimor_password"`    // Verimor password
+	VerimorSourceAddr string `mapstructure:"verimor_source_addr"` // Verimor sender ID
+
+	TurkcellUsername string `mapstructure:"turkcell_username"` // Turkcell Mesajüssü username
+	TurkcellPassword string `mapstructure:"turkcell_password"` // Turkcell Mesajüssü password
+	TurkcellSender   string `mapstructure:"turkcell_sender"`   // Turkcell sender name
+
+	VodafoneAPIKey   string `mapstructure:"vodafone_api_key"`   // Vodafone API key
+	VodafoneSecret   string `mapstructure:"vodafone_secret"`    // Vodafone API secret
+	VodafoneSender   string `mapstructure:"vodafone_sender"`    // Vodafone sender address
+
+	TurkTelekomAPIKey string `mapstructure:"turktelekom_api_key"` // Türk Telekom API key
+	TurkTelekomSecret string `mapstructure:"turktelekom_secret"`  // Türk Telekom API secret
+	TurkTelekomSender string `mapstructure:"turktelekom_sender"`  // Türk Telekom sender name
+
+	MutlucellUsername string `mapstructure:"mutlucell_username"` // Mutlucell username
+	MutlucellPassword string `mapstructure:"mutlucell_password"` // Mutlucell password
+	MutlucellAPIKey   string `mapstructure:"mutlucell_api_key"`  // Mutlucell API key
+	MutlucellSender   string `mapstructure:"mutlucell_sender"`   // Mutlucell sender name
+
+	// Webhook provider
+	WebhookURL    string `mapstructure:"webhook_url"`     // Custom webhook URL for SMS delivery
+	WebhookAPIKey string `mapstructure:"webhook_api_key"` // API key for webhook authentication
 }
 
 // DefaultConfig returns the default SMS configuration
@@ -61,9 +95,27 @@ func NewService(cfg Config, logger *zap.Logger) (*Service, error) {
 		provider, err = NewTwilioProvider(cfg.TwilioSID, cfg.TwilioToken, cfg.TwilioFrom, logger)
 	case "aws_sns":
 		provider, err = NewAWSSNSProvider(cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, logger)
+	case "webhook":
+		provider, err = NewWebhookProvider(cfg.WebhookURL, cfg.WebhookAPIKey, logger)
+	// Turkish SMS providers
+	case "netgsm":
+		provider, err = NewNetGSMProvider(cfg.NetGSMUserCode, cfg.NetGSMPassword, cfg.NetGSMHeader, logger)
+	case "ileti_merkezi":
+		provider, err = NewIletiMerkeziProvider(cfg.IletiMerkeziKey, cfg.IletiMerkeziSecret, cfg.IletiMerkeziSender, logger)
+	case "verimor":
+		provider, err = NewVerimorProvider(cfg.VerimorUsername, cfg.VerimorPassword, cfg.VerimorSourceAddr, logger)
+	case "turkcell":
+		provider, err = NewTurkcellProvider(cfg.TurkcellUsername, cfg.TurkcellPassword, cfg.TurkcellSender, logger)
+	case "vodafone":
+		provider, err = NewVodafoneProvider(cfg.VodafoneAPIKey, cfg.VodafoneSecret, cfg.VodafoneSender, logger)
+	case "turk_telekom":
+		provider, err = NewTurkTelekomProvider(cfg.TurkTelekomAPIKey, cfg.TurkTelekomSecret, cfg.TurkTelekomSender, logger)
+	case "mutlucell":
+		provider, err = NewMutlucellProvider(cfg.MutlucellUsername, cfg.MutlucellPassword, cfg.MutlucellAPIKey, cfg.MutlucellSender, logger)
 	case "mock":
 		provider = NewMockProvider(logger)
 	default:
+		logger.Warn("Unknown SMS provider, falling back to mock", zap.String("provider", cfg.Provider))
 		provider = NewMockProvider(logger)
 	}
 
