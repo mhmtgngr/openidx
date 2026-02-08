@@ -29,6 +29,7 @@ interface Settings {
     lockout_duration: number
     require_mfa: boolean
     allowed_ip_ranges: string[]
+    blocked_countries: string[]
   }
   authentication: {
     allow_registration: boolean
@@ -60,6 +61,7 @@ export function SettingsPage() {
 
   const [formData, setFormData] = useState<Settings | null>(null)
   const [newDomain, setNewDomain] = useState('')
+  const [newCountry, setNewCountry] = useState('')
 
   // Initialize form data when settings load
   useEffect(() => {
@@ -364,6 +366,86 @@ export function SettingsPage() {
                     />
                     <span className="text-sm font-medium">Require MFA for all users</span>
                   </label>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Country-Based Access Control</CardTitle>
+                  <CardDescription>Block login attempts from specific countries (ISO 3166-1 alpha-2 codes)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Blocked Countries</label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="e.g. CN, RU, KP"
+                        value={newCountry}
+                        onChange={(e) => setNewCountry(e.target.value.toUpperCase().slice(0, 2))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            if (newCountry.length === 2 && !formData.security.blocked_countries?.includes(newCountry)) {
+                              setFormData({
+                                ...formData,
+                                security: {
+                                  ...formData.security,
+                                  blocked_countries: [...(formData.security.blocked_countries || []), newCountry],
+                                },
+                              })
+                              setNewCountry('')
+                            }
+                          }
+                        }}
+                        className="w-32"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (newCountry.length === 2 && !formData.security.blocked_countries?.includes(newCountry)) {
+                            setFormData({
+                              ...formData,
+                              security: {
+                                ...formData.security,
+                                blocked_countries: [...(formData.security.blocked_countries || []), newCountry],
+                              },
+                            })
+                            setNewCountry('')
+                          }
+                        }}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {(formData.security.blocked_countries || []).map((country) => (
+                        <div
+                          key={country}
+                          className="flex items-center gap-1 bg-red-50 border border-red-200 px-2 py-1 rounded text-sm text-red-700"
+                        >
+                          <span>{country}</span>
+                          <button
+                            onClick={() => {
+                              setFormData({
+                                ...formData,
+                                security: {
+                                  ...formData.security,
+                                  blocked_countries: formData.security.blocked_countries.filter((c) => c !== country),
+                                },
+                              })
+                            }}
+                            className="text-red-400 hover:text-red-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {(!formData.security.blocked_countries || formData.security.blocked_countries.length === 0) && (
+                      <p className="text-xs text-muted-foreground">No countries blocked. Users can log in from any location.</p>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>

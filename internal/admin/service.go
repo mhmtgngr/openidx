@@ -128,6 +128,7 @@ type SecuritySettings struct {
 	LockoutDuration    int            `json:"lockout_duration"`
 	RequireMFA         bool           `json:"require_mfa"`
 	AllowedIPRanges    []string       `json:"allowed_ip_ranges,omitempty"`
+	BlockedCountries   []string       `json:"blocked_countries,omitempty"`
 }
 
 // PasswordPolicy defines password requirements
@@ -335,6 +336,110 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	return dashboard, nil
 }
 
+// GetUserDashboard returns dashboard statistics scoped to a specific user
+func (s *Service) GetUserDashboard(ctx context.Context, userID string) (*Dashboard, error) {
+	s.logger.Debug("Getting user dashboard statistics", zap.String("user_id", userID))
+
+	var myGroups, myApps, mySessions, myPendingReviews int
+
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM group_memberships WHERE user_id = $1),
+			(SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1),
+			(SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW()),
+			(SELECT COUNT(*) FROM review_items ri JOIN access_reviews ar ON ri.review_id = ar.id WHERE ri.user_id = $1 AND ar.status IN ('pending', 'in_progress'))
+	`, userID).Scan(&myGroups, &myApps, &mySessions, &myPendingReviews)
+	if err != nil {
+		s.logger.Error("Failed to query user dashboard stats", zap.Error(err))
+	}
+
+	// Get user's recent activity
+	var recentActivity []ActivityItem
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, event_type, action, actor_id, timestamp
+		FROM audit_events
+		WHERE actor_id = $1 OR target_id = $1
+		ORDER BY timestamp DESC
+		LIMIT 5
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var item ActivityItem
+			rows.Scan(&item.ID, &item.Type, &item.Message, &item.ActorID, &item.Timestamp)
+			recentActivity = append(recentActivity, item)
+		}
+	}
+
+	// Get user's auth stats
+	userAuthStats := s.getUserAuthStatistics(ctx, userID)
+
+	dashboard := &Dashboard{
+		TotalUsers:        0, // Not relevant for normal user
+		ActiveUsers:       0,
+		TotalGroups:       myGroups,
+		TotalApplications: myApps,
+		ActiveSessions:    mySessions,
+		PendingReviews:    myPendingReviews,
+		SecurityAlerts:    0,
+		RecentActivity:    recentActivity,
+		AuthStats:         userAuthStats,
+	}
+
+	return dashboard, nil
+}
+
+// getUserAuthStatistics returns auth stats scoped to a specific user
+func (s *Service) getUserAuthStatistics(ctx context.Context, userID string) AuthStatistics {
+	stats := AuthStatistics{
+		LoginsByMethod: make(map[string]int),
+	}
+
+	// Count user's login events
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT action, COUNT(*) as cnt
+		FROM audit_events
+		WHERE event_type = 'authentication' AND actor_id = $1
+		AND timestamp > NOW() - INTERVAL '30 days'
+		GROUP BY action
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var action string
+			var count int
+			rows.Scan(&action, &count)
+			stats.LoginsByMethod[action] = count
+			stats.TotalLogins += count
+			if action == "login" || action == "login_mfa" {
+				stats.SuccessfulLogins += count
+			} else if action == "login_failed" {
+				stats.FailedLogins += count
+			}
+		}
+	}
+
+	// Logins by day for chart
+	dayRows, err := s.db.Pool.Query(ctx, `
+		SELECT DATE(timestamp) as day, COUNT(*) as cnt
+		FROM audit_events
+		WHERE event_type = 'authentication' AND actor_id = $1
+		AND timestamp > NOW() - INTERVAL '30 days'
+		GROUP BY DATE(timestamp)
+		ORDER BY day
+	`, userID)
+	if err == nil {
+		defer dayRows.Close()
+		for dayRows.Next() {
+			var ds DayStats
+			dayRows.Scan(&ds.Date, &ds.Count)
+			stats.LoginsByDay = append(stats.LoginsByDay, ds)
+		}
+	}
+
+	return stats
+}
+
 // getAuthStatistics queries real authentication statistics from audit_events
 func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
 	stats := AuthStatistics{
@@ -436,10 +541,11 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 				MaxAge:           90,
 				History:          5,
 			},
-			SessionTimeout:  30,
-			MaxFailedLogins: 5,
-			LockoutDuration: 15,
-			RequireMFA:      false,
+			SessionTimeout:   30,
+			MaxFailedLogins:  5,
+			LockoutDuration:  15,
+			RequireMFA:       false,
+			BlockedCountries: []string{},
 		},
 		Authentication: AuthenticationSettings{
 			AllowRegistration:  true,
@@ -791,6 +897,32 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 // HTTP Handlers
 
 func (s *Service) handleGetDashboard(c *gin.Context) {
+	// Check if user is admin
+	isAdmin := false
+	if roles, exists := c.Get("roles"); exists {
+		if roleList, ok := roles.([]string); ok {
+			for _, r := range roleList {
+				if r == "admin" || r == "super_admin" {
+					isAdmin = true
+					break
+				}
+			}
+		}
+	}
+
+	userID, _ := c.Get("user_id")
+	uid, _ := userID.(string)
+
+	if !isAdmin && uid != "" {
+		dashboard, err := s.GetUserDashboard(c.Request.Context(), uid)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, dashboard)
+		return
+	}
+
 	dashboard, err := s.GetDashboard(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})

@@ -720,7 +720,8 @@ INSERT INTO system_settings (key, value) VALUES
         "session_timeout": 30,
         "max_failed_logins": 5,
         "lockout_duration": 15,
-        "require_mfa": false
+        "require_mfa": false,
+        "blocked_countries": []
     },
     "authentication": {
         "allow_registration": true,
@@ -864,7 +865,7 @@ VALUES (
     '',
     'Zero Trust Access Proxy',
     'public',
-    '["http://localhost:8007/access/.auth/callback"]'::jsonb,
+    '["http://localhost:8007/access/.auth/callback", "http://localhost:8088/access/.auth/callback", "http://demo.localtest.me:8088/access/.auth/callback"]'::jsonb,
     '["authorization_code", "refresh_token"]'::jsonb,
     '["code"]'::jsonb,
     '["openid", "profile", "email"]'::jsonb,
@@ -2174,3 +2175,22 @@ BEGIN
     WHERE status = 'active' AND expires_at < CURRENT_TIMESTAMP;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- DEMO APP - Proxy route for forward-auth standalone and BrowZer access
+-- ============================================================================
+
+INSERT INTO proxy_routes (id, name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled)
+VALUES (
+    'a0000000-0000-0000-0000-000000000100',
+    'demo-app',
+    'OpenIDX Demo App - demonstrates authenticated user identity via forward-auth and BrowZer zero-trust access',
+    'http://demo.localtest.me',
+    'http://demo-app:8090',
+    true,
+    true,
+    10,
+    true,
+    'demo-app-zt',
+    true
+) ON CONFLICT (id) DO NOTHING;
