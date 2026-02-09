@@ -2490,6 +2490,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		public.POST("/users/reset-password", svc.handleResetPassword)
 		public.POST("/verify-email", svc.handleVerifyEmail)
 		public.POST("/invitations/:token/accept", svc.handleAcceptInvitation)
+		public.GET("/providers", svc.handleListIdentityProviders)
 	}
 
 	identity := router.Group("/api/v1/identity")
@@ -2514,8 +2515,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
 		identity.POST("/users/:id/reset-password", svc.handleAdminResetPassword)
 
-		// Identity Providers (for SSO)
-		identity.GET("/providers", svc.handleListIdentityProviders)
+		// Identity Providers (for SSO) — GET /providers is public (login page needs it)
 		identity.POST("/providers", svc.handleCreateIdentityProvider)
 		identity.GET("/providers/:id", svc.handleGetIdentityProvider)
 		identity.PUT("/providers/:id", svc.handleUpdateIdentityProvider)
