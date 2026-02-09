@@ -734,7 +734,20 @@ INSERT INTO system_settings (key, value) VALUES
         "login_page_title": "Welcome to OpenIDX"
     }
 }'::jsonb),
-('mfa_methods', '["totp", "webauthn", "sms"]'::jsonb)
+('mfa_methods', '["totp", "webauthn", "sms"]'::jsonb),
+('browzer_domain_config', '{
+    "domain": "browzer.localtest.me",
+    "cert_type": "self_signed",
+    "cert_subject": "",
+    "cert_issuer": "",
+    "cert_not_before": "",
+    "cert_not_after": "",
+    "cert_fingerprint": "",
+    "cert_san": [],
+    "custom_cert_uploaded_at": null,
+    "previous_domain": null,
+    "domain_changed_at": null
+}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================================

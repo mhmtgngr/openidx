@@ -51,6 +51,8 @@ type BrowZerTargetManager struct {
 	logger           *zap.Logger
 	targetsPath      string
 	routerConfigPath string
+	certsPath        string
+	domain           string
 	mu               sync.Mutex
 }
 
@@ -66,6 +68,58 @@ func NewBrowZerTargetManager(db *database.PostgresDB, logger *zap.Logger, target
 // SetRouterConfigPath sets the path for the nginx router config file
 func (tm *BrowZerTargetManager) SetRouterConfigPath(path string) {
 	tm.routerConfigPath = path
+}
+
+// SetCertsPath sets the path for the shared BrowZer certificates directory
+func (tm *BrowZerTargetManager) SetCertsPath(path string) {
+	tm.certsPath = path
+}
+
+// GetCertsPath returns the configured certificates directory path
+func (tm *BrowZerTargetManager) GetCertsPath() string {
+	return tm.certsPath
+}
+
+// GetDomain returns the current BrowZer domain, falling back to DefaultBrowZerDomain
+func (tm *BrowZerTargetManager) GetDomain() string {
+	if tm.domain != "" {
+		return tm.domain
+	}
+	return DefaultBrowZerDomain
+}
+
+// SetDomain sets the BrowZer domain
+func (tm *BrowZerTargetManager) SetDomain(domain string) {
+	tm.domain = domain
+}
+
+// LoadDomainFromDB reads the browzer_domain_config from system_settings and sets the domain
+func (tm *BrowZerTargetManager) LoadDomainFromDB(ctx context.Context) error {
+	var configJSON []byte
+	err := tm.db.Pool.QueryRow(ctx,
+		`SELECT value FROM system_settings WHERE key = 'browzer_domain_config'`).Scan(&configJSON)
+	if err != nil {
+		tm.logger.Debug("No browzer_domain_config in DB, using default domain", zap.Error(err))
+		return nil
+	}
+
+	var cfg struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		return fmt.Errorf("failed to parse browzer_domain_config: %w", err)
+	}
+
+	if cfg.Domain != "" {
+		tm.domain = cfg.Domain
+		tm.logger.Info("Loaded BrowZer domain from DB", zap.String("domain", cfg.Domain))
+	}
+	return nil
+}
+
+// GetDB returns the database handle
+func (tm *BrowZerTargetManager) GetDB() *database.PostgresDB {
+	return tm.db
 }
 
 // browzerRouteInfo holds parsed route information for target/router generation
@@ -144,12 +198,13 @@ func (tm *BrowZerTargetManager) GenerateBrowZerTargets(ctx context.Context) (*Br
 	var targets []BrowZerTarget
 	hasRouterTarget := false
 
+	domain := tm.GetDomain()
 	for _, r := range routes {
-		// Routes with a path prefix on the default BrowZer domain → router target
-		if r.hostname == DefaultBrowZerDomain && r.pathPrefix != "/" {
+		// Routes with a path prefix on the BrowZer domain → router target
+		if r.hostname == domain && r.pathPrefix != "/" {
 			if !hasRouterTarget {
 				targets = append(targets, BrowZerTarget{
-					VHost:        DefaultBrowZerDomain,
+					VHost:        domain,
 					Service:      BrowZerRouterServiceName,
 					Path:         "/",
 					Scheme:       "http",
@@ -208,6 +263,11 @@ func (tm *BrowZerTargetManager) WriteBrowZerTargets(ctx context.Context) error {
 	configMap := map[string]string{
 		"ZITI_BROWZER_BOOTSTRAPPER_TARGETS": string(targetsJSON),
 	}
+	// Include HOST override so the bootstrapper uses the configured domain
+	domain := tm.GetDomain()
+	if domain != DefaultBrowZerDomain {
+		configMap["ZITI_BROWZER_BOOTSTRAPPER_HOST"] = domain
+	}
 	configJSON, err := json.MarshalIndent(configMap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
@@ -231,7 +291,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		return nil, err
 	}
 
-	// Filter to path-based routes on the default BrowZer domain
+	// Filter to path-based routes on the configured BrowZer domain
 	type routeMapping struct {
 		pathPrefix string
 		upstream   string
@@ -239,8 +299,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	}
 	var mappings []routeMapping
 
+	domain := tm.GetDomain()
 	for _, r := range routes {
-		if r.hostname != DefaultBrowZerDomain || r.pathPrefix == "/" {
+		if r.hostname != domain || r.pathPrefix == "/" {
 			continue
 		}
 

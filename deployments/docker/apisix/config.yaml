@@ -2,6 +2,10 @@ apisix:
   node_listen: 9080
   enable_ipv6: false
   enable_admin: false
+  ssl:
+    enable: true
+    listen:
+      - port: 9443
 
 deployment:
   role: data_plane

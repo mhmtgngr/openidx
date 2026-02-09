@@ -151,10 +151,25 @@ func main() {
 		if cfg.BrowZerRouterConfigPath != "" {
 			browzerTargetManager.SetRouterConfigPath(cfg.BrowZerRouterConfigPath)
 		}
+		if cfg.BrowZerCertsPath != "" {
+			browzerTargetManager.SetCertsPath(cfg.BrowZerCertsPath)
+		}
+		// Load configured domain from DB
+		if err := browzerTargetManager.LoadDomainFromDB(bgCtx); err != nil {
+			log.Warn("Failed to load BrowZer domain config", zap.Error(err))
+		}
 		accessService.SetBrowZerTargetManager(browzerTargetManager)
 		log.Info("BrowZer Target Manager initialized",
 			zap.String("targets_path", cfg.BrowZerTargetsPath),
-			zap.String("router_config_path", cfg.BrowZerRouterConfigPath))
+			zap.String("router_config_path", cfg.BrowZerRouterConfigPath),
+			zap.String("certs_path", cfg.BrowZerCertsPath),
+			zap.String("domain", browzerTargetManager.GetDomain()))
+	}
+
+	// Initialize APISIX SSL management
+	if cfg.APISIXConfigPath != "" {
+		accessService.SetAPISIXConfigPath(cfg.APISIXConfigPath)
+		log.Info("APISIX SSL management initialized", zap.String("config_path", cfg.APISIXConfigPath))
 	}
 
 	// Initialize Feature Manager for unified service management

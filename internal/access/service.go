@@ -101,6 +101,7 @@ type Service struct {
 	featureManager       *FeatureManager
 	auditService         *UnifiedAuditService
 	browzerTargetManager *BrowZerTargetManager
+	apisixConfigPath     string
 }
 
 // SetGuacamoleClient sets the Guacamole client for the service
@@ -139,6 +140,11 @@ func (s *Service) SetFeatureManager(fm *FeatureManager) {
 // SetBrowZerTargetManager sets the BrowZer target manager
 func (s *Service) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
 	s.browzerTargetManager = btm
+}
+
+// SetAPISIXConfigPath sets the path to the APISIX standalone config file
+func (s *Service) SetAPISIXConfigPath(path string) {
+	s.apisixConfigPath = path
 }
 
 // SetAuditService sets the unified audit service
@@ -255,6 +261,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/browzer/disable", svc.handleDisableBrowZer)
 		api.POST("/ziti/browzer/services/:id/enable", svc.handleEnableBrowZerOnService)
 		api.POST("/ziti/browzer/services/:id/disable", svc.handleDisableBrowZerOnService)
+
+		// BrowZer bootstrapper management panel endpoints
+		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
+		api.POST("/ziti/browzer/certificates", svc.handleBrowZerCertUpload)
+		api.DELETE("/ziti/browzer/certificates", svc.handleBrowZerCertRevert)
+		api.PUT("/ziti/browzer/domain", svc.handleBrowZerDomainChange)
+		api.POST("/ziti/browzer/restart", svc.handleBrowZerRestart)
+
+		// Platform certificate management
+		api.GET("/certificates/platform", svc.handleGetPlatformCert)
+		api.POST("/certificates/platform", svc.handleUploadPlatformCert)
+		api.DELETE("/certificates/platform", svc.handleRevertPlatformCert)
+		api.POST("/certificates/apisix/enable", svc.handleEnableAPISIXSSL)
+		api.POST("/certificates/apisix/disable", svc.handleDisableAPISIXSSL)
+		api.GET("/certificates/status", svc.handleGetCertStatus)
 
 		// Forward-auth endpoint for APISIX
 		api.POST("/auth/decide", svc.handleAuthDecide)

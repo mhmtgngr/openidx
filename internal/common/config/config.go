@@ -81,6 +81,8 @@ type Config struct {
 	BrowZerClientID    string `mapstructure:"browzer_client_id"`
 	BrowZerTargetsPath      string `mapstructure:"browzer_targets_path"`
 	BrowZerRouterConfigPath string `mapstructure:"browzer_router_config_path"`
+	BrowZerCertsPath        string `mapstructure:"browzer_certs_path"`
+	APISIXConfigPath        string `mapstructure:"apisix_config_path"`
 
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
@@ -350,6 +352,8 @@ func bindEnvVars(v *viper.Viper) {
 		"browzer_client_id":        "BROWZER_CLIENT_ID",
 		"browzer_targets_path":          "BROWZER_TARGETS_PATH",
 		"browzer_router_config_path":    "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_certs_path":            "BROWZER_CERTS_PATH",
+		"apisix_config_path":            "APISIX_CONFIG_PATH",
 		"enable_opa_authz":         "ENABLE_OPA_AUTHZ",
 		"jwt_secret":               "JWT_SECRET",
 		"encryption_key":           "ENCRYPTION_KEY",

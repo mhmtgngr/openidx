@@ -218,7 +218,19 @@ func (zm *ZitiManager) GetBrowZerConfig(ctx context.Context) (*BrowZerConfig, er
 	if err != nil {
 		return nil, err
 	}
-	cfg.BootstrapperURL = "https://browzer.localtest.me"
+	// Build bootstrapper URL from domain config
+	browzerDomain := DefaultBrowZerDomain
+	var configJSON []byte
+	if dbErr := zm.db.Pool.QueryRow(ctx,
+		`SELECT value FROM system_settings WHERE key = 'browzer_domain_config'`).Scan(&configJSON); dbErr == nil {
+		var domainCfg struct {
+			Domain string `json:"domain"`
+		}
+		if json.Unmarshal(configJSON, &domainCfg) == nil && domainCfg.Domain != "" {
+			browzerDomain = domainCfg.Domain
+		}
+	}
+	cfg.BootstrapperURL = "https://" + browzerDomain
 	return &cfg, nil
 }
 

@@ -43,6 +43,23 @@ load_config() {
         if [ -n "$TARGETS" ]; then
             export ZITI_BROWZER_BOOTSTRAPPER_TARGETS="$TARGETS"
             echo "[entrypoint] Loaded targets from config file"
+        fi
+
+        # Also load HOST override if present in config
+        HOST_OVERRIDE=$(node -e "
+            try {
+                const cfg = require('$CONFIG_FILE');
+                if (cfg.ZITI_BROWZER_BOOTSTRAPPER_HOST) {
+                    process.stdout.write(cfg.ZITI_BROWZER_BOOTSTRAPPER_HOST);
+                }
+            } catch(e) {}
+        " 2>/dev/null)
+        if [ -n "$HOST_OVERRIDE" ]; then
+            export ZITI_BROWZER_BOOTSTRAPPER_HOST="$HOST_OVERRIDE"
+            echo "[entrypoint] Loaded HOST override: $HOST_OVERRIDE"
+        fi
+
+        if [ -n "$TARGETS" ]; then
             return 0
         fi
     fi

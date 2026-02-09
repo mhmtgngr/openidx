@@ -66,18 +66,50 @@ services:
   # API Gateway - Apache APISIX
   #---------------------------------------------------------------------------
   
+  apisix-config-init:
+    image: alpine:3.19
+    container_name: openidx-apisix-config-init
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        if [ ! -f /apisix-conf/apisix.yaml ]; then
+          cp /apisix-seed/apisix.yaml /apisix-conf/apisix.yaml
+          echo "Seeded apisix.yaml into shared volume"
+        else
+          echo "apisix.yaml already exists in shared volume"
+        fi
+        chown 100:101 /apisix-conf
+        chown 100:101 /apisix-conf/apisix.yaml
+        chmod 775 /apisix-conf
+        chmod 664 /apisix-conf/apisix.yaml
+    volumes:
+      - ./apisix/apisix.yaml:/apisix-seed/apisix.yaml:ro
+      - apisix_config:/apisix-conf
+    networks:
+      - openidx-network
+
   apisix:
     image: apache/apisix:3.8.0-debian
     container_name: openidx-apisix
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      - apisix_config:/apisix-conf
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        ln -sf /apisix-conf/apisix.yaml /usr/local/apisix/conf/apisix.yaml
+        exec /docker-entrypoint.sh docker-start
     ports:
       - "8088:9080"
       - "8443:9443"
       - "9188:9180"
     depends_on:
-      - etcd
+      apisix-config-init:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9080'"]
       interval: 10s
@@ -984,10 +1016,14 @@ services:
       - BROWZER_CLIENT_ID=${BROWZER_CLIENT_ID:-browzer-client}
       - BROWZER_TARGETS_PATH=/shared-config/config.json
       - BROWZER_ROUTER_CONFIG_PATH=/shared-config/browzer-router.conf
+      - BROWZER_CERTS_PATH=/shared-certs
+      - APISIX_CONFIG_PATH=/apisix-conf/apisix.yaml
       - LOG_LEVEL=debug
     volumes:
       - ziti_access_proxy:/ziti
       - browzer_config:/shared-config
+      - browzer_certs:/shared-certs
+      - apisix_config:/apisix-conf
     ports:
       - "8007:8007"
     depends_on:
@@ -1075,3 +1111,4 @@ volumes:
   ziti_access_proxy:
   browzer_certs:
   browzer_config:
+  apisix_config:

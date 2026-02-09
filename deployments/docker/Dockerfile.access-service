@@ -32,6 +32,9 @@ RUN mkdir -p /ziti && chown openidx:openidx /ziti
 # Create shared config directory for BrowZer bootstrapper targets
 RUN mkdir -p /shared-config && chown openidx:openidx /shared-config
 
+# Create shared certs directory for BrowZer TLS certificates
+RUN mkdir -p /shared-certs && chown openidx:openidx /shared-certs
+
 USER openidx
 
 EXPOSE 8007
