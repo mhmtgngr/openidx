@@ -179,6 +179,7 @@ interface TempAccessLink {
 
 function TruncatedId({ value, label }: { value: string; label?: string }) {
   const { toast } = useToast()
+  if (!value) return <span className="text-xs text-muted-foreground">—</span>
   const short = value.length > 12 ? value.slice(0, 8) + '...' : value
   return (
     <button
