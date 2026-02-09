@@ -81,10 +81,11 @@ export function CertificatesPage() {
     refetchInterval: 15000,
   })
 
-  const { data: zitiCerts } = useQuery<ZitiCertificate[]>({
+  const { data: zitiCertsRaw } = useQuery({
     queryKey: ['ziti-certificates'],
     queryFn: () => api.get('/api/v1/access/ziti/certificates'),
   })
+  const zitiCerts: ZitiCertificate[] = Array.isArray(zitiCertsRaw) ? zitiCertsRaw : []
 
   const uploadMutation = useMutation({
     mutationFn: async () => {

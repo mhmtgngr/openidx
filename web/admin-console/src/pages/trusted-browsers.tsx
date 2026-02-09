@@ -53,12 +53,13 @@ export function TrustedBrowsersPage() {
   const [trustDialog, setTrustDialog] = useState(false)
 
   // Fetch trusted browsers
-  const { data: browsers = [], isLoading } = useQuery<TrustedBrowser[]>({
+  const { data: browsersRaw, isLoading } = useQuery({
     queryKey: ['trusted-browsers'],
     queryFn: async () => {
       return api.get<TrustedBrowser[]>('/api/v1/identity/trusted-browsers')
     }
   })
+  const browsers: TrustedBrowser[] = Array.isArray(browsersRaw) ? browsersRaw : []
 
   // Check if current browser is trusted
   const { data: checkResult } = useQuery<CheckResult>({

@@ -65,19 +65,13 @@ type zitiAPIError struct {
 }
 
 // ZitiServiceInfo represents a Ziti service from the management API
-// ZitiServiceConfigInfo represents a service intercept/host config
-type ZitiServiceConfigInfo struct {
-	Protocol string `json:"protocol"`
-	Address  string `json:"address"`
-}
-
 type ZitiServiceInfo struct {
-	ID             string                  `json:"id"`
-	Name           string                  `json:"name"`
-	Attributes     []string                `json:"roleAttributes"`
-	Protocol       string                  `json:"protocol,omitempty"`
-	RoleAttributes []string                `json:"role_attributes,omitempty"`
-	Configs        []ZitiServiceConfigInfo `json:"configs,omitempty"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Attributes     []string `json:"roleAttributes"`
+	Protocol       string   `json:"protocol,omitempty"`
+	RoleAttributes []string `json:"role_attributes,omitempty"`
+	Configs        []string `json:"configs,omitempty"`
 }
 
 // ZitiIdentityInfo represents a Ziti identity from the management API

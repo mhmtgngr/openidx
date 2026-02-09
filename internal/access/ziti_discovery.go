@@ -192,24 +192,9 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 			RoleAttributes:   svc.RoleAttributes,
 		}
 
-		// Try to extract host/port from service config
-		if svc.Configs != nil {
-			for _, cfg := range svc.Configs {
-				if cfg.Protocol != "" {
-					discovered.Protocol = cfg.Protocol
-				}
-				if cfg.Address != "" {
-					// Parse address like "tcp://host:port"
-					parts := strings.Split(strings.TrimPrefix(cfg.Address, "tcp://"), ":")
-					if len(parts) >= 1 {
-						discovered.Host = parts[0]
-					}
-					if len(parts) >= 2 {
-						fmt.Sscanf(parts[1], "%d", &discovered.Port)
-					}
-				}
-			}
-		}
+		// Configs from Ziti API are config IDs (strings), not config objects.
+		// Host/port info would require fetching each config by ID separately.
+		// For discovery, we rely on the DB-stored host/port for managed services.
 
 		result.DiscoveredServices = append(result.DiscoveredServices, discovered)
 
