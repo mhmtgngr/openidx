@@ -1281,6 +1281,29 @@ func (zm *ZitiManager) CheckControllerHealth(ctx context.Context) (bool, error) 
 	return true, nil
 }
 
+// GetDB returns the database reference for direct queries
+func (zm *ZitiManager) GetDB() *database.PostgresDB {
+	return zm.db
+}
+
+// EnsureServiceEdgeRouterPolicy creates a service-edge-router policy if it doesn't already exist.
+func (zm *ZitiManager) EnsureServiceEdgeRouterPolicy(ctx context.Context, name string, serviceRoles, edgeRouterRoles []string) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":            name,
+		"semantic":        "AnyOf",
+		"serviceRoles":    serviceRoles,
+		"edgeRouterRoles": edgeRouterRoles,
+	})
+	_, status, err := zm.mgmtRequest("POST", "/edge/management/v1/service-edge-router-policies", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d creating service-edge-router policy", status)
+	}
+	return nil
+}
+
 // GetServiceByName retrieves a Ziti service by its name
 func (zm *ZitiManager) GetServiceByName(serviceName string) (*ZitiServiceInfo, error) {
 	services, err := zm.ListServices(context.Background())

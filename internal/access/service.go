@@ -1474,36 +1474,97 @@ func (s *Service) ensureBrowZerAttribute(ctx context.Context, zm *ZitiManager, z
 	}
 }
 
-// EnsureBrowZerRouterService creates the browzer-router-zt Ziti service if it doesn't exist.
-// This is the Ziti service that fronts the nginx path-based router for single-domain BrowZer routing.
+// EnsureBrowZerRouterService creates the browzer-router-zt Ziti service with all required policies
+// and ensures it's hosted. All operations are idempotent; safe to call on every startup.
 func (s *Service) EnsureBrowZerRouterService(ctx context.Context, zm *ZitiManager) {
 	if zm == nil {
 		return
 	}
 
-	existingSvc, _ := zm.GetServiceByName(BrowZerRouterServiceName)
-	if existingSvc != nil {
-		s.logger.Info("BrowZer router Ziti service already exists, ensuring hosting",
-			zap.String("service", BrowZerRouterServiceName))
-		zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
-		s.ensureBrowZerAttribute(ctx, zm, existingSvc.ID)
-		return
-	}
-
-	s.logger.Info("Creating BrowZer router Ziti service",
+	s.logger.Info("Ensuring BrowZer router Ziti service",
 		zap.String("service", BrowZerRouterServiceName),
 		zap.String("host", BrowZerRouterHost),
 		zap.Int("port", BrowZerRouterPort))
 
-	svcInfo, err := zm.CreateServiceWithConfig(ctx, BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
+	// 1. Create or find the service
+	var serviceID string
+	err := zm.SetupZitiForRoute(ctx, "", BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
 	if err != nil {
-		s.logger.Error("Failed to create BrowZer router Ziti service", zap.Error(err))
-		return
+		s.logger.Debug("SetupZitiForRoute returned (service may already exist)", zap.Error(err))
 	}
 
-	zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
-	s.ensureBrowZerAttribute(ctx, zm, svcInfo.ID)
-	s.logger.Info("BrowZer router Ziti service created", zap.String("ziti_id", svcInfo.ID))
+	// Look up the service ID (it should exist now, either just created or from a previous run)
+	svc, svcErr := zm.GetServiceByName(BrowZerRouterServiceName)
+	if svcErr != nil || svc == nil {
+		// GetServiceByName iterates ListServices which can be unreliable; try DB fallback
+		var dbZitiID string
+		if dbErr := zm.GetDB().Pool.QueryRow(ctx,
+			"SELECT ziti_id FROM ziti_services WHERE name=$1", BrowZerRouterServiceName).Scan(&dbZitiID); dbErr == nil {
+			serviceID = dbZitiID
+			s.logger.Info("Found router service ID from DB", zap.String("ziti_id", serviceID))
+		} else {
+			s.logger.Warn("Could not find browzer-router-zt service ID from API or DB", zap.Error(svcErr))
+		}
+	} else {
+		serviceID = svc.ID
+	}
+
+	// 2. Ensure all role attributes are present
+	if serviceID != "" {
+		attrs, attrErr := zm.GetServiceRoleAttributes(ctx, serviceID)
+		if attrErr == nil {
+			needPatch := false
+			for _, need := range []string{BrowZerRouterServiceName, "browzer-enabled"} {
+				found := false
+				for _, a := range attrs {
+					if a == need {
+						found = true
+						break
+					}
+				}
+				if !found {
+					attrs = append(attrs, need)
+					needPatch = true
+				}
+			}
+			if needPatch {
+				if patchErr := zm.PatchServiceRoleAttributes(ctx, serviceID, attrs); patchErr != nil {
+					s.logger.Error("Failed to patch router service attributes", zap.Error(patchErr))
+				} else {
+					s.logger.Info("Updated router service role attributes", zap.Strings("attrs", attrs))
+				}
+			}
+		}
+	}
+
+	// 3. Ensure bind/dial service policies (idempotent — will get 400 if they exist)
+	bindName := fmt.Sprintf("openidx-bind-%s", BrowZerRouterServiceName)
+	if _, bErr := zm.CreateServicePolicy(ctx, bindName, "Bind",
+		[]string{"#" + BrowZerRouterServiceName}, []string{"#access-proxy-clients"}); bErr != nil {
+		s.logger.Debug("Bind policy (may already exist)", zap.Error(bErr))
+	}
+	dialName := fmt.Sprintf("openidx-dial-%s", BrowZerRouterServiceName)
+	if _, dErr := zm.CreateServicePolicy(ctx, dialName, "Dial",
+		[]string{"#" + BrowZerRouterServiceName}, []string{"#access-proxy-clients"}); dErr != nil {
+		s.logger.Debug("Dial policy (may already exist)", zap.Error(dErr))
+	}
+
+	// 4. Ensure service-edge-router policy (allows edge routers to handle this service)
+	serpName := fmt.Sprintf("openidx-serp-%s", BrowZerRouterServiceName)
+	if serpErr := zm.EnsureServiceEdgeRouterPolicy(ctx, serpName,
+		[]string{"#" + BrowZerRouterServiceName}, []string{"#all"}); serpErr != nil {
+		s.logger.Debug("Service-edge-router policy (may already exist)", zap.Error(serpErr))
+	}
+
+	// 5. Wait for SDK to discover the service, then host it
+	s.logger.Info("Waiting for Ziti SDK to discover browzer-router-zt service...")
+	time.Sleep(10 * time.Second)
+
+	if hostErr := zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort); hostErr != nil {
+		s.logger.Error("Failed to host BrowZer router Ziti service", zap.Error(hostErr))
+	} else {
+		s.logger.Info("BrowZer router Ziti service hosted successfully")
+	}
 }
 
 // handleQuickCreate creates a proxy route with Ziti and BrowZer enabled in a single API call.

@@ -75,6 +75,8 @@ restart_node() {
         fi
         wait "$NODE_PID" 2>/dev/null || true
     fi
+    # Wait for port 443 to be released (TCP TIME_WAIT)
+    sleep 3
     start_node
 }
 
@@ -105,6 +107,7 @@ while true; do
     # Check if node process crashed
     if ! kill -0 "$NODE_PID" 2>/dev/null; then
         echo "[entrypoint] Node process died unexpectedly, restarting..."
+        sleep 3
         start_node
         continue
     fi

@@ -265,7 +265,8 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	b.WriteString("# Auto-generated BrowZer router config — do not edit manually\n")
 	b.WriteString("server {\n")
 	b.WriteString("    listen 80;\n")
-	b.WriteString("    server_name _;\n\n")
+	b.WriteString("    server_name _;\n")
+	b.WriteString("    absolute_redirect off;\n\n")
 
 	// Generate location blocks for each path-based route
 	for _, m := range mappings {
