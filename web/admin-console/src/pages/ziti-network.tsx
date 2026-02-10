@@ -1463,9 +1463,9 @@ function RemoteAccessTab() {
   })
 
   // Services for per-service BrowZer toggle
-  const { data: servicesData } = useQuery<ZitiService[]>({
+  const { data: servicesData } = useQuery({
     queryKey: ['ziti-services-browzer'],
-    queryFn: () => api.get<ZitiService[]>('/api/v1/access/ziti/services'),
+    queryFn: () => api.get<{ services: ZitiService[] }>('/api/v1/access/ziti/services'),
   })
 
   const enableMutation = useMutation({
@@ -1490,8 +1490,8 @@ function RemoteAccessTab() {
   })
 
   const enableOnServiceMutation = useMutation({
-    mutationFn: (serviceId: string) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/enable`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-services'] }); toast({ title: 'BrowZer enabled on service' }) },
+    mutationFn: ({ serviceId, path }: { serviceId: string; path?: string }) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/enable`, path ? { path } : undefined),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-services'] }); queryClient.invalidateQueries({ queryKey: ['ziti-services-browzer'] }); toast({ title: 'BrowZer enabled on service' }) },
     onError: () => toast({ title: 'Failed to enable BrowZer on service', variant: 'destructive' }),
   })
 
@@ -1502,8 +1502,9 @@ function RemoteAccessTab() {
   })
 
   const connections = connData?.connections || []
-  const services = Array.isArray(servicesData) ? servicesData : []
+  const services = servicesData?.services || []
   const [showHowItWorks, setShowHowItWorks] = useState(false)
+  const [browzerPaths, setBrowzerPaths] = useState<Record<string, string>>({})
 
   if (browzerLoading || connLoading) return <Spinner />
 
@@ -1652,6 +1653,7 @@ function RemoteAccessTab() {
                 <TableRow>
                   <TableHead>Service</TableHead>
                   <TableHead>Target</TableHead>
+                  <TableHead>BrowZer Path</TableHead>
                   <TableHead>BrowZer</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
@@ -1664,6 +1666,15 @@ function RemoteAccessTab() {
                       <TableCell className="font-medium">{svc.name}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{svc.host}:{svc.port}</TableCell>
                       <TableCell>
+                        <Input
+                          placeholder={`/${svc.name}`}
+                          value={browzerPaths[svc.id] ?? ''}
+                          onChange={(e) => setBrowzerPaths(prev => ({ ...prev, [svc.id]: e.target.value }))}
+                          className="h-8 w-36 text-sm"
+                          disabled={isBrowzerEnabled}
+                        />
+                      </TableCell>
+                      <TableCell>
                         <Badge variant={isBrowzerEnabled ? 'default' : 'secondary'}>
                           {isBrowzerEnabled ? 'Enabled' : 'Disabled'}
                         </Badge>
@@ -1672,7 +1683,14 @@ function RemoteAccessTab() {
                         <Button
                           size="sm"
                           variant={isBrowzerEnabled ? 'destructive' : 'outline'}
-                          onClick={() => isBrowzerEnabled ? disableOnServiceMutation.mutate(svc.ziti_id) : enableOnServiceMutation.mutate(svc.ziti_id)}
+                          onClick={() => {
+                            if (isBrowzerEnabled) {
+                              disableOnServiceMutation.mutate(svc.ziti_id)
+                            } else {
+                              const path = browzerPaths[svc.id] || `/${svc.name}`
+                              enableOnServiceMutation.mutate({ serviceId: svc.ziti_id, path })
+                            }
+                          }}
                         >
                           {isBrowzerEnabled ? 'Disable' : 'Enable'}
                         </Button>

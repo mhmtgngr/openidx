@@ -168,6 +168,15 @@ func (s *Service) handleDeleteZitiService(c *gin.Context) {
 		// Continue to delete from DB anyway
 	}
 
+	// Clean up any BrowZer proxy_routes linked to this service
+	var serviceName string
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT name FROM ziti_services WHERE id = $1`, id,
+	).Scan(&serviceName); err == nil && serviceName != "" {
+		s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
+	}
+
 	// Delete from DB
 	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_services WHERE id=$1", id)
 
