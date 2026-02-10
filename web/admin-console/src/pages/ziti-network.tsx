@@ -43,6 +43,8 @@ interface ZitiService {
   route_id?: string
   enabled: boolean
   created_at: string
+  browzer_path?: string
+  browzer_domain?: string
 }
 
 interface ZitiIdentity {
@@ -617,7 +619,7 @@ function ServicesTab() {
               </div>
               <div className="space-y-2">
                 <Label>Port</Label>
-                <Input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) || 8080 })} required />
+                <Input type="number" min={1} max={65535} value={form.port} onChange={(e) => setForm({ ...form, port: Math.max(1, Math.min(65535, parseInt(e.target.value) || 1)) })} required />
               </div>
               <div className="space-y-2">
                 <Label>Protocol</Label>
@@ -1484,27 +1486,57 @@ function RemoteAccessTab() {
     mutationFn: async (routeId: string) => api.post<{ connect_url: string }>(`/api/v1/access/guacamole/connections/${routeId}/connect`, {}),
     onSuccess: (resp) => {
       const connectUrl = (resp as Record<string, string>)?.connect_url
-      if (connectUrl) window.open(connectUrl, '_blank')
+      if (connectUrl) window.open(connectUrl, '_blank', 'noopener,noreferrer')
     },
     onError: () => toast({ title: 'Error', description: 'Failed to get connection URL.', variant: 'destructive' }),
   })
 
   const enableOnServiceMutation = useMutation({
-    mutationFn: ({ serviceId, path }: { serviceId: string; path?: string }) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/enable`, path ? { path } : undefined),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-services'] }); queryClient.invalidateQueries({ queryKey: ['ziti-services-browzer'] }); toast({ title: 'BrowZer enabled on service' }) },
-    onError: () => toast({ title: 'Failed to enable BrowZer on service', variant: 'destructive' }),
+    mutationFn: ({ serviceId, path, domain }: { serviceId: string; path?: string; domain?: string }) => {
+      const body: Record<string, string> = {}
+      if (path) body.path = path
+      if (domain) body.domain = domain
+      return api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/enable`, Object.keys(body).length > 0 ? body : undefined)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-services-browzer'] })
+      setInitialized(false)
+      toast({ title: 'BrowZer enabled on service' })
+    },
+    onError: (err: Error) => toast({ title: 'Failed to enable BrowZer on service', description: err.message, variant: 'destructive' }),
   })
 
   const disableOnServiceMutation = useMutation({
     mutationFn: (serviceId: string) => api.post(`/api/v1/access/ziti/browzer/services/${serviceId}/disable`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-services'] }); toast({ title: 'BrowZer disabled on service' }) },
-    onError: () => toast({ title: 'Failed to disable BrowZer on service', variant: 'destructive' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-services'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-services-browzer'] })
+      setInitialized(false)
+      toast({ title: 'BrowZer disabled on service' })
+    },
+    onError: (err: Error) => toast({ title: 'Failed to disable BrowZer on service', description: err.message, variant: 'destructive' }),
   })
 
   const connections = connData?.connections || []
   const services = servicesData?.services || []
   const [showHowItWorks, setShowHowItWorks] = useState(false)
   const [browzerPaths, setBrowzerPaths] = useState<Record<string, string>>({})
+  const [browzerDomains, setBrowzerDomains] = useState<Record<string, string>>({})
+
+  // Initialize paths/domains from API data when services load
+  const [initialized, setInitialized] = useState(false)
+  if (!initialized && services.length > 0) {
+    const paths: Record<string, string> = {}
+    const domains: Record<string, string> = {}
+    for (const svc of services) {
+      if (svc.browzer_path) paths[svc.id] = svc.browzer_path
+      if (svc.browzer_domain) domains[svc.id] = svc.browzer_domain
+    }
+    if (Object.keys(paths).length > 0) setBrowzerPaths(prev => ({ ...prev, ...paths }))
+    if (Object.keys(domains).length > 0) setBrowzerDomains(prev => ({ ...prev, ...domains }))
+    setInitialized(true)
+  }
 
   if (browzerLoading || connLoading) return <Spinner />
 
@@ -1653,14 +1685,15 @@ function RemoteAccessTab() {
                 <TableRow>
                   <TableHead>Service</TableHead>
                   <TableHead>Target</TableHead>
-                  <TableHead>BrowZer Path</TableHead>
+                  <TableHead>Path</TableHead>
+                  <TableHead>Domain</TableHead>
                   <TableHead>BrowZer</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {services.map((svc) => {
-                  const isBrowzerEnabled = false
+                  const isBrowzerEnabled = !!(svc.browzer_path || svc.browzer_domain)
                   return (
                     <TableRow key={svc.id} className="hover:bg-muted/50">
                       <TableCell className="font-medium">{svc.name}</TableCell>
@@ -1670,7 +1703,16 @@ function RemoteAccessTab() {
                           placeholder={`/${svc.name}`}
                           value={browzerPaths[svc.id] ?? ''}
                           onChange={(e) => setBrowzerPaths(prev => ({ ...prev, [svc.id]: e.target.value }))}
-                          className="h-8 w-36 text-sm"
+                          className="h-8 w-32 text-sm"
+                          disabled={isBrowzerEnabled}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          placeholder={`${svc.name}.localtest.me`}
+                          value={browzerDomains[svc.id] ?? ''}
+                          onChange={(e) => setBrowzerDomains(prev => ({ ...prev, [svc.id]: e.target.value }))}
+                          className="h-8 w-44 text-sm"
                           disabled={isBrowzerEnabled}
                         />
                       </TableCell>
@@ -1688,7 +1730,8 @@ function RemoteAccessTab() {
                               disableOnServiceMutation.mutate(svc.ziti_id)
                             } else {
                               const path = browzerPaths[svc.id] || `/${svc.name}`
-                              enableOnServiceMutation.mutate({ serviceId: svc.ziti_id, path })
+                              const domain = browzerDomains[svc.id] || undefined
+                              enableOnServiceMutation.mutate({ serviceId: svc.ziti_id, path, domain })
                             }
                           }}
                         >

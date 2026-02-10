@@ -216,10 +216,10 @@ func (tm *BrowZerTargetManager) GenerateBrowZerTargets(ctx context.Context) (*Br
 			continue
 		}
 
-		// Routes with unique domains → direct targets
+		// Routes with unique domains → vhost targets routed through browzer-router
 		targets = append(targets, BrowZerTarget{
 			VHost:        r.hostname,
-			Service:      r.serviceName,
+			Service:      BrowZerRouterServiceName,
 			Path:         "/",
 			Scheme:       "http",
 			IDPIssuerURL: oidcIssuer,
@@ -283,25 +283,40 @@ func (tm *BrowZerTargetManager) WriteBrowZerTargets(ctx context.Context) error {
 	return nil
 }
 
-// GenerateBrowZerRouterConfig generates nginx config for path-based BrowZer routing.
-// Routes with a path prefix on browzer.localtest.me get location blocks mapping to their backends.
+// GenerateBrowZerRouterConfig generates nginx config for path-based and vhost-based BrowZer routing.
+// Path-based routes on the default domain get location blocks; routes with unique domains get
+// separate server blocks with simple proxy_pass (no sub_filter needed since the app runs at /).
 func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context) ([]byte, error) {
 	routes, err := tm.queryBrowZerRoutes(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter to path-based routes on the configured BrowZer domain
+	// Separate path-based routes from vhost routes
 	type routeMapping struct {
 		pathPrefix string
 		upstream   string
 		isGuac     bool
 	}
+	type vhostMapping struct {
+		hostname string
+		upstream string
+	}
 	var mappings []routeMapping
+	var vhosts []vhostMapping
 
 	domain := tm.GetDomain()
 	for _, r := range routes {
-		if r.hostname != domain || r.pathPrefix == "/" {
+		// Vhost routes: different domain, root path
+		if r.hostname != domain {
+			vhosts = append(vhosts, vhostMapping{
+				hostname: r.hostname,
+				upstream: r.toURL,
+			})
+			continue
+		}
+		// Skip root path on default domain (not a path-based route)
+		if r.pathPrefix == "/" {
 			continue
 		}
 
@@ -324,6 +339,13 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	// Build nginx config
 	var b strings.Builder
 	b.WriteString("# Auto-generated BrowZer router config — do not edit manually\n")
+	// WebSocket upgrade map for vhost proxying
+	if len(vhosts) > 0 {
+		b.WriteString("map $http_upgrade $connection_upgrade {\n")
+		b.WriteString("    default upgrade;\n")
+		b.WriteString("    ''      close;\n")
+		b.WriteString("}\n\n")
+	}
 	b.WriteString("server {\n")
 	b.WriteString("    listen 80;\n")
 	b.WriteString("    server_name _;\n")
@@ -350,16 +372,43 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			b.WriteString("        proxy_send_timeout 86400s;\n")
 			b.WriteString("        proxy_buffering off;\n")
 		} else {
-			// Strip path prefix: trailing slash on proxy_pass strips the matched prefix
+			// Hybrid path handling: rewrite rules strip the prefix for the root
+			// page and static assets only. All other paths (API calls, SPA page
+			// routes) pass through with the full URI so the backend sees its
+			// expected paths (e.g. /apisix/admin/*). sub_filter rewrites HTML
+			// asset paths, and the webpack publicPath so async chunks load from
+			// the correct prefix.
 			parsed, _ := url.Parse(m.upstream)
-			upstreamBase := fmt.Sprintf("%s://%s/", parsed.Scheme, parsed.Host)
+			upstreamBase := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+			pathTrimmed := strings.TrimSuffix(pathWithSlash, "/")
+
+			b.WriteString(fmt.Sprintf("        rewrite ^%s/?$ / break;\n", pathTrimmed))
+			b.WriteString(fmt.Sprintf("        rewrite \"^%s/(.+\\.(?:js|mjs|css|html|htm|png|svg|ico|jpg|jpeg|gif|webp|woff2?|ttf|eot|otf|map|json|txt|xml|webmanifest))$\" /$1 break;\n", pathTrimmed))
 			b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
+			b.WriteString(fmt.Sprintf("        proxy_redirect / %s;\n", pathWithSlash))
 			b.WriteString("        proxy_http_version 1.1;\n")
 			b.WriteString("        proxy_set_header Host $host;\n")
 			b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 			b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
 			b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+			b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
+			b.WriteString("        sub_filter_once off;\n")
+			b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
+			b.WriteString(fmt.Sprintf("        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash))
+			b.WriteString(fmt.Sprintf("        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash))
+			// Rewrite CSS url() references: url(/, url('/, url("/
+			b.WriteString(fmt.Sprintf("        sub_filter 'url(/' 'url(%s';\n", pathWithSlash))
+			b.WriteString(fmt.Sprintf("        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash))
+			b.WriteString(fmt.Sprintf("        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash))
+			// Rewrite webpack/vite publicPath so code-split async chunks load from the correct prefix
+			b.WriteString(fmt.Sprintf("        sub_filter '.p=\"/\"' '.p=\"%s\"';\n", pathWithSlash))
 		}
+
+		// Strip backend CSP headers — BrowZer SDK needs to connect to the Ziti controller
+		// and OIDC provider, which restrictive CSP from backend apps would block
+		b.WriteString("        proxy_hide_header Content-Security-Policy;\n")
+		b.WriteString("        proxy_hide_header Content-Security-Policy-Report-Only;\n")
+		b.WriteString("        proxy_hide_header X-Frame-Options;\n")
 
 		b.WriteString("    }\n\n")
 	}
@@ -380,7 +429,32 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	b.WriteString("    }\n")
 	b.WriteString("}\n")
 
-	tm.logger.Info("Generated BrowZer router config", zap.Int("routes", len(mappings)))
+	// Generate vhost server blocks for routes with unique domains.
+	// These are simple reverse proxies — no sub_filter needed since the app runs at root /.
+	for _, vh := range vhosts {
+		b.WriteString(fmt.Sprintf("\n# Vhost: %s\n", vh.hostname))
+		b.WriteString("server {\n")
+		b.WriteString("    listen 80;\n")
+		b.WriteString(fmt.Sprintf("    server_name %s;\n\n", vh.hostname))
+		b.WriteString("    location / {\n")
+		b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", vh.upstream))
+		b.WriteString("        proxy_http_version 1.1;\n")
+		b.WriteString("        proxy_set_header Host $host;\n")
+		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+		b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+		b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
+		b.WriteString("        proxy_set_header Connection $connection_upgrade;\n")
+		b.WriteString("        proxy_hide_header Content-Security-Policy;\n")
+		b.WriteString("        proxy_hide_header Content-Security-Policy-Report-Only;\n")
+		b.WriteString("        proxy_hide_header X-Frame-Options;\n")
+		b.WriteString("    }\n")
+		b.WriteString("}\n")
+	}
+
+	tm.logger.Info("Generated BrowZer router config",
+		zap.Int("path_routes", len(mappings)),
+		zap.Int("vhost_routes", len(vhosts)))
 	return []byte(b.String()), nil
 }
 

@@ -4,6 +4,7 @@ package access
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,8 +40,12 @@ func (s *Service) handleZitiStatus(c *gin.Context) {
 
 	// Count local DB records
 	var serviceCount, identityCount int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services").Scan(&serviceCount)
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities").Scan(&identityCount)
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services").Scan(&serviceCount); err != nil {
+		s.logger.Warn("Failed to count ziti services", zap.Error(err))
+	}
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities").Scan(&identityCount); err != nil {
+		s.logger.Warn("Failed to count ziti identities", zap.Error(err))
+	}
 	status["services_count"] = serviceCount
 	status["identities_count"] = identityCount
 
@@ -50,10 +55,18 @@ func (s *Service) handleZitiStatus(c *gin.Context) {
 // ---- Ziti Services ----
 
 func (s *Service) handleListZitiServices(c *gin.Context) {
-	// List from local DB
+	// List services with BrowZer route info via LEFT JOIN
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, ziti_id, name, description, protocol, host, port, route_id, enabled, created_at, updated_at
-		 FROM ziti_services ORDER BY name`)
+		`SELECT zs.id, zs.ziti_id, zs.name, zs.description, zs.protocol, zs.host, zs.port,
+		        zs.route_id, zs.enabled, zs.created_at, zs.updated_at,
+		        pr_path.from_url AS browzer_path_url,
+		        pr_vhost.from_url AS browzer_domain_url
+		 FROM ziti_services zs
+		 LEFT JOIN proxy_routes pr_path ON pr_path.ziti_service_name = zs.name
+		      AND pr_path.browzer_enabled = true AND pr_path.name LIKE 'browzer-%' AND pr_path.name NOT LIKE 'browzer-vhost-%'
+		 LEFT JOIN proxy_routes pr_vhost ON pr_vhost.ziti_service_name = zs.name
+		      AND pr_vhost.browzer_enabled = true AND pr_vhost.name LIKE 'browzer-vhost-%'
+		 ORDER BY zs.name`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list ziti services"})
 		return
@@ -61,27 +74,43 @@ func (s *Service) handleListZitiServices(c *gin.Context) {
 	defer rows.Close()
 
 	type zitiServiceRow struct {
-		ID          string    `json:"id"`
-		ZitiID      string    `json:"ziti_id"`
-		Name        string    `json:"name"`
-		Description *string   `json:"description,omitempty"`
-		Protocol    string    `json:"protocol"`
-		Host        string    `json:"host"`
-		Port        int       `json:"port"`
-		RouteID     *string   `json:"route_id,omitempty"`
-		Enabled     bool      `json:"enabled"`
-		CreatedAt   time.Time `json:"created_at"`
-		UpdatedAt   time.Time `json:"updated_at"`
+		ID            string    `json:"id"`
+		ZitiID        string    `json:"ziti_id"`
+		Name          string    `json:"name"`
+		Description   *string   `json:"description,omitempty"`
+		Protocol      string    `json:"protocol"`
+		Host          string    `json:"host"`
+		Port          int       `json:"port"`
+		RouteID       *string   `json:"route_id,omitempty"`
+		Enabled       bool      `json:"enabled"`
+		CreatedAt     time.Time `json:"created_at"`
+		UpdatedAt     time.Time `json:"updated_at"`
+		BrowzerPath   string    `json:"browzer_path,omitempty"`
+		BrowzerDomain string    `json:"browzer_domain,omitempty"`
 	}
 
 	services := []zitiServiceRow{}
 	for rows.Next() {
 		var svc zitiServiceRow
+		var browzerPathURL, browzerDomainURL *string
 		err := rows.Scan(&svc.ID, &svc.ZitiID, &svc.Name, &svc.Description, &svc.Protocol,
-			&svc.Host, &svc.Port, &svc.RouteID, &svc.Enabled, &svc.CreatedAt, &svc.UpdatedAt)
+			&svc.Host, &svc.Port, &svc.RouteID, &svc.Enabled, &svc.CreatedAt, &svc.UpdatedAt,
+			&browzerPathURL, &browzerDomainURL)
 		if err != nil {
 			s.logger.Error("Failed to scan ziti service", zap.Error(err))
 			continue
+		}
+		// Extract path from URL like "http://browzer.localtest.me/apisix"
+		if browzerPathURL != nil && *browzerPathURL != "" {
+			if u, err := url.Parse(*browzerPathURL); err == nil {
+				svc.BrowzerPath = u.Path
+			}
+		}
+		// Extract domain from URL like "http://apisix.localtest.me/"
+		if browzerDomainURL != nil && *browzerDomainURL != "" {
+			if u, err := url.Parse(*browzerDomainURL); err == nil {
+				svc.BrowzerDomain = u.Hostname()
+			}
 		}
 		services = append(services, svc)
 	}
@@ -111,6 +140,14 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 
 	if req.Protocol == "" {
 		req.Protocol = "tcp"
+	}
+	if req.Protocol != "tcp" && req.Protocol != "udp" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "protocol must be 'tcp' or 'udp'"})
+		return
+	}
+	if req.Port < 1 || req.Port > 65535 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "port must be between 1 and 65535"})
+		return
 	}
 
 	attrs := req.Attributes
