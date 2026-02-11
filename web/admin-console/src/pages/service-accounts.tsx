@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Search, Plus, Key, Trash2, Copy, ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react'
+import { Search, Plus, Key, Trash2, Copy, ChevronLeft, ChevronRight, Eye, EyeOff, Bot } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -12,6 +12,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -166,9 +167,16 @@ export function ServiceAccountsPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center py-8 text-muted-foreground">Loading...</div>
+        <div className="flex flex-col items-center justify-center py-12">
+          <LoadingSpinner size="lg" />
+          <p className="mt-4 text-sm text-muted-foreground">Loading service accounts...</p>
+        </div>
       ) : accounts.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">No service accounts found</div>
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <Bot className="h-12 w-12 text-muted-foreground/40 mb-3" />
+          <p className="font-medium">No service accounts found</p>
+          <p className="text-sm">Create a service account for programmatic access</p>
+        </div>
       ) : (
         <div className="space-y-4">
           {accounts.map((account) => (

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenIDX Simple Web</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 60px auto; padding: 0 20px; background: #f8fafc; color: #1e293b; }
+    h1 { color: #0f172a; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 12px; background: #dcfce7; color: #166534; font-weight: 600; }
+    .info { margin-top: 24px; padding: 16px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; }
+    .info dt { font-weight: 600; margin-top: 8px; }
+    .info dd { margin: 2px 0 0 0; color: #475569; }
+    #time { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h1>OpenIDX Simple Web Service</h1>
+  <p><span class="status">Running</span></p>
+  <div class="info">
+    <dl>
+      <dt>Service</dt><dd>simple-web</dd>
+      <dt>Port</dt><dd>8091</dd>
+      <dt>Current Time</dt><dd id="time">-</dd>
+    </dl>
+  </div>
+  <script>
+    function tick() { document.getElementById('time').textContent = new Date().toLocaleString(); }
+    tick(); setInterval(tick, 1000);
+  </script>
+</body>
+</html>

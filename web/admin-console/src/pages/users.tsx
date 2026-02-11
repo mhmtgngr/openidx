@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
-import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight, Users } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -30,6 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -394,6 +395,18 @@ export function UsersPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading users...</p>
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Users className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No users found</p>
+              <p className="text-sm">{search ? 'No users match your search criteria' : 'Users will appear here when accounts are created'}</p>
+            </div>
+          ) : (
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -406,14 +419,7 @@ export function UsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={5} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredUsers.length === 0 ? (
-                  <tr><td colSpan={5} className="p-4 text-center">
-                    {search ? 'No users found matching your search' : 'No users found'}
-                  </td></tr>
-                ) : (
-                  filteredUsers.map((user) => (
+                {filteredUsers.map((user) => (
                     <tr key={user.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
@@ -443,7 +449,7 @@ export function UsersPage() {
                         </div>
                       </td>
                       <td className="p-3">
-                        <Badge variant={user.enabled ? 'default' : 'secondary'}>
+                        <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
                           {user.enabled ? 'Active' : 'Disabled'}
                         </Badge>
                       </td>
@@ -483,11 +489,11 @@ export function UsersPage() {
                         </DropdownMenu>
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
@@ -699,7 +705,10 @@ export function UsersPage() {
             <DialogTitle>Manage Roles - {selectedUser?.username}</DialogTitle>
           </DialogHeader>
           {rolesLoading || userRolesLoading ? (
-            <div className="py-4 text-center">Loading roles...</div>
+            <div className="flex flex-col items-center justify-center py-8">
+              <LoadingSpinner size="md" />
+              <p className="mt-3 text-sm text-muted-foreground">Loading roles...</p>
+            </div>
           ) : (
             <form onSubmit={handleRolesSubmit} className="space-y-4">
               <div className="space-y-3">

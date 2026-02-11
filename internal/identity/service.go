@@ -31,6 +31,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/risk"
 )
 
 // Use the min function from pushmfa.go
@@ -173,6 +174,10 @@ type Service struct {
 	emailService      EmailSender
 	webhookService    WebhookPublisher
 	anomalyDetector   AnomalyDetector
+	smsProvider       SMSProvider       // SMS OTP provider
+	smsProviderMu     sync.RWMutex     // Protects smsProvider for runtime hot-swap
+	phoneCallProvider PhoneCallProvider // Phone call MFA provider
+	risk              RiskService       // Risk evaluation service
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex
@@ -201,6 +206,7 @@ type EmailSender interface {
 	SendInvitationEmail(ctx context.Context, to, inviterName, token, baseURL string) error
 	SendPasswordResetEmail(ctx context.Context, to, userName, token, baseURL string) error
 	SendWelcomeEmail(ctx context.Context, to, userName string) error
+	SendAsync(ctx context.Context, to, subject, templateName string, data map[string]interface{}) error
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -212,6 +218,12 @@ type WebhookPublisher interface {
 type AnomalyDetector interface {
 	RunAnomalyCheck(ctx context.Context, userID, ip, userAgent string, lat, lon float64) interface{}
 	CheckIPThreatList(ctx context.Context, ip string) (bool, string)
+}
+
+// SMSProvider defines the interface for sending SMS messages
+type SMSProvider interface {
+	SendOTP(ctx context.Context, phoneNumber, code string) error
+	SendMessage(ctx context.Context, phoneNumber, message string) error
 }
 
 // SetEmailService sets the email service
@@ -227,6 +239,48 @@ func (s *Service) SetWebhookService(ws WebhookPublisher) {
 // SetAnomalyDetector sets the anomaly detection service
 func (s *Service) SetAnomalyDetector(ad AnomalyDetector) {
 	s.anomalyDetector = ad
+}
+
+// SetSMSProvider sets the SMS provider for OTP delivery (thread-safe for runtime hot-swap)
+func (s *Service) SetSMSProvider(sp SMSProvider) {
+	s.smsProviderMu.Lock()
+	defer s.smsProviderMu.Unlock()
+	s.smsProvider = sp
+}
+
+// getSMSProvider returns the current SMS provider (thread-safe)
+func (s *Service) getSMSProvider() SMSProvider {
+	s.smsProviderMu.RLock()
+	defer s.smsProviderMu.RUnlock()
+	return s.smsProvider
+}
+
+// SetPhoneCallProvider sets the phone call provider for voice MFA
+func (s *Service) SetPhoneCallProvider(pcp PhoneCallProvider) {
+	s.phoneCallProvider = pcp
+}
+
+// RiskService defines the interface for risk evaluation
+type RiskService interface {
+	ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]risk.RiskPolicy, error)
+	GetRiskPolicy(ctx context.Context, policyID string) (*risk.RiskPolicy, error)
+	CreateRiskPolicy(ctx context.Context, req risk.CreateRiskPolicyRequest) (*risk.RiskPolicy, error)
+	UpdateRiskPolicy(ctx context.Context, policyID string, req risk.CreateRiskPolicyRequest) (*risk.RiskPolicy, error)
+	DeleteRiskPolicy(ctx context.Context, policyID string) error
+	ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error
+	GeoIPLookup(ctx context.Context, ip string) (*risk.GeoResult, error)
+	ComputeDeviceFingerprint(ipAddress, userAgent string) string
+	RegisterDevice(ctx context.Context, userID, fingerprint, ipAddress, userAgent, location string) (string, bool, error)
+	IsDeviceTrusted(ctx context.Context, userID, fingerprint string) bool
+	GetRecentFailedAttempts(ctx context.Context, userID string) int
+	EvaluateRiskPolicies(ctx context.Context, loginCtx risk.EvaluateLoginContext) (*risk.PolicyEvaluationResult, error)
+	GetRiskStats(ctx context.Context) (map[string]interface{}, error)
+	GetLoginHistory(ctx context.Context, userID string, limit int) ([]risk.LoginRecord, error)
+}
+
+// SetRiskService sets the risk service
+func (s *Service) SetRiskService(rs RiskService) {
+	s.risk = rs
 }
 
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens
@@ -1648,6 +1702,21 @@ func (s *Service) GetRemainingBackupCodes(ctx context.Context, userID string) (i
 	return count, err
 }
 
+// GetBackupCodeCount returns count of unused backup codes (alias for GetRemainingBackupCodes)
+func (s *Service) GetBackupCodeCount(ctx context.Context, userID string) (int, error) {
+	return s.GetRemainingBackupCodes(ctx, userID)
+}
+
+// VerifyBackupCode validates a backup code and marks it as used (alias for ValidateBackupCode)
+func (s *Service) VerifyBackupCode(ctx context.Context, userID, code string) (bool, error) {
+	return s.ValidateBackupCode(ctx, userID, code)
+}
+
+// GetPushDevices returns push MFA devices for a user (alias for GetPushMFADevices)
+func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFADevice, error) {
+	return s.GetPushMFADevices(ctx, userID)
+}
+
 // IsMFARequired checks if MFA is required for a user based on policies
 func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
@@ -2421,6 +2490,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		public.POST("/users/reset-password", svc.handleResetPassword)
 		public.POST("/verify-email", svc.handleVerifyEmail)
 		public.POST("/invitations/:token/accept", svc.handleAcceptInvitation)
+		public.GET("/providers", svc.handleListIdentityProviders)
 	}
 
 	identity := router.Group("/api/v1/identity")
@@ -2443,9 +2513,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/users/:id", svc.handleGetUser)
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
+		identity.POST("/users/:id/reset-password", svc.handleAdminResetPassword)
 
-		// Identity Providers (for SSO)
-		identity.GET("/providers", svc.handleListIdentityProviders)
+		// Identity Providers (for SSO) — GET /providers is public (login page needs it)
 		identity.POST("/providers", svc.handleCreateIdentityProvider)
 		identity.GET("/providers/:id", svc.handleGetIdentityProvider)
 		identity.PUT("/providers/:id", svc.handleUpdateIdentityProvider)
@@ -2510,6 +2580,35 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/mfa/push/verify", svc.handleVerifyPushChallenge)
 		identity.GET("/mfa/push/challenge/:challenge_id", svc.handleGetPushChallenge)
 
+		// SMS OTP MFA
+		identity.POST("/mfa/sms/enroll", svc.handleEnrollSMS)
+		identity.POST("/mfa/sms/verify", svc.handleVerifySMSEnrollment)
+		identity.GET("/mfa/sms/status", svc.handleGetSMSStatus)
+		identity.DELETE("/mfa/sms", svc.handleDeleteSMS)
+		identity.POST("/mfa/sms/challenge", svc.handleCreateSMSChallenge)
+
+		// Email OTP MFA
+		identity.POST("/mfa/email/enroll", svc.handleEnrollEmailOTP)
+		identity.GET("/mfa/email/status", svc.handleGetEmailOTPStatus)
+		identity.DELETE("/mfa/email", svc.handleDeleteEmailOTP)
+		identity.POST("/mfa/email/challenge", svc.handleCreateEmailOTPChallenge)
+
+		// Common OTP verification (works for both SMS and Email)
+		identity.POST("/mfa/otp/verify", svc.handleVerifyOTP)
+
+		// Get all enrolled MFA methods for current user
+		identity.GET("/mfa/methods", svc.handleGetMFAMethods)
+
+		// Trusted browsers (remember this device)
+		identity.POST("/trusted-browsers", svc.handleTrustBrowser)
+		identity.GET("/trusted-browsers", svc.handleGetTrustedBrowsers)
+		identity.DELETE("/trusted-browsers/:browser_id", svc.handleRevokeTrustedBrowser)
+		identity.DELETE("/trusted-browsers", svc.handleRevokeAllTrustedBrowsers)
+		identity.GET("/trusted-browsers/check", svc.handleCheckTrustedBrowser)
+
+		// Risk assessment
+		identity.GET("/risk-assessment", svc.handleGetRiskAssessment)
+
 		// Email verification
 		identity.POST("/resend-verification", svc.handleResendVerification)
 
@@ -2520,6 +2619,87 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 
 		// User lifecycle
 		identity.POST("/users/:id/offboard", svc.handleOffboardUser)
+
+		// ========================================
+		// Advanced MFA Features
+		// ========================================
+
+		// Hardware Tokens (Admin)
+		identity.GET("/hardware-tokens", svc.handleListHardwareTokens)
+		identity.POST("/hardware-tokens", svc.handleCreateHardwareToken)
+		identity.GET("/hardware-tokens/:token_id", svc.handleGetHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/assign", svc.handleAssignHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/unassign", svc.handleUnassignHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/revoke", svc.handleRevokeHardwareToken)
+		identity.POST("/hardware-tokens/:token_id/report-lost", svc.handleReportTokenLost)
+		identity.GET("/hardware-tokens/:token_id/events", svc.handleGetTokenEvents)
+
+		// Hardware Token (User)
+		identity.GET("/mfa/hardware-token", svc.handleGetUserHardwareToken)
+		identity.POST("/mfa/hardware-token/verify", svc.handleVerifyHardwareToken)
+
+		// Phone Call MFA
+		identity.POST("/mfa/phone/enroll", svc.handleEnrollPhoneCall)
+		identity.POST("/mfa/phone/verify", svc.handleVerifyPhoneCallEnrollment)
+		identity.GET("/mfa/phone/status", svc.handleGetPhoneCallStatus)
+		identity.DELETE("/mfa/phone", svc.handleDeletePhoneCall)
+		identity.POST("/mfa/phone/callback", svc.handleRequestCallback)
+
+		// Device Trust Approval (Admin)
+		identity.GET("/device-trust-requests", svc.handleListDeviceTrustRequests)
+		identity.POST("/device-trust-requests/:request_id/approve", svc.handleApproveDeviceTrust)
+		identity.POST("/device-trust-requests/:request_id/reject", svc.handleRejectDeviceTrust)
+		identity.POST("/device-trust-requests/bulk-approve", svc.handleBulkApproveDeviceTrust)
+		identity.POST("/device-trust-requests/bulk-reject", svc.handleBulkRejectDeviceTrust)
+		identity.GET("/device-trust-requests/pending-count", svc.handleGetPendingTrustCount)
+		identity.GET("/device-trust-settings", svc.handleGetDeviceTrustSettings)
+		identity.PUT("/device-trust-settings", svc.handleUpdateDeviceTrustSettings)
+
+		// MFA Bypass Codes (Admin)
+		identity.POST("/mfa/bypass-codes", svc.handleGenerateBypassCode)
+		identity.GET("/mfa/bypass-codes", svc.handleListBypassCodes)
+		identity.DELETE("/mfa/bypass-codes/:code_id", svc.handleRevokeBypassCode)
+		identity.DELETE("/users/:id/bypass-codes", svc.handleRevokeAllBypassCodes)
+		identity.POST("/mfa/bypass-codes/verify", svc.handleVerifyBypassCode)
+		identity.GET("/mfa/bypass-codes/audit", svc.handleGetBypassAuditLog)
+
+		// Passwordless Authentication
+		identity.POST("/passwordless/magic-link", svc.handleCreateMagicLink)
+		identity.POST("/passwordless/magic-link/verify", svc.handleVerifyMagicLink)
+		identity.POST("/passwordless/qr-login", svc.handleCreateQRLoginSession)
+		identity.POST("/passwordless/qr-login/scan", svc.handleScanQRLogin)
+		identity.POST("/passwordless/qr-login/approve", svc.handleApproveQRLogin)
+		identity.POST("/passwordless/qr-login/reject", svc.handleRejectQRLogin)
+		identity.GET("/passwordless/qr-login/poll", svc.handlePollQRLoginSession)
+		identity.GET("/passwordless/preferences", svc.handleGetPasswordlessPreferences)
+		identity.PUT("/passwordless/preferences", svc.handleUpdatePasswordlessPreferences)
+
+		// Biometric Authentication
+		identity.GET("/biometric/preferences", svc.handleGetBiometricPreferences)
+		identity.PUT("/biometric/preferences", svc.handleUpdateBiometricPreferences)
+		identity.POST("/biometric/enable-only", svc.handleEnableBiometricOnly)
+		identity.POST("/biometric/disable-only", svc.handleDisableBiometricOnly)
+		identity.GET("/biometric/authenticators", svc.handleGetPlatformAuthenticators)
+
+		// Biometric Policies (Admin)
+		identity.GET("/biometric/policies", svc.handleListBiometricPolicies)
+		identity.POST("/biometric/policies", svc.handleCreateBiometricPolicy)
+		identity.PUT("/biometric/policies/:policy_id", svc.handleUpdateBiometricPolicy)
+		identity.DELETE("/biometric/policies/:policy_id", svc.handleDeleteBiometricPolicy)
+
+		// Risk Policies (Admin)
+		identity.GET("/risk/policies", svc.handleListRiskPolicies)
+		identity.POST("/risk/policies", svc.handleCreateRiskPolicy)
+		identity.GET("/risk/policies/:id", svc.handleGetRiskPolicy)
+		identity.PUT("/risk/policies/:id", svc.handleUpdateRiskPolicy)
+		identity.DELETE("/risk/policies/:id", svc.handleDeleteRiskPolicy)
+		identity.PATCH("/risk/policies/:id/toggle", svc.handleToggleRiskPolicy)
+		identity.POST("/risk/evaluate", svc.handleEvaluateRisk)
+		identity.GET("/risk/stats", svc.handleGetRiskStats)
+		identity.GET("/risk/login-history", svc.handleGetLoginHistory)
+
+		// Login Analytics (Admin)
+		identity.GET("/analytics/logins", svc.handleGetLoginAnalytics)
 	}
 }
 
@@ -3681,6 +3861,55 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1", req.Token)
 
 	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
+}
+
+// handleAdminResetPassword allows admins to trigger a password reset email for a user
+func (s *Service) handleAdminResetPassword(c *gin.Context) {
+	userID := c.Param("id")
+
+	// Get user email
+	var email, firstName string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT email, first_name FROM users WHERE id = $1 AND enabled = true", userID).Scan(&email, &firstName)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
+	// Generate reset token
+	tokenBytes := make([]byte, 32)
+	rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+
+	// Store token with 24 hour expiry (longer for admin-triggered resets)
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, token, time.Now().Add(24*time.Hour))
+	if err != nil {
+		s.logger.Error("Failed to create password reset token", zap.Error(err))
+		c.JSON(500, gin.H{"error": "Failed to create reset token"})
+		return
+	}
+
+	// Log the admin action
+	adminID, _ := c.Get("user_id")
+	s.logger.Info("Admin triggered password reset",
+		zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+		zap.String("target_user_id", userID),
+		zap.String("target_email", email))
+
+	// Send password reset email
+	if s.emailService != nil {
+		baseURL := "http://localhost:3000"
+		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), email, firstName, token, baseURL); err != nil {
+			s.logger.Error("Failed to send password reset email", zap.Error(err))
+			c.JSON(500, gin.H{"error": "Failed to send reset email"})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"message": "Password reset email sent successfully"})
 }
 
 // Permission represents a system permission

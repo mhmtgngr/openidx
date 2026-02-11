@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/common/database"
 )
 
@@ -128,6 +129,7 @@ type SecuritySettings struct {
 	LockoutDuration    int            `json:"lockout_duration"`
 	RequireMFA         bool           `json:"require_mfa"`
 	AllowedIPRanges    []string       `json:"allowed_ip_ranges,omitempty"`
+	BlockedCountries   []string       `json:"blocked_countries,omitempty"`
 }
 
 // PasswordPolicy defines password requirements
@@ -335,6 +337,110 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	return dashboard, nil
 }
 
+// GetUserDashboard returns dashboard statistics scoped to a specific user
+func (s *Service) GetUserDashboard(ctx context.Context, userID string) (*Dashboard, error) {
+	s.logger.Debug("Getting user dashboard statistics", zap.String("user_id", userID))
+
+	var myGroups, myApps, mySessions, myPendingReviews int
+
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM group_memberships WHERE user_id = $1),
+			(SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1),
+			(SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW()),
+			(SELECT COUNT(*) FROM review_items ri JOIN access_reviews ar ON ri.review_id = ar.id WHERE ri.user_id = $1 AND ar.status IN ('pending', 'in_progress'))
+	`, userID).Scan(&myGroups, &myApps, &mySessions, &myPendingReviews)
+	if err != nil {
+		s.logger.Error("Failed to query user dashboard stats", zap.Error(err))
+	}
+
+	// Get user's recent activity
+	var recentActivity []ActivityItem
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, event_type, action, actor_id, timestamp
+		FROM audit_events
+		WHERE actor_id = $1 OR target_id = $1
+		ORDER BY timestamp DESC
+		LIMIT 5
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var item ActivityItem
+			rows.Scan(&item.ID, &item.Type, &item.Message, &item.ActorID, &item.Timestamp)
+			recentActivity = append(recentActivity, item)
+		}
+	}
+
+	// Get user's auth stats
+	userAuthStats := s.getUserAuthStatistics(ctx, userID)
+
+	dashboard := &Dashboard{
+		TotalUsers:        0, // Not relevant for normal user
+		ActiveUsers:       0,
+		TotalGroups:       myGroups,
+		TotalApplications: myApps,
+		ActiveSessions:    mySessions,
+		PendingReviews:    myPendingReviews,
+		SecurityAlerts:    0,
+		RecentActivity:    recentActivity,
+		AuthStats:         userAuthStats,
+	}
+
+	return dashboard, nil
+}
+
+// getUserAuthStatistics returns auth stats scoped to a specific user
+func (s *Service) getUserAuthStatistics(ctx context.Context, userID string) AuthStatistics {
+	stats := AuthStatistics{
+		LoginsByMethod: make(map[string]int),
+	}
+
+	// Count user's login events
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT action, COUNT(*) as cnt
+		FROM audit_events
+		WHERE event_type = 'authentication' AND actor_id = $1
+		AND timestamp > NOW() - INTERVAL '30 days'
+		GROUP BY action
+	`, userID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var action string
+			var count int
+			rows.Scan(&action, &count)
+			stats.LoginsByMethod[action] = count
+			stats.TotalLogins += count
+			if action == "login" || action == "login_mfa" {
+				stats.SuccessfulLogins += count
+			} else if action == "login_failed" {
+				stats.FailedLogins += count
+			}
+		}
+	}
+
+	// Logins by day for chart
+	dayRows, err := s.db.Pool.Query(ctx, `
+		SELECT DATE(timestamp) as day, COUNT(*) as cnt
+		FROM audit_events
+		WHERE event_type = 'authentication' AND actor_id = $1
+		AND timestamp > NOW() - INTERVAL '30 days'
+		GROUP BY DATE(timestamp)
+		ORDER BY day
+	`, userID)
+	if err == nil {
+		defer dayRows.Close()
+		for dayRows.Next() {
+			var ds DayStats
+			dayRows.Scan(&ds.Date, &ds.Count)
+			stats.LoginsByDay = append(stats.LoginsByDay, ds)
+		}
+	}
+
+	return stats
+}
+
 // getAuthStatistics queries real authentication statistics from audit_events
 func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
 	stats := AuthStatistics{
@@ -436,10 +542,11 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 				MaxAge:           90,
 				History:          5,
 			},
-			SessionTimeout:  30,
-			MaxFailedLogins: 5,
-			LockoutDuration: 15,
-			RequireMFA:      false,
+			SessionTimeout:   30,
+			MaxFailedLogins:  5,
+			LockoutDuration:  15,
+			RequireMFA:       false,
+			BlockedCountries: []string{},
 		},
 		Authentication: AuthenticationSettings{
 			AllowRegistration:  true,
@@ -700,6 +807,11 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Settings
 	router.GET("/settings", svc.handleGetSettings)
 	router.PUT("/settings", svc.handleUpdateSettings)
+
+	// SMS Settings (separate from main settings due to credential sensitivity)
+	router.GET("/settings/sms", svc.handleGetSMSSettings)
+	router.PUT("/settings/sms", svc.handleUpdateSMSSettings)
+	router.POST("/settings/sms/test", svc.handleTestSMS)
 	
 	// Applications
 	router.GET("/applications", svc.handleListApplications)
@@ -791,6 +903,32 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 // HTTP Handlers
 
 func (s *Service) handleGetDashboard(c *gin.Context) {
+	// Check if user is admin
+	isAdmin := false
+	if roles, exists := c.Get("roles"); exists {
+		if roleList, ok := roles.([]string); ok {
+			for _, r := range roleList {
+				if r == "admin" || r == "super_admin" {
+					isAdmin = true
+					break
+				}
+			}
+		}
+	}
+
+	userID, _ := c.Get("user_id")
+	uid, _ := userID.(string)
+
+	if !isAdmin && uid != "" {
+		dashboard, err := s.GetUserDashboard(c.Request.Context(), uid)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, dashboard)
+		return
+	}
+
 	dashboard, err := s.GetDashboard(c.Request.Context())
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -819,6 +957,113 @@ func (s *Service) handleUpdateSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(200, settings)
+}
+
+func (s *Service) handleGetSMSSettings(c *gin.Context) {
+	var valueBytes []byte
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&valueBytes)
+
+	var settings *sms.DBSMSSettings
+	if err == nil {
+		settings = &sms.DBSMSSettings{}
+		if jsonErr := json.Unmarshal(valueBytes, settings); jsonErr != nil {
+			settings = sms.DefaultDBSMSSettings()
+		}
+	} else {
+		settings = sms.DefaultDBSMSSettings()
+	}
+
+	sms.MaskCredentials(settings)
+	c.JSON(200, settings)
+}
+
+func (s *Service) handleUpdateSMSSettings(c *gin.Context) {
+	var incoming sms.DBSMSSettings
+	if err := c.ShouldBindJSON(&incoming); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Load existing settings to merge masked credentials
+	var existingBytes []byte
+	var existing *sms.DBSMSSettings
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&existingBytes)
+	if err == nil {
+		existing = &sms.DBSMSSettings{}
+		json.Unmarshal(existingBytes, existing)
+	}
+
+	sms.MergeCredentials(&incoming, existing)
+	sms.ValidateOTPSettings(&incoming)
+
+	valueBytes, err := json.Marshal(&incoming)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to marshal SMS settings"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO system_settings (key, value, updated_at)
+		VALUES ('sms_config', $1, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
+	`, valueBytes)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to save SMS settings"})
+		return
+	}
+
+	sms.MaskCredentials(&incoming)
+	c.JSON(200, incoming)
+}
+
+func (s *Service) handleTestSMS(c *gin.Context) {
+	var req struct {
+		PhoneNumber string              `json:"phone_number"`
+		Settings    sms.DBSMSSettings   `json:"settings"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if req.PhoneNumber == "" {
+		c.JSON(400, gin.H{"error": "phone_number is required"})
+		return
+	}
+
+	// Merge masked credentials from DB before testing
+	var existingBytes []byte
+	var existing *sms.DBSMSSettings
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&existingBytes)
+	if err == nil {
+		existing = &sms.DBSMSSettings{}
+		json.Unmarshal(existingBytes, existing)
+	}
+	sms.MergeCredentials(&req.Settings, existing)
+
+	// Force enabled for test
+	cfg := req.Settings.ToConfig()
+	cfg.Enabled = true
+
+	smsService, err := sms.NewService(cfg, s.logger)
+	if err != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("failed to create SMS service: %v", err), "success": false})
+		return
+	}
+
+	prefix := req.Settings.MessagePrefix
+	if prefix == "" {
+		prefix = "OpenIDX"
+	}
+	msg := fmt.Sprintf("%s: This is a test message. If you received this, SMS is configured correctly.", prefix)
+	if err := smsService.SendMessage(c.Request.Context(), req.PhoneNumber, msg); err != nil {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("failed to send test SMS: %v", err), "success": false})
+		return
+	}
+
+	c.JSON(200, gin.H{"success": true, "message": "Test SMS sent successfully"})
 }
 
 func (s *Service) handleListApplications(c *gin.Context) {

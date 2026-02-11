@@ -27,6 +27,15 @@ import {
   BarChart3,
   Rocket,
   Eye,
+  Fingerprint,
+  KeyRound,
+  ShieldOff,
+  Link2,
+  Activity,
+  Search,
+  Layers,
+  Globe,
+  FileKey,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -64,6 +73,8 @@ const navigationSections: NavSection[] = [
       { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
       { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
       { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
+      { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
+      { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, adminOnly: false },
       { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
     ],
   },
@@ -93,6 +104,9 @@ const navigationSections: NavSection[] = [
     items: [
       { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
       { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
+      { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },
+      { name: 'BrowZer', href: '/browzer-management', icon: Globe, adminOnly: true },
+      { name: 'Certificates', href: '/certificates', icon: FileKey, adminOnly: true },
       { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
     ],
   },
@@ -108,10 +122,23 @@ const navigationSections: NavSection[] = [
     ],
   },
   {
+    label: 'Security & MFA',
+    adminOnly: true,
+    items: [
+      { name: 'Risk Policies', href: '/risk-policies', icon: Activity, adminOnly: true },
+      { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, adminOnly: true },
+      { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
+      { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },
+      { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, adminOnly: true },
+    ],
+  },
+  {
     label: 'Audit & Reports',
     adminOnly: true,
     items: [
       { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
+      { name: 'Unified Audit', href: '/unified-audit', icon: Layers, adminOnly: true },
+      { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
       { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
       { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
     ],

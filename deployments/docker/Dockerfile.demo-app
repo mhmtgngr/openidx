@@ -1,0 +1,34 @@
+# Build stage
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /app
+
+COPY . .
+
+RUN go mod tidy
+RUN go mod download
+
+RUN GOMAXPROCS=1 GOMEMLIMIT=1GiB CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s" \
+    -o /app/demo-app ./cmd/demo-app
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates
+RUN addgroup -S openidx && adduser -S openidx -G openidx
+
+WORKDIR /app
+
+COPY --from=builder /app/demo-app .
+
+USER openidx
+
+EXPOSE 8090
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:8090/health || exit 1
+
+ENTRYPOINT ["./demo-app"]

@@ -15,6 +15,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./init-guacamole.sh:/docker-entrypoint-initdb.d/00-init-guacamole.sh:ro
+      - ./init-guacamole.sql:/docker-entrypoint-initdb.d/guacamole-schema.sql:ro
     ports:
       - "5432:5432"
     healthcheck:
@@ -64,18 +66,50 @@ services:
   # API Gateway - Apache APISIX
   #---------------------------------------------------------------------------
   
+  apisix-config-init:
+    image: alpine:3.19
+    container_name: openidx-apisix-config-init
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        if [ ! -f /apisix-conf/apisix.yaml ]; then
+          cp /apisix-seed/apisix.yaml /apisix-conf/apisix.yaml
+          echo "Seeded apisix.yaml into shared volume"
+        else
+          echo "apisix.yaml already exists in shared volume"
+        fi
+        chown 100:101 /apisix-conf
+        chown 100:101 /apisix-conf/apisix.yaml
+        chmod 775 /apisix-conf
+        chmod 664 /apisix-conf/apisix.yaml
+    volumes:
+      - ./apisix/apisix.yaml:/apisix-seed/apisix.yaml:ro
+      - apisix_config:/apisix-conf
+    networks:
+      - openidx-network
+
   apisix:
     image: apache/apisix:3.8.0-debian
     container_name: openidx-apisix
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      - apisix_config:/apisix-conf
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        ln -sf /apisix-conf/apisix.yaml /usr/local/apisix/conf/apisix.yaml
+        exec /docker-entrypoint.sh docker-start
     ports:
       - "8088:9080"
       - "8443:9443"
       - "9188:9180"
     depends_on:
-      - etcd
+      apisix-config-init:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9080'"]
       interval: 10s
@@ -140,6 +174,7 @@ services:
       - SMTP_PORT=1025
       - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
     ports:
       - "8001:8001"
     depends_on:
@@ -165,6 +200,7 @@ services:
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
     ports:
       - "8002:8002"
     depends_on:
@@ -187,6 +223,7 @@ services:
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
     ports:
       - "8003:8003"
     depends_on:
@@ -207,6 +244,7 @@ services:
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
     ports:
       - "8004:8004"
     depends_on:
@@ -233,6 +271,7 @@ services:
       - SMTP_PORT=1025
       - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
     ports:
       - "8005:8005"
     depends_on:
@@ -259,6 +298,7 @@ services:
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
       - JWT_SECRET=${JWT_SECRET:-openidx_jwt_secret_key_change_in_production}
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - PORT=8006
@@ -473,7 +513,7 @@ services:
             print "  - binding: edge"
             print "    address: wss:0.0.0.0:3023"
             print "    options:"
-            print "      advertise: ziti-controller.localtest.me:3023"
+            print "      advertise: browzer.localtest.me:3023"
             print "      connectTimeoutMs: 5000"
             print "      getSessionTimeout: 60"
           } { print }' "$$CONFIG" > "$$CONFIG.tmp" && mv "$$CONFIG.tmp" "$$CONFIG"
@@ -533,6 +573,11 @@ services:
     networks:
       - openidx-network
 
+  # TLS proxy for Ziti router WSS — browsers trust the mkcert cert
+  # ZBR SDK in browser connects here; proxy forwards WebSocket to router's WSS
+  # NOTE: ziti-router-wss-proxy removed - router alt_server_certs handles TLS
+  # Browser connects to browzer.localtest.me:3023 → router selects mkcert alt cert
+
   #---------------------------------------------------------------------------
   # BrowZer Bootstrapper - Browser-Native Ziti Access
   #---------------------------------------------------------------------------
@@ -582,6 +627,7 @@ services:
   browzer-bootstrapper:
     image: ghcr.io/openziti/ziti-browzer-bootstrapper:latest
     container_name: openidx-browzer-bootstrapper
+    entrypoint: ["/bin/bash", "/browzer-entrypoint.sh"]
     environment:
       - ZITI_BROWZER_BOOTSTRAPPER_LOGLEVEL=debug
       - ZITI_BROWZER_BOOTSTRAPPER_HOST=browzer.localtest.me
@@ -593,12 +639,15 @@ services:
       - ZITI_BROWZER_RUNTIME_HOTKEY=alt+F12
       - ZITI_CONTROLLER_HOST=ziti-controller.localtest.me
       - ZITI_CONTROLLER_PORT=1280
-      - ZITI_BROWZER_BOOTSTRAPPER_TARGETS={"targetArray":[{"vhost":"browzer.localtest.me","service":"guacamole-zt","path":"/","scheme":"http","idp_issuer_base_url":"https://oauth.localtest.me:8446","idp_client_id":"browzer-client"}]}
+      # Targets loaded from /shared-config/config.json (generated by access-service)
+      # Single router target: all path-based services go through browzer-router-zt
       - ZITI_BROWZER_OIDC_URL=http://oauth-service:8006
       - NODE_EXTRA_CA_CERTS=/shared-certs/mkcert-rootCA.pem
       - NODE_TLS_REJECT_UNAUTHORIZED=0
     volumes:
       - browzer_certs:/shared-certs
+      - browzer_config:/shared-config
+      - ./browzer-entrypoint.sh:/browzer-entrypoint.sh:ro
     ports:
       - "443:443"
     depends_on:
@@ -613,83 +662,57 @@ services:
         aliases:
           - browzer.localtest.me
 
+  # BrowZer path-based router — dispatches paths to backends inside Ziti tunnel
+  browzer-router:
+    image: nginx:alpine
+    container_name: openidx-browzer-router
+    entrypoint: ["/bin/sh", "/browzer-router-entrypoint.sh"]
+    volumes:
+      - browzer_config:/shared-config
+      - ./browzer-router-entrypoint.sh:/browzer-router-entrypoint.sh:ro
+    depends_on:
+      - demo-app
+      - guacamole-zbr-proxy
+    networks:
+      - openidx-network
+
   #---------------------------------------------------------------------------
-  # BrowZer Test App - Simple HTTP service to verify BrowZer end-to-end
+  # Demo App - Identity-aware app showcasing OpenIDX SSO + BrowZer access
   #---------------------------------------------------------------------------
 
-  browzer-test-app:
-    image: nginx:alpine
-    container_name: openidx-browzer-test-app
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        mkdir -p /usr/share/nginx/html
-        cat > /usr/share/nginx/html/index.html << 'HTMLEOF'
-        <!DOCTYPE html>
-        <html>
-        <head><title>OpenIDX BrowZer Test</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #0d1117; color: #c9d1d9; }
-          h1 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 16px; }
-          .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin: 16px 0; }
-          .success { border-left: 4px solid #3fb950; }
-          .info { border-left: 4px solid #58a6ff; }
-          code { background: #0d1117; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
-          #fetch-result { white-space: pre-wrap; }
-          button { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-          button:hover { background: #2ea043; }
-        </style>
-        </head>
-        <body>
-          <h1>OpenIDX Zero Trust BrowZer Test</h1>
-          <div class="card success">
-            <h3>BrowZer is working!</h3>
-            <p>This page was served through the OpenZiti overlay network via BrowZer.</p>
-            <p>Your browser is participating directly in the Ziti mesh — no VPN, no proxy agent.</p>
-          </div>
-          <div class="card info">
-            <h3>Connection Path</h3>
-            <p>Browser (ZBR Service Worker) &rarr; WSS to Edge Router &rarr; Ziti Circuit &rarr; This nginx server</p>
-          </div>
-          <div class="card info">
-            <h3>API Test</h3>
-            <button onclick="testFetch()">Fetch /api/test</button>
-            <pre id="fetch-result"></pre>
-          </div>
-          <div class="card info">
-            <h3>Request Headers (from server perspective)</h3>
-            <p>Server time: <code id="server-time">loading...</code></p>
-          </div>
-          <script>
-            document.getElementById('server-time').textContent = new Date().toISOString();
-            async function testFetch() {
-              try {
-                const r = await fetch('/api/test');
-                const t = await r.text();
-                document.getElementById('fetch-result').textContent = 'Status: ' + r.status + '\n' + t;
-              } catch(e) {
-                document.getElementById('fetch-result').textContent = 'Error: ' + e.message;
-              }
-            }
-          </script>
-        </body>
-        </html>
-        HTMLEOF
-        cat > /etc/nginx/conf.d/default.conf << 'NGINXEOF'
-        server {
-            listen 80;
-            location / {
-                root /usr/share/nginx/html;
-                index index.html;
-            }
-            location /api/test {
-                return 200 '{"status":"ok","message":"BrowZer Zero Trust connection verified","timestamp":"$time_iso8601","server":"browzer-test-app"}';
-                add_header Content-Type application/json;
-            }
-        }
-        NGINXEOF
-        nginx -g 'daemon off;'
+  demo-app:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.demo-app
+    container_name: openidx-demo-app
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8090/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Simple Web - Lightweight static web service (BrowZer target)
+  #---------------------------------------------------------------------------
+
+  simple-web:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.simple-web
+    container_name: openidx-simple-web
+    ports:
+      - "8091:8091"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8091/ || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     networks:
       - openidx-network
 
@@ -1017,9 +1040,17 @@ services:
       - CONTINUOUS_VERIFY_INTERVAL=${CONTINUOUS_VERIFY_INTERVAL:-30}
       - BROWZER_ENABLED=${BROWZER_ENABLED:-true}
       - BROWZER_CLIENT_ID=${BROWZER_CLIENT_ID:-browzer-client}
+      - BROWZER_TARGETS_PATH=/shared-config/config.json
+      - BROWZER_ROUTER_CONFIG_PATH=/shared-config/browzer-router.conf
+      - BROWZER_CERTS_PATH=/shared-certs
+      - APISIX_CONFIG_PATH=/apisix-conf/apisix.yaml
       - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
     volumes:
       - ziti_access_proxy:/ziti
+      - browzer_config:/shared-config
+      - browzer_certs:/shared-certs
+      - apisix_config:/apisix-conf
     ports:
       - "8007:8007"
     depends_on:
@@ -1106,3 +1137,5 @@ volumes:
   ziti_router_shared:
   ziti_access_proxy:
   browzer_certs:
+  browzer_config:
+  apisix_config:

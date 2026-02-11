@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Edit, Trash2, Shield, Key, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Edit, Trash2, Shield, ShieldCheck, Key, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -29,6 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -272,6 +273,18 @@ export function RolesPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading roles...</p>
+            </div>
+          ) : filteredRoles.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <ShieldCheck className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No roles found</p>
+              <p className="text-sm">{search ? 'No roles found matching your search' : 'Create a role to define access permissions'}</p>
+            </div>
+          ) : (
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -284,14 +297,7 @@ export function RolesPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={5} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredRoles.length === 0 ? (
-                  <tr><td colSpan={5} className="p-4 text-center">
-                    {search ? 'No roles found matching your search' : 'No roles found'}
-                  </td></tr>
-                ) : (
-                  filteredRoles.map((role) => (
+                {filteredRoles.map((role) => (
                     <tr key={role.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
@@ -348,10 +354,11 @@ export function RolesPage() {
                       </td>
                     </tr>
                   ))
-                )}
+                }
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (

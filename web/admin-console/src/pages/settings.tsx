@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Save, Building, Shield, Key, Palette, X, Plus } from 'lucide-react'
+import { Save, Building, Shield, Key, Palette, X, Plus, Smartphone, Send } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -29,6 +29,7 @@ interface Settings {
     lockout_duration: number
     require_mfa: boolean
     allowed_ip_ranges: string[]
+    blocked_countries: string[]
   }
   authentication: {
     allow_registration: boolean
@@ -48,10 +49,87 @@ interface Settings {
   }
 }
 
+interface SMSSettings {
+  enabled: boolean
+  provider: string
+  message_prefix: string
+  otp_length: number
+  otp_expiry: number
+  max_attempts: number
+  credentials: Record<string, string>
+}
+
+interface ProviderField {
+  key: string
+  label: string
+  sensitive: boolean
+  placeholder?: string
+}
+
+interface ProviderDef {
+  id: string
+  label: string
+  fields: ProviderField[]
+}
+
+const SMS_PROVIDERS: ProviderDef[] = [
+  { id: 'mock', label: 'Mock (Development)', fields: [] },
+  { id: 'twilio', label: 'Twilio', fields: [
+    { key: 'twilio_sid', label: 'Account SID', sensitive: false },
+    { key: 'twilio_token', label: 'Auth Token', sensitive: true },
+    { key: 'twilio_from', label: 'From Number', sensitive: false, placeholder: '+1234567890' },
+  ]},
+  { id: 'aws_sns', label: 'AWS SNS', fields: [
+    { key: 'aws_region', label: 'Region', sensitive: false, placeholder: 'us-east-1' },
+    { key: 'aws_access_key', label: 'Access Key', sensitive: false },
+    { key: 'aws_secret_key', label: 'Secret Key', sensitive: true },
+  ]},
+  { id: 'netgsm', label: 'NetGSM', fields: [
+    { key: 'netgsm_usercode', label: 'User Code', sensitive: false },
+    { key: 'netgsm_password', label: 'Password', sensitive: true },
+    { key: 'netgsm_header', label: 'Sender Header', sensitive: false },
+  ]},
+  { id: 'ileti_merkezi', label: 'Ileti Merkezi', fields: [
+    { key: 'iletimerkezi_key', label: 'API Key', sensitive: false },
+    { key: 'iletimerkezi_secret', label: 'API Secret', sensitive: true },
+    { key: 'iletimerkezi_sender', label: 'Sender Name', sensitive: false },
+  ]},
+  { id: 'verimor', label: 'Verimor', fields: [
+    { key: 'verimor_username', label: 'Username', sensitive: false, placeholder: '908501234567' },
+    { key: 'verimor_password', label: 'Password', sensitive: true },
+    { key: 'verimor_source_addr', label: 'Sender ID', sensitive: false },
+  ]},
+  { id: 'turkcell', label: 'Turkcell Mesajussu', fields: [
+    { key: 'turkcell_username', label: 'Username', sensitive: false },
+    { key: 'turkcell_password', label: 'Password', sensitive: true },
+    { key: 'turkcell_sender', label: 'Sender Name', sensitive: false },
+  ]},
+  { id: 'vodafone', label: 'Vodafone', fields: [
+    { key: 'vodafone_api_key', label: 'API Key', sensitive: false },
+    { key: 'vodafone_secret', label: 'API Secret', sensitive: true },
+    { key: 'vodafone_sender', label: 'Sender Address', sensitive: false },
+  ]},
+  { id: 'turk_telekom', label: 'Turk Telekom', fields: [
+    { key: 'turktelekom_api_key', label: 'API Key', sensitive: false },
+    { key: 'turktelekom_secret', label: 'API Secret', sensitive: true },
+    { key: 'turktelekom_sender', label: 'Sender Name', sensitive: false },
+  ]},
+  { id: 'mutlucell', label: 'Mutlucell', fields: [
+    { key: 'mutlucell_username', label: 'Username', sensitive: false },
+    { key: 'mutlucell_password', label: 'Password', sensitive: true },
+    { key: 'mutlucell_api_key', label: 'API Key', sensitive: true },
+    { key: 'mutlucell_sender', label: 'Sender Name', sensitive: false },
+  ]},
+  { id: 'webhook', label: 'Custom Webhook', fields: [
+    { key: 'webhook_url', label: 'Webhook URL', sensitive: false, placeholder: 'https://...' },
+    { key: 'webhook_api_key', label: 'API Key', sensitive: true },
+  ]},
+]
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<'general' | 'security' | 'authentication' | 'branding'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'security' | 'authentication' | 'sms' | 'branding'>('general')
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -60,6 +138,16 @@ export function SettingsPage() {
 
   const [formData, setFormData] = useState<Settings | null>(null)
   const [newDomain, setNewDomain] = useState('')
+  const [newCountry, setNewCountry] = useState('')
+
+  // SMS settings (separate query/state)
+  const { data: smsSettingsData } = useQuery({
+    queryKey: ['sms-settings'],
+    queryFn: () => api.get<SMSSettings>('/api/v1/settings/sms'),
+  })
+
+  const [smsFormData, setSmsFormData] = useState<SMSSettings | null>(null)
+  const [testPhone, setTestPhone] = useState('')
 
   // Initialize form data when settings load
   useEffect(() => {
@@ -67,6 +155,12 @@ export function SettingsPage() {
       setFormData(settings)
     }
   }, [settings]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (smsSettingsData && !smsFormData) {
+      setSmsFormData(smsSettingsData)
+    }
+  }, [smsSettingsData]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateMutation = useMutation({
     mutationFn: (data: Settings) => api.put('/api/v1/settings', data),
@@ -79,11 +173,38 @@ export function SettingsPage() {
     },
   })
 
+  const updateSMSMutation = useMutation({
+    mutationFn: (data: SMSSettings) => api.put<SMSSettings>('/api/v1/settings/sms', data),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['sms-settings'] })
+      setSmsFormData(data)
+      toast({ title: 'SMS settings saved', description: 'Configuration will take effect within 30 seconds.' })
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error', description: error.message || 'Failed to save SMS settings.', variant: 'destructive' })
+    },
+  })
+
+  const testSMSMutation = useMutation({
+    mutationFn: (req: { phone_number: string; settings: SMSSettings }) =>
+      api.post<{ success: boolean; message: string }>('/api/v1/settings/sms/test', req),
+    onSuccess: () => {
+      toast({ title: 'Test SMS sent', description: 'Check the target phone for the message.' })
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Test failed', description: error.message || 'Failed to send test SMS.', variant: 'destructive' })
+    },
+  })
+
   const handleSave = () => {
-    if (formData) {
+    if (activeTab === 'sms' && smsFormData) {
+      updateSMSMutation.mutate(smsFormData)
+    } else if (formData) {
       updateMutation.mutate(formData)
     }
   }
+
+  const isSaving = activeTab === 'sms' ? updateSMSMutation.isPending : updateMutation.isPending
 
   const updateGeneral = (field: keyof Settings['general'], value: string) => {
     if (formData) {
@@ -146,8 +267,11 @@ export function SettingsPage() {
     { id: 'general', label: 'General', icon: Building },
     { id: 'security', label: 'Security', icon: Shield },
     { id: 'authentication', label: 'Authentication', icon: Key },
+    { id: 'sms', label: 'SMS / OTP', icon: Smartphone },
     { id: 'branding', label: 'Branding', icon: Palette },
   ] as const
+
+  const currentProvider = SMS_PROVIDERS.find(p => p.id === smsFormData?.provider) || SMS_PROVIDERS[0]
 
   return (
     <div className="space-y-6">
@@ -156,9 +280,9 @@ export function SettingsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
           <p className="text-muted-foreground">Configure system settings</p>
         </div>
-        <Button onClick={handleSave} disabled={updateMutation.isPending}>
+        <Button onClick={handleSave} disabled={isSaving}>
           <Save className="mr-2 h-4 w-4" />
-          {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+          {isSaving ? 'Saving...' : 'Save Changes'}
         </Button>
       </div>
 
@@ -215,6 +339,7 @@ export function SettingsPage() {
                       <option value="es">Spanish</option>
                       <option value="fr">French</option>
                       <option value="de">German</option>
+                      <option value="tr">Turkish</option>
                     </select>
                   </div>
                   <div className="space-y-2">
@@ -229,6 +354,9 @@ export function SettingsPage() {
                       <option value="America/Chicago">Central Time</option>
                       <option value="America/Denver">Mountain Time</option>
                       <option value="America/Los_Angeles">Pacific Time</option>
+                      <option value="Europe/Istanbul">Turkey (Istanbul)</option>
+                      <option value="Europe/London">London</option>
+                      <option value="Europe/Berlin">Berlin</option>
                     </select>
                   </div>
                 </div>
@@ -364,6 +492,86 @@ export function SettingsPage() {
                     />
                     <span className="text-sm font-medium">Require MFA for all users</span>
                   </label>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Country-Based Access Control</CardTitle>
+                  <CardDescription>Block login attempts from specific countries (ISO 3166-1 alpha-2 codes)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Blocked Countries</label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="e.g. CN, RU, KP"
+                        value={newCountry}
+                        onChange={(e) => setNewCountry(e.target.value.toUpperCase().slice(0, 2))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            if (newCountry.length === 2 && !formData.security.blocked_countries?.includes(newCountry)) {
+                              setFormData({
+                                ...formData,
+                                security: {
+                                  ...formData.security,
+                                  blocked_countries: [...(formData.security.blocked_countries || []), newCountry],
+                                },
+                              })
+                              setNewCountry('')
+                            }
+                          }
+                        }}
+                        className="w-32"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (newCountry.length === 2 && !formData.security.blocked_countries?.includes(newCountry)) {
+                            setFormData({
+                              ...formData,
+                              security: {
+                                ...formData.security,
+                                blocked_countries: [...(formData.security.blocked_countries || []), newCountry],
+                              },
+                            })
+                            setNewCountry('')
+                          }
+                        }}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {(formData.security.blocked_countries || []).map((country) => (
+                        <div
+                          key={country}
+                          className="flex items-center gap-1 bg-red-50 border border-red-200 px-2 py-1 rounded text-sm text-red-700"
+                        >
+                          <span>{country}</span>
+                          <button
+                            onClick={() => {
+                              setFormData({
+                                ...formData,
+                                security: {
+                                  ...formData.security,
+                                  blocked_countries: formData.security.blocked_countries.filter((c) => c !== country),
+                                },
+                              })
+                            }}
+                            className="text-red-400 hover:text-red-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {(!formData.security.blocked_countries || formData.security.blocked_countries.length === 0) && (
+                      <p className="text-xs text-muted-foreground">No countries blocked. Users can log in from any location.</p>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -514,6 +722,157 @@ export function SettingsPage() {
                 </CardContent>
               </Card>
             </div>
+          )}
+
+          {activeTab === 'sms' && smsFormData && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>SMS Provider</CardTitle>
+                  <CardDescription>Configure the SMS gateway for OTP delivery</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={smsFormData.enabled}
+                      onChange={(e) => setSmsFormData({ ...smsFormData, enabled: e.target.checked })}
+                      className="rounded"
+                    />
+                    <span className="text-sm font-medium">Enable SMS OTP delivery</span>
+                  </label>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Provider</label>
+                    <select
+                      value={smsFormData.provider}
+                      onChange={(e) => setSmsFormData({
+                        ...smsFormData,
+                        provider: e.target.value,
+                        credentials: {},
+                      })}
+                      className="w-full border rounded-md px-3 py-2"
+                    >
+                      {SMS_PROVIDERS.map(p => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Message Prefix</label>
+                    <Input
+                      value={smsFormData.message_prefix}
+                      onChange={(e) => setSmsFormData({ ...smsFormData, message_prefix: e.target.value })}
+                      placeholder="OpenIDX"
+                    />
+                    <p className="text-xs text-muted-foreground">Appears at the start of OTP messages, e.g. &quot;OpenIDX: Your code is 123456&quot;</p>
+                  </div>
+
+                  {currentProvider.fields.length > 0 && (
+                    <div className="border-t pt-4 mt-4">
+                      <h4 className="text-sm font-medium mb-3">{currentProvider.label} Credentials</h4>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {currentProvider.fields.map(field => (
+                          <div key={field.key} className="space-y-2">
+                            <label className="text-sm font-medium">{field.label}</label>
+                            <Input
+                              type={field.sensitive ? 'password' : 'text'}
+                              value={smsFormData.credentials[field.key] || ''}
+                              placeholder={field.sensitive ? 'Enter new value to change' : field.placeholder || ''}
+                              onChange={(e) => setSmsFormData({
+                                ...smsFormData,
+                                credentials: { ...smsFormData.credentials, [field.key]: e.target.value },
+                              })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>OTP Settings</CardTitle>
+                  <CardDescription>Configure one-time password behavior</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Code Length</label>
+                      <select
+                        value={smsFormData.otp_length}
+                        onChange={(e) => setSmsFormData({ ...smsFormData, otp_length: parseInt(e.target.value) })}
+                        className="w-full border rounded-md px-3 py-2"
+                      >
+                        <option value={4}>4 digits</option>
+                        <option value={6}>6 digits</option>
+                        <option value={8}>8 digits</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Expiry (seconds)</label>
+                      <Input
+                        type="number"
+                        min={60}
+                        max={600}
+                        value={smsFormData.otp_expiry}
+                        onChange={(e) => setSmsFormData({ ...smsFormData, otp_expiry: parseInt(e.target.value) || 300 })}
+                      />
+                      <p className="text-xs text-muted-foreground">{Math.floor(smsFormData.otp_expiry / 60)}m {smsFormData.otp_expiry % 60}s</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Max Attempts</label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={smsFormData.max_attempts}
+                        onChange={(e) => setSmsFormData({ ...smsFormData, max_attempts: parseInt(e.target.value) || 3 })}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Test SMS</CardTitle>
+                  <CardDescription>Send a test message to verify your configuration works</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input
+                      value={testPhone}
+                      onChange={(e) => setTestPhone(e.target.value)}
+                      placeholder="+905551234567"
+                      className="max-w-xs"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        if (testPhone && smsFormData) {
+                          testSMSMutation.mutate({ phone_number: testPhone, settings: smsFormData })
+                        }
+                      }}
+                      disabled={testSMSMutation.isPending || !testPhone}
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      {testSMSMutation.isPending ? 'Sending...' : 'Send Test SMS'}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Save your settings first, then send a test to verify the provider is configured correctly.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === 'sms' && !smsFormData && (
+            <p className="text-center py-8">Loading SMS settings...</p>
           )}
 
           {activeTab === 'branding' && (

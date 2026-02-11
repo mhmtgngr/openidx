@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -425,7 +426,16 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		session = s.getSessionFromBearer(c)
 	}
 	if session == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		// Redirect to login with path-only redirect_url.
+		// Using a relative path avoids port-stripping issues (APISIX's X-Forwarded-Host
+		// uses nginx $host which drops the port). The browser resolves relative redirects
+		// against the current page URL, preserving the correct host:port.
+		redirectPath := originalURI
+		if redirectPath == "" {
+			redirectPath = "/"
+		}
+		loginURL := fmt.Sprintf("/access/.auth/login?redirect_url=%s", url.QueryEscape(redirectPath))
+		c.Redirect(http.StatusFound, loginURL)
 		return
 	}
 

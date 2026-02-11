@@ -96,18 +96,66 @@ type Service struct {
 	oauthIssuer      string
 	oauthInternalURL string // Docker-internal URL for server-to-server calls
 	oauthJWKSURL     string
-	zitiManager     *ZitiManager
-	guacamoleClient *GuacamoleClient
+	zitiManager          *ZitiManager
+	guacamoleClient      *GuacamoleClient
+	featureManager       *FeatureManager
+	auditService         *UnifiedAuditService
+	browzerTargetManager *BrowZerTargetManager
+	apisixConfigPath     string
 }
 
 // SetGuacamoleClient sets the Guacamole client for the service
 func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	s.guacamoleClient = gc
+	if s.featureManager != nil {
+		s.featureManager.SetGuacamoleClient(gc)
+	}
+	if s.auditService != nil {
+		s.auditService.SetGuacamoleClient(gc)
+	}
 }
 
 // SetZitiManager sets the OpenZiti manager for the service
 func (s *Service) SetZitiManager(zm *ZitiManager) {
 	s.zitiManager = zm
+	if s.featureManager != nil {
+		s.featureManager.SetZitiManager(zm)
+	}
+	if s.auditService != nil {
+		s.auditService.SetZitiManager(zm)
+	}
+}
+
+// SetFeatureManager sets the feature manager for the service
+func (s *Service) SetFeatureManager(fm *FeatureManager) {
+	s.featureManager = fm
+	if s.zitiManager != nil {
+		fm.SetZitiManager(s.zitiManager)
+	}
+	if s.guacamoleClient != nil {
+		fm.SetGuacamoleClient(s.guacamoleClient)
+	}
+}
+
+// SetBrowZerTargetManager sets the BrowZer target manager
+func (s *Service) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
+	s.browzerTargetManager = btm
+}
+
+// SetAPISIXConfigPath sets the path to the APISIX standalone config file
+func (s *Service) SetAPISIXConfigPath(path string) {
+	s.apisixConfigPath = path
+}
+
+// SetAuditService sets the unified audit service
+func (s *Service) SetAuditService(as *UnifiedAuditService) {
+	s.auditService = as
+	if s.zitiManager != nil {
+		as.SetZitiManager(s.zitiManager)
+	}
+	if s.guacamoleClient != nil {
+		as.SetGuacamoleClient(s.guacamoleClient)
+	}
 }
 
 // NewService creates a new access proxy service
@@ -214,6 +262,21 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/browzer/services/:id/enable", svc.handleEnableBrowZerOnService)
 		api.POST("/ziti/browzer/services/:id/disable", svc.handleDisableBrowZerOnService)
 
+		// BrowZer bootstrapper management panel endpoints
+		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
+		api.POST("/ziti/browzer/certificates", svc.handleBrowZerCertUpload)
+		api.DELETE("/ziti/browzer/certificates", svc.handleBrowZerCertRevert)
+		api.PUT("/ziti/browzer/domain", svc.handleBrowZerDomainChange)
+		api.POST("/ziti/browzer/restart", svc.handleBrowZerRestart)
+
+		// Platform certificate management
+		api.GET("/certificates/platform", svc.handleGetPlatformCert)
+		api.POST("/certificates/platform", svc.handleUploadPlatformCert)
+		api.DELETE("/certificates/platform", svc.handleRevertPlatformCert)
+		api.POST("/certificates/apisix/enable", svc.handleEnableAPISIXSSL)
+		api.POST("/certificates/apisix/disable", svc.handleDisableAPISIXSSL)
+		api.GET("/certificates/status", svc.handleGetCertStatus)
+
 		// Forward-auth endpoint for APISIX
 		api.POST("/auth/decide", svc.handleAuthDecide)
 		api.GET("/auth/decide", svc.handleAuthDecide)
@@ -224,7 +287,54 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guacamole remote access
 		api.GET("/guacamole/connections", svc.handleListGuacamoleConnections)
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
+
+		// Temporary access links for support/vendor access
+		api.GET("/temp-access", svc.handleListTempAccess)
+		api.POST("/temp-access", svc.handleCreateTempAccess)
+		api.GET("/temp-access/:id", svc.handleGetTempAccess)
+		api.DELETE("/temp-access/:id", svc.handleRevokeTempAccess)
+		api.GET("/temp-access/:id/usage", svc.handleGetTempAccessUsage)
+
+		// Quick service creation (route + Ziti + BrowZer in one call)
+		api.POST("/services/quick-create", svc.handleQuickCreate)
+
+		// Service feature management endpoints
+		api.GET("/services/:id/features", svc.handleGetServiceFeatures)
+		api.GET("/services/:id/status", svc.handleGetServiceStatus)
+		api.GET("/services/status", svc.handleGetAllServicesStatus)
+		api.POST("/services/:id/features/ziti/enable", svc.handleEnableZitiFeature)
+		api.POST("/services/:id/features/ziti/disable", svc.handleDisableZitiFeature)
+		api.POST("/services/:id/features/browzer/enable", svc.handleEnableBrowZerFeature)
+		api.POST("/services/:id/features/browzer/disable", svc.handleDisableBrowZerFeature)
+		api.POST("/services/:id/features/guacamole/enable", svc.handleEnableGuacamoleFeature)
+		api.POST("/services/:id/features/guacamole/disable", svc.handleDisableGuacamoleFeature)
+
+		// Health check endpoints
+		api.GET("/health/integrations", svc.handleHealthIntegrations)
+		api.GET("/health/ziti", svc.handleHealthZiti)
+		api.GET("/health/guacamole", svc.handleHealthGuacamole)
+		api.GET("/health/browzer", svc.handleHealthBrowZer)
+		api.GET("/services/:id/health", svc.handleHealthService)
+
+		// Connection test endpoints
+		api.POST("/services/:id/test-connection", svc.handleTestConnection)
+		api.GET("/services/:id/test-history", svc.handleGetConnectionTestHistory)
+
+		// Ziti discovery and import
+		api.GET("/ziti/discover", svc.handleDiscoverZitiServices)
+		api.POST("/ziti/import", svc.handleImportZitiService)
+		api.POST("/ziti/import/bulk", svc.handleBulkImportZitiServices)
+		api.GET("/ziti/unmanaged/count", svc.handleGetUnmanagedServicesCount)
+
+		// Unified audit log
+		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)
+		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
+		api.POST("/audit/unified/sync", svc.handleSyncExternalAuditEvents)
+		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
 	}
+
+	// Temp access public endpoint (no auth - uses token)
+	router.GET("/temp-access/:token", svc.handleUseTempAccess)
 
 	// Catch-all reverse proxy (must be last)
 	router.NoRoute(svc.handleProxy)
@@ -754,8 +864,22 @@ func (s *Service) handleLogin(c *gin.Context) {
 	s.redis.Client.Set(c.Request.Context(), "access_oauth_state:"+state, sessionData, 10*time.Minute)
 
 	// Build OAuth authorization URL
-	callbackURL := fmt.Sprintf("http://%s:%d/access/.auth/callback",
-		s.config.AccessProxyDomain, s.config.Port)
+	// Determine the callback host: prefer the request Host (preserves port from pass_host),
+	// then X-Forwarded-Host, then extract from redirect_url.
+	callbackHost := c.Request.Host
+	if callbackHost == "" || callbackHost == fmt.Sprintf("access-service:%d", s.config.Port) {
+		callbackHost = c.GetHeader("X-Forwarded-Host")
+	}
+	if callbackHost == "" {
+		// Extract host from redirect_url if it's a full URL (e.g., http://demo.localtest.me:8088/)
+		if parsed, err := url.Parse(redirectURL); err == nil && parsed.Host != "" {
+			callbackHost = parsed.Host
+		}
+	}
+	if callbackHost == "" {
+		callbackHost = fmt.Sprintf("%s:%d", s.config.AccessProxyDomain, s.config.Port)
+	}
+	callbackURL := fmt.Sprintf("http://%s/access/.auth/callback", callbackHost)
 
 	authURL := fmt.Sprintf("%s/oauth/authorize?client_id=access-proxy&response_type=code&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&state=%s&scope=openid+profile+email",
 		s.oauthIssuer,
@@ -804,9 +928,20 @@ func (s *Service) handleCallback(c *gin.Context) {
 		return
 	}
 
-	// Exchange code for tokens
-	callbackURL := fmt.Sprintf("http://%s:%d/access/.auth/callback",
-		s.config.AccessProxyDomain, s.config.Port)
+	// Exchange code for tokens (callback URL must match what was sent to the authorize endpoint)
+	callbackHost := c.Request.Host
+	if callbackHost == "" || callbackHost == fmt.Sprintf("access-service:%d", s.config.Port) {
+		callbackHost = c.GetHeader("X-Forwarded-Host")
+	}
+	if callbackHost == "" {
+		if parsed, err := url.Parse(storedState.RedirectURL); err == nil && parsed.Host != "" {
+			callbackHost = parsed.Host
+		}
+	}
+	if callbackHost == "" {
+		callbackHost = fmt.Sprintf("%s:%d", s.config.AccessProxyDomain, s.config.Port)
+	}
+	callbackURL := fmt.Sprintf("http://%s/access/.auth/callback", callbackHost)
 
 	tokenResp, err := s.exchangeCode(c.Request.Context(), code, storedState.Verifier, callbackURL)
 	if err != nil {
@@ -1262,6 +1397,329 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		r.AllowedCountries = []string{}
 	}
 	return &r, nil
+}
+
+// EnsureZitiServicesForRoutes checks for Ziti-enabled proxy routes that don't have
+// a corresponding Ziti service on the controller and creates them. This handles
+// routes seeded via init-db.sql that need Ziti resources provisioned on first boot.
+func (s *Service) EnsureZitiServicesForRoutes(ctx context.Context, zm *ZitiManager) {
+	if zm == nil {
+		return
+	}
+
+	// Wait for Ziti controller to be fully ready
+	time.Sleep(15 * time.Second)
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT pr.id, pr.ziti_service_name, pr.to_url, COALESCE(pr.browzer_enabled, false)
+		 FROM proxy_routes pr
+		 WHERE pr.ziti_enabled = true
+		   AND pr.ziti_service_name IS NOT NULL
+		   AND pr.ziti_service_name != ''
+		   AND NOT EXISTS (SELECT 1 FROM ziti_services zs WHERE zs.name = pr.ziti_service_name)`)
+	if err != nil {
+		s.logger.Error("Failed to query routes needing Ziti setup", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var routeID, serviceName, toURL string
+		var browzerEnabled bool
+		if err := rows.Scan(&routeID, &serviceName, &toURL, &browzerEnabled); err != nil {
+			s.logger.Error("Failed to scan route", zap.Error(err))
+			continue
+		}
+
+		host, port := parseHostPort(toURL)
+		if host == "" || port == 0 {
+			s.logger.Warn("Could not parse upstream for Ziti setup",
+				zap.String("service", serviceName), zap.String("to_url", toURL))
+			continue
+		}
+
+		// Check if the service already exists on the Ziti controller
+		existingSvc, _ := zm.GetServiceByName(serviceName)
+		if existingSvc != nil {
+			s.logger.Info("Ziti service already exists, ensuring hosting",
+				zap.String("service", serviceName))
+			// Ensure it's being hosted
+			zm.HostService(serviceName, host, port)
+			// Add browzer-enabled if needed
+			if browzerEnabled {
+				s.ensureBrowZerAttribute(ctx, zm, existingSvc.ID)
+			}
+			continue
+		}
+
+		s.logger.Info("Creating Ziti service for seeded route",
+			zap.String("route_id", routeID),
+			zap.String("service", serviceName),
+			zap.String("target", fmt.Sprintf("%s:%d", host, port)))
+
+		if err := zm.SetupZitiForRoute(ctx, routeID, serviceName, host, port); err != nil {
+			s.logger.Error("Failed to setup Ziti for seeded route",
+				zap.String("service", serviceName), zap.Error(err))
+			continue
+		}
+
+		// Add browzer-enabled attribute if route has browzer_enabled=true
+		if browzerEnabled {
+			svc, _ := zm.GetServiceByName(serviceName)
+			if svc != nil {
+				s.ensureBrowZerAttribute(ctx, zm, svc.ID)
+			}
+		}
+
+		s.logger.Info("Ziti service created for seeded route", zap.String("service", serviceName))
+	}
+}
+
+// ensureBrowZerAttribute adds the "browzer-enabled" role attribute to a Ziti service if not present
+func (s *Service) ensureBrowZerAttribute(ctx context.Context, zm *ZitiManager, zitiServiceID string) {
+	attrs, err := zm.GetServiceRoleAttributes(ctx, zitiServiceID)
+	if err != nil {
+		s.logger.Warn("Failed to get service role attributes", zap.Error(err))
+		return
+	}
+	for _, a := range attrs {
+		if a == "browzer-enabled" {
+			return // already has it
+		}
+	}
+	attrs = append(attrs, "browzer-enabled")
+	if err := zm.PatchServiceRoleAttributes(ctx, zitiServiceID, attrs); err != nil {
+		s.logger.Error("Failed to add browzer-enabled attribute", zap.Error(err))
+	} else {
+		s.logger.Info("Added browzer-enabled attribute to service", zap.String("ziti_id", zitiServiceID))
+	}
+}
+
+// EnsureBrowZerRouterService creates the browzer-router-zt Ziti service with all required policies
+// and ensures it's hosted. All operations are idempotent; safe to call on every startup.
+func (s *Service) EnsureBrowZerRouterService(ctx context.Context, zm *ZitiManager) {
+	if zm == nil {
+		return
+	}
+
+	s.logger.Info("Ensuring BrowZer router Ziti service",
+		zap.String("service", BrowZerRouterServiceName),
+		zap.String("host", BrowZerRouterHost),
+		zap.Int("port", BrowZerRouterPort))
+
+	// 1. Create or find the service
+	var serviceID string
+	err := zm.SetupZitiForRoute(ctx, "", BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
+	if err != nil {
+		s.logger.Debug("SetupZitiForRoute returned (service may already exist)", zap.Error(err))
+	}
+
+	// Look up the service ID (it should exist now, either just created or from a previous run)
+	svc, svcErr := zm.GetServiceByName(BrowZerRouterServiceName)
+	if svcErr != nil || svc == nil {
+		// GetServiceByName iterates ListServices which can be unreliable; try DB fallback
+		var dbZitiID string
+		if dbErr := zm.GetDB().Pool.QueryRow(ctx,
+			"SELECT ziti_id FROM ziti_services WHERE name=$1", BrowZerRouterServiceName).Scan(&dbZitiID); dbErr == nil {
+			serviceID = dbZitiID
+			s.logger.Info("Found router service ID from DB", zap.String("ziti_id", serviceID))
+		} else {
+			s.logger.Warn("Could not find browzer-router-zt service ID from API or DB", zap.Error(svcErr))
+		}
+	} else {
+		serviceID = svc.ID
+	}
+
+	// 2. Ensure all role attributes are present
+	if serviceID != "" {
+		attrs, attrErr := zm.GetServiceRoleAttributes(ctx, serviceID)
+		if attrErr == nil {
+			needPatch := false
+			for _, need := range []string{BrowZerRouterServiceName, "browzer-enabled"} {
+				found := false
+				for _, a := range attrs {
+					if a == need {
+						found = true
+						break
+					}
+				}
+				if !found {
+					attrs = append(attrs, need)
+					needPatch = true
+				}
+			}
+			if needPatch {
+				if patchErr := zm.PatchServiceRoleAttributes(ctx, serviceID, attrs); patchErr != nil {
+					s.logger.Error("Failed to patch router service attributes", zap.Error(patchErr))
+				} else {
+					s.logger.Info("Updated router service role attributes", zap.Strings("attrs", attrs))
+				}
+			}
+		}
+	}
+
+	// 3. Ensure bind/dial service policies (idempotent — will get 400 if they exist)
+	bindName := fmt.Sprintf("openidx-bind-%s", BrowZerRouterServiceName)
+	if _, bErr := zm.CreateServicePolicy(ctx, bindName, "Bind",
+		[]string{"#" + BrowZerRouterServiceName}, []string{"#access-proxy-clients"}); bErr != nil {
+		s.logger.Debug("Bind policy (may already exist)", zap.Error(bErr))
+	}
+	dialName := fmt.Sprintf("openidx-dial-%s", BrowZerRouterServiceName)
+	if _, dErr := zm.CreateServicePolicy(ctx, dialName, "Dial",
+		[]string{"#" + BrowZerRouterServiceName}, []string{"#access-proxy-clients"}); dErr != nil {
+		s.logger.Debug("Dial policy (may already exist)", zap.Error(dErr))
+	}
+
+	// 4. Ensure service-edge-router policy (allows edge routers to handle this service)
+	serpName := fmt.Sprintf("openidx-serp-%s", BrowZerRouterServiceName)
+	if serpErr := zm.EnsureServiceEdgeRouterPolicy(ctx, serpName,
+		[]string{"#" + BrowZerRouterServiceName}, []string{"#all"}); serpErr != nil {
+		s.logger.Debug("Service-edge-router policy (may already exist)", zap.Error(serpErr))
+	}
+
+	// 5. Wait for SDK to discover the service, then host it
+	s.logger.Info("Waiting for Ziti SDK to discover browzer-router-zt service...")
+	time.Sleep(10 * time.Second)
+
+	if hostErr := zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort); hostErr != nil {
+		s.logger.Error("Failed to host BrowZer router Ziti service", zap.Error(hostErr))
+	} else {
+		s.logger.Info("BrowZer router Ziti service hosted successfully")
+	}
+}
+
+// handleQuickCreate creates a proxy route with Ziti and BrowZer enabled in a single API call.
+// This eliminates the multi-step process of creating a route, enabling Ziti, and enabling BrowZer separately.
+func (s *Service) handleQuickCreate(c *gin.Context) {
+	var req struct {
+		Name           string   `json:"name" binding:"required"`
+		TargetURL      string   `json:"target_url" binding:"required"`
+		Domain         string   `json:"domain" binding:"required"`
+		PathPrefix     string   `json:"path_prefix"`
+		ZitiEnabled    bool     `json:"ziti_enabled"`
+		BrowzerEnabled bool     `json:"browzer_enabled"`
+		AllowedRoles   []string `json:"allowed_roles"`
+		AllowedGroups  []string `json:"allowed_groups"`
+		RouteType      string   `json:"route_type"`
+		RequireAuth    *bool    `json:"require_auth"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// BrowZer implies Ziti
+	if req.BrowzerEnabled {
+		req.ZitiEnabled = true
+	}
+
+	if req.RouteType == "" {
+		req.RouteType = "http"
+	}
+	requireAuth := true
+	if req.RequireAuth != nil {
+		requireAuth = *req.RequireAuth
+	}
+
+	// Validate path_prefix if set
+	if req.PathPrefix != "" && !strings.HasPrefix(req.PathPrefix, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path_prefix must start with /"})
+		return
+	}
+
+	// Build from_url from domain + optional path prefix
+	fromURL := "http://" + req.Domain
+	if req.PathPrefix != "" {
+		fromURL += req.PathPrefix
+	}
+
+	// Create the proxy route
+	routeID := uuid.New().String()
+	rolesJSON, _ := json.Marshal(req.AllowedRoles)
+	groupsJSON, _ := json.Marshal(req.AllowedGroups)
+
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		`INSERT INTO proxy_routes (id, name, from_url, to_url, require_auth, enabled, priority,
+		  route_type, allowed_roles, allowed_groups,
+		  idle_timeout, absolute_timeout, max_risk_score,
+		  allowed_countries, cors_allowed_origins, custom_headers, policy_ids, posture_check_ids)
+		 VALUES ($1, $2, $3, $4, $5, true, 0,
+		         $6, $7, $8,
+		         900, 43200, 100,
+		         '[]', '[]', '{}', '[]', '[]')`,
+		routeID, req.Name, fromURL, req.TargetURL, requireAuth,
+		req.RouteType, rolesJSON, groupsJSON)
+	if err != nil {
+		s.logger.Error("Failed to create route", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
+		return
+	}
+
+	s.logger.Info("Quick-create: route created", zap.String("route_id", routeID), zap.String("name", req.Name))
+
+	// Get user ID from context
+	userID := ""
+	if uid, exists := c.Get("user_id"); exists {
+		userID = uid.(string)
+	}
+
+	result := gin.H{
+		"id":      routeID,
+		"name":    req.Name,
+		"domain":  req.Domain,
+		"message": "route created",
+	}
+
+	// Enable Ziti if requested
+	if req.ZitiEnabled && s.featureManager != nil {
+		// Parse target URL to get host/port for Ziti
+		host, port := parseHostPort(req.TargetURL)
+		serviceName := fmt.Sprintf("openidx-%s", req.Name)
+
+		zitiConfig := &FeatureConfig{
+			ZitiServiceName: serviceName,
+			ZitiHost:        host,
+			ZitiPort:        port,
+		}
+
+		if err := s.featureManager.EnableFeature(c.Request.Context(), routeID, FeatureZiti, zitiConfig, userID); err != nil {
+			s.logger.Error("Quick-create: failed to enable Ziti", zap.Error(err))
+			result["ziti_error"] = err.Error()
+		} else {
+			result["ziti_enabled"] = true
+			result["ziti_service_name"] = serviceName
+			s.logger.Info("Quick-create: Ziti enabled", zap.String("service", serviceName))
+		}
+	}
+
+	// Enable BrowZer if requested (Ziti must have succeeded)
+	if req.BrowzerEnabled && s.featureManager != nil && result["ziti_error"] == nil {
+		if err := s.featureManager.EnableFeature(c.Request.Context(), routeID, FeatureBrowZer, &FeatureConfig{}, userID); err != nil {
+			s.logger.Error("Quick-create: failed to enable BrowZer", zap.Error(err))
+			result["browzer_error"] = err.Error()
+		} else {
+			result["browzer_enabled"] = true
+			s.logger.Info("Quick-create: BrowZer enabled")
+		}
+
+		if req.PathPrefix != "" {
+			result["path_prefix"] = req.PathPrefix
+			result["note"] = fmt.Sprintf("Path-based BrowZer routing: %s%s → router → backend", req.Domain, req.PathPrefix)
+		} else {
+			result["note"] = fmt.Sprintf("For Docker Compose: add '%s' as a network alias to the browzer-bootstrapper service", req.Domain)
+		}
+	}
+
+	s.logAuditEvent(c, "service_quick_created", routeID, "proxy_route", map[string]interface{}{
+		"name":            req.Name,
+		"domain":          req.Domain,
+		"path_prefix":     req.PathPrefix,
+		"ziti_enabled":    req.ZitiEnabled,
+		"browzer_enabled": req.BrowzerEnabled,
+	})
+
+	c.JSON(http.StatusCreated, result)
 }
 
 func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute, error) {

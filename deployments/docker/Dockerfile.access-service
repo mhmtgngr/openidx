@@ -12,7 +12,7 @@ RUN go mod download
 
 ARG VERSION=dev
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN GOMAXPROCS=1 GOMEMLIMIT=1GiB CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s -X main.Version=${VERSION}" \
     -o /app/service ./cmd/access-service
 
@@ -28,6 +28,12 @@ COPY --from=builder /app/service .
 
 # Create Ziti identity directory writable by openidx user
 RUN mkdir -p /ziti && chown openidx:openidx /ziti
+
+# Create shared config directory for BrowZer bootstrapper targets
+RUN mkdir -p /shared-config && chown openidx:openidx /shared-config
+
+# Create shared certs directory for BrowZer TLS certificates
+RUN mkdir -p /shared-certs && chown openidx:openidx /shared-certs
 
 USER openidx
 

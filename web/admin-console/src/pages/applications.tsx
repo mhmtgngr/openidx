@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Globe, Smartphone, Server, ExternalLink, Edit, Trash2, Settings, Copy, RefreshCw, ChevronLeft, ChevronRight, AppWindow } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -19,6 +19,8 @@ import {
   DialogTitle,
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import {
   AlertDialog,
@@ -393,6 +395,18 @@ export function ApplicationsPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading applications...</p>
+            </div>
+          ) : !filteredApps || filteredApps.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <AppWindow className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No applications found</p>
+              <p className="text-sm">Register an application to get started</p>
+            </div>
+          ) : (
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -406,12 +420,7 @@ export function ApplicationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={6} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredApps?.length === 0 ? (
-                  <tr><td colSpan={6} className="p-4 text-center">No applications found</td></tr>
-                ) : (
-                  filteredApps?.map((app) => (
+                {filteredApps.map((app) => (
                     <tr key={app.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
@@ -491,10 +500,11 @@ export function ApplicationsPage() {
                       </td>
                     </tr>
                   ))
-                )}
+                }
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
@@ -560,18 +570,16 @@ export function ApplicationsPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="type">Application Type *</Label>
-              <select
-                id="type"
-                name="type"
-                value={formData.type}
-                onChange={(e) => setFormData(prev => ({ ...prev, type: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="web">Web Application</option>
-                <option value="native">Native/Mobile App</option>
-                <option value="service">Service/Machine-to-Machine</option>
-              </select>
+              <Select value={formData.type} onValueChange={(value) => setFormData(prev => ({ ...prev, type: value }))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select application type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="web">Web Application</SelectItem>
+                  <SelectItem value="native">Native/Mobile App</SelectItem>
+                  <SelectItem value="service">Service/Machine-to-Machine</SelectItem>
+                </SelectContent>
+              </Select>
               <p className="text-xs text-gray-500">
                 {formData.type === 'web' && 'Server-side web applications (confidential client)'}
                 {formData.type === 'native' && 'Mobile or desktop applications (public client with PKCE)'}

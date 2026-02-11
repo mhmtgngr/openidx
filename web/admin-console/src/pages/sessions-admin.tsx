@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Monitor, Trash2 } from 'lucide-react'
+import { Monitor, MonitorSmartphone, Trash2, Globe, Shield, AlertTriangle, Users } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Badge } from '../components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -21,6 +22,9 @@ interface Session {
   device_name?: string
   location?: string
   device_type?: string
+  risk_score?: number
+  auth_methods?: string[]
+  device_trusted?: boolean
   started_at: string
   last_seen_at: string
   expires_at: string
@@ -76,11 +80,67 @@ export function SessionsAdminPage() {
 
   const formatDate = (d: string) => new Date(d).toLocaleString()
 
+  // Calculate session stats
+  const activeSessions = sessions.filter(s => !s.revoked && new Date(s.expires_at) > new Date())
+  const highRiskSessions = sessions.filter(s => (s.risk_score || 0) >= 70)
+  const trustedDeviceSessions = sessions.filter(s => s.device_trusted)
+  const uniqueUsers = new Set(sessions.map(s => s.user_id)).size
+
+  const getRiskBadge = (score?: number) => {
+    if (!score) return null
+    if (score >= 70) return <Badge className="bg-red-100 text-red-800 text-xs"><AlertTriangle className="h-3 w-3 mr-1" />{score}</Badge>
+    if (score >= 50) return <Badge className="bg-amber-100 text-amber-800 text-xs">{score}</Badge>
+    if (score >= 30) return <Badge className="bg-yellow-100 text-yellow-800 text-xs">{score}</Badge>
+    return <Badge className="bg-green-100 text-green-800 text-xs">{score}</Badge>
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Session Management</h1>
         <p className="text-muted-foreground">View and manage active user sessions</p>
+      </div>
+
+      {/* Session Stats */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Active Sessions</CardTitle>
+            <Monitor className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">{activeSessions.length}</div>
+            <p className="text-xs text-muted-foreground">of {total} total</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Unique Users</CardTitle>
+            <Users className="h-4 w-4 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{uniqueUsers}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">High Risk</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{highRiskSessions.length}</div>
+            <p className="text-xs text-muted-foreground">Risk score &ge; 70</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Trusted Devices</CardTitle>
+            <Shield className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{trustedDeviceSessions.length}</div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -96,17 +156,27 @@ export function SessionsAdminPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? <p className="text-center py-8 text-muted-foreground">Loading...</p> :
-           sessions.length === 0 ? <p className="text-center py-8 text-muted-foreground">No sessions found</p> : (
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading sessions...</p>
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <MonitorSmartphone className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No active sessions</p>
+              <p className="text-sm">User sessions will appear here when users log in</p>
+            </div>
+          ) : (
             <Table>
               <TableHeader><TableRow>
                 <TableHead>User</TableHead><TableHead>Device</TableHead><TableHead>Location</TableHead>
-                <TableHead>IP Address</TableHead><TableHead>Started</TableHead><TableHead>Last Active</TableHead>
+                <TableHead>Risk</TableHead><TableHead>Started</TableHead><TableHead>Last Active</TableHead>
                 <TableHead>Status</TableHead><TableHead>Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {sessions.map(s => (
-                  <TableRow key={s.id}>
+                  <TableRow key={s.id} className={(s.risk_score || 0) >= 70 ? 'bg-red-50' : ''}>
                     <TableCell>
                       <div>
                         <div className="font-medium">{s.username}</div>
@@ -114,11 +184,31 @@ export function SessionsAdminPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm">{s.device_name || '-'}</div>
-                      {s.device_type && <div className="text-xs text-muted-foreground">{s.device_type}</div>}
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <div className="text-sm">{s.device_name || '-'}</div>
+                          {s.device_type && <div className="text-xs text-muted-foreground">{s.device_type}</div>}
+                        </div>
+                        {s.device_trusted && (
+                          <Shield className="h-4 w-4 text-green-500" />
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="text-sm">{s.location || '-'}</TableCell>
-                    <TableCell className="font-mono text-sm">{s.ip_address || '-'}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Globe className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-sm">{s.location || '-'}</span>
+                      </div>
+                      <div className="font-mono text-xs text-muted-foreground">{s.ip_address || '-'}</div>
+                    </TableCell>
+                    <TableCell>
+                      {getRiskBadge(s.risk_score)}
+                      {s.auth_methods && s.auth_methods.length > 0 && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {s.auth_methods.join(', ')}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm">{formatDate(s.started_at)}</TableCell>
                     <TableCell className="text-sm">{formatDate(s.last_seen_at)}</TableCell>
                     <TableCell>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X, ChevronLeft, ChevronRight, Fingerprint } from 'lucide-react'
+import { Plus, Search, Scale, Shield, Clock, MapPin, AlertTriangle, Edit, Trash2, ToggleLeft, ToggleRight, X, ChevronLeft, ChevronRight, Fingerprint, MoreHorizontal } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -23,6 +23,15 @@ import {
 } from '../components/ui/alert-dialog'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -343,15 +352,16 @@ export function PoliciesPage() {
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs">Effect</Label>
-                <select
-                  value={rule.effect}
-                  onChange={(e) => updateRuleEffect(ruleIndex, e.target.value)}
-                  className="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {effectOptions.map(opt => (
-                    <option key={opt} value={opt}>{opt.replace(/_/g, ' ')}</option>
-                  ))}
-                </select>
+                <Select value={rule.effect} onValueChange={(value) => updateRuleEffect(ruleIndex, value)}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="Select effect" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {effectOptions.map(opt => (
+                      <SelectItem key={opt} value={opt}>{opt.replace(/_/g, ' ')}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Priority</Label>
@@ -470,6 +480,18 @@ export function PoliciesPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading policies...</p>
+            </div>
+          ) : !filteredPolicies || filteredPolicies.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Shield className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No policies found</p>
+              <p className="text-sm">Create a policy to get started with access control</p>
+            </div>
+          ) : (
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -482,12 +504,7 @@ export function PoliciesPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={5} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredPolicies?.length === 0 ? (
-                  <tr><td colSpan={5} className="p-4 text-center">No policies found</td></tr>
-                ) : (
-                  filteredPolicies?.map((policy) => (
+                {filteredPolicies?.map((policy) => (
                     <tr key={policy.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
@@ -532,30 +549,47 @@ export function PoliciesPage() {
                         <Badge variant="outline">{policy.priority}</Badge>
                       </td>
                       <td className="p-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleEditClick(policy)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteClick(policy)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleEditClick(policy)}>
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleToggleEnabled(policy)}>
+                              {policy.enabled ? (
+                                <>
+                                  <ToggleLeft className="h-4 w-4 mr-2" />
+                                  Disable
+                                </>
+                              ) : (
+                                <>
+                                  <ToggleRight className="h-4 w-4 mr-2" />
+                                  Enable
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteClick(policy)}
+                              className="text-red-600 focus:text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (
@@ -622,22 +656,17 @@ export function PoliciesPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="type">Policy Type *</Label>
-              <select
-                id="type"
-                name="type"
-                value={formData.type}
-                onChange={(e) => {
-                  handleFormChange(e)
-                  setRules([])
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="separation_of_duty">Separation of Duty (SoD)</option>
-                <option value="risk_based">Risk-based</option>
-                <option value="timebound">Timebound</option>
-                <option value="location">Location-based</option>
-              </select>
+              <Select value={formData.type} onValueChange={(value) => { setFormData(prev => ({ ...prev, type: value })); setRules([]) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select policy type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="separation_of_duty">Separation of Duty (SoD)</SelectItem>
+                  <SelectItem value="risk_based">Risk-based</SelectItem>
+                  <SelectItem value="timebound">Timebound</SelectItem>
+                  <SelectItem value="location">Location-based</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="priority">Priority</Label>
@@ -710,22 +739,17 @@ export function PoliciesPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-type">Policy Type *</Label>
-              <select
-                id="edit-type"
-                name="type"
-                value={formData.type}
-                onChange={(e) => {
-                  handleFormChange(e)
-                  setRules([])
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="separation_of_duty">Separation of Duty (SoD)</option>
-                <option value="risk_based">Risk-based</option>
-                <option value="timebound">Timebound</option>
-                <option value="location">Location-based</option>
-              </select>
+              <Select value={formData.type} onValueChange={(value) => { setFormData(prev => ({ ...prev, type: value })); setRules([]) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select policy type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="separation_of_duty">Separation of Duty (SoD)</SelectItem>
+                  <SelectItem value="risk_based">Risk-based</SelectItem>
+                  <SelectItem value="timebound">Timebound</SelectItem>
+                  <SelectItem value="location">Location-based</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-priority">Priority</Label>

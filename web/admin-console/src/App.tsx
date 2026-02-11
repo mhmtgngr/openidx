@@ -25,6 +25,10 @@ import { SessionsAdminPage } from './pages/sessions-admin'
 import { ApprovalPoliciesPage } from './pages/approval-policies'
 import { ProxyRoutesPage } from './pages/proxy-routes'
 import { ZitiNetworkPage } from './pages/ziti-network'
+import { BrowZerManagementPage } from './pages/browzer-management'
+import { CertificatesPage } from './pages/certificates'
+import { UnifiedAuditPage } from './pages/unified-audit'
+import { ZitiDiscoveryPage } from './pages/ziti-discovery'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
@@ -32,7 +36,15 @@ import { OrganizationsPage } from './pages/organizations'
 import { ReportsPage } from './pages/reports'
 import { AppLauncherPage } from './pages/app-launcher'
 import { MyAccessPage } from './pages/my-access'
+import { MyDevicesPage } from './pages/my-devices'
 import { NotificationPreferencesPage } from './pages/notification-preferences'
+import { HardwareTokensPage } from './pages/hardware-tokens'
+import { DeviceTrustApprovalPage } from './pages/device-trust-approval'
+import { MFABypassCodesPage } from './pages/mfa-bypass-codes'
+import { PasswordlessSettingsPage } from './pages/passwordless-settings'
+import { RiskPoliciesPage } from './pages/risk-policies'
+import { TrustedBrowsersPage } from './pages/trusted-browsers'
+import { LoginAnalyticsPage } from './pages/login-analytics'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -198,6 +210,26 @@ export default function App() {
               <ZitiNetworkPage />
             </AdminRoute>
           } />
+          <Route path="ziti-discovery" element={
+            <AdminRoute>
+              <ZitiDiscoveryPage />
+            </AdminRoute>
+          } />
+          <Route path="browzer-management" element={
+            <AdminRoute>
+              <BrowZerManagementPage />
+            </AdminRoute>
+          } />
+          <Route path="certificates" element={
+            <AdminRoute>
+              <CertificatesPage />
+            </AdminRoute>
+          } />
+          <Route path="unified-audit" element={
+            <AdminRoute>
+              <UnifiedAuditPage />
+            </AdminRoute>
+          } />
           <Route path="settings" element={
             <AdminRoute>
               <SettingsPage />
@@ -219,8 +251,44 @@ export default function App() {
           <Route path="my-access" element={
             <MyAccessPage />
           } />
+          <Route path="my-devices" element={
+            <MyDevicesPage />
+          } />
           <Route path="notification-preferences" element={
             <NotificationPreferencesPage />
+          } />
+          <Route path="trusted-browsers" element={
+            <TrustedBrowsersPage />
+          } />
+          <Route path="hardware-tokens" element={
+            <AdminRoute>
+              <HardwareTokensPage />
+            </AdminRoute>
+          } />
+          <Route path="device-trust-approval" element={
+            <AdminRoute>
+              <DeviceTrustApprovalPage />
+            </AdminRoute>
+          } />
+          <Route path="mfa-bypass-codes" element={
+            <AdminRoute>
+              <MFABypassCodesPage />
+            </AdminRoute>
+          } />
+          <Route path="passwordless-settings" element={
+            <AdminRoute>
+              <PasswordlessSettingsPage />
+            </AdminRoute>
+          } />
+          <Route path="risk-policies" element={
+            <AdminRoute>
+              <RiskPoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="login-analytics" element={
+            <AdminRoute>
+              <LoginAnalyticsPage />
+            </AdminRoute>
           } />
         </Route>
 

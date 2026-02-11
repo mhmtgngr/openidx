@@ -144,6 +144,47 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
+	// Initialize BrowZer Target Manager for dynamic bootstrapper config
+	var browzerTargetManager *access.BrowZerTargetManager
+	if cfg.BrowZerTargetsPath != "" {
+		browzerTargetManager = access.NewBrowZerTargetManager(db, log, cfg.BrowZerTargetsPath)
+		if cfg.BrowZerRouterConfigPath != "" {
+			browzerTargetManager.SetRouterConfigPath(cfg.BrowZerRouterConfigPath)
+		}
+		if cfg.BrowZerCertsPath != "" {
+			browzerTargetManager.SetCertsPath(cfg.BrowZerCertsPath)
+		}
+		// Load configured domain from DB
+		if err := browzerTargetManager.LoadDomainFromDB(bgCtx); err != nil {
+			log.Warn("Failed to load BrowZer domain config", zap.Error(err))
+		}
+		accessService.SetBrowZerTargetManager(browzerTargetManager)
+		log.Info("BrowZer Target Manager initialized",
+			zap.String("targets_path", cfg.BrowZerTargetsPath),
+			zap.String("router_config_path", cfg.BrowZerRouterConfigPath),
+			zap.String("certs_path", cfg.BrowZerCertsPath),
+			zap.String("domain", browzerTargetManager.GetDomain()))
+	}
+
+	// Initialize APISIX SSL management
+	if cfg.APISIXConfigPath != "" {
+		accessService.SetAPISIXConfigPath(cfg.APISIXConfigPath)
+		log.Info("APISIX SSL management initialized", zap.String("config_path", cfg.APISIXConfigPath))
+	}
+
+	// Initialize Feature Manager for unified service management
+	featureManager := access.NewFeatureManager(db, log)
+	if browzerTargetManager != nil {
+		featureManager.SetBrowZerTargetManager(browzerTargetManager)
+	}
+	accessService.SetFeatureManager(featureManager)
+	log.Info("Feature Manager initialized")
+
+	// Initialize Unified Audit Service
+	auditService := access.NewUnifiedAuditService(db, log)
+	accessService.SetAuditService(auditService)
+	log.Info("Unified Audit Service initialized")
+
 	// Initialize Apache Guacamole client if configured
 	if cfg.GuacamoleURL != "" {
 		log.Info("Initializing Apache Guacamole integration...", zap.String("url", cfg.GuacamoleURL))
@@ -152,6 +193,8 @@ func main() {
 			log.Error("Failed to initialize Guacamole client -- remote access features disabled", zap.Error(err))
 		} else {
 			accessService.SetGuacamoleClient(gc)
+			featureManager.SetGuacamoleClient(gc)
+			auditService.SetGuacamoleClient(gc)
 			log.Info("Apache Guacamole integration ready")
 		}
 	}
@@ -170,6 +213,8 @@ func main() {
 			log.Error("Failed to initialize ZitiManager -- Ziti features disabled", zap.Error(err))
 		} else {
 			accessService.SetZitiManager(zm)
+			featureManager.SetZitiManager(zm)
+			auditService.SetZitiManager(zm)
 			defer zm.Close()
 
 			// Start background monitors
@@ -191,11 +236,60 @@ func main() {
 				}
 			}
 
+			// Ensure Ziti services exist for seeded routes (e.g., demo-app)
+			// Also create the browzer-router-zt service for path-based routing
+			// After that completes, generate initial BrowZer targets + router config
+			go func() {
+				accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
+
+				// Ensure browzer-router-zt Ziti service exists for path-based routing
+				accessService.EnsureBrowZerRouterService(zitiCtx, zm)
+
+				if browzerTargetManager != nil {
+					if err := browzerTargetManager.WriteBrowZerTargets(zitiCtx); err != nil {
+						log.Warn("Failed to write initial BrowZer targets", zap.Error(err))
+					} else {
+						log.Info("Initial BrowZer targets file generated")
+					}
+					if err := browzerTargetManager.WriteBrowZerRouterConfig(zitiCtx); err != nil {
+						log.Warn("Failed to write initial BrowZer router config", zap.Error(err))
+					} else {
+						log.Info("Initial BrowZer router config generated")
+					}
+				}
+			}()
+
 			log.Info("OpenZiti integration ready (health + certificate monitors started, services hosted)")
 		}
 	} else {
 		log.Info("OpenZiti integration disabled (set ZITI_ENABLED=true to enable)")
 	}
+
+	// Start background audit event sync (every 5 minutes)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		// Initial sync after 30 seconds
+		time.Sleep(30 * time.Second)
+		if err := auditService.SyncExternalAuditEvents(bgCtx); err != nil {
+			log.Warn("Initial external audit sync failed", zap.Error(err))
+		} else {
+			log.Info("Initial external audit sync completed")
+		}
+
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				if err := auditService.SyncExternalAuditEvents(bgCtx); err != nil {
+					log.Warn("External audit sync failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+	log.Info("Background audit sync scheduled (every 5 minutes)")
 
 	// Register routes (admin API is protected in non-dev environments)
 	if cfg.Environment != "development" {

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, ClipboardCheck, Clock, CheckCircle, XCircle, AlertTriangle, Edit, Play, Eye, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, ClipboardCheck, ClipboardList, Clock, CheckCircle, XCircle, AlertTriangle, Edit, Play, Eye, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -19,8 +19,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -149,7 +151,7 @@ export function AccessReviewsPage() {
     })
   }
 
-  const handleNewReviewChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleNewReviewChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
     setNewReview(prev => ({ ...prev, [name]: value }))
   }
@@ -182,7 +184,7 @@ export function AccessReviewsPage() {
     setEditModal(true)
   }
 
-  const handleEditReviewChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleEditReviewChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
     setEditReview(prev => ({ ...prev, [name]: value }))
   }
@@ -338,20 +340,34 @@ export function AccessReviewsPage() {
                 className="pl-9"
               />
             </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(0) }}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            >
-              <option value="">All Statuses</option>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
-              <option value="expired">Expired</option>
-            </select>
+            <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val === 'all' ? '' : val); setPage(0) }}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All Statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="in_progress">In Progress</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="expired">Expired</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading access reviews...</p>
+            </div>
+          ) : !filteredReviews || filteredReviews.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <ClipboardList className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No access reviews found</p>
+              <p className="text-sm">Access reviews will appear here when created</p>
+            </div>
+          ) : (
+          <>
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -365,11 +381,7 @@ export function AccessReviewsPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={6} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredReviews?.length === 0 ? (
-                  <tr><td colSpan={6} className="p-4 text-center">No access reviews found</td></tr>
-                ) : (
+                {
                   filteredReviews?.map((review) => (
                     <tr key={review.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
@@ -415,20 +427,12 @@ export function AccessReviewsPage() {
                         </div>
                       </td>
                       <td className="p-3 text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleViewReview(review)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="sm">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleViewReview(review)}>
                                 <Eye className="h-4 w-4 mr-2" />
@@ -454,11 +458,9 @@ export function AccessReviewsPage() {
                               )}
                             </DropdownMenuContent>
                           </DropdownMenu>
-                        </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
               </tbody>
             </table>
           </div>
@@ -494,6 +496,8 @@ export function AccessReviewsPage() {
               </div>
             </div>
           )}
+          </>
+          )}
         </CardContent>
       </Card>
 
@@ -528,19 +532,17 @@ export function AccessReviewsPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="type">Review Type *</Label>
-              <select
-                id="type"
-                name="type"
-                value={newReview.type}
-                onChange={handleNewReviewChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="user_access">User Access Review</option>
-                <option value="role_assignment">Role Assignment Review</option>
-                <option value="application_access">Application Access Review</option>
-                <option value="privileged_access">Privileged Access Review</option>
-              </select>
+              <Select value={newReview.type} onValueChange={(val) => setNewReview(prev => ({ ...prev, type: val }))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select review type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user_access">User Access Review</SelectItem>
+                  <SelectItem value="role_assignment">Role Assignment Review</SelectItem>
+                  <SelectItem value="application_access">Application Access Review</SelectItem>
+                  <SelectItem value="privileged_access">Privileged Access Review</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -614,19 +616,17 @@ export function AccessReviewsPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-type">Review Type *</Label>
-              <select
-                id="edit-type"
-                name="type"
-                value={editReview.type}
-                onChange={handleEditReviewChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                <option value="user_access">User Access Review</option>
-                <option value="role_assignment">Role Assignment Review</option>
-                <option value="application_access">Application Access Review</option>
-                <option value="privileged_access">Privileged Access Review</option>
-              </select>
+              <Select value={editReview.type} onValueChange={(val) => setEditReview(prev => ({ ...prev, type: val }))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select review type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user_access">User Access Review</SelectItem>
+                  <SelectItem value="role_assignment">Role Assignment Review</SelectItem>
+                  <SelectItem value="application_access">Application Access Review</SelectItem>
+                  <SelectItem value="privileged_access">Privileged Access Review</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

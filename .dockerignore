@@ -64,3 +64,15 @@ docs/
 # Tests (optional - remove if you want to run tests in container)
 *_test.go
 **/*_test.go
+
+# Large directories not needed for Go service builds
+test-results/
+playwright-report/
+web/admin-console/node_modules/
+web/admin-console/test-results/
+web/admin-console/playwright-report/
+web/admin-console/e2e/
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+*.txt
+nul

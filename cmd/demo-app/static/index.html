@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenIDX Demo App</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; padding: 40px 20px; }
+    .container { max-width: 720px; margin: 0 auto; }
+    .header { text-align: center; margin-bottom: 32px; }
+    .header h1 { color: #58a6ff; font-size: 28px; margin-bottom: 8px; }
+    .header p { color: #8b949e; font-size: 14px; }
+    .logo { width: 48px; height: 48px; margin: 0 auto 12px; background: linear-gradient(135deg, #1f6feb, #58a6ff); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; color: white; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    .card h3 { color: #f0f6fc; font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .card h3 .icon { font-size: 18px; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .badge-blue { background: rgba(56,139,253,0.15); color: #58a6ff; border: 1px solid rgba(56,139,253,0.3); }
+    .badge-green { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+    .badge-purple { background: rgba(163,113,247,0.15); color: #a371f7; border: 1px solid rgba(163,113,247,0.3); }
+    .badge-yellow { background: rgba(210,153,34,0.15); color: #d29922; border: 1px solid rgba(210,153,34,0.3); }
+    .field { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #21262d; }
+    .field:last-child { border-bottom: none; }
+    .field-label { color: #8b949e; font-size: 13px; }
+    .field-value { color: #f0f6fc; font-size: 14px; font-weight: 500; }
+    .field-value.mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 13px; }
+    .roles { display: flex; gap: 6px; flex-wrap: wrap; }
+    .connection-browzer { border-left: 4px solid #a371f7; }
+    .connection-standalone { border-left: 4px solid #58a6ff; }
+    .connection-direct { border-left: 4px solid #d29922; }
+    .btn { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+    .btn:hover { background: #2ea043; }
+    .btn-outline { background: transparent; border: 1px solid #30363d; color: #c9d1d9; }
+    .btn-outline:hover { border-color: #58a6ff; color: #58a6ff; }
+    pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 13px; overflow-x: auto; white-space: pre-wrap; color: #c9d1d9; display: none; }
+    .no-auth { text-align: center; padding: 40px 20px; }
+    .no-auth h3 { color: #d29922; margin-bottom: 12px; }
+    .footer { text-align: center; color: #484f58; font-size: 12px; margin-top: 32px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">ID</div>
+      <h1>OpenIDX Demo App</h1>
+      <p>Authenticated Identity Display</p>
+    </div>
+
+    <div id="content"></div>
+
+    <div class="footer">
+      OpenIDX Zero Trust Access Platform &mdash; <span id="server-time"></span>
+    </div>
+  </div>
+
+  <script>
+    const data = window.__IDENTITY_DATA__;
+
+    function detectConnection() {
+      if (typeof window.zitiBrowzerRuntime !== 'undefined') return 'browzer';
+      if (data && data.user_id) return 'standalone';
+      return 'direct';
+    }
+
+    function render() {
+      const el = document.getElementById('content');
+      const conn = detectConnection();
+      document.getElementById('server-time').textContent = data ? data.server_time : new Date().toISOString();
+
+      if (!data || !data.user_id) {
+        el.innerHTML = `
+          <div class="card no-auth connection-direct">
+            <h3><span class="icon">&#9888;</span> Not Authenticated</h3>
+            <p style="color:#8b949e; margin-bottom:16px;">No identity headers detected. Access this app through:</p>
+            <div class="field"><span class="field-label">Standalone (APISIX)</span><span class="field-value mono">http://demo.localtest.me:8088/</span></div>
+            <div class="field"><span class="field-label">BrowZer (Zero Trust)</span><span class="field-value mono">https://browzer.localtest.me/demo/</span></div>
+          </div>`;
+        return;
+      }
+
+      const connClass = conn === 'browzer' ? 'connection-browzer' : 'connection-standalone';
+      const connLabel = conn === 'browzer' ? 'BrowZer Zero Trust' : 'APISIX Forward-Auth';
+      const connBadge = conn === 'browzer' ? 'badge-purple' : 'badge-blue';
+      const connDesc = conn === 'browzer'
+        ? 'Your browser is connected through the OpenZiti mesh via a Service Worker. No VPN or agent needed.'
+        : 'Your request was authenticated by the APISIX gateway using forward-auth with an OpenIDX OAuth session.';
+
+      const roles = (data.roles || '').split(',').filter(Boolean);
+      const rolesHtml = roles.length > 0
+        ? roles.map(r => `<span class="badge badge-green">${r.trim()}</span>`).join('')
+        : '<span class="badge badge-yellow">none</span>';
+
+      el.innerHTML = `
+        <div class="card">
+          <h3><span class="icon">&#128100;</span> Identity</h3>
+          <div class="field"><span class="field-label">User ID</span><span class="field-value mono">${data.user_id}</span></div>
+          <div class="field"><span class="field-label">Name</span><span class="field-value">${data.name || '—'}</span></div>
+          <div class="field"><span class="field-label">Email</span><span class="field-value">${data.email || '—'}</span></div>
+          <div class="field"><span class="field-label">Roles</span><div class="roles">${rolesHtml}</div></div>
+          ${data.risk_score ? `<div class="field"><span class="field-label">Risk Score</span><span class="field-value">${data.risk_score}</span></div>` : ''}
+        </div>
+
+        <div class="card ${connClass}">
+          <h3><span class="icon">${conn === 'browzer' ? '&#128274;' : '&#127760;'}</span> Connection Method <span class="badge ${connBadge}">${connLabel}</span></h3>
+          <p style="color:#8b949e; font-size:14px;">${connDesc}</p>
+        </div>
+
+        <div class="card">
+          <h3><span class="icon">&#128295;</span> API Test</h3>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" onclick="testApi()">GET /api/whoami</button>
+            <button class="btn btn-outline" onclick="document.getElementById('api-result').style.display='none'">Clear</button>
+          </div>
+          <pre id="api-result"></pre>
+        </div>`;
+    }
+
+    async function testApi() {
+      const pre = document.getElementById('api-result');
+      pre.style.display = 'block';
+      try {
+        const r = await fetch('/api/whoami');
+        const j = await r.json();
+        pre.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        pre.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    // BrowZer: initial page is proxied by bootstrapper (no identity).
+    // Once the BrowZer runtime is active, fetch identity via /api/whoami
+    // which goes through the Ziti mesh with the user's Ziti identity.
+    async function browzerAutoFetch() {
+      if (data && data.user_id) return; // already have identity from server
+      // Wait for BrowZer runtime to initialize (retries up to 5s)
+      for (let i = 0; i < 10; i++) {
+        if (typeof window.zitiBrowzerRuntime !== 'undefined') break;
+        await new Promise(r => setTimeout(r, 500));
+      }
+      if (typeof window.zitiBrowzerRuntime === 'undefined') return;
+      try {
+        const r = await fetch('/api/whoami');
+        const j = await r.json();
+        if (j.authenticated) {
+          window.__IDENTITY_DATA__ = {
+            user_id: j.user_id, email: j.email, name: j.name,
+            roles: j.roles, risk_score: j.risk_score || '', server_time: j.server_time
+          };
+          render(); // re-render with identity
+        }
+      } catch (e) { /* ignore, page already shows not-auth */ }
+    }
+
+    render();
+    browzerAutoFetch();
+  </script>
+</body>
+</html>

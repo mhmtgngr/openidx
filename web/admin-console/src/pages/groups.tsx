@@ -37,6 +37,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
@@ -422,6 +423,18 @@ export function GroupsPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <LoadingSpinner size="lg" />
+              <p className="mt-4 text-sm text-muted-foreground">Loading groups...</p>
+            </div>
+          ) : !filteredGroups || filteredGroups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <FolderTree className="h-12 w-12 text-muted-foreground/40 mb-3" />
+              <p className="font-medium">No groups found</p>
+              <p className="text-sm">Create a group to organize your users</p>
+            </div>
+          ) : (
           <div className="rounded-md border">
             <table className="w-full">
               <thead>
@@ -435,12 +448,7 @@ export function GroupsPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr><td colSpan={6} className="p-4 text-center">Loading...</td></tr>
-                ) : filteredGroups?.length === 0 ? (
-                  <tr><td colSpan={6} className="p-4 text-center">No groups found</td></tr>
-                ) : (
-                  filteredGroups?.map((group) => (
+                {filteredGroups.map((group) => (
                     <tr key={group.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">
                         <div className="flex items-center gap-3">
@@ -520,11 +528,11 @@ export function GroupsPage() {
                         </DropdownMenu>
                       </td>
                     </tr>
-                  ))
-                )}
+                  ))}
               </tbody>
             </table>
           </div>
+          )}
 
           {/* Pagination Controls */}
           {totalCount > PAGE_SIZE && (

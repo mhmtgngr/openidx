@@ -2,7 +2,10 @@
 package access
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -71,6 +74,7 @@ func (s *Service) handleDisableBrowZer(c *gin.Context) {
 }
 
 // handleEnableBrowZerOnService adds the "browzer-enabled" role attribute to a Ziti service
+// and optionally creates a proxy_route for path-based BrowZer access.
 func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	if s.zitiManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
@@ -78,6 +82,15 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	}
 
 	zitiServiceID := c.Param("id")
+
+	// Parse optional path and/or domain from request body
+	var body struct {
+		Path   string `json:"path"`
+		Domain string `json:"domain"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	browzerPath := strings.TrimSpace(body.Path)
+	browzerDomain := strings.TrimSpace(body.Domain)
 
 	// Get current attributes
 	attrs, err := s.zitiManager.GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
@@ -104,7 +117,101 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "BrowZer enabled on service", "role_attributes": attrs})
+	// If a path was provided, create/update a proxy_route for path-based BrowZer routing
+	var routePath string
+	if browzerPath != "" {
+		if !strings.HasPrefix(browzerPath, "/") {
+			browzerPath = "/" + browzerPath
+		}
+		routePath = browzerPath
+
+		// Look up the service details from the database
+		var serviceName, serviceHost string
+		var servicePort int
+		err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT name, host, port FROM ziti_services WHERE ziti_id = $1`, zitiServiceID,
+		).Scan(&serviceName, &serviceHost, &servicePort)
+		if err != nil {
+			s.logger.Warn("Could not look up service details for BrowZer path route", zap.Error(err))
+		} else {
+			domain := "browzer.localtest.me"
+			if s.browzerTargetManager != nil {
+				if d := s.browzerTargetManager.GetDomain(); d != "" {
+					domain = d
+				}
+			}
+
+			fromURL := fmt.Sprintf("http://%s%s", domain, browzerPath)
+			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
+			routeName := fmt.Sprintf("browzer-%s", serviceName)
+
+			// Delete any existing route for this service, then insert fresh
+			_, _ = s.db.Pool.Exec(c.Request.Context(),
+				`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
+			_, dbErr := s.db.Pool.Exec(c.Request.Context(),
+				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled)
+				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true)`,
+				routeName, fmt.Sprintf("BrowZer path route for %s", serviceName), fromURL, toURL, serviceName,
+			)
+			if dbErr != nil {
+				s.logger.Warn("Failed to create BrowZer path route", zap.Error(dbErr))
+			} else {
+				s.logger.Info("Created BrowZer path route",
+					zap.String("from", fromURL), zap.String("to", toURL), zap.String("service", serviceName))
+			}
+		}
+	}
+
+	// If a domain was provided, create/update a proxy_route for vhost-based BrowZer routing
+	var routeDomain string
+	if browzerDomain != "" {
+		routeDomain = browzerDomain
+
+		var serviceName, serviceHost string
+		var servicePort int
+		err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT name, host, port FROM ziti_services WHERE ziti_id = $1`, zitiServiceID,
+		).Scan(&serviceName, &serviceHost, &servicePort)
+		if err != nil {
+			s.logger.Warn("Could not look up service details for BrowZer vhost route", zap.Error(err))
+		} else {
+			fromURL := fmt.Sprintf("http://%s/", browzerDomain)
+			toURL := fmt.Sprintf("http://%s:%d", serviceHost, servicePort)
+			routeName := fmt.Sprintf("browzer-vhost-%s", serviceName)
+
+			_, _ = s.db.Pool.Exec(c.Request.Context(),
+				`DELETE FROM proxy_routes WHERE name = $1 AND browzer_enabled = true`, routeName)
+			_, dbErr := s.db.Pool.Exec(c.Request.Context(),
+				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled)
+				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true)`,
+				routeName, fmt.Sprintf("BrowZer vhost route for %s", serviceName), fromURL, toURL, serviceName,
+			)
+			if dbErr != nil {
+				s.logger.Warn("Failed to create BrowZer vhost route", zap.Error(dbErr))
+			} else {
+				s.logger.Info("Created BrowZer vhost route",
+					zap.String("domain", browzerDomain), zap.String("to", toURL), zap.String("service", serviceName))
+			}
+		}
+	}
+
+	// Regenerate BrowZer bootstrapper targets and router config
+	if s.browzerTargetManager != nil {
+		go func() {
+			bgCtx := context.Background()
+			s.browzerTargetManager.WriteBrowZerTargets(bgCtx)
+			s.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
+		}()
+	}
+
+	resp := gin.H{"message": "BrowZer enabled on service", "role_attributes": attrs}
+	if routePath != "" {
+		resp["browzer_path"] = routePath
+	}
+	if routeDomain != "" {
+		resp["browzer_domain"] = routeDomain
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // handleDisableBrowZerOnService removes the "browzer-enabled" role attribute from a Ziti service
@@ -134,6 +241,24 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 		s.logger.Error("Failed to disable BrowZer on service", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Clean up any BrowZer proxy_route for this service
+	var serviceName string
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT name FROM ziti_services WHERE ziti_id = $1`, zitiServiceID,
+	).Scan(&serviceName); err == nil {
+		_, _ = s.db.Pool.Exec(c.Request.Context(),
+			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
+	}
+
+	// Regenerate BrowZer bootstrapper targets and router config
+	if s.browzerTargetManager != nil {
+		go func() {
+			bgCtx := context.Background()
+			s.browzerTargetManager.WriteBrowZerTargets(bgCtx)
+			s.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
+		}()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer disabled on service", "role_attributes": filtered})
