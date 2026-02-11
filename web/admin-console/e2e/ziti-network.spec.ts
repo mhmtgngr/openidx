@@ -748,9 +748,8 @@ test.describe('Ziti Remote Access Tab', () => {
     await page.getByRole('tab', { name: /remote access/i }).click();
 
     // Verify SSH connection to internal server is displayed
-    await expect(page.locator('text=192.168.31.76')).toBeVisible();
+    await expect(page.locator('text=192.168.31.76:22')).toBeVisible();
     await expect(page.locator('td:has-text("ssh")').first()).toBeVisible();
-    await expect(page.locator('text=22').first()).toBeVisible();
   });
 
   test('should display Guacamole SSH access URL for 192.168.31.76', async ({ page }) => {

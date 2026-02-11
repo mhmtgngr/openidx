@@ -268,9 +268,9 @@ test.describe('Service Feature Panel', () => {
     await page.getByRole('button', { name: /Features/ }).click();
 
     // BrowZer toggle should be disabled (Ziti required)
-    const browzerSwitch = page.getByText('BrowZer', { exact: true }).first()
-      .locator('xpath=ancestor::div[contains(@class, "justify-between")][1]')
-      .locator('button[role="switch"]');
+    const browzerRow = page.locator('[class*="justify-between"]', { hasText: 'BrowZer' })
+      .filter({ hasText: 'browser-native' });
+    const browzerSwitch = browzerRow.locator('button[role="switch"]');
     await expect(browzerSwitch).toBeDisabled();
   });
 
@@ -364,9 +364,8 @@ test.describe('Service Feature Panel - SSH Route with Guacamole', () => {
     await page.goto('/proxy-routes');
     await page.getByRole('button', { name: /Features/ }).click();
 
-    const guacSwitch = page.getByText('Guacamole Remote Access', { exact: true })
-      .locator('xpath=ancestor::div[contains(@class, "justify-between")][1]')
-      .locator('button[role="switch"]');
+    const guacRow = page.locator('[class*="justify-between"]', { hasText: 'Guacamole Remote Access' });
+    const guacSwitch = guacRow.locator('button[role="switch"]');
     await guacSwitch.click();
 
     await expect(page.getByText('Configure Guacamole')).toBeVisible();

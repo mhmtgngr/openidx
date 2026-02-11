@@ -396,6 +396,9 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
 		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
 		"adaptive_mfa.enabled":     "ADAPTIVE_MFA_ENABLED",
+		"enable_rate_limit":        "ENABLE_RATE_LIMIT",
+		"rate_limit_requests":      "RATE_LIMIT_REQUESTS",
+		"rate_limit_window":        "RATE_LIMIT_WINDOW",
 	}
 
 	for key, env := range envMappings {

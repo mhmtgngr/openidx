@@ -44,8 +44,17 @@ test('enable BrowZer vhost domain on APISIX service', async ({ page }) => {
   await expect(apisixRow).toBeVisible({ timeout: 10000 })
   console.log('  Found APISIX row in table')
 
-  // Path input = first input, Domain input = second input in the row
+  // If already BrowZer-enabled, disable first so inputs become editable
+  const disableBtn = apisixRow.getByRole('button', { name: /Disable/i })
+  if (await disableBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+    console.log('  Service already BrowZer-enabled, disabling first...')
+    await disableBtn.click()
+    await page.waitForTimeout(2000)
+  }
+
+  // Domain input is the second input in the row (path=first, domain=second)
   const domainInput = apisixRow.locator('input').nth(1)
+  await expect(domainInput).toBeEnabled({ timeout: 5000 })
   await domainInput.click()
   await domainInput.fill('apisix.localtest.me')
   await page.waitForTimeout(1000)

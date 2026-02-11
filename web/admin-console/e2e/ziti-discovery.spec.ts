@@ -78,8 +78,15 @@ test.describe('Ziti Service Discovery', () => {
   test('should show Managed and Available badges', async ({ page }) => {
     await page.goto('/ziti-discovery');
 
-    await expect(page.getByText('Managed')).toBeVisible();
-    const availableBadges = page.getByText('Available');
+    // Wait for the table to render with data
+    await expect(page.getByText('demo-app-zt')).toBeVisible({ timeout: 10000 });
+
+    // Check "Managed" badge in the table (not the "Already Managed" summary card)
+    const managedBadge = page.locator('td').getByText('Managed');
+    await expect(managedBadge).toBeVisible();
+
+    // Check "Available" badges in the table
+    const availableBadges = page.locator('td').getByText('Available');
     await expect(availableBadges.first()).toBeVisible();
   });
 

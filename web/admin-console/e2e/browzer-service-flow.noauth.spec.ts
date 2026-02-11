@@ -120,9 +120,18 @@ test('create service, set BrowZer path, enable, and connect', async ({ page }) =
     console.log('  Found service in BrowZer services table.')
     await page.waitForTimeout(1000)
 
-    // Fill in the BrowZer path
+    // Check if already BrowZer-enabled (from a previous test run leftover)
+    const disableBtn = serviceRow.getByRole('button', { name: /Disable/i })
+    if (await disableBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      console.log('  Service already BrowZer-enabled, disabling first...')
+      await disableBtn.click()
+      await page.waitForTimeout(SLOW)
+    }
+
+    // Use the path input (first input, w-32 class) — target by placeholder pattern
     console.log(`  Typing BrowZer path: ${browzerPath}`)
-    const pathInput = serviceRow.locator('input')
+    const pathInput = serviceRow.locator('input').first()
+    await expect(pathInput).toBeEnabled({ timeout: 5000 })
     await pathInput.click()
     await pathInput.type(browzerPath, { delay: 60 })
     await page.waitForTimeout(SLOW)
