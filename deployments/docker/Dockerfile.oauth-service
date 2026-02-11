@@ -17,7 +17,7 @@ RUN GOMAXPROCS=1 GOMEMLIMIT=1GiB CGO_ENABLED=0 GOOS=linux go build \
     -o /app/service ./cmd/oauth-service
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates tzdata
 RUN addgroup -S openidx && adduser -S openidx -G openidx
