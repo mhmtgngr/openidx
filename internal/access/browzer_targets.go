@@ -372,36 +372,50 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			b.WriteString("        proxy_send_timeout 86400s;\n")
 			b.WriteString("        proxy_buffering off;\n")
 		} else {
-			// Hybrid path handling: rewrite rules strip the prefix for the root
-			// page and static assets only. All other paths (API calls, SPA page
-			// routes) pass through with the full URI so the backend sees its
-			// expected paths (e.g. /apisix/admin/*). sub_filter rewrites HTML
-			// asset paths, and the webpack publicPath so async chunks load from
-			// the correct prefix.
 			parsed, _ := url.Parse(m.upstream)
 			upstreamBase := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+			upstreamPath := strings.TrimSuffix(parsed.Path, "/")
 			pathTrimmed := strings.TrimSuffix(pathWithSlash, "/")
 
-			b.WriteString(fmt.Sprintf("        rewrite ^%s/?$ / break;\n", pathTrimmed))
-			b.WriteString(fmt.Sprintf("        rewrite \"^%s/(.+\\.(?:js|mjs|css|html|htm|png|svg|ico|jpg|jpeg|gif|webp|woff2?|ttf|eot|otf|map|json|txt|xml|webmanifest))$\" /$1 break;\n", pathTrimmed))
-			b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
-			b.WriteString(fmt.Sprintf("        proxy_redirect / %s;\n", pathWithSlash))
-			b.WriteString("        proxy_http_version 1.1;\n")
-			b.WriteString("        proxy_set_header Host $host;\n")
-			b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-			b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-			b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
-			b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
-			b.WriteString("        sub_filter_once off;\n")
-			b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
-			b.WriteString(fmt.Sprintf("        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash))
-			b.WriteString(fmt.Sprintf("        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash))
-			// Rewrite CSS url() references: url(/, url('/, url("/
-			b.WriteString(fmt.Sprintf("        sub_filter 'url(/' 'url(%s';\n", pathWithSlash))
-			b.WriteString(fmt.Sprintf("        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash))
-			b.WriteString(fmt.Sprintf("        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash))
-			// Rewrite webpack/vite publicPath so code-split async chunks load from the correct prefix
-			b.WriteString(fmt.Sprintf("        sub_filter '.p=\"/\"' '.p=\"%s\"';\n", pathWithSlash))
+			if upstreamPath != "" && upstreamPath != "/" {
+				// Upstream has a non-root path (e.g. https://psm.tdv.org/psm).
+				// Pass the URI through as-is — nginx forwards /psm/... to upstream /psm/...
+				// No rewrite or sub_filter needed since the prefix matches the app's path.
+				b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
+				b.WriteString("        proxy_http_version 1.1;\n")
+				b.WriteString(fmt.Sprintf("        proxy_set_header Host %s;\n", parsed.Host))
+				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+				b.WriteString("        proxy_ssl_verify off;\n")
+			} else {
+				// Hybrid path handling: rewrite rules strip the prefix for the root
+				// page and static assets only. All other paths (API calls, SPA page
+				// routes) pass through with the full URI so the backend sees its
+				// expected paths (e.g. /apisix/admin/*). sub_filter rewrites HTML
+				// asset paths, and the webpack publicPath so async chunks load from
+				// the correct prefix.
+				b.WriteString(fmt.Sprintf("        rewrite ^%s/?$ / break;\n", pathTrimmed))
+				b.WriteString(fmt.Sprintf("        rewrite \"^%s/(.+\\.(?:js|mjs|css|html|htm|png|svg|ico|jpg|jpeg|gif|webp|woff2?|ttf|eot|otf|map|json|txt|xml|webmanifest))$\" /$1 break;\n", pathTrimmed))
+				b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
+				b.WriteString(fmt.Sprintf("        proxy_redirect / %s;\n", pathWithSlash))
+				b.WriteString("        proxy_http_version 1.1;\n")
+				b.WriteString("        proxy_set_header Host $host;\n")
+				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
+				b.WriteString("        sub_filter_once off;\n")
+				b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
+				b.WriteString(fmt.Sprintf("        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash))
+				b.WriteString(fmt.Sprintf("        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash))
+				// Rewrite CSS url() references: url(/, url('/, url("/
+				b.WriteString(fmt.Sprintf("        sub_filter 'url(/' 'url(%s';\n", pathWithSlash))
+				b.WriteString(fmt.Sprintf("        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash))
+				b.WriteString(fmt.Sprintf("        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash))
+				// Rewrite webpack/vite publicPath so code-split async chunks load from the correct prefix
+				b.WriteString(fmt.Sprintf("        sub_filter '.p=\"/\"' '.p=\"%s\"';\n", pathWithSlash))
+			}
 		}
 
 		// Strip backend CSP headers — BrowZer SDK needs to connect to the Ziti controller
