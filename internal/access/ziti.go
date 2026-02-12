@@ -96,26 +96,18 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 		hostedServices: make(map[string]*hostedService),
 	}
 
-	// Build TLS config for Ziti controller communication
-	tlsConfig := &tls.Config{}
+	// Build TLS config for Ziti controller management API communication.
+	// The management API is internal (container-to-container) and uses the Ziti controller's
+	// self-signed PKI, so we skip TLS verification. The SDK-level identity auth uses the
+	// identity file's CA for proper verification.
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 	caFile := filepath.Join(cfg.ZitiIdentityDir, "ca.pem")
 	if caPEM, err := os.ReadFile(caFile); err == nil {
 		pool := x509.NewCertPool()
 		if pool.AppendCertsFromPEM(caPEM) {
 			tlsConfig.RootCAs = pool
 			zm.logger.Info("Loaded Ziti CA certificate", zap.String("file", caFile))
-		} else {
-			zm.logger.Warn("Failed to parse CA certificate, falling back to insecure", zap.String("file", caFile))
-			tlsConfig.InsecureSkipVerify = true
 		}
-	} else if cfg.ZitiInsecureSkipVerify {
-		zm.logger.Warn("Ziti CA cert not found and ZitiInsecureSkipVerify=true — skipping TLS verification",
-			zap.String("expected_ca", caFile))
-		tlsConfig.InsecureSkipVerify = true
-	} else {
-		zm.logger.Warn("Ziti CA cert not found; set ZITI_INSECURE_SKIP_VERIFY=true to allow insecure connections",
-			zap.String("expected_ca", caFile))
-		tlsConfig.InsecureSkipVerify = true
 	}
 
 	zm.mgmtClient = &http.Client{
@@ -1371,7 +1363,7 @@ func (zm *ZitiManager) GetAuditEvents(ctx context.Context, since *time.Time) ([]
 
 // CreateService (overloaded) creates a Ziti service with host/port config
 func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host string, port int) (*ZitiServiceInfo, error) {
-	attrs := []string{"openidx-managed"}
+	attrs := []string{name, "openidx-managed"}
 
 	zitiID, err := zm.CreateService(ctx, name, attrs)
 	if err != nil {

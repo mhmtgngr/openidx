@@ -35,6 +35,9 @@ RUN mkdir -p /shared-config && chown openidx:openidx /shared-config
 # Create shared certs directory for BrowZer TLS certificates
 RUN mkdir -p /shared-certs && chown openidx:openidx /shared-certs
 
+COPY deployments/docker/entrypoint-access.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 USER openidx
 
 EXPOSE 8007
@@ -42,4 +45,4 @@ EXPOSE 8007
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q --spider http://localhost:8007/health || exit 1
 
-ENTRYPOINT ["./service"]
+ENTRYPOINT ["/app/entrypoint.sh"]

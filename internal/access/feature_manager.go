@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -525,6 +526,60 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 
 		resourceIDs["ziti_service_id"] = zitiService.ID
 		resourceIDs["ziti_service_name"] = zitiService.Name
+
+		// Create Bind policy so access-proxy can host this service
+		bindPolicyID, err := fm.zitiManager.CreateServicePolicy(ctx,
+			fmt.Sprintf("openidx-bind-%s", serviceName),
+			"Bind",
+			[]string{"#" + serviceName},
+			[]string{"#access-proxy-clients"})
+		if err != nil {
+			fm.logger.Warn("Failed to create Bind policy", zap.Error(err))
+		} else {
+			fm.db.Pool.Exec(ctx,
+				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
+				 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+				bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
+				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+		}
+
+		// Create Dial policy so access-proxy can dial this service
+		dialPolicyID, err := fm.zitiManager.CreateServicePolicy(ctx,
+			fmt.Sprintf("openidx-dial-%s", serviceName),
+			"Dial",
+			[]string{"#" + serviceName},
+			[]string{"#access-proxy-clients"})
+		if err != nil {
+			fm.logger.Warn("Failed to create Dial policy", zap.Error(err))
+		} else {
+			fm.db.Pool.Exec(ctx,
+				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
+				 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+				dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
+				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+		}
+
+		// Create Service Edge Router Policy so the service is available on all edge routers
+		serBody, _ := json.Marshal(map[string]interface{}{
+			"name":            fmt.Sprintf("openidx-serp-%s", serviceName),
+			"semantic":        "AnyOf",
+			"serviceRoles":    []string{"#" + serviceName},
+			"edgeRouterRoles": []string{"#all"},
+		})
+		_, serpStatus, serpErr := fm.zitiManager.mgmtRequest("POST", "/edge/management/v1/service-edge-router-policies", serBody)
+		if serpErr != nil || (serpStatus != http.StatusCreated && serpStatus != http.StatusOK) {
+			fm.logger.Warn("Failed to create service edge router policy", zap.Error(serpErr), zap.Int("status", serpStatus))
+		}
+
+		// Update proxy route with Ziti service name
+		fm.db.Pool.Exec(ctx,
+			"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2",
+			serviceName, routeID)
+
+		// Host the service so it has a terminator
+		if err := fm.zitiManager.HostService(serviceName, host, port); err != nil {
+			fm.logger.Warn("Failed to host Ziti service (no terminator)", zap.String("service", serviceName), zap.Error(err))
+		}
 
 	case FeatureBrowZer:
 		if fm.zitiManager == nil || !fm.zitiManager.IsInitialized() {
