@@ -36,6 +36,7 @@ import {
   Layers,
   Globe,
   FileKey,
+  Upload,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -106,6 +107,7 @@ const navigationSections: NavSection[] = [
       { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
       { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },
       { name: 'BrowZer', href: '/browzer-management', icon: Globe, adminOnly: true },
+      { name: 'App Publish', href: '/app-publish', icon: Upload, adminOnly: true },
       { name: 'Certificates', href: '/certificates', icon: FileKey, adminOnly: true },
       { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
     ],

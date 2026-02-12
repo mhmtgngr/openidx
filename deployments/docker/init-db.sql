@@ -2223,3 +2223,50 @@ VALUES (
     'guacamole-zt',
     true
 ) ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- APP PUBLISHING - Auto-discover and publish web app paths as proxy routes
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS published_apps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    target_url VARCHAR(500) NOT NULL,
+    spec_url VARCHAR(500),
+    status VARCHAR(50) DEFAULT 'pending',
+    discovery_started_at TIMESTAMPTZ,
+    discovery_completed_at TIMESTAMPTZ,
+    discovery_error TEXT,
+    discovery_strategies JSONB DEFAULT '[]',
+    total_paths_discovered INTEGER DEFAULT 0,
+    total_paths_published INTEGER DEFAULT 0,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_published_apps_status ON published_apps(status);
+
+CREATE TABLE IF NOT EXISTS discovered_paths (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    app_id UUID NOT NULL REFERENCES published_apps(id) ON DELETE CASCADE,
+    path VARCHAR(500) NOT NULL,
+    http_methods JSONB DEFAULT '["GET"]',
+    classification VARCHAR(50) NOT NULL,
+    classification_source VARCHAR(50) DEFAULT 'auto',
+    discovery_strategy VARCHAR(50),
+    suggested_policy TEXT,
+    require_auth BOOLEAN DEFAULT true,
+    allowed_roles JSONB DEFAULT '[]',
+    require_device_trust BOOLEAN DEFAULT false,
+    published BOOLEAN DEFAULT false,
+    route_id UUID REFERENCES proxy_routes(id) ON DELETE SET NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(app_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discovered_paths_app ON discovered_paths(app_id);
+CREATE INDEX IF NOT EXISTS idx_discovered_paths_classification ON discovered_paths(classification);

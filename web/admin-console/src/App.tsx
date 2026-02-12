@@ -29,6 +29,7 @@ import { BrowZerManagementPage } from './pages/browzer-management'
 import { CertificatesPage } from './pages/certificates'
 import { UnifiedAuditPage } from './pages/unified-audit'
 import { ZitiDiscoveryPage } from './pages/ziti-discovery'
+import { AppPublishPage } from './pages/app-publish'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
@@ -213,6 +214,11 @@ export default function App() {
           <Route path="ziti-discovery" element={
             <AdminRoute>
               <ZitiDiscoveryPage />
+            </AdminRoute>
+          } />
+          <Route path="app-publish" element={
+            <AdminRoute>
+              <AppPublishPage />
             </AdminRoute>
           } />
           <Route path="browzer-management" element={

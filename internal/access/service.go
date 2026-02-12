@@ -326,6 +326,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/import/bulk", svc.handleBulkImportZitiServices)
 		api.GET("/ziti/unmanaged/count", svc.handleGetUnmanagedServicesCount)
 
+		// App publishing (register, discover, classify, publish)
+		api.GET("/apps", svc.handleListApps)
+		api.POST("/apps", svc.handleRegisterApp)
+		api.GET("/apps/:appId", svc.handleGetApp)
+		api.DELETE("/apps/:appId", svc.handleDeleteApp)
+		api.POST("/apps/:appId/discover", svc.handleStartDiscovery)
+		api.GET("/apps/:appId/paths", svc.handleListDiscoveredPaths)
+		api.PUT("/apps/:appId/paths/:pathId", svc.handleUpdatePathClassification)
+		api.POST("/apps/:appId/publish", svc.handlePublishPaths)
+
 		// Unified audit log
 		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)
 		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
