@@ -167,7 +167,7 @@ func (s *Service) handleListApps(c *gin.Context) {
 		apps = append(apps, a)
 	}
 
-	c.JSON(http.StatusOK, apps)
+	c.JSON(http.StatusOK, gin.H{"apps": apps, "total": total})
 }
 
 func (s *Service) handleRegisterApp(c *gin.Context) {
@@ -325,7 +325,7 @@ func (s *Service) handleListDiscoveredPaths(c *gin.Context) {
 		paths = append(paths, p)
 	}
 
-	c.JSON(http.StatusOK, paths)
+	c.JSON(http.StatusOK, gin.H{"paths": paths, "total": len(paths)})
 }
 
 func (s *Service) handleUpdatePathClassification(c *gin.Context) {
