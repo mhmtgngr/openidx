@@ -1,6 +1,7 @@
 package access
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -314,6 +315,195 @@ func (s *Service) handleDeletePolicySyncState(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusNoContent, nil)
+}
+
+// ---------------------------------------------------------------------------
+// Service Policy CRUD handlers
+// ---------------------------------------------------------------------------
+
+func (s *Service) handleCreateServicePolicy(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+
+	var req struct {
+		Name          string   `json:"name" binding:"required"`
+		Type          string   `json:"type" binding:"required"`
+		ServiceRoles  []string `json:"service_roles" binding:"required"`
+		IdentityRoles []string `json:"identity_roles" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Type != "Dial" && req.Type != "Bind" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be 'Dial' or 'Bind'"})
+		return
+	}
+
+	zitiID, err := s.zitiManager.CreateServicePolicy(c.Request.Context(), req.Name, req.Type, req.ServiceRoles, req.IdentityRoles)
+	if err != nil {
+		s.logger.Error("failed to create service policy", zap.String("name", req.Name), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Persist to DB
+	serviceRolesJSON, _ := json.Marshal(req.ServiceRoles)
+	identityRolesJSON, _ := json.Marshal(req.IdentityRoles)
+
+	var id string
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
+		 VALUES ($1, $2, $3, $4, $5, false) RETURNING id`,
+		zitiID, req.Name, req.Type, serviceRolesJSON, identityRolesJSON).Scan(&id)
+	if err != nil {
+		s.logger.Error("Failed to persist service policy to DB", zap.Error(err))
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"id":             id,
+		"ziti_id":        zitiID,
+		"name":           req.Name,
+		"type":           req.Type,
+		"service_roles":  req.ServiceRoles,
+		"identity_roles": req.IdentityRoles,
+	})
+}
+
+func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+
+	id := c.Param("id")
+
+	var req struct {
+		Name          string   `json:"name" binding:"required"`
+		Type          string   `json:"type" binding:"required"`
+		ServiceRoles  []string `json:"service_roles" binding:"required"`
+		IdentityRoles []string `json:"identity_roles" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Type != "Dial" && req.Type != "Bind" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be 'Dial' or 'Bind'"})
+		return
+	}
+
+	// Look up ziti_id and check if system policy
+	var zitiID string
+	var isSystem bool
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT ziti_id, COALESCE(is_system, false) FROM ziti_service_policies WHERE id=$1", id).Scan(&zitiID, &isSystem)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "service policy not found"})
+		return
+	}
+	if isSystem {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot modify system-managed policies"})
+		return
+	}
+
+	if err := s.zitiManager.UpdateServicePolicy(c.Request.Context(), zitiID, req.Name, req.Type, req.ServiceRoles, req.IdentityRoles); err != nil {
+		s.logger.Error("failed to update service policy", zap.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Update DB
+	serviceRolesJSON, _ := json.Marshal(req.ServiceRoles)
+	identityRolesJSON, _ := json.Marshal(req.IdentityRoles)
+	s.db.Pool.Exec(c.Request.Context(),
+		`UPDATE ziti_service_policies SET name=$1, policy_type=$2, service_roles=$3, identity_roles=$4 WHERE id=$5`,
+		req.Name, req.Type, serviceRolesJSON, identityRolesJSON, id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":             id,
+		"ziti_id":        zitiID,
+		"name":           req.Name,
+		"type":           req.Type,
+		"service_roles":  req.ServiceRoles,
+		"identity_roles": req.IdentityRoles,
+	})
+}
+
+func (s *Service) handleDeleteServicePolicy(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+
+	id := c.Param("id")
+
+	var zitiID string
+	var isSystem bool
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT ziti_id, COALESCE(is_system, false) FROM ziti_service_policies WHERE id=$1", id).Scan(&zitiID, &isSystem)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "service policy not found"})
+		return
+	}
+	if isSystem {
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete system-managed policies"})
+		return
+	}
+
+	if err := s.zitiManager.DeleteServicePolicy(c.Request.Context(), zitiID); err != nil {
+		s.logger.Error("failed to delete service policy from controller", zap.String("id", id), zap.Error(err))
+	}
+
+	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_service_policies WHERE id=$1", id)
+
+	c.JSON(http.StatusNoContent, nil)
+}
+
+// ---------------------------------------------------------------------------
+// Identity attribute management
+// ---------------------------------------------------------------------------
+
+func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+
+	id := c.Param("id")
+
+	var req struct {
+		Attributes []string `json:"attributes" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Look up ziti_id from DB
+	var zitiID string
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT ziti_id FROM ziti_identities WHERE id=$1", id).Scan(&zitiID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
+		return
+	}
+
+	if err := s.zitiManager.PatchIdentityRoleAttributes(c.Request.Context(), zitiID, req.Attributes); err != nil {
+		s.logger.Error("failed to patch identity attributes", zap.String("id", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Update DB
+	attrsJSON, _ := json.Marshal(req.Attributes)
+	s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE ziti_identities SET attributes=$1, updated_at=NOW() WHERE id=$2", attrsJSON, id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":         id,
+		"ziti_id":    zitiID,
+		"attributes": req.Attributes,
+		"message":    "identity attributes updated",
+	})
 }
 
 // ---------------------------------------------------------------------------

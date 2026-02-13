@@ -621,6 +621,40 @@ test.describe('Ziti Security Tab', () => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, sdk_ready: true, controller_reachable: true, services_count: 5, identities_count: 10 }) });
     });
 
+    // Mock service policies
+    await page.route('**/api/v1/access/ziti/fabric/service-policies', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'pol-1', name: 'openidx-dial-web', type: 'Dial', serviceRoles: ['#web'], identityRoles: ['#access-proxy-clients'] },
+          { id: 'pol-2', name: 'openidx-bind-web', type: 'Bind', serviceRoles: ['#web'], identityRoles: ['#access-proxy-clients'] },
+          { id: 'pol-3', name: 'allow-engineering-api', type: 'Dial', serviceRoles: ['#api-service'], identityRoles: ['#engineering'] },
+        ]),
+      });
+    });
+
+    // Mock service policy CRUD
+    await page.route('**/api/v1/access/ziti/service-policies', async (route) => {
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON();
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: 'new-pol', ziti_id: 'ziti-pol-new', ...body }),
+        });
+      }
+    });
+
+    await page.route('**/api/v1/access/ziti/service-policies/*', async (route) => {
+      if (route.request().method() === 'DELETE') {
+        await route.fulfill({ status: 204 });
+      } else if (route.request().method() === 'PUT') {
+        const body = route.request().postDataJSON();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: route.request().url().split('/').pop(), ...body }) });
+      }
+    });
+
     // Note: API uses /posture/checks (not /posture-checks)
     await page.route('**/api/v1/access/ziti/posture/checks*', async (route) => {
       await route.fulfill({
@@ -669,6 +703,183 @@ test.describe('Ziti Security Tab', () => {
 
     // Use first() for strict mode
     await expect(page.getByRole('cell', { name: 'Root CA', exact: true }).or(page.getByRole('button', { name: 'Certificates' })).first()).toBeVisible();
+  });
+
+  test('should display service policies section with system and custom policies', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /security/i }).click();
+
+    // Service Policies section should be visible
+    await expect(page.locator('text=Service Policies').first()).toBeVisible();
+
+    // Should show system policies (with lock icon via openidx- prefix)
+    await expect(page.locator('text=openidx-dial-web')).toBeVisible();
+    await expect(page.locator('text=openidx-bind-web')).toBeVisible();
+
+    // Should show custom policy
+    await expect(page.locator('text=allow-engineering-api')).toBeVisible();
+
+    // Should show Dial and Bind badges
+    await expect(page.getByRole('cell').filter({ hasText: 'Dial' }).first()).toBeVisible();
+    await expect(page.getByRole('cell').filter({ hasText: 'Bind' }).first()).toBeVisible();
+
+    // Should show role badges
+    await expect(page.locator('text=#web').first()).toBeVisible();
+    await expect(page.locator('text=#engineering').first()).toBeVisible();
+  });
+
+  test('should have Add Policy button in service policies section', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /security/i }).click();
+
+    await expect(page.getByRole('button', { name: /add policy/i })).toBeVisible();
+  });
+
+  test('should open create policy dialog and fill form', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /security/i }).click();
+
+    await page.getByRole('button', { name: /add policy/i }).click();
+
+    await expect(page.locator('text=Create Service Policy')).toBeVisible();
+
+    // Fill form
+    await page.getByPlaceholder('allow-engineering-gitlab').fill('test-finance-dial');
+
+    // Type selector should default to Dial
+    const typeSelect = page.locator('form select').first();
+    await expect(typeSelect).toHaveValue('Dial');
+
+    // Fill roles
+    await page.getByPlaceholder('#gitlab, #internal-apps').fill('#test-service');
+    await page.getByPlaceholder('#engineering, #vpn-users').fill('#finance');
+
+    // Submit
+    await page.getByRole('button', { name: /create policy/i }).click();
+    await expect(page.locator('text=Service policy created').first()).toBeVisible();
+  });
+
+  test('should not show edit/delete menu on system policies', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /security/i }).click();
+
+    // System policy row (openidx-dial-web) should NOT have a dropdown menu button
+    const systemRow = page.locator('tr', { hasText: 'openidx-dial-web' });
+    await expect(systemRow).toBeVisible();
+    // System rows should not have the MoreHorizontal dropdown trigger
+    const menuBtn = systemRow.locator('button[role="trigger"], button:has(svg)').last();
+    // The row should not have the dropdown — check there's no MoreHorizontal
+    const rowButtons = await systemRow.locator('button').count();
+    expect(rowButtons).toBe(0);
+
+    // Custom policy row should have dropdown
+    const customRow = page.locator('tr', { hasText: 'allow-engineering-api' });
+    await expect(customRow).toBeVisible();
+    const customButtons = await customRow.locator('button').count();
+    expect(customButtons).toBeGreaterThan(0);
+  });
+});
+
+test.describe('Ziti Identity Attributes', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/v1/access/ziti/status', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, sdk_ready: true, controller_reachable: true, services_count: 3, identities_count: 3 }) });
+    });
+
+    await page.route('**/api/v1/access/ziti/identities', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            identities: [
+              { id: '1', ziti_id: 'id-001', name: 'user-john', identity_type: 'User', user_id: 'user-1', enrolled: true, attributes: ['engineering', 'vpn-users'], created_at: '2024-01-01T00:00:00Z' },
+              { id: '2', ziti_id: 'id-002', name: 'device-laptop', identity_type: 'Device', enrolled: true, attributes: [], created_at: '2024-01-05T00:00:00Z' },
+            ],
+          }),
+        });
+      }
+    });
+
+    await page.route('**/api/v1/access/ziti/identities/*/attributes', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        const body = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: '1', ziti_id: 'id-001', attributes: body.attributes, message: 'identity attributes updated' }),
+        });
+      }
+    });
+  });
+
+  test('should display role attributes as badges in identities table', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /identities/i }).click();
+
+    // user-john should show engineering and vpn-users badges
+    const johnRow = page.locator('tr', { hasText: 'user-john' });
+    await expect(johnRow).toBeVisible();
+    await expect(johnRow.locator('text=engineering')).toBeVisible();
+    await expect(johnRow.locator('text=vpn-users')).toBeVisible();
+
+    // device-laptop should show "none"
+    const laptopRow = page.locator('tr', { hasText: 'device-laptop' });
+    await expect(laptopRow).toBeVisible();
+    await expect(laptopRow.locator('text=none')).toBeVisible();
+  });
+
+  test('should have Roles column header', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /identities/i }).click();
+
+    await expect(page.locator('th:has-text("Roles")')).toBeVisible();
+  });
+
+  test('should open edit attributes dialog from dropdown menu', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /identities/i }).click();
+
+    // Open dropdown for user-john
+    const johnRow = page.locator('tr', { hasText: 'user-john' });
+    await johnRow.locator('button').last().click();
+
+    // Click Edit Attributes
+    await page.locator('[role="menuitem"]').filter({ hasText: 'Edit Attributes' }).click();
+
+    // Dialog should appear with current attributes
+    await expect(page.locator('text=Edit Role Attributes')).toBeVisible();
+    const input = page.locator('form input[placeholder*="engineering"]');
+    await expect(input).toBeVisible();
+    // Should contain current attributes
+    await expect(input).toHaveValue('engineering, vpn-users');
+  });
+
+  test('should update identity attributes', async ({ page }) => {
+    await page.goto('/ziti-network');
+
+    await page.getByRole('tab', { name: /identities/i }).click();
+
+    // Open dropdown for user-john
+    const johnRow = page.locator('tr', { hasText: 'user-john' });
+    await johnRow.locator('button').last().click();
+    await page.locator('[role="menuitem"]').filter({ hasText: 'Edit Attributes' }).click();
+
+    // Modify attributes
+    const input = page.locator('form input[placeholder*="engineering"]');
+    await input.clear();
+    await input.fill('engineering, finance, admin');
+
+    // Submit
+    await page.getByRole('button', { name: /save attributes/i }).click();
+    await expect(page.locator('text=Attributes updated').first()).toBeVisible();
   });
 });
 

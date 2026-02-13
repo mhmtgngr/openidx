@@ -926,6 +926,66 @@ func (zm *ZitiManager) DeleteServicePolicy(ctx context.Context, zitiID string) e
 	return nil
 }
 
+// UpdateServicePolicy updates an existing service policy on the Ziti controller
+func (zm *ZitiManager) UpdateServicePolicy(ctx context.Context, zitiID, name, policyType string, serviceRoles, identityRoles []string) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          name,
+		"type":          policyType,
+		"semantic":      "AnyOf",
+		"serviceRoles":  serviceRoles,
+		"identityRoles": identityRoles,
+	})
+
+	_, statusCode, err := zm.mgmtRequest("PUT",
+		fmt.Sprintf("/edge/management/v1/service-policies/%s", zitiID), body)
+	if err != nil {
+		return fmt.Errorf("failed to update service policy: %w", err)
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d updating service policy", statusCode)
+	}
+	return nil
+}
+
+// PatchIdentityRoleAttributes updates the role attributes of a Ziti identity
+func (zm *ZitiManager) PatchIdentityRoleAttributes(ctx context.Context, zitiID string, attrs []string) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"roleAttributes": attrs,
+	})
+
+	_, statusCode, err := zm.mgmtRequest("PATCH",
+		fmt.Sprintf("/edge/management/v1/identities/%s", zitiID), body)
+	if err != nil {
+		return fmt.Errorf("failed to patch identity role attributes: %w", err)
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d patching identity", statusCode)
+	}
+	return nil
+}
+
+// GetIdentityRoleAttributes retrieves current role attributes for an identity
+func (zm *ZitiManager) GetIdentityRoleAttributes(ctx context.Context, zitiID string) ([]string, error) {
+	respData, statusCode, err := zm.mgmtRequest("GET",
+		fmt.Sprintf("/edge/management/v1/identities/%s", zitiID), nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d getting identity", statusCode)
+	}
+
+	var resp struct {
+		Data struct {
+			RoleAttributes []string `json:"roleAttributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data.RoleAttributes, nil
+}
+
 // ListServices lists all Ziti services from the management API
 func (zm *ZitiManager) ListServices(ctx context.Context) ([]ZitiServiceInfo, error) {
 	respData, statusCode, err := zm.mgmtRequest("GET", "/edge/management/v1/services", nil)
@@ -1064,8 +1124,8 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 		zm.logger.Warn("Failed to create Bind policy", zap.Error(err))
 	} else {
 		zm.db.Pool.Exec(ctx,
-			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
-			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
+			 VALUES ($1, $2, $3, $4, $5, true) ON CONFLICT (ziti_id) DO NOTHING`,
 			bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
 			`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
 	}
@@ -1080,8 +1140,8 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 		zm.logger.Warn("Failed to create Dial policy", zap.Error(err))
 	} else {
 		zm.db.Pool.Exec(ctx,
-			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
-			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
+			 VALUES ($1, $2, $3, $4, $5, true) ON CONFLICT (ziti_id) DO NOTHING`,
 			dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
 			`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
 	}

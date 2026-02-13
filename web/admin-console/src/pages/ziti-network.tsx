@@ -4,7 +4,7 @@ import {
   Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
   Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
   Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
-  LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay,
+  LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay, Lock, Pencil, ScrollText,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -112,6 +112,14 @@ interface PolicySync {
   sync_status: string
   last_synced_at: string
   error_message: string
+}
+
+interface ServicePolicy {
+  id: string
+  name: string
+  type: string
+  serviceRoles: string[]
+  identityRoles: string[]
 }
 
 interface Certificate {
@@ -673,6 +681,8 @@ function IdentitiesTab() {
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ZitiIdentity | null>(null)
   const [jwtModal, setJwtModal] = useState<{ jwt: string; name: string } | null>(null)
+  const [editAttrsTarget, setEditAttrsTarget] = useState<ZitiIdentity | null>(null)
+  const [editAttrsValue, setEditAttrsValue] = useState('')
   const [form, setForm] = useState({ name: '', identity_type: 'Device', user_id: '', attributes: '' })
 
   const { data, isLoading } = useQuery({
@@ -714,6 +724,22 @@ function IdentitiesTab() {
     },
     onError: () => toast({ title: 'Error', description: 'Failed to delete Ziti identity.', variant: 'destructive' }),
   })
+
+  const updateAttrsMutation = useMutation({
+    mutationFn: ({ id, attributes }: { id: string; attributes: string[] }) =>
+      api.patch(`/api/v1/access/ziti/identities/${id}/attributes`, { attributes }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-identities'] })
+      setEditAttrsTarget(null)
+      toast({ title: 'Attributes updated', description: 'Identity role attributes have been updated.' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to update identity attributes.', variant: 'destructive' }),
+  })
+
+  const openEditAttrs = (ident: ZitiIdentity) => {
+    setEditAttrsValue((ident.attributes || []).join(', '))
+    setEditAttrsTarget(ident)
+  }
 
   const fetchJWT = async (identity: ZitiIdentity) => {
     try {
@@ -758,6 +784,7 @@ function IdentitiesTab() {
                 <TableHead>Identity</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Roles</TableHead>
                 <TableHead>Ziti ID</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-[50px]" />
@@ -783,6 +810,16 @@ function IdentitiesTab() {
                       {ident.enrolled ? 'Enrolled' : 'Pending'}
                     </Badge>
                   </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(ident.attributes || []).map((attr) => (
+                        <Badge key={attr} variant="outline" className="text-xs">{attr}</Badge>
+                      ))}
+                      {(!ident.attributes || ident.attributes.length === 0) && (
+                        <span className="text-xs text-muted-foreground">none</span>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell><TruncatedId value={ident.ziti_id} label="Ziti ID" /></TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {new Date(ident.created_at).toLocaleDateString()}
@@ -800,6 +837,9 @@ function IdentitiesTab() {
                           toast({ title: 'Copied', description: 'Ziti ID copied to clipboard.' })
                         }}>
                           <Copy className="mr-2 h-4 w-4" /> Copy Ziti ID
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openEditAttrs(ident)}>
+                          <Pencil className="mr-2 h-4 w-4" /> Edit Attributes
                         </DropdownMenuItem>
                         {!ident.enrolled && (
                           <DropdownMenuItem onClick={() => fetchJWT(ident)}>
@@ -897,6 +937,43 @@ function IdentitiesTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit Attributes Dialog */}
+      <Dialog open={!!editAttrsTarget} onOpenChange={(v) => { if (!v) setEditAttrsTarget(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Role Attributes — {editAttrsTarget?.name}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={(e) => {
+            e.preventDefault()
+            if (editAttrsTarget) {
+              updateAttrsMutation.mutate({
+                id: editAttrsTarget.id,
+                attributes: editAttrsValue.split(',').map(s => s.trim()).filter(Boolean),
+              })
+            }
+          }} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Role Attributes (comma-separated)</Label>
+              <Input
+                value={editAttrsValue}
+                onChange={(e) => setEditAttrsValue(e.target.value)}
+                placeholder="engineering, vpn-users, finance"
+              />
+              <p className="text-xs text-muted-foreground">
+                These attributes determine which service policies apply to this identity.
+                Use the same names referenced in your Dial/Bind policies (e.g., engineering, vpn-users).
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setEditAttrsTarget(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateAttrsMutation.isPending}>
+                {updateAttrsMutation.isPending ? 'Saving...' : 'Save Attributes'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -945,10 +1022,235 @@ function CollapsibleSection({ title, count, icon: Icon, defaultOpen, children }:
 function SecurityTab() {
   return (
     <div className="space-y-4 mt-4">
+      <ServicePoliciesSection />
       <PostureSection />
       <CertificatesSection />
       <PolicySyncSection />
     </div>
+  )
+}
+
+function ServicePoliciesSection() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [search, setSearch] = useState('')
+  const [createModal, setCreateModal] = useState(false)
+  const [editTarget, setEditTarget] = useState<ServicePolicy | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ServicePolicy | null>(null)
+  const [form, setForm] = useState({ name: '', type: 'Dial', service_roles: '', identity_roles: '' })
+
+  const { data: policiesData, isLoading } = useQuery({
+    queryKey: ['ziti-service-policies'],
+    queryFn: () => api.get<ServicePolicy[]>('/api/v1/access/ziti/fabric/service-policies'),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/service-policies', {
+      name: data.name,
+      type: data.type,
+      service_roles: data.service_roles.split(',').map(s => s.trim()).filter(Boolean),
+      identity_roles: data.identity_roles.split(',').map(s => s.trim()).filter(Boolean),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-service-policies'] })
+      setCreateModal(false)
+      resetForm()
+      toast({ title: 'Service policy created' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create service policy.', variant: 'destructive' }),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof form }) => api.put(`/api/v1/access/ziti/service-policies/${id}`, {
+      name: data.name,
+      type: data.type,
+      service_roles: data.service_roles.split(',').map(s => s.trim()).filter(Boolean),
+      identity_roles: data.identity_roles.split(',').map(s => s.trim()).filter(Boolean),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-service-policies'] })
+      setEditTarget(null)
+      resetForm()
+      toast({ title: 'Service policy updated' })
+    },
+    onError: (err: Error & { response?: { data?: { error?: string } } }) => {
+      const msg = err?.response?.data?.error || 'Failed to update service policy.'
+      toast({ title: 'Error', description: msg, variant: 'destructive' })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/service-policies/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-service-policies'] })
+      setDeleteTarget(null)
+      toast({ title: 'Service policy deleted' })
+    },
+    onError: (err: Error & { response?: { data?: { error?: string } } }) => {
+      const msg = err?.response?.data?.error || 'Failed to delete service policy.'
+      toast({ title: 'Error', description: msg, variant: 'destructive' })
+    },
+  })
+
+  const resetForm = () => setForm({ name: '', type: 'Dial', service_roles: '', identity_roles: '' })
+
+  const openEditModal = (policy: ServicePolicy) => {
+    setForm({
+      name: policy.name,
+      type: policy.type,
+      service_roles: (policy.serviceRoles || []).join(', '),
+      identity_roles: (policy.identityRoles || []).join(', '),
+    })
+    setEditTarget(policy)
+  }
+
+  const isSystemPolicy = (name: string) => name.startsWith('openidx-')
+
+  const policies = (Array.isArray(policiesData) ? policiesData : []).filter((p) =>
+    !search || p.name.toLowerCase().includes(search.toLowerCase()) ||
+    p.type.toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <CollapsibleSection title="Service Policies" count={policies.length} icon={ScrollText} defaultOpen>
+      <p className="text-sm text-muted-foreground mb-3">
+        Control which identities can Dial (access) or Bind (host) services. Policies use role attributes prefixed with <code className="text-xs bg-muted px-1 py-0.5 rounded">#</code> for matching.
+      </p>
+
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search policies..." />
+        <Button size="sm" onClick={() => { resetForm(); setCreateModal(true) }}>
+          <Plus className="mr-2 h-4 w-4" /> Add Policy
+        </Button>
+      </div>
+
+      {isLoading ? <Spinner /> : policies.length === 0 ? (
+        <EmptyState icon={ScrollText} title="No service policies" description="Create policies to control identity access to services." />
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Service Roles</TableHead>
+                <TableHead>Identity Roles</TableHead>
+                <TableHead className="w-[50px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {policies.map((policy) => (
+                <TableRow key={policy.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      {isSystemPolicy(policy.name) && <span title="System policy"><Lock className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+                      <span className="font-medium">{policy.name}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={policy.type === 'Dial' ? 'default' : 'secondary'}>
+                      {policy.type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(policy.serviceRoles || []).map((role) => (
+                        <Badge key={role} variant="outline" className="text-xs">{role}</Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(policy.identityRoles || []).map((role) => (
+                        <Badge key={role} variant="outline" className="text-xs">{role}</Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {!isSystemPolicy(policy.name) && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEditModal(policy)}>
+                            <Pencil className="mr-2 h-4 w-4" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(policy)}>
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      {/* Create/Edit Dialogs */}
+      {[
+        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Service Policy', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Policy' },
+        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: 'Edit Service Policy', onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: 'Update Policy' },
+      ].map((dlg, i) => (
+        <Dialog key={i} open={dlg.open} onOpenChange={dlg.onOpenChange}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>{dlg.title}</DialogTitle></DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); dlg.onSubmit() }} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Policy Name</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="allow-engineering-gitlab" required />
+              </div>
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                  <option value="Dial">Dial (access service)</option>
+                  <option value="Bind">Bind (host service)</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Service Roles</Label>
+                <Input value={form.service_roles} onChange={(e) => setForm({ ...form, service_roles: e.target.value })} placeholder="#gitlab, #internal-apps" required />
+                <p className="text-xs text-muted-foreground">Comma-separated. Use # prefix for role attributes (e.g., #web-services).</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Identity Roles</Label>
+                <Input value={form.identity_roles} onChange={(e) => setForm({ ...form, identity_roles: e.target.value })} placeholder="#engineering, #vpn-users" required />
+                <p className="text-xs text-muted-foreground">Comma-separated. Use # prefix for role attributes (e.g., #engineering).</p>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
+                <Button type="submit" disabled={dlg.pending}>
+                  {dlg.pending ? 'Saving...' : dlg.submitLabel}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ))}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Service Policy</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? Identities matched by this policy will lose access.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </CollapsibleSection>
   )
 }
 

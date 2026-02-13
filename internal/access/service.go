@@ -235,6 +235,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/fabric/metrics", svc.handleGetMetrics)
 		api.GET("/ziti/fabric/service-policies", svc.handleListServicePolicies)
 
+		// Service policy CRUD
+		api.POST("/ziti/service-policies", svc.handleCreateServicePolicy)
+		api.PUT("/ziti/service-policies/:id", svc.handleUpdateServicePolicy)
+		api.DELETE("/ziti/service-policies/:id", svc.handleDeleteServicePolicy)
+
+		// Identity attribute management
+		api.PATCH("/ziti/identities/:id/attributes", svc.handlePatchIdentityAttributes)
+
 		// Phase 3: Posture checks
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
 		api.POST("/ziti/posture/checks", svc.handleCreatePostureCheck)

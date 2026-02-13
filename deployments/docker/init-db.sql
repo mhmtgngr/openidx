@@ -1558,6 +1558,9 @@ ON CONFLICT (id) DO NOTHING;
 -- Add posture_check_ids to ziti_service_policies
 ALTER TABLE ziti_service_policies ADD COLUMN IF NOT EXISTS posture_check_roles JSONB DEFAULT '[]';
 
+-- Track whether a service policy was auto-created by the system
+ALTER TABLE ziti_service_policies ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT false;
+
 -- Add description column to ziti_services
 ALTER TABLE ziti_services ADD COLUMN IF NOT EXISTS description TEXT;
 
