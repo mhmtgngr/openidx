@@ -5,6 +5,7 @@ import {
   Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
   Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
   LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay, Lock, Pencil, ScrollText,
+  Settings, Zap, Upload,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -202,6 +203,72 @@ interface TempAccessLink {
   last_used_at?: string
   last_used_ip?: string
   created_at: string
+}
+
+interface ZitiConfigType {
+  id: string
+  name: string
+  schema?: Record<string, unknown>
+}
+
+interface ZitiConfig {
+  id: string
+  name: string
+  configTypeId: string
+  configType?: { id: string; name: string }
+  data: Record<string, unknown>
+}
+
+interface ZitiAuthPolicy {
+  id: string
+  name: string
+  primary: Record<string, Record<string, unknown>>
+  secondary: Record<string, unknown>
+}
+
+interface ZitiJWTSigner {
+  id: string
+  name: string
+  issuer: string
+  audience: string
+  jwksEndpoint: string
+  claimsProperty: string
+  useExternalId: boolean
+  enabled: boolean
+}
+
+interface ZitiTerminator {
+  id: string
+  serviceId: string
+  service?: { id: string; name: string }
+  routerId: string
+  router?: { id: string; name: string }
+  binding: string
+  address: string
+  cost: number
+  precedence: string
+  createdAt: string
+}
+
+interface ZitiSessionEntry {
+  id: string
+  type: 'Dial' | 'Bind'
+  identity?: { id: string; name: string }
+  service?: { id: string; name: string }
+  createdAt: string
+}
+
+interface AppZitiService {
+  id: string
+  ziti_id: string
+  name: string
+  protocol: string
+  host: string
+  port: number
+  enabled: boolean
+  linked_path: string
+  classification: string
+  route_name: string
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -717,6 +784,88 @@ function ServicesTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PublishedAppServicesSection />
+    </div>
+  )
+}
+
+// ─── F15: Published App Services Section ─────────────────────────────────────
+
+function PublishedAppServicesSection() {
+  const [expandedApp, setExpandedApp] = useState<string | null>(null)
+
+  const { data: appsResp } = useQuery({
+    queryKey: ['published-apps'],
+    queryFn: () => api.get<{ apps: Array<{ id: string; name: string; target_url: string; total_paths_published: number; status: string }> }>('/api/v1/access/apps'),
+  })
+
+  const { data: appServicesResp } = useQuery({
+    queryKey: ['app-ziti-services', expandedApp],
+    queryFn: () => api.get<{ services: AppZitiService[]; app_name: string }>(`/api/v1/access/apps/${expandedApp}/ziti-services`),
+    enabled: !!expandedApp,
+  })
+
+  const publishedApps = appsResp?.apps?.filter((a) => a.total_paths_published > 0) ?? []
+
+  if (publishedApps.length === 0) return null
+
+  return (
+    <div className="mt-6">
+      <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+        <Upload className="h-4 w-4" /> Published App Services
+      </h3>
+      <p className="text-xs text-muted-foreground mb-3">Ziti services automatically created when publishing apps.</p>
+      <div className="space-y-2">
+        {publishedApps.map((app) => (
+          <div key={app.id} className="border rounded-lg">
+            <button
+              className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-muted/50"
+              onClick={() => setExpandedApp(expandedApp === app.id ? null : app.id)}
+            >
+              <div className="flex items-center gap-2">
+                {expandedApp === app.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                <span className="font-medium">{app.name}</span>
+                <span className="text-xs text-muted-foreground">{app.target_url}</span>
+              </div>
+              <Badge variant="outline">{app.total_paths_published} paths</Badge>
+            </button>
+            {expandedApp === app.id && (
+              <div className="px-4 pb-3">
+                {!appServicesResp?.services || appServicesResp.services.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-2">No Ziti services linked to this app.</p>
+                ) : (
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead>Service</TableHead>
+                      <TableHead>Path</TableHead>
+                      <TableHead>Classification</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {appServicesResp.services.map((svc) => (
+                        <TableRow key={svc.id}>
+                          <TableCell className="font-medium text-xs">{svc.name}</TableCell>
+                          <TableCell className="text-xs font-mono">{svc.linked_path}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={`text-[10px] ${
+                              svc.classification === 'critical' ? 'bg-red-50 text-red-700 border-red-200' :
+                              svc.classification === 'sensitive' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                              svc.classification === 'public' ? 'bg-green-50 text-green-700 border-green-200' :
+                              'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}>{svc.classification}</Badge>
+                          </TableCell>
+                          <TableCell>{svc.enabled ? <Badge className="bg-green-100 text-green-700 text-[10px]">Active</Badge> : <Badge variant="secondary" className="text-[10px]">Disabled</Badge>}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1195,14 +1344,422 @@ function CollapsibleSection({ title, count, icon: Icon, defaultOpen, children }:
 function SecurityTab() {
   return (
     <div className="space-y-4 mt-4">
+      <ActiveSessionsSection />
       <ServicePoliciesSection />
       <EdgeRouterPoliciesSection />
+      <ConfigurationsSection />
+      <AuthPoliciesSection />
+      <TerminatorsSection />
       <PostureSection />
       <CertificatesSection />
       <PolicySyncSection />
     </div>
   )
 }
+
+// ─── F14: Active Sessions Section ────────────────────────────────────────────
+
+function ActiveSessionsSection() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [deleteTarget, setDeleteTarget] = useState<ZitiSessionEntry | null>(null)
+
+  const { data: sessions } = useQuery({
+    queryKey: ['ziti-sessions'],
+    queryFn: () => api.get<ZitiSessionEntry[]>('/api/v1/access/ziti/sessions'),
+    refetchInterval: 10000,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/sessions/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-sessions'] })
+      toast({ title: 'Session terminated' })
+      setDeleteTarget(null)
+    },
+  })
+
+  return (
+    <>
+      <CollapsibleSection title="Active Sessions" count={sessions?.length ?? 0} icon={Zap} defaultOpen>
+        <p className="text-xs text-muted-foreground mb-3">Currently active Ziti overlay connections. Dial = accessing a service; Bind = hosting a service endpoint.</p>
+        {!sessions || sessions.length === 0 ? (
+          <EmptyState icon={Clock} title="No active sessions" description="No one is currently connected through the Ziti overlay." />
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Identity</TableHead>
+              <TableHead>Service</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Connected Since</TableHead>
+              <TableHead className="w-10" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {sessions.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="font-medium">{s.identity?.name || s.identity?.id || '—'}</TableCell>
+                  <TableCell>{s.service?.name || s.service?.id || '—'}</TableCell>
+                  <TableCell>
+                    <Badge variant={s.type === 'Dial' ? 'default' : 'secondary'}>{s.type}</Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{s.createdAt ? new Date(s.createdAt).toLocaleString() : '—'}</TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(s)} title="Force disconnect">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CollapsibleSection>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Force Disconnect Session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will immediately disconnect {deleteTarget?.identity?.name || 'this identity'} from {deleteTarget?.service?.name || 'the service'}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Disconnect</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+// ─── F11: Configurations Section ─────────────────────────────────────────────
+
+function ConfigurationsSection() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [createModal, setCreateModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ZitiConfig | null>(null)
+  const [form, setForm] = useState({ name: '', configTypeId: '', data: '{}' })
+
+  const { data: configs } = useQuery({
+    queryKey: ['ziti-configs'],
+    queryFn: () => api.get<ZitiConfig[]>('/api/v1/access/ziti/configs'),
+  })
+  const { data: configTypes } = useQuery({
+    queryKey: ['ziti-config-types'],
+    queryFn: () => api.get<ZitiConfigType[]>('/api/v1/access/ziti/config-types'),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (data: { name: string; configTypeId: string; data: string }) =>
+      api.post('/api/v1/access/ziti/configs', { name: data.name, configTypeId: data.configTypeId, data: JSON.parse(data.data) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-configs'] })
+      toast({ title: 'Config created' })
+      setCreateModal(false)
+      setForm({ name: '', configTypeId: '', data: '{}' })
+    },
+    onError: (e: Error) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  })
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/configs/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-configs'] })
+      toast({ title: 'Config deleted' })
+      setDeleteTarget(null)
+    },
+  })
+
+  const isSystem = (name: string) => name.startsWith('openidx-')
+
+  return (
+    <>
+      <CollapsibleSection title="Configurations" count={configs?.length ?? 0} icon={Settings} defaultOpen={false}>
+        <div className="flex justify-between items-center mb-3">
+          <p className="text-xs text-muted-foreground">Ziti config objects (host.v1, intercept.v1, etc.) that define service behavior.</p>
+          <Button size="sm" onClick={() => setCreateModal(true)}><Plus className="h-4 w-4 mr-1" /> Add Config</Button>
+        </div>
+        {!configs || configs.length === 0 ? (
+          <EmptyState icon={Settings} title="No configurations" description="No Ziti config objects found." />
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Config Type</TableHead>
+              <TableHead>Data</TableHead>
+              <TableHead className="w-10" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {configs.map((cfg) => (
+                <TableRow key={cfg.id}>
+                  <TableCell className="font-medium">{cfg.name}</TableCell>
+                  <TableCell><Badge variant="outline">{typeof cfg.configType === 'object' && cfg.configType?.name ? cfg.configType.name : cfg.configTypeId}</Badge></TableCell>
+                  <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{JSON.stringify(cfg.data).slice(0, 80)}</TableCell>
+                  <TableCell>
+                    {!isSystem(cfg.name) && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(cfg)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CollapsibleSection>
+
+      <Dialog open={createModal} onOpenChange={setCreateModal}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Create Configuration</DialogTitle></DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
+            <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
+            <div><Label>Config Type</Label>
+              <select className="w-full border rounded-md p-2 text-sm" value={form.configTypeId} onChange={(e) => setForm({ ...form, configTypeId: e.target.value })} required>
+                <option value="">Select config type...</option>
+                {configTypes?.map((ct) => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
+              </select>
+            </div>
+            <div><Label>Data (JSON)</Label><textarea className="w-full border rounded-md p-2 text-sm font-mono h-32" value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
+              <Button type="submit" disabled={createMutation.isPending}>Create</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Configuration?</AlertDialogTitle>
+            <AlertDialogDescription>This will delete &quot;{deleteTarget?.name}&quot;. Services using this config may break.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+// ─── F12: Auth Policies & JWT Signers Section ────────────────────────────────
+
+function AuthPoliciesSection() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [deleteAPTarget, setDeleteAPTarget] = useState<ZitiAuthPolicy | null>(null)
+  const [deleteJSTarget, setDeleteJSTarget] = useState<ZitiJWTSigner | null>(null)
+
+  const { data: authPolicies } = useQuery({
+    queryKey: ['ziti-auth-policies'],
+    queryFn: () => api.get<ZitiAuthPolicy[]>('/api/v1/access/ziti/auth-policies'),
+  })
+  const { data: jwtSigners } = useQuery({
+    queryKey: ['ziti-jwt-signers'],
+    queryFn: () => api.get<ZitiJWTSigner[]>('/api/v1/access/ziti/jwt-signers'),
+  })
+
+  const deleteAPMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/auth-policies/${id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-auth-policies'] }); toast({ title: 'Auth policy deleted' }); setDeleteAPTarget(null) },
+  })
+  const deleteJSMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/jwt-signers/${id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ziti-jwt-signers'] }); toast({ title: 'JWT signer deleted' }); setDeleteJSTarget(null) },
+  })
+
+  const isSystem = (name: string) => name.startsWith('openidx-') || name === 'default'
+  const totalCount = (authPolicies?.length ?? 0) + (jwtSigners?.length ?? 0)
+
+  const authMethods = (p: ZitiAuthPolicy) => {
+    const methods: string[] = []
+    if (p.primary?.cert?.allowed) methods.push('Cert')
+    if (p.primary?.updb?.allowed) methods.push('UPDB')
+    if (p.primary?.extJwt?.allowed) methods.push('ExtJWT')
+    return methods
+  }
+
+  return (
+    <>
+      <CollapsibleSection title="Auth Policies & JWT Signers" count={totalCount} icon={Key} defaultOpen={false}>
+        <p className="text-xs text-muted-foreground mb-3">Authentication policies control how identities authenticate to Ziti. JWT signers enable external JWT-based authentication.</p>
+
+        <h4 className="text-sm font-semibold mb-2">Auth Policies</h4>
+        {!authPolicies || authPolicies.length === 0 ? (
+          <p className="text-xs text-muted-foreground mb-4">No auth policies found.</p>
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Primary Auth</TableHead>
+              <TableHead>TOTP</TableHead>
+              <TableHead className="w-10" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {authPolicies.map((ap) => (
+                <TableRow key={ap.id}>
+                  <TableCell className="font-medium">{ap.name}{isSystem(ap.name) && <Badge variant="outline" className="ml-2 text-[10px]">system</Badge>}</TableCell>
+                  <TableCell className="flex gap-1 flex-wrap">
+                    {authMethods(ap).map((m) => (
+                      <Badge key={m} variant="secondary" className="text-[10px]">{m}</Badge>
+                    ))}
+                    {authMethods(ap).length === 0 && <span className="text-xs text-muted-foreground">none</span>}
+                  </TableCell>
+                  <TableCell>{ap.secondary?.requireTotp ? <Badge className="text-[10px]">Required</Badge> : <span className="text-xs text-muted-foreground">No</span>}</TableCell>
+                  <TableCell>
+                    {!isSystem(ap.name) && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteAPTarget(ap)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        <h4 className="text-sm font-semibold mt-4 mb-2">JWT Signers</h4>
+        {!jwtSigners || jwtSigners.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No external JWT signers found.</p>
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Issuer</TableHead>
+              <TableHead>Audience</TableHead>
+              <TableHead>Enabled</TableHead>
+              <TableHead className="w-10" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {jwtSigners.map((js) => (
+                <TableRow key={js.id}>
+                  <TableCell className="font-medium">{js.name}{isSystem(js.name) && <Badge variant="outline" className="ml-2 text-[10px]">system</Badge>}</TableCell>
+                  <TableCell className="text-xs max-w-[150px] truncate">{js.issuer}</TableCell>
+                  <TableCell className="text-xs">{js.audience}</TableCell>
+                  <TableCell>{js.enabled ? <Badge className="bg-green-100 text-green-700 text-[10px]">Yes</Badge> : <Badge variant="secondary" className="text-[10px]">No</Badge>}</TableCell>
+                  <TableCell>
+                    {!isSystem(js.name) && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteJSTarget(js)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CollapsibleSection>
+
+      <AlertDialog open={!!deleteAPTarget} onOpenChange={() => setDeleteAPTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Delete Auth Policy?</AlertDialogTitle>
+            <AlertDialogDescription>This will delete &quot;{deleteAPTarget?.name}&quot;. Identities using this policy may lose authentication.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteAPTarget && deleteAPMutation.mutate(deleteAPTarget.id)}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!deleteJSTarget} onOpenChange={() => setDeleteJSTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Delete JWT Signer?</AlertDialogTitle>
+            <AlertDialogDescription>This will delete &quot;{deleteJSTarget?.name}&quot;. Auth policies referencing this signer will break.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteJSTarget && deleteJSMutation.mutate(deleteJSTarget.id)}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+// ─── F13: Terminators Section ────────────────────────────────────────────────
+
+function TerminatorsSection() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [deleteTarget, setDeleteTarget] = useState<ZitiTerminator | null>(null)
+
+  const { data: terminators } = useQuery({
+    queryKey: ['ziti-terminators'],
+    queryFn: () => api.get<ZitiTerminator[]>('/api/v1/access/ziti/terminators'),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/terminators/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-terminators'] })
+      toast({ title: 'Terminator deleted' })
+      setDeleteTarget(null)
+    },
+  })
+
+  return (
+    <>
+      <CollapsibleSection title="Terminators" count={terminators?.length ?? 0} icon={Link2} defaultOpen={false}>
+        <p className="text-xs text-muted-foreground mb-3">Terminators connect Ziti services to backend servers. They are auto-created when services are hosted.</p>
+        {!terminators || terminators.length === 0 ? (
+          <EmptyState icon={Link2} title="No terminators" description="No service terminators found on the Ziti controller." />
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Service</TableHead>
+              <TableHead>Router</TableHead>
+              <TableHead>Binding</TableHead>
+              <TableHead>Address</TableHead>
+              <TableHead>Cost</TableHead>
+              <TableHead>Precedence</TableHead>
+              <TableHead className="w-10" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {terminators.map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="font-medium">{t.service?.name || t.serviceId}</TableCell>
+                  <TableCell>{t.router?.name || t.routerId}</TableCell>
+                  <TableCell><Badge variant="outline" className="text-[10px]">{t.binding}</Badge></TableCell>
+                  <TableCell className="text-xs font-mono">{t.address}</TableCell>
+                  <TableCell>{t.cost}</TableCell>
+                  <TableCell><Badge variant="secondary" className="text-[10px]">{t.precedence}</Badge></TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => setDeleteTarget(t)} title="Delete terminator">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CollapsibleSection>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Terminator?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deleting this terminator for &quot;{deleteTarget?.service?.name}&quot; may disrupt active connections to the backend server.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+// ─── Existing Security Sections ──────────────────────────────────────────────
 
 function ServicePoliciesSection() {
   const queryClient = useQueryClient()

@@ -1006,6 +1006,62 @@ func parseTargetHostPort(targetURL string) (string, int) {
 	return host, port
 }
 
+// handleGetAppZitiServices returns Ziti services linked to a published app
+// via the chain: published_apps → discovered_paths → proxy_routes → ziti_services
+func (s *Service) handleGetAppZitiServices(c *gin.Context) {
+	appID := c.Param("appId")
+	ctx := c.Request.Context()
+
+	var appName string
+	err := s.db.Pool.QueryRow(ctx, `SELECT name FROM published_apps WHERE id=$1`, appID).Scan(&appName)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
+		return
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT zs.id, zs.ziti_id, zs.name, COALESCE(zs.description,''), zs.protocol,
+		       zs.host, zs.port, zs.enabled, dp.path, COALESCE(dp.classification,''), pr.name as route_name
+		FROM discovered_paths dp
+		JOIN proxy_routes pr ON pr.id = dp.route_id
+		JOIN ziti_services zs ON zs.name = pr.ziti_service_name
+		WHERE dp.app_id = $1 AND dp.published = true AND pr.ziti_service_name IS NOT NULL
+		ORDER BY zs.name`, appID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type appZitiService struct {
+		ID             string `json:"id"`
+		ZitiID         string `json:"ziti_id"`
+		Name           string `json:"name"`
+		Description    string `json:"description,omitempty"`
+		Protocol       string `json:"protocol"`
+		Host           string `json:"host"`
+		Port           int    `json:"port"`
+		Enabled        bool   `json:"enabled"`
+		LinkedPath     string `json:"linked_path"`
+		Classification string `json:"classification"`
+		RouteName      string `json:"route_name"`
+	}
+
+	var services []appZitiService
+	for rows.Next() {
+		var svc appZitiService
+		if err := rows.Scan(&svc.ID, &svc.ZitiID, &svc.Name, &svc.Description, &svc.Protocol,
+			&svc.Host, &svc.Port, &svc.Enabled, &svc.LinkedPath, &svc.Classification, &svc.RouteName); err != nil {
+			continue
+		}
+		services = append(services, svc)
+	}
+	if services == nil {
+		services = []appZitiService{}
+	}
+	c.JSON(http.StatusOK, gin.H{"services": services, "app_name": appName})
+}
+
 func sanitizeName(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")

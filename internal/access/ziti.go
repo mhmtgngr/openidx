@@ -44,6 +44,10 @@ type ZitiManager struct {
 	// Service hosting: listeners that bind services and forward to upstream
 	hostedMu       sync.Mutex
 	hostedServices map[string]*hostedService // keyed by service name
+
+	// Config type name → ID cache (e.g. "host.v1" → "NH5p4FpGR")
+	configTypeCacheMu sync.RWMutex
+	configTypeCache   map[string]string
 }
 
 // hostedService tracks a Ziti service listener that forwards to an upstream target
@@ -93,7 +97,8 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 		cfg:            cfg,
 		logger:         logger.With(zap.String("component", "ziti")),
 		db:             db,
-		hostedServices: make(map[string]*hostedService),
+		hostedServices:  make(map[string]*hostedService),
+		configTypeCache: make(map[string]string),
 	}
 
 	// Build TLS config for Ziti controller management API communication.
@@ -1026,6 +1031,60 @@ func (zm *ZitiManager) ListIdentities(ctx context.Context) ([]ZitiIdentityInfo, 
 	return resp.Data, nil
 }
 
+// resolveConfigTypeID looks up a config type ID by name, with caching.
+// Falls back to hardcoded defaults if lookup fails.
+func (zm *ZitiManager) resolveConfigTypeID(typeName string) string {
+	// Check cache first
+	zm.configTypeCacheMu.RLock()
+	if id, ok := zm.configTypeCache[typeName]; ok {
+		zm.configTypeCacheMu.RUnlock()
+		return id
+	}
+	zm.configTypeCacheMu.RUnlock()
+
+	// Fetch from controller
+	respData, status, err := zm.mgmtRequest("GET", "/edge/management/v1/config-types?limit=500", nil)
+	if err != nil || status != 200 {
+		zm.logger.Warn("failed to fetch config types, using fallback", zap.Error(err))
+		return zm.configTypeFallback(typeName)
+	}
+
+	var resp struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return zm.configTypeFallback(typeName)
+	}
+
+	zm.configTypeCacheMu.Lock()
+	for _, ct := range resp.Data {
+		zm.configTypeCache[ct.Name] = ct.ID
+	}
+	zm.configTypeCacheMu.Unlock()
+
+	zm.configTypeCacheMu.RLock()
+	id, ok := zm.configTypeCache[typeName]
+	zm.configTypeCacheMu.RUnlock()
+	if ok {
+		return id
+	}
+	return zm.configTypeFallback(typeName)
+}
+
+func (zm *ZitiManager) configTypeFallback(typeName string) string {
+	defaults := map[string]string{
+		"host.v1":      "NH5p4FpGR",
+		"intercept.v1": "g7cIWbcGg",
+	}
+	if id, ok := defaults[typeName]; ok {
+		return id
+	}
+	return typeName
+}
+
 // ---- Route Ziti Setup/Teardown ----
 
 // SetupZitiForRoute creates all Ziti resources needed for a proxy route
@@ -1041,7 +1100,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 	// Create a host.v1 config that tells Ziti where to forward traffic
 	configBody, _ := json.Marshal(map[string]interface{}{
 		"name":     fmt.Sprintf("openidx-host-%s", serviceName),
-		"configTypeId": "NH5p4FpGR",  // host.v1 config type
+		"configTypeId": zm.resolveConfigTypeID("host.v1"),
 		"data": map[string]interface{}{
 			"protocol":       "tcp",
 			"address":        host,

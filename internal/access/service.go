@@ -276,6 +276,32 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/policy-sync/:id/trigger", svc.handleTriggerPolicySync)
 		api.DELETE("/ziti/policy-sync/:id", svc.handleDeletePolicySyncState)
 
+		// Config types & configs management
+		api.GET("/ziti/config-types", svc.handleListConfigTypes)
+		api.GET("/ziti/configs", svc.handleListConfigs)
+		api.POST("/ziti/configs", svc.handleCreateConfig)
+		api.PUT("/ziti/configs/:id", svc.handleUpdateConfig)
+		api.DELETE("/ziti/configs/:id", svc.handleDeleteConfig)
+
+		// Auth policies & JWT signers management
+		api.GET("/ziti/auth-policies", svc.handleListAuthPolicies)
+		api.POST("/ziti/auth-policies", svc.handleCreateAuthPolicy)
+		api.PUT("/ziti/auth-policies/:id", svc.handleUpdateAuthPolicy)
+		api.DELETE("/ziti/auth-policies/:id", svc.handleDeleteAuthPolicy)
+		api.GET("/ziti/jwt-signers", svc.handleListJWTSigners)
+		api.POST("/ziti/jwt-signers", svc.handleCreateJWTSigner)
+		api.PUT("/ziti/jwt-signers/:id", svc.handleUpdateJWTSigner)
+		api.DELETE("/ziti/jwt-signers/:id", svc.handleDeleteJWTSigner)
+
+		// Terminators management
+		api.GET("/ziti/terminators", svc.handleListTerminators)
+		api.GET("/ziti/terminators/:id", svc.handleGetTerminator)
+		api.DELETE("/ziti/terminators/:id", svc.handleDeleteTerminator)
+
+		// Ziti session visibility
+		api.GET("/ziti/sessions", svc.handleListZitiSessions)
+		api.DELETE("/ziti/sessions/:id", svc.handleDeleteZitiSession)
+
 		// Phase 5: Certificates
 		api.GET("/ziti/certificates", svc.handleListCertificates)
 		api.GET("/ziti/certificates/expiry-alerts", svc.handleGetCertExpiryAlerts)
@@ -361,6 +387,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/apps/:appId/paths", svc.handleListDiscoveredPaths)
 		api.PUT("/apps/:appId/paths/:pathId", svc.handleUpdatePathClassification)
 		api.POST("/apps/:appId/publish", svc.handlePublishPaths)
+		api.GET("/apps/:appId/ziti-services", svc.handleGetAppZitiServices)
 
 		// Unified audit log
 		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)

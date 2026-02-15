@@ -1463,4 +1463,203 @@ test.describe('Ziti Remote Access Tab', () => {
       await expect(page.getByRole('button', { name: /sync all/i })).toBeVisible();
     });
   });
+
+  // ─── F14: Active Sessions ──────────────────────────────────────────────────
+
+  test.describe('Active Sessions', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/sessions', async (route) => {
+        if (route.request().method() === 'GET') {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+              { id: 'sess-1', type: 'Dial', identity: { id: 'id-1', name: 'alice' }, service: { id: 'svc-1', name: 'internal-app' }, createdAt: '2024-01-01T10:00:00Z' },
+              { id: 'sess-2', type: 'Bind', identity: { id: 'id-2', name: 'router-host' }, service: { id: 'svc-2', name: 'ssh-service' }, createdAt: '2024-01-01T09:00:00Z' },
+            ]),
+          });
+        } else {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: '{"message":"session terminated"}' });
+        }
+      });
+    });
+
+    test('should display Active Sessions section on Security tab', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await expect(page.getByRole('button', { name: 'Active Sessions' })).toBeVisible();
+    });
+
+    test('should show session entries with identity and service names', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await expect(page.getByText('alice')).toBeVisible();
+      await expect(page.getByText('internal-app')).toBeVisible();
+      await expect(page.getByText('Dial', { exact: true })).toBeVisible();
+      await expect(page.getByText('Bind', { exact: true })).toBeVisible();
+    });
+  });
+
+  // ─── F11: Configurations ───────────────────────────────────────────────────
+
+  test.describe('Configurations Section', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/configs', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'cfg-1', name: 'openidx-host-app', configTypeId: 'ct-1', configType: { id: 'ct-1', name: 'host.v1' }, data: { protocol: 'tcp', address: 'localhost', port: 8080 } },
+          ]),
+        });
+      });
+      await page.route('**/api/v1/access/ziti/config-types', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'ct-1', name: 'host.v1' },
+            { id: 'ct-2', name: 'intercept.v1' },
+          ]),
+        });
+      });
+    });
+
+    test('should display Configurations section on Security tab', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Configurations")').click();
+      await expect(page.getByText('openidx-host-app')).toBeVisible();
+      await expect(page.getByText('host.v1', { exact: true })).toBeVisible();
+    });
+
+    test('should have Add Config button', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Configurations")').click();
+      await expect(page.getByRole('button', { name: /add config/i })).toBeVisible();
+    });
+  });
+
+  // ─── F12: Auth Policies & JWT Signers ──────────────────────────────────────
+
+  test.describe('Auth Policies & JWT Signers', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/auth-policies', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'ap-1', name: 'default', primary: { cert: { allowed: true }, updb: { allowed: true }, extJwt: { allowed: false } }, secondary: { requireTotp: false } },
+            { id: 'ap-2', name: 'openidx-browzer-auth', primary: { cert: { allowed: false }, updb: { allowed: false }, extJwt: { allowed: true } }, secondary: { requireTotp: false } },
+          ]),
+        });
+      });
+      await page.route('**/api/v1/access/ziti/jwt-signers', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'js-1', name: 'openidx-oauth-browzer', issuer: 'https://auth.example.com', audience: 'admin-console', jwksEndpoint: 'https://auth.example.com/jwks', claimsProperty: 'sub', useExternalId: true, enabled: true },
+          ]),
+        });
+      });
+    });
+
+    test('should display Auth Policies section on Security tab', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Auth Policies")').click();
+      await expect(page.getByRole('heading', { name: 'Auth Policies' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'JWT Signers' })).toBeVisible();
+    });
+
+    test('should show auth policy entries with auth method badges', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Auth Policies")').click();
+      await expect(page.getByText('Cert', { exact: true })).toBeVisible();
+      await expect(page.getByText('UPDB', { exact: true })).toBeVisible();
+    });
+
+    test('should show JWT signer entries', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Auth Policies")').click();
+      await expect(page.getByText('openidx-oauth-browzer')).toBeVisible();
+    });
+  });
+
+  // ─── F13: Terminators ──────────────────────────────────────────────────────
+
+  test.describe('Terminators Section', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/terminators', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'term-1', serviceId: 'svc-1', service: { id: 'svc-1', name: 'internal-app' }, routerId: 'r-1', router: { id: 'r-1', name: 'edge-router-1' }, binding: 'edge', address: 'tcp:localhost:8080', cost: 0, precedence: 'default', createdAt: '2024-01-01T00:00:00Z' },
+          ]),
+        });
+      });
+    });
+
+    test('should display Terminators section on Security tab', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Terminators")').click();
+      await expect(page.getByText('internal-app')).toBeVisible();
+      await expect(page.getByText('edge-router-1')).toBeVisible();
+    });
+
+    test('should show terminator details', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Terminators")').click();
+      await expect(page.getByText('tcp:localhost:8080')).toBeVisible();
+      await expect(page.getByText('edge', { exact: true })).toBeVisible();
+    });
+  });
+
+  // ─── F15: Published App Services ───────────────────────────────────────────
+
+  test.describe('Published App Services', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/apps', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ apps: [
+            { id: 'app-1', name: 'My Web App', target_url: 'http://internal-app:8080', total_paths_published: 3, status: 'published' },
+          ], total: 1 }),
+        });
+      });
+      await page.route('**/api/v1/access/apps/app-1/ziti-services', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ services: [
+            { id: 's1', ziti_id: 'z1', name: 'openidx-my-web-app-api', protocol: 'tcp', host: 'internal-app', port: 8080, enabled: true, linked_path: '/api', classification: 'protected', route_name: 'my-web-app-api' },
+          ], app_name: 'My Web App' }),
+        });
+      });
+    });
+
+    test('should show Published App Services section in Services tab', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /services/i }).click();
+      await expect(page.getByText('Published App Services')).toBeVisible();
+      await expect(page.getByText('My Web App')).toBeVisible();
+    });
+
+    test('should expand app to show linked Ziti services', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /services/i }).click();
+      await page.locator('button:has-text("My Web App")').click();
+      await expect(page.getByText('openidx-my-web-app-api')).toBeVisible();
+      await expect(page.getByText('/api')).toBeVisible();
+      await expect(page.getByText('protected')).toBeVisible();
+    });
+  });
 });
