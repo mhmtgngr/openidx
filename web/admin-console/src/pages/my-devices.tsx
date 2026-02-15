@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Smartphone, Monitor, Tablet, Shield, ShieldCheck, ShieldX, Trash2, Edit, Plus, MoreHorizontal } from 'lucide-react'
+import { Smartphone, Monitor, Tablet, Shield, ShieldCheck, ShieldX, Trash2, Edit, Plus, MoreHorizontal, Network, Copy, FileKey, Download } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -34,6 +34,15 @@ import { Textarea } from '../components/ui/textarea'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
+
+interface MyZitiIdentity {
+  linked: boolean
+  ziti_id?: string
+  name?: string
+  enrolled?: boolean
+  attributes?: string[]
+  enrollment_jwt?: string
+}
 
 interface Device {
   id: string
@@ -174,6 +183,25 @@ export function MyDevicesPage() {
     })
   }
 
+  // Fetch Ziti identity for the current user
+  const { data: zitiIdentity } = useQuery({
+    queryKey: ['my-ziti-identity'],
+    queryFn: () => api.get<MyZitiIdentity>('/api/v1/access/ziti/sync/my-identity'),
+  })
+
+  const [showJwt, setShowJwt] = useState(false)
+
+  const downloadJwt = () => {
+    if (!zitiIdentity?.enrollment_jwt) return
+    const blob = new Blob([zitiIdentity.enrollment_jwt], { type: 'application/jwt' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${zitiIdentity.name || 'identity'}.jwt`
+    a.click()
+    window.URL.revokeObjectURL(url)
+  }
+
   // Summary stats
   const trustedCount = devices.filter(d => d.trusted).length
   const untrustedCount = devices.filter(d => !d.trusted).length
@@ -184,7 +212,7 @@ export function MyDevicesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">My Devices</h1>
           <p className="text-muted-foreground">
-            Manage devices registered to your account
+            Manage devices and zero-trust network enrollment
           </p>
         </div>
         <Button onClick={() => setRegisterDialog(true)}>
@@ -192,6 +220,78 @@ export function MyDevicesPage() {
           Register This Device
         </Button>
       </div>
+
+      {/* Ziti Network Identity Card */}
+      {zitiIdentity && (
+        <Card className={zitiIdentity.linked ? 'border-green-200 bg-green-50/30' : 'border-amber-200 bg-amber-50/30'}>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Network className="h-5 w-5 text-blue-600" />
+              Zero Trust Network Identity
+            </CardTitle>
+            <CardDescription>
+              {zitiIdentity.linked
+                ? 'Your account is linked to a Ziti network identity for secure access.'
+                : 'Your account does not yet have a Ziti network identity. Contact your administrator.'}
+            </CardDescription>
+          </CardHeader>
+          {zitiIdentity.linked && (
+            <CardContent>
+              <div className="flex flex-wrap items-center gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Identity:</span>{' '}
+                  <span className="font-medium">{zitiIdentity.name}</span>
+                </div>
+                <Badge variant={zitiIdentity.enrolled ? 'default' : 'secondary'}>
+                  {zitiIdentity.enrolled ? 'Enrolled' : 'Pending Enrollment'}
+                </Badge>
+                {zitiIdentity.attributes && zitiIdentity.attributes.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-muted-foreground">Roles:</span>
+                    {zitiIdentity.attributes.map((attr) => (
+                      <Badge key={attr} variant="outline" className="text-xs">{attr}</Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Enrollment section for unenrolled identities */}
+              {!zitiIdentity.enrolled && zitiIdentity.enrollment_jwt && (
+                <div className="mt-4 p-3 bg-white rounded-lg border">
+                  <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <FileKey className="h-4 w-4" />
+                    Enrollment Token
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Use this token with the OpenZiti Desktop Edge tunneler to connect your device to the network.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setShowJwt(!showJwt)}>
+                      {showJwt ? 'Hide Token' : 'Show Token'}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => {
+                      navigator.clipboard.writeText(zitiIdentity.enrollment_jwt!)
+                      toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
+                    }}>
+                      <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={downloadJwt}>
+                      <Download className="h-3.5 w-3.5 mr-1.5" /> Download .jwt
+                    </Button>
+                  </div>
+                  {showJwt && (
+                    <textarea
+                      readOnly
+                      value={zitiIdentity.enrollment_jwt}
+                      className="mt-2 w-full h-24 rounded-md border bg-muted p-2 text-xs font-mono"
+                    />
+                  )}
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-3">

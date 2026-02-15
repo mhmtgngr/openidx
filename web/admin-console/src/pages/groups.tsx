@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
-import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight, ChevronLeft } from 'lucide-react'
+import { Plus, Search, Users, MoreHorizontal, FolderTree, Edit, Trash2, UserPlus, Settings, X, ChevronRight, ChevronLeft, Network } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -443,6 +443,7 @@ export function GroupsPage() {
                   <th className="p-3 text-left text-sm font-medium">Description</th>
                   <th className="p-3 text-left text-sm font-medium">Members</th>
                   <th className="p-3 text-left text-sm font-medium">Type</th>
+                  <th className="p-3 text-left text-sm font-medium">Ziti Role</th>
                   <th className="p-3 text-left text-sm font-medium">Created</th>
                   <th className="p-3 text-right text-sm font-medium">Actions</th>
                 </tr>
@@ -490,6 +491,14 @@ export function GroupsPage() {
                           {group.allow_self_join && (
                             <Badge variant="outline" className="text-xs">Self-join</Badge>
                           )}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-1.5" title={`Members of "${group.name}" get Ziti role attribute "#${group.name}" on their identity`}>
+                          <Network className="h-3.5 w-3.5 text-purple-500" />
+                          <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                            #{group.name}
+                          </Badge>
                         </div>
                       </td>
                       <td className="p-3 text-gray-500">

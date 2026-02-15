@@ -235,6 +235,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/fabric/metrics", svc.handleGetMetrics)
 		api.GET("/ziti/fabric/service-policies", svc.handleListServicePolicies)
 
+		// Ziti service connectivity test
+		api.POST("/ziti/services/:id/test", svc.handleTestZitiService)
+
+		// Edge router policy CRUD
+		api.GET("/ziti/edge-router-policies", svc.handleListEdgeRouterPolicies)
+		api.POST("/ziti/edge-router-policies", svc.handleCreateEdgeRouterPolicy)
+		api.PUT("/ziti/edge-router-policies/:id", svc.handleUpdateEdgeRouterPolicy)
+		api.DELETE("/ziti/edge-router-policies/:id", svc.handleDeleteEdgeRouterPolicy)
+
 		// Service policy CRUD
 		api.POST("/ziti/service-policies", svc.handleCreateServicePolicy)
 		api.PUT("/ziti/service-policies/:id", svc.handleUpdateServicePolicy)
@@ -245,6 +254,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// User-to-Ziti identity sync
 		api.GET("/ziti/sync/status", svc.handleGetSyncStatus)
+		api.GET("/ziti/sync/unsynced", svc.handleGetUnsyncedUsers)
+		api.GET("/ziti/sync/user-map", svc.handleGetUserZitiMap)
+		api.GET("/ziti/sync/my-identity", svc.handleGetMyZitiIdentity)
 		api.POST("/ziti/sync/users", svc.handleSyncAllUsers)
 		api.POST("/ziti/sync/users/:userId", svc.handleSyncSingleUser)
 		api.POST("/ziti/sync/groups", svc.handleSyncAllGroups)

@@ -1177,4 +1177,290 @@ test.describe('Ziti Remote Access Tab', () => {
     // Verify Connect button is available
     await expect(page.getByRole('button', { name: /connect/i })).toBeVisible();
   });
+
+  // ─── New Quick-Win Improvement Tests ────────────────────────────────────────
+
+  test.describe('Service Test Connection', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/services', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            services: [
+              { id: 'svc-1', ziti_id: 'ziti-svc-001', name: 'internal-app', description: 'Internal app', protocol: 'tcp', host: 'internal-app', port: 8080, enabled: true, created_at: '2024-01-01T00:00:00Z' },
+            ],
+          }),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/services/svc-1/test', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            service_name: 'internal-app',
+            tests: {
+              ziti_lookup: { success: true, latency_ms: 15 },
+              ziti_dial: { success: true, latency_ms: 42 },
+            },
+            tested_at: new Date().toISOString(),
+          }),
+        });
+      });
+    });
+
+    test('should have Test Connection option in service dropdown', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /services/i }).click();
+      // Open the "..." dropdown menu for the service row (last button in row)
+      const row = page.locator('table tbody tr').first();
+      await row.locator('button').last().click();
+      await expect(page.getByRole('menuitem', { name: /test connection/i })).toBeVisible();
+    });
+  });
+
+  test.describe('Unsynced Users Expandable List', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/sync/status', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            status: 'idle', unsynced_users: 2, total_users: 7, total_identities: 5,
+            last_auto_sync_at: '2024-01-20T12:30:00Z',
+          }),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/sync/unsynced', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'user-1', username: 'jdoe', email: 'jdoe@example.com', first_name: 'John', last_name: 'Doe' },
+            { id: 'user-2', username: 'asmith', email: 'asmith@example.com', first_name: 'Alice', last_name: 'Smith' },
+          ]),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/identities', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ identities: [] }),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/sync/users/*', async (route) => {
+        if (route.request().method() === 'POST') {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ user_id: 'user-1', ziti_id: 'z1', created: true, attributes: [] }) });
+        }
+      });
+    });
+
+    test('should expand unsynced list when clicking the badge', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /identities/i }).click();
+      // Click the unsynced badge
+      await page.locator('text=2 unsynced').click();
+      // Should show the user list
+      await expect(page.locator('text=jdoe')).toBeVisible();
+      await expect(page.locator('text=asmith')).toBeVisible();
+    });
+
+    test('should have individual Sync button for each unsynced user', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /identities/i }).click();
+      await page.locator('text=2 unsynced').click();
+      // Each user should have a Sync button
+      const syncButtons = page.locator('text=Users without Ziti identities').locator('..').getByRole('button', { name: /^sync$/i });
+      await expect(syncButtons).toHaveCount(2);
+    });
+  });
+
+  test.describe('Edge Router Policies', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/edge-router-policies', async (route) => {
+        if (route.request().method() === 'GET') {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+              { id: 'erp-1', name: 'allEdgeRouters', edgeRouterRoles: ['#all'], identityRoles: ['#all'] },
+              { id: 'erp-2', name: 'engineering-routers', edgeRouterRoles: ['#datacenter-us'], identityRoles: ['#engineering'] },
+            ]),
+          });
+        }
+      });
+
+      await page.route('**/api/v1/access/ziti/fabric/service-policies', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/checks', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/summary', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ total_checks: 0, enabled_checks: 0, disabled_checks: 0, by_type: {}, by_severity: {} }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates/expiry-alerts', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ alerts: [] }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/policy-sync', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/governance/policies', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+    });
+
+    test('should display Edge Router Policies section on Security tab', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await expect(page.locator('text=Edge Router Policies')).toBeVisible();
+    });
+
+    test('should expand and show edge router policies', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      // Click to expand the section
+      await page.locator('button:has-text("Edge Router Policies")').click();
+      await expect(page.locator('text=allEdgeRouters')).toBeVisible();
+      await expect(page.locator('text=engineering-routers')).toBeVisible();
+    });
+
+    test('should have Add Policy button in edge router policies', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Edge Router Policies")').click();
+      await expect(page.getByRole('button', { name: /add policy/i }).first()).toBeVisible();
+    });
+  });
+
+  test.describe('Policy Notation Readability', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/fabric/service-policies', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'sp-1', name: 'allow-engineering', type: 'Dial', serviceRoles: ['#internal-apps', '#gitlab'], identityRoles: ['#engineering'] },
+          ]),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/edge-router-policies', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/checks', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/summary', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ total_checks: 0, enabled_checks: 0, disabled_checks: 0 }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates/expiry-alerts', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ alerts: [] }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/policy-sync', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/governance/policies', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+    });
+
+    test('should show color-coded role badges in service policies', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      // Service roles should show with readable labels
+      await expect(page.locator('text=internal-apps').first()).toBeVisible();
+      await expect(page.locator('text=engineering').first()).toBeVisible();
+    });
+  });
+
+  test.describe('Governance Policy Sync Enhancement', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/fabric/service-policies', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/edge-router-policies', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/checks', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/summary', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ total_checks: 0, enabled_checks: 0, disabled_checks: 0 }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates/expiry-alerts', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ alerts: [] }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/policy-sync', async (route) => {
+        if (route.request().method() === 'GET') {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+              { id: 'ps-1', governance_policy_id: 'gov-1', ziti_policy_id: 'ziti-pol-1', sync_status: 'synced', last_synced_at: '2024-01-20T10:00:00Z', error_message: '' },
+            ]),
+          });
+        }
+      });
+
+      await page.route('**/api/v1/governance/policies', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'gov-1', name: 'Vendor Access Policy', description: 'Controls vendor VPN access' },
+            { id: 'gov-2', name: 'Engineering Policy', description: 'Engineering team access' },
+          ]),
+        });
+      });
+    });
+
+    test('should show Governance → Ziti Sync section with linked policies', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      // Expand the sync section
+      await page.locator('button:has-text("Governance")').click();
+      await expect(page.locator('text=Vendor Access Policy')).toBeVisible();
+    });
+
+    test('should have Link Policy and Sync All buttons', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Governance")').click();
+      await expect(page.getByRole('button', { name: /link policy/i })).toBeVisible();
+      await expect(page.getByRole('button', { name: /sync all/i })).toBeVisible();
+    });
+  });
 });

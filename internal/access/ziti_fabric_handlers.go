@@ -142,6 +142,186 @@ func (s *Service) handleListServicePolicies(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
+// Ziti Service connectivity test
+// ---------------------------------------------------------------------------
+
+func (s *Service) handleTestZitiService(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+	serviceID := c.Param("id")
+
+	// Look up the service to get the Ziti service name
+	var zitiID, name, host string
+	var port int
+	err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT ziti_id, name, host, port FROM ziti_services WHERE id = $1`, serviceID).
+		Scan(&zitiID, &name, &host, &port)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
+		return
+	}
+
+	result := gin.H{
+		"service_id":   serviceID,
+		"service_name": name,
+		"tests":        gin.H{},
+		"tested_at":    time.Now(),
+	}
+	allOK := true
+
+	// Test 1: Check Ziti service exists on controller
+	start := time.Now()
+	svc, svcErr := s.zitiManager.GetServiceByName(name)
+	if svcErr != nil {
+		result["tests"] = gin.H{
+			"ziti_lookup": gin.H{"success": false, "error": svcErr.Error(), "latency_ms": time.Since(start).Milliseconds()},
+		}
+		result["success"] = false
+		c.JSON(http.StatusOK, result)
+		return
+	}
+	tests := gin.H{
+		"ziti_lookup": gin.H{"success": true, "latency_ms": time.Since(start).Milliseconds(), "ziti_id": svc.ID},
+	}
+
+	// Test 2: Try to dial the service through Ziti overlay
+	start = time.Now()
+	reachable, dialErr := s.zitiManager.TestServiceDial(c.Request.Context(), name)
+	dialResult := gin.H{
+		"success":    reachable,
+		"latency_ms": time.Since(start).Milliseconds(),
+	}
+	if dialErr != nil {
+		dialResult["error"] = dialErr.Error()
+	}
+	if !reachable {
+		allOK = false
+	}
+	tests["ziti_dial"] = dialResult
+
+	// Test 3: Direct TCP connectivity to upstream
+	if host != "" && port > 0 {
+		tcpResult := s.testTCPConnectivity(c.Request.Context(), host, port)
+		tests["upstream_tcp"] = gin.H{
+			"success":    tcpResult.Success,
+			"latency_ms": tcpResult.LatencyMs,
+			"error":      tcpResult.ErrorMessage,
+		}
+		if !tcpResult.Success {
+			allOK = false
+		}
+	}
+
+	result["tests"] = tests
+	result["success"] = allOK
+	c.JSON(http.StatusOK, result)
+}
+
+// ---------------------------------------------------------------------------
+// Edge Router Policy CRUD handlers
+// ---------------------------------------------------------------------------
+
+func (s *Service) handleListEdgeRouterPolicies(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+	policies, err := s.zitiManager.ListEdgeRouterPolicies(c.Request.Context())
+	if err != nil {
+		s.logger.Error("failed to list edge router policies", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, policies)
+}
+
+func (s *Service) handleCreateEdgeRouterPolicy(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+	var req struct {
+		Name            string   `json:"name"`
+		EdgeRouterRoles []string `json:"edgeRouterRoles"`
+		IdentityRoles   []string `json:"identityRoles"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+
+	payload := map[string]interface{}{
+		"name":            req.Name,
+		"edgeRouterRoles": req.EdgeRouterRoles,
+		"identityRoles":   req.IdentityRoles,
+	}
+	body, _ := json.Marshal(payload)
+	respData, statusCode, err := s.zitiManager.MgmtRequest("POST", "/edge/management/v1/edge-router-policies", body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if statusCode != http.StatusCreated && statusCode != http.StatusOK {
+		c.JSON(statusCode, gin.H{"error": "Ziti controller returned " + strconv.Itoa(statusCode), "details": string(respData)})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": "edge router policy created"})
+}
+
+func (s *Service) handleUpdateEdgeRouterPolicy(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+	id := c.Param("id")
+	var req struct {
+		Name            string   `json:"name"`
+		EdgeRouterRoles []string `json:"edgeRouterRoles"`
+		IdentityRoles   []string `json:"identityRoles"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	payload := map[string]interface{}{
+		"name":            req.Name,
+		"edgeRouterRoles": req.EdgeRouterRoles,
+		"identityRoles":   req.IdentityRoles,
+	}
+	body, _ := json.Marshal(payload)
+	respData, statusCode, err := s.zitiManager.MgmtRequest("PUT", "/edge/management/v1/edge-router-policies/"+id, body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if statusCode != http.StatusOK {
+		c.JSON(statusCode, gin.H{"error": "Ziti controller returned " + strconv.Itoa(statusCode), "details": string(respData)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "edge router policy updated"})
+}
+
+func (s *Service) handleDeleteEdgeRouterPolicy(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+	id := c.Param("id")
+	_, statusCode, err := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/edge-router-policies/"+id, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {
+		c.JSON(statusCode, gin.H{"error": "Ziti controller returned " + strconv.Itoa(statusCode)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "edge router policy deleted"})
+}
+
+// ---------------------------------------------------------------------------
 // Posture Check handlers
 // ---------------------------------------------------------------------------
 

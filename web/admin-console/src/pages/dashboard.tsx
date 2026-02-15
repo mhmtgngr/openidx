@@ -9,7 +9,9 @@ import {
   AlertTriangle,
   CheckCircle,
   Clock,
-  Settings
+  Settings,
+  Network,
+  RefreshCw,
 } from 'lucide-react'
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
@@ -23,6 +25,20 @@ interface ActivityItem {
   actor_id?: string
   actor_name?: string
   timestamp: string
+}
+
+interface ZitiStatus {
+  enabled: boolean
+  sdk_ready: boolean
+  controller_reachable?: boolean
+  services_count: number
+  identities_count: number
+}
+
+interface ZitiSyncStatus {
+  unsynced_users: number
+  total_users: number
+  total_identities: number
 }
 
 interface AuthStatistics {
@@ -89,6 +105,19 @@ export function DashboardPage() {
   const { data: eventAnalytics } = useQuery({
     queryKey: ['analytics-events', period],
     queryFn: () => api.get<{ data: { event_type: string; count: number }[] }>(`/api/v1/analytics/events?period=${period}`),
+  })
+
+  const { data: zitiStatus } = useQuery({
+    queryKey: ['ziti-status'],
+    queryFn: () => api.get<ZitiStatus>('/api/v1/access/ziti/status'),
+    refetchInterval: 15000,
+  })
+
+  const { data: zitiSync } = useQuery({
+    queryKey: ['ziti-sync-status'],
+    queryFn: () => api.get<ZitiSyncStatus>('/api/v1/access/ziti/sync/status'),
+    enabled: !!zitiStatus?.enabled,
+    refetchInterval: 15000,
   })
 
   const statCards = [
@@ -220,6 +249,49 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Ziti Network Status */}
+      {zitiStatus && (
+        <Link to="/ziti-network" className="block">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer border-blue-200 bg-blue-50/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Network className="h-4 w-4 text-blue-600" />
+                Zero Trust Network
+                {zitiStatus.controller_reachable ? (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600">
+                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                    Connected
+                  </span>
+                ) : (
+                  <span className="ml-auto flex items-center gap-1.5 text-xs text-red-500">
+                    <span className="h-2 w-2 rounded-full bg-red-500" />
+                    Disconnected
+                  </span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-6 text-sm">
+                <div>
+                  <span className="text-2xl font-bold">{zitiStatus.services_count}</span>
+                  <span className="text-muted-foreground ml-1.5">services</span>
+                </div>
+                <div>
+                  <span className="text-2xl font-bold">{zitiStatus.identities_count}</span>
+                  <span className="text-muted-foreground ml-1.5">identities</span>
+                </div>
+                {zitiSync && zitiSync.unsynced_users > 0 && (
+                  <div className="flex items-center gap-1.5 text-orange-600">
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span className="text-sm font-medium">{zitiSync.unsynced_users} users unsynced</span>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
 
       {/* Analytics Section */}
       <div className="flex items-center justify-between">

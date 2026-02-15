@@ -73,8 +73,8 @@ test.describe('Groups Page', () => {
   test('should display groups in list', async ({ page }) => {
     await page.goto('/groups');
 
-    await expect(page.locator('text=Administrators')).toBeVisible();
-    await expect(page.locator('text=Developers')).toBeVisible();
+    await expect(page.getByText('Administrators', { exact: true })).toBeVisible();
+    await expect(page.getByText('Developers', { exact: true })).toBeVisible();
     await expect(page.getByText('Marketing', { exact: true })).toBeVisible();
   });
 

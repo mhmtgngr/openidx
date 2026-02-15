@@ -39,8 +39,11 @@ import {
   Upload,
 } from 'lucide-react'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../lib/auth'
+import { api } from '../lib/api'
 import { NotificationBell } from './notification-bell'
+import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Avatar, AvatarFallback } from './ui/avatar'
 import {
@@ -155,6 +158,43 @@ const navigationSections: NavSection[] = [
     ],
   },
 ]
+
+function ZitiStatusIndicator() {
+  const navigate = useNavigate()
+  const { data: zitiStatus } = useQuery({
+    queryKey: ['ziti-status-header'],
+    queryFn: () => api.get<{ enabled: boolean; controller_reachable?: boolean; services_count: number; identities_count: number }>('/api/v1/access/ziti/status'),
+    refetchInterval: 30000,
+  })
+  const { data: browzerStatus } = useQuery({
+    queryKey: ['browzer-status-header'],
+    queryFn: () => api.get<{ enabled: boolean; configured?: boolean }>('/api/v1/access/ziti/browzer/status'),
+    refetchInterval: 30000,
+    enabled: !!zitiStatus?.enabled,
+  })
+
+  if (!zitiStatus?.enabled) return null
+
+  return (
+    <button
+      onClick={() => navigate('/ziti-network')}
+      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors text-sm"
+      title="Ziti Network Status"
+    >
+      <Network className="h-4 w-4 text-blue-600" />
+      {zitiStatus.controller_reachable ? (
+        <span className="h-2 w-2 rounded-full bg-green-500" />
+      ) : (
+        <span className="h-2 w-2 rounded-full bg-red-500" />
+      )}
+      {browzerStatus?.enabled && browzerStatus?.configured && (
+        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-blue-50 text-blue-700 border-blue-200">
+          BrowZer
+        </Badge>
+      )}
+    </button>
+  )
+}
 
 export function Layout() {
   const { user, logout, hasRole } = useAuth()
@@ -281,8 +321,9 @@ export function Layout() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar with notification bell */}
-        <header className="h-16 border-b bg-white flex items-center justify-end px-8">
+        {/* Top bar with status indicators and notification bell */}
+        <header className="h-16 border-b bg-white flex items-center justify-end px-8 gap-4">
+          {hasRole('admin') && <ZitiStatusIndicator />}
           <NotificationBell />
         </header>
         <main className="flex-1 overflow-auto">

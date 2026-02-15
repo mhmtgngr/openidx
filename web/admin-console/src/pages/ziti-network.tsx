@@ -134,6 +134,13 @@ interface ServicePolicy {
   identityRoles: string[]
 }
 
+interface EdgeRouterPolicy {
+  id: string
+  name: string
+  edgeRouterRoles: string[]
+  identityRoles: string[]
+}
+
 interface Certificate {
   id: string
   name: string
@@ -496,12 +503,19 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
 
 // ─── Services Tab ────────────────────────────────────────────────────────────
 
+interface ServiceTestResult {
+  success: boolean
+  service_name: string
+  tests: Record<string, { success: boolean; latency_ms: number; error?: string }>
+}
+
 function ServicesTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ZitiService | null>(null)
+  const [testingService, setTestingService] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', description: '', host: '', port: 8080, protocol: 'tcp' })
 
   const { data, isLoading } = useQuery({
@@ -531,6 +545,25 @@ function ServicesTab() {
     },
     onError: () => toast({ title: 'Error', description: 'Failed to delete Ziti service.', variant: 'destructive' }),
   })
+
+  const testConnection = async (svc: ZitiService) => {
+    setTestingService(svc.id)
+    try {
+      const result = await api.post<ServiceTestResult>(`/api/v1/access/ziti/services/${svc.id}/test`, {})
+      if (result.success) {
+        const latencies = Object.values(result.tests).map(t => t.latency_ms).filter(Boolean)
+        const avgLatency = latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0
+        toast({ title: 'Connection OK', description: `${svc.name} is reachable (${avgLatency}ms).` })
+      } else {
+        const failedTests = Object.entries(result.tests).filter(([, t]) => !t.success).map(([k, t]) => `${k}: ${t.error || 'failed'}`).join(', ')
+        toast({ title: 'Connection failed', description: failedTests || 'Service is not reachable.', variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Failed to test connection.', variant: 'destructive' })
+    } finally {
+      setTestingService(null)
+    }
+  }
 
   const services = (data?.services || []).filter((svc) =>
     !search || svc.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -597,6 +630,10 @@ function ServicesTab() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => testConnection(svc)} disabled={testingService === svc.id}>
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                          {testingService === svc.id ? 'Testing...' : 'Test Connection'}
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => {
                           navigator.clipboard.writeText(svc.ziti_id)
                           toast({ title: 'Copied', description: 'Ziti ID copied to clipboard.' })
@@ -686,6 +723,14 @@ function ServicesTab() {
 
 // ─── Identities Tab ──────────────────────────────────────────────────────────
 
+interface UnsyncedUser {
+  id: string
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+}
+
 function IdentitiesTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -696,6 +741,7 @@ function IdentitiesTab() {
   const [editAttrsTarget, setEditAttrsTarget] = useState<ZitiIdentity | null>(null)
   const [editAttrsValue, setEditAttrsValue] = useState('')
   const [form, setForm] = useState({ name: '', identity_type: 'Device', user_id: '', attributes: '' })
+  const [showUnsynced, setShowUnsynced] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['ziti-identities'],
@@ -778,6 +824,23 @@ function IdentitiesTab() {
     onError: () => toast({ title: 'Error', description: 'Group attribute sync failed.', variant: 'destructive' }),
   })
 
+  const syncSingleMutation = useMutation({
+    mutationFn: (userId: string) => api.post(`/api/v1/access/ziti/sync/users/${userId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-identities'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-sync-status'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-unsynced-users'] })
+      toast({ title: 'User synced', description: 'Ziti identity created for user.' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to sync user.', variant: 'destructive' }),
+  })
+
+  const { data: unsyncedUsers } = useQuery({
+    queryKey: ['ziti-unsynced-users'],
+    queryFn: () => api.get<UnsyncedUser[]>('/api/v1/access/ziti/sync/unsynced'),
+    enabled: showUnsynced,
+  })
+
   const openEditAttrs = (ident: ZitiIdentity) => {
     setEditAttrsValue((ident.attributes || []).join(', '))
     setEditAttrsTarget(ident)
@@ -818,9 +881,15 @@ function IdentitiesTab() {
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span>{syncStatus.total_identities} identities / {syncStatus.total_users} users</span>
                   {syncStatus.unsynced_users > 0 && (
-                    <Badge variant="secondary" className="text-orange-700 bg-orange-100">
-                      {syncStatus.unsynced_users} unsynced
-                    </Badge>
+                    <button
+                      onClick={() => setShowUnsynced(!showUnsynced)}
+                      className="inline-flex items-center gap-1"
+                    >
+                      <Badge variant="secondary" className="text-orange-700 bg-orange-100 cursor-pointer hover:bg-orange-200">
+                        {syncStatus.unsynced_users} unsynced
+                        {showUnsynced ? <ChevronDown className="h-3 w-3 ml-0.5" /> : <ChevronRight className="h-3 w-3 ml-0.5" />}
+                      </Badge>
+                    </button>
                   )}
                   {syncStatus.last_auto_sync_at && (
                     <span>Auto: {new Date(syncStatus.last_auto_sync_at).toLocaleTimeString()}</span>
@@ -838,6 +907,32 @@ function IdentitiesTab() {
               </Button>
             </div>
           </div>
+          {/* Expandable unsynced users list */}
+          {showUnsynced && unsyncedUsers && unsyncedUsers.length > 0 && (
+            <div className="mt-3 border-t border-blue-200 pt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Users without Ziti identities:</p>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {unsyncedUsers.map((user) => (
+                  <div key={user.id} className="flex items-center justify-between bg-white rounded px-3 py-1.5 text-sm">
+                    <div className="flex items-center gap-2">
+                      <Users2 className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="font-medium">{user.first_name || user.username} {user.last_name || ''}</span>
+                      <span className="text-xs text-muted-foreground">@{user.username}</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-xs"
+                      onClick={() => syncSingleMutation.mutate(user.id)}
+                      disabled={syncSingleMutation.isPending}
+                    >
+                      Sync
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1101,6 +1196,7 @@ function SecurityTab() {
   return (
     <div className="space-y-4 mt-4">
       <ServicePoliciesSection />
+      <EdgeRouterPoliciesSection />
       <PostureSection />
       <CertificatesSection />
       <PolicySyncSection />
@@ -1232,16 +1328,38 @@ function ServicePoliciesSection() {
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {(policy.serviceRoles || []).map((role) => (
-                        <Badge key={role} variant="outline" className="text-xs">{role}</Badge>
-                      ))}
+                      {(policy.serviceRoles || []).map((role) => {
+                        const isAttr = role.startsWith('#')
+                        const isId = role.startsWith('@')
+                        const label = isAttr ? role.slice(1) : isId ? role.slice(1) : role
+                        return (
+                          <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-purple-50 text-purple-700 border-purple-200' : isId ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}`}
+                            title={isAttr ? `Attribute: matches services with role "${label}"` : isId ? `Specific service ID: ${label}` : role}
+                          >
+                            {isAttr && <span className="text-purple-400 mr-0.5">#</span>}
+                            {isId && <span className="text-blue-400 mr-0.5">@</span>}
+                            {label}
+                          </Badge>
+                        )
+                      })}
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {(policy.identityRoles || []).map((role) => (
-                        <Badge key={role} variant="outline" className="text-xs">{role}</Badge>
-                      ))}
+                      {(policy.identityRoles || []).map((role) => {
+                        const isAttr = role.startsWith('#')
+                        const isId = role.startsWith('@')
+                        const label = isAttr ? role.slice(1) : isId ? role.slice(1) : role
+                        return (
+                          <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-orange-50 text-orange-700 border-orange-200' : isId ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}`}
+                            title={isAttr ? `Attribute: matches identities with role "${label}"` : isId ? `Specific identity ID: ${label}` : role}
+                          >
+                            {isAttr && <span className="text-orange-400 mr-0.5">#</span>}
+                            {isId && <span className="text-blue-400 mr-0.5">@</span>}
+                            {label}
+                          </Badge>
+                        )
+                      })}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -1294,12 +1412,12 @@ function ServicePoliciesSection() {
               <div className="space-y-2">
                 <Label>Service Roles</Label>
                 <Input value={form.service_roles} onChange={(e) => setForm({ ...form, service_roles: e.target.value })} placeholder="#gitlab, #internal-apps" required />
-                <p className="text-xs text-muted-foreground">Comma-separated. Use # prefix for role attributes (e.g., #web-services).</p>
+                <p className="text-xs text-muted-foreground">Comma-separated. <span className="text-purple-600 font-medium">#attribute</span> matches services by role, <span className="text-blue-600 font-medium">@id</span> targets a specific service.</p>
               </div>
               <div className="space-y-2">
                 <Label>Identity Roles</Label>
                 <Input value={form.identity_roles} onChange={(e) => setForm({ ...form, identity_roles: e.target.value })} placeholder="#engineering, #vpn-users" required />
-                <p className="text-xs text-muted-foreground">Comma-separated. Use # prefix for role attributes (e.g., #engineering).</p>
+                <p className="text-xs text-muted-foreground">Comma-separated. <span className="text-orange-600 font-medium">#attribute</span> matches identities by role (e.g., group names), <span className="text-blue-600 font-medium">@id</span> targets a specific identity.</p>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
@@ -1318,6 +1436,221 @@ function ServicePoliciesSection() {
             <AlertDialogTitle>Delete Service Policy</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? Identities matched by this policy will lose access.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </CollapsibleSection>
+  )
+}
+
+function EdgeRouterPoliciesSection() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [search, setSearch] = useState('')
+  const [createModal, setCreateModal] = useState(false)
+  const [editTarget, setEditTarget] = useState<EdgeRouterPolicy | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<EdgeRouterPolicy | null>(null)
+  const [form, setForm] = useState({ name: '', edge_router_roles: '', identity_roles: '' })
+
+  const { data: policiesData, isLoading } = useQuery({
+    queryKey: ['ziti-edge-router-policies'],
+    queryFn: () => api.get<EdgeRouterPolicy[]>('/api/v1/access/ziti/edge-router-policies'),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/edge-router-policies', {
+      name: data.name,
+      edgeRouterRoles: data.edge_router_roles.split(',').map(s => s.trim()).filter(Boolean),
+      identityRoles: data.identity_roles.split(',').map(s => s.trim()).filter(Boolean),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-edge-router-policies'] })
+      setCreateModal(false)
+      resetForm()
+      toast({ title: 'Edge router policy created' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to create edge router policy.', variant: 'destructive' }),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof form }) => api.put(`/api/v1/access/ziti/edge-router-policies/${id}`, {
+      name: data.name,
+      edgeRouterRoles: data.edge_router_roles.split(',').map(s => s.trim()).filter(Boolean),
+      identityRoles: data.identity_roles.split(',').map(s => s.trim()).filter(Boolean),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-edge-router-policies'] })
+      setEditTarget(null)
+      resetForm()
+      toast({ title: 'Edge router policy updated' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to update edge router policy.', variant: 'destructive' }),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/edge-router-policies/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-edge-router-policies'] })
+      setDeleteTarget(null)
+      toast({ title: 'Edge router policy deleted' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to delete edge router policy.', variant: 'destructive' }),
+  })
+
+  const resetForm = () => setForm({ name: '', edge_router_roles: '', identity_roles: '' })
+
+  const openEditModal = (policy: EdgeRouterPolicy) => {
+    setForm({
+      name: policy.name,
+      edge_router_roles: (policy.edgeRouterRoles || []).join(', '),
+      identity_roles: (policy.identityRoles || []).join(', '),
+    })
+    setEditTarget(policy)
+  }
+
+  const isSystemPolicy = (name: string) => name.startsWith('allEdgeRouters') || name.startsWith('openidx-')
+
+  const policies = (Array.isArray(policiesData) ? policiesData : []).filter((p) =>
+    !search || p.name.toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <CollapsibleSection title="Edge Router Policies" count={policies.length} icon={Router} defaultOpen={false}>
+      <p className="text-sm text-muted-foreground mb-3">
+        Control which identities can connect through which edge routers. Use role attributes to match identities and routers.
+      </p>
+
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search router policies..." />
+        <Button size="sm" onClick={() => { resetForm(); setCreateModal(true) }}>
+          <Plus className="mr-2 h-4 w-4" /> Add Policy
+        </Button>
+      </div>
+
+      {isLoading ? <Spinner /> : policies.length === 0 ? (
+        <EmptyState icon={Router} title="No edge router policies" description="Create policies to control identity access to edge routers." />
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Edge Router Roles</TableHead>
+                <TableHead>Identity Roles</TableHead>
+                <TableHead className="w-[50px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {policies.map((policy) => (
+                <TableRow key={policy.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      {isSystemPolicy(policy.name) && <span title="System policy"><Lock className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+                      <span className="font-medium">{policy.name}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(policy.edgeRouterRoles || []).map((role) => {
+                        const isAttr = role.startsWith('#')
+                        const label = isAttr ? role.slice(1) : role
+                        return (
+                          <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-teal-50 text-teal-700 border-teal-200' : ''}`}
+                            title={isAttr ? `Attribute: matches routers with role "${label}"` : role}>
+                            {isAttr && <span className="text-teal-400 mr-0.5">#</span>}{label}
+                          </Badge>
+                        )
+                      })}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(policy.identityRoles || []).map((role) => {
+                        const isAttr = role.startsWith('#')
+                        const label = isAttr ? role.slice(1) : role
+                        return (
+                          <Badge key={role} variant="outline" className={`text-xs ${isAttr ? 'bg-orange-50 text-orange-700 border-orange-200' : ''}`}
+                            title={isAttr ? `Attribute: matches identities with role "${label}"` : role}>
+                            {isAttr && <span className="text-orange-400 mr-0.5">#</span>}{label}
+                          </Badge>
+                        )
+                      })}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {!isSystemPolicy(policy.name) && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEditModal(policy)}>
+                            <Pencil className="mr-2 h-4 w-4" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(policy)}>
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      {/* Create/Edit Dialogs */}
+      {[
+        { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Edge Router Policy', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Policy' },
+        { open: !!editTarget, onOpenChange: (v: boolean) => { if (!v) { setEditTarget(null); resetForm() } }, title: 'Edit Edge Router Policy', onSubmit: () => editTarget && updateMutation.mutate({ id: editTarget.id, data: form }), pending: updateMutation.isPending, submitLabel: 'Update Policy' },
+      ].map((dlg, i) => (
+        <Dialog key={i} open={dlg.open} onOpenChange={dlg.onOpenChange}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>{dlg.title}</DialogTitle></DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); dlg.onSubmit() }} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Policy Name</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="allow-all-routers" required />
+              </div>
+              <div className="space-y-2">
+                <Label>Edge Router Roles</Label>
+                <Input value={form.edge_router_roles} onChange={(e) => setForm({ ...form, edge_router_roles: e.target.value })} placeholder="#public, #datacenter-us" required />
+                <p className="text-xs text-muted-foreground"><span className="text-teal-600 font-medium">#attribute</span> matches routers by role. Use <code className="text-xs bg-muted px-1 rounded">#all</code> for all routers.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Identity Roles</Label>
+                <Input value={form.identity_roles} onChange={(e) => setForm({ ...form, identity_roles: e.target.value })} placeholder="#engineering, #vpn-users" required />
+                <p className="text-xs text-muted-foreground"><span className="text-orange-600 font-medium">#attribute</span> matches identities by role (e.g., group names).</p>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => dlg.onOpenChange(false)}>Cancel</Button>
+                <Button type="submit" disabled={dlg.pending}>
+                  {dlg.pending ? 'Saving...' : dlg.submitLabel}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ))}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Edge Router Policy</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{deleteTarget?.name}&quot;? Identities matched by this policy may lose router connectivity.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1683,6 +2016,12 @@ function PolicySyncSection() {
     queryFn: () => api.get<PolicySync[]>('/api/v1/access/ziti/policy-sync'),
   })
 
+  // Fetch governance policies for dropdown and name lookup
+  const { data: governancePolicies } = useQuery({
+    queryKey: ['governance-policies-for-sync'],
+    queryFn: () => api.get<{ id: string; name: string; description?: string }[]>('/api/v1/governance/policies'),
+  })
+
   const createMutation = useMutation({
     mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/policy-sync', { governance_policy_id: data.governance_policy_id, config: JSON.parse(data.config) }),
     onSuccess: () => {
@@ -1703,6 +2042,31 @@ function PolicySyncSection() {
     onError: () => toast({ title: 'Error', description: 'Failed to trigger re-sync.', variant: 'destructive' }),
   })
 
+  const syncAllMutation = useMutation({
+    mutationFn: async () => {
+      const results = []
+      for (const sync of syncs) {
+        try {
+          await api.post(`/api/v1/access/ziti/policy-sync/${sync.id}/trigger`, {})
+          results.push({ id: sync.id, success: true })
+        } catch {
+          results.push({ id: sync.id, success: false })
+        }
+      }
+      return results
+    },
+    onSuccess: (results) => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
+      const succeeded = results.filter(r => r.success).length
+      const failed = results.filter(r => !r.success).length
+      toast({
+        title: 'Sync All complete',
+        description: `${succeeded} synced${failed > 0 ? `, ${failed} failed` : ''}`,
+        variant: failed > 0 ? 'destructive' : undefined,
+      })
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/access/ziti/policy-sync/${id}`),
     onSuccess: () => {
@@ -1721,11 +2085,25 @@ function PolicySyncSection() {
     return 'secondary'
   }
 
+  // Map governance policy IDs to names
+  const govPolicyMap = new Map((Array.isArray(governancePolicies) ? governancePolicies : []).map(p => [p.id, p.name]))
+
   return (
-    <CollapsibleSection title="Policy Sync" count={syncs.length} icon={RefreshCw} defaultOpen={false}>
-      <div className="flex items-center justify-end mb-3">
+    <CollapsibleSection title="Governance → Ziti Sync" count={syncs.length} icon={RefreshCw} defaultOpen={false}>
+      <p className="text-sm text-muted-foreground mb-3">
+        Link governance access policies to Ziti service policies. When access reviews grant or revoke access, the corresponding Ziti policies update automatically.
+      </p>
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <div className="flex items-center gap-2">
+          {syncs.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => syncAllMutation.mutate()} disabled={syncAllMutation.isPending}>
+              <RefreshCw className={`mr-2 h-3 w-3 ${syncAllMutation.isPending ? 'animate-spin' : ''}`} />
+              {syncAllMutation.isPending ? 'Syncing...' : 'Sync All'}
+            </Button>
+          )}
+        </div>
         <Button size="sm" onClick={() => setCreateModal(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Sync Policy
+          <Plus className="mr-2 h-4 w-4" /> Link Policy
         </Button>
       </div>
 
@@ -1746,7 +2124,15 @@ function PolicySyncSection() {
             <TableBody>
               {syncs.map((sync) => (
                 <TableRow key={sync.id} className="hover:bg-muted/50">
-                  <TableCell><TruncatedId value={sync.governance_policy_id} label="Governance Policy ID" /></TableCell>
+                  <TableCell>
+                    <div>
+                      {govPolicyMap.get(sync.governance_policy_id) ? (
+                        <span className="font-medium">{govPolicyMap.get(sync.governance_policy_id)}</span>
+                      ) : (
+                        <TruncatedId value={sync.governance_policy_id} label="Governance Policy ID" />
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     {sync.ziti_policy_id ? <TruncatedId value={sync.ziti_policy_id} label="Ziti Policy ID" /> : <span className="text-muted-foreground">-</span>}
                   </TableCell>
@@ -1785,25 +2171,41 @@ function PolicySyncSection() {
       {/* Create Dialog */}
       <Dialog open={createModal} onOpenChange={setCreateModal}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Sync Policy to Ziti</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Link Governance Policy to Ziti</DialogTitle></DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(form) }} className="space-y-4">
             <div className="space-y-2">
-              <Label>Governance Policy ID</Label>
-              <Input value={form.governance_policy_id} onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })} placeholder="UUID of governance policy" required />
+              <Label>Governance Policy</Label>
+              {Array.isArray(governancePolicies) && governancePolicies.length > 0 ? (
+                <select
+                  value={form.governance_policy_id}
+                  onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">Select a governance policy...</option>
+                  {governancePolicies.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}{p.description ? ` — ${p.description}` : ''}</option>
+                  ))}
+                </select>
+              ) : (
+                <Input value={form.governance_policy_id} onChange={(e) => setForm({ ...form, governance_policy_id: e.target.value })} placeholder="UUID of governance policy" required />
+              )}
+              <p className="text-xs text-muted-foreground">Access review decisions on this policy will auto-update Ziti service policies.</p>
             </div>
             <div className="space-y-2">
-              <Label>Config (JSON)</Label>
+              <Label>Mapping Config (JSON)</Label>
               <textarea
                 value={form.config}
                 onChange={(e) => setForm({ ...form, config: e.target.value })}
                 className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-                placeholder='{"action": "allow", "service_roles": ["#web"]}'
+                placeholder='{"action": "allow", "service_roles": ["#web"], "identity_roles": ["#engineering"]}'
               />
+              <p className="text-xs text-muted-foreground">Defines how governance decisions map to Ziti policy rules.</p>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
               <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? 'Syncing...' : 'Sync Policy'}
+                {createMutation.isPending ? 'Linking...' : 'Link Policy'}
               </Button>
             </div>
           </form>

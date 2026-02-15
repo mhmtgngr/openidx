@@ -1250,6 +1250,11 @@ func (zm *ZitiManager) GetControllerVersion(ctx context.Context) (map[string]int
 	return result, nil
 }
 
+// MgmtRequest is the exported wrapper around the internal management API request helper.
+func (zm *ZitiManager) MgmtRequest(method, path string, body []byte) ([]byte, int, error) {
+	return zm.mgmtRequest(method, path, body)
+}
+
 // ---- Internal helpers ----
 
 func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, int, error) {

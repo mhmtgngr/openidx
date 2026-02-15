@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
-import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight, Users } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight, Users, Network } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -51,6 +51,13 @@ interface Role {
   description: string
   is_composite: boolean
   created_at: string
+}
+
+interface ZitiInfo {
+  ziti_id: string
+  name: string
+  enrolled: boolean
+  attributes: string[]
 }
 
 export function UsersPage() {
@@ -111,6 +118,12 @@ export function UsersPage() {
       if (!isNaN(total)) setTotalCount(total)
       return result.data
     },
+  })
+
+  // Fetch Ziti identity mapping for all users
+  const { data: zitiMap } = useQuery({
+    queryKey: ['ziti-user-map'],
+    queryFn: () => api.get<Record<string, ZitiInfo>>('/api/v1/access/ziti/sync/user-map'),
   })
 
   // Create user mutation
@@ -414,6 +427,7 @@ export function UsersPage() {
                   <th className="p-3 text-left text-sm font-medium">User</th>
                   <th className="p-3 text-left text-sm font-medium">Email</th>
                   <th className="p-3 text-left text-sm font-medium">Status</th>
+                  <th className="p-3 text-left text-sm font-medium">Ziti</th>
                   <th className="p-3 text-left text-sm font-medium">Created</th>
                   <th className="p-3 text-right text-sm font-medium">Actions</th>
                 </tr>
@@ -452,6 +466,18 @@ export function UsersPage() {
                         <Badge className={user.enabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
                           {user.enabled ? 'Active' : 'Disabled'}
                         </Badge>
+                      </td>
+                      <td className="p-3">
+                        {zitiMap && zitiMap[user.id] ? (
+                          <div className="flex items-center gap-1.5" title={`Ziti: ${zitiMap[user.id].name}\nRoles: ${zitiMap[user.id].attributes.join(', ') || 'none'}`}>
+                            <Network className="h-3.5 w-3.5 text-green-600" />
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                              {zitiMap[user.id].enrolled ? 'Enrolled' : 'Linked'}
+                            </Badge>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </td>
                       <td className="p-3 text-gray-500">
                         {new Date(user.created_at).toLocaleDateString()}
