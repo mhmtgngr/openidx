@@ -1464,11 +1464,17 @@ func (s *Service) handleTrustDevice(c *gin.Context) {
 	}
 
 	deviceID := c.Param("id")
+
+	// Look up user_id before trusting so frontend can sync Ziti attributes
+	var userID string
+	_ = s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT user_id FROM known_devices WHERE id = $1`, deviceID).Scan(&userID)
+
 	if err := s.riskService.TrustDevice(c.Request.Context(), deviceID); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"message": "Device trusted"})
+	c.JSON(200, gin.H{"message": "Device trusted", "user_id": userID})
 }
 
 func (s *Service) handleRevokeDevice(c *gin.Context) {
@@ -1478,11 +1484,17 @@ func (s *Service) handleRevokeDevice(c *gin.Context) {
 	}
 
 	deviceID := c.Param("id")
+
+	// Look up user_id before revoking so frontend can sync Ziti attributes
+	var userID string
+	_ = s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT user_id FROM known_devices WHERE id = $1`, deviceID).Scan(&userID)
+
 	if err := s.riskService.RevokeDevice(c.Request.Context(), deviceID); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"message": "Device revoked"})
+	c.JSON(200, gin.H{"message": "Device revoked", "user_id": userID})
 }
 
 func (s *Service) handleRiskStats(c *gin.Context) {

@@ -84,10 +84,10 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 		return nil, fmt.Errorf("user %s not found or disabled: %w", userID, err)
 	}
 
-	// Get group names for initial role attributes
-	attrs, err := zm.getUserGroupNames(ctx, userID)
+	// Get group names + device trust for initial role attributes
+	attrs, err := zm.buildUserAttributes(ctx, userID)
 	if err != nil {
-		zm.logger.Warn("Failed to get group names for user", zap.String("user_id", userID), zap.Error(err))
+		zm.logger.Warn("Failed to build attributes for user", zap.String("user_id", userID), zap.Error(err))
 		attrs = []string{}
 	}
 
@@ -184,8 +184,41 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 	}, nil
 }
 
+// hasUserTrustedDevice checks if a user has at least one trusted device.
+func (zm *ZitiManager) hasUserTrustedDevice(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	err := zm.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM known_devices WHERE user_id = $1 AND trusted = true)`,
+		userID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check trusted devices for user %s: %w", userID, err)
+	}
+	return exists, nil
+}
+
+// buildUserAttributes combines group names with device trust attribute.
+func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) ([]string, error) {
+	attrs, err := zm.getUserGroupNames(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get groups for user %s: %w", userID, err)
+	}
+	if attrs == nil {
+		attrs = []string{}
+	}
+
+	// Add #device-trusted if user has any trusted device
+	hasTrusted, err := zm.hasUserTrustedDevice(ctx, userID)
+	if err != nil {
+		zm.logger.Warn("Failed to check device trust", zap.String("user_id", userID), zap.Error(err))
+	} else if hasTrusted {
+		attrs = append(attrs, "device-trusted")
+	}
+
+	return attrs, nil
+}
+
 // SyncGroupAttributesForUser fetches the user's current group memberships
-// and patches their Ziti identity's role attributes to match.
+// and device trust status, then patches their Ziti identity's role attributes.
 func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID string) error {
 	// Get the user's Ziti identity
 	var zitiIdentityID, zitiID string
@@ -195,13 +228,10 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 		return fmt.Errorf("no ziti identity for user %s: %w", userID, err)
 	}
 
-	// Get current group memberships
-	attrs, err := zm.getUserGroupNames(ctx, userID)
+	// Build attributes: groups + device trust
+	attrs, err := zm.buildUserAttributes(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("get groups for user %s: %w", userID, err)
-	}
-	if attrs == nil {
-		attrs = []string{}
+		return err
 	}
 
 	// Patch Ziti controller
@@ -215,6 +245,20 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 		`UPDATE ziti_identities SET attributes=$1, group_attrs_synced_at=NOW(), updated_at=NOW()
 		 WHERE id=$2`, attrsJSON, zitiIdentityID)
 
+	return nil
+}
+
+// SyncDeviceTrustForUser re-syncs a user's Ziti identity attributes
+// after a device trust change (trust granted or revoked).
+func (zm *ZitiManager) SyncDeviceTrustForUser(ctx context.Context, userID string) error {
+	err := zm.SyncGroupAttributesForUser(ctx, userID)
+	if err != nil {
+		zm.logger.Warn("Failed to sync device trust attribute",
+			zap.String("user_id", userID), zap.Error(err))
+		return err
+	}
+
+	zm.logger.Info("Synced device trust attribute for user", zap.String("user_id", userID))
 	return nil
 }
 

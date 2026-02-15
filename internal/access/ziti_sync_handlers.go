@@ -1,6 +1,7 @@
 package access
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -194,6 +195,110 @@ func (s *Service) handleGetUserZitiMap(c *gin.Context) {
 		result[userID] = ZitiInfo{ZitiID: zitiID, Name: name, Enrolled: enrolled, Attributes: attrs}
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// handleSyncDeviceTrust re-syncs a user's Ziti identity attributes after
+// a device trust change (trust granted or revoked).
+// POST /api/v1/access/ziti/sync/device-trust/:userId
+func (s *Service) handleSyncDeviceTrust(c *gin.Context) {
+	if s.zitiManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti not configured"})
+		return
+	}
+
+	userID := c.Param("userId")
+	if err := s.zitiManager.SyncDeviceTrustForUser(c.Request.Context(), userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "device trust synced", "user_id": userID})
+}
+
+// handleGetEnrichedDevices returns all devices with user info and Ziti identity status.
+// GET /api/v1/access/devices/enriched
+func (s *Service) handleGetEnrichedDevices(c *gin.Context) {
+	limit := 50
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	var total int
+	_ = s.db.Pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM known_devices`).Scan(&total)
+
+	rows, err := s.db.Pool.Query(c.Request.Context(), `
+		SELECT d.id, d.fingerprint, COALESCE(d.name,''), COALESCE(d.ip_address,''),
+		       COALESCE(d.user_agent,''), COALESCE(d.location,''), d.trusted,
+		       d.last_seen_at, d.created_at,
+		       u.id, u.username, COALESCE(u.email,''), COALESCE(u.first_name,''), COALESCE(u.last_name,''),
+		       COALESCE(zi.ziti_id,''), COALESCE(zi.enrolled, false), COALESCE(zi.attributes, '[]')
+		FROM known_devices d
+		JOIN users u ON u.id = d.user_id
+		LEFT JOIN ziti_identities zi ON zi.user_id = d.user_id
+		ORDER BY d.last_seen_at DESC
+		LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type EnrichedDevice struct {
+		ID          string   `json:"id"`
+		Fingerprint string   `json:"fingerprint"`
+		Name        string   `json:"name"`
+		IPAddress   string   `json:"ip_address"`
+		UserAgent   string   `json:"user_agent"`
+		Location    string   `json:"location"`
+		Trusted     bool     `json:"trusted"`
+		LastSeenAt  string   `json:"last_seen_at"`
+		CreatedAt   string   `json:"created_at"`
+		UserID      string   `json:"user_id"`
+		Username    string   `json:"username"`
+		Email       string   `json:"email"`
+		FirstName   string   `json:"first_name"`
+		LastName    string   `json:"last_name"`
+		ZitiID      string   `json:"ziti_id"`
+		ZitiEnrolled bool    `json:"ziti_enrolled"`
+		ZitiAttrs   []string `json:"ziti_attributes"`
+	}
+
+	var devices []EnrichedDevice
+	for rows.Next() {
+		var d EnrichedDevice
+		var lastSeen, created interface{}
+		var attrs []string
+		if err := rows.Scan(
+			&d.ID, &d.Fingerprint, &d.Name, &d.IPAddress,
+			&d.UserAgent, &d.Location, &d.Trusted,
+			&lastSeen, &created,
+			&d.UserID, &d.Username, &d.Email, &d.FirstName, &d.LastName,
+			&d.ZitiID, &d.ZitiEnrolled, &attrs,
+		); err != nil {
+			continue
+		}
+		if lastSeen != nil {
+			d.LastSeenAt = fmt.Sprintf("%v", lastSeen)
+		}
+		if created != nil {
+			d.CreatedAt = fmt.Sprintf("%v", created)
+		}
+		if attrs != nil {
+			d.ZitiAttrs = attrs
+		} else {
+			d.ZitiAttrs = []string{}
+		}
+		devices = append(devices, d)
+	}
+
+	if devices == nil {
+		devices = []EnrichedDevice{}
+	}
+	c.JSON(http.StatusOK, gin.H{"devices": devices, "total": total})
 }
 
 // handleSyncAllGroups refreshes group-based role attributes for all linked identities.

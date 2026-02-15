@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Smartphone, Monitor, Tablet, Shield, ShieldCheck, ShieldX, Trash2, Edit, Plus, MoreHorizontal, Network, Copy, FileKey, Download } from 'lucide-react'
+import { Smartphone, Monitor, Tablet, Shield, ShieldCheck, ShieldX, Trash2, Edit, Plus, MoreHorizontal, Network, Copy, FileKey, Download, Wifi, WifiOff } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -369,6 +369,21 @@ export function MyDevicesPage() {
                             Untrusted
                           </Badge>
                         )}
+                        {device.trusted && zitiIdentity?.linked && zitiIdentity?.enrolled ? (
+                          <Badge className="bg-emerald-100 text-emerald-800">
+                            <Wifi className="h-3 w-3 mr-1" />
+                            Network Active
+                          </Badge>
+                        ) : device.trusted && zitiIdentity?.linked && !zitiIdentity?.enrolled ? (
+                          <Badge className="bg-yellow-100 text-yellow-800">
+                            Pending Enrollment
+                          </Badge>
+                        ) : !device.trusted ? (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            <WifiOff className="h-3 w-3 mr-1" />
+                            No Network Access
+                          </Badge>
+                        ) : null}
                       </div>
                       <div className="text-sm text-muted-foreground">
                         {device.ip_address}
@@ -479,7 +494,7 @@ export function MyDevicesPage() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Trusted devices may have fewer MFA prompts and enhanced access. Please provide a reason for trusting this device.
+              Trusted devices get fewer MFA prompts and zero-trust network access. Once approved, this device will enable secure network connectivity.
             </p>
             <div className="space-y-2">
               <Label htmlFor="justification">Justification</Label>

@@ -100,7 +100,11 @@ export function DeviceTrustApprovalPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['device-trust-requests'] })
       queryClient.invalidateQueries({ queryKey: ['device-trust-pending-count'] })
-      toast({ title: 'Request Approved', description: 'Device trust has been granted.' })
+      // Sync Ziti attributes so network access is granted immediately
+      if (selectedRequest?.user_id) {
+        api.post(`/api/v1/access/ziti/sync/device-trust/${selectedRequest.user_id}`).catch(() => {})
+      }
+      toast({ title: 'Request Approved', description: 'Device trust granted — network access updated.' })
       setReviewDialog(false)
     }
   })
@@ -403,6 +407,11 @@ export function DeviceTrustApprovalPage() {
                   <p><strong>Justification:</strong> {selectedRequest.justification}</p>
                 )}
               </div>
+              {reviewAction === 'approve' && (
+                <p className="text-sm text-blue-700 bg-blue-50 p-3 rounded-md">
+                  Approving will grant the user's Ziti network identity the <code className="font-mono bg-blue-100 px-1 rounded">device-trusted</code> role, enabling access to policies that require trusted devices.
+                </p>
+              )}
               <div className="space-y-2">
                 <Label>Review Notes</Label>
                 <Textarea

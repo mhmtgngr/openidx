@@ -260,6 +260,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/sync/users", svc.handleSyncAllUsers)
 		api.POST("/ziti/sync/users/:userId", svc.handleSyncSingleUser)
 		api.POST("/ziti/sync/groups", svc.handleSyncAllGroups)
+		api.POST("/ziti/sync/device-trust/:userId", svc.handleSyncDeviceTrust)
+
+		// Enriched device management (unified view)
+		api.GET("/devices/enriched", svc.handleGetEnrichedDevices)
 
 		// Phase 3: Posture checks
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
