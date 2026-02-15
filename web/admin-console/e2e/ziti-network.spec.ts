@@ -883,6 +883,85 @@ test.describe('Ziti Identity Attributes', () => {
   });
 });
 
+test.describe('Ziti Identity Sync', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/v1/access/ziti/status', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: true, sdk_ready: true, controller_reachable: true, services_count: 2, identities_count: 5 }) });
+    });
+
+    await page.route('**/api/v1/access/ziti/identities', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          identities: [
+            { id: '1', ziti_id: 'id-001', name: 'user-john', identity_type: 'User', user_id: 'user-1', enrolled: true, attributes: ['engineering'], created_at: '2024-01-01T00:00:00Z' },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/access/ziti/sync/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          status: 'idle',
+          last_full_sync_at: '2024-01-20T10:00:00Z',
+          last_auto_sync_at: '2024-01-20T12:30:00Z',
+          users_synced: 5, users_failed: 0, groups_synced: 3,
+          unsynced_users: 2, total_users: 7, total_identities: 5,
+        }),
+      });
+    });
+
+    await page.route('**/api/v1/access/ziti/sync/users', async (route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ users_synced: 2, users_failed: 0, groups_synced: 3 }) });
+      }
+    });
+
+    await page.route('**/api/v1/access/ziti/sync/groups', async (route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ users_synced: 0, users_failed: 0, groups_synced: 5 }) });
+      }
+    });
+  });
+
+  test('should display sync status card on identities tab', async ({ page }) => {
+    await page.goto('/ziti-network');
+    await page.getByRole('tab', { name: /identities/i }).click();
+    await expect(page.locator('text=Identity Sync')).toBeVisible();
+    await expect(page.locator('text=5 identities / 7 users')).toBeVisible();
+  });
+
+  test('should show unsynced badge when users lack identities', async ({ page }) => {
+    await page.goto('/ziti-network');
+    await page.getByRole('tab', { name: /identities/i }).click();
+    await expect(page.locator('text=2 unsynced')).toBeVisible();
+  });
+
+  test('should have Sync All Users button', async ({ page }) => {
+    await page.goto('/ziti-network');
+    await page.getByRole('tab', { name: /identities/i }).click();
+    await expect(page.getByRole('button', { name: /sync all users/i })).toBeVisible();
+  });
+
+  test('should trigger sync all users and show success toast', async ({ page }) => {
+    await page.goto('/ziti-network');
+    await page.getByRole('tab', { name: /identities/i }).click();
+    await page.getByRole('button', { name: /sync all users/i }).click();
+    await expect(page.locator('text=Sync complete').first()).toBeVisible();
+  });
+
+  test('should trigger group sync and show success toast', async ({ page }) => {
+    await page.goto('/ziti-network');
+    await page.getByRole('tab', { name: /identities/i }).click();
+    await page.getByRole('button', { name: /sync groups/i }).click();
+    await expect(page.locator('text=Group sync complete').first()).toBeVisible();
+  });
+});
+
 test.describe('Ziti Remote Access Tab', () => {
   test.beforeEach(async ({ page }) => {
     await page.route('**/api/v1/access/ziti/status', async (route) => {

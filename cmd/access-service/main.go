@@ -222,6 +222,7 @@ func main() {
 			defer zitiCancel()
 			zm.StartHealthMonitor(zitiCtx)
 			zm.StartCertificateMonitor(zitiCtx)
+			zm.StartUserSyncPoller(zitiCtx)
 
 			// Host all Ziti-enabled services (creates terminators so Dial works)
 			zm.HostAllServices(zitiCtx)

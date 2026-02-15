@@ -1564,6 +1564,23 @@ ALTER TABLE ziti_service_policies ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEF
 -- Add description column to ziti_services
 ALTER TABLE ziti_services ADD COLUMN IF NOT EXISTS description TEXT;
 
+-- Track when group attributes were last synced per identity
+ALTER TABLE ziti_identities ADD COLUMN IF NOT EXISTS group_attrs_synced_at TIMESTAMP WITH TIME ZONE;
+
+-- Ziti user sync state (singleton row)
+CREATE TABLE IF NOT EXISTS ziti_user_sync (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    last_full_sync_at TIMESTAMP WITH TIME ZONE,
+    last_auto_sync_at TIMESTAMP WITH TIME ZONE,
+    users_synced INTEGER DEFAULT 0,
+    users_failed INTEGER DEFAULT 0,
+    groups_synced INTEGER DEFAULT 0,
+    status VARCHAR(50) DEFAULT 'idle',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+INSERT INTO ziti_user_sync (status) VALUES ('idle') ON CONFLICT DO NOTHING;
+
 -- ============================================================================
 -- POMERIUM-LIKE ZERO-TRUST ACCESS PROXY ENHANCEMENTS
 -- ============================================================================

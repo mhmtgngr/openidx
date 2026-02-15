@@ -243,6 +243,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Identity attribute management
 		api.PATCH("/ziti/identities/:id/attributes", svc.handlePatchIdentityAttributes)
 
+		// User-to-Ziti identity sync
+		api.GET("/ziti/sync/status", svc.handleGetSyncStatus)
+		api.POST("/ziti/sync/users", svc.handleSyncAllUsers)
+		api.POST("/ziti/sync/users/:userId", svc.handleSyncSingleUser)
+		api.POST("/ziti/sync/groups", svc.handleSyncAllGroups)
+
 		// Phase 3: Posture checks
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
 		api.POST("/ziti/posture/checks", svc.handleCreatePostureCheck)

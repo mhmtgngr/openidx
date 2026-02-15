@@ -68,6 +68,18 @@ interface ZitiStatus {
   identities_count: number
 }
 
+interface ZitiSyncStatus {
+  status: string
+  last_full_sync_at?: string
+  last_auto_sync_at?: string
+  users_synced: number
+  users_failed: number
+  groups_synced: number
+  unsynced_users: number
+  total_users: number
+  total_identities: number
+}
+
 interface FabricRouter {
   id: string
   name: string
@@ -736,6 +748,36 @@ function IdentitiesTab() {
     onError: () => toast({ title: 'Error', description: 'Failed to update identity attributes.', variant: 'destructive' }),
   })
 
+  const { data: syncStatus } = useQuery({
+    queryKey: ['ziti-sync-status'],
+    queryFn: () => api.get<ZitiSyncStatus>('/api/v1/access/ziti/sync/status'),
+    refetchInterval: 5000,
+  })
+
+  const syncAllMutation = useMutation({
+    mutationFn: () => api.post<{ users_synced: number; users_failed: number; groups_synced: number }>('/api/v1/access/ziti/sync/users'),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-identities'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-sync-status'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-status'] })
+      toast({
+        title: 'Sync complete',
+        description: `Synced ${result.users_synced} users, ${result.groups_synced} group attributes.${result.users_failed > 0 ? ` ${result.users_failed} failed.` : ''}`,
+      })
+    },
+    onError: () => toast({ title: 'Error', description: 'User sync failed.', variant: 'destructive' }),
+  })
+
+  const syncGroupsMutation = useMutation({
+    mutationFn: () => api.post<{ groups_synced: number }>('/api/v1/access/ziti/sync/groups'),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-identities'] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-sync-status'] })
+      toast({ title: 'Group sync complete', description: `Updated role attributes for ${result.groups_synced} identities.` })
+    },
+    onError: () => toast({ title: 'Error', description: 'Group attribute sync failed.', variant: 'destructive' }),
+  })
+
   const openEditAttrs = (ident: ZitiIdentity) => {
     setEditAttrsValue((ident.attributes || []).join(', '))
     setEditAttrsTarget(ident)
@@ -763,6 +805,42 @@ function IdentitiesTab() {
 
   return (
     <div className="space-y-4 mt-4">
+      {/* Sync Status Card */}
+      <Card className="border-blue-200 bg-blue-50/50">
+        <CardContent className="py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <RefreshCw className={`h-4 w-4 ${syncAllMutation.isPending || syncGroupsMutation.isPending ? 'animate-spin' : ''} text-blue-600`} />
+                <span className="text-sm font-medium">Identity Sync</span>
+              </div>
+              {syncStatus && (
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span>{syncStatus.total_identities} identities / {syncStatus.total_users} users</span>
+                  {syncStatus.unsynced_users > 0 && (
+                    <Badge variant="secondary" className="text-orange-700 bg-orange-100">
+                      {syncStatus.unsynced_users} unsynced
+                    </Badge>
+                  )}
+                  {syncStatus.last_auto_sync_at && (
+                    <span>Auto: {new Date(syncStatus.last_auto_sync_at).toLocaleTimeString()}</span>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => syncGroupsMutation.mutate()} disabled={syncGroupsMutation.isPending || syncAllMutation.isPending}>
+                {syncGroupsMutation.isPending ? 'Syncing...' : 'Sync Groups'}
+              </Button>
+              <Button size="sm" onClick={() => syncAllMutation.mutate()} disabled={syncAllMutation.isPending || syncGroupsMutation.isPending}>
+                <RefreshCw className={`mr-2 h-3 w-3 ${syncAllMutation.isPending ? 'animate-spin' : ''}`} />
+                {syncAllMutation.isPending ? 'Syncing...' : 'Sync All Users'}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex items-center justify-between gap-4">
         <SearchInput value={search} onChange={setSearch} placeholder="Search identities..." />
         <Button onClick={() => setCreateModal(true)}>
