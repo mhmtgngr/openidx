@@ -1532,7 +1532,7 @@ test.describe('Ziti Remote Access Tab', () => {
     test('should show session entries with identity and service names', async ({ page }) => {
       await page.goto('/ziti-network');
       await page.getByRole('tab', { name: /security/i }).click();
-      await expect(page.getByText('alice')).toBeVisible();
+      await expect(page.getByRole('cell', { name: 'alice' })).toBeVisible();
       await expect(page.getByText('internal-app')).toBeVisible();
       await expect(page.getByText('Dial', { exact: true })).toBeVisible();
       await expect(page.getByText('Bind', { exact: true })).toBeVisible();
@@ -1772,6 +1772,15 @@ test.describe('Ziti Remote Access Tab', () => {
 
   test.describe('Published App Services', () => {
     test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/services', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ services: [
+            { id: '1', ziti_id: 'svc-001', name: 'web-service', protocol: 'tcp', host: '10.0.0.1', port: 443, enabled: true, created_at: '2024-01-01T00:00:00Z' },
+          ] }),
+        });
+      });
       await page.route('**/api/v1/access/apps', async (route) => {
         await route.fulfill({
           status: 200,
