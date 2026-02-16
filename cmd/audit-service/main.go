@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/audit"
@@ -49,6 +50,14 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize Redis connection (used for distributed rate limiting)
+	redis, err := database.NewRedis(cfg.RedisURL)
+	if err != nil {
+		log.Warn("Failed to connect to Redis, rate limiting will fail open", zap.Error(err))
+	} else {
+		defer redis.Close()
+	}
+
 	// Initialize Elasticsearch client (best-effort — audit works without ES)
 	var es *database.ElasticsearchClient
 	if cfg.ElasticsearchURL != "" {
@@ -67,7 +76,17 @@ func main() {
 	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
-		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+		var redisClient *goredis.Client
+		if redis != nil {
+			redisClient = redis.Client
+		}
+		router.Use(middleware.DistributedRateLimit(redisClient, middleware.RateLimitConfig{
+			Requests:     cfg.RateLimitRequests,
+			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
+			AuthRequests: cfg.RateLimitAuthRequests,
+			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
+			PerUser:      cfg.RateLimitPerUser,
+		}, log))
 	}
 	router.Use(middleware.PrometheusMetrics("audit-service"))
 

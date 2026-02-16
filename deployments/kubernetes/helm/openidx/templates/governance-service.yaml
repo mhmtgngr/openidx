@@ -21,6 +21,17 @@ spec:
       serviceAccountName: {{ include "openidx.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: governance-service
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: governance-service
           image: "{{ .Values.global.imageRegistry }}/{{ .Values.governanceService.image.repository }}:{{ .Values.governanceService.image.tag }}"

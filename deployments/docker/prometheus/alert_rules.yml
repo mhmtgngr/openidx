@@ -107,3 +107,12 @@ groups:
         annotations:
           summary: "High concurrent requests on {{ $labels.service }}"
           description: "{{ $labels.service }} has {{ $value }} requests in flight (threshold: 100)."
+
+      - alert: CircuitBreakerOpen
+        expr: openidx_circuit_breaker_state > 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker {{ $labels.name }} is open"
+          description: "Circuit breaker {{ $labels.name }} has been open for more than 1 minute, indicating a downstream dependency failure."

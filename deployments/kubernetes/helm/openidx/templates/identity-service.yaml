@@ -21,6 +21,17 @@ spec:
       serviceAccountName: {{ include "openidx.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: identity-service
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: identity-service
           image: "{{ .Values.global.imageRegistry }}/{{ .Values.identityService.image.repository }}:{{ .Values.identityService.image.tag }}"

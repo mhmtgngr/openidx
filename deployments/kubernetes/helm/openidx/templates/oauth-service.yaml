@@ -21,6 +21,17 @@ spec:
       serviceAccountName: {{ include "openidx.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: oauth-service
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: oauth-service
           image: "{{ .Values.global.imageRegistry }}/{{ .Values.oauthService.image.repository | default "oauth-service" }}:{{ .Values.oauthService.image.tag | default "latest" }}"

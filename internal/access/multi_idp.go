@@ -268,13 +268,16 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 	s.db.Pool.Exec(c.Request.Context(),
 		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2", idpID, session.ID)
 
-	// Set session cookie
-	c.SetCookie(
-		"_openidx_proxy_session",
-		session.SessionToken,
-		session.AbsoluteTimeout(),
-		"/", "", false, true,
-	)
+	// Set session cookie with SameSite=Lax for CSRF protection
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "_openidx_proxy_session",
+		Value:    session.SessionToken,
+		MaxAge:   session.AbsoluteTimeout(),
+		Path:     "/",
+		Secure:   s.config.IsProduction(),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	s.logAuditEvent(c, "proxy_session_created", session.UserID, "session", map[string]interface{}{
 		"session_id": session.ID,

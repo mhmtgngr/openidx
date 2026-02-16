@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/resilience"
 )
 
 // ZitiCertificate represents a certificate tracked in the ziti_certificates table
@@ -34,112 +36,16 @@ type ZitiCertificate struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
-// CircuitBreaker implements the circuit breaker pattern for Ziti controller communication
-type CircuitBreaker struct {
-	mu           sync.Mutex
-	failures     int
-	threshold    int
-	resetTimeout time.Duration
-	lastFailure  time.Time
-	state        string // "closed", "open", "half-open"
-	logger       *zap.Logger
-}
-
 // Package-level registry of circuit breakers keyed by controller URL
 var (
 	circuitBreakersMu sync.Mutex
-	circuitBreakers   = make(map[string]*CircuitBreaker)
+	circuitBreakers   = make(map[string]*resilience.CircuitBreaker)
 )
-
-// NewCircuitBreaker creates a new CircuitBreaker with the given threshold and reset timeout
-func NewCircuitBreaker(threshold int, resetTimeout time.Duration, logger *zap.Logger) *CircuitBreaker {
-	return &CircuitBreaker{
-		threshold:    threshold,
-		resetTimeout: resetTimeout,
-		state:        "closed",
-		logger:       logger,
-	}
-}
-
-// Execute runs fn through the circuit breaker. If the circuit is open and the reset
-// timeout has not elapsed, it returns an error immediately. On failure, the failure
-// counter is incremented and the circuit opens when the threshold is reached.
-func (cb *CircuitBreaker) Execute(fn func() error) error {
-	cb.mu.Lock()
-
-	switch cb.state {
-	case "open":
-		// Check if reset timeout has elapsed; if so, transition to half-open
-		if time.Since(cb.lastFailure) > cb.resetTimeout {
-			cb.state = "half-open"
-			cb.logger.Info("Circuit breaker transitioning to half-open")
-		} else {
-			cb.mu.Unlock()
-			return fmt.Errorf("circuit breaker is open; requests blocked until %s",
-				cb.lastFailure.Add(cb.resetTimeout).Format(time.RFC3339))
-		}
-	case "half-open":
-		// Allow one request through to test recovery
-	case "closed":
-		// Normal operation
-	}
-
-	cb.mu.Unlock()
-
-	// Execute the function outside of the lock
-	err := fn()
-
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	if err != nil {
-		cb.failures++
-		cb.lastFailure = time.Now()
-		cb.logger.Warn("Circuit breaker recorded failure",
-			zap.Int("failures", cb.failures),
-			zap.Int("threshold", cb.threshold),
-			zap.String("state", cb.state),
-			zap.Error(err))
-
-		if cb.state == "half-open" || cb.failures >= cb.threshold {
-			cb.state = "open"
-			cb.logger.Error("Circuit breaker opened",
-				zap.Int("failures", cb.failures),
-				zap.Duration("reset_timeout", cb.resetTimeout))
-		}
-		return err
-	}
-
-	// Success: reset the circuit breaker
-	if cb.state == "half-open" {
-		cb.logger.Info("Circuit breaker recovered, transitioning to closed")
-	}
-	cb.failures = 0
-	cb.state = "closed"
-	return nil
-}
-
-// State returns the current state of the circuit breaker
-func (cb *CircuitBreaker) State() string {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.state
-}
-
-// Reset resets the circuit breaker to its initial closed state
-func (cb *CircuitBreaker) Reset() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.failures = 0
-	cb.state = "closed"
-	cb.lastFailure = time.Time{}
-	cb.logger.Info("Circuit breaker reset to closed state")
-}
 
 // circuitBreaker returns or lazily creates a CircuitBreaker for this ZitiManager's
 // controller URL. Since we cannot modify the ZitiManager struct, circuit breakers
 // are stored in a package-level map keyed by the controller URL.
-func (zm *ZitiManager) circuitBreaker() *CircuitBreaker {
+func (zm *ZitiManager) circuitBreaker() *resilience.CircuitBreaker {
 	circuitBreakersMu.Lock()
 	defer circuitBreakersMu.Unlock()
 
@@ -148,7 +54,12 @@ func (zm *ZitiManager) circuitBreaker() *CircuitBreaker {
 		return cb
 	}
 
-	cb := NewCircuitBreaker(5, 30*time.Second, zm.logger.With(zap.String("component", "circuit-breaker")))
+	cb := resilience.NewCircuitBreaker(resilience.CircuitBreakerConfig{
+		Name:         "ziti-controller",
+		Threshold:    5,
+		ResetTimeout: 30 * time.Second,
+		Logger:       zm.logger.With(zap.String("component", "circuit-breaker")),
+	})
 	circuitBreakers[key] = cb
 	return cb
 }
@@ -561,5 +472,5 @@ func (zm *ZitiManager) MgmtRequestWithCircuitBreaker(method, path string, body [
 // based on the circuit breaker state, without making an actual request.
 func (zm *ZitiManager) IsControllerAvailable() bool {
 	cb := zm.circuitBreaker()
-	return cb.State() != "open"
+	return cb.State() != resilience.StateOpen
 }

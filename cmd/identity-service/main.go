@@ -77,7 +77,13 @@ func main() {
 	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
-		router.Use(middleware.RateLimit(cfg.RateLimitRequests, time.Duration(cfg.RateLimitWindow)*time.Second))
+		router.Use(middleware.DistributedRateLimit(redis.Client, middleware.RateLimitConfig{
+			Requests:     cfg.RateLimitRequests,
+			Window:       time.Duration(cfg.RateLimitWindow) * time.Second,
+			AuthRequests: cfg.RateLimitAuthRequests,
+			AuthWindow:   time.Duration(cfg.RateLimitAuthWindow) * time.Second,
+			PerUser:      cfg.RateLimitPerUser,
+		}, log))
 	}
 	router.Use(middleware.PrometheusMetrics("identity-service"))
 

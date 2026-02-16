@@ -21,6 +21,17 @@ spec:
       serviceAccountName: {{ include "openidx.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.podAntiAffinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.podAntiAffinity.weight | default 100 }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: admin-console
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: admin-console
           image: "{{ .Values.global.imageRegistry }}/{{ .Values.adminConsole.image.repository }}:{{ .Values.adminConsole.image.tag }}"

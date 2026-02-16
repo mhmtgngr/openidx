@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/resilience"
 )
 
 // Input represents the authorization input sent to OPA
@@ -49,18 +51,25 @@ type opaResponse struct {
 // Client communicates with an OPA server for policy decisions
 type Client struct {
 	baseURL    string
-	httpClient *http.Client
+	httpClient *resilience.ResilientHTTPClient
 	logger     *zap.Logger
 	policyPath string
 }
 
 // NewClient creates a new OPA client
 func NewClient(baseURL string, logger *zap.Logger) *Client {
+	rawClient := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+	cb := resilience.NewCircuitBreaker(resilience.CircuitBreakerConfig{
+		Name:         "opa",
+		Threshold:    5,
+		ResetTimeout: 15 * time.Second,
+		Logger:       logger.With(zap.String("component", "opa-circuit-breaker")),
+	})
 	return &Client{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		baseURL:    baseURL,
+		httpClient: resilience.NewResilientHTTPClient(rawClient, cb),
 		logger:     logger,
 		policyPath: "/v1/data/openidx/authz",
 	}

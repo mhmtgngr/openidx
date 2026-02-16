@@ -318,6 +318,11 @@ securityContext:
   runAsNonRoot: true
   runAsUser: 1000
 
+# Pod anti-affinity — spread replicas across nodes
+podAntiAffinity:
+  enabled: true
+  weight: 100
+
 # TLS for inter-service communication (opt-in)
 serviceTLS:
   enabled: false

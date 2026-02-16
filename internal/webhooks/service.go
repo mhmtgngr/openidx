@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/resilience"
 )
 
 // Webhook event type constants
@@ -69,18 +70,25 @@ type Service struct {
 	db     *database.PostgresDB
 	redis  *database.RedisClient
 	logger *zap.Logger
-	client *http.Client
+	client *resilience.ResilientHTTPClient
 }
 
 // NewService creates a new webhook service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *zap.Logger) *Service {
+	rawClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	cb := resilience.NewCircuitBreaker(resilience.CircuitBreakerConfig{
+		Name:         "webhook-delivery",
+		Threshold:    10,
+		ResetTimeout: 30 * time.Second,
+		Logger:       logger.With(zap.String("component", "webhook-circuit-breaker")),
+	})
 	return &Service{
 		db:     db,
 		redis:  redis,
 		logger: logger,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		client: resilience.NewResilientHTTPClient(rawClient, cb),
 	}
 }
 

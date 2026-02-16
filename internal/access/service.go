@@ -1035,16 +1035,16 @@ func (s *Service) handleCallback(c *gin.Context) {
 		return
 	}
 
-	// Set session cookie
-	c.SetCookie(
-		"_openidx_proxy_session",
-		session.SessionToken,
-		session.AbsoluteTimeout(),
-		"/",
-		"",
-		false, // secure (set true in production)
-		true,  // httponly
-	)
+	// Set session cookie with SameSite=Lax for CSRF protection
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "_openidx_proxy_session",
+		Value:    session.SessionToken,
+		MaxAge:   session.AbsoluteTimeout(),
+		Path:     "/",
+		Secure:   s.config.IsProduction(),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	s.logAuditEvent(c, "proxy_session_created", session.UserID, "session", map[string]interface{}{
 		"session_id": session.ID,
@@ -1189,7 +1189,15 @@ func (s *Service) handleLogout(c *gin.Context) {
 		}
 	}
 
-	c.SetCookie("_openidx_proxy_session", "", -1, "/", "", false, true)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "_openidx_proxy_session",
+		Value:    "",
+		MaxAge:   -1,
+		Path:     "/",
+		Secure:   s.config.IsProduction(),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	redirectURL := c.Query("redirect_url")
 	if redirectURL == "" {

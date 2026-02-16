@@ -40,8 +40,11 @@ type Config struct {
 	EnableRateLimit    bool `mapstructure:"enable_rate_limit"`
 
 	// Rate limiting
-	RateLimitRequests int `mapstructure:"rate_limit_requests"`
-	RateLimitWindow   int `mapstructure:"rate_limit_window"`
+	RateLimitRequests     int  `mapstructure:"rate_limit_requests"`
+	RateLimitWindow       int  `mapstructure:"rate_limit_window"`
+	RateLimitAuthRequests int  `mapstructure:"rate_limit_auth_requests"`
+	RateLimitAuthWindow   int  `mapstructure:"rate_limit_auth_window"`
+	RateLimitPerUser      bool `mapstructure:"rate_limit_per_user"`
 
 	// SMTP configuration (for email notifications)
 	SMTPHost     string `mapstructure:"smtp_host"`
@@ -95,6 +98,10 @@ type Config struct {
 
 	// Adaptive MFA / Risk-based authentication
 	AdaptiveMFA AdaptiveMFAConfig `mapstructure:"adaptive_mfa"`
+
+	// CSRF protection
+	CSRFEnabled       bool   `mapstructure:"csrf_enabled"`
+	CSRFTrustedDomain string `mapstructure:"csrf_trusted_domain"`
 
 	// TLS configuration for inter-service communication
 	TLS TLSConfig `mapstructure:"tls"`
@@ -265,6 +272,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// Rate limiting defaults
 	v.SetDefault("rate_limit_requests", 100)
 	v.SetDefault("rate_limit_window", 60)
+	v.SetDefault("rate_limit_auth_requests", 20)
+	v.SetDefault("rate_limit_auth_window", 60)
+	v.SetDefault("rate_limit_per_user", false)
 
 	// OAuth / OIDC defaults
 	v.SetDefault("oauth_issuer", "http://localhost:8006")
@@ -317,6 +327,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("sms.otp_length", 6)
 	v.SetDefault("sms.otp_expiry", 300)
 	v.SetDefault("sms.max_attempts", 3)
+
+	// CSRF defaults (disabled by default, auto-enabled in production via warning)
+	v.SetDefault("csrf_enabled", false)
+	v.SetDefault("csrf_trusted_domain", "")
 
 	// TLS defaults (disabled by default for backward compatibility)
 	v.SetDefault("tls.enabled", false)
@@ -412,14 +426,19 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.mutlucell_password":   "MUTLUCELL_PASSWORD",
 		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
 		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
+		"csrf_enabled":             "CSRF_ENABLED",
+		"csrf_trusted_domain":      "CSRF_TRUSTED_DOMAIN",
 		"tls.enabled":              "TLS_ENABLED",
 		"tls.cert_file":            "TLS_CERT_FILE",
 		"tls.key_file":             "TLS_KEY_FILE",
 		"tls.ca_file":              "TLS_CA_FILE",
 		"adaptive_mfa.enabled":     "ADAPTIVE_MFA_ENABLED",
-		"enable_rate_limit":        "ENABLE_RATE_LIMIT",
-		"rate_limit_requests":      "RATE_LIMIT_REQUESTS",
-		"rate_limit_window":        "RATE_LIMIT_WINDOW",
+		"enable_rate_limit":          "ENABLE_RATE_LIMIT",
+		"rate_limit_requests":        "RATE_LIMIT_REQUESTS",
+		"rate_limit_window":          "RATE_LIMIT_WINDOW",
+		"rate_limit_auth_requests":   "RATE_LIMIT_AUTH_REQUESTS",
+		"rate_limit_auth_window":     "RATE_LIMIT_AUTH_WINDOW",
+		"rate_limit_per_user":        "RATE_LIMIT_PER_USER",
 	}
 
 	for key, env := range envMappings {
@@ -473,6 +492,9 @@ func (c *Config) ProductionWarnings() []string {
 	}
 	if c.CORSAllowedOrigins == "*" {
 		warnings = append(warnings, "cors_allowed_origins is wildcard '*'; set specific origins for production")
+	}
+	if !c.CSRFEnabled {
+		warnings = append(warnings, "csrf_enabled is false; enable CSRF protection for production deployments")
 	}
 	return warnings
 }
