@@ -2506,3 +2506,28 @@ CREATE TABLE IF NOT EXISTS abac_policies (
 
 CREATE INDEX IF NOT EXISTS idx_abac_policies_resource ON abac_policies(resource_type, resource_id);
 CREATE INDEX IF NOT EXISTS idx_abac_policies_enabled ON abac_policies(enabled);
+
+-- ============================================================================
+-- PHASE 9: SESSION MANAGEMENT & SSO
+-- ============================================================================
+
+-- Link refresh tokens to sessions for revocation propagation
+ALTER TABLE oauth_refresh_tokens ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_session_id ON oauth_refresh_tokens(session_id);
+
+-- Partial index for fast active session counts per user
+CREATE INDEX IF NOT EXISTS idx_sessions_user_active ON sessions(user_id) WHERE (revoked IS NULL OR revoked = false) AND expires_at > NOW();
+
+-- Session policy fields on per-application SSO settings
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS idle_timeout INTEGER DEFAULT 1800;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS absolute_timeout INTEGER DEFAULT 86400;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS remember_me_duration INTEGER DEFAULT 2592000;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS reauth_interval INTEGER DEFAULT 0;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS bind_ip BOOLEAN DEFAULT false;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS force_logout_on_password_change BOOLEAN DEFAULT true;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS max_concurrent_sessions INTEGER DEFAULT 0;
+ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS concurrent_session_strategy VARCHAR(20) DEFAULT 'deny_new';
+
+-- Back-channel and front-channel logout URIs for federated logout
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS back_channel_logout_uri VARCHAR(500);
+ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS front_channel_logout_uri VARCHAR(500);

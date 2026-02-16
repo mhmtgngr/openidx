@@ -289,6 +289,26 @@ export function UserProfilePage() {
     },
   })
 
+  const logoutAllMutation = useMutation({
+    mutationFn: async () => {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${import.meta.env.VITE_OAUTH_URL || 'http://localhost:8006'}/oauth/logout-all`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+      if (!response.ok) {
+        throw new Error('Failed to sign out everywhere')
+      }
+    },
+    onSuccess: () => {
+      toast({ title: 'Signed out everywhere', description: 'All sessions have been revoked. You will be redirected to sign in.' })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to sign out of all devices', variant: 'destructive' })
+    },
+  })
+
   if (isLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
@@ -920,16 +940,43 @@ export function UserProfilePage() {
                   <CardDescription>Manage your active sessions across devices</CardDescription>
                 </div>
                 {sessions && sessions.length > 0 && (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => {
-                      sessions.forEach((session) => revokeSessionMutation.mutate(session.id))
-                    }}
-                    disabled={revokeSessionMutation.isPending}
-                  >
-                    Revoke All Sessions
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={logoutAllMutation.isPending}
+                        >
+                          Sign Out Everywhere
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Sign out of all devices?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will revoke all your active sessions and refresh tokens across all devices. You will need to sign in again on each device.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => logoutAllMutation.mutate()}>
+                            Sign Out Everywhere
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        sessions.forEach((session) => revokeSessionMutation.mutate(session.id))
+                      }}
+                      disabled={revokeSessionMutation.isPending}
+                    >
+                      Revoke All Sessions
+                    </Button>
+                  </div>
                 )}
               </div>
             </CardHeader>

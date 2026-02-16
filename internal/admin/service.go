@@ -123,13 +123,21 @@ type GeneralSettings struct {
 
 // SecuritySettings contains security-related settings
 type SecuritySettings struct {
-	PasswordPolicy     PasswordPolicy `json:"password_policy"`
-	SessionTimeout     int            `json:"session_timeout"`
-	MaxFailedLogins    int            `json:"max_failed_logins"`
-	LockoutDuration    int            `json:"lockout_duration"`
-	RequireMFA         bool           `json:"require_mfa"`
-	AllowedIPRanges    []string       `json:"allowed_ip_ranges,omitempty"`
-	BlockedCountries   []string       `json:"blocked_countries,omitempty"`
+	PasswordPolicy            PasswordPolicy `json:"password_policy"`
+	SessionTimeout            int            `json:"session_timeout"`
+	MaxFailedLogins           int            `json:"max_failed_logins"`
+	LockoutDuration           int            `json:"lockout_duration"`
+	RequireMFA                bool           `json:"require_mfa"`
+	AllowedIPRanges           []string       `json:"allowed_ip_ranges,omitempty"`
+	BlockedCountries          []string       `json:"blocked_countries,omitempty"`
+	IdleTimeout               int            `json:"idle_timeout"`
+	AbsoluteTimeout           int            `json:"absolute_timeout"`
+	RememberMeDuration        int            `json:"remember_me_duration"`
+	ReauthInterval            int            `json:"reauth_interval"`
+	BindSessionToIP           bool           `json:"bind_session_to_ip"`
+	ForceLogoutOnPwdChange    bool           `json:"force_logout_on_password_change"`
+	MaxConcurrentSessions     int            `json:"max_concurrent_sessions"`
+	ConcurrentSessionStrategy string         `json:"concurrent_session_strategy"`
 }
 
 // PasswordPolicy defines password requirements
@@ -559,11 +567,19 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 				MaxAge:           90,
 				History:          5,
 			},
-			SessionTimeout:   30,
-			MaxFailedLogins:  5,
-			LockoutDuration:  15,
-			RequireMFA:       false,
-			BlockedCountries: []string{},
+			SessionTimeout:            30,
+			MaxFailedLogins:           5,
+			LockoutDuration:           15,
+			RequireMFA:                false,
+			BlockedCountries:          []string{},
+			IdleTimeout:               1800,
+			AbsoluteTimeout:           86400,
+			RememberMeDuration:        2592000,
+			ReauthInterval:            0,
+			BindSessionToIP:           false,
+			ForceLogoutOnPwdChange:    true,
+			MaxConcurrentSessions:     0,
+			ConcurrentSessionStrategy: "deny_new",
 		},
 		Authentication: AuthenticationSettings{
 			AllowRegistration:  true,

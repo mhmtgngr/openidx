@@ -140,6 +140,9 @@ func main() {
 	oauthService.SetRiskService(riskService)
 	oauthService.SetWebhookService(webhookService)
 
+	// Start background session expiry worker
+	oauthService.StartSessionWorker(ctx)
+
 	// Register routes (apply auth middleware to client management API in non-development environments)
 	if cfg.Environment != "development" {
 		oauth.RegisterRoutes(router, oauthService, middleware.Auth(cfg.OAuthJWKSURL))

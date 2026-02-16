@@ -30,6 +30,14 @@ interface Settings {
     require_mfa: boolean
     allowed_ip_ranges: string[]
     blocked_countries: string[]
+    idle_timeout: number
+    absolute_timeout: number
+    remember_me_duration: number
+    reauth_interval: number
+    bind_session_to_ip: boolean
+    force_logout_on_password_change: boolean
+    max_concurrent_sessions: number
+    concurrent_session_strategy: string
   }
   authentication: {
     allow_registration: boolean
@@ -215,7 +223,7 @@ export function SettingsPage() {
     }
   }
 
-  const updateSecurity = (field: keyof Settings['security'], value: number | boolean) => {
+  const updateSecurity = (field: keyof Settings['security'], value: number | boolean | string) => {
     if (formData) {
       setFormData({
         ...formData,
@@ -492,6 +500,95 @@ export function SettingsPage() {
                     />
                     <span className="text-sm font-medium">Require MFA for all users</span>
                   </label>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Session Policies</CardTitle>
+                  <CardDescription>Configure advanced session management policies</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Idle Timeout (seconds)</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={86400}
+                        value={formData.security.idle_timeout ?? 1800}
+                        onChange={(e) => updateSecurity('idle_timeout', parseInt(e.target.value) || 0)}
+                      />
+                      <p className="text-xs text-muted-foreground">0 = disabled. Default: 1800 (30 min)</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Absolute Timeout (seconds)</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={604800}
+                        value={formData.security.absolute_timeout ?? 86400}
+                        onChange={(e) => updateSecurity('absolute_timeout', parseInt(e.target.value) || 0)}
+                      />
+                      <p className="text-xs text-muted-foreground">0 = disabled. Default: 86400 (24h)</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Remember Me Duration (seconds)</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={7776000}
+                        value={formData.security.remember_me_duration ?? 2592000}
+                        onChange={(e) => updateSecurity('remember_me_duration', parseInt(e.target.value) || 0)}
+                      />
+                      <p className="text-xs text-muted-foreground">Default: 2592000 (30 days)</p>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Max Concurrent Sessions</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={formData.security.max_concurrent_sessions ?? 0}
+                        onChange={(e) => updateSecurity('max_concurrent_sessions', parseInt(e.target.value) || 0)}
+                      />
+                      <p className="text-xs text-muted-foreground">0 = unlimited</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Concurrent Session Strategy</label>
+                      <select
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={formData.security.concurrent_session_strategy ?? 'deny_new'}
+                        onChange={(e) => updateSecurity('concurrent_session_strategy', e.target.value)}
+                      >
+                        <option value="deny_new">Deny New Login</option>
+                        <option value="terminate_oldest">Terminate Oldest Session</option>
+                        <option value="prompt_user">Ask User to Choose</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.security.bind_session_to_ip ?? false}
+                        onChange={(e) => updateSecurity('bind_session_to_ip', e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium">Bind sessions to IP address</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.security.force_logout_on_password_change ?? true}
+                        onChange={(e) => updateSecurity('force_logout_on_password_change', e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium">Force logout on password change</span>
+                    </label>
+                  </div>
                 </CardContent>
               </Card>
 

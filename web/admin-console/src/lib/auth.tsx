@@ -233,6 +233,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setIsAuthenticated(true)
           return true
         }
+      } else {
+        // Check for session revocation
+        const errorData = await response.json().catch(() => ({}))
+        if (errorData.error_description === 'session_revoked') {
+          console.warn('[Auth] Session was revoked - redirecting to login')
+        }
       }
     } catch (error) {
       console.error('[Auth] Token refresh failed:', error)
@@ -283,7 +289,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = authUrl.toString()
   }
 
-  const logout = () => {
+  const logout = async () => {
+    // Server-side logout — revoke all sessions and refresh tokens
+    const currentToken = localStorage.getItem('token')
+    if (currentToken) {
+      try {
+        await fetch(`${OAUTH_URL}/oauth/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Bearer ${currentToken}`,
+          },
+          body: new URLSearchParams({
+            id_token_hint: currentToken,
+          }),
+        })
+      } catch {
+        // Proceed with local logout even if server call fails
+      }
+    }
+
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
     sessionStorage.removeItem('pkce_code_verifier')

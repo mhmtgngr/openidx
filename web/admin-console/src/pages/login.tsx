@@ -53,6 +53,11 @@ export function LoginPage() {
   const [trustBrowser, setTrustBrowser] = useState(false)
   const [pendingRedirectUrl, setPendingRedirectUrl] = useState('')
 
+  // Concurrent session state
+  const [concurrentLimitReached, setConcurrentLimitReached] = useState(false)
+  const [activeSessions, setActiveSessions] = useState<any[]>([])
+  const [pendingLoginSession, setPendingLoginSession] = useState('')
+
   // Check for login_session parameter on mount
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
@@ -138,6 +143,14 @@ export function LoginPage() {
 
       if (!response.ok) {
         setError(data.error_description || 'Login failed. Please try again.')
+        return
+      }
+
+      // Check if concurrent session limit reached
+      if (data.concurrent_limit_reached) {
+        setConcurrentLimitReached(true)
+        setActiveSessions(data.active_sessions || [])
+        setPendingLoginSession(data.login_session)
         return
       }
 
@@ -463,6 +476,28 @@ export function LoginPage() {
     setShowTrustPrompt(false)
     setTrustBrowser(false)
     setPendingRedirectUrl('')
+  }
+
+  const handleForceLogin = async (terminateSessionId: string) => {
+    try {
+      const response = await fetch(`${baseURL}/oauth/force-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          terminate_session_id: terminateSessionId,
+          login_session: pendingLoginSession,
+        }),
+      })
+      const data = await response.json()
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url
+      } else {
+        setError(data.error_description || 'Failed to force login')
+      }
+    } catch (err) {
+      setError('Failed to force login')
+    }
+    setConcurrentLimitReached(false)
   }
 
   const getMfaMethodInfo = (method: string): MFAOption => {
@@ -1066,6 +1101,37 @@ export function LoginPage() {
           </div>
         </div>
       </Card>
+
+      {/* Concurrent Session Limit Dialog */}
+      {concurrentLimitReached && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle className="text-lg">Session Limit Reached</CardTitle>
+              <CardDescription>
+                You have reached the maximum number of active sessions. Please sign out of an existing session to continue.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {activeSessions.map((session: any) => (
+                <div key={session.id} className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="text-sm">
+                    <div className="font-medium">{session.ip_address}</div>
+                    <div className="text-muted-foreground truncate max-w-[200px]">{session.user_agent?.substring(0, 50)}</div>
+                    <div className="text-muted-foreground text-xs">Last active: {new Date(session.last_seen_at).toLocaleString()}</div>
+                  </div>
+                  <Button variant="destructive" size="sm" onClick={() => handleForceLogin(session.id)}>
+                    Sign Out
+                  </Button>
+                </div>
+              ))}
+              <Button variant="outline" className="w-full" onClick={() => setConcurrentLimitReached(false)}>
+                Cancel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Footer branding */}
       <div className="absolute bottom-4 text-center w-full">

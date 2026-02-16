@@ -1182,6 +1182,56 @@ func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) e
 	return err
 }
 
+// IsSessionValid checks if a session is not revoked and not expired
+func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
+	var revoked bool
+	var expiresAt time.Time
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1
+	`, sessionID).Scan(&revoked, &expiresAt)
+	if err != nil {
+		return false, err
+	}
+	return !revoked && time.Now().Before(expiresAt), nil
+}
+
+// CountActiveSessions returns the number of active (non-revoked, non-expired) sessions for a user
+func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+	`, userID).Scan(&count)
+	return count, err
+}
+
+// RevokeUserSessionsOnPasswordChange revokes all sessions and refresh tokens for a user on password change
+func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID string) error {
+	s.logger.Info("Revoking all sessions on password change", zap.String("user_id", userID))
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id FROM sessions
+		WHERE user_id = $1 AND (revoked IS NULL OR revoked = false)
+	`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			continue
+		}
+		_, _ = s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1`, sessionID)
+		s.redis.Client.Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
+	}
+
+	// Also delete all refresh tokens
+	_, _ = s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID)
+
+	return nil
+}
+
 // RecordFailedLogin records a failed login attempt for account lockout
 func (s *Service) RecordFailedLogin(ctx context.Context, username string) error {
 	s.logger.Info("Recording failed login", zap.String("username", username))

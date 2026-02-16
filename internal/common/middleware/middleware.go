@@ -362,6 +362,11 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			c.Set("name", name)
 		}
 
+		// Extract session ID from sid claim
+		if sid, ok := claims["sid"].(string); ok && sid != "" {
+			c.Set("session_id", sid)
+		}
+
 		// Extract roles
 		if roles, ok := claims["roles"].([]interface{}); ok {
 			roleStrings := make([]string, len(roles))
@@ -429,6 +434,10 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 		}
 		if name, ok := claims["name"].(string); ok {
 			c.Set("name", name)
+		}
+		// Extract session ID from sid claim
+		if sid, ok := claims["sid"].(string); ok && sid != "" {
+			c.Set("session_id", sid)
 		}
 		if roles, ok := claims["roles"].([]interface{}); ok {
 			roleStrings := make([]string, len(roles))

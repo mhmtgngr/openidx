@@ -84,6 +84,7 @@ type RefreshToken struct {
 	ClientID  string    `json:"client_id"`
 	UserID    string    `json:"user_id"`
 	Scope     string    `json:"scope"`
+	SessionID string    `json:"session_id,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -124,8 +125,11 @@ type OIDCDiscovery struct {
 	SubjectTypesSupported             []string `json:"subject_types_supported"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
-	ClaimsSupported                   []string `json:"claims_supported"`
-	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
+	ClaimsSupported                      []string `json:"claims_supported"`
+	CodeChallengeMethodsSupported        []string `json:"code_challenge_methods_supported"`
+	EndSessionEndpoint                   string   `json:"end_session_endpoint,omitempty"`
+	BackchannelLogoutSupported           bool     `json:"backchannel_logout_supported,omitempty"`
+	BackchannelLogoutSessionSupported    bool     `json:"backchannel_logout_session_supported,omitempty"`
 }
 
 // JWKS represents JSON Web Key Set
@@ -543,10 +547,16 @@ func (s *Service) CreateAccessToken(ctx context.Context, token *AccessToken) err
 func (s *Service) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	token.CreatedAt = time.Now()
 
+	// Store NULL for empty session_id
+	var sessionID interface{}
+	if token.SessionID != "" {
+		sessionID = token.SessionID
+	}
+
 	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, token.Token, token.ClientID, token.UserID, token.Scope, token.ExpiresAt, token.CreatedAt)
+		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt)
 
 	return err
 }
@@ -554,17 +564,22 @@ func (s *Service) CreateRefreshToken(ctx context.Context, token *RefreshToken) e
 // GetRefreshToken retrieves a refresh token
 func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error) {
 	var refreshToken RefreshToken
+	var sessionID *string
 
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT token, client_id, user_id, scope, expires_at, created_at
+		SELECT token, client_id, user_id, scope, session_id, expires_at, created_at
 		FROM oauth_refresh_tokens WHERE token = $1
 	`, token).Scan(
 		&refreshToken.Token, &refreshToken.ClientID, &refreshToken.UserID,
-		&refreshToken.Scope, &refreshToken.ExpiresAt, &refreshToken.CreatedAt,
+		&refreshToken.Scope, &sessionID, &refreshToken.ExpiresAt, &refreshToken.CreatedAt,
 	)
 
 	if err != nil {
 		return nil, err
+	}
+
+	if sessionID != nil {
+		refreshToken.SessionID = *sessionID
 	}
 
 	if time.Now().After(refreshToken.ExpiresAt) {
@@ -583,7 +598,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 // JWT Token Generation
 
 // GenerateJWT generates a signed JWT access token
-func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int) (string, error) {
+func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int, sessionID ...string) (string, error) {
 	now := time.Now()
 
 	// Get user info for access token
@@ -677,13 +692,18 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		"permissions": permStrings,
 	}
 
+	// Add session ID claim if provided
+	if len(sessionID) > 0 && sessionID[0] != "" {
+		claims["sid"] = sessionID[0]
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = "openidx-key-1"
 	return token.SignedString(s.privateKey)
 }
 
 // GenerateIDToken generates an OIDC ID token
-func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce string, expiresIn int) (string, error) {
+func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce string, expiresIn int, sessionID ...string) (string, error) {
 	now := time.Now()
 
 	// Get user info
@@ -770,6 +790,11 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 
 	if nonce != "" {
 		claims["nonce"] = nonce
+	}
+
+	// Add session ID claim if provided
+	if len(sessionID) > 0 && sessionID[0] != "" {
+		claims["sid"] = sessionID[0]
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -885,6 +910,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		oauth.GET("/userinfo", svc.handleUserInfo)
 		oauth.POST("/userinfo", svc.handleUserInfo)
 		oauth.OPTIONS("/userinfo", svc.handleUserInfo)
+
+		// Session management endpoints
+		oauth.POST("/logout", svc.handleLogout)
+		oauth.GET("/logout", svc.handleLogout)
+		oauth.POST("/logout-all", svc.handleLogoutAll)
+		oauth.POST("/force-login", svc.handleForceLogin)
+		oauth.GET("/session-info", svc.handleSessionInfo)
 	}
 
 	// Client management API (protected by auth middleware when available)
@@ -929,8 +961,11 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		SubjectTypesSupported:  []string{"public"},
 		IDTokenSigningAlgValuesSupported: []string{"RS256"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
-		ClaimsSupported: []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name"},
+		ClaimsSupported: []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
 		CodeChallengeMethodsSupported: []string{"S256", "plain"},
+		EndSessionEndpoint:                s.issuer + "/oauth/logout",
+		BackchannelLogoutSupported:        true,
+		BackchannelLogoutSessionSupported: true,
 	}
 
 	c.JSON(200, discovery)
@@ -1375,6 +1410,38 @@ func (s *Service) handleLogin(c *gin.Context) {
 	}
 
 	// No MFA required — proceed with authorization code
+
+	// Check concurrent session limits before creating a new session
+	action, activeSessions, concErr := s.checkConcurrentSessions(c.Request.Context(), user.ID, oauthParams["client_id"])
+	if concErr != nil && action == "denied" {
+		c.JSON(403, gin.H{
+			"error":             "concurrent_session_limit",
+			"error_description": "Maximum number of concurrent sessions reached.",
+		})
+		return
+	}
+	if action == "prompt_user" {
+		// Store user_id in the login session data so force-login can resume
+		oauthParams["user_id"] = user.ID
+		pendingData, _ := json.Marshal(oauthParams)
+		s.redis.Client.Set(c.Request.Context(), "login_session:"+req.LoginSession, string(pendingData), 5*time.Minute)
+		c.JSON(200, gin.H{
+			"concurrent_limit_reached": true,
+			"active_sessions":          activeSessions,
+			"login_session":            req.LoginSession,
+		})
+		return
+	}
+
+	// Create a session linked to this login
+	session, sessionErr := s.identityService.CreateSession(c.Request.Context(), user.ID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour)
+	if sessionErr != nil {
+		s.logger.Warn("Failed to create session during login", zap.Error(sessionErr))
+	}
+	if session != nil {
+		oauthParams["session_id"] = session.ID
+	}
+
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
 	s.issueAuthorizationCode(c, oauthParams, user.ID)
 }
@@ -1397,6 +1464,11 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
 		c.JSON(500, gin.H{"error": "server_error"})
 		return
+	}
+
+	// Store session_id alongside the auth code in Redis (5-minute TTL)
+	if sessionID := oauthParams["session_id"]; sessionID != "" {
+		s.redis.Client.Set(c.Request.Context(), "authcode_session:"+code, sessionID, 5*time.Minute)
 	}
 
 	redirectURL, _ := url.Parse(oauthParams["redirect_uri"])
@@ -1565,6 +1637,15 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 		}
 	}
 
+	// Create a session linked to this MFA-verified login
+	session, sessionErr := s.identityService.CreateSession(c.Request.Context(), userID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour)
+	if sessionErr != nil {
+		s.logger.Warn("Failed to create session during MFA verify", zap.Error(sessionErr))
+	}
+	if session != nil {
+		oauthParams["session_id"] = session.ID
+	}
+
 	// Issue authorization code with optional trusted browser info
 	s.issueAuthorizationCodeWithTrust(c, oauthParams, userID, trustedBrowserID)
 }
@@ -1708,6 +1789,11 @@ func (s *Service) issueAuthorizationCodeWithTrust(c *gin.Context, params map[str
 
 	codeDataJSON, _ := json.Marshal(codeData)
 	s.redis.Client.Set(c.Request.Context(), "auth_code:"+authCode, string(codeDataJSON), 10*time.Minute)
+
+	// Store session_id alongside the auth code in Redis (5-minute TTL)
+	if sessionID := params["session_id"]; sessionID != "" {
+		s.redis.Client.Set(c.Request.Context(), "authcode_session:"+authCode, sessionID, 5*time.Minute)
+	}
 
 	response := gin.H{
 		"code":  authCode,
@@ -2034,8 +2120,15 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// Delete authorization code (single use)
 	s.DeleteAuthorizationCode(c.Request.Context(), code)
 
-	// Generate tokens
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime)
+	// Retrieve session_id associated with this auth code from Redis
+	sessionID, _ := s.redis.Client.Get(c.Request.Context(), "authcode_session:"+code).Result()
+	// Clean up the Redis key
+	if sessionID != "" {
+		s.redis.Client.Del(c.Request.Context(), "authcode_session:"+code)
+	}
+
+	// Generate tokens (with session ID linkage)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime, sessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -2046,7 +2139,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// Generate ID token if openid scope is requested
 	if strings.Contains(authCode.Scope, "openid") {
-		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime)
+		idToken, _ := s.GenerateIDToken(c.Request.Context(), authCode.UserID, clientID, authCode.Nonce, client.AccessTokenLifetime, sessionID)
 		response.IDToken = idToken
 	}
 
@@ -2058,6 +2151,7 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 			ClientID:  clientID,
 			UserID:    authCode.UserID,
 			Scope:     authCode.Scope,
+			SessionID: sessionID,
 			ExpiresAt: time.Now().Add(time.Duration(client.RefreshTokenLifetime) * time.Second),
 		})
 		response.RefreshToken = refreshToken
@@ -2085,8 +2179,23 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		return
 	}
 
-	// Generate new access token
-	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.AccessTokenLifetime)
+	// Check if the linked session has been revoked
+	if token.SessionID != "" {
+		// Check Redis for revoked session
+		revoked, _ := s.redis.Client.Exists(c.Request.Context(), "revoked_session:"+token.SessionID).Result()
+		if revoked > 0 {
+			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "session_revoked"})
+			return
+		}
+		// Debounced activity update (only if >30s since last update)
+		debounceKey := "session_activity:" + token.SessionID
+		if set, _ := s.redis.Client.SetNX(c.Request.Context(), debounceKey, "1", 30*time.Second).Result(); set {
+			go s.identityService.UpdateSessionActivity(context.Background(), token.SessionID)
+		}
+	}
+
+	// Generate new access token (with session ID linkage)
+	accessToken, _ := s.GenerateJWT(c.Request.Context(), token.UserID, clientID, token.Scope, client.AccessTokenLifetime, token.SessionID)
 
 	response := TokenResponse{
 		AccessToken: accessToken,
@@ -2421,6 +2530,277 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 		map[string]interface{}{"challenge_id": req.ChallengeID})
 
 	c.JSON(200, gin.H{"status": "verified"})
+}
+
+// checkConcurrentSessions checks if the user has reached the concurrent session limit
+// and returns the action to take based on the session policy.
+func (s *Service) checkConcurrentSessions(ctx context.Context, userID, clientID string) (string, []map[string]interface{}, error) {
+	policy := s.getEffectiveSessionPolicy(ctx, clientID)
+	if policy.MaxConcurrentSessions <= 0 {
+		return "", nil, nil // unlimited
+	}
+
+	count, err := s.identityService.CountActiveSessions(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if count < policy.MaxConcurrentSessions {
+		return "", nil, nil // under limit
+	}
+
+	switch policy.ConcurrentSessionStrategy {
+	case "terminate_oldest":
+		// Terminate oldest session
+		var oldestID string
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT id FROM sessions
+			WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+			ORDER BY started_at ASC LIMIT 1
+		`, userID).Scan(&oldestID)
+		if err == nil && oldestID != "" {
+			s.revokeSessionWithRedis(ctx, oldestID)
+		}
+		return "", nil, nil
+	case "prompt_user":
+		// Return active sessions for user to choose
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT id, ip_address, user_agent, started_at, last_seen_at
+			FROM sessions
+			WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+			ORDER BY last_seen_at DESC
+		`, userID)
+		if err != nil {
+			return "", nil, err
+		}
+		defer rows.Close()
+		var sessions []map[string]interface{}
+		for rows.Next() {
+			var id, ip, ua string
+			var startedAt, lastSeen time.Time
+			if err := rows.Scan(&id, &ip, &ua, &startedAt, &lastSeen); err != nil {
+				continue
+			}
+			sessions = append(sessions, map[string]interface{}{
+				"id":           id,
+				"ip_address":   ip,
+				"user_agent":   ua,
+				"started_at":   startedAt,
+				"last_seen_at": lastSeen,
+			})
+		}
+		return "prompt_user", sessions, nil
+	default: // deny_new
+		return "denied", nil, fmt.Errorf("concurrent session limit reached")
+	}
+}
+
+// handleForceLogin handles POST /oauth/force-login — terminates a chosen session and resumes login
+func (s *Service) handleForceLogin(c *gin.Context) {
+	var req struct {
+		TerminateSessionID string `json:"terminate_session_id"`
+		LoginSession       string `json:"login_session"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	// Revoke the specified session
+	if req.TerminateSessionID != "" {
+		s.revokeSessionWithRedis(c.Request.Context(), req.TerminateSessionID)
+	}
+
+	// Retrieve the pending login session from Redis
+	sessionKey := "login_session:" + req.LoginSession
+	data, err := s.redis.Client.Get(c.Request.Context(), sessionKey).Result()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "login_session_expired", "error_description": "Login session has expired. Please sign in again."})
+		return
+	}
+
+	// Parse the stored oauth params
+	var oauthParams map[string]string
+	if err := json.Unmarshal([]byte(data), &oauthParams); err != nil {
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	userID := oauthParams["user_id"]
+	clientIP := c.ClientIP()
+	userAgent := c.Request.UserAgent()
+
+	// Create session and issue code
+	session, sessionErr := s.identityService.CreateSession(c.Request.Context(), userID, oauthParams["client_id"], clientIP, userAgent, 24*time.Hour)
+	if sessionErr != nil {
+		s.logger.Warn("Failed to create session during force-login", zap.Error(sessionErr))
+	}
+	if session != nil {
+		oauthParams["session_id"] = session.ID
+	}
+
+	s.redis.Client.Del(c.Request.Context(), sessionKey)
+	s.issueAuthorizationCode(c, oauthParams, userID)
+}
+
+// revokeAllUserSessions revokes all active sessions for a user
+func (s *Service) revokeAllUserSessions(ctx context.Context, userID string) error {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id FROM sessions
+		WHERE user_id = $1 AND (revoked IS NULL OR revoked = false)
+	`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			continue
+		}
+		s.revokeSessionWithRedis(ctx, sessionID)
+	}
+	return nil
+}
+
+// revokeAllUserRefreshTokens deletes all refresh tokens for a user
+func (s *Service) revokeAllUserRefreshTokens(ctx context.Context, userID string) error {
+	_, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID)
+	return err
+}
+
+// handleLogout handles POST/GET /oauth/logout — OIDC RP-initiated logout
+func (s *Service) handleLogout(c *gin.Context) {
+	// Try to identify user from id_token_hint or Bearer token
+	idTokenHint := c.Query("id_token_hint")
+	if idTokenHint == "" {
+		idTokenHint = c.PostForm("id_token_hint")
+	}
+	postLogoutRedirectURI := c.Query("post_logout_redirect_uri")
+	if postLogoutRedirectURI == "" {
+		postLogoutRedirectURI = c.PostForm("post_logout_redirect_uri")
+	}
+
+	var userID string
+
+	if idTokenHint != "" {
+		// Parse the ID token (don't validate expiry since it may be expired)
+		token, _, err := new(jwt.Parser).ParseUnverified(idTokenHint, jwt.MapClaims{})
+		if err == nil {
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				if sub, ok := claims["sub"].(string); ok {
+					userID = sub
+				}
+			}
+		}
+	}
+
+	// Also try Bearer token
+	if userID == "" {
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+			if err == nil {
+				if claims, ok := token.Claims.(jwt.MapClaims); ok {
+					if sub, ok := claims["sub"].(string); ok {
+						userID = sub
+					}
+				}
+			}
+		}
+	}
+
+	if userID != "" {
+		s.revokeAllUserSessions(c.Request.Context(), userID)
+		s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
+		s.logger.Info("Global logout for user", zap.String("user_id", userID))
+
+		go s.logAuditEvent(context.Background(), "authentication", "security", "global_logout", "success",
+			userID, c.ClientIP(), userID, "user",
+			map[string]interface{}{"method": "logout_endpoint"})
+	}
+
+	if postLogoutRedirectURI != "" {
+		c.Redirect(302, postLogoutRedirectURI)
+		return
+	}
+
+	c.JSON(200, gin.H{"status": "logged_out"})
+}
+
+// handleLogoutAll handles POST /oauth/logout-all — authenticated self-service sign-out-everywhere
+func (s *Service) handleLogoutAll(c *gin.Context) {
+	// Get user from Bearer token
+	authHeader := c.GetHeader("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+	if err != nil {
+		c.JSON(401, gin.H{"error": "invalid_token"})
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(401, gin.H{"error": "invalid_token"})
+		return
+	}
+
+	userID, _ := claims["sub"].(string)
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "invalid_token"})
+		return
+	}
+
+	s.revokeAllUserSessions(c.Request.Context(), userID)
+	s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
+
+	s.logger.Info("Logout-all for user", zap.String("user_id", userID))
+
+	go s.logAuditEvent(context.Background(), "authentication", "security", "logout_all", "success",
+		userID, c.ClientIP(), userID, "user",
+		map[string]interface{}{"method": "logout_all_endpoint"})
+
+	c.JSON(200, gin.H{"status": "all_sessions_revoked"})
+}
+
+// handleSessionInfo handles GET /oauth/session-info — returns session policy info for the current token
+func (s *Service) handleSessionInfo(c *gin.Context) {
+	// Extract session info from Bearer token
+	authHeader := c.GetHeader("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+	if err != nil {
+		c.JSON(401, gin.H{"error": "invalid_token"})
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(401, gin.H{"error": "invalid_token"})
+		return
+	}
+
+	// Get client_id from aud claim
+	clientID, _ := claims["aud"].(string)
+	policy := s.getEffectiveSessionPolicy(c.Request.Context(), clientID)
+
+	c.JSON(200, gin.H{
+		"idle_timeout":     policy.IdleTimeout,
+		"absolute_timeout": policy.AbsoluteTimeout,
+		"bind_to_ip":       policy.BindSessionToIP,
+	})
 }
 
 // logAuditEvent writes an audit event directly to the audit_events table
