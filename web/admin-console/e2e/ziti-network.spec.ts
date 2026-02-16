@@ -1462,6 +1462,45 @@ test.describe('Ziti Remote Access Tab', () => {
       await expect(page.getByRole('button', { name: /link policy/i })).toBeVisible();
       await expect(page.getByRole('button', { name: /sync all/i })).toBeVisible();
     });
+
+    test('should sync governance policy with auto-fetch enabled', async ({ page }) => {
+      let syncPayload: unknown = null;
+      await page.route('**/api/v1/access/ziti/policy-sync', async (route) => {
+        if (route.request().method() === 'POST') {
+          syncPayload = route.request().postDataJSON();
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ message: 'policy synced successfully', auto_fetched: true }),
+          });
+        } else {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([]),
+          });
+        }
+      });
+
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+      await page.locator('button:has-text("Governance")').click();
+      await page.getByRole('button', { name: /link policy/i }).click();
+
+      // Select a governance policy
+      const select = page.locator('form select').first();
+      await select.selectOption('gov-1');
+
+      // Auto-detect should be on by default (Switch component)
+      await expect(page.locator('text=Auto-detect policy rules')).toBeVisible();
+
+      // Submit the sync
+      await page.getByRole('button', { name: /link policy/i }).last().click();
+
+      // Verify auto_fetch was sent in the request
+      expect(syncPayload).toMatchObject({ governance_policy_id: 'gov-1', auto_fetch: true });
+      await expect(page.locator('text=Policy sync created').first()).toBeVisible();
+    });
   });
 
   // ─── F14: Active Sessions ──────────────────────────────────────────────────
@@ -1497,6 +1536,113 @@ test.describe('Ziti Remote Access Tab', () => {
       await expect(page.getByText('internal-app')).toBeVisible();
       await expect(page.getByText('Dial', { exact: true })).toBeVisible();
       await expect(page.getByText('Bind', { exact: true })).toBeVisible();
+    });
+
+    test('should batch terminate all sessions for an identity', async ({ page }) => {
+      // Need 2+ unique identities to show batch terminate buttons
+      await page.route('**/api/v1/access/ziti/sessions', async (route) => {
+        if (route.request().method() === 'GET') {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([
+              { id: 'sess-1', type: 'Dial', identity: { id: 'id-1', name: 'alice' }, service: { id: 'svc-1', name: 'internal-app' }, createdAt: '2024-01-01T10:00:00Z' },
+              { id: 'sess-2', type: 'Dial', identity: { id: 'id-2', name: 'bob' }, service: { id: 'svc-2', name: 'ssh-service' }, createdAt: '2024-01-01T09:00:00Z' },
+            ]),
+          });
+        }
+      });
+
+      let batchPayload: unknown = null;
+      await page.route('**/api/v1/access/ziti/sessions/batch-terminate', async (route) => {
+        batchPayload = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'sessions terminated', sessions_terminated: 1 }),
+        });
+      });
+
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+
+      // Click the batch terminate button for alice
+      await page.getByRole('button', { name: /Terminate All: alice/i }).click();
+
+      // Verify the POST was sent with the correct identity_id
+      expect(batchPayload).toEqual({ identity_id: 'id-1' });
+      await expect(page.locator('text=All sessions terminated').first()).toBeVisible();
+    });
+  });
+
+  // ─── Posture Identity Viewer ────────────────────────────────────────────────
+
+  test.describe('Posture Identity Viewer', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.route('**/api/v1/access/ziti/posture/checks*', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            { id: 'chk-1', name: 'OS Check', check_type: 'OS', enabled: true, severity: 'high', created_at: '2024-01-01T00:00:00Z' },
+          ]),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/summary', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ total_checks: 1, enabled_checks: 1 }) });
+      });
+
+      await page.route('**/api/v1/access/ziti/certificates*', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/identities/id-test-001', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            overall_passed: true,
+            results: [
+              { id: 'r-1', identity_id: 'id-test-001', check_id: 'chk-1', passed: true, details: { os: 'Windows' }, checked_at: '2024-01-20T10:00:00Z', expires_at: '2024-01-20T11:00:00Z' },
+            ],
+          }),
+        });
+      });
+
+      await page.route('**/api/v1/access/ziti/posture/identities/id-test-001/evaluate', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ passed: true, results: [] }),
+        });
+      });
+    });
+
+    test('should look up posture status for an identity and show results', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+
+      // Find the identity posture lookup input and enter an ID
+      await page.getByPlaceholder('Enter identity ID...').fill('id-test-001');
+      await page.getByRole('button', { name: /lookup/i }).click();
+
+      // Should show passed badge
+      await expect(page.locator('text=Passed').first()).toBeVisible();
+    });
+
+    test('should trigger posture evaluation with Evaluate Now button', async ({ page }) => {
+      await page.goto('/ziti-network');
+      await page.getByRole('tab', { name: /security/i }).click();
+
+      await page.getByPlaceholder('Enter identity ID...').fill('id-test-001');
+      await page.getByRole('button', { name: /lookup/i }).click();
+
+      // Wait for results to load, then click Evaluate Now
+      await expect(page.locator('text=Passed').first()).toBeVisible();
+      await page.getByRole('button', { name: /evaluate now/i }).click();
+
+      await expect(page.locator('text=Posture evaluation triggered').first()).toBeVisible();
     });
   });
 
