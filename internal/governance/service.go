@@ -1317,6 +1317,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		gov.POST("/approval-policies", svc.handleCreateApprovalPolicy)
 		gov.PUT("/approval-policies/:id", svc.handleUpdateApprovalPolicy)
 		gov.DELETE("/approval-policies/:id", svc.handleDeleteApprovalPolicy)
+
+		// Certification campaigns
+		gov.GET("/campaigns", svc.handleListCampaigns)
+		gov.POST("/campaigns", svc.handleCreateCampaign)
+		gov.GET("/campaigns/:id", svc.handleGetCampaign)
+		gov.PUT("/campaigns/:id", svc.handleUpdateCampaign)
+		gov.DELETE("/campaigns/:id", svc.handleDeleteCampaign)
+		gov.POST("/campaigns/:id/run", svc.handleRunCampaign)
+		gov.GET("/campaigns/:id/runs", svc.handleGetCampaignRuns)
 	}
 }
 
@@ -1586,4 +1595,560 @@ func (s *Service) handleEvaluatePolicy(c *gin.Context) {
 		}
 	}
 	c.JSON(200, response)
+}
+
+// --- Certification Campaigns ---
+
+// CertificationCampaign represents a scheduled certification campaign
+type CertificationCampaign struct {
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description"`
+	Type             string     `json:"type"`
+	Schedule         string     `json:"schedule"`
+	ReviewerStrategy string     `json:"reviewer_strategy"`
+	ReviewerID       *string    `json:"reviewer_id,omitempty"`
+	ReviewerRole     *string    `json:"reviewer_role,omitempty"`
+	AutoRevoke       bool       `json:"auto_revoke"`
+	GracePeriodDays  int        `json:"grace_period_days"`
+	DurationDays     int        `json:"duration_days"`
+	Status           string     `json:"status"`
+	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt        *time.Time `json:"next_run_at,omitempty"`
+	CreatedBy        *string    `json:"created_by,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// CampaignRun represents a single execution of a campaign
+type CampaignRun struct {
+	ID               string     `json:"id"`
+	CampaignID       string     `json:"campaign_id"`
+	ReviewID         *string    `json:"review_id,omitempty"`
+	Status           string     `json:"status"`
+	StartedAt        time.Time  `json:"started_at"`
+	Deadline         time.Time  `json:"deadline"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	TotalItems       int        `json:"total_items"`
+	ReviewedItems    int        `json:"reviewed_items"`
+	AutoRevokedItems int        `json:"auto_revoked_items"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+// computeNextRunAt calculates the next run time based on the campaign schedule
+func computeNextRunAt(schedule string, from time.Time) *time.Time {
+	var next time.Time
+	switch schedule {
+	case "quarterly":
+		next = from.AddDate(0, 0, 90)
+	case "semi_annual":
+		next = from.AddDate(0, 0, 180)
+	case "annual":
+		next = from.AddDate(0, 0, 365)
+	default:
+		// "once" or unknown schedule -> no next run
+		return nil
+	}
+	return &next
+}
+
+// CreateCampaign inserts a new certification campaign
+func (s *Service) CreateCampaign(ctx context.Context, campaign *CertificationCampaign) error {
+	s.logger.Info("Creating certification campaign", zap.String("name", campaign.Name))
+
+	if campaign.ID == "" {
+		campaign.ID = uuid.New().String()
+	}
+	now := time.Now()
+	campaign.CreatedAt = now
+	campaign.UpdatedAt = now
+	if campaign.Status == "" {
+		campaign.Status = "active"
+	}
+	campaign.NextRunAt = computeNextRunAt(campaign.Schedule, now)
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO certification_campaigns (id, name, description, type, schedule, reviewer_strategy,
+			reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
+			status, next_run_at, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	`, campaign.ID, campaign.Name, campaign.Description, campaign.Type, campaign.Schedule,
+		campaign.ReviewerStrategy, campaign.ReviewerID, campaign.ReviewerRole,
+		campaign.AutoRevoke, campaign.GracePeriodDays, campaign.DurationDays,
+		campaign.Status, campaign.NextRunAt, campaign.CreatedBy, campaign.CreatedAt, campaign.UpdatedAt)
+
+	return err
+}
+
+// ListCampaigns retrieves campaigns with pagination and optional status filter
+func (s *Service) ListCampaigns(ctx context.Context, offset, limit int, status string) ([]CertificationCampaign, int, error) {
+	var total int
+	countQuery := "SELECT COUNT(*) FROM certification_campaigns"
+	countArgs := []interface{}{}
+
+	if status != "" {
+		countQuery += " WHERE status = $1"
+		countArgs = append(countArgs, status)
+	}
+
+	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	baseQuery := `
+		SELECT id, name, description, type, schedule, reviewer_strategy,
+		       reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
+		       status, last_run_at, next_run_at, created_by, created_at, updated_at
+		FROM certification_campaigns
+	`
+
+	args := []interface{}{}
+	paramIdx := 1
+
+	if status != "" {
+		baseQuery += " WHERE status = $" + strconv.Itoa(paramIdx)
+		args = append(args, status)
+		paramIdx++
+	}
+
+	baseQuery += " ORDER BY created_at DESC OFFSET $" + strconv.Itoa(paramIdx) + " LIMIT $" + strconv.Itoa(paramIdx+1)
+	args = append(args, offset, limit)
+
+	rows, err := s.db.Pool.Query(ctx, baseQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var campaigns []CertificationCampaign
+	for rows.Next() {
+		var c CertificationCampaign
+		if err := rows.Scan(
+			&c.ID, &c.Name, &c.Description, &c.Type, &c.Schedule, &c.ReviewerStrategy,
+			&c.ReviewerID, &c.ReviewerRole, &c.AutoRevoke, &c.GracePeriodDays, &c.DurationDays,
+			&c.Status, &c.LastRunAt, &c.NextRunAt, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		campaigns = append(campaigns, c)
+	}
+
+	return campaigns, total, nil
+}
+
+// GetCampaign retrieves a single certification campaign by ID
+func (s *Service) GetCampaign(ctx context.Context, id string) (*CertificationCampaign, error) {
+	var c CertificationCampaign
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, description, type, schedule, reviewer_strategy,
+		       reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
+		       status, last_run_at, next_run_at, created_by, created_at, updated_at
+		FROM certification_campaigns WHERE id = $1
+	`, id).Scan(
+		&c.ID, &c.Name, &c.Description, &c.Type, &c.Schedule, &c.ReviewerStrategy,
+		&c.ReviewerID, &c.ReviewerRole, &c.AutoRevoke, &c.GracePeriodDays, &c.DurationDays,
+		&c.Status, &c.LastRunAt, &c.NextRunAt, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// UpdateCampaign updates an existing certification campaign
+func (s *Service) UpdateCampaign(ctx context.Context, campaign *CertificationCampaign) error {
+	s.logger.Info("Updating certification campaign", zap.String("id", campaign.ID))
+
+	now := time.Now()
+	campaign.UpdatedAt = now
+	campaign.NextRunAt = computeNextRunAt(campaign.Schedule, now)
+
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE certification_campaigns
+		SET name = $2, description = $3, type = $4, schedule = $5, reviewer_strategy = $6,
+		    reviewer_id = $7, reviewer_role = $8, auto_revoke = $9, grace_period_days = $10,
+		    duration_days = $11, status = $12, next_run_at = $13, updated_at = $14
+		WHERE id = $1
+	`, campaign.ID, campaign.Name, campaign.Description, campaign.Type, campaign.Schedule,
+		campaign.ReviewerStrategy, campaign.ReviewerID, campaign.ReviewerRole,
+		campaign.AutoRevoke, campaign.GracePeriodDays, campaign.DurationDays,
+		campaign.Status, campaign.NextRunAt, campaign.UpdatedAt)
+
+	return err
+}
+
+// DeleteCampaign deletes a certification campaign and its runs
+func (s *Service) DeleteCampaign(ctx context.Context, id string) error {
+	s.logger.Info("Deleting certification campaign", zap.String("id", id))
+
+	// Delete associated campaign runs first
+	_, err := s.db.Pool.Exec(ctx, "DELETE FROM campaign_runs WHERE campaign_id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete campaign runs: %w", err)
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM certification_campaigns WHERE id = $1", id)
+	return err
+}
+
+// RunCampaign triggers a single run of a certification campaign
+func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*CampaignRun, error) {
+	s.logger.Info("Running certification campaign", zap.String("campaign_id", campaignID))
+
+	campaign, err := s.GetCampaign(ctx, campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("campaign not found: %w", err)
+	}
+
+	now := time.Now()
+
+	// Determine reviewer ID for the access review
+	reviewerID := ""
+	if campaign.ReviewerStrategy == "specific_user" && campaign.ReviewerID != nil {
+		reviewerID = *campaign.ReviewerID
+	} else if campaign.ReviewerStrategy == "role" && campaign.ReviewerRole != nil {
+		// Look up first user with matching role to act as primary reviewer
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT u.id FROM users u
+			JOIN user_roles ur ON u.id = ur.user_id
+			JOIN roles r ON ur.role_id = r.id
+			WHERE r.name = $1 AND u.enabled = true
+			LIMIT 1
+		`, *campaign.ReviewerRole).Scan(&reviewerID)
+		if err != nil {
+			s.logger.Warn("No user found for reviewer role, using empty reviewer",
+				zap.String("role", *campaign.ReviewerRole), zap.Error(err))
+		}
+	}
+
+	// Create an access review for this campaign run
+	reviewName := fmt.Sprintf("%s - %s", campaign.Name, now.Format("2006-01-02 15:04"))
+	reviewType := ReviewType(campaign.Type)
+	deadline := now.AddDate(0, 0, campaign.DurationDays)
+
+	review := &AccessReview{
+		Name:        reviewName,
+		Description: fmt.Sprintf("Auto-generated review from campaign: %s", campaign.Name),
+		Type:        reviewType,
+		ReviewerID:  reviewerID,
+		StartDate:   now,
+		EndDate:     deadline,
+	}
+
+	if err := s.CreateAccessReview(ctx, review); err != nil {
+		return nil, fmt.Errorf("failed to create access review: %w", err)
+	}
+
+	// Start the review to populate items
+	if err := s.UpdateReviewStatus(ctx, review.ID, ReviewStatusInProgress); err != nil {
+		s.logger.Warn("Failed to start review for campaign run",
+			zap.String("review_id", review.ID), zap.Error(err))
+	}
+
+	// Count total items generated
+	var totalItems int
+	_ = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM review_items WHERE review_id = $1", review.ID).Scan(&totalItems)
+
+	// Create campaign run
+	run := &CampaignRun{
+		ID:         uuid.New().String(),
+		CampaignID: campaignID,
+		ReviewID:   &review.ID,
+		Status:     "in_progress",
+		StartedAt:  now,
+		Deadline:   deadline,
+		TotalItems: totalItems,
+		CreatedAt:  now,
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO campaign_runs (id, campaign_id, review_id, status, started_at, deadline,
+			total_items, reviewed_items, auto_revoked_items, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, run.ID, run.CampaignID, run.ReviewID, run.Status, run.StartedAt,
+		run.Deadline, run.TotalItems, run.ReviewedItems, run.AutoRevokedItems, run.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create campaign run: %w", err)
+	}
+
+	// Update campaign last_run_at and next_run_at
+	nextRunAt := computeNextRunAt(campaign.Schedule, now)
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE certification_campaigns
+		SET last_run_at = $2, next_run_at = $3, updated_at = $4
+		WHERE id = $1
+	`, campaignID, now, nextRunAt, now)
+	if err != nil {
+		s.logger.Error("Failed to update campaign run timestamps", zap.Error(err))
+	}
+
+	return run, nil
+}
+
+// GetCampaignRuns retrieves all runs for a specific campaign
+func (s *Service) GetCampaignRuns(ctx context.Context, campaignID string) ([]CampaignRun, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, campaign_id, review_id, status, started_at, deadline,
+		       completed_at, total_items, reviewed_items, auto_revoked_items, created_at
+		FROM campaign_runs
+		WHERE campaign_id = $1
+		ORDER BY created_at DESC
+	`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []CampaignRun
+	for rows.Next() {
+		var r CampaignRun
+		if err := rows.Scan(
+			&r.ID, &r.CampaignID, &r.ReviewID, &r.Status, &r.StartedAt, &r.Deadline,
+			&r.CompletedAt, &r.TotalItems, &r.ReviewedItems, &r.AutoRevokedItems, &r.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+
+	return runs, nil
+}
+
+// --- Campaign HTTP Handlers ---
+
+func (s *Service) handleListCampaigns(c *gin.Context) {
+	status := c.Query("status")
+
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil {
+			offset = parsed
+		}
+	}
+
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil {
+			limit = parsed
+		}
+	}
+
+	campaigns, total, err := s.ListCampaigns(c.Request.Context(), offset, limit, status)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("X-Total-Count", strconv.Itoa(total))
+	c.JSON(200, campaigns)
+}
+
+func (s *Service) handleCreateCampaign(c *gin.Context) {
+	var campaign CertificationCampaign
+	if err := c.ShouldBindJSON(&campaign); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Set created_by from auth context if available
+	if userID, exists := c.Get("user_id"); exists {
+		if uid, ok := userID.(string); ok {
+			campaign.CreatedBy = &uid
+		}
+	}
+
+	if err := s.CreateCampaign(c.Request.Context(), &campaign); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, campaign)
+}
+
+func (s *Service) handleGetCampaign(c *gin.Context) {
+	campaign, err := s.GetCampaign(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(404, gin.H{"error": "campaign not found"})
+		return
+	}
+	c.JSON(200, campaign)
+}
+
+func (s *Service) handleUpdateCampaign(c *gin.Context) {
+	var campaign CertificationCampaign
+	if err := c.ShouldBindJSON(&campaign); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	campaign.ID = c.Param("id")
+
+	if err := s.UpdateCampaign(c.Request.Context(), &campaign); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, campaign)
+}
+
+func (s *Service) handleDeleteCampaign(c *gin.Context) {
+	if err := s.DeleteCampaign(c.Request.Context(), c.Param("id")); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(204, nil)
+}
+
+func (s *Service) handleRunCampaign(c *gin.Context) {
+	run, err := s.RunCampaign(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, run)
+}
+
+func (s *Service) handleGetCampaignRuns(c *gin.Context) {
+	runs, err := s.GetCampaignRuns(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, runs)
+}
+
+// --- Campaign Scheduler ---
+
+// StartCampaignScheduler runs a background loop that checks for campaigns due to run
+// and for campaign runs that have exceeded their deadline.
+func (s *Service) StartCampaignScheduler(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkCampaignSchedules(ctx)
+			s.checkCampaignDeadlines(ctx)
+		}
+	}
+}
+
+// checkCampaignSchedules finds active campaigns whose next_run_at has passed and triggers them.
+func (s *Service) checkCampaignSchedules(ctx context.Context) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id FROM certification_campaigns
+		WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= NOW()
+	`)
+	if err != nil {
+		s.logger.Error("Failed to query due campaigns", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	var campaignIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			s.logger.Error("Failed to scan campaign ID", zap.Error(err))
+			continue
+		}
+		campaignIDs = append(campaignIDs, id)
+	}
+
+	for _, id := range campaignIDs {
+		s.logger.Info("Scheduler triggering campaign run", zap.String("campaign_id", id))
+		if _, err := s.RunCampaign(ctx, id); err != nil {
+			s.logger.Error("Scheduler failed to run campaign",
+				zap.String("campaign_id", id), zap.Error(err))
+		}
+	}
+}
+
+// checkCampaignDeadlines finds in-progress campaign runs past their deadline and marks them expired.
+// If the parent campaign has auto_revoke enabled, it counts unreviewed items as auto-revoked.
+func (s *Service) checkCampaignDeadlines(ctx context.Context) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT cr.id, cr.campaign_id, cr.review_id
+		FROM campaign_runs cr
+		WHERE cr.status = 'in_progress' AND cr.deadline < NOW()
+	`)
+	if err != nil {
+		s.logger.Error("Failed to query expired campaign runs", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type expiredRun struct {
+		runID      string
+		campaignID string
+		reviewID   *string
+	}
+	var expiredRuns []expiredRun
+	for rows.Next() {
+		var er expiredRun
+		if err := rows.Scan(&er.runID, &er.campaignID, &er.reviewID); err != nil {
+			s.logger.Error("Failed to scan expired campaign run", zap.Error(err))
+			continue
+		}
+		expiredRuns = append(expiredRuns, er)
+	}
+
+	now := time.Now()
+	for _, er := range expiredRuns {
+		s.logger.Info("Marking campaign run as expired",
+			zap.String("run_id", er.runID), zap.String("campaign_id", er.campaignID))
+
+		// Check if the campaign has auto_revoke enabled
+		campaign, cErr := s.GetCampaign(ctx, er.campaignID)
+		if cErr != nil {
+			s.logger.Error("Failed to get campaign for expired run",
+				zap.String("campaign_id", er.campaignID), zap.Error(cErr))
+			continue
+		}
+
+		autoRevokedCount := 0
+		if campaign.AutoRevoke && er.reviewID != nil {
+			// Count pending (unreviewed) items and mark them as revoked
+			var pending int
+			err := s.db.Pool.QueryRow(ctx,
+				"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND decision = 'pending'",
+				*er.reviewID).Scan(&pending)
+			if err == nil && pending > 0 {
+				_, updateErr := s.db.Pool.Exec(ctx, `
+					UPDATE review_items
+					SET decision = 'revoked', comments = 'Auto-revoked: campaign deadline expired', decided_at = $2
+					WHERE review_id = $1 AND decision = 'pending'
+				`, *er.reviewID, now)
+				if updateErr != nil {
+					s.logger.Error("Failed to auto-revoke pending items",
+						zap.String("review_id", *er.reviewID), zap.Error(updateErr))
+				} else {
+					autoRevokedCount = pending
+				}
+			}
+
+			// Also mark the access review itself as expired
+			_, _ = s.db.Pool.Exec(ctx, `
+				UPDATE access_reviews SET status = 'expired', completed_at = $2 WHERE id = $1
+			`, *er.reviewID, now)
+		}
+
+		// Count reviewed items for the run
+		var reviewedItems int
+		if er.reviewID != nil {
+			_ = s.db.Pool.QueryRow(ctx,
+				"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND decision != 'pending'",
+				*er.reviewID).Scan(&reviewedItems)
+		}
+
+		// Mark the campaign run as expired
+		_, err := s.db.Pool.Exec(ctx, `
+			UPDATE campaign_runs
+			SET status = 'expired', completed_at = $2, reviewed_items = $3, auto_revoked_items = $4
+			WHERE id = $1
+		`, er.runID, now, reviewedItems, autoRevokedCount)
+		if err != nil {
+			s.logger.Error("Failed to mark campaign run as expired",
+				zap.String("run_id", er.runID), zap.Error(err))
+		}
+	}
 }

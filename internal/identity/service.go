@@ -2700,6 +2700,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 
 		// Login Analytics (Admin)
 		identity.GET("/analytics/logins", svc.handleGetLoginAnalytics)
+
+		// Lifecycle workflows
+		identity.GET("/lifecycle/workflows", svc.handleListLifecycleWorkflows)
+		identity.POST("/lifecycle/workflows", svc.handleCreateLifecycleWorkflow)
+		identity.GET("/lifecycle/workflows/:id", svc.handleGetLifecycleWorkflow)
+		identity.PUT("/lifecycle/workflows/:id", svc.handleUpdateLifecycleWorkflow)
+		identity.DELETE("/lifecycle/workflows/:id", svc.handleDeleteLifecycleWorkflow)
+		identity.POST("/lifecycle/workflows/:id/execute", svc.handleExecuteLifecycleWorkflow)
+		identity.GET("/lifecycle/executions", svc.handleListLifecycleExecutions)
+		identity.GET("/lifecycle/executions/:id", svc.handleGetLifecycleExecution)
 	}
 }
 
@@ -4298,4 +4308,679 @@ func (s *Service) handleOffboardUser(c *gin.Context) {
 
 	s.logger.Info("User offboarded", zap.String("user_id", userID))
 	c.JSON(200, gin.H{"message": "User offboarded successfully"})
+}
+
+// LifecycleWorkflow represents a JML (Joiner/Mover/Leaver) workflow template
+type LifecycleWorkflow struct {
+	ID               string                   `json:"id"`
+	Name             string                   `json:"name"`
+	Description      string                   `json:"description"`
+	EventType        string                   `json:"event_type"`
+	TriggerType      string                   `json:"trigger_type"`
+	Actions          []map[string]interface{}  `json:"actions"`
+	Conditions       map[string]interface{}    `json:"conditions"`
+	RequireApproval  bool                      `json:"require_approval"`
+	ApprovalPolicyID *string                   `json:"approval_policy_id,omitempty"`
+	Enabled          bool                      `json:"enabled"`
+	CreatedBy        *string                   `json:"created_by,omitempty"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	UpdatedAt        time.Time                 `json:"updated_at"`
+}
+
+// LifecycleExecution represents a single execution of a workflow
+type LifecycleExecution struct {
+	ID               string                   `json:"id"`
+	WorkflowID       string                   `json:"workflow_id"`
+	UserID           string                   `json:"user_id"`
+	TriggeredBy      *string                  `json:"triggered_by,omitempty"`
+	TriggerType      string                   `json:"trigger_type"`
+	Status           string                   `json:"status"`
+	ActionsCompleted []map[string]interface{}  `json:"actions_completed"`
+	ActionsFailed    []map[string]interface{}  `json:"actions_failed"`
+	Error            *string                  `json:"error,omitempty"`
+	StartedAt        time.Time                `json:"started_at"`
+	CompletedAt      *time.Time               `json:"completed_at,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+}
+
+// CreateLifecycleWorkflow inserts a new lifecycle workflow into the database
+func (s *Service) CreateLifecycleWorkflow(ctx context.Context, wf *LifecycleWorkflow) error {
+	wf.ID = uuid.New().String()
+	wf.CreatedAt = time.Now()
+	wf.UpdatedAt = time.Now()
+
+	actionsJSON, err := json.Marshal(wf.Actions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal actions: %w", err)
+	}
+
+	conditionsJSON, err := json.Marshal(wf.Conditions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal conditions: %w", err)
+	}
+
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO lifecycle_workflows (id, name, description, event_type, trigger_type, actions, conditions, require_approval, approval_policy_id, enabled, created_by, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		wf.ID, wf.Name, wf.Description, wf.EventType, wf.TriggerType,
+		actionsJSON, conditionsJSON, wf.RequireApproval, wf.ApprovalPolicyID,
+		wf.Enabled, wf.CreatedBy, wf.CreatedAt, wf.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create lifecycle workflow: %w", err)
+	}
+	return nil
+}
+
+// ListLifecycleWorkflows returns paginated lifecycle workflows with optional event_type filter
+func (s *Service) ListLifecycleWorkflows(ctx context.Context, offset, limit int, eventType string) ([]LifecycleWorkflow, int, error) {
+	countQuery := "SELECT COUNT(*) FROM lifecycle_workflows"
+	listQuery := `SELECT id, name, description, event_type, trigger_type, actions, conditions,
+		require_approval, approval_policy_id, enabled, created_by, created_at, updated_at
+		FROM lifecycle_workflows`
+
+	var args []interface{}
+	argIdx := 1
+
+	if eventType != "" {
+		countQuery += fmt.Sprintf(" WHERE event_type = $%d", argIdx)
+		listQuery += fmt.Sprintf(" WHERE event_type = $%d", argIdx)
+		args = append(args, eventType)
+		argIdx++
+	}
+
+	var total int
+	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count lifecycle workflows: %w", err)
+	}
+
+	listQuery += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Pool.Query(ctx, listQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list lifecycle workflows: %w", err)
+	}
+	defer rows.Close()
+
+	var workflows []LifecycleWorkflow
+	for rows.Next() {
+		var wf LifecycleWorkflow
+		var actionsBytes, conditionsBytes []byte
+
+		err := rows.Scan(
+			&wf.ID, &wf.Name, &wf.Description, &wf.EventType, &wf.TriggerType,
+			&actionsBytes, &conditionsBytes, &wf.RequireApproval, &wf.ApprovalPolicyID,
+			&wf.Enabled, &wf.CreatedBy, &wf.CreatedAt, &wf.UpdatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan lifecycle workflow: %w", err)
+		}
+
+		if actionsBytes != nil {
+			if err := json.Unmarshal(actionsBytes, &wf.Actions); err != nil {
+				return nil, 0, fmt.Errorf("failed to unmarshal actions: %w", err)
+			}
+		}
+		if conditionsBytes != nil {
+			if err := json.Unmarshal(conditionsBytes, &wf.Conditions); err != nil {
+				return nil, 0, fmt.Errorf("failed to unmarshal conditions: %w", err)
+			}
+		}
+
+		workflows = append(workflows, wf)
+	}
+
+	if workflows == nil {
+		workflows = []LifecycleWorkflow{}
+	}
+
+	return workflows, total, nil
+}
+
+// GetLifecycleWorkflow returns a single lifecycle workflow by ID
+func (s *Service) GetLifecycleWorkflow(ctx context.Context, id string) (*LifecycleWorkflow, error) {
+	var wf LifecycleWorkflow
+	var actionsBytes, conditionsBytes []byte
+
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, name, description, event_type, trigger_type, actions, conditions,
+			require_approval, approval_policy_id, enabled, created_by, created_at, updated_at
+		 FROM lifecycle_workflows WHERE id = $1`, id,
+	).Scan(
+		&wf.ID, &wf.Name, &wf.Description, &wf.EventType, &wf.TriggerType,
+		&actionsBytes, &conditionsBytes, &wf.RequireApproval, &wf.ApprovalPolicyID,
+		&wf.Enabled, &wf.CreatedBy, &wf.CreatedAt, &wf.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get lifecycle workflow: %w", err)
+	}
+
+	if actionsBytes != nil {
+		if err := json.Unmarshal(actionsBytes, &wf.Actions); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal actions: %w", err)
+		}
+	}
+	if conditionsBytes != nil {
+		if err := json.Unmarshal(conditionsBytes, &wf.Conditions); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal conditions: %w", err)
+		}
+	}
+
+	return &wf, nil
+}
+
+// UpdateLifecycleWorkflow updates an existing lifecycle workflow
+func (s *Service) UpdateLifecycleWorkflow(ctx context.Context, wf *LifecycleWorkflow) error {
+	wf.UpdatedAt = time.Now()
+
+	actionsJSON, err := json.Marshal(wf.Actions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal actions: %w", err)
+	}
+
+	conditionsJSON, err := json.Marshal(wf.Conditions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal conditions: %w", err)
+	}
+
+	result, err := s.db.Pool.Exec(ctx,
+		`UPDATE lifecycle_workflows
+		 SET name = $1, description = $2, event_type = $3, trigger_type = $4,
+			 actions = $5, conditions = $6, require_approval = $7, approval_policy_id = $8,
+			 enabled = $9, updated_at = $10
+		 WHERE id = $11`,
+		wf.Name, wf.Description, wf.EventType, wf.TriggerType,
+		actionsJSON, conditionsJSON, wf.RequireApproval, wf.ApprovalPolicyID,
+		wf.Enabled, wf.UpdatedAt, wf.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update lifecycle workflow: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("lifecycle workflow not found")
+	}
+
+	return nil
+}
+
+// DeleteLifecycleWorkflow deletes a lifecycle workflow by ID
+func (s *Service) DeleteLifecycleWorkflow(ctx context.Context, id string) error {
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM lifecycle_workflows WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete lifecycle workflow: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("lifecycle workflow not found")
+	}
+
+	return nil
+}
+
+// ExecuteLifecycleWorkflow runs a workflow against a target user
+func (s *Service) ExecuteLifecycleWorkflow(ctx context.Context, workflowID, userID, triggeredBy string) (*LifecycleExecution, error) {
+	wf, err := s.GetLifecycleWorkflow(ctx, workflowID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow: %w", err)
+	}
+
+	if !wf.Enabled {
+		return nil, fmt.Errorf("workflow is disabled")
+	}
+
+	exec := &LifecycleExecution{
+		ID:          uuid.New().String(),
+		WorkflowID:  workflowID,
+		UserID:      userID,
+		TriggerType: wf.TriggerType,
+		Status:      "in_progress",
+		StartedAt:   time.Now(),
+		CreatedAt:   time.Now(),
+	}
+	if triggeredBy != "" {
+		exec.TriggeredBy = &triggeredBy
+	}
+
+	// Insert the initial execution record
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO lifecycle_executions (id, workflow_id, user_id, triggered_by, trigger_type, status, actions_completed, actions_failed, error, started_at, completed_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, '[]'::jsonb, '[]'::jsonb, NULL, $7, NULL, $8)`,
+		exec.ID, exec.WorkflowID, exec.UserID, exec.TriggeredBy, exec.TriggerType,
+		exec.Status, exec.StartedAt, exec.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create execution record: %w", err)
+	}
+
+	var completed []map[string]interface{}
+	var failed []map[string]interface{}
+	var execErr string
+
+	for _, action := range wf.Actions {
+		err := s.executeLifecycleAction(ctx, userID, action)
+		if err != nil {
+			action["error"] = err.Error()
+			failed = append(failed, action)
+			s.logger.Error("Lifecycle action failed",
+				zap.String("workflow_id", workflowID),
+				zap.String("user_id", userID),
+				zap.Any("action", action),
+				zap.Error(err),
+			)
+		} else {
+			completed = append(completed, action)
+		}
+	}
+
+	if completed == nil {
+		completed = []map[string]interface{}{}
+	}
+	if failed == nil {
+		failed = []map[string]interface{}{}
+	}
+
+	exec.ActionsCompleted = completed
+	exec.ActionsFailed = failed
+
+	if len(failed) > 0 {
+		exec.Status = "failed"
+		failMsg := fmt.Sprintf("%d of %d actions failed", len(failed), len(wf.Actions))
+		exec.Error = &failMsg
+		execErr = failMsg
+	} else {
+		exec.Status = "completed"
+	}
+
+	now := time.Now()
+	exec.CompletedAt = &now
+
+	completedJSON, _ := json.Marshal(completed)
+	failedJSON, _ := json.Marshal(failed)
+
+	var errPtr *string
+	if execErr != "" {
+		errPtr = &execErr
+	}
+
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE lifecycle_executions
+		 SET status = $1, actions_completed = $2, actions_failed = $3, error = $4, completed_at = $5
+		 WHERE id = $6`,
+		exec.Status, completedJSON, failedJSON, errPtr, exec.CompletedAt, exec.ID,
+	)
+	if err != nil {
+		s.logger.Error("Failed to update execution record", zap.String("execution_id", exec.ID), zap.Error(err))
+	}
+
+	return exec, nil
+}
+
+// executeLifecycleAction executes a single lifecycle action against a user
+func (s *Service) executeLifecycleAction(ctx context.Context, userID string, action map[string]interface{}) error {
+	actionType, ok := action["type"].(string)
+	if !ok {
+		return fmt.Errorf("action missing 'type' field")
+	}
+
+	switch actionType {
+	case "assign_role":
+		roleID, ok := action["role_id"].(string)
+		if !ok {
+			return fmt.Errorf("assign_role action missing 'role_id'")
+		}
+		_, err := s.db.Pool.Exec(ctx,
+			"INSERT INTO user_roles (user_id, role_id, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING",
+			userID, roleID)
+		return err
+
+	case "remove_role":
+		roleID, ok := action["role_id"].(string)
+		if !ok {
+			return fmt.Errorf("remove_role action missing 'role_id'")
+		}
+		_, err := s.db.Pool.Exec(ctx,
+			"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2",
+			userID, roleID)
+		return err
+
+	case "assign_group":
+		groupID, ok := action["group_id"].(string)
+		if !ok {
+			return fmt.Errorf("assign_group action missing 'group_id'")
+		}
+		_, err := s.db.Pool.Exec(ctx,
+			"INSERT INTO group_memberships (id, group_id, user_id, created_at) VALUES (gen_random_uuid(), $1, $2, NOW()) ON CONFLICT DO NOTHING",
+			groupID, userID)
+		return err
+
+	case "remove_group":
+		groupID, ok := action["group_id"].(string)
+		if !ok {
+			return fmt.Errorf("remove_group action missing 'group_id'")
+		}
+		_, err := s.db.Pool.Exec(ctx,
+			"DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2",
+			groupID, userID)
+		return err
+
+	case "enable_user":
+		_, err := s.db.Pool.Exec(ctx,
+			"UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1",
+			userID)
+		return err
+
+	case "disable_user":
+		_, err := s.db.Pool.Exec(ctx,
+			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1",
+			userID)
+		return err
+
+	case "revoke_sessions":
+		_, err := s.db.Pool.Exec(ctx,
+			"DELETE FROM sessions WHERE user_id = $1",
+			userID)
+		return err
+
+	default:
+		return fmt.Errorf("unsupported action type: %s", actionType)
+	}
+}
+
+// ListLifecycleExecutions returns paginated lifecycle executions with optional filters
+func (s *Service) ListLifecycleExecutions(ctx context.Context, offset, limit int, workflowID, userID string) ([]LifecycleExecution, int, error) {
+	countQuery := "SELECT COUNT(*) FROM lifecycle_executions"
+	listQuery := `SELECT id, workflow_id, user_id, triggered_by, trigger_type, status,
+		actions_completed, actions_failed, error, started_at, completed_at, created_at
+		FROM lifecycle_executions`
+
+	var conditions []string
+	var args []interface{}
+	argIdx := 1
+
+	if workflowID != "" {
+		conditions = append(conditions, fmt.Sprintf("workflow_id = $%d", argIdx))
+		args = append(args, workflowID)
+		argIdx++
+	}
+	if userID != "" {
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", argIdx))
+		args = append(args, userID)
+		argIdx++
+	}
+
+	if len(conditions) > 0 {
+		whereClause := " WHERE " + strings.Join(conditions, " AND ")
+		countQuery += whereClause
+		listQuery += whereClause
+	}
+
+	var total int
+	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count lifecycle executions: %w", err)
+	}
+
+	listQuery += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Pool.Query(ctx, listQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list lifecycle executions: %w", err)
+	}
+	defer rows.Close()
+
+	var executions []LifecycleExecution
+	for rows.Next() {
+		var ex LifecycleExecution
+		var completedBytes, failedBytes []byte
+
+		err := rows.Scan(
+			&ex.ID, &ex.WorkflowID, &ex.UserID, &ex.TriggeredBy, &ex.TriggerType,
+			&ex.Status, &completedBytes, &failedBytes, &ex.Error,
+			&ex.StartedAt, &ex.CompletedAt, &ex.CreatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan lifecycle execution: %w", err)
+		}
+
+		if completedBytes != nil {
+			if err := json.Unmarshal(completedBytes, &ex.ActionsCompleted); err != nil {
+				return nil, 0, fmt.Errorf("failed to unmarshal actions_completed: %w", err)
+			}
+		}
+		if failedBytes != nil {
+			if err := json.Unmarshal(failedBytes, &ex.ActionsFailed); err != nil {
+				return nil, 0, fmt.Errorf("failed to unmarshal actions_failed: %w", err)
+			}
+		}
+
+		executions = append(executions, ex)
+	}
+
+	if executions == nil {
+		executions = []LifecycleExecution{}
+	}
+
+	return executions, total, nil
+}
+
+// GetLifecycleExecution returns a single lifecycle execution by ID
+func (s *Service) GetLifecycleExecution(ctx context.Context, id string) (*LifecycleExecution, error) {
+	var ex LifecycleExecution
+	var completedBytes, failedBytes []byte
+
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, workflow_id, user_id, triggered_by, trigger_type, status,
+			actions_completed, actions_failed, error, started_at, completed_at, created_at
+		 FROM lifecycle_executions WHERE id = $1`, id,
+	).Scan(
+		&ex.ID, &ex.WorkflowID, &ex.UserID, &ex.TriggeredBy, &ex.TriggerType,
+		&ex.Status, &completedBytes, &failedBytes, &ex.Error,
+		&ex.StartedAt, &ex.CompletedAt, &ex.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get lifecycle execution: %w", err)
+	}
+
+	if completedBytes != nil {
+		if err := json.Unmarshal(completedBytes, &ex.ActionsCompleted); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal actions_completed: %w", err)
+		}
+	}
+	if failedBytes != nil {
+		if err := json.Unmarshal(failedBytes, &ex.ActionsFailed); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal actions_failed: %w", err)
+		}
+	}
+
+	return &ex, nil
+}
+
+// HTTP Handlers for Lifecycle Workflows
+
+func (s *Service) handleListLifecycleWorkflows(c *gin.Context) {
+	offset := 0
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	eventType := c.Query("event_type")
+
+	workflows, total, err := s.ListLifecycleWorkflows(c.Request.Context(), offset, limit, eventType)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Header("X-Total-Count", strconv.Itoa(total))
+	c.JSON(200, workflows)
+}
+
+func (s *Service) handleCreateLifecycleWorkflow(c *gin.Context) {
+	var wf LifecycleWorkflow
+	if err := c.ShouldBindJSON(&wf); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	if wf.Name == "" {
+		c.JSON(400, gin.H{"error": "name is required"})
+		return
+	}
+	if wf.EventType == "" {
+		c.JSON(400, gin.H{"error": "event_type is required"})
+		return
+	}
+	if wf.TriggerType == "" {
+		c.JSON(400, gin.H{"error": "trigger_type is required"})
+		return
+	}
+
+	if userID, exists := c.Get("user_id"); exists {
+		uid := userID.(string)
+		wf.CreatedBy = &uid
+	}
+
+	if err := s.CreateLifecycleWorkflow(c.Request.Context(), &wf); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(201, wf)
+}
+
+func (s *Service) handleGetLifecycleWorkflow(c *gin.Context) {
+	id := c.Param("id")
+
+	wf, err := s.GetLifecycleWorkflow(c.Request.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			c.JSON(404, gin.H{"error": "Workflow not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, wf)
+}
+
+func (s *Service) handleUpdateLifecycleWorkflow(c *gin.Context) {
+	id := c.Param("id")
+
+	var wf LifecycleWorkflow
+	if err := c.ShouldBindJSON(&wf); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	wf.ID = id
+
+	if err := s.UpdateLifecycleWorkflow(c.Request.Context(), &wf); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": "Workflow not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, wf)
+}
+
+func (s *Service) handleDeleteLifecycleWorkflow(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := s.DeleteLifecycleWorkflow(c.Request.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": "Workflow not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Workflow deleted successfully"})
+}
+
+func (s *Service) handleExecuteLifecycleWorkflow(c *gin.Context) {
+	workflowID := c.Param("id")
+
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+
+	if req.UserID == "" {
+		c.JSON(400, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	triggeredBy := ""
+	if uid, exists := c.Get("user_id"); exists {
+		triggeredBy = uid.(string)
+	}
+
+	exec, err := s.ExecuteLifecycleWorkflow(c.Request.Context(), workflowID, req.UserID, triggeredBy)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no rows") {
+			c.JSON(404, gin.H{"error": "Workflow not found"})
+			return
+		}
+		if strings.Contains(err.Error(), "disabled") {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, exec)
+}
+
+func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
+	offset := 0
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	workflowID := c.Query("workflow_id")
+	userID := c.Query("user_id")
+
+	executions, total, err := s.ListLifecycleExecutions(c.Request.Context(), offset, limit, workflowID, userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Header("X-Total-Count", strconv.Itoa(total))
+	c.JSON(200, executions)
+}
+
+func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
+	id := c.Param("id")
+
+	exec, err := s.GetLifecycleExecution(c.Request.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			c.JSON(404, gin.H{"error": "Execution not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, exec)
 }

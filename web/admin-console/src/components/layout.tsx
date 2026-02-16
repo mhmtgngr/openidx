@@ -38,6 +38,9 @@ import {
   FileKey,
   Upload,
   BookOpen,
+  Target,
+  Package,
+  Gauge,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -101,6 +104,7 @@ const navigationSections: NavSection[] = [
       { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
       { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
       { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
+      { name: 'Lifecycle Workflows', href: '/lifecycle-workflows', icon: Workflow, adminOnly: true },
     ],
   },
   {
@@ -123,6 +127,8 @@ const navigationSections: NavSection[] = [
       { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
       { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, adminOnly: true },
       { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
+      { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, adminOnly: true },
+      { name: 'Entitlements', href: '/entitlements', icon: Package, adminOnly: true },
       { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
       { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
     ],
@@ -148,6 +154,7 @@ const navigationSections: NavSection[] = [
       { name: 'Unified Audit', href: '/unified-audit', icon: Layers, adminOnly: true },
       { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
       { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
+      { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, adminOnly: true },
       { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
     ],
   },

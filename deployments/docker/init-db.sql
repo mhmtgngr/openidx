@@ -2290,3 +2290,111 @@ CREATE TABLE IF NOT EXISTS discovered_paths (
 
 CREATE INDEX IF NOT EXISTS idx_discovered_paths_app ON discovered_paths(app_id);
 CREATE INDEX IF NOT EXISTS idx_discovered_paths_classification ON discovered_paths(classification);
+
+-- ============================================================================
+-- Certification Campaigns (Governance)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS certification_campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    type VARCHAR(50) NOT NULL,
+    schedule VARCHAR(50) NOT NULL,
+    reviewer_strategy VARCHAR(50) NOT NULL,
+    reviewer_id UUID,
+    reviewer_role VARCHAR(100),
+    auto_revoke BOOLEAN DEFAULT false,
+    grace_period_days INTEGER DEFAULT 7,
+    duration_days INTEGER DEFAULT 30,
+    status VARCHAR(50) DEFAULT 'active',
+    last_run_at TIMESTAMPTZ,
+    next_run_at TIMESTAMPTZ,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_certification_campaigns_status ON certification_campaigns(status);
+CREATE INDEX IF NOT EXISTS idx_certification_campaigns_next_run ON certification_campaigns(next_run_at);
+
+CREATE TABLE IF NOT EXISTS campaign_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    campaign_id UUID NOT NULL REFERENCES certification_campaigns(id) ON DELETE CASCADE,
+    review_id UUID REFERENCES access_reviews(id),
+    status VARCHAR(50) DEFAULT 'in_progress',
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    deadline TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    total_items INTEGER DEFAULT 0,
+    reviewed_items INTEGER DEFAULT 0,
+    auto_revoked_items INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign ON campaign_runs(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_runs_status ON campaign_runs(status);
+
+-- ============================================================================
+-- User Lifecycle Workflows (Identity + Provisioning)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS lifecycle_workflows (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    event_type VARCHAR(50) NOT NULL,
+    trigger_type VARCHAR(50) DEFAULT 'manual',
+    actions JSONB NOT NULL DEFAULT '[]',
+    conditions JSONB DEFAULT '{}',
+    require_approval BOOLEAN DEFAULT false,
+    approval_policy_id UUID,
+    enabled BOOLEAN DEFAULT true,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_workflows_event_type ON lifecycle_workflows(event_type);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_workflows_enabled ON lifecycle_workflows(enabled);
+
+CREATE TABLE IF NOT EXISTS lifecycle_executions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workflow_id UUID NOT NULL REFERENCES lifecycle_workflows(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    triggered_by UUID,
+    trigger_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    actions_completed JSONB DEFAULT '[]',
+    actions_failed JSONB DEFAULT '[]',
+    error TEXT,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_executions_workflow ON lifecycle_executions(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_executions_user ON lifecycle_executions(user_id);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_executions_status ON lifecycle_executions(status);
+
+-- ============================================================================
+-- Entitlement Metadata (Catalog)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS entitlement_metadata (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entitlement_type VARCHAR(50) NOT NULL,
+    entitlement_id UUID NOT NULL,
+    risk_level VARCHAR(20) DEFAULT 'low',
+    owner_id UUID,
+    description TEXT,
+    tags JSONB DEFAULT '[]',
+    review_required BOOLEAN DEFAULT false,
+    last_reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(entitlement_type, entitlement_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entitlement_metadata_type ON entitlement_metadata(entitlement_type);
+CREATE INDEX IF NOT EXISTS idx_entitlement_metadata_risk ON entitlement_metadata(risk_level);

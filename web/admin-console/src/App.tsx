@@ -49,6 +49,10 @@ import { LoginAnalyticsPage } from './pages/login-analytics'
 import { SecurityKeysPage } from './pages/security-keys'
 import { PushDevicesPage } from './pages/push-devices'
 import { ApiDocsPage } from './pages/api-docs'
+import { CertificationCampaignsPage } from './pages/certification-campaigns'
+import { LifecycleWorkflowsPage } from './pages/lifecycle-workflows'
+import { EntitlementsPage } from './pages/entitlements'
+import { ComplianceDashboardPage } from './pages/compliance-dashboard'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -312,6 +316,26 @@ export default function App() {
           <Route path="api-docs" element={
             <AdminRoute>
               <ApiDocsPage />
+            </AdminRoute>
+          } />
+          <Route path="certification-campaigns" element={
+            <AdminRoute>
+              <CertificationCampaignsPage />
+            </AdminRoute>
+          } />
+          <Route path="lifecycle-workflows" element={
+            <AdminRoute>
+              <LifecycleWorkflowsPage />
+            </AdminRoute>
+          } />
+          <Route path="entitlements" element={
+            <AdminRoute>
+              <EntitlementsPage />
+            </AdminRoute>
+          } />
+          <Route path="compliance-dashboard" element={
+            <AdminRoute>
+              <ComplianceDashboardPage />
             </AdminRoute>
           } />
         </Route>

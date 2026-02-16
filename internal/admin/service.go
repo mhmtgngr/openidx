@@ -898,6 +898,14 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 	// Service account key rotation
 	router.POST("/service-accounts/:id/rotate-key", svc.handleRotateServiceAccountKey)
+
+	// Compliance posture dashboard
+	router.GET("/compliance-posture", svc.handleGetCompliancePosture)
+
+	// Entitlement catalog
+	router.GET("/entitlements", svc.handleGetEntitlementCatalog)
+	router.GET("/entitlements/stats", svc.handleGetEntitlementStats)
+	router.PUT("/entitlements/:type/:id/metadata", svc.handleUpdateEntitlementMetadata)
 }
 
 // HTTP Handlers
@@ -2078,4 +2086,402 @@ func (s *Service) handleEventAnalytics(c *gin.Context) {
 		results = []map[string]interface{}{}
 	}
 	c.JSON(200, results)
+}
+
+// ==========================================
+// Compliance Posture Dashboard
+// ==========================================
+
+// CompliancePosture represents the overall compliance health score
+type CompliancePosture struct {
+	MFAAdoptionRate        float64 `json:"mfa_adoption_rate"`
+	PasswordComplianceRate float64 `json:"password_compliance_rate"`
+	OpenReviewsCount       int     `json:"open_reviews_count"`
+	OverdueReviewsCount    int     `json:"overdue_reviews_count"`
+	DormantAccountsCount   int     `json:"dormant_accounts_count"`
+	DisabledAccountsCount  int     `json:"disabled_accounts_count"`
+	ActiveCampaignsCount   int     `json:"active_campaigns_count"`
+	CampaignCompletionRate float64 `json:"campaign_completion_rate"`
+	PolicyViolationsCount  int     `json:"policy_violations_count"`
+	OverallScore           int     `json:"overall_score"`
+}
+
+// GetCompliancePosture returns the aggregated compliance health score
+func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture, error) {
+	posture := &CompliancePosture{}
+
+	// MFA adoption: % of enabled users with at least one MFA method enrolled
+	var totalEnabled, mfaEnrolled int
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users WHERE enabled = true),
+			(SELECT COUNT(DISTINCT user_id) FROM mfa_enrollments WHERE status = 'active')
+	`).Scan(&totalEnabled, &mfaEnrolled)
+	if err != nil {
+		s.logger.Warn("Failed to query MFA adoption", zap.Error(err))
+	}
+	if totalEnabled > 0 {
+		posture.MFAAdoptionRate = float64(mfaEnrolled) / float64(totalEnabled) * 100
+	}
+
+	// Password compliance: % of users whose password hasn't expired (max_age = 90 days default)
+	var passwordCompliant int
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM users
+		WHERE enabled = true AND (password_changed_at IS NULL OR password_changed_at > NOW() - INTERVAL '90 days')
+	`).Scan(&passwordCompliant)
+	if err != nil {
+		s.logger.Warn("Failed to query password compliance", zap.Error(err))
+	}
+	if totalEnabled > 0 {
+		posture.PasswordComplianceRate = float64(passwordCompliant) / float64(totalEnabled) * 100
+	}
+
+	// Open and overdue access reviews
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')),
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND end_date < NOW())
+	`).Scan(&posture.OpenReviewsCount, &posture.OverdueReviewsCount)
+	if err != nil {
+		s.logger.Warn("Failed to query review counts", zap.Error(err))
+	}
+
+	// Dormant accounts: users who haven't logged in for 90+ days
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM users
+		WHERE enabled = true AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
+	`).Scan(&posture.DormantAccountsCount)
+	if err != nil {
+		s.logger.Warn("Failed to query dormant accounts", zap.Error(err))
+	}
+
+	// Disabled accounts
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM users WHERE enabled = false
+	`).Scan(&posture.DisabledAccountsCount)
+	if err != nil {
+		s.logger.Warn("Failed to query disabled accounts", zap.Error(err))
+	}
+
+	// Active certification campaigns
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM certification_campaigns WHERE status = 'active'
+	`).Scan(&posture.ActiveCampaignsCount)
+	if err != nil {
+		s.logger.Warn("Failed to query active campaigns", zap.Error(err))
+	}
+
+	// Campaign completion rate (avg % across active campaign runs)
+	var avgCompletion *float64
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT AVG(
+			CASE WHEN total_items > 0 THEN (reviewed_items::float / total_items * 100)
+			ELSE 0 END
+		) FROM campaign_runs
+		WHERE status = 'in_progress'
+	`).Scan(&avgCompletion)
+	if err != nil {
+		s.logger.Warn("Failed to query campaign completion", zap.Error(err))
+	}
+	if avgCompletion != nil {
+		posture.CampaignCompletionRate = *avgCompletion
+	}
+
+	// Policy violations: failed policy evaluations in last 30 days
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE event_type = 'policy_evaluation' AND outcome = 'failure'
+		AND timestamp > NOW() - INTERVAL '30 days'
+	`).Scan(&posture.PolicyViolationsCount)
+	if err != nil {
+		s.logger.Warn("Failed to query policy violations", zap.Error(err))
+	}
+
+	// Compute overall score (weighted composite 0-100)
+	score := 0.0
+	score += posture.MFAAdoptionRate * 0.25
+	score += posture.PasswordComplianceRate * 0.20
+	if posture.OverdueReviewsCount == 0 {
+		score += 15
+	}
+	if posture.DormantAccountsCount == 0 {
+		score += 10
+	} else if posture.DormantAccountsCount < 5 {
+		score += 5
+	}
+	if posture.PolicyViolationsCount == 0 {
+		score += 15
+	} else if posture.PolicyViolationsCount < 10 {
+		score += 7
+	}
+	if posture.ActiveCampaignsCount > 0 {
+		score += 10
+	}
+	score += posture.CampaignCompletionRate * 0.05
+
+	if score > 100 {
+		score = 100
+	}
+	posture.OverallScore = int(score)
+
+	return posture, nil
+}
+
+func (s *Service) handleGetCompliancePosture(c *gin.Context) {
+	posture, err := s.GetCompliancePosture(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, posture)
+}
+
+// ==========================================
+// Entitlement Catalog
+// ==========================================
+
+// EntitlementEntry represents a single entitlement in the catalog
+type EntitlementEntry struct {
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Type           string     `json:"type"`
+	Description    string     `json:"description"`
+	MemberCount    int        `json:"member_count"`
+	RiskLevel      string     `json:"risk_level"`
+	OwnerID        *string    `json:"owner_id,omitempty"`
+	Tags           []string   `json:"tags"`
+	ReviewRequired bool       `json:"review_required"`
+	LastReviewedAt *time.Time `json:"last_reviewed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// EntitlementStats summarizes the entitlement catalog
+type EntitlementStats struct {
+	TotalEntitlements int            `json:"total_entitlements"`
+	ByType            map[string]int `json:"by_type"`
+	ByRiskLevel       map[string]int `json:"by_risk_level"`
+	OrphanCount       int            `json:"orphan_count"`
+}
+
+// GetEntitlementCatalog returns a unified view of all entitlements
+func (s *Service) GetEntitlementCatalog(ctx context.Context, offset, limit int, entType, riskLevel, search string) ([]EntitlementEntry, int, error) {
+	query := `
+		WITH catalog AS (
+			SELECT r.id, r.name, 'role' as type, COALESCE(r.description, '') as description,
+				(SELECT COUNT(*) FROM user_roles WHERE role_id = r.id) as member_count,
+				r.created_at
+			FROM roles r
+			UNION ALL
+			SELECT g.id, g.name, 'group' as type, COALESCE(g.description, '') as description,
+				(SELECT COUNT(*) FROM group_memberships WHERE group_id = g.id) as member_count,
+				g.created_at
+			FROM groups g
+			UNION ALL
+			SELECT a.id, a.name, 'application' as type, COALESCE(a.description, '') as description,
+				(SELECT COUNT(*) FROM user_application_assignments WHERE application_id = a.id) as member_count,
+				a.created_at
+			FROM applications a
+		)
+		SELECT c.id, c.name, c.type, c.description, c.member_count, c.created_at,
+			COALESCE(em.risk_level, 'low') as risk_level,
+			em.owner_id,
+			COALESCE(em.tags, '[]'::jsonb) as tags,
+			COALESCE(em.review_required, false) as review_required,
+			em.last_reviewed_at
+		FROM catalog c
+		LEFT JOIN entitlement_metadata em ON em.entitlement_id = c.id AND em.entitlement_type = c.type
+	`
+
+	conditions := []string{}
+	args := []interface{}{}
+	argCount := 1
+
+	if entType != "" {
+		conditions = append(conditions, fmt.Sprintf("c.type = $%d", argCount))
+		args = append(args, entType)
+		argCount++
+	}
+	if riskLevel != "" {
+		conditions = append(conditions, fmt.Sprintf("COALESCE(em.risk_level, 'low') = $%d", argCount))
+		args = append(args, riskLevel)
+		argCount++
+	}
+	if search != "" {
+		conditions = append(conditions, fmt.Sprintf("(LOWER(c.name) LIKE $%d OR LOWER(c.description) LIKE $%d)", argCount, argCount))
+		args = append(args, "%"+strings.ToLower(search)+"%")
+		argCount++
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	countQuery := "SELECT COUNT(*) FROM (" + query + ") sub"
+	var total int
+	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count entitlements: %w", err)
+	}
+
+	query += " ORDER BY c.type, c.name"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, limit)
+		argCount++
+	}
+	if offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", argCount)
+		args = append(args, offset)
+		argCount++
+	}
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query entitlements: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []EntitlementEntry
+	for rows.Next() {
+		var e EntitlementEntry
+		var tagsJSON []byte
+		if err := rows.Scan(&e.ID, &e.Name, &e.Type, &e.Description, &e.MemberCount,
+			&e.CreatedAt, &e.RiskLevel, &e.OwnerID, &tagsJSON, &e.ReviewRequired, &e.LastReviewedAt); err != nil {
+			s.logger.Warn("Failed to scan entitlement row", zap.Error(err))
+			continue
+		}
+		if len(tagsJSON) > 0 {
+			json.Unmarshal(tagsJSON, &e.Tags)
+		}
+		if e.Tags == nil {
+			e.Tags = []string{}
+		}
+		entries = append(entries, e)
+	}
+	if entries == nil {
+		entries = []EntitlementEntry{}
+	}
+
+	return entries, total, nil
+}
+
+// GetEntitlementStats returns summary statistics for the catalog
+func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, error) {
+	stats := &EntitlementStats{
+		ByType:      make(map[string]int),
+		ByRiskLevel: make(map[string]int),
+	}
+
+	var roleCount, groupCount, appCount int
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles").Scan(&roleCount)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&groupCount)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&appCount)
+
+	stats.ByType["role"] = roleCount
+	stats.ByType["group"] = groupCount
+	stats.ByType["application"] = appCount
+	stats.TotalEntitlements = roleCount + groupCount + appCount
+
+	riskRows, err := s.db.Pool.Query(ctx, `
+		SELECT risk_level, COUNT(*) FROM entitlement_metadata GROUP BY risk_level
+	`)
+	if err == nil {
+		defer riskRows.Close()
+		for riskRows.Next() {
+			var level string
+			var count int
+			riskRows.Scan(&level, &count)
+			stats.ByRiskLevel[level] = count
+		}
+	}
+	metadataCount := 0
+	for _, c := range stats.ByRiskLevel {
+		metadataCount += c
+	}
+	stats.ByRiskLevel["low"] += stats.TotalEntitlements - metadataCount
+
+	var orphanCount int
+	s.db.Pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM roles r WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE role_id = r.id)) +
+			(SELECT COUNT(*) FROM groups g WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = g.id))
+	`).Scan(&orphanCount)
+	stats.OrphanCount = orphanCount
+
+	return stats, nil
+}
+
+// UpdateEntitlementMetadata updates risk level, owner, tags for an entitlement
+func (s *Service) UpdateEntitlementMetadata(ctx context.Context, entType, entID string, metadata map[string]interface{}) error {
+	riskLevel, _ := metadata["risk_level"].(string)
+	if riskLevel == "" {
+		riskLevel = "low"
+	}
+	ownerID, _ := metadata["owner_id"].(string)
+	description, _ := metadata["description"].(string)
+	reviewRequired, _ := metadata["review_required"].(bool)
+
+	var tags []byte
+	if tagsRaw, ok := metadata["tags"]; ok {
+		tags, _ = json.Marshal(tagsRaw)
+	} else {
+		tags = []byte("[]")
+	}
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO entitlement_metadata (entitlement_type, entitlement_id, risk_level, owner_id, description, tags, review_required, updated_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, NOW())
+		ON CONFLICT (entitlement_type, entitlement_id) DO UPDATE SET
+			risk_level = $3, owner_id = NULLIF($4, ''), description = $5, tags = $6, review_required = $7, updated_at = NOW()
+	`, entType, entID, riskLevel, ownerID, description, tags, reviewRequired)
+	if err != nil {
+		return fmt.Errorf("failed to update entitlement metadata: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) handleGetEntitlementCatalog(c *gin.Context) {
+	offset := 0
+	limit := 50
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+
+	entries, total, err := s.GetEntitlementCatalog(c.Request.Context(), offset, limit,
+		c.Query("type"), c.Query("risk_level"), c.Query("search"))
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("X-Total-Count", fmt.Sprintf("%d", total))
+	c.JSON(200, entries)
+}
+
+func (s *Service) handleGetEntitlementStats(c *gin.Context) {
+	stats, err := s.GetEntitlementStats(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, stats)
+}
+
+func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
+	entType := c.Param("type")
+	entID := c.Param("id")
+
+	var metadata map[string]interface{}
+	if err := c.ShouldBindJSON(&metadata); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.UpdateEntitlementMetadata(c.Request.Context(), entType, entID, metadata); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Entitlement metadata updated"})
 }

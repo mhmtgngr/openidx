@@ -115,10 +115,11 @@ func main() {
 	}
 	governance.RegisterRoutes(router, governanceService, opaMiddleware...)
 
-	// Start JIT access expiration checker
+	// Start background workers
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 	governanceService.StartJITExpirationChecker(bgCtx)
+	go governanceService.StartCampaignScheduler(bgCtx)
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
