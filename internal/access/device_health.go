@@ -117,12 +117,14 @@ func (zm *ZitiManager) EvaluateDeviceHealth(ctx context.Context, identityID stri
 			}
 		}
 
-		// Store result in database
+		// Store result in database with 1-hour expiry
+		expiresAt := time.Now().Add(1 * time.Hour)
 		zm.RecordPostureResult(ctx, &PostureCheckResult{
 			IdentityID: identityID,
 			CheckID:    check.ID,
 			Passed:     result.Passed,
 			Details:    result.Details,
+			ExpiresAt:  &expiresAt,
 		})
 	}
 

@@ -273,6 +273,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/posture/identities/:id", svc.handleGetIdentityPosture)
 		api.POST("/ziti/posture/identities/:id/evaluate", svc.handleEvaluateIdentityPosture)
 		api.GET("/ziti/posture/summary", svc.handleGetPostureSummary)
+		api.POST("/ziti/posture/device", svc.handleSubmitDevicePosture)
 
 		// Phase 3: Policy sync
 		api.GET("/ziti/policy-sync", svc.handleListPolicySyncStates)
@@ -305,6 +306,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Ziti session visibility
 		api.GET("/ziti/sessions", svc.handleListZitiSessions)
 		api.DELETE("/ziti/sessions/:id", svc.handleDeleteZitiSession)
+		api.POST("/ziti/sessions/batch-terminate", svc.handleBatchDeleteZitiSessions)
 
 		// Phase 5: Certificates
 		api.GET("/ziti/certificates", svc.handleListCertificates)

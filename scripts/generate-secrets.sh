@@ -34,6 +34,9 @@ KEYCLOAK_ADMIN_PASSWORD="$(rand_password)"
 JWT_SECRET="$(rand_hex)"
 ENCRYPTION_KEY="$(rand_key_32)"
 GRAFANA_ADMIN_PASSWORD="$(rand_password)"
+ZITI_PWD="$(rand_password)"
+ACCESS_SESSION_SECRET="$(rand_key_32)"
+GUACAMOLE_ADMIN_PASSWORD="$(rand_password)"
 
 # --- backup existing file ---
 if [ -f "$OUTPUT" ]; then
@@ -88,6 +91,15 @@ VITE_AUTH_PROVIDER=openidx
 # ----- Observability -----
 GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
 
+# ----- Zero Trust Network (Ziti) -----
+ZITI_PWD=${ZITI_PWD}
+
+# ----- Access Proxy -----
+ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET}
+
+# ----- Guacamole -----
+GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD}
+
 # ----- SMTP (optional) -----
 SMTP_HOST=
 SMTP_PORT=587
@@ -105,3 +117,6 @@ echo "  KEYCLOAK_ADMIN_PW  = ${KEYCLOAK_ADMIN_PASSWORD:0:8}..."
 echo "  JWT_SECRET         = ${JWT_SECRET:0:8}..."
 echo "  ENCRYPTION_KEY     = ${ENCRYPTION_KEY:0:8}..."
 echo "  GRAFANA_ADMIN_PW   = ${GRAFANA_ADMIN_PASSWORD:0:8}..."
+echo "  ZITI_PWD           = ${ZITI_PWD:0:8}..."
+echo "  ACCESS_SESSION     = ${ACCESS_SESSION_SECRET:0:8}..."
+echo "  GUACAMOLE_ADMIN_PW = ${GUACAMOLE_ADMIN_PASSWORD:0:8}..."

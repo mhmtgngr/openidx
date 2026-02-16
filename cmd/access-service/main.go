@@ -223,6 +223,7 @@ func main() {
 			zm.StartHealthMonitor(zitiCtx)
 			zm.StartCertificateMonitor(zitiCtx)
 			zm.StartUserSyncPoller(zitiCtx)
+			zm.StartPostureResultExpiryChecker(zitiCtx)
 
 			// Host all Ziti-enabled services (creates terminators so Dial works)
 			zm.HostAllServices(zitiCtx)

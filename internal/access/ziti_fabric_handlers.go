@@ -430,6 +430,38 @@ func (s *Service) handleGetPostureSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, summary)
 }
 
+func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
+	if s.zitiUnavailable(c) {
+		return
+	}
+
+	var req struct {
+		IdentityID string            `json:"identity_id" binding:"required"`
+		Posture    DevicePostureData `json:"posture" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	report, err := s.zitiManager.EvaluateDeviceHealth(c.Request.Context(), req.IdentityID, &req.Posture)
+	if err != nil {
+		s.logger.Error("Device posture evaluation failed",
+			zap.String("identity_id", req.IdentityID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.logAuditEvent(c, "device_posture_evaluated", req.IdentityID, "ziti_identity", map[string]interface{}{
+		"overall_passed": report.OverallPassed,
+		"score":          report.Score,
+		"critical":       report.Critical,
+		"high":           report.High,
+	})
+
+	c.JSON(http.StatusOK, report)
+}
+
 // ---------------------------------------------------------------------------
 // Policy Sync handlers
 // ---------------------------------------------------------------------------
@@ -454,6 +486,7 @@ func (s *Service) handleSyncGovernancePolicy(c *gin.Context) {
 	var req struct {
 		GovernancePolicyID string                 `json:"governance_policy_id"`
 		Config             map[string]interface{} `json:"config"`
+		AutoFetch          bool                   `json:"auto_fetch"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -463,12 +496,25 @@ func (s *Service) handleSyncGovernancePolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "governance_policy_id is required"})
 		return
 	}
-	if err := s.zitiManager.SyncGovernancePolicy(c.Request.Context(), req.GovernancePolicyID, req.Config); err != nil {
+
+	config := req.Config
+	if req.AutoFetch || len(config) == 0 {
+		// Fetch and transform the governance policy automatically
+		policy, err := s.zitiManager.FetchGovernancePolicy(c.Request.Context(), req.GovernancePolicyID)
+		if err != nil {
+			s.logger.Error("failed to fetch governance policy", zap.String("policyID", req.GovernancePolicyID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch governance policy: " + err.Error()})
+			return
+		}
+		config = TransformGovernancePolicyToZiti(policy)
+	}
+
+	if err := s.zitiManager.SyncGovernancePolicy(c.Request.Context(), req.GovernancePolicyID, config); err != nil {
 		s.logger.Error("failed to sync governance policy", zap.String("policyID", req.GovernancePolicyID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "policy synced successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "policy synced successfully", "auto_fetched": req.AutoFetch || len(req.Config) == 0})
 }
 
 func (s *Service) handleTriggerPolicySync(c *gin.Context) {

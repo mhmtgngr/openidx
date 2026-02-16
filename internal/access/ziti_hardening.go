@@ -242,8 +242,9 @@ func (zm *ZitiManager) GetCertificateExpiryAlerts(ctx context.Context, threshold
 	return certs, nil
 }
 
-// RotateCertificate marks an existing certificate as 'rotating' and creates a placeholder
-// entry for the renewed certificate. An audit event is logged for the rotation.
+// RotateCertificate handles certificate rotation based on certificate type.
+// For identity certificates, it triggers Ziti re-enrollment. For CA certificates,
+// rotation must be done manually (logged as warning).
 func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) error {
 	// Mark the old certificate as rotating
 	tag, err := zm.db.Pool.Exec(ctx,
@@ -256,26 +257,89 @@ func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) err
 		return fmt.Errorf("certificate %s not found or not in active status", certID)
 	}
 
-	// Fetch the old certificate details for the placeholder
+	// Fetch the old certificate details
 	var name, certType string
 	var associatedIdentityID *string
 	err = zm.db.Pool.QueryRow(ctx,
 		`SELECT name, cert_type, associated_identity_id FROM ziti_certificates WHERE id = $1`, certID).
 		Scan(&name, &certType, &associatedIdentityID)
 	if err != nil {
+		zm.revertCertStatus(ctx, certID)
 		return fmt.Errorf("failed to read certificate details: %w", err)
 	}
 
-	// Create a placeholder for the renewed certificate
+	switch certType {
+	case "identity":
+		if associatedIdentityID == nil {
+			zm.revertCertStatus(ctx, certID)
+			return fmt.Errorf("identity certificate %s has no associated identity", certID)
+		}
+		if err := zm.rotateIdentityCert(ctx, certID, *associatedIdentityID, name); err != nil {
+			zm.revertCertStatus(ctx, certID)
+			return fmt.Errorf("identity cert rotation failed: %w", err)
+		}
+
+	case "ca":
+		zm.logger.Warn("CA certificate rotation must be done manually",
+			zap.String("cert_id", certID), zap.String("name", name))
+		zm.revertCertStatus(ctx, certID)
+		return fmt.Errorf("CA certificates cannot be auto-rotated; perform manual rotation via the Ziti controller")
+
+	default:
+		// For unknown types, attempt identity-style rotation if identity is linked
+		if associatedIdentityID != nil {
+			if err := zm.rotateIdentityCert(ctx, certID, *associatedIdentityID, name); err != nil {
+				zm.revertCertStatus(ctx, certID)
+				return fmt.Errorf("cert rotation failed: %w", err)
+			}
+		} else {
+			zm.revertCertStatus(ctx, certID)
+			return fmt.Errorf("cannot auto-rotate certificate of type %q without an associated identity", certType)
+		}
+	}
+
+	return nil
+}
+
+// rotateIdentityCert triggers a re-enrollment for a Ziti identity and updates the certificate records.
+func (zm *ZitiManager) rotateIdentityCert(ctx context.Context, certID, associatedIdentityID, name string) error {
+	// Look up the Ziti controller identity ID from our internal identity table
+	var zitiID string
+	err := zm.db.Pool.QueryRow(ctx,
+		"SELECT ziti_id FROM ziti_identities WHERE id = $1", associatedIdentityID).
+		Scan(&zitiID)
+	if err != nil {
+		return fmt.Errorf("failed to look up ziti_id for identity %s: %w", associatedIdentityID, err)
+	}
+
+	// Trigger re-enrollment via the Ziti management API
+	_, statusCode, err := zm.mgmtRequest("POST",
+		fmt.Sprintf("/edge/management/v1/identities/%s/re-enroll", zitiID), nil)
+	if err != nil {
+		return fmt.Errorf("Ziti re-enrollment API call failed: %w", err)
+	}
+	if statusCode != 200 && statusCode != 201 && statusCode != 204 {
+		return fmt.Errorf("Ziti re-enrollment returned status %d", statusCode)
+	}
+
+	// Mark old certificate as rotated
+	_, err = zm.db.Pool.Exec(ctx,
+		`UPDATE ziti_certificates SET status = 'rotated', updated_at = NOW() WHERE id = $1`,
+		certID)
+	if err != nil {
+		zm.logger.Warn("Failed to mark old certificate as rotated", zap.String("cert_id", certID), zap.Error(err))
+	}
+
+	// Create a new active certificate record (real cert data will be synced by SyncCertificatesFromController)
 	newID := uuid.New().String()
 	_, err = zm.db.Pool.Exec(ctx,
 		`INSERT INTO ziti_certificates (id, name, cert_type, subject, issuer, serial_number, fingerprint,
 		                                auto_renew, renewal_threshold_days, status, associated_identity_id,
 		                                created_at, updated_at)
-		 VALUES ($1, $2, $3, 'pending-renewal', 'pending-renewal', '', '', true, 30, 'pending', $4, NOW(), NOW())`,
-		newID, name+"-renewed", certType, associatedIdentityID)
+		 VALUES ($1, $2, 'identity', 'pending-sync', 'pending-sync', '', '', true, 30, 'active', $3, NOW(), NOW())`,
+		newID, name+"-renewed", associatedIdentityID)
 	if err != nil {
-		return fmt.Errorf("failed to create renewal placeholder: %w", err)
+		zm.logger.Warn("Failed to create renewed certificate placeholder", zap.Error(err))
 	}
 
 	// Log the rotation event to audit
@@ -283,17 +347,29 @@ func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) err
 		`INSERT INTO audit_events (id, event_type, actor, resource_type, resource_id, details, created_at)
 		 VALUES ($1, 'certificate.rotate', 'system', 'ziti_certificate', $2, $3, NOW())`,
 		uuid.New().String(), certID,
-		fmt.Sprintf(`{"old_cert_id":"%s","new_cert_id":"%s","name":"%s"}`, certID, newID, name))
+		fmt.Sprintf(`{"old_cert_id":"%s","new_cert_id":"%s","name":"%s","ziti_identity":"%s","method":"re-enrollment"}`,
+			certID, newID, name, zitiID))
 	if err != nil {
 		zm.logger.Warn("Failed to log certificate rotation audit event", zap.Error(err))
 	}
 
-	zm.logger.Info("Certificate rotation initiated",
+	zm.logger.Info("Certificate rotation completed via Ziti re-enrollment",
 		zap.String("old_cert_id", certID),
 		zap.String("new_cert_id", newID),
+		zap.String("ziti_identity", zitiID),
 		zap.String("name", name))
 
 	return nil
+}
+
+// revertCertStatus reverts a certificate from 'rotating' back to 'active' on failure.
+func (zm *ZitiManager) revertCertStatus(ctx context.Context, certID string) {
+	_, err := zm.db.Pool.Exec(ctx,
+		`UPDATE ziti_certificates SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'rotating'`,
+		certID)
+	if err != nil {
+		zm.logger.Error("Failed to revert certificate status", zap.String("cert_id", certID), zap.Error(err))
+	}
 }
 
 // SyncCertificatesFromController fetches CA and identity certificates from the Ziti controller

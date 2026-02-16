@@ -693,6 +693,215 @@ func (zm *ZitiManager) DeletePolicySyncState(ctx context.Context, id string) err
 	return nil
 }
 
+// StartPostureResultExpiryChecker runs a background goroutine that periodically
+// deletes expired posture check results from the database.
+func (zm *ZitiManager) StartPostureResultExpiryChecker(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+
+		zm.logger.Info("Posture result expiry checker started")
+
+		for {
+			select {
+			case <-ctx.Done():
+				zm.logger.Info("Posture result expiry checker stopped")
+				return
+			case <-ticker.C:
+				zm.cleanExpiredPostureResults(ctx)
+			}
+		}
+	}()
+}
+
+// cleanExpiredPostureResults deletes posture check results that have passed their expiry time.
+func (zm *ZitiManager) cleanExpiredPostureResults(ctx context.Context) {
+	result, err := zm.db.Pool.Exec(ctx,
+		"DELETE FROM device_posture_results WHERE expires_at IS NOT NULL AND expires_at < NOW()")
+	if err != nil {
+		zm.logger.Error("Failed to clean expired posture results", zap.Error(err))
+		return
+	}
+	if result.RowsAffected() > 0 {
+		zm.logger.Info("Cleaned expired posture results",
+			zap.Int64("deleted", result.RowsAffected()))
+	}
+}
+
+// GovernancePolicy represents a fetched governance policy with its rules.
+type GovernancePolicy struct {
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	Type        string                   `json:"type"`
+	Enabled     bool                     `json:"enabled"`
+	Priority    int                      `json:"priority"`
+	Rules       []map[string]interface{} `json:"rules"`
+}
+
+// FetchGovernancePolicy reads a governance policy and its rules from the shared PostgreSQL database.
+func (zm *ZitiManager) FetchGovernancePolicy(ctx context.Context, policyID string) (*GovernancePolicy, error) {
+	var p GovernancePolicy
+	var rulesJSON []byte
+	err := zm.db.Pool.QueryRow(ctx,
+		`SELECT id, name, COALESCE(description,''), type, enabled, priority, COALESCE(rules, '[]')
+		 FROM policies WHERE id=$1`, policyID).
+		Scan(&p.ID, &p.Name, &p.Description, &p.Type, &p.Enabled, &p.Priority, &rulesJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch governance policy %s: %w", policyID, err)
+	}
+
+	// Parse inline rules
+	if err := json.Unmarshal(rulesJSON, &p.Rules); err != nil {
+		zm.logger.Warn("Failed to unmarshal inline policy rules", zap.String("policy_id", policyID), zap.Error(err))
+		p.Rules = []map[string]interface{}{}
+	}
+
+	// Also fetch linked policy_rules rows
+	rows, err := zm.db.Pool.Query(ctx,
+		`SELECT rule_type, conditions, actions FROM policy_rules WHERE policy_id=$1`, policyID)
+	if err != nil {
+		zm.logger.Warn("Failed to fetch policy_rules", zap.String("policy_id", policyID), zap.Error(err))
+	} else {
+		defer rows.Close()
+		for rows.Next() {
+			var ruleType string
+			var conditionsJSON, actionsJSON []byte
+			if err := rows.Scan(&ruleType, &conditionsJSON, &actionsJSON); err != nil {
+				continue
+			}
+			rule := map[string]interface{}{"rule_type": ruleType}
+			var conditions, actions map[string]interface{}
+			if json.Unmarshal(conditionsJSON, &conditions) == nil {
+				rule["conditions"] = conditions
+			}
+			if json.Unmarshal(actionsJSON, &actions) == nil {
+				rule["actions"] = actions
+			}
+			p.Rules = append(p.Rules, rule)
+		}
+	}
+
+	return &p, nil
+}
+
+// TransformGovernancePolicyToZiti converts a governance policy to a Ziti-compatible
+// config map based on the policy type. Different policy types produce different
+// identity_roles, service_roles, and metadata attributes.
+func TransformGovernancePolicyToZiti(policy *GovernancePolicy) map[string]interface{} {
+	config := map[string]interface{}{
+		"policy_type": "Dial",
+		"policy_name": policy.Name,
+		"governance_type": policy.Type,
+	}
+
+	switch policy.Type {
+	case "separation_of_duty":
+		// Extract conflicting roles and map to identity role exclusions
+		identityRoles := []string{}
+		for _, rule := range policy.Rules {
+			if conds, ok := rule["conditions"].(map[string]interface{}); ok {
+				if roles, ok := conds["conflicting_roles"].([]interface{}); ok {
+					for _, r := range roles {
+						identityRoles = append(identityRoles, fmt.Sprintf("#sod_exclude_%v", r))
+					}
+				}
+			}
+		}
+		if len(identityRoles) == 0 {
+			identityRoles = []string{"#all"}
+		}
+		config["identity_roles"] = identityRoles
+		config["service_roles"] = []string{"#all"}
+
+	case "timebound":
+		// Time-window policies: store windows as metadata, grant access to all during valid window
+		windows := []interface{}{}
+		for _, rule := range policy.Rules {
+			if conds, ok := rule["conditions"].(map[string]interface{}); ok {
+				if tw, ok := conds["time_window"]; ok {
+					windows = append(windows, tw)
+				}
+				if start, ok := conds["valid_from"]; ok {
+					windows = append(windows, map[string]interface{}{
+						"valid_from":  start,
+						"valid_until": conds["valid_until"],
+					})
+				}
+			}
+		}
+		config["identity_roles"] = []string{"#all"}
+		config["service_roles"] = []string{"#all"}
+		config["time_windows"] = windows
+
+	case "risk_based":
+		// Map risk thresholds to identity attributes
+		identityRoles := []string{}
+		for _, rule := range policy.Rules {
+			if conds, ok := rule["conditions"].(map[string]interface{}); ok {
+				if threshold, ok := conds["risk_threshold"]; ok {
+					identityRoles = append(identityRoles, fmt.Sprintf("#risk_below_%v", threshold))
+				}
+				if maxScore, ok := conds["max_risk_score"]; ok {
+					identityRoles = append(identityRoles, fmt.Sprintf("#risk_below_%v", maxScore))
+				}
+			}
+		}
+		if len(identityRoles) == 0 {
+			identityRoles = []string{"#low_risk"}
+		}
+		config["identity_roles"] = identityRoles
+		config["service_roles"] = []string{"#all"}
+
+	case "location":
+		// Map allowed/denied countries to geo attributes
+		identityRoles := []string{}
+		for _, rule := range policy.Rules {
+			if conds, ok := rule["conditions"].(map[string]interface{}); ok {
+				if countries, ok := conds["allowed_countries"].([]interface{}); ok {
+					for _, c := range countries {
+						identityRoles = append(identityRoles, fmt.Sprintf("#geo_%v", c))
+					}
+				}
+			}
+		}
+		if len(identityRoles) == 0 {
+			identityRoles = []string{"#geo_allowed"}
+		}
+		config["identity_roles"] = identityRoles
+		config["service_roles"] = []string{"#all"}
+
+	case "conditional_access":
+		// Map conditional access requirements to attribute tags
+		identityRoles := []string{}
+		for _, rule := range policy.Rules {
+			if conds, ok := rule["conditions"].(map[string]interface{}); ok {
+				if mfa, ok := conds["require_mfa"].(bool); ok && mfa {
+					identityRoles = append(identityRoles, "#mfa_verified")
+				}
+				if dt, ok := conds["device_trust"].(bool); ok && dt {
+					identityRoles = append(identityRoles, "#device_trusted")
+				}
+				if compliant, ok := conds["require_compliant_device"].(bool); ok && compliant {
+					identityRoles = append(identityRoles, "#device_compliant")
+				}
+			}
+		}
+		if len(identityRoles) == 0 {
+			identityRoles = []string{"#all"}
+		}
+		config["identity_roles"] = identityRoles
+		config["service_roles"] = []string{"#all"}
+
+	default:
+		// Unknown policy type — generic pass-through
+		config["identity_roles"] = []string{"#all"}
+		config["service_roles"] = []string{"#all"}
+	}
+
+	return config
+}
+
 // GetPostureCheckSummary returns aggregate statistics about posture checks and their results
 func (zm *ZitiManager) GetPostureCheckSummary(ctx context.Context) (map[string]interface{}, error) {
 	summary := map[string]interface{}{}

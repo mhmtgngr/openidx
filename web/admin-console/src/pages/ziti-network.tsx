@@ -118,6 +118,23 @@ interface PostureSummary {
   by_severity: Record<string, number>
 }
 
+interface PostureResult {
+  id: string
+  identity_id: string
+  check_id: string
+  passed: boolean
+  details: Record<string, unknown>
+  checked_at: string
+  expires_at?: string
+}
+
+interface IdentityPostureReport {
+  identity_id: string
+  overall_passed: boolean
+  results: PostureResult[]
+  evaluated_at: string
+}
+
 interface PolicySync {
   id: string
   governance_policy_id: string
@@ -1379,10 +1396,30 @@ function ActiveSessionsSection() {
     },
   })
 
+  const batchTerminateMutation = useMutation({
+    mutationFn: (identityId: string) => api.post('/api/v1/access/ziti/sessions/batch-terminate', { identity_id: identityId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-sessions'] })
+      toast({ title: 'All sessions terminated for identity' })
+    },
+  })
+
+  // Get unique identities for batch terminate
+  const uniqueIdentities = sessions ? [...new Map(sessions.filter(s => s.identity?.id).map(s => [s.identity!.id, s.identity!])).values()] : []
+
   return (
     <>
       <CollapsibleSection title="Active Sessions" count={sessions?.length ?? 0} icon={Zap} defaultOpen>
         <p className="text-xs text-muted-foreground mb-3">Currently active Ziti overlay connections. Dial = accessing a service; Bind = hosting a service endpoint.</p>
+        {uniqueIdentities.length > 1 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {uniqueIdentities.map(ident => (
+              <Button key={ident.id} variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => batchTerminateMutation.mutate(ident.id)} disabled={batchTerminateMutation.isPending}>
+                Terminate All: {ident.name || ident.id}
+              </Button>
+            ))}
+          </div>
+        )}
         {!sessions || sessions.length === 0 ? (
           <EmptyState icon={Clock} title="No active sessions" description="No one is currently connected through the Ziti overlay." />
         ) : (
@@ -2374,6 +2411,9 @@ function PostureSection() {
         </Card>
       )}
 
+      {/* Identity Posture Viewer */}
+      <IdentityPostureViewer />
+
       {/* Create/Edit Dialogs */}
       {[
         { open: createModal, onOpenChange: (v: boolean) => { if (!v) setCreateModal(false) }, title: 'Create Posture Check', onSubmit: () => createMutation.mutate(form), pending: createMutation.isPending, submitLabel: 'Create Check' },
@@ -2445,6 +2485,120 @@ function PostureSection() {
         </AlertDialogContent>
       </AlertDialog>
     </CollapsibleSection>
+  )
+}
+
+function IdentityPostureViewer() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [identityId, setIdentityId] = useState('')
+  const [searchId, setSearchId] = useState('')
+
+  const { data: postureData, isLoading, isFetching } = useQuery({
+    queryKey: ['ziti-identity-posture', searchId],
+    queryFn: () => api.get<IdentityPostureReport>(`/api/v1/access/ziti/posture/identities/${searchId}`),
+    enabled: !!searchId,
+  })
+
+  const evaluateMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/access/ziti/posture/identities/${id}/evaluate`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ziti-identity-posture', searchId] })
+      queryClient.invalidateQueries({ queryKey: ['ziti-posture-summary'] })
+      toast({ title: 'Posture evaluation triggered' })
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to evaluate posture.', variant: 'destructive' }),
+  })
+
+  const handleLookup = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (identityId.trim()) setSearchId(identityId.trim())
+  }
+
+  return (
+    <div className="mt-6 border-t pt-4">
+      <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+        <Search className="h-4 w-4" /> Identity Posture Lookup
+      </h4>
+      <form onSubmit={handleLookup} className="flex gap-2 mb-3">
+        <Input
+          value={identityId}
+          onChange={(e) => setIdentityId(e.target.value)}
+          placeholder="Enter identity ID..."
+          className="max-w-sm"
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={!identityId.trim()}>
+          Lookup
+        </Button>
+        {searchId && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => evaluateMutation.mutate(searchId)}
+            disabled={evaluateMutation.isPending}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${evaluateMutation.isPending ? 'animate-spin' : ''}`} />
+            Evaluate Now
+          </Button>
+        )}
+      </form>
+
+      {isLoading || isFetching ? <Spinner /> : postureData && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 text-sm">
+            <Badge variant={postureData.overall_passed ? 'default' : 'destructive'}>
+              {postureData.overall_passed ? 'Passed' : 'Failed'}
+            </Badge>
+            <span className="text-muted-foreground">
+              {postureData.results?.length || 0} check(s) evaluated
+            </span>
+            {postureData.evaluated_at && (
+              <span className="text-muted-foreground">
+                at {new Date(postureData.evaluated_at).toLocaleString()}
+              </span>
+            )}
+          </div>
+
+          {postureData.results && postureData.results.length > 0 && (
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Check ID</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Details</TableHead>
+                    <TableHead>Checked At</TableHead>
+                    <TableHead>Expires At</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {postureData.results.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-mono text-xs">{r.check_id}</TableCell>
+                      <TableCell>
+                        <Badge variant={r.passed ? 'default' : 'destructive'}>
+                          {r.passed ? 'Passed' : 'Failed'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs max-w-[300px] truncate">
+                        {r.details ? JSON.stringify(r.details) : '-'}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {new Date(r.checked_at).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {r.expires_at ? new Date(r.expires_at).toLocaleString() : '-'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2566,7 +2720,7 @@ function PolicySyncSection() {
   const { toast } = useToast()
   const [createModal, setCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PolicySync | null>(null)
-  const [form, setForm] = useState({ governance_policy_id: '', config: '{}' })
+  const [form, setForm] = useState({ governance_policy_id: '', config: '{}', auto_fetch: true })
 
   const { data: syncsData, isLoading } = useQuery({
     queryKey: ['ziti-policy-sync'],
@@ -2580,11 +2734,15 @@ function PolicySyncSection() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/policy-sync', { governance_policy_id: data.governance_policy_id, config: JSON.parse(data.config) }),
+    mutationFn: (data: typeof form) => api.post('/api/v1/access/ziti/policy-sync', {
+      governance_policy_id: data.governance_policy_id,
+      auto_fetch: data.auto_fetch,
+      ...(data.auto_fetch ? {} : { config: JSON.parse(data.config) }),
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ziti-policy-sync'] })
       setCreateModal(false)
-      setForm({ governance_policy_id: '', config: '{}' })
+      setForm({ governance_policy_id: '', config: '{}', auto_fetch: true })
       toast({ title: 'Policy sync created' })
     },
     onError: () => toast({ title: 'Error', description: 'Failed to create policy sync.', variant: 'destructive' }),
@@ -2749,16 +2907,27 @@ function PolicySyncSection() {
               )}
               <p className="text-xs text-muted-foreground">Access review decisions on this policy will auto-update Ziti service policies.</p>
             </div>
-            <div className="space-y-2">
-              <Label>Mapping Config (JSON)</Label>
-              <textarea
-                value={form.config}
-                onChange={(e) => setForm({ ...form, config: e.target.value })}
-                className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-                placeholder='{"action": "allow", "service_roles": ["#web"], "identity_roles": ["#engineering"]}'
-              />
-              <p className="text-xs text-muted-foreground">Defines how governance decisions map to Ziti policy rules.</p>
+            <div className="flex items-center gap-2">
+              <Switch checked={form.auto_fetch} onCheckedChange={(checked) => setForm({ ...form, auto_fetch: checked })} />
+              <Label>Auto-detect policy rules</Label>
             </div>
+            <p className="text-xs text-muted-foreground -mt-2">
+              {form.auto_fetch
+                ? 'Policy type and rules will be automatically fetched and transformed into Ziti roles.'
+                : 'Manually specify how governance decisions map to Ziti policy rules.'}
+            </p>
+            {!form.auto_fetch && (
+              <div className="space-y-2">
+                <Label>Mapping Config (JSON)</Label>
+                <textarea
+                  value={form.config}
+                  onChange={(e) => setForm({ ...form, config: e.target.value })}
+                  className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                  placeholder='{"action": "allow", "service_roles": ["#web"], "identity_roles": ["#engineering"]}'
+                />
+                <p className="text-xs text-muted-foreground">Defines how governance decisions map to Ziti policy rules.</p>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setCreateModal(false)}>Cancel</Button>
               <Button type="submit" disabled={createMutation.isPending}>
