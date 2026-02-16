@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Edit, Trash2, ChevronLeft, ChevronRight, KeyRound, Shield, ExternalLink } from 'lucide-react'
+import { PROVIDER_TEMPLATES, ProviderTemplate } from '../lib/provider-templates'
+import { GoogleIcon, GitHubIcon, MicrosoftIcon } from '../components/icons/social-providers'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import {
@@ -83,6 +85,7 @@ export function IdentityProvidersPage() {
   const [selectedProvider, setSelectedProvider] = useState<IdentityProvider | null>(null)
   const [formData, setFormData] = useState<ProviderFormData>(emptyForm)
   const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null)
+  const [selectedTemplate, setSelectedTemplate] = useState<ProviderTemplate | null>(null)
   const [page, setPage] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const PAGE_SIZE = 20
@@ -157,7 +160,22 @@ export function IdentityProvidersPage() {
     },
   })
 
+  const handleQuickSetup = (template: ProviderTemplate) => {
+    setSelectedTemplate(template)
+    setFormData({
+      name: template.name,
+      provider_type: template.provider_type,
+      issuer_url: template.issuer_url,
+      client_id: '',
+      client_secret: '',
+      scopes: template.scopes,
+      enabled: true,
+    })
+    setAddModal(true)
+  }
+
   const handleAdd = () => {
+    setSelectedTemplate(null)
     setFormData(emptyForm)
     setAddModal(true)
   }
@@ -292,6 +310,52 @@ export function IdentityProvidersPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Quick Setup</CardTitle>
+          <CardDescription>
+            Add a popular identity provider with pre-configured settings. You only need your Client ID and Client Secret.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {PROVIDER_TEMPLATES.map((template) => {
+              const IconComponent = template.id === 'google' ? GoogleIcon
+                : template.id === 'github' ? GitHubIcon
+                : template.id === 'microsoft' ? MicrosoftIcon
+                : null
+              return (
+                <button
+                  key={template.id}
+                  onClick={() => handleQuickSetup(template)}
+                  className="flex flex-col items-center gap-2 p-4 border rounded-lg hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors text-left"
+                >
+                  {IconComponent && <IconComponent className="h-8 w-8" />}
+                  <span className="font-medium text-sm">{template.name}</span>
+                  <span className="text-xs text-muted-foreground text-center">{template.description}</span>
+                </button>
+              )
+            })}
+            <button
+              onClick={handleAdd}
+              className="flex flex-col items-center gap-2 p-4 border rounded-lg hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors"
+            >
+              <KeyRound className="h-8 w-8 text-muted-foreground" />
+              <span className="font-medium text-sm">Custom OIDC</span>
+              <span className="text-xs text-muted-foreground text-center">Any OIDC-compliant provider</span>
+            </button>
+            <button
+              onClick={() => { setSelectedTemplate(null); setFormData({ ...emptyForm, provider_type: 'saml' }); setAddModal(true) }}
+              className="flex flex-col items-center gap-2 p-4 border rounded-lg hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-colors"
+            >
+              <Shield className="h-8 w-8 text-muted-foreground" />
+              <span className="font-medium text-sm">Custom SAML</span>
+              <span className="text-xs text-muted-foreground text-center">Any SAML 2.0 provider</span>
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Configured Providers</CardTitle>
           <CardDescription>
             Manage external identity providers for Single Sign-On (SSO).
@@ -398,10 +462,22 @@ export function IdentityProvidersPage() {
       </Card>
 
       {/* Add Provider Dialog */}
-      <Dialog open={addModal} onOpenChange={setAddModal}>
+      <Dialog open={addModal} onOpenChange={(open) => { setAddModal(open); if (!open) setSelectedTemplate(null) }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add Identity Provider</DialogTitle>
+            <DialogTitle>
+              {selectedTemplate ? `Add ${selectedTemplate.name} Provider` : 'Add Identity Provider'}
+            </DialogTitle>
+            {selectedTemplate && (
+              <a
+                href={selectedTemplate.docsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
+              >
+                Setup guide <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
           </DialogHeader>
           {formContent}
         </DialogContent>

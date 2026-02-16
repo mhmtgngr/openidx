@@ -37,6 +37,7 @@ import {
   Globe,
   FileKey,
   Upload,
+  BookOpen,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -154,6 +155,7 @@ const navigationSections: NavSection[] = [
     items: [
       { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
       { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
+      { name: 'API Docs', href: '/api-docs', icon: BookOpen, adminOnly: true },
       { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
     ],
   },

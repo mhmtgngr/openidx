@@ -65,6 +65,42 @@ test.describe('Login Page - Unauthenticated', () => {
   });
 });
 
+test.describe('Social Login Provider Icons', () => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.clearCookies();
+    await page.goto('/login');
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+    });
+    await page.reload();
+  });
+
+  test('should show provider-specific icons for known providers', async ({ page }) => {
+    await page.route('**/api/v1/identity/providers*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: '1', name: 'Google', provider_type: 'oidc', issuer_url: 'https://accounts.google.com', enabled: true, client_id: 'test', scopes: ['openid'] },
+          { id: '2', name: 'GitHub', provider_type: 'oidc', issuer_url: 'https://github.com', enabled: true, client_id: 'test', scopes: ['openid'] },
+        ]),
+      });
+    });
+
+    await page.goto('/login');
+
+    const googleBtn = page.getByRole('button', { name: /sign in with google/i });
+    await expect(googleBtn).toBeVisible({ timeout: 10000 });
+    // Provider-specific SVG icon should be present (not just the generic Globe)
+    await expect(googleBtn.locator('svg')).toBeVisible();
+
+    const githubBtn = page.getByRole('button', { name: /sign in with github/i });
+    await expect(githubBtn).toBeVisible();
+    await expect(githubBtn.locator('svg')).toBeVisible();
+  });
+});
+
 test.describe('Login Flow - Credentials', () => {
   test.beforeEach(async ({ page, context }) => {
     // Clear any existing auth state including cookies

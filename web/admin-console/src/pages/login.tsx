@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
+import { getProviderIcon } from '../components/icons/social-providers'
 
 interface MFAOption {
   method: string
@@ -723,18 +724,21 @@ export function LoginPage() {
               </div>
             ) : (
               <>
-                {identityProviders.map((idp) => (
-                  <Button
-                    key={idp.id}
-                    onClick={() => handleSSOLogin(idp)}
-                    className="w-full bg-gray-700 hover:bg-gray-800 text-white"
-                    size="lg"
-                    disabled={isLoading}
-                  >
-                    <Globe className="mr-2 h-4 w-4" />
-                    Sign in with {idp.name}
-                  </Button>
-                ))}
+                {identityProviders.map((idp) => {
+                  const ProviderIcon = getProviderIcon(idp.issuer_url)
+                  return (
+                    <Button
+                      key={idp.id}
+                      onClick={() => handleSSOLogin(idp)}
+                      className="w-full bg-gray-700 hover:bg-gray-800 text-white"
+                      size="lg"
+                      disabled={isLoading}
+                    >
+                      {ProviderIcon ? <ProviderIcon className="mr-2 h-4 w-4" /> : <Globe className="mr-2 h-4 w-4" />}
+                      Sign in with {idp.name}
+                    </Button>
+                  )
+                })}
 
                 {identityProviders.length > 0 && <div className="relative my-4">
                   <div className="absolute inset-0 flex items-center">

@@ -46,6 +46,7 @@ import { PasswordlessSettingsPage } from './pages/passwordless-settings'
 import { RiskPoliciesPage } from './pages/risk-policies'
 import { TrustedBrowsersPage } from './pages/trusted-browsers'
 import { LoginAnalyticsPage } from './pages/login-analytics'
+import { ApiDocsPage } from './pages/api-docs'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -294,6 +295,11 @@ export default function App() {
           <Route path="login-analytics" element={
             <AdminRoute>
               <LoginAnalyticsPage />
+            </AdminRoute>
+          } />
+          <Route path="api-docs" element={
+            <AdminRoute>
+              <ApiDocsPage />
             </AdminRoute>
           } />
         </Route>

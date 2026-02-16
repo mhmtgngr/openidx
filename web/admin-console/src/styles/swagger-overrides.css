@@ -1,0 +1,45 @@
+.swagger-wrapper .swagger-ui .topbar {
+  display: none;
+}
+
+.swagger-wrapper .swagger-ui {
+  font-family: inherit;
+}
+
+.swagger-wrapper .swagger-ui .info {
+  margin: 16px 0;
+}
+
+.swagger-wrapper .swagger-ui .info .title {
+  font-size: 1.25rem;
+}
+
+.swagger-wrapper .swagger-ui .scheme-container {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  margin: 0 0 16px 0;
+}
+
+.swagger-wrapper .swagger-ui .opblock-tag {
+  font-size: 0.95rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.swagger-wrapper .swagger-ui .opblock {
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.swagger-wrapper .swagger-ui .btn {
+  border-radius: 4px;
+}
+
+.swagger-wrapper .swagger-ui select {
+  border-radius: 4px;
+}
+
+.swagger-wrapper .swagger-ui input[type="text"],
+.swagger-wrapper .swagger-ui textarea {
+  border-radius: 4px;
+}
