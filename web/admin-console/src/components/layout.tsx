@@ -136,6 +136,8 @@ const navigationSections: NavSection[] = [
       { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
       { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },
       { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, adminOnly: true },
+      { name: 'Security Keys', href: '/security-keys', icon: KeyRound, adminOnly: true },
+      { name: 'Push Devices', href: '/push-devices', icon: Bell, adminOnly: true },
     ],
   },
   {

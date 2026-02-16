@@ -57,6 +57,28 @@ type ApprovalPolicy struct {
 	UpdatedAt             time.Time                `json:"updated_at"`
 }
 
+// parseDuration converts a human-friendly duration string to time.Duration.
+// Supports: "4h", "8h", "1d", "3d", "7d", "30d", "90d"
+func parseDuration(s string) (time.Duration, error) {
+	if len(s) < 2 {
+		return 0, fmt.Errorf("invalid duration: %s", s)
+	}
+	unit := s[len(s)-1]
+	value := s[:len(s)-1]
+	var n int
+	if _, err := fmt.Sscanf(value, "%d", &n); err != nil {
+		return 0, fmt.Errorf("invalid duration value: %s", s)
+	}
+	switch unit {
+	case 'h':
+		return time.Duration(n) * time.Hour, nil
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("unsupported duration unit: %c", unit)
+	}
+}
+
 // handleCreateAccessRequest creates a new access request
 func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 	var body struct {
@@ -65,6 +87,7 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		ResourceName  string `json:"resource_name"`
 		Justification string `json:"justification"`
 		Priority      string `json:"priority"`
+		Duration      string `json:"duration,omitempty"` // e.g. "4h", "1d", "7d", "30d" — empty means permanent
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -89,14 +112,26 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		body.ResourceID = uuid.New().String()
 	}
 
+	// Parse duration to calculate expires_at
+	var expiresAt *time.Time
+	if body.Duration != "" {
+		d, err := parseDuration(body.Duration)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid duration: " + err.Error()})
+			return
+		}
+		t := time.Now().Add(d)
+		expiresAt = &t
+	}
+
 	id := uuid.New().String()
 	now := time.Now()
 
 	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, justification, status, priority, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, justification, status, priority, expires_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		id, requesterID, body.ResourceType, body.ResourceID, body.ResourceName,
-		body.Justification, "pending", body.Priority, now, now,
+		body.Justification, "pending", body.Priority, expiresAt, now, now,
 	)
 	if err != nil {
 		s.logger.Error("Failed to create access request", zap.Error(err))
@@ -116,6 +151,7 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		Justification: body.Justification,
 		Status:        "pending",
 		Priority:      body.Priority,
+		ExpiresAt:     expiresAt,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	})

@@ -46,6 +46,8 @@ import { PasswordlessSettingsPage } from './pages/passwordless-settings'
 import { RiskPoliciesPage } from './pages/risk-policies'
 import { TrustedBrowsersPage } from './pages/trusted-browsers'
 import { LoginAnalyticsPage } from './pages/login-analytics'
+import { SecurityKeysPage } from './pages/security-keys'
+import { PushDevicesPage } from './pages/push-devices'
 import { ApiDocsPage } from './pages/api-docs'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
@@ -285,6 +287,16 @@ export default function App() {
           <Route path="passwordless-settings" element={
             <AdminRoute>
               <PasswordlessSettingsPage />
+            </AdminRoute>
+          } />
+          <Route path="security-keys" element={
+            <AdminRoute>
+              <SecurityKeysPage />
+            </AdminRoute>
+          } />
+          <Route path="push-devices" element={
+            <AdminRoute>
+              <PushDevicesPage />
             </AdminRoute>
           } />
           <Route path="risk-policies" element={

@@ -183,6 +183,68 @@ export const api = {
     })
     return response.data
   },
+
+  // WebAuthn API
+  getWebAuthnCredentials: async (): Promise<WebAuthnCredential[]> => {
+    return api.get<WebAuthnCredential[]>('/api/v1/identity/mfa/webauthn/credentials')
+  },
+
+  beginWebAuthnRegistration: async (): Promise<unknown> => {
+    return api.post<unknown>('/api/v1/identity/mfa/webauthn/register/begin')
+  },
+
+  finishWebAuthnRegistration: async (data: unknown): Promise<WebAuthnCredential> => {
+    return api.post<WebAuthnCredential>('/api/v1/identity/mfa/webauthn/register/finish', data)
+  },
+
+  deleteWebAuthnCredential: async (credentialId: string): Promise<void> => {
+    await api.delete<void>(`/api/v1/identity/mfa/webauthn/credentials/${credentialId}`)
+  },
+
+  // Push MFA API
+  getPushDevices: async (): Promise<PushMFADevice[]> => {
+    return api.get<PushMFADevice[]>('/api/v1/identity/mfa/push/devices')
+  },
+
+  registerPushDevice: async (data: PushMFAEnrollment): Promise<PushMFADevice> => {
+    return api.post<PushMFADevice>('/api/v1/identity/mfa/push/devices', data)
+  },
+
+  deletePushDevice: async (deviceId: string): Promise<void> => {
+    await api.delete<void>(`/api/v1/identity/mfa/push/devices/${deviceId}`)
+  },
+}
+
+// WebAuthn types
+export interface WebAuthnCredential {
+  id: string
+  user_id: string
+  credential_id: string
+  name: string
+  aaguid: string
+  sign_count: number
+  created_at: string
+  last_used_at?: string
+}
+
+// Push MFA types
+export interface PushMFADevice {
+  id: string
+  user_id: string
+  device_name: string
+  platform: string
+  device_model: string
+  enabled: boolean
+  trusted: boolean
+  created_at: string
+  last_used_at?: string
+}
+
+export interface PushMFAEnrollment {
+  device_token: string
+  platform: 'ios' | 'android' | 'web'
+  device_name: string
+  device_model?: string
 }
 
 export default axiosInstance

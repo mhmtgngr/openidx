@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Shield, AlertCircle, Loader2, Globe, ArrowLeft, KeyRound, Smartphone, Mail, Phone, Check } from 'lucide-react'
+import { Shield, AlertCircle, Loader2, Globe, ArrowLeft, KeyRound, Smartphone, Mail, Phone, Check, Bell } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label'
 import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 import { getProviderIcon } from '../components/icons/social-providers'
+import { decodeCredentialRequestOptions, serializeAssertionResponse, type PublicKeyCredentialRequestOptionsJSON } from '../lib/webauthn'
 
 interface MFAOption {
   method: string
@@ -37,6 +38,15 @@ export function LoginPage() {
   const [mfaMethodSelectionStep, setMfaMethodSelectionStep] = useState(false)
   const [otpSent, setOtpSent] = useState(false)
   const mfaInputRef = useRef<HTMLInputElement>(null)
+
+  // WebAuthn state
+  const [webauthnLoading, setWebauthnLoading] = useState(false)
+
+  // Push MFA state
+  const [pushLoading, setPushLoading] = useState(false)
+  const [, setPushChallengeId] = useState('')
+  const [pushChallengeCode, setPushChallengeCode] = useState('')
+  const pushPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Trust browser state
   const [showTrustPrompt, setShowTrustPrompt] = useState(false)
@@ -149,8 +159,11 @@ export function LoginPage() {
           // Single method - proceed directly
           setSelectedMfaMethod(methods[0])
           if (methods[0] === 'sms' || methods[0] === 'email') {
-            // Need to send OTP first
             sendOTP(data.mfa_session, methods[0])
+          } else if (methods[0] === 'webauthn') {
+            beginWebAuthnChallenge(data.mfa_session)
+          } else if (methods[0] === 'push') {
+            beginPushChallenge(data.mfa_session)
           } else {
             setTimeout(() => mfaInputRef.current?.focus(), 100)
           }
@@ -194,14 +207,173 @@ export function LoginPage() {
     }
   }
 
+  // Begin WebAuthn authentication ceremony
+  const beginWebAuthnChallenge = useCallback(async (session: string) => {
+    setWebauthnLoading(true)
+    setError('')
+
+    try {
+      // Step 1: Get WebAuthn options from server
+      const response = await fetch(`${baseURL}/oauth/mfa-webauthn-begin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfa_session: session }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error_description || 'Failed to start WebAuthn authentication')
+      }
+
+      const serverOptions = await response.json()
+
+      // Step 2: Decode options and call browser WebAuthn API
+      const publicKeyOptions = serverOptions.publicKey || serverOptions
+      const options = decodeCredentialRequestOptions(publicKeyOptions as PublicKeyCredentialRequestOptionsJSON)
+      const credential = await navigator.credentials.get({ publicKey: options }) as PublicKeyCredential
+
+      if (!credential) {
+        throw new Error('Authentication was cancelled')
+      }
+
+      // Step 3: Serialize and send to mfa-verify
+      const assertionJSON = serializeAssertionResponse(credential)
+
+      const verifyResponse = await fetch(`${baseURL}/oauth/mfa-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mfa_session: session,
+          code: assertionJSON,
+          method: 'webauthn',
+          trust_browser: trustBrowser,
+        }),
+      })
+
+      const verifyData = await verifyResponse.json()
+
+      if (!verifyResponse.ok) {
+        throw new Error(verifyData.error_description || 'WebAuthn verification failed')
+      }
+
+      if (verifyData.redirect_url) {
+        window.location.href = verifyData.redirect_url
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'WebAuthn authentication failed'
+      setError(message)
+      setWebauthnLoading(false)
+    }
+  }, [trustBrowser])
+
+  // Begin Push MFA challenge with polling
+  const beginPushChallenge = useCallback(async (session: string) => {
+    setPushLoading(true)
+    setError('')
+
+    try {
+      // Step 1: Create push challenge
+      const response = await fetch(`${baseURL}/oauth/mfa-push-begin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfa_session: session }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error_description || 'Failed to send push notification')
+      }
+
+      const data = await response.json()
+      setPushChallengeId(data.challenge_id)
+      setPushChallengeCode(data.challenge_code)
+
+      // Step 2: Start polling for approval
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(`${baseURL}/oauth/mfa-push-status/${data.challenge_id}`)
+          const statusData = await statusResponse.json()
+
+          if (statusData.status === 'approved') {
+            clearInterval(pollInterval)
+            pushPollingRef.current = null
+
+            // Step 3: Complete MFA verify with challenge_id
+            const verifyResponse = await fetch(`${baseURL}/oauth/mfa-verify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mfa_session: session,
+                code: data.challenge_id,
+                method: 'push',
+                trust_browser: trustBrowser,
+              }),
+            })
+
+            const verifyData = await verifyResponse.json()
+
+            if (!verifyResponse.ok) {
+              setError(verifyData.error_description || 'Push verification failed')
+              setPushLoading(false)
+              return
+            }
+
+            if (verifyData.redirect_url) {
+              window.location.href = verifyData.redirect_url
+            }
+          } else if (statusData.status === 'denied') {
+            clearInterval(pollInterval)
+            pushPollingRef.current = null
+            setError('Push notification was denied.')
+            setPushLoading(false)
+          } else if (statusData.status === 'expired') {
+            clearInterval(pollInterval)
+            pushPollingRef.current = null
+            setError('Push challenge has expired. Please try again.')
+            setPushLoading(false)
+          }
+        } catch {
+          // Network error during polling — continue polling
+        }
+      }, 2000)
+
+      pushPollingRef.current = pollInterval
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to initiate push challenge'
+      setError(message)
+      setPushLoading(false)
+    }
+  }, [trustBrowser])
+
+  // Cleanup push polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pushPollingRef.current) {
+        clearInterval(pushPollingRef.current)
+      }
+    }
+  }, [])
+
   // Select MFA method when multiple are available
   const selectMfaMethod = (method: string) => {
     setSelectedMfaMethod(method)
     setMfaMethodSelectionStep(false)
     setMfaCode('')
 
+    // Stop any existing push polling
+    if (pushPollingRef.current) {
+      clearInterval(pushPollingRef.current)
+      pushPollingRef.current = null
+    }
+    setPushLoading(false)
+    setWebauthnLoading(false)
+
     if (method === 'sms' || method === 'email') {
       sendOTP(mfaSession, method)
+    } else if (method === 'webauthn') {
+      beginWebAuthnChallenge(mfaSession)
+    } else if (method === 'push') {
+      beginPushChallenge(mfaSession)
     } else {
       setTimeout(() => mfaInputRef.current?.focus(), 100)
     }
@@ -267,6 +439,12 @@ export function LoginPage() {
   }
 
   const handleBackToOptions = () => {
+    // Clean up push polling
+    if (pushPollingRef.current) {
+      clearInterval(pushPollingRef.current)
+      pushPollingRef.current = null
+    }
+
     setLoginSession(null)
     setMfaRequired(false)
     setMfaSession('')
@@ -275,6 +453,10 @@ export function LoginPage() {
     setSelectedMfaMethod('')
     setMfaMethodSelectionStep(false)
     setOtpSent(false)
+    setWebauthnLoading(false)
+    setPushLoading(false)
+    setPushChallengeId('')
+    setPushChallengeCode('')
     setUsername('')
     setPassword('')
     setError('')
@@ -293,6 +475,8 @@ export function LoginPage() {
         return { method: 'email', label: 'Email Code', icon: <Mail className="h-5 w-5" /> }
       case 'webauthn':
         return { method: 'webauthn', label: 'Security Key', icon: <KeyRound className="h-5 w-5" /> }
+      case 'push':
+        return { method: 'push', label: 'Push Notification', icon: <Bell className="h-5 w-5" /> }
       default:
         return { method, label: method.toUpperCase(), icon: <Shield className="h-5 w-5" /> }
     }
@@ -410,6 +594,7 @@ export function LoginPage() {
                         {method === 'sms' && 'Receive a code via text message'}
                         {method === 'email' && 'Receive a code via email'}
                         {method === 'webauthn' && 'Use your security key or biometrics'}
+                        {method === 'push' && 'Approve on your mobile device'}
                       </p>
                     </div>
                   </div>
@@ -445,6 +630,8 @@ export function LoginPage() {
   // Show MFA verification form
   if (mfaRequired && loginSession) {
     const methodInfo = getMfaMethodInfo(selectedMfaMethod || 'totp')
+    const isWebAuthn = selectedMfaMethod === 'webauthn'
+    const isPush = selectedMfaMethod === 'push'
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -467,72 +654,160 @@ export function LoginPage() {
                 {selectedMfaMethod === 'totp' && 'Enter the 6-digit code from your authenticator app'}
                 {selectedMfaMethod === 'sms' && (otpSent ? 'Enter the code sent to your phone' : 'Sending code to your phone...')}
                 {selectedMfaMethod === 'email' && (otpSent ? 'Enter the code sent to your email' : 'Sending code to your email...')}
+                {isWebAuthn && 'Touch your security key or use biometrics to verify'}
+                {isPush && 'Approve the notification on your registered device'}
                 {!selectedMfaMethod && 'Enter the 6-digit code from your authenticator app'}
               </CardDescription>
             </div>
           </CardHeader>
 
           <CardContent>
-            <form onSubmit={handleMFASubmit} className="space-y-4">
-              {error && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
-                  <p className="text-sm text-red-600">{error}</p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="mfa-code">Verification Code</Label>
-                <Input
-                  ref={mfaInputRef}
-                  id="mfa-code"
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder="000000"
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
-                  required
-                  autoFocus
-                  className="text-center text-2xl tracking-widest font-mono"
-                />
+            {error && (
+              <div className="flex items-center gap-2 p-3 mb-4 bg-red-50 border border-red-200 rounded-md">
+                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <p className="text-sm text-red-600">{error}</p>
               </div>
+            )}
 
-              {(selectedMfaMethod === 'sms' || selectedMfaMethod === 'email') && (
-                <Button
-                  type="button"
-                  variant="link"
-                  className="w-full text-sm"
-                  onClick={() => sendOTP(mfaSession, selectedMfaMethod)}
-                  disabled={isSubmitting}
-                >
-                  Resend Code
-                </Button>
-              )}
-
-              <Button
-                type="submit"
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-                size="lg"
-                disabled={isSubmitting || mfaCode.length !== 6}
-              >
-                {isSubmitting ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Verifying...
-                  </span>
+            {/* WebAuthn: Waiting for security key */}
+            {isWebAuthn && (
+              <div className="space-y-4">
+                {webauthnLoading ? (
+                  <div className="text-center py-6">
+                    <Loader2 className="h-10 w-10 animate-spin mx-auto text-blue-600 mb-4" />
+                    <p className="text-lg font-medium">Waiting for your security key...</p>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Touch your security key or use biometrics when prompted by your browser.
+                    </p>
+                  </div>
                 ) : (
-                  'Verify'
+                  <div className="text-center py-6">
+                    <KeyRound className="h-10 w-10 mx-auto text-muted-foreground mb-4" />
+                    <Button
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                      size="lg"
+                      onClick={() => beginWebAuthnChallenge(mfaSession)}
+                    >
+                      Try Again
+                    </Button>
+                  </div>
                 )}
-              </Button>
+              </div>
+            )}
 
+            {/* Push MFA: Waiting for approval with challenge code */}
+            {isPush && (
+              <div className="space-y-4">
+                {pushLoading ? (
+                  <div className="text-center py-6">
+                    <Loader2 className="h-10 w-10 animate-spin mx-auto text-green-600 mb-4" />
+                    {pushChallengeCode && (
+                      <div className="mb-4">
+                        <p className="text-sm text-muted-foreground mb-2">Verify this number on your device:</p>
+                        <div className="text-5xl font-bold font-mono tracking-widest text-blue-700">
+                          {pushChallengeCode}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-lg font-medium">Waiting for approval...</p>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Open the notification on your device and approve the sign-in request.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => {
+                        if (pushPollingRef.current) {
+                          clearInterval(pushPollingRef.current)
+                          pushPollingRef.current = null
+                        }
+                        setPushLoading(false)
+                        setError('Push challenge cancelled.')
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <Bell className="h-10 w-10 mx-auto text-muted-foreground mb-4" />
+                    <Button
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                      size="lg"
+                      onClick={() => beginPushChallenge(mfaSession)}
+                    >
+                      Send Push Notification
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Standard code input (totp, sms, email, backup, bypass) */}
+            {!isWebAuthn && !isPush && (
+              <form onSubmit={handleMFASubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="mfa-code">Verification Code</Label>
+                  <Input
+                    ref={mfaInputRef}
+                    id="mfa-code"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    placeholder="000000"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                    required
+                    autoFocus
+                    className="text-center text-2xl tracking-widest font-mono"
+                  />
+                </div>
+
+                {(selectedMfaMethod === 'sms' || selectedMfaMethod === 'email') && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="w-full text-sm"
+                    onClick={() => sendOTP(mfaSession, selectedMfaMethod)}
+                    disabled={isSubmitting}
+                  >
+                    Resend Code
+                  </Button>
+                )}
+
+                <Button
+                  type="submit"
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  size="lg"
+                  disabled={isSubmitting || mfaCode.length !== 6}
+                >
+                  {isSubmitting ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Verifying...
+                    </span>
+                  ) : (
+                    'Verify'
+                  )}
+                </Button>
+              </form>
+            )}
+
+            <div className="space-y-2 mt-4">
               {mfaMethods.length > 1 && (
                 <Button
                   type="button"
                   variant="outline"
                   className="w-full"
                   onClick={() => {
+                    if (pushPollingRef.current) {
+                      clearInterval(pushPollingRef.current)
+                      pushPollingRef.current = null
+                    }
+                    setPushLoading(false)
+                    setWebauthnLoading(false)
                     setMfaMethodSelectionStep(true)
                     setMfaCode('')
                     setOtpSent(false)
@@ -551,7 +826,7 @@ export function LoginPage() {
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to login
               </Button>
-            </form>
+            </div>
           </CardContent>
 
           <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-lg">

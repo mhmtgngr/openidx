@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { GitPullRequest, Plus, Clock, CheckCircle, XCircle, Ban } from 'lucide-react'
+import { GitPullRequest, Plus, Clock, CheckCircle, XCircle, Ban, Timer } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -25,6 +25,7 @@ interface AccessRequest {
   status: string
   priority: string
   justification: string
+  expires_at?: string
   created_at: string
   updated_at: string
 }
@@ -36,9 +37,21 @@ const statusBadge = (status: string) => {
     fulfilled: 'bg-green-100 text-green-800',
     denied: 'bg-red-100 text-red-800',
     cancelled: 'bg-gray-100 text-gray-800',
+    expired: 'bg-orange-100 text-orange-800',
   }
   return map[status] || 'bg-gray-100 text-gray-800'
 }
+
+const DURATION_OPTIONS = [
+  { value: '', label: 'Permanent' },
+  { value: '4h', label: '4 hours' },
+  { value: '8h', label: '8 hours' },
+  { value: '1d', label: '1 day' },
+  { value: '3d', label: '3 days' },
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
+]
 
 export function AccessRequestsPage() {
   const queryClient = useQueryClient()
@@ -51,7 +64,7 @@ export function AccessRequestsPage() {
   const [comments, setComments] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
-  const [newReq, setNewReq] = useState({ resource_type: '', resource_name: '', justification: '', priority: 'normal' })
+  const [newReq, setNewReq] = useState({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '' })
 
   const { data: myRequestsData, isLoading: myLoading } = useQuery({
     queryKey: ['my-requests'],
@@ -75,13 +88,16 @@ export function AccessRequestsPage() {
   const allRequests = allData?.requests || []
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof newReq) => api.post('/api/v1/governance/requests', data),
+    mutationFn: (data: typeof newReq) => {
+      const payload = { ...data, duration: data.duration === 'permanent' ? '' : data.duration }
+      return api.post('/api/v1/governance/requests', payload)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-requests'] })
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
       toast({ title: 'Access request submitted' })
       setCreateOpen(false)
-      setNewReq({ resource_type: '', resource_name: '', justification: '', priority: 'normal' })
+      setNewReq({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '' })
     },
     onError: () => toast({ title: 'Failed to submit request', variant: 'destructive' }),
   })
@@ -163,7 +179,14 @@ export function AccessRequestsPage() {
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.resource_name}</TableCell>
                         <TableCell><Badge variant="outline">{r.resource_type}</Badge></TableCell>
-                        <TableCell><span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span></TableCell>
+                        <TableCell>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span>
+                          {r.expires_at && r.status !== 'expired' && (
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-600" title={`Expires ${new Date(r.expires_at).toLocaleString()}`}>
+                              <Timer className="h-3 w-3" />{new Date(r.expires_at).toLocaleDateString()}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell>{r.priority}</TableCell>
                         <TableCell>{formatDate(r.created_at)}</TableCell>
                         <TableCell>
@@ -260,7 +283,14 @@ export function AccessRequestsPage() {
                         <TableCell className="font-medium">{r.requester_name}</TableCell>
                         <TableCell>{r.resource_name}</TableCell>
                         <TableCell><Badge variant="outline">{r.resource_type}</Badge></TableCell>
-                        <TableCell><span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span></TableCell>
+                        <TableCell>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusBadge(r.status)}`}>{r.status}</span>
+                          {r.expires_at && r.status !== 'expired' && (
+                            <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-orange-600" title={`Expires ${new Date(r.expires_at).toLocaleString()}`}>
+                              <Timer className="h-3 w-3" />{new Date(r.expires_at).toLocaleDateString()}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell>{r.priority}</TableCell>
                         <TableCell>{formatDate(r.created_at)}</TableCell>
                       </TableRow>
@@ -310,6 +340,22 @@ export function AccessRequestsPage() {
                   <SelectItem value="urgent">Urgent</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Access Duration</label>
+              <Select value={newReq.duration} onValueChange={v => setNewReq(p => ({ ...p, duration: v }))}>
+                <SelectTrigger><SelectValue placeholder="Permanent" /></SelectTrigger>
+                <SelectContent>
+                  {DURATION_OPTIONS.map(opt => (
+                    <SelectItem key={opt.value || 'permanent'} value={opt.value || 'permanent'}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                {newReq.duration ? 'Access will be automatically revoked after the duration expires.' : 'Access will not expire automatically.'}
+              </p>
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
