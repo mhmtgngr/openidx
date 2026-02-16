@@ -1,0 +1,110 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "openidx.fullname" . }}-alerts
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: openidx.service_availability
+      rules:
+        - alert: ServiceDown
+          expr: up{job=~".*openidx.*"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Service {{ "{{ $labels.job }}" }} is down"
+            description: "{{ "{{ $labels.job }}" }} has been unreachable for more than 1 minute."
+
+        - alert: ServiceHighRestartRate
+          expr: changes(process_start_time_seconds{job=~".*openidx.*"}[15m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Service {{ "{{ $labels.job }}" }} is restarting frequently"
+            description: "{{ "{{ $labels.job }}" }} has restarted {{ "{{ $value }}" }} times in the last 15 minutes."
+
+    - name: openidx.latency_errors
+      rules:
+        - alert: HighRequestLatency
+          expr: histogram_quantile(0.95, sum(rate(openidx_http_request_duration_seconds_bucket[5m])) by (le, service)) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High p95 latency on {{ "{{ $labels.service }}" }}"
+            description: "p95 request latency for {{ "{{ $labels.service }}" }} exceeds 2 seconds."
+
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(openidx_http_requests_total{status=~"5.."}[5m])) by (service)
+              /
+              sum(rate(openidx_http_requests_total[5m])) by (service)
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High 5xx error rate on {{ "{{ $labels.service }}" }}"
+            description: "{{ "{{ $labels.service }}" }} has a {{ "{{ $value | humanizePercentage }}" }} server error rate."
+
+        - alert: HighClientErrorRate
+          expr: |
+            (
+              sum(rate(openidx_http_requests_total{status=~"4.."}[5m])) by (service)
+              /
+              sum(rate(openidx_http_requests_total[5m])) by (service)
+            ) > 0.20
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 4xx error rate on {{ "{{ $labels.service }}" }}"
+            description: "{{ "{{ $labels.service }}" }} has a {{ "{{ $value | humanizePercentage }}" }} client error rate."
+
+    - name: openidx.authentication
+      rules:
+        - alert: HighAuthFailureRate
+          expr: sum(rate(openidx_auth_attempts_total{outcome="failure"}[5m])) by (method) * 60 > 10
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High authentication failure rate"
+            description: "Auth method {{ "{{ $labels.method }}" }} is seeing {{ "{{ $value | humanize }}" }}/min failures."
+
+        - alert: TokenRefreshFailures
+          expr: sum(rate(openidx_token_operations_total{operation="refresh",outcome="failure"}[5m])) * 60 > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Token refresh failures elevated"
+            description: "Token refresh failures are at {{ "{{ $value | humanize }}" }}/min."
+
+    - name: openidx.infrastructure
+      rules:
+        - alert: HighMemoryUsage
+          expr: process_resident_memory_bytes{job=~".*openidx.*"} / 1024 / 1024 > 400
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High memory usage on {{ "{{ $labels.job }}" }}"
+            description: "{{ "{{ $labels.job }}" }} is using {{ "{{ $value | humanize }}" }}MB of memory."
+
+        - alert: HighRequestsInFlight
+          expr: openidx_http_requests_in_flight > 100
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High concurrent requests on {{ "{{ $labels.service }}" }}"
+            description: "{{ "{{ $labels.service }}" }} has {{ "{{ $value }}" }} requests in flight."
+{{- end }}

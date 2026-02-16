@@ -159,11 +159,25 @@ services:
   # Observability - Prometheus & Grafana
   #---------------------------------------------------------------------------
 
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: openidx-alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - openidx-network
+
   prometheus:
     image: prom/prometheus:v2.50.0
     container_name: openidx-prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
@@ -171,6 +185,8 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=15d'
+    depends_on:
+      - alertmanager
     networks:
       - openidx-network
 

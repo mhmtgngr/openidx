@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/oauth"
 	"github.com/openidx/openidx/internal/risk"
@@ -162,7 +163,7 @@ func main() {
 	// Start server in goroutine
 	go func() {
 		log.Info("Starting OAuth service", zap.Int("port", port))
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := tlsutil.ListenAndServe(server, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
 			log.Fatal("Failed to start server", zap.Error(err))
 		}
 	}()

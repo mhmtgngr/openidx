@@ -1,0 +1,46 @@
+global:
+  resolve_timeout: 5m
+  smtp_from: '${SMTP_FROM:-alertmanager@openidx.io}'
+  smtp_smarthost: '${SMTP_HOST:-localhost}:${SMTP_PORT:-587}'
+  smtp_auth_username: '${SMTP_USERNAME:-}'
+  smtp_auth_password: '${SMTP_PASSWORD:-}'
+  smtp_require_tls: false
+
+route:
+  receiver: webhook-default
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: critical-alerts
+      match:
+        severity: critical
+      group_wait: 10s
+      repeat_interval: 1h
+    - receiver: webhook-default
+      match:
+        severity: warning
+
+receivers:
+  - name: webhook-default
+    webhook_configs:
+      - url: 'http://admin-api:8005/api/v1/alerts/webhook'
+        send_resolved: true
+
+  - name: critical-alerts
+    webhook_configs:
+      - url: 'http://admin-api:8005/api/v1/alerts/webhook'
+        send_resolved: true
+    email_configs:
+      - to: '${ALERT_EMAIL:-admin@openidx.io}'
+        send_resolved: true
+        headers:
+          Subject: '[OpenIDX CRITICAL] {{ .GroupLabels.alertname }}'
+
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'service']

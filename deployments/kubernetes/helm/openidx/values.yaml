@@ -60,6 +60,9 @@ identityService:
     limits:
       cpu: 500m
       memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
   autoscaling:
     enabled: false
     minReplicas: 2
@@ -84,6 +87,9 @@ governanceService:
     limits:
       cpu: 500m
       memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
 
 # Provisioning Service
 provisioningService:
@@ -103,6 +109,9 @@ provisioningService:
     limits:
       cpu: 500m
       memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
 
 # Audit Service
 auditService:
@@ -122,6 +131,9 @@ auditService:
     limits:
       cpu: 500m
       memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
 
 # Admin API
 adminApi:
@@ -141,6 +153,9 @@ adminApi:
     limits:
       cpu: 500m
       memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
 
 # OAuth/OIDC Service
 oauthService:
@@ -160,6 +175,9 @@ oauthService:
     limits:
       cpu: 500m
       memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
   autoscaling:
     enabled: false
     minReplicas: 2
@@ -191,6 +209,9 @@ adminConsole:
       - secretName: admin-console-tls
         hosts:
           - admin.openidx.io
+  pdb:
+    enabled: true
+    maxUnavailable: 1
 
 # Keycloak
 keycloak:
@@ -296,3 +317,11 @@ securityContext:
   readOnlyRootFilesystem: true
   runAsNonRoot: true
   runAsUser: 1000
+
+# TLS for inter-service communication (opt-in)
+serviceTLS:
+  enabled: false
+  # Secret containing tls.crt and tls.key for service certificates
+  certSecret: ""
+  # Secret containing ca.crt for CA certificate (enables mTLS verification)
+  caSecret: ""

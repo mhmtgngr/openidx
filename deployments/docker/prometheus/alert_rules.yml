@@ -1,0 +1,109 @@
+groups:
+  - name: service_availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been unreachable for more than 1 minute."
+
+      - alert: ServiceHighRestartRate
+        expr: changes(process_start_time_seconds[15m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Service {{ $labels.job }} is restarting frequently"
+          description: "{{ $labels.job }} has restarted {{ $value }} times in the last 15 minutes."
+
+  - name: latency_errors
+    rules:
+      - alert: HighRequestLatency
+        expr: histogram_quantile(0.95, sum(rate(openidx_http_request_duration_seconds_bucket[5m])) by (le, service)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency on {{ $labels.service }}"
+          description: "p95 request latency for {{ $labels.service }} is {{ $value | humanizeDuration }} (threshold: 2s)."
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(openidx_http_requests_total{status=~"5.."}[5m])) by (service)
+            /
+            sum(rate(openidx_http_requests_total[5m])) by (service)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} has a {{ $value | humanizePercentage }} server error rate (threshold: 5%)."
+
+      - alert: HighClientErrorRate
+        expr: |
+          (
+            sum(rate(openidx_http_requests_total{status=~"4.."}[5m])) by (service)
+            /
+            sum(rate(openidx_http_requests_total[5m])) by (service)
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 4xx error rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} has a {{ $value | humanizePercentage }} client error rate (threshold: 20%)."
+
+  - name: authentication
+    rules:
+      - alert: HighAuthFailureRate
+        expr: sum(rate(openidx_auth_attempts_total{outcome="failure"}[5m])) by (method) * 60 > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High authentication failure rate"
+          description: "Auth method {{ $labels.method }} is seeing {{ $value | humanize }}/min failures (threshold: 10/min)."
+
+      - alert: TokenRefreshFailures
+        expr: sum(rate(openidx_token_operations_total{operation="refresh",outcome="failure"}[5m])) * 60 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Token refresh failures elevated"
+          description: "Token refresh failures are at {{ $value | humanize }}/min (threshold: 5/min)."
+
+  - name: infrastructure
+    rules:
+      - alert: PostgresConnectionFailure
+        expr: |
+          sum(rate(openidx_http_requests_total{path="/ready",status=~"5.."}[2m])) by (service) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connectivity issue on {{ $labels.service }}"
+          description: "{{ $labels.service }} readiness endpoint is returning errors, indicating possible database issues."
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.job }}"
+          description: "{{ $labels.job }} is using {{ $value | humanize }}MB of memory (threshold: 400MB)."
+
+      - alert: HighRequestsInFlight
+        expr: openidx_http_requests_in_flight > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High concurrent requests on {{ $labels.service }}"
+          description: "{{ $labels.service }} has {{ $value }} requests in flight (threshold: 100)."

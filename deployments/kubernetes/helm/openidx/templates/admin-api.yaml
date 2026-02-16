@@ -44,6 +44,18 @@ spec:
                 configMapKeyRef:
                   name: {{ include "openidx.fullname" . }}-config
                   key: OPA_URL
+            {{- if .Values.serviceTLS.enabled }}
+            - name: TLS_ENABLED
+              value: "true"
+            - name: TLS_CERT_FILE
+              value: "/tls/tls.crt"
+            - name: TLS_KEY_FILE
+              value: "/tls/tls.key"
+            {{- if .Values.serviceTLS.caSecret }}
+            - name: TLS_CA_FILE
+              value: "/tls-ca/ca.crt"
+            {{- end }}
+            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-db-url
@@ -53,18 +65,46 @@ spec:
             httpGet:
               path: /health
               port: http
+              {{- if .Values.serviceTLS.enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 15
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /health
               port: http
+              {{- if .Values.serviceTLS.enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
             {{- toYaml .Values.adminApi.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if .Values.serviceTLS.enabled }}
+          volumeMounts:
+            - name: tls-certs
+              mountPath: /tls
+              readOnly: true
+            {{- if .Values.serviceTLS.caSecret }}
+            - name: tls-ca
+              mountPath: /tls-ca
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if .Values.serviceTLS.enabled }}
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: {{ .Values.serviceTLS.certSecret }}
+        {{- if .Values.serviceTLS.caSecret }}
+        - name: tls-ca
+          secret:
+            secretName: {{ .Values.serviceTLS.caSecret }}
+        {{- end }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

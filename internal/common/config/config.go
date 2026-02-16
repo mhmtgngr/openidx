@@ -95,6 +95,17 @@ type Config struct {
 
 	// Adaptive MFA / Risk-based authentication
 	AdaptiveMFA AdaptiveMFAConfig `mapstructure:"adaptive_mfa"`
+
+	// TLS configuration for inter-service communication
+	TLS TLSConfig `mapstructure:"tls"`
+}
+
+// TLSConfig holds TLS configuration for service-to-service encryption
+type TLSConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`   // Enable TLS for the HTTP server
+	CertFile string `mapstructure:"cert_file"` // Path to TLS certificate file
+	KeyFile  string `mapstructure:"key_file"`  // Path to TLS private key file
+	CAFile   string `mapstructure:"ca_file"`   // Path to CA certificate for client verification (optional)
 }
 
 // WebAuthnConfig holds WebAuthn/FIDO2 configuration
@@ -307,6 +318,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("sms.otp_expiry", 300)
 	v.SetDefault("sms.max_attempts", 3)
 
+	// TLS defaults (disabled by default for backward compatibility)
+	v.SetDefault("tls.enabled", false)
+	v.SetDefault("tls.cert_file", "")
+	v.SetDefault("tls.key_file", "")
+	v.SetDefault("tls.ca_file", "")
+
 	// Adaptive MFA defaults
 	v.SetDefault("adaptive_mfa.enabled", true)
 	v.SetDefault("adaptive_mfa.new_device_risk_score", 30)
@@ -395,6 +412,10 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.mutlucell_password":   "MUTLUCELL_PASSWORD",
 		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
 		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
+		"tls.enabled":              "TLS_ENABLED",
+		"tls.cert_file":            "TLS_CERT_FILE",
+		"tls.key_file":             "TLS_KEY_FILE",
+		"tls.ca_file":              "TLS_CA_FILE",
 		"adaptive_mfa.enabled":     "ADAPTIVE_MFA_ENABLED",
 		"enable_rate_limit":        "ENABLE_RATE_LIMIT",
 		"rate_limit_requests":      "RATE_LIMIT_REQUESTS",

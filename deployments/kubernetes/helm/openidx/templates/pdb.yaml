@@ -1,0 +1,28 @@
+{{- $services := dict
+  "identity-service" .Values.identityService
+  "governance-service" .Values.governanceService
+  "provisioning-service" .Values.provisioningService
+  "audit-service" .Values.auditService
+  "admin-api" .Values.adminApi
+  "oauth-service" .Values.oauthService
+  "admin-console" .Values.adminConsole
+}}
+
+{{- range $name, $svc := $services }}
+{{- if and $svc.enabled (default true (dig "pdb" "enabled" true $svc)) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "openidx.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "openidx.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  maxUnavailable: {{ dig "pdb" "maxUnavailable" 1 $svc }}
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+{{- end }}
+{{- end }}
