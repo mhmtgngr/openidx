@@ -14,12 +14,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/opa"
 	"github.com/openidx/openidx/internal/common/tlsutil"
+	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/provisioning"
 )
 
@@ -44,13 +47,29 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// Initialize tracing
+	tracingCfg := tracing.ConfigFromEnv("provisioning-service", cfg.Environment)
+	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
+	if err != nil {
+		log.Warn("Failed to initialize tracing", zap.Error(err))
+	} else {
+		defer shutdownTracer(context.Background())
+	}
+
 	db, err := database.NewPostgres(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
 	defer db.Close()
 
-	redis, err := database.NewRedis(cfg.RedisURL)
+	redis, err := database.NewRedisFromConfig(database.RedisConfig{
+		URL:                cfg.RedisURL,
+		SentinelEnabled:    cfg.RedisSentinelEnabled,
+		SentinelMasterName: cfg.RedisSentinelMasterName,
+		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
+		SentinelPassword:   cfg.RedisSentinelPassword,
+		Password:           cfg.GetRedisPassword(),
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
 	}
@@ -62,6 +81,7 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(otelgin.Middleware("provisioning-service"))
 	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {

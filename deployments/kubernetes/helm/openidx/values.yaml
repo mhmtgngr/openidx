@@ -68,6 +68,7 @@ identityService:
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Governance Service
 governanceService:
@@ -90,6 +91,12 @@ governanceService:
   pdb:
     enabled: true
     maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Provisioning Service
 provisioningService:
@@ -112,6 +119,12 @@ provisioningService:
   pdb:
     enabled: true
     maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Audit Service
 auditService:
@@ -134,6 +147,12 @@ auditService:
   pdb:
     enabled: true
     maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Admin API
 adminApi:
@@ -156,6 +175,12 @@ adminApi:
   pdb:
     enabled: true
     maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # OAuth/OIDC Service
 oauthService:
@@ -183,6 +208,7 @@ oauthService:
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Admin Console
 adminConsole:
@@ -212,6 +238,12 @@ adminConsole:
   pdb:
     enabled: true
     maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Keycloak
 keycloak:
@@ -261,6 +293,11 @@ redis:
   master:
     persistence:
       size: 5Gi
+  sentinel:
+    enabled: false
+    masterName: "mymaster"
+    # When sentinel.enabled=true, deploy Redis in Sentinel mode for HA failover.
+    # Sentinel addresses are auto-discovered from the Helm chart's headless service.
 
 # Elasticsearch
 elasticsearch:

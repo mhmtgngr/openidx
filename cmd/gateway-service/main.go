@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/tlsutil"
+	"github.com/openidx/openidx/internal/common/tracing"
 )
 
 var (
@@ -50,12 +52,22 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// Initialize tracing
+	tracingCfg := tracing.ConfigFromEnv("gateway-service", cfg.Environment)
+	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
+	if err != nil {
+		log.Warn("Failed to initialize tracing", zap.Error(err))
+	} else {
+		defer shutdownTracer(context.Background())
+	}
+
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(otelgin.Middleware("gateway-service"))
 	router.Use(logger.GinMiddleware(log))
 	router.Use(middleware.CORS("http://localhost:3000", "http://localhost:5173"))
 	router.Use(middleware.RequestID())

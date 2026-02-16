@@ -2,10 +2,12 @@
 package logger
 
 import (
+	"context"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -89,6 +91,15 @@ func GinMiddleware(logger *zap.Logger) gin.HandlerFunc {
 			fields = append(fields, zap.Any("user_id", userID))
 		}
 
+		// Add trace context for log-trace correlation
+		span := trace.SpanFromContext(c.Request.Context())
+		if span.SpanContext().IsValid() {
+			fields = append(fields,
+				zap.String("trace_id", span.SpanContext().TraceID().String()),
+				zap.String("span_id", span.SpanContext().SpanID().String()),
+			)
+		}
+
 		// Log at appropriate level based on status code
 		switch {
 		case status >= 500:
@@ -121,4 +132,17 @@ func WithRequestID(logger *zap.Logger, requestID string) *zap.Logger {
 // WithUserID returns a logger with user ID
 func WithUserID(logger *zap.Logger, userID string) *zap.Logger {
 	return logger.With(zap.String("user_id", userID))
+}
+
+// WithTraceContext returns a logger with OpenTelemetry trace context fields
+// for log-trace correlation
+func WithTraceContext(logger *zap.Logger, ctx context.Context) *zap.Logger {
+	span := trace.SpanFromContext(ctx)
+	if !span.SpanContext().IsValid() {
+		return logger
+	}
+	return logger.With(
+		zap.String("trace_id", span.SpanContext().TraceID().String()),
+		zap.String("span_id", span.SpanContext().SpanID().String()),
+	)
 }

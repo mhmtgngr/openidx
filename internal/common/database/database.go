@@ -68,6 +68,57 @@ type RedisClient struct {
 	Client *redis.Client
 }
 
+// RedisConfig holds configuration for creating a Redis client with optional
+// Sentinel failover support.
+type RedisConfig struct {
+	// URL is the standard Redis connection string (used when Sentinel is disabled)
+	URL string
+
+	// Sentinel configuration
+	SentinelEnabled    bool
+	SentinelMasterName string
+	SentinelAddresses  []string
+	SentinelPassword   string
+
+	// Password for the Redis master (extracted from URL when using Sentinel)
+	Password string
+}
+
+// NewRedisFromConfig creates a Redis client from a RedisConfig.
+// When SentinelEnabled is true, it uses redis.NewFailoverClient with Sentinel
+// addresses for automatic master failover.
+func NewRedisFromConfig(cfg RedisConfig) (*RedisClient, error) {
+	if cfg.SentinelEnabled {
+		if len(cfg.SentinelAddresses) == 0 {
+			return nil, fmt.Errorf("redis sentinel enabled but no sentinel addresses configured")
+		}
+		opt := &redis.FailoverOptions{
+			MasterName:       cfg.SentinelMasterName,
+			SentinelAddrs:    cfg.SentinelAddresses,
+			SentinelPassword: cfg.SentinelPassword,
+			Password:         cfg.Password,
+			PoolSize:         10,
+			MinIdleConns:     5,
+			MaxRetries:       3,
+			DialTimeout:      5 * time.Second,
+			ReadTimeout:      3 * time.Second,
+			WriteTimeout:     3 * time.Second,
+		}
+		client := redis.NewFailoverClient(opt)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if _, err := client.Ping(ctx).Result(); err != nil {
+			return nil, fmt.Errorf("failed to connect to Redis via Sentinel: %w", err)
+		}
+		return &RedisClient{Client: client}, nil
+	}
+
+	// Non-sentinel: delegate to existing NewRedis
+	return NewRedis(cfg.URL)
+}
+
 // NewRedis creates a new Redis client
 func NewRedis(connString string) (*RedisClient, error) {
 	opt, err := redis.ParseURL(connString)

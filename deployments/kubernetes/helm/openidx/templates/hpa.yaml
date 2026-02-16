@@ -1,47 +1,42 @@
-{{- if and .Values.identityService.enabled (.Values.identityService.autoscaling).enabled }}
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: {{ include "openidx.fullname" . }}-identity-service
-  labels:
-    {{- include "openidx.labels" . | nindent 4 }}
-    app.kubernetes.io/component: identity-service
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: {{ include "openidx.fullname" . }}-identity-service
-  minReplicas: {{ .Values.identityService.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.identityService.autoscaling.maxReplicas }}
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.identityService.autoscaling.targetCPUUtilizationPercentage }}
-{{- end }}
+{{- $services := dict
+  "identity-service" .Values.identityService
+  "governance-service" .Values.governanceService
+  "provisioning-service" .Values.provisioningService
+  "audit-service" .Values.auditService
+  "admin-api" .Values.adminApi
+  "oauth-service" .Values.oauthService
+  "admin-console" .Values.adminConsole
+}}
+
+{{- range $name, $svc := $services }}
+{{- if and $svc.enabled (dig "autoscaling" "enabled" false $svc) }}
 ---
-{{- if and .Values.oauthService.enabled ((.Values.oauthService).autoscaling).enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "openidx.fullname" . }}-oauth-service
+  name: {{ include "openidx.fullname" $ }}-{{ $name }}
   labels:
-    {{- include "openidx.labels" . | nindent 4 }}
-    app.kubernetes.io/component: oauth-service
+    {{- include "openidx.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "openidx.fullname" . }}-oauth-service
-  minReplicas: {{ .Values.oauthService.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.oauthService.autoscaling.maxReplicas }}
+    name: {{ include "openidx.fullname" $ }}-{{ $name }}
+  minReplicas: {{ dig "autoscaling" "minReplicas" 2 $svc }}
+  maxReplicas: {{ dig "autoscaling" "maxReplicas" 10 $svc }}
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: {{ .Values.oauthService.autoscaling.targetCPUUtilizationPercentage }}
+          averageUtilization: {{ dig "autoscaling" "targetCPUUtilizationPercentage" 80 $svc }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ dig "autoscaling" "targetMemoryUtilizationPercentage" 80 $svc }}
+{{- end }}
 {{- end }}

@@ -99,6 +99,12 @@ type Config struct {
 	// Adaptive MFA / Risk-based authentication
 	AdaptiveMFA AdaptiveMFAConfig `mapstructure:"adaptive_mfa"`
 
+	// Redis Sentinel configuration
+	RedisSentinelEnabled    bool   `mapstructure:"redis_sentinel_enabled"`
+	RedisSentinelMasterName string `mapstructure:"redis_sentinel_master_name"`
+	RedisSentinelAddresses  string `mapstructure:"redis_sentinel_addresses"`
+	RedisSentinelPassword   string `mapstructure:"redis_sentinel_password"`
+
 	// CSRF protection
 	CSRFEnabled       bool   `mapstructure:"csrf_enabled"`
 	CSRFTrustedDomain string `mapstructure:"csrf_trusted_domain"`
@@ -328,6 +334,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("sms.otp_expiry", 300)
 	v.SetDefault("sms.max_attempts", 3)
 
+	// Redis Sentinel defaults
+	v.SetDefault("redis_sentinel_enabled", false)
+	v.SetDefault("redis_sentinel_master_name", "mymaster")
+	v.SetDefault("redis_sentinel_addresses", "")
+	v.SetDefault("redis_sentinel_password", "")
+
 	// CSRF defaults (disabled by default, auto-enabled in production via warning)
 	v.SetDefault("csrf_enabled", false)
 	v.SetDefault("csrf_trusted_domain", "")
@@ -426,6 +438,10 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.mutlucell_password":   "MUTLUCELL_PASSWORD",
 		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
 		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
+		"redis_sentinel_enabled":     "REDIS_SENTINEL_ENABLED",
+		"redis_sentinel_master_name": "REDIS_SENTINEL_MASTER_NAME",
+		"redis_sentinel_addresses":   "REDIS_SENTINEL_ADDRESSES",
+		"redis_sentinel_password":    "REDIS_SENTINEL_PASSWORD",
 		"csrf_enabled":             "CSRF_ENABLED",
 		"csrf_trusted_domain":      "CSRF_TRUSTED_DOMAIN",
 		"tls.enabled":              "TLS_ENABLED",
@@ -454,6 +470,38 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
 	return nil
+}
+
+// GetRedisSentinelAddresses returns the sentinel addresses as a slice
+func (c *Config) GetRedisSentinelAddresses() []string {
+	if c.RedisSentinelAddresses == "" {
+		return nil
+	}
+	addrs := strings.Split(c.RedisSentinelAddresses, ",")
+	result := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		a = strings.TrimSpace(a)
+		if a != "" {
+			result = append(result, a)
+		}
+	}
+	return result
+}
+
+// GetRedisPassword extracts the password from the Redis URL for Sentinel mode
+func (c *Config) GetRedisPassword() string {
+	// Redis URL format: redis://:password@host:port
+	url := c.RedisURL
+	if idx := strings.Index(url, "://"); idx >= 0 {
+		url = url[idx+3:]
+	}
+	if idx := strings.Index(url, "@"); idx >= 0 {
+		userInfo := url[:idx]
+		if idx2 := strings.Index(userInfo, ":"); idx2 >= 0 {
+			return userInfo[idx2+1:]
+		}
+	}
+	return ""
 }
 
 // GetCORSOrigins returns CORS allowed origins as a slice

@@ -175,6 +175,9 @@ services:
       - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=identity-service
     ports:
       - "8001:8001"
     depends_on:
@@ -201,6 +204,9 @@ services:
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=governance-service
     ports:
       - "8002:8002"
     depends_on:
@@ -224,6 +230,9 @@ services:
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=provisioning-service
     ports:
       - "8003:8003"
     depends_on:
@@ -245,6 +254,9 @@ services:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=audit-service
     ports:
       - "8004:8004"
     depends_on:
@@ -272,6 +284,9 @@ services:
       - SMTP_FROM=noreply@openidx.local
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=admin-api
     ports:
       - "8005:8005"
     depends_on:
@@ -299,6 +314,9 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=oauth-service
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required - run scripts/generate-secrets.sh}
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - PORT=8006
@@ -1033,6 +1051,9 @@ services:
       - APISIX_CONFIG_PATH=/apisix-conf/apisix.yaml
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=access-service
     volumes:
       - ziti_access_proxy:/ziti
       - browzer_config:/shared-config

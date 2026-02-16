@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/audit"
@@ -21,6 +22,7 @@ import (
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/tlsutil"
+	"github.com/openidx/openidx/internal/common/tracing"
 )
 
 var (
@@ -44,6 +46,15 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// Initialize tracing
+	tracingCfg := tracing.ConfigFromEnv("audit-service", cfg.Environment)
+	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
+	if err != nil {
+		log.Warn("Failed to initialize tracing", zap.Error(err))
+	} else {
+		defer shutdownTracer(context.Background())
+	}
+
 	db, err := database.NewPostgres(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
@@ -51,7 +62,14 @@ func main() {
 	defer db.Close()
 
 	// Initialize Redis connection (used for distributed rate limiting)
-	redis, err := database.NewRedis(cfg.RedisURL)
+	redis, err := database.NewRedisFromConfig(database.RedisConfig{
+		URL:                cfg.RedisURL,
+		SentinelEnabled:    cfg.RedisSentinelEnabled,
+		SentinelMasterName: cfg.RedisSentinelMasterName,
+		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
+		SentinelPassword:   cfg.RedisSentinelPassword,
+		Password:           cfg.GetRedisPassword(),
+	})
 	if err != nil {
 		log.Warn("Failed to connect to Redis, rate limiting will fail open", zap.Error(err))
 	} else {
@@ -73,6 +91,7 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(otelgin.Middleware("audit-service"))
 	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {

@@ -208,6 +208,50 @@ services:
     networks:
       - openidx-network
 
+  #---------------------------------------------------------------------------
+  # Log Aggregation - Loki + Promtail
+  #---------------------------------------------------------------------------
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: openidx-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - openidx-network
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: openidx-promtail
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - openidx-network
+
+  #---------------------------------------------------------------------------
+  # Distributed Tracing - Jaeger
+  #---------------------------------------------------------------------------
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    container_name: openidx-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    networks:
+      - openidx-network
+
 #---------------------------------------------------------------------------
 # Networks
 #---------------------------------------------------------------------------
@@ -227,3 +271,4 @@ volumes:
   etcd_data:
   prometheus_data:
   grafana_data:
+  loki_data:
