@@ -1326,6 +1326,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		gov.DELETE("/campaigns/:id", svc.handleDeleteCampaign)
 		gov.POST("/campaigns/:id/run", svc.handleRunCampaign)
 		gov.GET("/campaigns/:id/runs", svc.handleGetCampaignRuns)
+
+		// ABAC Policies
+		gov.GET("/abac-policies", svc.handleListABACPolicies)
+		gov.POST("/abac-policies", svc.handleCreateABACPolicy)
+		gov.GET("/abac-policies/:id", svc.handleGetABACPolicy)
+		gov.PUT("/abac-policies/:id", svc.handleUpdateABACPolicy)
+		gov.DELETE("/abac-policies/:id", svc.handleDeleteABACPolicy)
+		gov.POST("/abac-policies/evaluate", svc.handleEvaluateABACPolicies)
 	}
 }
 
@@ -2151,4 +2159,503 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 				zap.String("run_id", er.runID), zap.Error(err))
 		}
 	}
+}
+
+// --- ABAC (Attribute-Based Access Control) Policies ---
+
+// ABACPolicy represents an attribute-based access control policy
+type ABACPolicy struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	ResourceType string          `json:"resource_type"`
+	ResourceID   *string         `json:"resource_id,omitempty"`
+	Conditions   []ABACCondition `json:"conditions"`
+	Effect       string          `json:"effect"`
+	Priority     int             `json:"priority"`
+	Enabled      bool            `json:"enabled"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+}
+
+// ABACCondition represents a single condition within an ABAC policy
+type ABACCondition struct {
+	Attribute string      `json:"attribute"`
+	Operator  string      `json:"operator"`
+	Value     interface{} `json:"value"`
+}
+
+// ABACEvaluationRequest represents a request to evaluate ABAC policies
+type ABACEvaluationRequest struct {
+	UserAttributes map[string]interface{} `json:"user_attributes"`
+	ResourceType   string                 `json:"resource_type"`
+	ResourceID     string                 `json:"resource_id"`
+}
+
+// ABACEvaluationResult represents the result of an ABAC policy evaluation
+type ABACEvaluationResult struct {
+	Allowed  bool   `json:"allowed"`
+	Reason   string `json:"reason,omitempty"`
+	PolicyID string `json:"policy_id,omitempty"`
+}
+
+// CreateABACPolicy creates a new ABAC policy
+func (s *Service) CreateABACPolicy(ctx context.Context, policy *ABACPolicy) error {
+	s.logger.Info("Creating ABAC policy", zap.String("name", policy.Name))
+
+	if policy.ID == "" {
+		policy.ID = uuid.New().String()
+	}
+	now := time.Now()
+	policy.CreatedAt = now
+	policy.UpdatedAt = now
+
+	conditionsJSON, err := json.Marshal(policy.Conditions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal conditions: %w", err)
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO abac_policies (id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, policy.ID, policy.Name, policy.Description, policy.ResourceType, policy.ResourceID,
+		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, policy.CreatedAt, policy.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert ABAC policy: %w", err)
+	}
+
+	return nil
+}
+
+// ListABACPolicies retrieves ABAC policies with optional resource type filter
+func (s *Service) ListABACPolicies(ctx context.Context, resourceType string, offset, limit int) ([]ABACPolicy, int, error) {
+	var total int
+	var countQuery string
+	var countArgs []interface{}
+
+	if resourceType != "" {
+		countQuery = "SELECT COUNT(*) FROM abac_policies WHERE resource_type = $1"
+		countArgs = append(countArgs, resourceType)
+	} else {
+		countQuery = "SELECT COUNT(*) FROM abac_policies"
+	}
+
+	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count ABAC policies: %w", err)
+	}
+
+	var query string
+	var queryArgs []interface{}
+
+	if resourceType != "" {
+		query = `
+			SELECT id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at
+			FROM abac_policies
+			WHERE resource_type = $1
+			ORDER BY priority DESC, created_at DESC
+			OFFSET $2 LIMIT $3
+		`
+		queryArgs = []interface{}{resourceType, offset, limit}
+	} else {
+		query = `
+			SELECT id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at
+			FROM abac_policies
+			ORDER BY priority DESC, created_at DESC
+			OFFSET $1 LIMIT $2
+		`
+		queryArgs = []interface{}{offset, limit}
+	}
+
+	rows, err := s.db.Pool.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query ABAC policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []ABACPolicy
+	for rows.Next() {
+		var p ABACPolicy
+		var conditionsJSON []byte
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Description, &p.ResourceType, &p.ResourceID,
+			&conditionsJSON, &p.Effect, &p.Priority, &p.Enabled, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan ABAC policy: %w", err)
+		}
+		if len(conditionsJSON) > 0 {
+			if err := json.Unmarshal(conditionsJSON, &p.Conditions); err != nil {
+				s.logger.Warn("Failed to parse ABAC conditions", zap.String("policy_id", p.ID), zap.Error(err))
+			}
+		}
+		policies = append(policies, p)
+	}
+
+	return policies, total, nil
+}
+
+// GetABACPolicy retrieves a single ABAC policy by ID
+func (s *Service) GetABACPolicy(ctx context.Context, id string) (*ABACPolicy, error) {
+	var p ABACPolicy
+	var conditionsJSON []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at
+		FROM abac_policies WHERE id = $1
+	`, id).Scan(
+		&p.ID, &p.Name, &p.Description, &p.ResourceType, &p.ResourceID,
+		&conditionsJSON, &p.Effect, &p.Priority, &p.Enabled, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("ABAC policy not found")
+		}
+		return nil, fmt.Errorf("failed to get ABAC policy: %w", err)
+	}
+	if len(conditionsJSON) > 0 {
+		if err := json.Unmarshal(conditionsJSON, &p.Conditions); err != nil {
+			s.logger.Warn("Failed to parse ABAC conditions", zap.String("policy_id", p.ID), zap.Error(err))
+		}
+	}
+	return &p, nil
+}
+
+// UpdateABACPolicy updates an existing ABAC policy
+func (s *Service) UpdateABACPolicy(ctx context.Context, policy *ABACPolicy) error {
+	s.logger.Info("Updating ABAC policy", zap.String("policy_id", policy.ID))
+
+	now := time.Now()
+	policy.UpdatedAt = now
+
+	conditionsJSON, err := json.Marshal(policy.Conditions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal conditions: %w", err)
+	}
+
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE abac_policies
+		SET name = $2, description = $3, resource_type = $4, resource_id = $5,
+			conditions = $6, effect = $7, priority = $8, enabled = $9, updated_at = $10
+		WHERE id = $1
+	`, policy.ID, policy.Name, policy.Description, policy.ResourceType, policy.ResourceID,
+		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, now)
+	if err != nil {
+		return fmt.Errorf("failed to update ABAC policy: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("ABAC policy not found")
+	}
+
+	return nil
+}
+
+// DeleteABACPolicy deletes an ABAC policy by ID
+func (s *Service) DeleteABACPolicy(ctx context.Context, id string) error {
+	s.logger.Info("Deleting ABAC policy", zap.String("policy_id", id))
+
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM abac_policies WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete ABAC policy: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("ABAC policy not found")
+	}
+	return nil
+}
+
+// EvaluateABACPolicies evaluates all matching ABAC policies for a given request
+func (s *Service) EvaluateABACPolicies(ctx context.Context, req ABACEvaluationRequest) ABACEvaluationResult {
+	s.logger.Info("Evaluating ABAC policies",
+		zap.String("resource_type", req.ResourceType),
+		zap.String("resource_id", req.ResourceID))
+
+	// Query all enabled ABAC policies matching the resource type, ordered by priority DESC
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, conditions, effect, priority
+		FROM abac_policies
+		WHERE enabled = true
+			AND resource_type IN ($1, '*')
+			AND (resource_id IS NULL OR resource_id = '' OR resource_id = $2)
+		ORDER BY priority DESC
+	`, req.ResourceType, req.ResourceID)
+	if err != nil {
+		s.logger.Error("Failed to query ABAC policies for evaluation", zap.Error(err))
+		return ABACEvaluationResult{Allowed: true, Reason: "policy evaluation error, fail-open"}
+	}
+	defer rows.Close()
+
+	var denyMatch *ABACEvaluationResult
+	var allowMatch *ABACEvaluationResult
+
+	for rows.Next() {
+		var policyID, name, effect string
+		var conditionsJSON []byte
+		var priority int
+		if err := rows.Scan(&policyID, &name, &conditionsJSON, &effect, &priority); err != nil {
+			s.logger.Warn("Failed to scan ABAC policy during evaluation", zap.Error(err))
+			continue
+		}
+
+		var conditions []ABACCondition
+		if len(conditionsJSON) > 0 {
+			if err := json.Unmarshal(conditionsJSON, &conditions); err != nil {
+				s.logger.Warn("Failed to parse ABAC conditions during evaluation", zap.String("policy_id", policyID), zap.Error(err))
+				continue
+			}
+		}
+
+		// Evaluate all conditions — all must match for the policy to apply
+		allMatch := true
+		for _, cond := range conditions {
+			if !evaluateABACCondition(cond, req.UserAttributes) {
+				allMatch = false
+				break
+			}
+		}
+
+		if allMatch {
+			if effect == "deny" {
+				denyMatch = &ABACEvaluationResult{
+					Allowed:  false,
+					Reason:   fmt.Sprintf("denied by policy: %s", name),
+					PolicyID: policyID,
+				}
+				// Deny takes immediate precedence
+				break
+			}
+			if allowMatch == nil && effect == "allow" {
+				allowMatch = &ABACEvaluationResult{
+					Allowed:  true,
+					Reason:   fmt.Sprintf("allowed by policy: %s", name),
+					PolicyID: policyID,
+				}
+			}
+		}
+	}
+
+	// Deny overrides allow
+	if denyMatch != nil {
+		return *denyMatch
+	}
+
+	// If at least one allow policy matched, return allowed
+	if allowMatch != nil {
+		return *allowMatch
+	}
+
+	// Default: allowed (fail-open in dev mode)
+	return ABACEvaluationResult{Allowed: true, Reason: "no matching policies, default allow"}
+}
+
+// evaluateABACCondition evaluates a single ABAC condition against user attributes
+func evaluateABACCondition(cond ABACCondition, attrs map[string]interface{}) bool {
+	attrVal, exists := attrs[cond.Attribute]
+	if !exists {
+		return false
+	}
+
+	switch cond.Operator {
+	case "eq":
+		return fmt.Sprintf("%v", attrVal) == fmt.Sprintf("%v", cond.Value)
+
+	case "neq":
+		return fmt.Sprintf("%v", attrVal) != fmt.Sprintf("%v", cond.Value)
+
+	case "in":
+		return evalIn(attrVal, cond.Value)
+
+	case "not_in":
+		return !evalIn(attrVal, cond.Value)
+
+	case "gt":
+		a, b, ok := toFloat64Pair(attrVal, cond.Value)
+		return ok && a > b
+
+	case "gte":
+		a, b, ok := toFloat64Pair(attrVal, cond.Value)
+		return ok && a >= b
+
+	case "lt":
+		a, b, ok := toFloat64Pair(attrVal, cond.Value)
+		return ok && a < b
+
+	case "lte":
+		a, b, ok := toFloat64Pair(attrVal, cond.Value)
+		return ok && a <= b
+
+	case "between":
+		return evalBetween(attrVal, cond.Value)
+
+	case "contains":
+		return strings.Contains(fmt.Sprintf("%v", attrVal), fmt.Sprintf("%v", cond.Value))
+
+	default:
+		return false
+	}
+}
+
+// evalIn checks if attrVal is one of the values in the list
+func evalIn(attrVal interface{}, condValue interface{}) bool {
+	list, ok := condValue.([]interface{})
+	if !ok {
+		return false
+	}
+	attrStr := fmt.Sprintf("%v", attrVal)
+	for _, v := range list {
+		if fmt.Sprintf("%v", v) == attrStr {
+			return true
+		}
+	}
+	return false
+}
+
+// evalBetween checks if attrVal is between [min, max]
+func evalBetween(attrVal interface{}, condValue interface{}) bool {
+	list, ok := condValue.([]interface{})
+	if !ok || len(list) != 2 {
+		return false
+	}
+	a, minOk := toFloat64(attrVal)
+	minVal, minValOk := toFloat64(list[0])
+	maxVal, maxValOk := toFloat64(list[1])
+	if !minOk || !minValOk || !maxValOk {
+		return false
+	}
+	return a >= minVal && a <= maxVal
+}
+
+// toFloat64Pair converts two values to float64 for numeric comparison
+func toFloat64Pair(a, b interface{}) (float64, float64, bool) {
+	af, aOk := toFloat64(a)
+	bf, bOk := toFloat64(b)
+	return af, bf, aOk && bOk
+}
+
+// toFloat64 converts a value to float64
+func toFloat64(v interface{}) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case json.Number:
+		f, err := val.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(val, 64)
+		return f, err == nil
+	default:
+		// Try converting via string representation
+		f, err := strconv.ParseFloat(fmt.Sprintf("%v", v), 64)
+		return f, err == nil
+	}
+}
+
+// --- ABAC HTTP Handlers ---
+
+func (s *Service) handleCreateABACPolicy(c *gin.Context) {
+	var policy ABACPolicy
+	if err := c.ShouldBindJSON(&policy); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if policy.Name == "" {
+		c.JSON(400, gin.H{"error": "name is required"})
+		return
+	}
+	if policy.ResourceType == "" {
+		c.JSON(400, gin.H{"error": "resource_type is required"})
+		return
+	}
+	if policy.Effect != "allow" && policy.Effect != "deny" {
+		c.JSON(400, gin.H{"error": "effect must be 'allow' or 'deny'"})
+		return
+	}
+	if err := s.CreateABACPolicy(c.Request.Context(), &policy); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, policy)
+}
+
+func (s *Service) handleListABACPolicies(c *gin.Context) {
+	resourceType := c.Query("resource_type")
+
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil {
+			offset = parsed
+		}
+	}
+
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil {
+			limit = parsed
+		}
+	}
+
+	policies, total, err := s.ListABACPolicies(c.Request.Context(), resourceType, offset, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("X-Total-Count", strconv.Itoa(total))
+	c.JSON(200, policies)
+}
+
+func (s *Service) handleGetABACPolicy(c *gin.Context) {
+	policy, err := s.GetABACPolicy(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(404, gin.H{"error": "ABAC policy not found"})
+		return
+	}
+	c.JSON(200, policy)
+}
+
+func (s *Service) handleUpdateABACPolicy(c *gin.Context) {
+	var policy ABACPolicy
+	if err := c.ShouldBindJSON(&policy); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	policy.ID = c.Param("id")
+	if err := s.UpdateABACPolicy(c.Request.Context(), &policy); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, policy)
+}
+
+func (s *Service) handleDeleteABACPolicy(c *gin.Context) {
+	if err := s.DeleteABACPolicy(c.Request.Context(), c.Param("id")); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(204, nil)
+}
+
+func (s *Service) handleEvaluateABACPolicies(c *gin.Context) {
+	var req ABACEvaluationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if req.ResourceType == "" {
+		c.JSON(400, gin.H{"error": "resource_type is required"})
+		return
+	}
+	result := s.EvaluateABACPolicies(c.Request.Context(), req)
+	c.JSON(200, result)
 }

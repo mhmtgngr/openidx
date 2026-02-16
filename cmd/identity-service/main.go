@@ -187,6 +187,9 @@ func main() {
 	// Start SMS config watcher (polls DB every 30s for admin console changes)
 	go identityService.StartSMSConfigWatcher(ctx, 30*time.Second)
 
+	// Start role expiration checker (cleans up expired time-bound role assignments)
+	identityService.StartRoleExpirationChecker(ctx)
+
 	// Initialize portal service
 	portalService := portal.NewService(db, log)
 

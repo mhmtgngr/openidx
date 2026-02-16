@@ -31,6 +31,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/risk"
 )
 
@@ -155,6 +156,14 @@ type Role struct {
 	Description string    `json:"description"`
 	IsComposite bool      `json:"is_composite"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// UserRoleAssignment represents a role assignment with time-bound metadata
+type UserRoleAssignment struct {
+	Role       Role       `json:"role"`
+	AssignedBy string     `json:"assigned_by"`
+	AssignedAt time.Time  `json:"assigned_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 }
 
 // DirectoryAuthenticator is an interface for LDAP auth pass-through
@@ -2118,6 +2127,7 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		ORDER BY r.name
 	`, userID)
 	if err != nil {
@@ -2136,6 +2146,40 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 	}
 
 	return roles, nil
+}
+
+// GetUserRoleAssignments returns detailed role assignments for a user including expiry info
+func (s *Service) GetUserRoleAssignments(ctx context.Context, userID string) ([]UserRoleAssignment, error) {
+	s.logger.Debug("Getting user role assignments", zap.String("user_id", userID))
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT r.id, r.name, r.description, r.is_composite, r.created_at,
+		       COALESCE(ur.assigned_by::text, ''), ur.assigned_at, ur.expires_at
+		FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+		ORDER BY r.name
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var assignments []UserRoleAssignment
+	for rows.Next() {
+		var a UserRoleAssignment
+		err := rows.Scan(
+			&a.Role.ID, &a.Role.Name, &a.Role.Description, &a.Role.IsComposite, &a.Role.CreatedAt,
+			&a.AssignedBy, &a.AssignedAt, &a.ExpiresAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		assignments = append(assignments, a)
+	}
+
+	return assignments, nil
 }
 
 // PolicyViolation represents a governance policy violation
@@ -2403,15 +2447,15 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 	return nil
 }
 
-// AssignUserRole assigns a role to a user
-func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, assignedBy string) error {
+// AssignUserRole assigns a role to a user with an optional expiration time
+func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, assignedBy string, expiresAt *time.Time) error {
 	s.logger.Info("Assigning role to user",
 		zap.String("user_id", userID), zap.String("role_id", roleID), zap.String("assigned_by", assignedBy))
 
-	// Check if role assignment already exists
+	// Check if role assignment already exists (only non-expired)
 	var exists bool
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2)
+		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2 AND (expires_at IS NULL OR expires_at > NOW()))
 	`, userID, roleID).Scan(&exists)
 	if err != nil {
 		return err
@@ -2423,9 +2467,9 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 
 	// Insert role assignment
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at)
-		VALUES ($1, $2, $3, NOW())
-	`, userID, roleID, assignedBy)
+		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at, expires_at)
+		VALUES ($1, $2, $3, NOW(), $4)
+	`, userID, roleID, assignedBy, expiresAt)
 
 	return err
 }
@@ -2495,6 +2539,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 
 	identity := router.Group("/api/v1/identity")
 	identity.Use(svc.openIDXAuthMiddleware())
+	identity.Use(middleware.PermissionResolver(svc.db.Pool, svc.redis.Client))
 	{
 		// User Self-Service endpoints (require authentication)
 		identity.GET("/users/me", svc.handleGetCurrentUser)
@@ -2542,6 +2587,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/users/:id/roles", svc.handleAssignUserRole)
 		identity.DELETE("/users/:id/roles/:roleId", svc.handleRemoveUserRole)
 		identity.PUT("/users/:id/roles", svc.handleUpdateUserRoles)
+		identity.GET("/users/:id/role-assignments", svc.handleGetUserRoleAssignments)
 
 		// Group management
 		identity.GET("/groups", svc.handleListGroups)
@@ -3010,11 +3056,18 @@ func (s *Service) handleAssignUserRole(c *gin.Context) {
 	userID := c.Param("id")
 
 	var req struct {
-		RoleID string `json:"role_id" binding:"required"`
+		RoleID    string     `json:"role_id" binding:"required"`
+		ExpiresAt *time.Time `json:"expires_at"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate expires_at is in the future if provided
+	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) {
+		c.JSON(400, gin.H{"error": "expires_at must be in the future"})
 		return
 	}
 
@@ -3024,13 +3077,25 @@ func (s *Service) handleAssignUserRole(c *gin.Context) {
 		assignedBy = "" // Allow NULL for unauthenticated requests
 	}
 
-	err := s.AssignUserRole(c.Request.Context(), userID, req.RoleID, assignedBy)
+	err := s.AssignUserRole(c.Request.Context(), userID, req.RoleID, assignedBy, req.ExpiresAt)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(200, gin.H{"status": "assigned"})
+}
+
+func (s *Service) handleGetUserRoleAssignments(c *gin.Context) {
+	userID := c.Param("id")
+
+	assignments, err := s.GetUserRoleAssignments(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, assignments)
 }
 
 func (s *Service) handleRemoveUserRole(c *gin.Context) {
@@ -3999,7 +4064,27 @@ func (s *Service) SetRolePermissions(ctx context.Context, roleID string, permiss
 		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.invalidatePermissionCache(ctx, roleID)
+	return nil
+}
+
+// invalidatePermissionCache clears Redis-cached permissions for a role
+func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) {
+	if s.redis == nil || s.redis.Client == nil {
+		return
+	}
+	var roleName string
+	_ = s.db.Pool.QueryRow(ctx, "SELECT name FROM roles WHERE id = $1", roleID).Scan(&roleName)
+	if roleName == "" {
+		return
+	}
+	iter := s.redis.Client.Scan(ctx, 0, "perms:*"+roleName+"*", 100).Iterator()
+	for iter.Next(ctx) {
+		s.redis.Client.Del(ctx, iter.Val())
+	}
 }
 
 func (s *Service) handleListPermissions(c *gin.Context) {

@@ -2398,3 +2398,111 @@ CREATE TABLE IF NOT EXISTS entitlement_metadata (
 
 CREATE INDEX IF NOT EXISTS idx_entitlement_metadata_type ON entitlement_metadata(entitlement_type);
 CREATE INDEX IF NOT EXISTS idx_entitlement_metadata_risk ON entitlement_metadata(risk_level);
+
+-- ============================================================================
+-- Phase 8: Advanced RBAC & Delegation
+-- ============================================================================
+
+-- Additional permissions for fine-grained access control
+INSERT INTO permissions (id, name, description, resource, action) VALUES
+('a0000000-0000-0000-0000-000000000010', 'Read Groups', 'View groups', 'groups', 'read'),
+('a0000000-0000-0000-0000-000000000011', 'Write Groups', 'Create and edit groups', 'groups', 'write'),
+('a0000000-0000-0000-0000-000000000012', 'Delete Groups', 'Delete groups', 'groups', 'delete'),
+('a0000000-0000-0000-0000-000000000013', 'Read Policies', 'View governance policies', 'policies', 'read'),
+('a0000000-0000-0000-0000-000000000014', 'Write Policies', 'Create and edit governance policies', 'policies', 'write'),
+('a0000000-0000-0000-0000-000000000015', 'Read Directories', 'View directory integrations', 'directories', 'read'),
+('a0000000-0000-0000-0000-000000000016', 'Write Directories', 'Manage directory integrations', 'directories', 'write'),
+('a0000000-0000-0000-0000-000000000017', 'Read Sessions', 'View active sessions', 'sessions', 'read'),
+('a0000000-0000-0000-0000-000000000018', 'Write Sessions', 'Terminate sessions', 'sessions', 'write'),
+('a0000000-0000-0000-0000-000000000019', 'Delete Roles', 'Delete roles', 'roles', 'delete'),
+('a0000000-0000-0000-0000-000000000020', 'Read Settings', 'View system settings', 'settings', 'read'),
+('a0000000-0000-0000-0000-000000000021', 'Manage Delegations', 'Create and manage admin delegations', 'delegations', 'write')
+ON CONFLICT (resource, action) DO NOTHING;
+
+-- Seed role_permissions for built-in roles
+-- Admin gets ALL permissions
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT '60000000-0000-0000-0000-000000000001', id FROM permissions
+ON CONFLICT DO NOTHING;
+
+-- Manager: read/write users, read/write groups, read roles, read applications, read audit, read sessions
+INSERT INTO role_permissions (role_id, permission_id) VALUES
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000001'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000002'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000004'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000006'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000008'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000010'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000011'),
+('60000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000017')
+ON CONFLICT DO NOTHING;
+
+-- Auditor: read users, read roles, read applications, read audit, read policies, read sessions, read settings
+INSERT INTO role_permissions (role_id, permission_id) VALUES
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000001'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000004'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000006'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000008'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000010'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000013'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000017'),
+('60000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000020')
+ON CONFLICT DO NOTHING;
+
+-- User: read users, read roles, read applications, read groups
+INSERT INTO role_permissions (role_id, permission_id) VALUES
+('60000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000001'),
+('60000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000004'),
+('60000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000006'),
+('60000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-000000000010')
+ON CONFLICT DO NOTHING;
+
+-- Developer: read users, read roles, read applications, read groups, read directories
+INSERT INTO role_permissions (role_id, permission_id) VALUES
+('60000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000001'),
+('60000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000004'),
+('60000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000006'),
+('60000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000010'),
+('60000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000015')
+ON CONFLICT DO NOTHING;
+
+-- Time-bound role assignments
+ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS expiry_notified BOOLEAN DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_user_roles_expires ON user_roles(expires_at) WHERE expires_at IS NOT NULL;
+
+-- Admin Delegations
+CREATE TABLE IF NOT EXISTS admin_delegations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    delegate_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    delegated_by UUID NOT NULL REFERENCES users(id),
+    scope_type VARCHAR(50) NOT NULL,
+    scope_id UUID NOT NULL,
+    permissions JSONB NOT NULL DEFAULT '[]',
+    enabled BOOLEAN DEFAULT true,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_delegations_delegate ON admin_delegations(delegate_id);
+CREATE INDEX IF NOT EXISTS idx_admin_delegations_scope ON admin_delegations(scope_type, scope_id);
+CREATE INDEX IF NOT EXISTS idx_admin_delegations_expires ON admin_delegations(expires_at);
+
+-- ABAC Policies
+CREATE TABLE IF NOT EXISTS abac_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    resource_type VARCHAR(100) NOT NULL,
+    resource_id UUID,
+    conditions JSONB NOT NULL DEFAULT '[]',
+    effect VARCHAR(10) NOT NULL DEFAULT 'deny',
+    priority INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_abac_policies_resource ON abac_policies(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_abac_policies_enabled ON abac_policies(enabled);

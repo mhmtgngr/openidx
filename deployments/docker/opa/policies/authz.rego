@@ -140,6 +140,13 @@ allow if {
     contains(input.path, "/notifications")
 }
 
+# ─── Groups-based access ────────────────────────────────────────
+# Members of admin-group get full access
+allow if {
+    some group in input.user.groups
+    group == "admin-group"
+}
+
 # ─── Tenant isolation ───────────────────────────────────────────
 # If tenant_id is set on both user and resource, they must match
 deny[msg] if {

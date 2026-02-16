@@ -197,6 +197,9 @@ func main() {
 		v1.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
 	}
 
+	// Resolve permissions from roles (cached in Redis)
+	v1.Use(middleware.PermissionResolver(db.Pool, redis.Client))
+
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)
 	if cfg.EnableOPAAuthz {
 		opaClient := opa.NewClient(cfg.OPAURL, log)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // JWKSKey represents a single key from the JWKS endpoint
@@ -475,6 +478,148 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"error": "insufficient permissions",
+		})
+	}
+}
+
+// PermissionEntry represents a resolved permission for a user
+type PermissionEntry struct {
+	Resource  string `json:"resource"`
+	Action    string `json:"action"`
+	ScopeType string `json:"scope_type,omitempty"`
+	ScopeID   string `json:"scope_id,omitempty"`
+}
+
+// PermissionResolver loads the user's effective permissions from their roles via Redis cache.
+// Must run after Auth/SoftAuth so that "roles" and "user_id" are set in the context.
+func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rolesRaw, exists := c.Get("roles")
+		if !exists {
+			c.Next()
+			return
+		}
+		roleNames, ok := rolesRaw.([]string)
+		if !ok || len(roleNames) == 0 {
+			c.Next()
+			return
+		}
+
+		sortedRoles := make([]string, len(roleNames))
+		copy(sortedRoles, roleNames)
+		sort.Strings(sortedRoles)
+		cacheKey := "perms:" + strings.Join(sortedRoles, ",")
+
+		// Try Redis cache
+		if redisClient != nil {
+			cached, err := redisClient.Get(c.Request.Context(), cacheKey).Result()
+			if err == nil && cached != "" {
+				var perms []PermissionEntry
+				if json.Unmarshal([]byte(cached), &perms) == nil {
+					c.Set("permissions", perms)
+					c.Next()
+					return
+				}
+			}
+		}
+
+		// Cache miss: query DB
+		rows, err := db.Query(c.Request.Context(), `
+			SELECT DISTINCT p.resource, p.action
+			FROM permissions p
+			JOIN role_permissions rp ON p.id = rp.permission_id
+			JOIN roles r ON r.id = rp.role_id
+			WHERE r.name = ANY($1)
+		`, roleNames)
+		if err != nil {
+			c.Next()
+			return
+		}
+		defer rows.Close()
+
+		var perms []PermissionEntry
+		for rows.Next() {
+			var pe PermissionEntry
+			if err := rows.Scan(&pe.Resource, &pe.Action); err == nil {
+				perms = append(perms, pe)
+			}
+		}
+
+		// Also resolve admin delegations for this user
+		userIDRaw, _ := c.Get("user_id")
+		userID, _ := userIDRaw.(string)
+		if userID != "" {
+			delegRows, err := db.Query(c.Request.Context(), `
+				SELECT permissions, scope_type, scope_id::text
+				FROM admin_delegations
+				WHERE delegate_id = $1 AND enabled = true
+				AND (expires_at IS NULL OR expires_at > NOW())
+			`, userID)
+			if err == nil {
+				defer delegRows.Close()
+				for delegRows.Next() {
+					var permsJSON []byte
+					var scopeType, scopeID string
+					if delegRows.Scan(&permsJSON, &scopeType, &scopeID) == nil {
+						var delegPerms []string
+						if json.Unmarshal(permsJSON, &delegPerms) == nil {
+							for _, dp := range delegPerms {
+								parts := strings.SplitN(dp, ":", 2)
+								if len(parts) == 2 {
+									perms = append(perms, PermissionEntry{
+										Resource:  parts[0],
+										Action:    parts[1],
+										ScopeType: scopeType,
+										ScopeID:   scopeID,
+									})
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Cache in Redis for 5 minutes
+		if redisClient != nil {
+			if data, err := json.Marshal(perms); err == nil {
+				redisClient.Set(c.Request.Context(), cacheKey, string(data), 5*time.Minute)
+			}
+		}
+
+		c.Set("permissions", perms)
+		c.Next()
+	}
+}
+
+// RequirePermission checks that the user has a specific permission via their roles.
+func RequirePermission(resource, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		permsRaw, exists := c.Get("permissions")
+		if !exists {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": fmt.Sprintf("missing permission: %s:%s", resource, action),
+			})
+			return
+		}
+
+		perms, ok := permsRaw.([]PermissionEntry)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "invalid permissions format",
+			})
+			return
+		}
+
+		for _, p := range perms {
+			if p.Resource == resource && p.Action == action {
+				c.Next()
+				return
+			}
+		}
+
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": fmt.Sprintf("missing permission: %s:%s", resource, action),
 		})
 	}
 }

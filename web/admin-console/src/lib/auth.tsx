@@ -6,6 +6,8 @@ interface User {
   email: string
   name: string
   roles: string[]
+  groups: string[]
+  permissions: string[]
 }
 
 interface AuthContextType {
@@ -16,6 +18,7 @@ interface AuthContextType {
   login: () => void
   logout: () => void
   hasRole: (role: string) => boolean
+  hasPermission: (resource: string, action: string) => boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -120,6 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               email: (parsed.email as string) || '',
               name: (parsed.name as string) || (parsed.preferred_username as string) || '',
               roles: (parsed.roles as string[]) || [],
+              groups: (parsed.groups as string[]) || [],
+              permissions: (parsed.permissions as string[]) || [],
             })
             setToken(tokens.access_token)
             setIsAuthenticated(true)
@@ -162,6 +167,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: (parsed.email as string) || '',
             name: (parsed.name as string) || (parsed.preferred_username as string) || '',
             roles: roles,
+            groups: (parsed.groups as string[]) || [],
+            permissions: (parsed.permissions as string[]) || [],
           })
           setToken(storedToken)
           setIsAuthenticated(true)
@@ -219,6 +226,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: (parsed.email as string) || '',
             name: (parsed.name as string) || (parsed.preferred_username as string) || '',
             roles: (parsed.roles as string[]) || [],
+            groups: (parsed.groups as string[]) || [],
+            permissions: (parsed.permissions as string[]) || [],
           })
           setToken(tokens.access_token)
           setIsAuthenticated(true)
@@ -289,6 +298,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user?.roles.includes(role) || false
   }
 
+  const hasPermission = (resource: string, action: string) => {
+    if (user?.roles.includes('admin')) return true
+    return user?.permissions.includes(`${resource}:${action}`) || false
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -299,6 +313,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         hasRole,
+        hasPermission,
       }}
     >
       {children}

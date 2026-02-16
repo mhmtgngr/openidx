@@ -600,7 +600,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		name = firstName + " " + lastName
 	}
 
-	// Get user roles (initialize as empty slice so JSON serializes as [] not null)
+	// Get user roles (excluding expired time-bound assignments)
 	roleNames := make([]string, 0)
 	if userID != "" {
 		rows, err := s.db.Pool.Query(ctx, `
@@ -608,6 +608,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 			FROM roles r
 			JOIN user_roles ur ON r.id = ur.role_id
 			WHERE ur.user_id = $1
+			AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		`, userID)
 		if err == nil {
 			defer rows.Close()
@@ -620,17 +621,60 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		}
 	}
 
+	// Get user groups
+	groupNames := make([]string, 0)
+	if userID != "" {
+		gRows, err := s.db.Pool.Query(ctx, `
+			SELECT g.name FROM groups g
+			JOIN group_memberships gm ON g.id = gm.group_id
+			WHERE gm.user_id = $1
+		`, userID)
+		if err == nil {
+			defer gRows.Close()
+			for gRows.Next() {
+				var gn string
+				if err := gRows.Scan(&gn); err == nil {
+					groupNames = append(groupNames, gn)
+				}
+			}
+		}
+	}
+
+	// Get effective permissions (resource:action pairs)
+	permStrings := make([]string, 0)
+	if userID != "" {
+		pRows, err := s.db.Pool.Query(ctx, `
+			SELECT DISTINCT p.resource || ':' || p.action
+			FROM permissions p
+			JOIN role_permissions rp ON p.id = rp.permission_id
+			JOIN user_roles ur ON ur.role_id = rp.role_id
+			WHERE ur.user_id = $1
+			AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+		`, userID)
+		if err == nil {
+			defer pRows.Close()
+			for pRows.Next() {
+				var ps string
+				if err := pRows.Scan(&ps); err == nil {
+					permStrings = append(permStrings, ps)
+				}
+			}
+		}
+	}
+
 	claims := jwt.MapClaims{
-		"sub":       userID,
-		"aud":       clientID,
-		"client_id": clientID,
-		"scope":     scope,
-		"iss":       s.issuer,
-		"iat":       now.Unix(),
-		"exp":       now.Add(time.Duration(expiresIn) * time.Second).Unix(),
-		"email":     email,
-		"name":      name,
-		"roles":     roleNames,
+		"sub":         userID,
+		"aud":         clientID,
+		"client_id":   clientID,
+		"scope":       scope,
+		"iss":         s.issuer,
+		"iat":         now.Unix(),
+		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		"email":       email,
+		"name":        name,
+		"roles":       roleNames,
+		"groups":      groupNames,
+		"permissions": permStrings,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -653,13 +697,14 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		name = firstName + " " + lastName
 	}
 
-	// Get user roles (initialize as empty slice so JSON serializes as [] not null)
+	// Get user roles (excluding expired time-bound assignments)
 	roleNames := make([]string, 0)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.name
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 	`, userID)
 	if err == nil {
 		defer rows.Close()
@@ -671,17 +716,56 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		}
 	}
 
+	// Get user groups
+	groupNames := make([]string, 0)
+	gRows, gErr := s.db.Pool.Query(ctx, `
+		SELECT g.name FROM groups g
+		JOIN group_memberships gm ON g.id = gm.group_id
+		WHERE gm.user_id = $1
+	`, userID)
+	if gErr == nil {
+		defer gRows.Close()
+		for gRows.Next() {
+			var gn string
+			if gRows.Scan(&gn) == nil {
+				groupNames = append(groupNames, gn)
+			}
+		}
+	}
+
+	// Get effective permissions
+	permStrings := make([]string, 0)
+	pRows, pErr := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT p.resource || ':' || p.action
+		FROM permissions p
+		JOIN role_permissions rp ON p.id = rp.permission_id
+		JOIN user_roles ur ON ur.role_id = rp.role_id
+		WHERE ur.user_id = $1
+		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+	`, userID)
+	if pErr == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var ps string
+			if pRows.Scan(&ps) == nil {
+				permStrings = append(permStrings, ps)
+			}
+		}
+	}
+
 	claims := jwt.MapClaims{
-		"sub":        userID,
-		"aud":        clientID,
-		"iss":        s.issuer,
-		"iat":        now.Unix(),
-		"exp":        now.Add(time.Duration(expiresIn) * time.Second).Unix(),
-		"email":      email,
-		"name":       name,
-		"given_name": firstName,
+		"sub":         userID,
+		"aud":         clientID,
+		"iss":         s.issuer,
+		"iat":         now.Unix(),
+		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
+		"email":       email,
+		"name":        name,
+		"given_name":  firstName,
 		"family_name": lastName,
-		"roles":      roleNames,
+		"roles":       roleNames,
+		"groups":      groupNames,
+		"permissions": permStrings,
 	}
 
 	if nonce != "" {

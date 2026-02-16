@@ -163,6 +163,23 @@ type BrandingSettings struct {
 	LoginPageMessage string           `json:"login_page_message,omitempty"`
 }
 
+// AdminDelegation represents a delegated admin permission assignment
+type AdminDelegation struct {
+	ID              string     `json:"id"`
+	DelegateID      string     `json:"delegate_id"`
+	DelegateName    string     `json:"delegate_name,omitempty"`
+	DelegatedBy     string     `json:"delegated_by"`
+	DelegatedByName string     `json:"delegated_by_name,omitempty"`
+	ScopeType       string     `json:"scope_type"`
+	ScopeID         string     `json:"scope_id"`
+	ScopeName       string     `json:"scope_name,omitempty"`
+	Permissions     []string   `json:"permissions"`
+	Enabled         bool       `json:"enabled"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
 // DirectorySyncer defines the interface for directory sync operations
 type DirectorySyncer interface {
 	TestConnection(ctx context.Context, cfg interface{}) error
@@ -906,6 +923,13 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/entitlements", svc.handleGetEntitlementCatalog)
 	router.GET("/entitlements/stats", svc.handleGetEntitlementStats)
 	router.PUT("/entitlements/:type/:id/metadata", svc.handleUpdateEntitlementMetadata)
+
+	// Admin delegations
+	router.GET("/delegations", svc.handleListDelegations)
+	router.POST("/delegations", svc.handleCreateDelegation)
+	router.GET("/delegations/:id", svc.handleGetDelegation)
+	router.PUT("/delegations/:id", svc.handleUpdateDelegation)
+	router.DELETE("/delegations/:id", svc.handleDeleteDelegation)
 }
 
 // HTTP Handlers
@@ -2484,4 +2508,344 @@ func (s *Service) handleUpdateEntitlementMetadata(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Entitlement metadata updated"})
+}
+
+// ── Admin Delegation service methods ──────────────────────────────────────────
+
+// CreateDelegation creates a new admin delegation
+func (s *Service) CreateDelegation(ctx context.Context, d *AdminDelegation) error {
+	s.logger.Info("Creating admin delegation", zap.String("delegate_id", d.DelegateID), zap.String("scope_type", d.ScopeType))
+
+	d.ID = uuid.New().String()
+	d.CreatedAt = time.Now()
+	d.UpdatedAt = time.Now()
+
+	permJSON, err := json.Marshal(d.Permissions)
+	if err != nil {
+		return fmt.Errorf("failed to marshal permissions: %w", err)
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO admin_delegations (id, delegate_id, delegated_by, scope_type, scope_id, permissions, enabled, expires_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, d.ID, d.DelegateID, d.DelegatedBy, d.ScopeType, d.ScopeID, permJSON, d.Enabled, d.ExpiresAt, d.CreatedAt, d.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create delegation: %w", err)
+	}
+
+	return nil
+}
+
+// ListDelegations returns admin delegations with pagination
+func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeType string) ([]AdminDelegation, int, error) {
+	s.logger.Debug("Listing admin delegations")
+
+	countQuery := "SELECT COUNT(*) FROM admin_delegations"
+	dataQuery := `
+		SELECT ad.id, ad.delegate_id,
+			COALESCE(u1.first_name || ' ' || u1.last_name, u1.username, '') as delegate_name,
+			ad.delegated_by,
+			COALESCE(u2.first_name || ' ' || u2.last_name, u2.username, '') as delegated_by_name,
+			ad.scope_type, ad.scope_id,
+			CASE ad.scope_type
+				WHEN 'group' THEN (SELECT name FROM groups WHERE id = ad.scope_id)
+				WHEN 'role' THEN (SELECT name FROM roles WHERE id = ad.scope_id)
+				WHEN 'application' THEN (SELECT name FROM applications WHERE id = ad.scope_id)
+				WHEN 'organization' THEN (SELECT name FROM organizations WHERE id = ad.scope_id)
+				ELSE ''
+			END as scope_name,
+			ad.permissions, ad.enabled, ad.expires_at, ad.created_at, ad.updated_at
+		FROM admin_delegations ad
+		LEFT JOIN users u1 ON u1.id = ad.delegate_id
+		LEFT JOIN users u2 ON u2.id = ad.delegated_by
+	`
+
+	conditions := []string{}
+	args := []interface{}{}
+	argCount := 1
+
+	if scopeType != "" {
+		conditions = append(conditions, fmt.Sprintf("ad.scope_type = $%d", argCount))
+		args = append(args, scopeType)
+		argCount++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var total int
+	if err := s.db.Pool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count delegations: %w", err)
+	}
+
+	dataQuery += whereClause + " ORDER BY ad.created_at DESC"
+	if limit > 0 {
+		dataQuery += fmt.Sprintf(" LIMIT $%d", argCount)
+		args = append(args, limit)
+		argCount++
+	}
+	if offset > 0 {
+		dataQuery += fmt.Sprintf(" OFFSET $%d", argCount)
+		args = append(args, offset)
+		argCount++
+	}
+
+	rows, err := s.db.Pool.Query(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query delegations: %w", err)
+	}
+	defer rows.Close()
+
+	var delegations []AdminDelegation
+	for rows.Next() {
+		var d AdminDelegation
+		var permJSON []byte
+		var scopeName *string
+		if err := rows.Scan(&d.ID, &d.DelegateID, &d.DelegateName, &d.DelegatedBy, &d.DelegatedByName,
+			&d.ScopeType, &d.ScopeID, &scopeName, &permJSON, &d.Enabled, &d.ExpiresAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			s.logger.Warn("Failed to scan delegation row", zap.Error(err))
+			continue
+		}
+		if scopeName != nil {
+			d.ScopeName = *scopeName
+		}
+		if len(permJSON) > 0 {
+			json.Unmarshal(permJSON, &d.Permissions)
+		}
+		if d.Permissions == nil {
+			d.Permissions = []string{}
+		}
+		delegations = append(delegations, d)
+	}
+	if delegations == nil {
+		delegations = []AdminDelegation{}
+	}
+
+	return delegations, total, nil
+}
+
+// GetDelegation returns a single admin delegation by ID
+func (s *Service) GetDelegation(ctx context.Context, id string) (*AdminDelegation, error) {
+	s.logger.Debug("Getting admin delegation", zap.String("id", id))
+
+	var d AdminDelegation
+	var permJSON []byte
+	var scopeName *string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT ad.id, ad.delegate_id,
+			COALESCE(u1.first_name || ' ' || u1.last_name, u1.username, '') as delegate_name,
+			ad.delegated_by,
+			COALESCE(u2.first_name || ' ' || u2.last_name, u2.username, '') as delegated_by_name,
+			ad.scope_type, ad.scope_id,
+			CASE ad.scope_type
+				WHEN 'group' THEN (SELECT name FROM groups WHERE id = ad.scope_id)
+				WHEN 'role' THEN (SELECT name FROM roles WHERE id = ad.scope_id)
+				WHEN 'application' THEN (SELECT name FROM applications WHERE id = ad.scope_id)
+				WHEN 'organization' THEN (SELECT name FROM organizations WHERE id = ad.scope_id)
+				ELSE ''
+			END as scope_name,
+			ad.permissions, ad.enabled, ad.expires_at, ad.created_at, ad.updated_at
+		FROM admin_delegations ad
+		LEFT JOIN users u1 ON u1.id = ad.delegate_id
+		LEFT JOIN users u2 ON u2.id = ad.delegated_by
+		WHERE ad.id = $1
+	`, id).Scan(&d.ID, &d.DelegateID, &d.DelegateName, &d.DelegatedBy, &d.DelegatedByName,
+		&d.ScopeType, &d.ScopeID, &scopeName, &permJSON, &d.Enabled, &d.ExpiresAt, &d.CreatedAt, &d.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("delegation not found: %w", err)
+	}
+	if scopeName != nil {
+		d.ScopeName = *scopeName
+	}
+	if len(permJSON) > 0 {
+		json.Unmarshal(permJSON, &d.Permissions)
+	}
+	if d.Permissions == nil {
+		d.Permissions = []string{}
+	}
+
+	return &d, nil
+}
+
+// UpdateDelegation updates mutable fields on an admin delegation
+func (s *Service) UpdateDelegation(ctx context.Context, id string, updates map[string]interface{}) error {
+	s.logger.Info("Updating admin delegation", zap.String("id", id))
+
+	setParts := []string{}
+	args := []interface{}{}
+	argCount := 1
+
+	if scopeType, ok := updates["scope_type"].(string); ok {
+		setParts = append(setParts, fmt.Sprintf("scope_type = $%d", argCount))
+		args = append(args, scopeType)
+		argCount++
+	}
+	if scopeID, ok := updates["scope_id"].(string); ok {
+		setParts = append(setParts, fmt.Sprintf("scope_id = $%d", argCount))
+		args = append(args, scopeID)
+		argCount++
+	}
+	if permsRaw, ok := updates["permissions"]; ok {
+		var perms []string
+		if permsList, ok := permsRaw.([]string); ok {
+			perms = permsList
+		} else if permsList, ok := permsRaw.([]interface{}); ok {
+			for _, p := range permsList {
+				if ps, ok := p.(string); ok {
+					perms = append(perms, ps)
+				}
+			}
+		}
+		permJSON, _ := json.Marshal(perms)
+		setParts = append(setParts, fmt.Sprintf("permissions = $%d", argCount))
+		args = append(args, permJSON)
+		argCount++
+	}
+	if enabled, ok := updates["enabled"].(bool); ok {
+		setParts = append(setParts, fmt.Sprintf("enabled = $%d", argCount))
+		args = append(args, enabled)
+		argCount++
+	}
+	if expiresAtStr, ok := updates["expires_at"].(string); ok {
+		if expiresAtStr == "" {
+			setParts = append(setParts, fmt.Sprintf("expires_at = $%d", argCount))
+			args = append(args, nil)
+			argCount++
+		} else if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
+			setParts = append(setParts, fmt.Sprintf("expires_at = $%d", argCount))
+			args = append(args, t)
+			argCount++
+		}
+	}
+
+	if len(setParts) == 0 {
+		return fmt.Errorf("no valid fields to update")
+	}
+
+	setParts = append(setParts, "updated_at = NOW()")
+	query := fmt.Sprintf("UPDATE admin_delegations SET %s WHERE id = $%d",
+		strings.Join(setParts, ", "), argCount)
+	args = append(args, id)
+
+	result, err := s.db.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update delegation: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("delegation not found")
+	}
+
+	return nil
+}
+
+// DeleteDelegation removes an admin delegation by ID
+func (s *Service) DeleteDelegation(ctx context.Context, id string) error {
+	s.logger.Info("Deleting admin delegation", zap.String("id", id))
+
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM admin_delegations WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete delegation: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("delegation not found")
+	}
+
+	return nil
+}
+
+// ── Admin Delegation HTTP handlers ────────────────────────────────────────────
+
+func (s *Service) handleListDelegations(c *gin.Context) {
+	offset := 0
+	limit := 20
+	if v := c.Query("offset"); v != "" {
+		fmt.Sscanf(v, "%d", &offset)
+	}
+	if v := c.Query("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	scopeType := c.Query("scope_type")
+
+	delegations, total, err := s.ListDelegations(c.Request.Context(), offset, limit, scopeType)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("X-Total-Count", fmt.Sprintf("%d", total))
+	c.JSON(200, delegations)
+}
+
+func (s *Service) handleCreateDelegation(c *gin.Context) {
+	var d AdminDelegation
+	if err := c.ShouldBindJSON(&d); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if d.DelegateID == "" || d.ScopeType == "" || d.ScopeID == "" {
+		c.JSON(400, gin.H{"error": "delegate_id, scope_type, and scope_id are required"})
+		return
+	}
+	// Set delegated_by from the authenticated user if available
+	if userID, exists := c.Get("user_id"); exists {
+		if uid, ok := userID.(string); ok && d.DelegatedBy == "" {
+			d.DelegatedBy = uid
+		}
+	}
+	if d.DelegatedBy == "" {
+		c.JSON(400, gin.H{"error": "delegated_by is required"})
+		return
+	}
+	if d.Permissions == nil {
+		d.Permissions = []string{}
+	}
+
+	if err := s.CreateDelegation(c.Request.Context(), &d); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(201, d)
+}
+
+func (s *Service) handleGetDelegation(c *gin.Context) {
+	id := c.Param("id")
+	d, err := s.GetDelegation(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "Delegation not found"})
+		return
+	}
+	c.JSON(200, d)
+}
+
+func (s *Service) handleUpdateDelegation(c *gin.Context) {
+	id := c.Param("id")
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.UpdateDelegation(c.Request.Context(), id, updates); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": "Delegation not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Delegation updated successfully"})
+}
+
+func (s *Service) handleDeleteDelegation(c *gin.Context) {
+	id := c.Param("id")
+	if err := s.DeleteDelegation(c.Request.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(404, gin.H{"error": "Delegation not found"})
+			return
+		}
+		c.JSON(500, gin.H{"error": "Failed to delete delegation"})
+		return
+	}
+	c.JSON(204, nil)
 }

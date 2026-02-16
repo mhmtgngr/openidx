@@ -41,6 +41,8 @@ import {
   Target,
   Package,
   Gauge,
+  UserCheck,
+  Filter,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -129,6 +131,7 @@ const navigationSections: NavSection[] = [
       { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
       { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, adminOnly: true },
       { name: 'Entitlements', href: '/entitlements', icon: Package, adminOnly: true },
+      { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, adminOnly: true },
       { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
       { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
     ],
@@ -163,6 +166,7 @@ const navigationSections: NavSection[] = [
     adminOnly: true,
     items: [
       { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
+      { name: 'Delegations', href: '/delegations', icon: UserCheck, adminOnly: true },
       { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
       { name: 'API Docs', href: '/api-docs', icon: BookOpen, adminOnly: true },
       { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },

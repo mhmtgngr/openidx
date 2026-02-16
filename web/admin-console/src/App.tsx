@@ -53,6 +53,8 @@ import { CertificationCampaignsPage } from './pages/certification-campaigns'
 import { LifecycleWorkflowsPage } from './pages/lifecycle-workflows'
 import { EntitlementsPage } from './pages/entitlements'
 import { ComplianceDashboardPage } from './pages/compliance-dashboard'
+import { DelegationsPage } from './pages/delegations'
+import { ABACPoliciesPage } from './pages/abac-policies'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -336,6 +338,16 @@ export default function App() {
           <Route path="compliance-dashboard" element={
             <AdminRoute>
               <ComplianceDashboardPage />
+            </AdminRoute>
+          } />
+          <Route path="delegations" element={
+            <AdminRoute>
+              <DelegationsPage />
+            </AdminRoute>
+          } />
+          <Route path="abac-policies" element={
+            <AdminRoute>
+              <ABACPoliciesPage />
             </AdminRoute>
           } />
         </Route>
