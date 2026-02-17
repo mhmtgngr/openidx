@@ -37,6 +37,27 @@ import (
 
 // Use the min function from pushmfa.go
 
+// ctxKey is an unexported type for context keys in this package.
+type ctxKey int
+
+const (
+	// ctxKeyActorID is the context key for the actor (authenticated user) performing the operation.
+	ctxKeyActorID ctxKey = iota
+)
+
+// ContextWithActorID returns a new context that carries the given actor ID.
+func ContextWithActorID(ctx context.Context, actorID string) context.Context {
+	return context.WithValue(ctx, ctxKeyActorID, actorID)
+}
+
+// actorIDFromContext extracts the actor ID from context, returning "system" if not set.
+func actorIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyActorID).(string); ok && v != "" {
+		return v
+	}
+	return "system"
+}
+
 // User represents a user in the system
 type User struct {
 	ID            string            `json:"id"`
@@ -615,6 +636,15 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
 		user.Enabled, user.EmailVerified, user.CreatedAt, user.UpdatedAt)
 
+	if err == nil {
+		actorID := actorIDFromContext(ctx)
+		s.logAuditEvent("identity", "user_management", "user.created", "success",
+			actorID, user.ID, "user", map[string]interface{}{
+				"username": user.Username,
+				"email":    user.Email,
+			})
+	}
+
 	return err
 }
 
@@ -643,6 +673,11 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 // DeleteUser deletes a user
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting user", zap.String("user_id", userID))
+
+	// Log audit event before deletion so the record exists even if delete succeeds
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent("identity", "user_management", "user.deleted", "success",
+		actorID, userID, "user", nil)
 
 	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
 	if err != nil {
@@ -1391,6 +1426,12 @@ func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword
 		WHERE id = $1
 	`, userID, string(hashedPassword), now)
 
+	if err == nil {
+		actorID := actorIDFromContext(ctx)
+		s.logAuditEvent("identity", "security", "user.password_changed", "success",
+			actorID, userID, "user", nil)
+	}
+
 	return err
 }
 
@@ -1617,7 +1658,9 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 	totpID := uuid.New().String()
 
 	// Remove any existing TOTP records for this user before inserting
-	_, _ = s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1`, userID)
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("failed to remove existing TOTP records: %w", err)
+	}
 
 	// Insert TOTP record
 	_, err := s.db.Pool.Exec(ctx, `
@@ -2134,6 +2177,14 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 		VALUES ($1, $2, $3, $4, $5, $5)
 	`, role.ID, role.Name, role.Description, role.IsComposite, now)
 
+	if err == nil {
+		actorID := actorIDFromContext(ctx)
+		s.logAuditEvent("identity", "role_management", "role.created", "success",
+			actorID, role.ID, "role", map[string]interface{}{
+				"role_name": role.Name,
+			})
+	}
+
 	return err
 }
 
@@ -2154,6 +2205,12 @@ func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("role not found")
 	}
+
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent("identity", "role_management", "role.updated", "success",
+		actorID, role.ID, "role", map[string]interface{}{
+			"role_name": role.Name,
+		})
 
 	return nil
 }
@@ -2895,8 +2952,9 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
-	if err := s.CreateUser(c.Request.Context(), &user); err != nil {
+
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	if err := s.CreateUser(ctx, &user); err != nil {
 		s.logger.Error("failed to create user", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -2945,8 +3003,9 @@ func (s *Service) handleUpdateUser(c *gin.Context) {
 
 func (s *Service) handleDeleteUser(c *gin.Context) {
 	userID := c.Param("id")
-	
-	if err := s.DeleteUser(c.Request.Context(), userID); err != nil {
+
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	if err := s.DeleteUser(ctx, userID); err != nil {
 		s.logger.Error("failed to delete user", zap.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -3022,7 +3081,12 @@ func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 		return
 	}
 	
-	idp.ID, _ = uuid.Parse(idpID)
+	parsedID, err := uuid.Parse(idpID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid identity provider ID format"})
+		return
+	}
+	idp.ID = parsedID
 	if err := s.UpdateIdentityProvider(c.Request.Context(), &idp); err != nil {
 		s.logger.Error("failed to update identity provider", zap.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -3118,7 +3182,8 @@ func (s *Service) handleCreateRole(c *gin.Context) {
 		return
 	}
 
-	if err := s.CreateRole(c.Request.Context(), &role); err != nil {
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	if err := s.CreateRole(ctx, &role); err != nil {
 		s.logger.Error("failed to create role", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -3137,7 +3202,8 @@ func (s *Service) handleUpdateRole(c *gin.Context) {
 	}
 
 	role.ID = roleID
-	if err := s.UpdateRole(c.Request.Context(), &role); err != nil {
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	if err := s.UpdateRole(ctx, &role); err != nil {
 		if err.Error() == "role not found" {
 			c.JSON(404, gin.H{"error": "role not found"})
 			return
@@ -4315,8 +4381,10 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 		return
 	}
 
-	_, _ = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1", req.Token)
+	if _, err := s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1", req.Token); err != nil {
+		s.logger.Error("failed to mark verification token as used", zap.String("token", req.Token), zap.Error(err))
+	}
 
 	c.JSON(200, gin.H{"message": "Email verified successfully"})
 }
@@ -5266,4 +5334,24 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 	}
 
 	c.JSON(200, exec)
+}
+
+// logAuditEvent writes an audit event to the audit_events table (best-effort, non-blocking).
+// It mirrors the pattern used in the OAuth service.
+func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+	go func() {
+		detailsJSON, _ := json.Marshal(details)
+		_, err := s.db.Pool.Exec(context.Background(), `
+			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
+			                          actor_id, actor_type, actor_ip, target_id, target_type,
+			                          resource_id, details)
+			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', '', $6, $7, $6, $8)
+		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON)
+		if err != nil {
+			s.logger.Warn("failed to record audit event",
+				zap.String("event_type", eventType),
+				zap.String("action", action),
+				zap.Error(err))
+		}
+	}()
 }

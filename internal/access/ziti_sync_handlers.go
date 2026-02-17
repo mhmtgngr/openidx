@@ -1,10 +1,13 @@
 package access
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
 )
 
 // handleGetSyncStatus returns the current user-to-Ziti sync state.
@@ -146,8 +149,12 @@ func (s *Service) handleGetMyZitiIdentity(c *gin.Context) {
 	// If not enrolled, try to get enrollment JWT
 	if !enrolled {
 		var enrollmentJWT *string
-		_ = s.db.Pool.QueryRow(c.Request.Context(),
-			"SELECT enrollment_jwt FROM ziti_identities WHERE ziti_id=$1", zitiID).Scan(&enrollmentJWT)
+		if err := s.db.Pool.QueryRow(c.Request.Context(),
+			"SELECT enrollment_jwt FROM ziti_identities WHERE ziti_id=$1", zitiID).Scan(&enrollmentJWT); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Error("failed to query enrollment JWT", zap.String("ziti_id", zitiID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query enrollment JWT"})
+			return
+		}
 		if enrollmentJWT != nil && *enrollmentJWT != "" {
 			result["enrollment_jwt"] = *enrollmentJWT
 		} else if s.zitiManager != nil {

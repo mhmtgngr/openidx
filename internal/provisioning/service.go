@@ -16,11 +16,42 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 )
+
+// ctxKey is an unexported type for context keys in this package.
+type ctxKey int
+
+const (
+	// ctxKeyActorID is the context key for the actor (authenticated user) performing the operation.
+	ctxKeyActorID ctxKey = iota
+)
+
+// ContextWithActorID returns a new context that carries the given actor ID.
+func ContextWithActorID(ctx context.Context, actorID string) context.Context {
+	return context.WithValue(ctx, ctxKeyActorID, actorID)
+}
+
+// actorIDFromContext extracts the actor ID from context, returning "system" if not set.
+func actorIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyActorID).(string); ok && v != "" {
+		return v
+	}
+	return "system"
+}
+
+// writeSCIMError writes a SCIM-formatted error response
+func writeSCIMError(c *gin.Context, status int, detail string) {
+	c.JSON(status, SCIMError{
+		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
+		Status:  strconv.Itoa(status),
+		Detail:  detail,
+	})
+}
 
 // SCIMUser represents a user in SCIM 2.0 format
 type SCIMUser struct {
@@ -422,6 +453,13 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 		// Don't return error, user is already created
 	}
 
+	// Audit log: SCIM user created
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent("provisioning", "scim", "scim.user_created", "success",
+		actorID, userID, "user", map[string]interface{}{
+			"username": user.UserName,
+		})
+
 	return user, nil
 }
 
@@ -500,6 +538,11 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 // DeleteSCIMUser deletes a user via SCIM
 func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting SCIM user", zap.String("user_id", userID))
+
+	// Audit log before deletion so the record exists even if delete succeeds
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent("provisioning", "scim", "scim.user_deleted", "success",
+		actorID, userID, "user", nil)
 
 	// Delete from users table (CASCADE will delete from scim_users)
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
@@ -633,6 +676,12 @@ func (s *Service) handleListUsers(c *gin.Context) {
 			count = int(parsed)
 		}
 	}
+	if count < 1 {
+		count = 1
+	}
+	if count > 200 {
+		count = 200
+	}
 
 	filter := c.Query("filter")
 
@@ -666,7 +715,20 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 		return
 	}
 
-	created, err := s.CreateSCIMUser(c.Request.Context(), &user)
+	// Validate email length
+	var primaryEmail string
+	for _, email := range user.Emails {
+		if email.Primary || primaryEmail == "" {
+			primaryEmail = email.Value
+		}
+	}
+	if len(primaryEmail) > 254 {
+		writeSCIMError(c, http.StatusBadRequest, "Email exceeds maximum length of 254 characters")
+		return
+	}
+
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	created, err := s.CreateSCIMUser(ctx, &user)
 	if err != nil {
 		s.logger.Error("failed to create SCIM user", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -676,7 +738,13 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 }
 
 func (s *Service) handleGetUser(c *gin.Context) {
-	user, err := s.GetSCIMUser(c.Request.Context(), c.Param("id"))
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
+	user, err := s.GetSCIMUser(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -685,15 +753,21 @@ func (s *Service) handleGetUser(c *gin.Context) {
 }
 
 func (s *Service) handleReplaceUser(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
 	var user SCIMUser
 	if err := c.ShouldBindJSON(&user); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
-	updated, err := s.UpdateSCIMUser(c.Request.Context(), c.Param("id"), &user)
+
+	updated, err := s.UpdateSCIMUser(c.Request.Context(), id, &user)
 	if err != nil {
-		s.logger.Error("failed to update SCIM user", zap.String("id", c.Param("id")), zap.Error(err))
+		s.logger.Error("failed to update SCIM user", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -701,6 +775,12 @@ func (s *Service) handleReplaceUser(c *gin.Context) {
 }
 
 func (s *Service) handlePatchUser(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
 	var patch SCIMPatchRequest
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		c.JSON(400, SCIMError{
@@ -712,7 +792,7 @@ func (s *Service) handlePatchUser(c *gin.Context) {
 	}
 
 	// Get existing user
-	user, err := s.GetSCIMUser(c.Request.Context(), c.Param("id"))
+	user, err := s.GetSCIMUser(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(404, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
@@ -724,13 +804,16 @@ func (s *Service) handlePatchUser(c *gin.Context) {
 
 	// Apply patch operations
 	for _, op := range patch.Operations {
-		s.applyUserPatchOperation(user, op)
+		if err := s.applyUserPatchOperation(user, op); err != nil {
+			writeSCIMError(c, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Update user
-	updated, err := s.UpdateSCIMUser(c.Request.Context(), c.Param("id"), user)
+	updated, err := s.UpdateSCIMUser(c.Request.Context(), id, user)
 	if err != nil {
-		s.logger.Error("failed to patch SCIM user", zap.String("id", c.Param("id")), zap.Error(err))
+		s.logger.Error("failed to patch SCIM user", zap.String("id", id), zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
 			Status:  "500",
@@ -742,7 +825,10 @@ func (s *Service) handlePatchUser(c *gin.Context) {
 }
 
 // applyUserPatchOperation applies a PATCH operation to a user
-func (s *Service) applyUserPatchOperation(user *SCIMUser, op SCIMPatchOperation) {
+func (s *Service) applyUserPatchOperation(user *SCIMUser, op SCIMPatchOperation) error {
+	if op.Op != "add" && op.Op != "replace" && op.Op != "remove" {
+		return fmt.Errorf("invalid SCIM patch operation: %s", op.Op)
+	}
 	switch op.Op {
 	case "replace":
 		switch op.Path {
@@ -778,10 +864,14 @@ func (s *Service) applyUserPatchOperation(user *SCIMUser, op SCIMPatchOperation)
 			// Remove email from user
 		}
 	}
+	return nil
 }
 
 // applyGroupPatchOperation applies a PATCH operation to a group
-func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperation) {
+func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperation) error {
+	if op.Op != "add" && op.Op != "replace" && op.Op != "remove" {
+		return fmt.Errorf("invalid SCIM patch operation: %s", op.Op)
+	}
 	switch op.Op {
 	case "replace":
 		if op.Path == "displayName" {
@@ -826,11 +916,19 @@ func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperati
 			}
 		}
 	}
+	return nil
 }
 
 func (s *Service) handleDeleteUser(c *gin.Context) {
-	if err := s.DeleteSCIMUser(c.Request.Context(), c.Param("id")); err != nil {
-		s.logger.Error("failed to delete SCIM user", zap.String("id", c.Param("id")), zap.Error(err))
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	if err := s.DeleteSCIMUser(ctx, id); err != nil {
+		s.logger.Error("failed to delete SCIM user", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -985,6 +1083,11 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting SCIM group", zap.String("group_id", groupID))
 
+	// Audit log before deletion so the record exists even if delete succeeds
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent("provisioning", "scim", "scim.group_deleted", "success",
+		actorID, groupID, "group", nil)
+
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1", groupID)
 	return err
 }
@@ -1050,6 +1153,12 @@ func (s *Service) handleListGroups(c *gin.Context) {
 			count = int(parsed)
 		}
 	}
+	if count < 1 {
+		count = 1
+	}
+	if count > 200 {
+		count = 200
+	}
 
 	filter := c.Query("filter")
 
@@ -1083,7 +1192,13 @@ func (s *Service) handleCreateGroup(c *gin.Context) {
 }
 
 func (s *Service) handleGetGroup(c *gin.Context) {
-	group, err := s.GetSCIMGroup(c.Request.Context(), c.Param("id"))
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
+	group, err := s.GetSCIMGroup(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
 		return
@@ -1092,15 +1207,21 @@ func (s *Service) handleGetGroup(c *gin.Context) {
 }
 
 func (s *Service) handleReplaceGroup(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
 	var group SCIMGroup
 	if err := c.ShouldBindJSON(&group); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	updated, err := s.UpdateSCIMGroup(c.Request.Context(), c.Param("id"), &group)
+	updated, err := s.UpdateSCIMGroup(c.Request.Context(), id, &group)
 	if err != nil {
-		s.logger.Error("failed to replace SCIM group", zap.String("id", c.Param("id")), zap.Error(err))
+		s.logger.Error("failed to replace SCIM group", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1108,6 +1229,12 @@ func (s *Service) handleReplaceGroup(c *gin.Context) {
 }
 
 func (s *Service) handlePatchGroup(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
 	var patch SCIMPatchRequest
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -1115,7 +1242,7 @@ func (s *Service) handlePatchGroup(c *gin.Context) {
 	}
 
 	// Get existing group
-	group, err := s.GetSCIMGroup(c.Request.Context(), c.Param("id"))
+	group, err := s.GetSCIMGroup(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "group not found"})
 		return
@@ -1123,13 +1250,16 @@ func (s *Service) handlePatchGroup(c *gin.Context) {
 
 	// Apply patch operations
 	for _, op := range patch.Operations {
-		s.applyGroupPatchOperation(group, op)
+		if err := s.applyGroupPatchOperation(group, op); err != nil {
+			writeSCIMError(c, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Update group
-	updated, err := s.UpdateSCIMGroup(c.Request.Context(), c.Param("id"), group)
+	updated, err := s.UpdateSCIMGroup(c.Request.Context(), id, group)
 	if err != nil {
-		s.logger.Error("failed to patch SCIM group", zap.String("id", c.Param("id")), zap.Error(err))
+		s.logger.Error("failed to patch SCIM group", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1137,8 +1267,15 @@ func (s *Service) handlePatchGroup(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteGroup(c *gin.Context) {
-	if err := s.DeleteSCIMGroup(c.Request.Context(), c.Param("id")); err != nil {
-		s.logger.Error("failed to delete SCIM group", zap.String("id", c.Param("id")), zap.Error(err))
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeSCIMError(c, http.StatusBadRequest, "Invalid ID format")
+		return
+	}
+
+	ctx := ContextWithActorID(c.Request.Context(), c.GetString("user_id"))
+	if err := s.DeleteSCIMGroup(ctx, id); err != nil {
+		s.logger.Error("failed to delete SCIM group", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
@@ -1469,4 +1606,24 @@ func (s *Service) handleDeleteRule(c *gin.Context) {
 		return
 	}
 	c.JSON(204, nil)
+}
+
+// logAuditEvent writes an audit event to the audit_events table (best-effort, non-blocking).
+// It mirrors the pattern used in the OAuth service.
+func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+	go func() {
+		detailsJSON, _ := json.Marshal(details)
+		_, err := s.db.Pool.Exec(context.Background(), `
+			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
+			                          actor_id, actor_type, actor_ip, target_id, target_type,
+			                          resource_id, details)
+			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'service', '', $6, $7, $6, $8)
+		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON)
+		if err != nil {
+			s.logger.Warn("failed to record audit event",
+				zap.String("event_type", eventType),
+				zap.String("action", action),
+				zap.Error(err))
+		}
+	}()
 }

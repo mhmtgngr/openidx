@@ -67,13 +67,19 @@ func (s *Service) GetUserRiskProfile(ctx context.Context, userID string) (*UserR
 	}
 
 	if len(hoursJSON) > 0 {
-		json.Unmarshal(hoursJSON, &profile.TypicalLoginHours)
+		if err := json.Unmarshal(hoursJSON, &profile.TypicalLoginHours); err != nil {
+			s.logger.Warn("corrupted risk profile data: TypicalLoginHours", zap.Error(err))
+		}
 	}
 	if len(countriesJSON) > 0 {
-		json.Unmarshal(countriesJSON, &profile.TypicalCountries)
+		if err := json.Unmarshal(countriesJSON, &profile.TypicalCountries); err != nil {
+			s.logger.Warn("corrupted risk profile data: TypicalCountries", zap.Error(err))
+		}
 	}
 	if len(ipsJSON) > 0 {
-		json.Unmarshal(ipsJSON, &profile.TypicalIPs)
+		if err := json.Unmarshal(ipsJSON, &profile.TypicalIPs); err != nil {
+			s.logger.Warn("corrupted risk profile data: TypicalIPs", zap.Error(err))
+		}
 	}
 
 	return profile, nil
