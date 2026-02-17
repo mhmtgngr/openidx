@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -99,6 +100,7 @@ func defaultDeveloperSettings() *DeveloperSettings {
 
 // handleGetDeveloperSettings returns global developer settings
 func (s *Service) handleGetDeveloperSettings(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	var valueBytes []byte
@@ -124,6 +126,7 @@ func (s *Service) handleGetDeveloperSettings(c *gin.Context) {
 
 // handleUpdateDeveloperSettings upserts global developer settings
 func (s *Service) handleUpdateDeveloperSettings(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	var settings DeveloperSettings
 	if err := c.ShouldBindJSON(&settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -377,13 +380,13 @@ func (s *Service) executePlaygroundToken(session PlaygroundSession, code string)
 
 	tokenURL := fmt.Sprintf("%s/oauth/token", oauthBaseURL)
 
-	body := fmt.Sprintf(
-		"grant_type=authorization_code&code=%s&redirect_uri=%s&client_id=%s&code_verifier=%s",
-		code,
-		session.RedirectURI,
-		session.ClientID,
-		session.CodeVerifier,
-	)
+	body := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {session.RedirectURI},
+		"client_id":     {session.ClientID},
+		"code_verifier": {session.CodeVerifier},
+	}.Encode()
 
 	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(body))
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 // handleAuthAnalyticsDashboard returns detailed authentication analytics for a given period.
 // GET /api/v1/analytics/auth?period=24h|7d|30d|90d
 func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	// Parse period
@@ -136,6 +137,7 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 // handleUsageAnalytics returns platform usage metrics: DAU, WAU, MAU, entity counts.
 // GET /api/v1/analytics/usage
 func (s *Service) handleUsageAnalytics(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	result := make(map[string]interface{})
@@ -202,6 +204,7 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 // handleAPIUsageMetrics returns API usage statistics from the api_usage_metrics table.
 // GET /api/v1/analytics/api?period=24h|7d|30d|90d
 func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	period := c.DefaultQuery("period", "30d")
@@ -275,6 +278,7 @@ func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
 // handleFeatureAdoption returns feature adoption metrics from the feature_adoption table.
 // GET /api/v1/analytics/features
 func (s *Service) handleFeatureAdoption(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	// Total enabled users for computing adoption rates
@@ -351,6 +355,7 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 // handleRiskScoreTimeline returns daily risk score trends.
 // GET /api/v1/analytics/risk-timeline?days=30
 func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	if s.riskService == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "risk service not available"})
 		return
@@ -411,6 +416,7 @@ func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
 // handleUserActivityHeatmap returns a 24x7 heatmap of login activity (hour x day of week).
 // GET /api/v1/analytics/activity-heatmap?period=30d
 func (s *Service) handleUserActivityHeatmap(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	period := c.DefaultQuery("period", "30d")

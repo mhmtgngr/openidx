@@ -952,14 +952,9 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 	s.logger.Info("Adding member to group", zap.String("group_id", groupID), zap.String("user_id", userID))
 
 	// Check if group exists
-	group, err := s.GetGroup(ctx, groupID)
+	_, err := s.GetGroup(ctx, groupID)
 	if err != nil {
 		return fmt.Errorf("group not found: %w", err)
-	}
-
-	// Check max members limit if set
-	if group.MaxMembers != nil && group.MemberCount >= *group.MaxMembers {
-		return fmt.Errorf("group has reached maximum member limit of %d", *group.MaxMembers)
 	}
 
 	// Check if user exists
@@ -968,26 +963,37 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 		return fmt.Errorf("user not found: %w", err)
 	}
 
-	// Check if membership already exists
-	var exists bool
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)
-	`, groupID, userID).Scan(&exists)
-	if err != nil {
-		return err
-	}
-
-	if exists {
-		return fmt.Errorf("user is already a member of this group")
-	}
-
-	// Insert membership
-	_, err = s.db.Pool.Exec(ctx, `
+	// Use a single atomic query that checks the member limit and inserts in one step,
+	// avoiding the TOCTOU race between counting members and inserting.
+	result, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO group_memberships (group_id, user_id, joined_at)
-		VALUES ($1, $2, NOW())
+		SELECT $1, $2, NOW()
+		WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)
+		AND (
+			SELECT COUNT(*) FROM group_memberships WHERE group_id = $1
+		) < COALESCE(
+			(SELECT max_members FROM groups WHERE id = $1),
+			2147483647
+		)
 	`, groupID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to add member: %w", err)
+	}
 
-	return err
+	if result.RowsAffected() == 0 {
+		// Check why the insert didn't happen: either already a member or limit reached
+		var exists bool
+		err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)", groupID, userID).Scan(&exists)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("user is already a member of this group")
+		}
+		return fmt.Errorf("group has reached maximum member limit")
+	}
+
+	return nil
 }
 
 // RemoveGroupMember removes a user from a group
@@ -1176,11 +1182,19 @@ func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) e
 	s.logger.Debug("Updating session activity", zap.String("session_id", sessionID))
 
 	now := time.Now()
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE sessions SET last_seen_at = $2 WHERE id = $1
+	result, err := s.db.Pool.Exec(ctx, `
+		UPDATE sessions SET last_seen_at = $2
+		WHERE id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
 	`, sessionID, now)
+	if err != nil {
+		return err
+	}
 
-	return err
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("session not found or is revoked/expired")
+	}
+
+	return nil
 }
 
 // IsSessionValid checks if a session is not revoked and not expired

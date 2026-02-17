@@ -142,15 +142,23 @@ func (s *Service) GenerateMFABypassCode(ctx context.Context, req *GenerateBypass
 
 // VerifyBypassCode verifies and uses a bypass code
 func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress, userAgent string) (bool, error) {
-	// Get active bypass codes for user
+	// Begin a transaction to prevent TOCTOU race between checking and updating bypass codes
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Get active bypass codes for user with FOR UPDATE to lock rows
 	query := `
 		SELECT id, code_hash, valid_until, max_uses, use_count
 		FROM mfa_bypass_codes
 		WHERE user_id = $1 AND status = 'active'
 		ORDER BY created_at DESC
+		FOR UPDATE
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, userID)
+	rows, err := tx.Query(ctx, query, userID)
 	if err != nil {
 		return false, err
 	}
@@ -167,13 +175,13 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 
 		// Check expiration
 		if time.Now().After(validUntil) {
-			s.db.Pool.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'expired' WHERE id = $1", bypassID)
+			tx.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'expired' WHERE id = $1", bypassID)
 			continue
 		}
 
 		// Check max uses
 		if maxUses > 0 && useCount >= maxUses {
-			s.db.Pool.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'used' WHERE id = $1", bypassID)
+			tx.Exec(ctx, "UPDATE mfa_bypass_codes SET status = 'used' WHERE id = $1", bypassID)
 			continue
 		}
 
@@ -182,14 +190,14 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 			continue // Try next code
 		}
 
-		// Code is valid - update usage
+		// Code is valid - update usage atomically within the transaction
 		newUseCount := useCount + 1
 		newStatus := "active"
 		if maxUses > 0 && newUseCount >= maxUses {
 			newStatus = "used"
 		}
 
-		_, err = s.db.Pool.Exec(ctx,
+		_, err = tx.Exec(ctx,
 			`UPDATE mfa_bypass_codes
 			SET use_count = $1, status = $2, used_at = NOW(), used_from_ip = $3
 			WHERE id = $4`,
@@ -199,10 +207,23 @@ func (s *Service) VerifyBypassCode(ctx context.Context, userID, code, ipAddress,
 			return false, err
 		}
 
-		// Log audit
+		// Close rows before committing
+		rows.Close()
+
+		// Commit the transaction
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("failed to commit transaction: %w", err)
+		}
+
+		// Log audit (outside transaction - best effort)
 		s.logBypassAudit(ctx, bypassID, userID, "used", nil, ipAddress, userAgent, nil)
 
 		return true, nil
+	}
+
+	// No matching code found - commit to persist any status updates (expired/used)
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return false, nil

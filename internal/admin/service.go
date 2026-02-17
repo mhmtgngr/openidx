@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -252,6 +253,22 @@ type Service struct {
 	apiKeyService    APIKeyManager
 	webhookService   WebhookManager
 	securityService  SecurityService
+}
+
+// requireAdmin checks if the authenticated user has admin or super_admin role.
+// Returns true if admin, false (with 403 response) if not.
+func requireAdmin(c *gin.Context) bool {
+	if roles, exists := c.Get("roles"); exists {
+		if roleList, ok := roles.([]string); ok {
+			for _, r := range roleList {
+				if r == "admin" || r == "super_admin" {
+					return true
+				}
+			}
+		}
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "admin access required"})
+	return false
 }
 
 // NewService creates a new admin service

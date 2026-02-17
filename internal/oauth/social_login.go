@@ -4,6 +4,7 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,11 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
+
+// ErrSocialAccountConflict is returned when a social login matches an existing
+// user by email but the social account has not been explicitly linked yet.
+// Auto-linking is refused to prevent account takeover.
+var ErrSocialAccountConflict = errors.New("an account with this email already exists; please log in and link your social account from your profile")
 
 // SocialTokens represents tokens received from a social OAuth provider
 type SocialTokens struct {
@@ -203,6 +209,16 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 	// Link or create local user
 	userID, err := s.linkOrCreateSocialUser(c.Request.Context(), providerID, userInfo)
 	if err != nil {
+		if errors.Is(err, ErrSocialAccountConflict) {
+			s.logger.Warn("Social login conflict: email already in use",
+				zap.String("provider_id", providerID),
+				zap.String("email", userInfo.Email))
+			c.JSON(http.StatusConflict, gin.H{
+				"error":             "account_conflict",
+				"error_description": err.Error(),
+			})
+			return
+		}
 		s.logger.Error("Failed to link/create user from social login",
 			zap.String("provider_id", providerID),
 			zap.String("email", userInfo.Email),
@@ -595,18 +611,16 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 			"SELECT id FROM users WHERE email = $1", userInfo.Email).Scan(&userID)
 
 		if err == nil {
-			// User exists - create the link
-			if linkErr := s.createSocialAccountLink(ctx, providerID, userID, userInfo); linkErr != nil {
-				return "", linkErr
-			}
-
-			s.logger.Info("Linked social account to existing user",
+			// User exists but has no linked social account for this provider.
+			// Refuse to auto-link to prevent account takeover; the user must
+			// authenticate normally and link the social account from their profile.
+			s.logger.Warn("Social login blocked: email matches existing user without linked social account",
 				zap.String("user_id", userID),
 				zap.String("email", userInfo.Email),
 				zap.String("provider", userInfo.Provider),
 			)
 
-			return userID, nil
+			return "", ErrSocialAccountConflict
 		}
 	}
 

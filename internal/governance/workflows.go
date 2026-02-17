@@ -105,7 +105,8 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 
 	requesterID := c.GetString("user_id")
 	if requesterID == "" {
-		requesterID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	if body.ResourceID == "" {
@@ -223,7 +224,8 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 	if requesterID == "me" {
 		requesterID = c.GetString("user_id")
 		if requesterID == "" {
-			requesterID = "00000000-0000-0000-0000-000000000001"
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
 		}
 	}
 
@@ -391,7 +393,8 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 
 	approverID := c.GetString("user_id")
 	if approverID == "" {
-		approverID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	now := time.Now()
@@ -458,7 +461,8 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 
 	approverID := c.GetString("user_id")
 	if approverID == "" {
-		approverID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	now := time.Now()
@@ -496,7 +500,8 @@ func (s *Service) handleCancelRequest(c *gin.Context) {
 
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	var requesterID, status string
@@ -540,7 +545,8 @@ func (s *Service) handleCancelRequest(c *gin.Context) {
 func (s *Service) handleListPendingApprovals(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	rows, err := s.db.Pool.Query(c.Request.Context(),

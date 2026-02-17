@@ -365,8 +365,8 @@ func (s *Service) deliverWebhook(ctx context.Context, deliveryID string) error {
 	}
 	defer resp.Body.Close()
 
-	// Read and truncate response body
-	respBodyBytes, _ := io.ReadAll(resp.Body)
+	// Read and truncate response body (limit to 1MB to prevent memory exhaustion from malicious receivers)
+	respBodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
 	respBodyStr := string(respBodyBytes)
 	if len(respBodyStr) > 1000 {
 		respBodyStr = respBodyStr[:1000]
@@ -646,8 +646,8 @@ func (s *Service) PingSubscription(ctx context.Context, subscriptionID string) (
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	respBodyBytes, _ := io.ReadAll(resp.Body)
+	// Read response body (limit to 1MB to prevent memory exhaustion from malicious receivers)
+	respBodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
 	respBodyStr := string(respBodyBytes)
 	if len(respBodyStr) > 1000 {
 		respBodyStr = respBodyStr[:1000]

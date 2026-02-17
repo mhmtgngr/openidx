@@ -95,6 +95,7 @@ func (s *Service) RecordAdminAction(
 
 // handleGetAdminAuditLog returns paginated admin audit log entries with optional filters
 func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	// Parse pagination
@@ -221,6 +222,7 @@ func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
 
 // handleGetAdminAuditEntry returns a single admin audit log entry by ID
 func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
@@ -260,6 +262,7 @@ func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
 
 // handleGetSettingsHistory returns admin audit entries for settings changes
 func (s *Service) handleGetSettingsHistory(c *gin.Context) {
+	if !requireAdmin(c) { return }
 	ctx := c.Request.Context()
 
 	limit := 20

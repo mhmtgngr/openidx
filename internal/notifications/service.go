@@ -271,14 +271,15 @@ func (s *Service) UpdatePreferences(ctx context.Context, userID string, prefs []
 func getUserID(c *gin.Context) string {
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
-	if userIDStr == "" {
-		userIDStr = "00000000-0000-0000-0000-000000000001"
-	}
 	return userIDStr
 }
 
 func (s *Service) handleGetNotifications(c *gin.Context) {
 	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	channel := c.Query("channel")
 
@@ -322,6 +323,10 @@ func (s *Service) handleGetNotifications(c *gin.Context) {
 
 func (s *Service) handleGetUnreadCount(c *gin.Context) {
 	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	count, err := s.GetUnreadCount(c.Request.Context(), userID)
 	if err != nil {
@@ -335,6 +340,10 @@ func (s *Service) handleGetUnreadCount(c *gin.Context) {
 
 func (s *Service) handleMarkAsRead(c *gin.Context) {
 	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	var req struct {
 		NotificationIDs []string `json:"notification_ids"`
@@ -360,6 +369,10 @@ func (s *Service) handleMarkAsRead(c *gin.Context) {
 
 func (s *Service) handleMarkAllAsRead(c *gin.Context) {
 	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	if err := s.MarkAllAsRead(c.Request.Context(), userID); err != nil {
 		s.logger.Error("failed to mark all notifications as read", zap.Error(err))
@@ -372,6 +385,10 @@ func (s *Service) handleMarkAllAsRead(c *gin.Context) {
 
 func (s *Service) handleGetPreferences(c *gin.Context) {
 	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	prefs, err := s.GetPreferences(c.Request.Context(), userID)
 	if err != nil {
@@ -385,6 +402,10 @@ func (s *Service) handleGetPreferences(c *gin.Context) {
 
 func (s *Service) handleUpdatePreferences(c *gin.Context) {
 	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
 	var req struct {
 		Preferences []NotificationPreference `json:"preferences"`
