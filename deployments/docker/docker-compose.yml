@@ -162,6 +162,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.identity-service
+      network: host
     container_name: openidx-identity-service
     environment:
       - APP_ENV=development
@@ -194,6 +195,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.governance-service
+      network: host
     container_name: openidx-governance-service
     environment:
       - APP_ENV=development
@@ -221,6 +223,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.provisioning-service
+      network: host
     container_name: openidx-provisioning-service
     environment:
       - APP_ENV=development
@@ -247,6 +250,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.audit-service
+      network: host
     container_name: openidx-audit-service
     environment:
       - APP_ENV=development
@@ -271,6 +275,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.admin-api
+      network: host
     container_name: openidx-admin-api
     environment:
       - APP_ENV=development
@@ -307,6 +312,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.oauth-service
+      network: host
     container_name: openidx-oauth-service
     environment:
       - APP_ENV=development
@@ -689,6 +695,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.demo-app
+      network: host
     container_name: openidx-demo-app
     ports:
       - "8090:8090"
@@ -709,6 +716,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.simple-web
+      network: host
     container_name: openidx-simple-web
     ports:
       - "8091:8091"
@@ -1022,6 +1030,7 @@ services:
     build:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.access-service
+      network: host
     container_name: openidx-access-service
     environment:
       - APP_ENV=development
@@ -1087,6 +1096,7 @@ services:
     build:
       context: ../../web/admin-console
       dockerfile: ../../deployments/docker/Dockerfile.admin-console
+      network: host
       args:
         - VITE_API_URL=http://localhost:8088
         - VITE_OAUTH_URL=http://localhost:8006
