@@ -1531,7 +1531,11 @@ test.describe('Ziti Remote Access Tab', () => {
 
     test('should show session entries with identity and service names', async ({ page }) => {
       await page.goto('/ziti-network');
-      await page.getByRole('tab', { name: /security/i }).click();
+      // Click Security tab and wait for sessions API response (query fires on SecurityTab mount)
+      await Promise.all([
+        page.waitForResponse(resp => resp.url().includes('/ziti/sessions') && resp.status() === 200),
+        page.getByRole('tab', { name: /security/i }).click(),
+      ]);
       await expect(page.getByRole('cell', { name: 'alice' })).toBeVisible();
       await expect(page.getByRole('cell', { name: 'internal-app' })).toBeVisible();
       // Verify session types exist in the Active Sessions table (use .first() since Dial/Bind also appear in Service Policies)
@@ -1556,9 +1560,7 @@ test.describe('Ziti Remote Access Tab', () => {
         }
       });
 
-      let batchPayload: unknown = null;
       await page.route('**/api/v1/access/ziti/sessions/batch-terminate', async (route) => {
-        batchPayload = route.request().postDataJSON();
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -1569,14 +1571,14 @@ test.describe('Ziti Remote Access Tab', () => {
       await page.goto('/ziti-network');
       await page.getByRole('tab', { name: /security/i }).click();
 
-      // Click the batch terminate button for alice
-      await page.getByRole('button', { name: /Terminate All: alice/i }).click();
-
-      // Wait for the request to complete
-      await page.waitForTimeout(500);
+      // Click the batch terminate button and wait for the POST request deterministically
+      const [request] = await Promise.all([
+        page.waitForRequest(req => req.url().includes('batch-terminate') && req.method() === 'POST'),
+        page.getByRole('button', { name: /Terminate All: alice/i }).click(),
+      ]);
 
       // Verify the POST was sent with the correct identity_id
-      expect(batchPayload).toEqual({ identity_id: 'id-1' });
+      expect(request.postDataJSON()).toEqual({ identity_id: 'id-1' });
       await expect(page.locator('text=All sessions terminated').first()).toBeVisible();
     });
   });
