@@ -11,7 +11,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '../hooks/use-toast'
 import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/api'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
-import { Shield, User, Key, Smartphone, Mail, Monitor, Phone, Globe, Trash2, Check } from 'lucide-react'
+import { Checkbox } from '../components/ui/checkbox'
+import { Shield, User, Key, Smartphone, Mail, Monitor, Phone, Globe, Trash2, Check, Plus, Copy, KeyRound, AppWindow, AlertTriangle } from 'lucide-react'
 import QRCode from 'qrcode.react'
 import { useAuth } from '../lib/auth'
 
@@ -48,6 +49,31 @@ interface Session {
   expires_at: string
 }
 
+interface PersonalAccessToken {
+  id: string
+  name: string
+  key_prefix: string
+  scopes: string[]
+  expires_at: string | null
+  last_used_at: string | null
+  status: string
+  created_at: string
+}
+
+interface CreateTokenResponse {
+  token: PersonalAccessToken
+  raw_token: string
+}
+
+interface UserConsent {
+  client_id: string
+  client_name: string
+  logo_uri?: string
+  scopes: string[]
+  authorized_at: string
+  last_used_at: string
+}
+
 export function UserProfilePage() {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -69,6 +95,16 @@ export function UserProfilePage() {
   // Email OTP state
   const [emailOtpEnrollStep, setEmailOtpEnrollStep] = useState<'idle' | 'verify'>('idle')
   const [emailOtpCode, setEmailOtpCode] = useState('')
+
+  // Access Tokens state
+  const [showCreateToken, setShowCreateToken] = useState(false)
+  const [newTokenName, setNewTokenName] = useState('')
+  const [newTokenScopes, setNewTokenScopes] = useState<string[]>([])
+  const [newTokenExpiry, setNewTokenExpiry] = useState('')
+  const [createdRawToken, setCreatedRawToken] = useState<string | null>(null)
+
+  // Authorized Apps state
+  const [revokeConsentClientId, setRevokeConsentClientId] = useState<string | null>(null)
 
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -273,6 +309,66 @@ export function UserProfilePage() {
     },
   })
 
+  // Access Tokens queries and mutations
+  const { data: accessTokens, isLoading: tokensLoading } = useQuery({
+    queryKey: ['access-tokens'],
+    queryFn: () => api.get<PersonalAccessToken[]>('/api/v1/identity/users/me/tokens'),
+  })
+
+  const createTokenMutation = useMutation({
+    mutationFn: (data: { name: string; scopes: string[]; expires_at?: string }) =>
+      api.post<CreateTokenResponse>('/api/v1/identity/users/me/tokens', data),
+    onSuccess: (response) => {
+      setCreatedRawToken(response.raw_token)
+      setShowCreateToken(false)
+      setNewTokenName('')
+      setNewTokenScopes([])
+      setNewTokenExpiry('')
+      queryClient.invalidateQueries({ queryKey: ['access-tokens'] })
+      toast({ title: 'Token Created', description: 'Your new access token has been created.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to create access token.', variant: 'destructive' })
+    },
+  })
+
+  const revokeTokenMutation = useMutation({
+    mutationFn: (tokenId: string) =>
+      api.delete(`/api/v1/identity/users/me/tokens/${tokenId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['access-tokens'] })
+      toast({ title: 'Token Revoked', description: 'The access token has been revoked.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to revoke token.', variant: 'destructive' })
+    },
+  })
+
+  // Authorized Apps queries and mutations
+  const { data: userConsents, isLoading: consentsLoading } = useQuery({
+    queryKey: ['user-consents'],
+    queryFn: () => api.get<UserConsent[]>('/api/v1/identity/users/me/consents'),
+  })
+
+  const revokeConsentMutation = useMutation({
+    mutationFn: (clientId: string) =>
+      api.delete(`/api/v1/identity/users/me/consents/${clientId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-consents'] })
+      setRevokeConsentClientId(null)
+      toast({ title: 'Access Revoked', description: 'The application no longer has access to your account.' })
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to revoke application access.', variant: 'destructive' })
+    },
+  })
+
+  const toggleTokenScope = (scope: string) => {
+    setNewTokenScopes(prev =>
+      prev.includes(scope) ? prev.filter(s => s !== scope) : [...prev, scope]
+    )
+  }
+
   // Helper to check if a method is enabled
   const isMethodEnabled = (method: string) => {
     return mfaMethods?.some(m => m.method === method && m.enabled && m.verified)
@@ -350,6 +446,14 @@ export function UserProfilePage() {
             {sessions && sessions.length > 0 && (
               <Badge variant="secondary" className="ml-1">{sessions.length}</Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="access-tokens" className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4" />
+            Access Tokens
+          </TabsTrigger>
+          <TabsTrigger value="authorized-apps" className="flex items-center gap-2">
+            <AppWindow className="h-4 w-4" />
+            Authorized Apps
           </TabsTrigger>
         </TabsList>
 
@@ -1032,6 +1136,331 @@ export function UserProfilePage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="access-tokens" className="space-y-4">
+          {/* Created Token Banner */}
+          {createdRawToken && (
+            <Card className="border-amber-300 bg-amber-50">
+              <CardContent className="pt-6 space-y-3">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <p className="font-medium text-amber-900">Copy this token now. You won't be able to see it again.</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 bg-white border border-amber-200 px-3 py-2 rounded text-sm font-mono break-all select-all">
+                        {createdRawToken}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(createdRawToken)
+                          toast({ title: 'Copied', description: 'Token copied to clipboard.' })
+                        }}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCreatedRawToken(null)}
+                      className="text-amber-700"
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Personal Access Tokens</CardTitle>
+                  <CardDescription>Tokens for API access and automation</CardDescription>
+                </div>
+                <Button onClick={() => setShowCreateToken(true)} disabled={showCreateToken}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Token
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {/* Create Token Form */}
+              {showCreateToken && (
+                <Card className="mb-6 border-blue-200">
+                  <CardHeader>
+                    <CardTitle className="text-base">Create New Token</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="token-name">Token Name</Label>
+                      <Input
+                        id="token-name"
+                        placeholder="e.g., CI/CD Pipeline, CLI Tool"
+                        value={newTokenName}
+                        onChange={(e) => setNewTokenName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Scopes</Label>
+                      <div className="flex items-center gap-6">
+                        {['read', 'write', 'admin'].map((scope) => (
+                          <div key={scope} className="flex items-center gap-2">
+                            <Checkbox
+                              id={`scope-${scope}`}
+                              checked={newTokenScopes.includes(scope)}
+                              onCheckedChange={() => toggleTokenScope(scope)}
+                            />
+                            <Label htmlFor={`scope-${scope}`} className="text-sm font-normal capitalize cursor-pointer">
+                              {scope}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="token-expiry">Expiry Date (optional)</Label>
+                      <Input
+                        id="token-expiry"
+                        type="date"
+                        value={newTokenExpiry}
+                        onChange={(e) => setNewTokenExpiry(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setShowCreateToken(false)
+                          setNewTokenName('')
+                          setNewTokenScopes([])
+                          setNewTokenExpiry('')
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          if (!newTokenName.trim()) {
+                            toast({ title: 'Error', description: 'Token name is required.', variant: 'destructive' })
+                            return
+                          }
+                          if (newTokenScopes.length === 0) {
+                            toast({ title: 'Error', description: 'Select at least one scope.', variant: 'destructive' })
+                            return
+                          }
+                          createTokenMutation.mutate({
+                            name: newTokenName.trim(),
+                            scopes: newTokenScopes,
+                            ...(newTokenExpiry ? { expires_at: new Date(newTokenExpiry).toISOString() } : {}),
+                          })
+                        }}
+                        disabled={createTokenMutation.isPending}
+                      >
+                        {createTokenMutation.isPending ? <LoadingSpinner size="sm" /> : null}
+                        Create Token
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Tokens Table */}
+              {tokensLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : !accessTokens || accessTokens.length === 0 ? (
+                <div className="text-center py-8">
+                  <KeyRound className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                  <p className="text-muted-foreground">No access tokens</p>
+                  <p className="text-sm text-muted-foreground">Create a token to access the API programmatically.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 px-2 font-medium">Name</th>
+                        <th className="text-left py-2 px-2 font-medium">Prefix</th>
+                        <th className="text-left py-2 px-2 font-medium">Scopes</th>
+                        <th className="text-left py-2 px-2 font-medium">Created</th>
+                        <th className="text-left py-2 px-2 font-medium">Last Used</th>
+                        <th className="text-left py-2 px-2 font-medium">Expires</th>
+                        <th className="text-left py-2 px-2 font-medium">Status</th>
+                        <th className="text-left py-2 px-2 font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accessTokens.map((token) => (
+                        <tr key={token.id} className="border-b">
+                          <td className="py-2 px-2 font-medium">{token.name}</td>
+                          <td className="py-2 px-2 font-mono text-xs">{token.key_prefix}...</td>
+                          <td className="py-2 px-2">
+                            <div className="flex flex-wrap gap-1">
+                              {token.scopes.map((scope) => (
+                                <Badge key={scope} variant="secondary" className="text-xs">
+                                  {scope}
+                                </Badge>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {new Date(token.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {token.last_used_at
+                              ? new Date(token.last_used_at).toLocaleDateString()
+                              : 'Never'}
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">
+                            {token.expires_at
+                              ? new Date(token.expires_at).toLocaleDateString()
+                              : 'Never'}
+                          </td>
+                          <td className="py-2 px-2">
+                            <Badge
+                              variant={token.status === 'active' ? 'secondary' : 'destructive'}
+                              className="text-xs"
+                            >
+                              {token.status}
+                            </Badge>
+                          </td>
+                          <td className="py-2 px-2">
+                            {token.status === 'active' && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="destructive" size="sm">
+                                    Revoke
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Revoke Access Token?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This will permanently revoke the token "{token.name}". Any applications
+                                      using this token will lose access immediately.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => revokeTokenMutation.mutate(token.id)}>
+                                      Revoke Token
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="authorized-apps" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Authorized Applications</CardTitle>
+              <CardDescription>Applications you have granted access to your account</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {consentsLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : !userConsents || userConsents.length === 0 ? (
+                <div className="text-center py-8">
+                  <AppWindow className="h-12 w-12 mx-auto mb-3 opacity-40" />
+                  <p className="text-muted-foreground">No authorized applications</p>
+                  <p className="text-sm text-muted-foreground">
+                    When you sign in to third-party applications using OpenIDX, they will appear here.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {userConsents.map((consent) => (
+                    <div
+                      key={consent.client_id}
+                      className="flex items-start justify-between p-4 border rounded-lg"
+                    >
+                      <div className="flex items-start gap-4">
+                        {consent.logo_uri ? (
+                          <img
+                            src={consent.logo_uri}
+                            alt={consent.client_name}
+                            className="h-10 w-10 rounded-lg object-contain"
+                          />
+                        ) : (
+                          <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                            <AppWindow className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <p className="font-medium">{consent.client_name}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {consent.scopes.map((scope) => (
+                              <Badge key={scope} variant="secondary" className="text-xs">
+                                {scope}
+                              </Badge>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Authorized {new Date(consent.authorized_at).toLocaleDateString()}
+                            {consent.last_used_at && (
+                              <> &middot; Last used {new Date(consent.last_used_at).toLocaleDateString()}</>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                      <AlertDialog
+                        open={revokeConsentClientId === consent.client_id}
+                        onOpenChange={(isOpen) => {
+                          if (!isOpen) setRevokeConsentClientId(null)
+                        }}
+                      >
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setRevokeConsentClientId(consent.client_id)}
+                          >
+                            Revoke Access
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Revoke Application Access?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will revoke {consent.client_name}'s access to your account.
+                              The application will no longer be able to act on your behalf.
+                              You can re-authorize it later if needed.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => revokeConsentMutation.mutate(consent.client_id)}
+                            >
+                              Revoke Access
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>

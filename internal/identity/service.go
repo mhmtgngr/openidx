@@ -171,6 +171,7 @@ type DirectoryAuthenticator interface {
 	AuthenticateUser(ctx context.Context, directoryID, username, password string) error
 }
 
+
 // Service provides identity management operations
 type Service struct {
 	db                *database.PostgresDB
@@ -2599,6 +2600,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/users/me/mfa/enable", svc.handleEnableUserMFA)
 		identity.POST("/users/me/mfa/disable", svc.handleDisableUserMFA)
 
+		// Personal Access Tokens (User self-service)
+		identity.GET("/users/me/tokens", svc.handleListUserPATs)
+		identity.POST("/users/me/tokens", svc.handleCreateUserPAT)
+		identity.DELETE("/users/me/tokens/:id", svc.handleRevokeUserPAT)
+
+		// Consent management (User self-service)
+		identity.GET("/users/me/consents", svc.handleListUserConsents)
+		identity.DELETE("/users/me/consents/:client_id", svc.handleRevokeUserConsent)
+
 		// User management
 		identity.GET("/users", svc.handleListUsers)
 		identity.POST("/users", svc.handleCreateUser)
@@ -2769,6 +2779,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.GET("/passwordless/qr-login/poll", svc.handlePollQRLoginSession)
 		identity.GET("/passwordless/preferences", svc.handleGetPasswordlessPreferences)
 		identity.PUT("/passwordless/preferences", svc.handleUpdatePasswordlessPreferences)
+
+		// Passwordless Settings (Admin)
+		identity.GET("/passwordless/settings", svc.handleGetPasswordlessSettings)
+		identity.PUT("/passwordless/settings", svc.handleUpdatePasswordlessSettings)
+		identity.PATCH("/passwordless/settings", svc.handlePatchPasswordlessSettings)
+		identity.GET("/passwordless/stats", svc.handleGetPasswordlessStats)
+		identity.POST("/passwordless/magic-link/test", svc.handleTestMagicLink)
 
 		// Biometric Authentication
 		identity.GET("/biometric/preferences", svc.handleGetBiometricPreferences)
@@ -3944,8 +3961,8 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 		return
 	}
 
-	if len(req.Password) < 8 {
-		c.JSON(400, gin.H{"error": "Password must be at least 8 characters"})
+	if violations := s.ValidatePasswordPolicyChecks(req.Password); len(violations) > 0 {
+		c.JSON(400, gin.H{"error": "password_policy_violation", "violations": violations})
 		return
 	}
 

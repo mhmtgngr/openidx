@@ -887,6 +887,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// WebAuthn MFA begin (returns credential assertion options)
 		oauth.POST("/mfa-webauthn-begin", svc.handleMFAWebAuthnBegin)
 
+		// MFA OTP delivery (SMS/Email)
+		oauth.POST("/mfa-send-otp", svc.handleMFASendOTP)
+
 		// Push MFA endpoints
 		oauth.POST("/mfa-push-begin", svc.handleMFAPushBegin)
 		oauth.GET("/mfa-push-status/:challenge_id", svc.handleMFAPushStatus)
@@ -910,6 +913,18 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		oauth.GET("/userinfo", svc.handleUserInfo)
 		oauth.POST("/userinfo", svc.handleUserInfo)
 		oauth.OPTIONS("/userinfo", svc.handleUserInfo)
+
+		// Passkey-first login (WebAuthn as first factor)
+		oauth.POST("/passkey-begin", svc.handlePasskeyBegin)
+		oauth.POST("/passkey-finish", svc.handlePasskeyFinish)
+
+		// Magic link login (public, no auth required)
+		oauth.POST("/magic-link", svc.handleOAuthMagicLink)
+		oauth.GET("/magic-link-verify", svc.handleMagicLinkVerify)
+
+		// QR code login (public, no auth required)
+		oauth.POST("/qr-login/create", svc.handleQRLoginCreate)
+		oauth.GET("/qr-login/poll", svc.handleQRLoginPoll)
 
 		// Session management endpoints
 		oauth.POST("/logout", svc.handleLogout)

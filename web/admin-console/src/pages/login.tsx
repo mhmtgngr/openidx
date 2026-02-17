@@ -9,6 +9,7 @@ import { useAuth } from '../lib/auth'
 import { api, baseURL, IdentityProvider } from '../lib/api'
 import { getProviderIcon } from '../components/icons/social-providers'
 import { decodeCredentialRequestOptions, serializeAssertionResponse, type PublicKeyCredentialRequestOptionsJSON } from '../lib/webauthn'
+import { QRCodeSVG } from 'qrcode.react'
 
 interface MFAOption {
   method: string
@@ -57,6 +58,29 @@ export function LoginPage() {
   const [concurrentLimitReached, setConcurrentLimitReached] = useState(false)
   const [activeSessions, setActiveSessions] = useState<any[]>([])
   const [pendingLoginSession, setPendingLoginSession] = useState('')
+
+  // Passkey state
+  const [passkeySupported, setPasskeySupported] = useState(false)
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
+
+  // Magic link state
+  const [showMagicLink, setShowMagicLink] = useState(false)
+  const [magicLinkEmail, setMagicLinkEmail] = useState('')
+  const [magicLinkSent, setMagicLinkSent] = useState(false)
+  const [magicLinkLoading, setMagicLinkLoading] = useState(false)
+
+  // QR login state
+  const [showQRLogin, setShowQRLogin] = useState(false)
+  const [qrSession, setQrSession] = useState<{ session_token: string; qr_content: string; expires_at: string } | null>(null)
+  const [qrLoading, setQrLoading] = useState(false)
+  const qrPollingRef2 = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Check if passkeys/WebAuthn are supported
+  useEffect(() => {
+    if (window.PublicKeyCredential) {
+      setPasskeySupported(true)
+    }
+  }, [])
 
   // Check for login_session parameter on mount
   useEffect(() => {
@@ -358,11 +382,14 @@ export function LoginPage() {
     }
   }, [trustBrowser])
 
-  // Cleanup push polling on unmount
+  // Cleanup push polling and QR polling on unmount
   useEffect(() => {
     return () => {
       if (pushPollingRef.current) {
         clearInterval(pushPollingRef.current)
+      }
+      if (qrPollingRef2.current) {
+        clearInterval(qrPollingRef2.current)
       }
     }
   }, [])
@@ -514,6 +541,107 @@ export function LoginPage() {
         return { method: 'push', label: 'Push Notification', icon: <Bell className="h-5 w-5" /> }
       default:
         return { method, label: method.toUpperCase(), icon: <Shield className="h-5 w-5" /> }
+    }
+  }
+
+  const handlePasskeyLogin = async () => {
+    if (!loginSession) return
+    setPasskeyLoading(true)
+    setError('')
+
+    try {
+      const beginResp = await fetch(`${baseURL}/oauth/passkey-begin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login_session: loginSession }),
+      })
+      if (!beginResp.ok) {
+        const d = await beginResp.json()
+        throw new Error(d.error_description || 'No passkeys available')
+      }
+      const serverOptions = await beginResp.json()
+
+      const publicKeyOptions = serverOptions.publicKey || serverOptions
+      const options = decodeCredentialRequestOptions(publicKeyOptions as PublicKeyCredentialRequestOptionsJSON)
+      const credential = await navigator.credentials.get({ publicKey: options }) as PublicKeyCredential
+      if (!credential) throw new Error('Passkey authentication was cancelled')
+
+      const assertionJSON = serializeAssertionResponse(credential)
+      const finishResp = await fetch(`${baseURL}/oauth/passkey-finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login_session: loginSession,
+          credential: JSON.parse(assertionJSON),
+        }),
+      })
+      const finishData = await finishResp.json()
+      if (!finishResp.ok) throw new Error(finishData.error_description || 'Passkey verification failed')
+      if (finishData.redirect_url) window.location.href = finishData.redirect_url
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Passkey authentication failed'
+      setError(msg)
+    } finally {
+      setPasskeyLoading(false)
+    }
+  }
+
+  const handleMagicLinkRequest = async () => {
+    if (!loginSession || !magicLinkEmail) return
+    setMagicLinkLoading(true)
+    setError('')
+    try {
+      await fetch(`${baseURL}/oauth/magic-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: magicLinkEmail, login_session: loginSession }),
+      })
+      setMagicLinkSent(true)
+    } catch {
+      setError('Failed to send sign-in link. Please try again.')
+    } finally {
+      setMagicLinkLoading(false)
+    }
+  }
+
+  const initQRLogin = async () => {
+    if (!loginSession) return
+    setQrLoading(true)
+    setShowQRLogin(true)
+    setError('')
+
+    try {
+      const resp = await fetch(`${baseURL}/oauth/qr-login/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login_session: loginSession }),
+      })
+      if (!resp.ok) throw new Error('Failed to create QR session')
+      const data = await resp.json()
+      setQrSession(data)
+
+      // Start polling
+      if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
+      qrPollingRef2.current = setInterval(async () => {
+        try {
+          const pollResp = await fetch(`${baseURL}/oauth/qr-login/poll?session_token=${data.session_token}&login_session=${loginSession}`)
+          const pollData = await pollResp.json()
+          if (pollData.redirect_url) {
+            if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
+            window.location.href = pollData.redirect_url
+          } else if (pollData.status === 'expired') {
+            if (qrPollingRef2.current) clearInterval(qrPollingRef2.current)
+            setQrSession(null)
+            setShowQRLogin(false)
+            setError('QR session expired. Please try again.')
+          }
+        } catch { /* ignore polling errors */ }
+      }, 2000)
+    } catch {
+      setError('Failed to create QR login session.')
+      setShowQRLogin(false)
+    } finally {
+      setQrLoading(false)
     }
   }
 
@@ -906,6 +1034,26 @@ export function LoginPage() {
           </CardHeader>
 
           <CardContent>
+            {passkeySupported && (
+              <div className="mb-4">
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={handlePasskeyLogin}
+                  disabled={passkeyLoading}
+                >
+                  {passkeyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                  Sign in with a passkey
+                </Button>
+                <div className="relative my-4">
+                  <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-white px-2 text-muted-foreground">Or continue with password</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleCredentialsSubmit} className="space-y-4">
               {error && (
                 <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
@@ -973,6 +1121,73 @@ export function LoginPage() {
                 Back to login options
               </Button>
             </form>
+
+            {/* Magic Link Option */}
+            <div className="mt-4 pt-4 border-t">
+              {!showMagicLink && !magicLinkSent && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-sm text-muted-foreground"
+                  onClick={() => setShowMagicLink(true)}
+                >
+                  <Mail className="mr-2 h-4 w-4" />
+                  Email me a sign-in link
+                </Button>
+              )}
+              {showMagicLink && !magicLinkSent && (
+                <div className="space-y-2">
+                  <Label htmlFor="magic-email">Email address</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="magic-email"
+                      type="email"
+                      placeholder="your@email.com"
+                      value={magicLinkEmail}
+                      onChange={(e) => setMagicLinkEmail(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleMagicLinkRequest()}
+                    />
+                    <Button onClick={handleMagicLinkRequest} disabled={magicLinkLoading || !magicLinkEmail}>
+                      {magicLinkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {magicLinkSent && (
+                <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
+                  <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
+                  <p className="text-sm text-green-700">Check your email for a sign-in link.</p>
+                </div>
+              )}
+            </div>
+
+            {/* QR Code Login Option */}
+            <div className="mt-2">
+              {!showQRLogin && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-sm text-muted-foreground"
+                  onClick={initQRLogin}
+                  disabled={qrLoading}
+                >
+                  <Smartphone className="mr-2 h-4 w-4" />
+                  Sign in with QR code
+                </Button>
+              )}
+              {showQRLogin && qrSession && (
+                <div className="space-y-3 text-center">
+                  <p className="text-sm text-muted-foreground">Scan with the OpenIDX mobile app</p>
+                  <div className="flex justify-center">
+                    <QRCodeSVG value={qrSession.qr_content} size={160} />
+                  </div>
+                  <p className="text-xs text-muted-foreground">Waiting for approval...</p>
+                  <Button variant="ghost" size="sm" onClick={() => { setShowQRLogin(false); setQrSession(null); if (qrPollingRef2.current) clearInterval(qrPollingRef2.current) }}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardContent>
 
           <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-lg">

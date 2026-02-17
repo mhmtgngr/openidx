@@ -2531,3 +2531,8 @@ ALTER TABLE application_sso_settings ADD COLUMN IF NOT EXISTS concurrent_session
 -- Back-channel and front-channel logout URIs for federated logout
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS back_channel_logout_uri VARCHAR(500);
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS front_channel_logout_uri VARCHAR(500);
+
+-- Phase 10: Self-Service Portal & Passwordless UX
+-- Indexes for consent management queries (refresh tokens by user+client)
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_user_client ON oauth_refresh_tokens(user_id, client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user_client ON oauth_access_tokens(user_id, client_id);

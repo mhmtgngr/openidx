@@ -386,6 +386,103 @@ func (s *Service) FinishWebAuthnAuthentication(ctx context.Context, username str
 	return userID, nil
 }
 
+// BeginWebAuthnDiscoverableAuthentication begins a discoverable credential (resident key) assertion.
+// No username is required — the browser selects the credential via user interaction.
+func (s *Service) BeginWebAuthnDiscoverableAuthentication(ctx context.Context) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	webAuthn, err := s.getWebAuthnInstance()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize WebAuthn: %w", err)
+	}
+
+	options, sessionData, err := webAuthn.BeginDiscoverableLogin()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin discoverable login: %w", err)
+	}
+
+	s.logger.Info("WebAuthn discoverable authentication initiated")
+	return options, sessionData, nil
+}
+
+// FinishWebAuthnDiscoverableAuthentication completes a discoverable credential assertion.
+// The userHandle from the assertion response is used to look up the user and their credentials.
+func (s *Service) FinishWebAuthnDiscoverableAuthentication(ctx context.Context, sessionData *webauthn.SessionData, response *protocol.ParsedCredentialAssertionData) (string, error) {
+	webAuthn, err := s.getWebAuthnInstance()
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize WebAuthn: %w", err)
+	}
+
+	// The user handle from the assertion contains the user ID
+	userHandle := response.Response.UserHandle
+	if len(userHandle) == 0 {
+		return "", fmt.Errorf("no user handle in assertion response")
+	}
+
+	// Parse user ID from the handle (UUID bytes)
+	userUUID, err := uuid.FromBytes(userHandle)
+	if err != nil {
+		return "", fmt.Errorf("invalid user handle format: %w", err)
+	}
+	userID := userUUID.String()
+
+	// Get user info
+	query := `SELECT id, username, first_name, last_name FROM users WHERE id = $1 AND enabled = true`
+	var uid, uname, firstName, lastName string
+	if err := s.db.Pool.QueryRow(ctx, query, userID).Scan(&uid, &uname, &firstName, &lastName); err != nil {
+		return "", fmt.Errorf("user not found: %w", err)
+	}
+
+	// Get credentials for the user
+	credentials, err := s.getWebAuthnCredentials(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get credentials: %w", err)
+	}
+
+	webauthnCreds := make([]webauthn.Credential, 0, len(credentials))
+	for _, cred := range credentials {
+		credID, _ := base64.RawURLEncoding.DecodeString(cred.CredentialID)
+		pubKey := []byte(cred.PublicKey)
+		webauthnCreds = append(webauthnCreds, webauthn.Credential{
+			ID:        credID,
+			PublicKey: pubKey,
+			Authenticator: webauthn.Authenticator{
+				SignCount: cred.SignCount,
+			},
+		})
+	}
+
+	userIDBytes, _ := uuid.Parse(userID)
+	webauthnUser := &WebAuthnUser{
+		ID:          userIDBytes[:],
+		Name:        uname,
+		DisplayName: fmt.Sprintf("%s %s", firstName, lastName),
+		Credentials: webauthnCreds,
+	}
+
+	// Handler for discoverable login: given a raw user handle, return the user
+	discoverableUserHandler := func(rawID, userHandle []byte) (webauthn.User, error) {
+		return webauthnUser, nil
+	}
+
+	credential, err := webAuthn.ValidateDiscoverableLogin(discoverableUserHandler, *sessionData, response)
+	if err != nil {
+		s.logger.Error("WebAuthn discoverable authentication failed", zap.String("user_id", userID), zap.Error(err))
+		return "", fmt.Errorf("failed to verify authentication: %w", err)
+	}
+
+	// Update sign count
+	credentialID := base64.RawURLEncoding.EncodeToString(credential.ID)
+	if err := s.updateWebAuthnCredential(ctx, userID, credentialID, credential.Authenticator.SignCount); err != nil {
+		s.logger.Warn("Failed to update credential sign count", zap.String("user_id", userID), zap.Error(err))
+	}
+
+	s.logger.Info("WebAuthn discoverable authentication successful",
+		zap.String("user_id", userID),
+		zap.String("username", uname),
+		zap.String("credential_id", credentialID))
+
+	return userID, nil
+}
+
 // GetWebAuthnCredentials returns all WebAuthn credentials for a user
 func (s *Service) GetWebAuthnCredentials(ctx context.Context, userID string) ([]WebAuthnCredential, error) {
 	return s.getWebAuthnCredentials(ctx, userID)

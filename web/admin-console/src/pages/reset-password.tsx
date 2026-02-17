@@ -15,10 +15,12 @@ export function ResetPasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  const [violations, setViolations] = useState<string[]>([])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setViolations([])
 
     if (password !== confirmPassword) {
       setError('Passwords do not match')
@@ -43,6 +45,9 @@ export function ResetPasswordPage() {
 
       if (response.ok) {
         setSuccess(true)
+      } else if (data.violations) {
+        setViolations(data.violations)
+        setError('Password does not meet the requirements:')
       } else {
         setError(data.error || 'Failed to reset password. The link may be expired.')
       }
@@ -110,10 +115,17 @@ export function ResetPasswordPage() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-              {error && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
-                  <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
-                  <p className="text-sm text-red-600">{error}</p>
+              {(error || violations.length > 0) && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                    <p className="text-sm text-red-600">{error}</p>
+                  </div>
+                  {violations.length > 0 && (
+                    <ul className="mt-2 ml-6 list-disc text-sm text-red-600 space-y-1">
+                      {violations.map((v, i) => <li key={i}>{v}</li>)}
+                    </ul>
+                  )}
                 </div>
               )}
 

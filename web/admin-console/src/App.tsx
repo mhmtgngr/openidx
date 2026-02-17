@@ -33,6 +33,7 @@ import { AppPublishPage } from './pages/app-publish'
 import { SettingsPage } from './pages/settings'
 import { ForgotPasswordPage } from './pages/forgot-password'
 import { ResetPasswordPage } from './pages/reset-password'
+import { MagicLinkVerifyPage } from './pages/magic-link-verify'
 import { OrganizationsPage } from './pages/organizations'
 import { ReportsPage } from './pages/reports'
 import { AppLauncherPage } from './pages/app-launcher'
@@ -105,6 +106,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/magic-link-verify" element={<MagicLinkVerifyPage />} />
 
         <Route
           path="/"
