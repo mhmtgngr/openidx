@@ -957,6 +957,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 
 		// Export
 		audit.POST("/export", svc.handleExportEvents)
+
+		// Enhanced compliance reports (Phase 12)
+		audit.POST("/reports/soc2-detailed", svc.handleGenerateSOC2Detailed)
+		audit.POST("/reports/iso27001-detailed", svc.handleGenerateISO27001Detailed)
+		audit.GET("/reports/:id/evidence", svc.handleDownloadEvidence)
 	}
 }
 

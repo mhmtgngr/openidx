@@ -2536,3 +2536,179 @@ ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS front_channel_logout_uri VARC
 -- Indexes for consent management queries (refresh tokens by user+client)
 CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_user_client ON oauth_refresh_tokens(user_id, client_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user_client ON oauth_access_tokens(user_id, client_id);
+
+-- ============================================================================
+-- Phase 11: Enterprise Integrations
+-- ============================================================================
+
+-- SAML Service Provider registrations (for IdP role)
+CREATE TABLE IF NOT EXISTS saml_service_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    entity_id VARCHAR(500) UNIQUE NOT NULL,
+    acs_url VARCHAR(500) NOT NULL,
+    slo_url VARCHAR(500),
+    certificate TEXT,
+    name_id_format VARCHAR(255) DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+    attribute_mappings JSONB DEFAULT '{}',
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_saml_sp_entity_id ON saml_service_providers(entity_id);
+
+-- Social login account links
+CREATE TABLE IF NOT EXISTS social_account_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    provider_id UUID REFERENCES identity_providers(id) ON DELETE CASCADE,
+    external_id VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    profile_data JSONB,
+    linked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(provider_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_links_user ON social_account_links(user_id);
+CREATE INDEX IF NOT EXISTS idx_social_links_provider ON social_account_links(provider_id, external_id);
+
+-- Webhook delivery statistics cache
+CREATE TABLE IF NOT EXISTS webhook_delivery_stats (
+    subscription_id VARCHAR(255) PRIMARY KEY,
+    total_deliveries INT DEFAULT 0,
+    successful_deliveries INT DEFAULT 0,
+    failed_deliveries INT DEFAULT 0,
+    avg_response_time_ms INT DEFAULT 0,
+    last_delivery_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================================================
+-- Phase 12: Analytics & Insights
+-- ============================================================================
+
+-- User risk baselines
+CREATE TABLE IF NOT EXISTS user_risk_baselines (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    typical_login_hours JSONB DEFAULT '[]',
+    typical_countries JSONB DEFAULT '[]',
+    typical_ips JSONB DEFAULT '[]',
+    avg_risk_score FLOAT DEFAULT 0,
+    login_count INT DEFAULT 0,
+    last_updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- API usage metrics
+CREATE TABLE IF NOT EXISTS api_usage_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    endpoint VARCHAR(255) NOT NULL,
+    method VARCHAR(10) NOT NULL,
+    service VARCHAR(100) NOT NULL,
+    status_code INT,
+    count INT DEFAULT 1,
+    avg_latency_ms FLOAT DEFAULT 0,
+    hour TIMESTAMP WITH TIME ZONE NOT NULL,
+    UNIQUE(endpoint, method, service, status_code, hour)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_metrics_hour ON api_usage_metrics(hour);
+CREATE INDEX IF NOT EXISTS idx_api_metrics_endpoint ON api_usage_metrics(endpoint, hour);
+
+-- Feature adoption tracking
+CREATE TABLE IF NOT EXISTS feature_adoption (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    feature_name VARCHAR(100) NOT NULL,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    first_used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_used_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    usage_count INT DEFAULT 1,
+    UNIQUE(feature_name, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_adoption_feature ON feature_adoption(feature_name);
+
+-- ============================================================================
+-- Phase 13: Developer Experience
+-- ============================================================================
+
+-- Developer settings
+CREATE TABLE IF NOT EXISTS developer_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    setting_key VARCHAR(100) UNIQUE NOT NULL,
+    setting_value JSONB NOT NULL,
+    updated_by UUID REFERENCES users(id),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- OAuth playground sessions
+CREATE TABLE IF NOT EXISTS oauth_playground_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    client_id VARCHAR(255) NOT NULL,
+    state VARCHAR(255),
+    code_verifier VARCHAR(255),
+    code_challenge VARCHAR(255),
+    redirect_uri VARCHAR(500),
+    scopes TEXT[],
+    status VARCHAR(50) DEFAULT 'initiated',
+    authorization_code VARCHAR(255),
+    access_token TEXT,
+    id_token TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() + INTERVAL '30 minutes'
+);
+
+CREATE INDEX IF NOT EXISTS idx_playground_user ON oauth_playground_sessions(user_id);
+
+-- ============================================================================
+-- Phase 14: Operational Excellence
+-- ============================================================================
+
+-- Admin operation audit trail
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id UUID REFERENCES users(id),
+    actor_email VARCHAR(255),
+    action VARCHAR(100) NOT NULL,
+    target_type VARCHAR(100) NOT NULL,
+    target_id VARCHAR(255),
+    target_name VARCHAR(255),
+    before_state JSONB,
+    after_state JSONB,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    request_id VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_actor ON admin_audit_log(actor_id);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_time ON admin_audit_log(created_at DESC);
+
+-- Health check history
+CREATE TABLE IF NOT EXISTS health_check_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_name VARCHAR(100) NOT NULL,
+    dependency_name VARCHAR(100) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    latency_ms INT,
+    details JSONB,
+    checked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_history_service ON health_check_history(service_name, checked_at DESC);
+
+-- Error catalog
+CREATE TABLE IF NOT EXISTS error_catalog (
+    code VARCHAR(100) PRIMARY KEY,
+    http_status INT NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    description TEXT NOT NULL,
+    resolution_hint TEXT,
+    documentation_url VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);

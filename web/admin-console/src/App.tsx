@@ -56,6 +56,16 @@ import { EntitlementsPage } from './pages/entitlements'
 import { ComplianceDashboardPage } from './pages/compliance-dashboard'
 import { DelegationsPage } from './pages/delegations'
 import { ABACPoliciesPage } from './pages/abac-policies'
+import { SAMLServiceProvidersPage } from './pages/saml-service-providers'
+import { AuthAnalyticsPage } from './pages/auth-analytics'
+import { UsageAnalyticsPage } from './pages/usage-analytics'
+import { RiskDashboardPage } from './pages/risk-dashboard'
+import { AdminAuditLogPage } from './pages/admin-audit-log'
+import { ApiExplorerPage } from './pages/api-explorer'
+import { DeveloperSettingsPage } from './pages/developer-settings'
+import { ErrorCatalogPage } from './pages/error-catalog'
+import { OAuthPlaygroundPage } from './pages/oauth-playground'
+import { SystemHealthPage } from './pages/system-health'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -350,6 +360,56 @@ export default function App() {
           <Route path="abac-policies" element={
             <AdminRoute>
               <ABACPoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="saml-service-providers" element={
+            <AdminRoute>
+              <SAMLServiceProvidersPage />
+            </AdminRoute>
+          } />
+          <Route path="auth-analytics" element={
+            <AdminRoute>
+              <AuthAnalyticsPage />
+            </AdminRoute>
+          } />
+          <Route path="usage-analytics" element={
+            <AdminRoute>
+              <UsageAnalyticsPage />
+            </AdminRoute>
+          } />
+          <Route path="risk-dashboard" element={
+            <AdminRoute>
+              <RiskDashboardPage />
+            </AdminRoute>
+          } />
+          <Route path="admin-audit-log" element={
+            <AdminRoute>
+              <AdminAuditLogPage />
+            </AdminRoute>
+          } />
+          <Route path="api-explorer" element={
+            <AdminRoute>
+              <ApiExplorerPage />
+            </AdminRoute>
+          } />
+          <Route path="developer-settings" element={
+            <AdminRoute>
+              <DeveloperSettingsPage />
+            </AdminRoute>
+          } />
+          <Route path="error-catalog" element={
+            <AdminRoute>
+              <ErrorCatalogPage />
+            </AdminRoute>
+          } />
+          <Route path="oauth-playground" element={
+            <AdminRoute>
+              <OAuthPlaygroundPage />
+            </AdminRoute>
+          } />
+          <Route path="system-health" element={
+            <AdminRoute>
+              <SystemHealthPage />
             </AdminRoute>
           } />
         </Route>

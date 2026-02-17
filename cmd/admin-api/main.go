@@ -369,6 +369,14 @@ func (a *webhookAdapter) Publish(ctx context.Context, eventType string, payload 
 	return a.svc.Publish(ctx, eventType, payload)
 }
 
+func (a *webhookAdapter) PingSubscription(ctx context.Context, subscriptionID string) (interface{}, error) {
+	return a.svc.PingSubscription(ctx, subscriptionID)
+}
+
+func (a *webhookAdapter) GetDeliveryStats(ctx context.Context, subscriptionID string) (interface{}, error) {
+	return a.svc.GetDeliveryStats(ctx, subscriptionID)
+}
+
 // securityAdapter adapts risk.Service to admin.SecurityService interface
 type securityAdapter struct {
 	riskService *risk.Service

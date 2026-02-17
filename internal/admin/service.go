@@ -227,6 +227,8 @@ type WebhookManager interface {
 	GetDeliveryHistory(ctx context.Context, subscriptionID string, limit int) (interface{}, error)
 	RetryDelivery(ctx context.Context, deliveryID string) error
 	Publish(ctx context.Context, eventType string, payload interface{}) error
+	PingSubscription(ctx context.Context, subscriptionID string) (interface{}, error)
+	GetDeliveryStats(ctx context.Context, subscriptionID string) (interface{}, error)
 }
 
 // SecurityService defines the interface for security alert and IP threat operations
@@ -902,6 +904,8 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.DELETE("/webhooks/:id", svc.handleDeleteWebhook)
 	router.GET("/webhooks/:id/deliveries", svc.handleWebhookDeliveries)
 	router.POST("/webhooks/deliveries/:id/retry", svc.handleRetryWebhookDelivery)
+	router.POST("/webhooks/:id/test", svc.handleTestWebhook)
+	router.GET("/webhooks/:id/stats", svc.handleWebhookStats)
 
 	// Invitations
 	router.GET("/invitations", svc.handleListInvitations)
@@ -946,6 +950,36 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/delegations/:id", svc.handleGetDelegation)
 	router.PUT("/delegations/:id", svc.handleUpdateDelegation)
 	router.DELETE("/delegations/:id", svc.handleDeleteDelegation)
+
+	// Developer experience
+	router.GET("/developer/settings", svc.handleGetDeveloperSettings)
+	router.PUT("/developer/settings", svc.handleUpdateDeveloperSettings)
+	router.GET("/developer/api-catalog", svc.handleListAPIEndpoints)
+	router.GET("/developer/code-samples", svc.handleGetCodeSamples)
+	router.POST("/developer/playground/sessions", svc.handleCreatePlaygroundSession)
+	router.POST("/developer/playground/execute", svc.handleExecutePlayground)
+
+	// Admin audit log
+	router.GET("/audit-log", svc.handleGetAdminAuditLog)
+	router.GET("/audit-log/:id", svc.handleGetAdminAuditEntry)
+	router.GET("/settings-history", svc.handleGetSettingsHistory)
+
+	// Enhanced analytics (Phase 12)
+	router.GET("/analytics/auth-dashboard", svc.handleAuthAnalyticsDashboard)
+	router.GET("/analytics/usage", svc.handleUsageAnalytics)
+	router.GET("/analytics/api-usage", svc.handleAPIUsageMetrics)
+	router.GET("/analytics/feature-adoption", svc.handleFeatureAdoption)
+	router.GET("/analytics/risk-timeline", svc.handleRiskScoreTimeline)
+	router.GET("/analytics/activity-heatmap", svc.handleUserActivityHeatmap)
+
+	// System health (Phase 14)
+	router.GET("/system/health", svc.handleSystemHealth)
+
+	// Error catalog (Phase 14)
+	router.GET("/error-catalog", svc.handleListErrorCatalog)
+	router.POST("/error-catalog", svc.handleCreateErrorCatalogEntry)
+	router.PUT("/error-catalog/:code", svc.handleUpdateErrorCatalogEntry)
+	router.DELETE("/error-catalog/:code", svc.handleDeleteErrorCatalogEntry)
 }
 
 // HTTP Handlers
@@ -1868,6 +1902,36 @@ func (s *Service) handleRetryWebhookDelivery(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Delivery retry initiated"})
+}
+
+func (s *Service) handleTestWebhook(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	delivery, err := s.webhookService.PingSubscription(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Test ping sent", "delivery": delivery})
+}
+
+func (s *Service) handleWebhookStats(c *gin.Context) {
+	if s.webhookService == nil {
+		c.JSON(500, gin.H{"error": "webhook service not available"})
+		return
+	}
+
+	id := c.Param("id")
+	stats, err := s.webhookService.GetDeliveryStats(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, stats)
 }
 
 // Invitation handlers

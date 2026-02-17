@@ -948,8 +948,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		clients.POST("/:id/regenerate-secret", svc.handleRegenerateClientSecret)
 	}
 
-	// SAML Service Provider endpoints
-	svc.RegisterSAMLRoutes(router)
+	// SAML IdP and Service Provider endpoints
+	svc.RegisterSAMLIdPRoutes(router)
+
+	// Social login endpoints
+	svc.RegisterSocialLoginRoutes(router)
 }
 
 func (s *Service) handleDiscovery(c *gin.Context) {

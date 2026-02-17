@@ -43,6 +43,14 @@ import {
   Gauge,
   UserCheck,
   Filter,
+  Code2,
+  Play,
+  HeartPulse,
+  AlertTriangle,
+  ScrollText,
+  TrendingUp,
+  PieChart,
+  Fingerprint as FingerprintIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -155,16 +163,38 @@ const navigationSections: NavSection[] = [
     items: [
       { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
       { name: 'Unified Audit', href: '/unified-audit', icon: Layers, adminOnly: true },
+      { name: 'Admin Audit Log', href: '/admin-audit-log', icon: ScrollText, adminOnly: true },
       { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
+      { name: 'Auth Analytics', href: '/auth-analytics', icon: TrendingUp, adminOnly: true },
+      { name: 'Usage Analytics', href: '/usage-analytics', icon: PieChart, adminOnly: true },
+      { name: 'Risk Dashboard', href: '/risk-dashboard', icon: AlertTriangle, adminOnly: true },
       { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
       { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, adminOnly: true },
       { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
     ],
   },
   {
+    label: 'Enterprise',
+    adminOnly: true,
+    items: [
+      { name: 'SAML Providers', href: '/saml-service-providers', icon: FingerprintIcon, adminOnly: true },
+    ],
+  },
+  {
+    label: 'Developer',
+    adminOnly: true,
+    items: [
+      { name: 'API Explorer', href: '/api-explorer', icon: Code2, adminOnly: true },
+      { name: 'OAuth Playground', href: '/oauth-playground', icon: Play, adminOnly: true },
+      { name: 'Developer Settings', href: '/developer-settings', icon: Settings, adminOnly: true },
+      { name: 'Error Catalog', href: '/error-catalog', icon: AlertTriangle, adminOnly: true },
+    ],
+  },
+  {
     label: 'System',
     adminOnly: true,
     items: [
+      { name: 'System Health', href: '/system-health', icon: HeartPulse, adminOnly: true },
       { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
       { name: 'Delegations', href: '/delegations', icon: UserCheck, adminOnly: true },
       { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },

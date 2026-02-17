@@ -572,3 +572,172 @@ func (s *Service) processRetryBatch(ctx context.Context) {
 		s.logger.Info("queued webhook deliveries for retry", zap.Int("count", count))
 	}
 }
+
+// PingSubscription sends a test ping to a webhook subscription
+func (s *Service) PingSubscription(ctx context.Context, subscriptionID string) (*Delivery, error) {
+	// Load the subscription to verify it exists and get URL/secret
+	sub, err := s.GetSubscription(ctx, subscriptionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load subscription for ping: %w", err)
+	}
+
+	// Create the test ping payload
+	pingPayload := map[string]interface{}{
+		"event":     "ping",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	payloadJSON, err := json.Marshal(pingPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal ping payload: %w", err)
+	}
+
+	// Create a delivery record for the ping
+	deliveryID := uuid.New().String()
+	now := time.Now().UTC()
+
+	insertQuery := `INSERT INTO webhook_deliveries (id, subscription_id, event_type, payload, attempt, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err = s.db.Pool.Exec(ctx, insertQuery,
+		deliveryID, subscriptionID, "ping", string(payloadJSON), 0, "pending", now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ping delivery record: %w", err)
+	}
+
+	// Build and send the HTTP request directly (no retry scheduling for test pings)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.URL, strings.NewReader(string(payloadJSON)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ping request: %w", err)
+	}
+
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	signature := computeSignature(sub.Secret, payloadJSON)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Webhook-ID", deliveryID)
+	req.Header.Set("X-Webhook-Event", "ping")
+	req.Header.Set("X-Webhook-Timestamp", timestamp)
+	req.Header.Set("X-Webhook-Signature", signature)
+
+	delivery := &Delivery{
+		ID:             deliveryID,
+		SubscriptionID: subscriptionID,
+		EventType:      "ping",
+		Payload:        string(payloadJSON),
+		Attempt:        1,
+		CreatedAt:      now,
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		// Update delivery as failed
+		updateQuery := `UPDATE webhook_deliveries SET status = 'failed', attempt = 1, response_body = $2 WHERE id = $1`
+		errMsg := err.Error()
+		s.db.Pool.Exec(ctx, updateQuery, deliveryID, errMsg)
+
+		delivery.Status = "failed"
+		delivery.ResponseBody = &errMsg
+
+		s.logger.Warn("webhook ping failed",
+			zap.String("subscription_id", subscriptionID),
+			zap.Error(err),
+		)
+		return delivery, nil
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBodyBytes, _ := io.ReadAll(resp.Body)
+	respBodyStr := string(respBodyBytes)
+	if len(respBodyStr) > 1000 {
+		respBodyStr = respBodyStr[:1000]
+	}
+
+	deliveredAt := time.Now().UTC()
+	statusCode := resp.StatusCode
+	delivery.ResponseStatus = &statusCode
+	delivery.ResponseBody = &respBodyStr
+	delivery.DeliveredAt = &deliveredAt
+	delivery.Attempt = 1
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		delivery.Status = "delivered"
+		updateQuery := `UPDATE webhook_deliveries SET status = 'delivered', response_status = $2, response_body = $3, delivered_at = $4, attempt = 1 WHERE id = $1`
+		s.db.Pool.Exec(ctx, updateQuery, deliveryID, statusCode, respBodyStr, deliveredAt)
+	} else {
+		delivery.Status = "failed"
+		updateQuery := `UPDATE webhook_deliveries SET status = 'failed', response_status = $2, response_body = $3, attempt = 1 WHERE id = $1`
+		s.db.Pool.Exec(ctx, updateQuery, deliveryID, statusCode, respBodyStr)
+	}
+
+	s.logger.Info("webhook ping completed",
+		zap.String("subscription_id", subscriptionID),
+		zap.String("delivery_id", deliveryID),
+		zap.Int("status_code", resp.StatusCode),
+		zap.String("status", delivery.Status),
+	)
+
+	return delivery, nil
+}
+
+// GetDeliveryStats returns delivery statistics for a subscription
+func (s *Service) GetDeliveryStats(ctx context.Context, subscriptionID string) (map[string]interface{}, error) {
+	// Verify the subscription exists
+	_, err := s.GetSubscription(ctx, subscriptionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load subscription for stats: %w", err)
+	}
+
+	query := `SELECT
+		COUNT(*) AS total_deliveries,
+		COUNT(*) FILTER (WHERE status = 'delivered') AS successful,
+		COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+		COALESCE(AVG(EXTRACT(EPOCH FROM (delivered_at - created_at)) * 1000) FILTER (WHERE delivered_at IS NOT NULL), 0) AS avg_response_time_ms,
+		MAX(delivered_at) AS last_delivery_at
+	FROM webhook_deliveries
+	WHERE subscription_id = $1`
+
+	var (
+		totalDeliveries int64
+		successful      int64
+		failed          int64
+		avgResponseTime float64
+		lastDeliveryAt  *time.Time
+	)
+
+	err = s.db.Pool.QueryRow(ctx, query, subscriptionID).Scan(
+		&totalDeliveries,
+		&successful,
+		&failed,
+		&avgResponseTime,
+		&lastDeliveryAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query delivery stats: %w", err)
+	}
+
+	stats := map[string]interface{}{
+		"subscription_id":      subscriptionID,
+		"total_deliveries":     totalDeliveries,
+		"successful_deliveries": successful,
+		"failed_deliveries":    failed,
+		"avg_response_time_ms": int64(avgResponseTime),
+		"last_delivery_at":     lastDeliveryAt,
+	}
+
+	// Calculate success rate
+	if totalDeliveries > 0 {
+		stats["success_rate"] = float64(successful) / float64(totalDeliveries) * 100.0
+	} else {
+		stats["success_rate"] = float64(0)
+	}
+
+	s.logger.Debug("webhook delivery stats retrieved",
+		zap.String("subscription_id", subscriptionID),
+		zap.Int64("total", totalDeliveries),
+		zap.Int64("successful", successful),
+		zap.Int64("failed", failed),
+	)
+
+	return stats, nil
+}
