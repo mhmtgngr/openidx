@@ -39,8 +39,17 @@ func (s *Service) handleListAllSessions(c *gin.Context) {
 	if l := c.Query("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	if o := c.Query("offset"); o != "" {
 		fmt.Sscanf(o, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	ctx := c.Request.Context()
@@ -210,8 +219,17 @@ func (s *Service) handleListSecurityAlerts(c *gin.Context) {
 	if l := c.Query("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	if o := c.Query("offset"); o != "" {
 		fmt.Sscanf(o, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	alerts, total, err := s.securityService.ListSecurityAlerts(c.Request.Context(), status, severity, alertType, limit, offset)
@@ -291,8 +309,17 @@ func (s *Service) handleListIPThreats(c *gin.Context) {
 	if l := c.Query("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	if o := c.Query("offset"); o != "" {
 		fmt.Sscanf(o, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	entries, total, err := s.securityService.ListIPThreats(c.Request.Context(), limit, offset)
@@ -390,7 +417,11 @@ func (s *Service) handleRotateServiceAccountKey(c *gin.Context) {
 			if km, ok := k.(map[string]interface{}); ok {
 				if id, ok := km["id"].(string); ok {
 					if status, ok := km["status"].(string); ok && status == "active" {
-						_ = s.apiKeyService.RevokeAPIKey(c.Request.Context(), id)
+						if err := s.apiKeyService.RevokeAPIKey(c.Request.Context(), id); err != nil {
+							s.logger.Error("Failed to revoke old key during rotation", zap.String("key_id", id), zap.Error(err))
+							c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke existing key"})
+							return
+						}
 					}
 				}
 			}

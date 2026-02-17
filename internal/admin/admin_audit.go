@@ -103,14 +103,17 @@ func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
 	if l := c.Query("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
-	if o := c.Query("offset"); o != "" {
-		fmt.Sscanf(o, "%d", &offset)
+	if limit < 1 {
+		limit = 1
 	}
 	if limit > 100 {
 		limit = 100
 	}
-	if limit < 1 {
-		limit = 20
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	// Build dynamic query with filters
@@ -264,14 +267,17 @@ func (s *Service) handleGetSettingsHistory(c *gin.Context) {
 	if l := c.Query("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
-	if o := c.Query("offset"); o != "" {
-		fmt.Sscanf(o, "%d", &offset)
+	if limit < 1 {
+		limit = 1
 	}
 	if limit > 100 {
 		limit = 100
 	}
-	if limit < 1 {
-		limit = 20
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	// Count total settings changes

@@ -173,7 +173,7 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			// Validate signing method
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				s.logger.Warn("Unexpected signing method", zap.String("method", token.Header["alg"].(string)))
+				s.logger.Warn("Unexpected signing method", zap.Any("method", token.Header["alg"]))
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 
@@ -1358,7 +1358,8 @@ func (s *Service) handleListReviews(c *gin.Context) {
 
 	reviews, total, err := s.ListAccessReviews(c.Request.Context(), offset, limit, status)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list access reviews", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
@@ -1372,7 +1373,8 @@ func (s *Service) handleCreateReview(c *gin.Context) {
 		return
 	}
 	if err := s.CreateAccessReview(c.Request.Context(), &review); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create access review", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, review)
@@ -1399,7 +1401,8 @@ func (s *Service) handleUpdateReview(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update access review", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, review)
@@ -1419,7 +1422,8 @@ func (s *Service) handleUpdateReviewStatus(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update review status", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -1447,7 +1451,8 @@ func (s *Service) handleListReviewItems(c *gin.Context) {
 
 	items, total, err := s.ListReviewItems(c.Request.Context(), c.Param("id"), offset, limit, decisionFilter)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list review items", zap.String("review_id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -1475,7 +1480,8 @@ func (s *Service) handleBatchDecision(c *gin.Context) {
 	}
 
 	if err := s.BatchSubmitDecisions(c.Request.Context(), c.Param("id"), req.ItemIDs, req.Decision, req.Comments, decidedBy); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to batch submit decisions", zap.String("review_id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -1503,7 +1509,8 @@ func (s *Service) handleSubmitDecision(c *gin.Context) {
 		return
 	}
 	if err := s.SubmitReviewDecision(c.Request.Context(), c.Param("itemId"), req.Decision, req.Comments, userIDStr); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to submit review decision", zap.String("item_id", c.Param("itemId")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, gin.H{"status": "submitted"})
@@ -1526,7 +1533,8 @@ func (s *Service) handleListPolicies(c *gin.Context) {
 
 	policies, total, err := s.ListPolicies(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list policies", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
@@ -1540,7 +1548,8 @@ func (s *Service) handleCreatePolicy(c *gin.Context) {
 		return
 	}
 	if err := s.CreatePolicy(c.Request.Context(), &policy); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create policy", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, policy)
@@ -1562,7 +1571,8 @@ func (s *Service) handleUpdatePolicy(c *gin.Context) {
 		return
 	}
 	if err := s.UpdatePolicy(c.Request.Context(), c.Param("id"), &policy); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update policy", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, policy)
@@ -1570,7 +1580,8 @@ func (s *Service) handleUpdatePolicy(c *gin.Context) {
 
 func (s *Service) handleDeletePolicy(c *gin.Context) {
 	if err := s.DeletePolicy(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete policy", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(204, nil)
@@ -1585,7 +1596,8 @@ func (s *Service) handleEvaluatePolicy(c *gin.Context) {
 	
 	allowed, err := s.EvaluatePolicy(c.Request.Context(), c.Param("id"), req)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to evaluate policy", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -1944,7 +1956,8 @@ func (s *Service) handleListCampaigns(c *gin.Context) {
 
 	campaigns, total, err := s.ListCampaigns(c.Request.Context(), offset, limit, status)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list campaigns", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
@@ -1966,7 +1979,8 @@ func (s *Service) handleCreateCampaign(c *gin.Context) {
 	}
 
 	if err := s.CreateCampaign(c.Request.Context(), &campaign); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create campaign", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, campaign)
@@ -1990,7 +2004,8 @@ func (s *Service) handleUpdateCampaign(c *gin.Context) {
 	campaign.ID = c.Param("id")
 
 	if err := s.UpdateCampaign(c.Request.Context(), &campaign); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update campaign", zap.String("id", campaign.ID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, campaign)
@@ -1998,7 +2013,8 @@ func (s *Service) handleUpdateCampaign(c *gin.Context) {
 
 func (s *Service) handleDeleteCampaign(c *gin.Context) {
 	if err := s.DeleteCampaign(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete campaign", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(204, nil)
@@ -2007,7 +2023,8 @@ func (s *Service) handleDeleteCampaign(c *gin.Context) {
 func (s *Service) handleRunCampaign(c *gin.Context) {
 	run, err := s.RunCampaign(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to run campaign", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, run)
@@ -2016,7 +2033,8 @@ func (s *Service) handleRunCampaign(c *gin.Context) {
 func (s *Service) handleGetCampaignRuns(c *gin.Context) {
 	runs, err := s.GetCampaignRuns(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get campaign runs", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, runs)
@@ -2575,7 +2593,8 @@ func (s *Service) handleCreateABACPolicy(c *gin.Context) {
 		return
 	}
 	if err := s.CreateABACPolicy(c.Request.Context(), &policy); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create ABAC policy", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, policy)
@@ -2600,7 +2619,8 @@ func (s *Service) handleListABACPolicies(c *gin.Context) {
 
 	policies, total, err := s.ListABACPolicies(c.Request.Context(), resourceType, offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list ABAC policies", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
@@ -2625,10 +2645,11 @@ func (s *Service) handleUpdateABACPolicy(c *gin.Context) {
 	policy.ID = c.Param("id")
 	if err := s.UpdateABACPolicy(c.Request.Context(), &policy); err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(404, gin.H{"error": err.Error()})
+			c.JSON(404, gin.H{"error": "ABAC policy not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update ABAC policy", zap.String("id", policy.ID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, policy)
@@ -2637,10 +2658,11 @@ func (s *Service) handleUpdateABACPolicy(c *gin.Context) {
 func (s *Service) handleDeleteABACPolicy(c *gin.Context) {
 	if err := s.DeleteABACPolicy(c.Request.Context(), c.Param("id")); err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			c.JSON(404, gin.H{"error": err.Error()})
+			c.JSON(404, gin.H{"error": "ABAC policy not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete ABAC policy", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(204, nil)

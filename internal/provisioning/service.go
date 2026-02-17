@@ -204,7 +204,7 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			// Validate signing method
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				s.logger.Warn("Unexpected signing method", zap.String("method", token.Header["alg"].(string)))
+				s.logger.Warn("Unexpected signing method", zap.Any("method", token.Header["alg"]))
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 
@@ -638,10 +638,11 @@ func (s *Service) handleListUsers(c *gin.Context) {
 
 	resp, err := s.ListSCIMUsers(c.Request.Context(), startIndex, count, filter)
 	if err != nil {
+		s.logger.Error("failed to list SCIM users", zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
 			Status:  "500",
-			Detail:  "Failed to list users: " + err.Error(),
+			Detail:  "Failed to list users",
 		})
 		return
 	}
@@ -654,10 +655,21 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
+
+	// Validate userName
+	if user.UserName == "" {
+		c.JSON(400, gin.H{"error": "userName is required"})
+		return
+	}
+	if len(user.UserName) > 255 {
+		c.JSON(400, gin.H{"error": "userName too long"})
+		return
+	}
+
 	created, err := s.CreateSCIMUser(c.Request.Context(), &user)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create SCIM user", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, created)
@@ -681,7 +693,8 @@ func (s *Service) handleReplaceUser(c *gin.Context) {
 	
 	updated, err := s.UpdateSCIMUser(c.Request.Context(), c.Param("id"), &user)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update SCIM user", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, updated)
@@ -717,10 +730,11 @@ func (s *Service) handlePatchUser(c *gin.Context) {
 	// Update user
 	updated, err := s.UpdateSCIMUser(c.Request.Context(), c.Param("id"), user)
 	if err != nil {
+		s.logger.Error("failed to patch SCIM user", zap.String("id", c.Param("id")), zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
 			Status:  "500",
-			Detail:  "Failed to update user: " + err.Error(),
+			Detail:  "Failed to update user",
 		})
 		return
 	}
@@ -816,7 +830,8 @@ func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperati
 
 func (s *Service) handleDeleteUser(c *gin.Context) {
 	if err := s.DeleteSCIMUser(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete SCIM user", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(204, nil)
@@ -934,18 +949,32 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		return nil, err
 	}
 
-	// Update members if provided
+	// Update members if provided — use a transaction to ensure atomicity
 	if group.Members != nil {
+		tx, err := s.db.Pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer tx.Rollback(ctx)
+
 		// Clear existing members
-		s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1", groupID)
+		if _, err := tx.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1", groupID); err != nil {
+			return nil, fmt.Errorf("failed to clear group members: %w", err)
+		}
 
 		// Add new members
 		for _, member := range group.Members {
-			s.db.Pool.Exec(ctx, `
+			if _, err := tx.Exec(ctx, `
 				INSERT INTO group_memberships (user_id, group_id, joined_at)
 				VALUES ($1, $2, $3)
 				ON CONFLICT DO NOTHING
-			`, member.Value, groupID, now)
+			`, member.Value, groupID, now); err != nil {
+				return nil, fmt.Errorf("failed to add group member: %w", err)
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("failed to commit transaction: %w", err)
 		}
 	}
 
@@ -1026,10 +1055,11 @@ func (s *Service) handleListGroups(c *gin.Context) {
 
 	resp, err := s.ListSCIMGroups(c.Request.Context(), startIndex, count, filter)
 	if err != nil {
+		s.logger.Error("failed to list SCIM groups", zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
 			Status:  "500",
-			Detail:  "Failed to list groups: " + err.Error(),
+			Detail:  "Failed to list groups",
 		})
 		return
 	}
@@ -1045,7 +1075,8 @@ func (s *Service) handleCreateGroup(c *gin.Context) {
 
 	created, err := s.CreateSCIMGroup(c.Request.Context(), &group)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create SCIM group", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, created)
@@ -1069,7 +1100,8 @@ func (s *Service) handleReplaceGroup(c *gin.Context) {
 
 	updated, err := s.UpdateSCIMGroup(c.Request.Context(), c.Param("id"), &group)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to replace SCIM group", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, updated)
@@ -1097,7 +1129,8 @@ func (s *Service) handlePatchGroup(c *gin.Context) {
 	// Update group
 	updated, err := s.UpdateSCIMGroup(c.Request.Context(), c.Param("id"), group)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to patch SCIM group", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, updated)
@@ -1105,7 +1138,8 @@ func (s *Service) handlePatchGroup(c *gin.Context) {
 
 func (s *Service) handleDeleteGroup(c *gin.Context) {
 	if err := s.DeleteSCIMGroup(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete SCIM group", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(204, nil)
@@ -1362,7 +1396,8 @@ func (s *Service) handleListRules(c *gin.Context) {
 
 	rules, total, err := s.ListRules(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to list rules: " + err.Error()})
+		s.logger.Error("failed to list provisioning rules", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
@@ -1386,7 +1421,8 @@ func (s *Service) handleCreateRule(c *gin.Context) {
 
 	created, err := s.CreateRule(c.Request.Context(), &rule)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create provisioning rule", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(201, created)
@@ -1414,7 +1450,8 @@ func (s *Service) handleUpdateRule(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "rule not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update provisioning rule", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, updated)
@@ -1427,7 +1464,8 @@ func (s *Service) handleDeleteRule(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "rule not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete provisioning rule", zap.String("id", c.Param("id")), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(204, nil)

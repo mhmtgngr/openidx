@@ -318,7 +318,7 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			// Validate signing method
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				s.logger.Warn("Unexpected signing method", zap.String("method", token.Header["alg"].(string)))
+				s.logger.Warn("Unexpected signing method", zap.Any("method", token.Header["alg"]))
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 
@@ -1223,12 +1223,16 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 		if err := rows.Scan(&sessionID); err != nil {
 			continue
 		}
-		_, _ = s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1`, sessionID)
+		if _, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1`, sessionID); err != nil {
+			return fmt.Errorf("failed to revoke session %s: %w", sessionID, err)
+		}
 		s.redis.Client.Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 	}
 
 	// Also delete all refresh tokens
-	_, _ = s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID)
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("failed to delete refresh tokens: %w", err)
+	}
 
 	return nil
 }
@@ -2834,14 +2838,24 @@ func (s *Service) handleListUsers(c *gin.Context) {
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	search := c.Query("search")
 
 	users, total, err := s.ListUsers(c.Request.Context(), offset, limit, search)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list users", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -2869,7 +2883,8 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 	}
 	
 	if err := s.CreateUser(c.Request.Context(), &user); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create user", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -2906,10 +2921,11 @@ func (s *Service) handleUpdateUser(c *gin.Context) {
 	
 	user.ID = userID
 	if err := s.UpdateUser(c.Request.Context(), &user); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update user", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.JSON(200, user)
 }
 
@@ -2917,10 +2933,11 @@ func (s *Service) handleDeleteUser(c *gin.Context) {
 	userID := c.Param("id")
 	
 	if err := s.DeleteUser(c.Request.Context(), userID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete user", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.JSON(204, nil)
 }
 
@@ -2930,16 +2947,26 @@ func (s *Service) handleListIdentityProviders(c *gin.Context) {
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
 	}
 
 	idps, total, err := s.ListIdentityProviders(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list identity providers", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.Header("X-Total-Count", strconv.Itoa(total))
 	c.JSON(200, idps)
 }
@@ -2964,10 +2991,11 @@ func (s *Service) handleCreateIdentityProvider(c *gin.Context) {
 	}
 	
 	if err := s.CreateIdentityProvider(c.Request.Context(), &idp); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create identity provider", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.JSON(201, idp)
 }
 
@@ -2982,10 +3010,11 @@ func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 	
 	idp.ID, _ = uuid.Parse(idpID)
 	if err := s.UpdateIdentityProvider(c.Request.Context(), &idp); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update identity provider", zap.String("id", idpID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.JSON(200, idp)
 }
 
@@ -2993,10 +3022,11 @@ func (s *Service) handleDeleteIdentityProvider(c *gin.Context) {
 	idpID := c.Param("id")
 	
 	if err := s.DeleteIdentityProvider(c.Request.Context(), idpID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete identity provider", zap.String("id", idpID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.JSON(204, nil)
 }
 
@@ -3005,10 +3035,11 @@ func (s *Service) handleGetUserSessions(c *gin.Context) {
 	
 	sessions, err := s.GetUserSessions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get user sessions", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
-	
+
 	c.JSON(200, sessions)
 }
 
@@ -3016,7 +3047,8 @@ func (s *Service) handleTerminateSession(c *gin.Context) {
 	sessionID := c.Param("id")
 
 	if err := s.TerminateSession(c.Request.Context(), sessionID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to terminate session", zap.String("session_id", sessionID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3029,13 +3061,23 @@ func (s *Service) handleListRoles(c *gin.Context) {
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
 	}
 
 	roles, total, err := s.ListRoles(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list roles", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3063,7 +3105,8 @@ func (s *Service) handleCreateRole(c *gin.Context) {
 	}
 
 	if err := s.CreateRole(c.Request.Context(), &role); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create role", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3082,10 +3125,11 @@ func (s *Service) handleUpdateRole(c *gin.Context) {
 	role.ID = roleID
 	if err := s.UpdateRole(c.Request.Context(), &role); err != nil {
 		if err.Error() == "role not found" {
-			c.JSON(404, gin.H{"error": err.Error()})
+			c.JSON(404, gin.H{"error": "role not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update role", zap.String("role_id", roleID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3097,10 +3141,11 @@ func (s *Service) handleDeleteRole(c *gin.Context) {
 
 	if err := s.DeleteRole(c.Request.Context(), roleID); err != nil {
 		if err.Error() == "role not found" {
-			c.JSON(404, gin.H{"error": err.Error()})
+			c.JSON(404, gin.H{"error": "role not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete role", zap.String("role_id", roleID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3112,7 +3157,8 @@ func (s *Service) handleGetUserRoles(c *gin.Context) {
 
 	roles, err := s.GetUserRoles(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get user roles", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3158,7 +3204,8 @@ func (s *Service) handleGetUserRoleAssignments(c *gin.Context) {
 
 	assignments, err := s.GetUserRoleAssignments(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get user role assignments", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3209,7 +3256,8 @@ func (s *Service) handleUpdateUserRoles(c *gin.Context) {
 
 	err := s.UpdateUserRoles(c.Request.Context(), userID, req.RoleIDs, assignedBy)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update user roles", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3222,14 +3270,24 @@ func (s *Service) handleListGroups(c *gin.Context) {
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	search := c.Query("search")
 
 	groups, total, err := s.ListGroups(c.Request.Context(), offset, limit, search)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list groups", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3254,7 +3312,8 @@ func (s *Service) handleGetGroupMembers(c *gin.Context) {
 
 	members, err := s.GetGroupMembers(c.Request.Context(), groupID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get group members", zap.String("group_id", groupID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3269,7 +3328,8 @@ func (s *Service) handleCreateGroup(c *gin.Context) {
 	}
 
 	if err := s.CreateGroup(c.Request.Context(), &group); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create group", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3287,7 +3347,8 @@ func (s *Service) handleUpdateGroup(c *gin.Context) {
 
 	group.ID = groupID
 	if err := s.UpdateGroup(c.Request.Context(), &group); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update group", zap.String("group_id", groupID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3298,7 +3359,8 @@ func (s *Service) handleDeleteGroup(c *gin.Context) {
 	groupID := c.Param("id")
 
 	if err := s.DeleteGroup(c.Request.Context(), groupID); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete group", zap.String("group_id", groupID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3337,7 +3399,8 @@ func (s *Service) handleAddGroupMember(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to add group member", zap.String("group_id", groupID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3364,7 +3427,8 @@ func (s *Service) handleRemoveGroupMember(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to remove group member", zap.String("group_id", groupID), zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3376,7 +3440,8 @@ func (s *Service) handleGetSubgroups(c *gin.Context) {
 
 	subgroups, err := s.GetSubgroups(c.Request.Context(), parentID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get subgroups", zap.String("parent_id", parentID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3392,10 +3457,17 @@ func (s *Service) handleSearchUsers(c *gin.Context) {
 
 	limitStr := c.DefaultQuery("limit", "20")
 	limit, _ := strconv.Atoi(limitStr)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
 
 	users, err := s.SearchUsers(c.Request.Context(), query, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to search users", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3413,7 +3485,8 @@ func (s *Service) handleSetupTOTP(c *gin.Context) {
 
 	enrollment, err := s.GenerateTOTPSecret(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to setup TOTP", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3461,7 +3534,8 @@ func (s *Service) handleVerifyTOTP(c *gin.Context) {
 
 	valid, err := s.VerifyTOTP(c.Request.Context(), userID, req.Code)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to verify TOTP", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3477,7 +3551,8 @@ func (s *Service) handleGetTOTPStatus(c *gin.Context) {
 
 	status, err := s.GetTOTPStatus(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get TOTP status", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3493,7 +3568,8 @@ func (s *Service) handleDisableTOTP(c *gin.Context) {
 
 	err := s.DisableTOTP(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to disable TOTP", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3516,7 +3592,8 @@ func (s *Service) handleGenerateBackupCodes(c *gin.Context) {
 
 	codes, err := s.GenerateBackupCodes(c.Request.Context(), userID, req.Count)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to generate backup codes", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3540,7 +3617,8 @@ func (s *Service) handleVerifyBackupCode(c *gin.Context) {
 
 	valid, err := s.ValidateBackupCode(c.Request.Context(), userID, req.Code)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to validate backup code", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3556,7 +3634,8 @@ func (s *Service) handleGetBackupCodeCount(c *gin.Context) {
 
 	count, err := s.GetRemainingBackupCodes(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get remaining backup codes", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3638,7 +3717,8 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 	user.Enabled = req.Enabled
 
 	if err := s.UpdateUser(c.Request.Context(), user); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update current user", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3691,7 +3771,8 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 
 	// Set new password
 	if err := s.SetPassword(c.Request.Context(), userID, req.NewPassword); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to set password", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3707,7 +3788,8 @@ func (s *Service) handleSetupUserMFA(c *gin.Context) {
 
 	enrollment, err := s.GenerateTOTPSecret(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to setup user MFA", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3784,7 +3866,8 @@ func (s *Service) handleDisableUserMFA(c *gin.Context) {
 
 	err := s.DisableTOTP(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to disable user MFA", zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -3794,7 +3877,8 @@ func (s *Service) handleDisableUserMFA(c *gin.Context) {
 func (s *Service) handleExportUsersCSV(c *gin.Context) {
 	users, _, err := s.ListUsers(c.Request.Context(), 0, 10000)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to export users CSV", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -4157,7 +4241,8 @@ func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) 
 func (s *Service) handleListPermissions(c *gin.Context) {
 	perms, err := s.ListPermissions(c.Request.Context())
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list permissions", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, perms)
@@ -4167,7 +4252,8 @@ func (s *Service) handleGetRolePermissions(c *gin.Context) {
 	roleID := c.Param("id")
 	perms, err := s.GetRolePermissions(c.Request.Context(), roleID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get role permissions", zap.String("role_id", roleID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, perms)
@@ -4183,7 +4269,8 @@ func (s *Service) handleSetRolePermissions(c *gin.Context) {
 		return
 	}
 	if err := s.SetRolePermissions(c.Request.Context(), roleID, req.PermissionIDs); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to set role permissions", zap.String("role_id", roleID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, gin.H{"message": "Permissions updated"})
@@ -4255,7 +4342,8 @@ func (s *Service) handleListInvitations(c *gin.Context) {
 		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at
 		 FROM user_invitations ORDER BY created_at DESC LIMIT 50`)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list invitations", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	defer rows.Close()
@@ -4310,7 +4398,8 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days') RETURNING id`,
 		req.Email, invitedBy, req.Roles, req.Groups, token).Scan(&id)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create invitation", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -4334,7 +4423,8 @@ func (s *Service) handleDeleteInvitation(c *gin.Context) {
 	_, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM user_invitations WHERE id = $1", id)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete invitation", zap.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 	c.JSON(200, gin.H{"message": "Invitation revoked"})
@@ -4378,7 +4468,8 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	}
 
 	if err := s.CreateUser(c.Request.Context(), user); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create user from invitation", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -4959,14 +5050,24 @@ func (s *Service) handleListLifecycleWorkflows(c *gin.Context) {
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	eventType := c.Query("event_type")
 
 	workflows, total, err := s.ListLifecycleWorkflows(c.Request.Context(), offset, limit, eventType)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list lifecycle workflows", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5000,7 +5101,8 @@ func (s *Service) handleCreateLifecycleWorkflow(c *gin.Context) {
 	}
 
 	if err := s.CreateLifecycleWorkflow(c.Request.Context(), &wf); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to create lifecycle workflow", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5016,7 +5118,8 @@ func (s *Service) handleGetLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get lifecycle workflow", zap.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5039,7 +5142,8 @@ func (s *Service) handleUpdateLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to update lifecycle workflow", zap.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5054,7 +5158,8 @@ func (s *Service) handleDeleteLifecycleWorkflow(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Workflow not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to delete lifecycle workflow", zap.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5092,7 +5197,8 @@ func (s *Service) handleExecuteLifecycleWorkflow(c *gin.Context) {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to execute lifecycle workflow", zap.String("workflow_id", workflowID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5105,15 +5211,25 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	workflowID := c.Query("workflow_id")
 	userID := c.Query("user_id")
 
 	executions, total, err := s.ListLifecycleExecutions(c.Request.Context(), offset, limit, workflowID, userID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to list lifecycle executions", zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
@@ -5130,7 +5246,8 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 			c.JSON(404, gin.H{"error": "Execution not found"})
 			return
 		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		s.logger.Error("failed to get lifecycle execution", zap.String("id", id), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 

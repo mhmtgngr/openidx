@@ -100,9 +100,11 @@ func (s *Service) RegisterDevice(ctx context.Context, userID, fingerprint, ipAdd
 
 	if err == nil {
 		// Device exists — update last seen
-		s.db.Pool.Exec(ctx,
+		if _, err := s.db.Pool.Exec(ctx,
 			`UPDATE known_devices SET last_seen_at = NOW(), ip_address = $3, location = $4 WHERE id = $1`,
-			deviceID, userID, ipAddress, location)
+			deviceID, userID, ipAddress, location); err != nil {
+			return deviceID, false, fmt.Errorf("failed to update device: %w", err)
+		}
 		return deviceID, false, nil
 	}
 

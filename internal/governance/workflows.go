@@ -206,8 +206,17 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 	if l := c.Query("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	if o := c.Query("offset"); o != "" {
 		fmt.Sscanf(o, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	// Handle "me" as requester_id

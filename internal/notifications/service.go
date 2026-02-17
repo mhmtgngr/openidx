@@ -292,8 +292,17 @@ func (s *Service) handleGetNotifications(c *gin.Context) {
 	if v := c.Query("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	if v := c.Query("offset"); v != "" {
 		fmt.Sscanf(v, "%d", &offset)
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	notifications, total, err := s.GetUserNotifications(c.Request.Context(), userID, channel, unreadOnly, limit, offset)
