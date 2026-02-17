@@ -523,6 +523,31 @@ func (s *Service) GetAuthorizationCode(ctx context.Context, code string) (*Autho
 	return &authCode, nil
 }
 
+// ConsumeAuthorizationCode atomically retrieves and deletes an authorization code (single use).
+// This prevents replay attacks by ensuring the code can only be used once.
+func (s *Service) ConsumeAuthorizationCode(ctx context.Context, code string) (*AuthorizationCode, error) {
+	var authCode AuthorizationCode
+	err := s.db.Pool.QueryRow(ctx, `
+		DELETE FROM oauth_authorization_codes WHERE code = $1
+		RETURNING code, client_id, user_id, redirect_uri, scope, state, nonce,
+		          code_challenge, code_challenge_method, expires_at, created_at
+	`, code).Scan(
+		&authCode.Code, &authCode.ClientID, &authCode.UserID, &authCode.RedirectURI,
+		&authCode.Scope, &authCode.State, &authCode.Nonce, &authCode.CodeChallenge,
+		&authCode.CodeChallengeMethod, &authCode.ExpiresAt, &authCode.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if expired
+	if time.Now().After(authCode.ExpiresAt) {
+		return nil, fmt.Errorf("authorization code expired")
+	}
+
+	return &authCode, nil
+}
+
 // DeleteAuthorizationCode deletes an authorization code (single use)
 func (s *Service) DeleteAuthorizationCode(ctx context.Context, code string) error {
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM oauth_authorization_codes WHERE code = $1", code)
@@ -834,10 +859,13 @@ func (s *Service) GetUserInfo(ctx context.Context, userID string) (*UserInfo, er
 
 // Utility Functions
 
-// GenerateRandomToken generates a cryptographically secure random token
+// GenerateRandomToken generates a cryptographically secure random token.
+// Panics if the CSPRNG fails, as producing weak tokens would be a critical security issue.
 func GenerateRandomToken(length int) string {
 	b := make([]byte, length)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return base64.URLEncoding.EncodeToString(b)
 }
 
@@ -2094,10 +2122,19 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		zap.Bool("has_code", code != ""),
 		zap.Bool("has_verifier", codeVerifier != ""))
 
-	// Get authorization code
-	authCode, err := s.GetAuthorizationCode(c.Request.Context(), code)
+	// Atomically retrieve and delete authorization code (single use per RFC 6749 §4.1.2)
+	authCode, err := s.ConsumeAuthorizationCode(c.Request.Context(), code)
 	if err != nil {
-		s.logger.Debug("Failed to get authorization code", zap.Error(err))
+		s.logger.Debug("Failed to consume authorization code", zap.Error(err))
+		c.JSON(400, gin.H{"error": "invalid_grant"})
+		return
+	}
+
+	// Verify the auth code was issued to the requesting client (RFC 6749 §4.1.3)
+	if authCode.ClientID != clientID {
+		s.logger.Warn("Auth code client_id mismatch",
+			zap.String("code_client_id", authCode.ClientID),
+			zap.String("request_client_id", clientID))
 		c.JSON(400, gin.H{"error": "invalid_grant"})
 		return
 	}
@@ -2134,9 +2171,6 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE required for public clients"})
 		return
 	}
-
-	// Delete authorization code (single use)
-	s.DeleteAuthorizationCode(c.Request.Context(), code)
 
 	// Retrieve session_id associated with this auth code from Redis
 	sessionID, _ := s.redis.Client.Get(c.Request.Context(), "authcode_session:"+code).Result()
@@ -2193,6 +2227,15 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	// Get refresh token
 	token, err := s.GetRefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_grant"})
+		return
+	}
+
+	// Verify the refresh token was issued to the requesting client (RFC 6749 §10.4)
+	if token.ClientID != clientID {
+		s.logger.Warn("Refresh token client_id mismatch",
+			zap.String("token_client_id", token.ClientID),
+			zap.String("request_client_id", clientID))
 		c.JSON(400, gin.H{"error": "invalid_grant"})
 		return
 	}

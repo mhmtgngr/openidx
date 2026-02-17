@@ -132,7 +132,8 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 	adminUserID, _ := c.Get("user_id")
 	adminID, ok := adminUserID.(string)
 	if !ok || adminID == "" {
-		adminID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	result, err := s.db.Pool.Exec(ctx, `
@@ -167,7 +168,8 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 	adminUserID, _ := c.Get("user_id")
 	adminID, ok := adminUserID.(string)
 	if !ok || adminID == "" {
-		adminID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	result, err := s.db.Pool.Exec(ctx, `
@@ -264,7 +266,8 @@ func (s *Service) handleUpdateAlertStatus(c *gin.Context) {
 	adminUserID, _ := c.Get("user_id")
 	adminID, ok := adminUserID.(string)
 	if !ok || adminID == "" {
-		adminID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	if err := s.securityService.UpdateAlertStatus(c.Request.Context(), c.Param("id"), body.Status, adminID); err != nil {

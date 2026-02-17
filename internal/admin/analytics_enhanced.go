@@ -25,7 +25,7 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
-		  AND timestamp > NOW() - `+interval).Scan(&totalLogins)
+		  AND timestamp > NOW() - $1::interval`, interval).Scan(&totalLogins)
 	result["total_logins"] = totalLogins
 
 	// Successful logins
@@ -33,14 +33,14 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
-		  AND timestamp > NOW() - `+interval).Scan(&successLogins)
+		  AND timestamp > NOW() - $1::interval`, interval).Scan(&successLogins)
 
 	// Failed logins
 	var failedLogins int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure'
-		  AND timestamp > NOW() - `+interval).Scan(&failedLogins)
+		  AND timestamp > NOW() - $1::interval`, interval).Scan(&failedLogins)
 
 	// Rates
 	if totalLogins > 0 {
@@ -56,7 +56,7 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'mfa_verification' AND outcome = 'success'
-		  AND timestamp > NOW() - `+interval).Scan(&mfaLogins)
+		  AND timestamp > NOW() - $1::interval`, interval).Scan(&mfaLogins)
 
 	if successLogins > 0 {
 		result["mfa_usage_rate"] = float64(mfaLogins) / float64(successLogins) * 100
@@ -70,10 +70,10 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 		SELECT COALESCE(action, 'unknown'), COUNT(*)
 		FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
-		  AND timestamp > NOW() - `+interval+`
+		  AND timestamp > NOW() - $1::interval
 		GROUP BY action
 		ORDER BY COUNT(*) DESC
-	`)
+	`, interval)
 	if err == nil {
 		for rows.Next() {
 			var method string
@@ -93,11 +93,11 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 		SELECT EXTRACT(HOUR FROM timestamp)::int AS hour, COUNT(*) AS cnt
 		FROM audit_events
 		WHERE event_type = 'authentication'
-		  AND timestamp > NOW() - `+interval+`
+		  AND timestamp > NOW() - $1::interval
 		GROUP BY hour
 		ORDER BY cnt DESC
 		LIMIT 1
-	`).Scan(&peakHour, &peakCount)
+	`, interval).Scan(&peakHour, &peakCount)
 	if peakHour != nil {
 		result["peak_hour"] = *peakHour
 	} else {
@@ -109,11 +109,11 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	geoRows, err := s.db.Pool.Query(ctx, `
 		SELECT COALESCE(location, 'Unknown'), COUNT(*) AS cnt
 		FROM login_history
-		WHERE created_at > NOW() - `+interval+`
+		WHERE created_at > NOW() - $1::interval
 		GROUP BY location
 		ORDER BY cnt DESC
 		LIMIT 5
-	`)
+	`, interval)
 	if err == nil {
 		for geoRows.Next() {
 			var loc string
@@ -214,7 +214,7 @@ func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(request_count), 0)
 		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - `+interval).Scan(&totalRequests)
+		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&totalRequests)
 	result["total_requests"] = totalRequests
 
 	// Top endpoints
@@ -224,11 +224,11 @@ func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
 		       AVG(avg_latency_ms) AS avg_lat,
 		       SUM(error_count) AS errors
 		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - `+interval+`
+		WHERE recorded_at > NOW() - $1::interval
 		GROUP BY endpoint, method
 		ORDER BY total DESC
 		LIMIT 10
-	`)
+	`, interval)
 	if err == nil {
 		for rows.Next() {
 			var endpoint, method string
@@ -253,7 +253,7 @@ func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(error_count), 0)
 		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - `+interval).Scan(&totalErrors)
+		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&totalErrors)
 	if totalRequests > 0 {
 		result["error_rate"] = float64(totalErrors) / float64(totalRequests) * 100
 	} else {
@@ -265,7 +265,7 @@ func (s *Service) handleAPIUsageMetrics(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(AVG(avg_latency_ms), 0)
 		FROM api_usage_metrics
-		WHERE recorded_at > NOW() - `+interval).Scan(&avgLatency)
+		WHERE recorded_at > NOW() - $1::interval`, interval).Scan(&avgLatency)
 	result["avg_latency_ms"] = avgLatency
 	result["period"] = period
 
@@ -363,8 +363,6 @@ func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
 		}
 	}
 
-	// The riskService interface does not expose GetRiskTimeline directly,
-	// so we query it ourselves from the database as a fallback.
 	ctx := c.Request.Context()
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(created_at) AS day,
@@ -372,7 +370,7 @@ func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
 		       MAX(risk_score) AS max_score,
 		       COUNT(*) AS login_count
 		FROM login_history
-		WHERE created_at > NOW() - ($1::int || ' days')::interval
+		WHERE created_at > NOW() - make_interval(days => $1)
 		GROUP BY day
 		ORDER BY day
 	`, days)
@@ -425,10 +423,10 @@ func (s *Service) handleUserActivityHeatmap(c *gin.Context) {
 		       COUNT(*) AS cnt
 		FROM audit_events
 		WHERE event_type = 'authentication'
-		  AND timestamp > NOW() - `+interval+`
+		  AND timestamp > NOW() - $1::interval
 		GROUP BY dow, hour
 		ORDER BY dow, hour
-	`)
+	`, interval)
 	if err != nil {
 		s.logger.Error("Failed to query activity heatmap", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query activity heatmap"})
@@ -463,18 +461,19 @@ func (s *Service) handleUserActivityHeatmap(c *gin.Context) {
 }
 
 // periodToInterval converts a period string like "24h", "7d", "30d", "90d"
-// to a PostgreSQL interval expression.
+// to a plain interval string safe for use as a parameterized query value
+// with PostgreSQL's $N::interval cast.
 func periodToInterval(period string) string {
 	switch period {
 	case "24h":
-		return "INTERVAL '24 hours'"
+		return "24 hours"
 	case "7d":
-		return "INTERVAL '7 days'"
+		return "7 days"
 	case "90d":
-		return "INTERVAL '90 days'"
+		return "90 days"
 	case "30d":
-		return "INTERVAL '30 days'"
+		return "30 days"
 	default:
-		return "INTERVAL '30 days'"
+		return "30 days"
 	}
 }

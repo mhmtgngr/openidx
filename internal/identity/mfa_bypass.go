@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -213,13 +214,20 @@ func (s *Service) ListBypassCodes(ctx context.Context, userID, status string, ac
 		limit = 50
 	}
 
-	// Build query conditions
+	// Build query conditions with parameterized queries
 	conditions := "1=1"
+	args := []interface{}{}
+	argIdx := 1
+
 	if userID != "" {
-		conditions += " AND bc.user_id::text = '" + userID + "'"
+		conditions += fmt.Sprintf(" AND bc.user_id::text = $%d", argIdx)
+		args = append(args, userID)
+		argIdx++
 	}
 	if status != "" {
-		conditions += " AND bc.status = '" + status + "'"
+		conditions += fmt.Sprintf(" AND bc.status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
 	}
 	if activeOnly {
 		conditions += " AND bc.status = 'active' AND bc.valid_until > NOW() AND (bc.max_uses IS NULL OR bc.use_count < bc.max_uses)"
@@ -227,22 +235,23 @@ func (s *Service) ListBypassCodes(ctx context.Context, userID, status string, ac
 
 	// Count total
 	var total int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_bypass_codes bc WHERE "+conditions).Scan(&total)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_bypass_codes bc WHERE "+conditions, args...).Scan(&total)
 
 	// Get codes
-	query := `
+	query := fmt.Sprintf(`
 		SELECT bc.id, bc.user_id, u.email, bc.reason, bc.generated_by, g.email,
 			bc.valid_from, bc.valid_until, bc.max_uses, bc.use_count, bc.status,
 			bc.used_at, bc.used_from_ip, bc.revoked_at, bc.revoked_by, bc.created_at
 		FROM mfa_bypass_codes bc
 		JOIN users u ON bc.user_id = u.id
 		JOIN users g ON bc.generated_by = g.id
-		WHERE ` + conditions + `
+		WHERE %s
 		ORDER BY bc.created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+		LIMIT $%d OFFSET $%d
+	`, conditions, argIdx, argIdx+1)
 
-	rows, err := s.db.Pool.Query(ctx, query, limit, offset)
+	queryArgs := append(args, limit, offset)
+	rows, err := s.db.Pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}

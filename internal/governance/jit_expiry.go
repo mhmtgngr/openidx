@@ -2,6 +2,7 @@ package governance
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"go.uber.org/zap"
@@ -92,11 +93,14 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 		}
 
 		// Insert audit event
+		details, _ := json.Marshal(map[string]string{
+			"request_id":    id,
+			"resource_name": resourceName,
+		})
 		s.db.Pool.Exec(ctx,
 			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at)
 			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_access_expired', 'success', $1, '0.0.0.0', $2, $3, $4, NOW())`,
-			requesterID, resourceID, resourceType,
-			`{"request_id": "`+id+`", "resource_name": "`+resourceName+`"}`)
+			requesterID, resourceID, resourceType, string(details))
 
 		revokedCount++
 		s.logger.Info("Revoked expired JIT access",
