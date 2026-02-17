@@ -424,8 +424,8 @@ test.describe('Identity Providers Page', () => {
   test('should display providers in list', async ({ page }) => {
     await page.goto('/identity-providers');
 
-    await expect(page.locator('text=Azure AD')).toBeVisible();
-    await expect(page.locator('text=Google Workspace')).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'Azure AD' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'Google Workspace' })).toBeVisible();
   });
 });
 

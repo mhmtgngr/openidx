@@ -1533,9 +1533,10 @@ test.describe('Ziti Remote Access Tab', () => {
       await page.goto('/ziti-network');
       await page.getByRole('tab', { name: /security/i }).click();
       await expect(page.getByRole('cell', { name: 'alice' })).toBeVisible();
-      await expect(page.getByText('internal-app')).toBeVisible();
-      await expect(page.getByText('Dial', { exact: true })).toBeVisible();
-      await expect(page.getByText('Bind', { exact: true })).toBeVisible();
+      await expect(page.getByRole('cell', { name: 'internal-app' })).toBeVisible();
+      // Verify session types exist in the Active Sessions table (use .first() since Dial/Bind also appear in Service Policies)
+      await expect(page.getByRole('cell', { name: 'Dial' }).first()).toBeVisible();
+      await expect(page.getByRole('cell', { name: 'Bind' }).first()).toBeVisible();
     });
 
     test('should batch terminate all sessions for an identity', async ({ page }) => {
@@ -1550,6 +1551,8 @@ test.describe('Ziti Remote Access Tab', () => {
               { id: 'sess-2', type: 'Dial', identity: { id: 'id-2', name: 'bob' }, service: { id: 'svc-2', name: 'ssh-service' }, createdAt: '2024-01-01T09:00:00Z' },
             ]),
           });
+        } else {
+          await route.fallback();
         }
       });
 
@@ -1568,6 +1571,9 @@ test.describe('Ziti Remote Access Tab', () => {
 
       // Click the batch terminate button for alice
       await page.getByRole('button', { name: /Terminate All: alice/i }).click();
+
+      // Wait for the request to complete
+      await page.waitForTimeout(500);
 
       // Verify the POST was sent with the correct identity_id
       expect(batchPayload).toEqual({ identity_id: 'id-1' });
@@ -1755,8 +1761,9 @@ test.describe('Ziti Remote Access Tab', () => {
       await page.goto('/ziti-network');
       await page.getByRole('tab', { name: /security/i }).click();
       await page.locator('button:has-text("Terminators")').click();
-      await expect(page.getByText('internal-app')).toBeVisible();
-      await expect(page.getByText('edge-router-1')).toBeVisible();
+      // Use cell locators to match within the Terminators table specifically
+      await expect(page.getByRole('cell', { name: 'internal-app' })).toBeVisible();
+      await expect(page.getByRole('cell', { name: 'edge-router-1' })).toBeVisible();
     });
 
     test('should show terminator details', async ({ page }) => {

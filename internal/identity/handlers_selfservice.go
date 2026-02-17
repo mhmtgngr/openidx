@@ -55,7 +55,7 @@ func (s *Service) handleListUserPATs(c *gin.Context) {
 		tokens = append(tokens, t)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"tokens": tokens})
+	c.JSON(http.StatusOK, tokens)
 }
 
 // handleCreateUserPAT creates a new personal access token for the authenticated user
@@ -214,7 +214,7 @@ func (s *Service) handleListUserConsents(c *gin.Context) {
 		consents = append(consents, consent)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"consents": consents})
+	c.JSON(http.StatusOK, consents)
 }
 
 // handleRevokeUserConsent revokes all tokens for a given app, effectively removing authorization
