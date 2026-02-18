@@ -498,7 +498,7 @@ func (s *Service) handleListUserIdentityLinks(c *gin.Context) {
 		return
 	}
 
-	userID := c.Param("userId")
+	userID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT uil.id, uil.user_id, uil.provider_id,
 		        COALESCE(ip.name, '') as provider_name,
@@ -539,7 +539,7 @@ func (s *Service) handleDeleteIdentityLink(c *gin.Context) {
 	}
 
 	linkID := c.Param("linkId")
-	userID := c.Param("userId")
+	userID := c.Param("id")
 
 	var tag interface{ RowsAffected() int64 }
 	var err error
@@ -571,7 +571,7 @@ func (s *Service) handleListCustomClaims(c *gin.Context) {
 		return
 	}
 
-	appID := c.Param("appId")
+	appID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, application_id, claim_name, source_type, source_value,
 		        claim_type, include_in_id_token, include_in_access_token,
@@ -606,7 +606,7 @@ func (s *Service) handleCreateCustomClaim(c *gin.Context) {
 		return
 	}
 
-	appID := c.Param("appId")
+	appID := c.Param("id")
 	var req struct {
 		ClaimName            string          `json:"claim_name"`
 		SourceType           string          `json:"source_type"`

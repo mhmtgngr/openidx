@@ -1134,12 +1134,12 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/federation/rules", svc.handleCreateFederationRule)
 	router.PUT("/federation/rules/:id", svc.handleUpdateFederationRule)
 	router.DELETE("/federation/rules/:id", svc.handleDeleteFederationRule)
-	router.GET("/users/:userId/identity-links", svc.handleListUserIdentityLinks)
-	router.DELETE("/users/:userId/identity-links/:linkId", svc.handleDeleteIdentityLink)
-	router.GET("/applications/:appId/claims", svc.handleListCustomClaims)
-	router.POST("/applications/:appId/claims", svc.handleCreateCustomClaim)
-	router.PUT("/applications/:appId/claims/:claimId", svc.handleUpdateCustomClaim)
-	router.DELETE("/applications/:appId/claims/:claimId", svc.handleDeleteCustomClaim)
+	router.GET("/users/:id/identity-links", svc.handleListUserIdentityLinks)
+	router.DELETE("/users/:id/identity-links/:linkId", svc.handleDeleteIdentityLink)
+	router.GET("/applications/:id/claims", svc.handleListCustomClaims)
+	router.POST("/applications/:id/claims", svc.handleCreateCustomClaim)
+	router.PUT("/applications/:id/claims/:claimId", svc.handleUpdateCustomClaim)
+	router.DELETE("/applications/:id/claims/:claimId", svc.handleDeleteCustomClaim)
 
 	// 17D: Notification Management
 	router.GET("/notifications/routing-rules", svc.handleListRoutingRules)
