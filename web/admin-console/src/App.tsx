@@ -82,6 +82,8 @@ import { SocialProvidersPage } from './pages/social-providers'
 import { FederationConfigPage } from './pages/federation-config'
 import { NotificationCenterPage } from './pages/notification-center'
 import { NotificationAdminPage } from './pages/notification-admin'
+import MFAManagement from './pages/mfa-management'
+import LoginAnomalies from './pages/login-anomalies'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -504,6 +506,16 @@ export default function App() {
           <Route path="notification-admin" element={
             <AdminRoute>
               <NotificationAdminPage />
+            </AdminRoute>
+          } />
+          <Route path="mfa-management" element={
+            <AdminRoute>
+              <MFAManagement />
+            </AdminRoute>
+          } />
+          <Route path="login-anomalies" element={
+            <AdminRoute>
+              <LoginAnomalies />
             </AdminRoute>
           } />
         </Route>

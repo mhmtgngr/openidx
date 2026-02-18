@@ -161,7 +161,9 @@ const navigationSections: NavSection[] = [
     label: 'Security & MFA',
     adminOnly: true,
     items: [
+      { name: 'MFA Management', href: '/mfa-management', icon: Shield, adminOnly: true },
       { name: 'Risk Policies', href: '/risk-policies', icon: Activity, adminOnly: true },
+      { name: 'Login Anomalies', href: '/login-anomalies', icon: AlertTriangle, adminOnly: true },
       { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, adminOnly: true },
       { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
       { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },

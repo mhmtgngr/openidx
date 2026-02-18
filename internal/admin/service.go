@@ -1153,6 +1153,22 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/notifications/broadcasts/:id/send", svc.handleSendBroadcast)
 	router.DELETE("/notifications/broadcasts/:id", svc.handleDeleteBroadcast)
 	router.GET("/notifications/stats", svc.handleNotificationStats)
+
+	// Phase 18: MFA Management & Risk Analytics
+	// 18A: MFA Management
+	router.GET("/mfa/enrollment-stats", svc.handleMFAEnrollmentStats)
+	router.GET("/mfa/policies", svc.handleListMFAPolicies)
+	router.POST("/mfa/policies", svc.handleCreateMFAPolicy)
+	router.GET("/mfa/policies/:id", svc.handleGetMFAPolicy)
+	router.PUT("/mfa/policies/:id", svc.handleUpdateMFAPolicy)
+	router.DELETE("/mfa/policies/:id", svc.handleDeleteMFAPolicy)
+	router.GET("/mfa/user-status", svc.handleListUserMFAStatus)
+	router.GET("/mfa/user-status/:id", svc.handleGetUserMFAStatus)
+
+	// 18B: Login Anomaly Analytics
+	router.GET("/risk/anomalies", svc.handleLoginAnomalies)
+	router.GET("/risk/user-profile/:id", svc.handleUserRiskProfile)
+	router.GET("/risk/overview", svc.handleRiskOverview)
 }
 
 // HTTP Handlers
