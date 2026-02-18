@@ -75,6 +75,21 @@ export function LoginPage() {
   const [qrLoading, setQrLoading] = useState(false)
   const qrPollingRef2 = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Tenant branding state
+  const [branding, setBranding] = useState<{
+    logo_url?: string; primary_color?: string; login_page_title?: string; login_page_message?: string
+  }>({})
+
+  // Fetch tenant branding based on domain
+  useEffect(() => {
+    const domain = window.location.hostname
+    if (domain && domain !== 'localhost') {
+      api.get<Record<string, unknown>>(`/api/v1/identity/branding?domain=${domain}`)
+        .then(data => { if (data?.logo_url || data?.primary_color) setBranding(data as typeof branding) })
+        .catch(() => {})
+    }
+  }, [])
+
   // Check if passkeys/WebAuthn are supported
   useEffect(() => {
     if (window.PublicKeyCredential) {

@@ -1090,6 +1090,69 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/audit-archives", svc.handleListAuditArchives)
 	router.GET("/audit-archives/:id", svc.handleGetAuditArchive)
 	router.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
+
+	// Phase 17: Multi-Tenancy, Privacy, Federation & Notifications
+
+	// 17A: Tenant Branding & Management
+	router.POST("/tenants/switch", svc.handleSwitchTenant)
+	router.GET("/tenants/current", svc.handleGetCurrentTenant)
+	router.GET("/tenants/:orgId/branding", svc.handleGetTenantBranding)
+	router.PUT("/tenants/:orgId/branding", svc.handleUpdateTenantBranding)
+	router.GET("/tenants/:orgId/settings", svc.handleGetTenantSettings)
+	router.PUT("/tenants/:orgId/settings", svc.handleUpdateTenantSettings)
+	router.GET("/tenants/:orgId/domains", svc.handleListTenantDomains)
+	router.POST("/tenants/:orgId/domains", svc.handleCreateTenantDomain)
+	router.DELETE("/tenants/:orgId/domains/:domainId", svc.handleDeleteTenantDomain)
+	router.POST("/tenants/:orgId/domains/:domainId/verify", svc.handleVerifyTenantDomain)
+
+	// 17B: Privacy & GDPR
+	router.GET("/privacy/dashboard", svc.handlePrivacyDashboard)
+	router.GET("/privacy/consents", svc.handleListConsents)
+	router.GET("/privacy/consents/stats", svc.handleConsentStats)
+	router.GET("/privacy/dsars", svc.handleListDSARs)
+	router.POST("/privacy/dsars", svc.handleCreateDSAR)
+	router.GET("/privacy/dsars/:id", svc.handleGetDSAR)
+	router.PUT("/privacy/dsars/:id", svc.handleUpdateDSAR)
+	router.POST("/privacy/dsars/:id/execute", svc.handleExecuteDSAR)
+	router.GET("/privacy/retention", svc.handleListPrivacyRetention)
+	router.POST("/privacy/retention", svc.handleCreatePrivacyRetention)
+	router.PUT("/privacy/retention/:id", svc.handleUpdatePrivacyRetention)
+	router.DELETE("/privacy/retention/:id", svc.handleDeletePrivacyRetention)
+	router.GET("/privacy/assessments", svc.handleListPrivacyAssessments)
+	router.POST("/privacy/assessments", svc.handleCreatePrivacyAssessment)
+	router.GET("/privacy/assessments/:id", svc.handleGetPrivacyAssessment)
+	router.PUT("/privacy/assessments/:id", svc.handleUpdatePrivacyAssessment)
+	router.DELETE("/privacy/assessments/:id", svc.handleDeletePrivacyAssessment)
+
+	// 17C: Federation & SSO
+	router.GET("/social-providers", svc.handleListSocialProviders)
+	router.POST("/social-providers", svc.handleCreateSocialProvider)
+	router.GET("/social-providers/:id", svc.handleGetSocialProvider)
+	router.PUT("/social-providers/:id", svc.handleUpdateSocialProvider)
+	router.DELETE("/social-providers/:id", svc.handleDeleteSocialProvider)
+	router.GET("/federation/rules", svc.handleListFederationRules)
+	router.POST("/federation/rules", svc.handleCreateFederationRule)
+	router.PUT("/federation/rules/:id", svc.handleUpdateFederationRule)
+	router.DELETE("/federation/rules/:id", svc.handleDeleteFederationRule)
+	router.GET("/users/:userId/identity-links", svc.handleListUserIdentityLinks)
+	router.DELETE("/users/:userId/identity-links/:linkId", svc.handleDeleteIdentityLink)
+	router.GET("/applications/:appId/claims", svc.handleListCustomClaims)
+	router.POST("/applications/:appId/claims", svc.handleCreateCustomClaim)
+	router.PUT("/applications/:appId/claims/:claimId", svc.handleUpdateCustomClaim)
+	router.DELETE("/applications/:appId/claims/:claimId", svc.handleDeleteCustomClaim)
+
+	// 17D: Notification Management
+	router.GET("/notifications/routing-rules", svc.handleListRoutingRules)
+	router.POST("/notifications/routing-rules", svc.handleCreateRoutingRule)
+	router.GET("/notifications/routing-rules/:id", svc.handleGetRoutingRule)
+	router.PUT("/notifications/routing-rules/:id", svc.handleUpdateRoutingRule)
+	router.DELETE("/notifications/routing-rules/:id", svc.handleDeleteRoutingRule)
+	router.GET("/notifications/broadcasts", svc.handleListBroadcasts)
+	router.POST("/notifications/broadcasts", svc.handleCreateBroadcast)
+	router.GET("/notifications/broadcasts/:id", svc.handleGetBroadcast)
+	router.POST("/notifications/broadcasts/:id/send", svc.handleSendBroadcast)
+	router.DELETE("/notifications/broadcasts/:id", svc.handleDeleteBroadcast)
+	router.GET("/notifications/stats", svc.handleNotificationStats)
 }
 
 // HTTP Handlers

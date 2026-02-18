@@ -2661,6 +2661,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		public.POST("/verify-email", svc.handleVerifyEmail)
 		public.POST("/invitations/:token/accept", svc.handleAcceptInvitation)
 		public.GET("/providers", svc.handleListIdentityProviders)
+		public.GET("/branding", svc.handleGetLoginBranding)
+		public.POST("/federation/discover", svc.handleFederationDiscover)
 	}
 
 	identity := router.Group("/api/v1/identity")
@@ -2683,6 +2685,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		// Consent management (User self-service)
 		identity.GET("/users/me/consents", svc.handleListUserConsents)
 		identity.DELETE("/users/me/consents/:client_id", svc.handleRevokeUserConsent)
+
+		// Privacy / GDPR self-service (Phase 17B)
+		identity.GET("/users/me/privacy/consents", svc.handleGetMyPrivacyConsents)
+		identity.POST("/users/me/privacy/consents", svc.handleGrantPrivacyConsent)
+		identity.DELETE("/users/me/privacy/consents/:consentType", svc.handleRevokePrivacyConsent)
+		identity.POST("/users/me/privacy/dsar", svc.handleSubmitDSAR)
+		identity.GET("/users/me/privacy/dsars", svc.handleGetMyDSARs)
+
+		// Identity links self-service (Phase 17C)
+		identity.GET("/users/me/identity-links", svc.handleGetMyIdentityLinks)
+		identity.DELETE("/users/me/identity-links/:linkId", svc.handleUnlinkMyIdentity)
 
 		// User management
 		identity.GET("/users", svc.handleListUsers)

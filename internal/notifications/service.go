@@ -424,6 +424,159 @@ func (s *Service) handleUpdatePreferences(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "preferences updated"})
 }
 
+// --- Phase 17D: Notification Center Handlers ---
+
+func (s *Service) handleGetNotificationHistory(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	typeFilter := c.Query("type")
+	query := `SELECT id, user_id, org_id, channel, type, title, body, link, read, metadata, created_at
+		FROM notifications WHERE user_id = $1`
+	args := []interface{}{userID}
+	argIdx := 2
+
+	if typeFilter != "" {
+		query += fmt.Sprintf(" AND type = $%d", argIdx)
+		args = append(args, typeFilter)
+		argIdx++
+	}
+	_ = argIdx
+	query += " ORDER BY created_at DESC LIMIT 100"
+
+	rows, err := s.db.Pool.Query(c.Request.Context(), query, args...)
+	if err != nil {
+		s.logger.Error("failed to get notification history", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get history"})
+		return
+	}
+	defer rows.Close()
+
+	var notifications []Notification
+	for rows.Next() {
+		var n Notification
+		var metadataBytes []byte
+		if err := rows.Scan(&n.ID, &n.UserID, &n.OrgID, &n.Channel, &n.Type,
+			&n.Title, &n.Body, &n.Link, &n.Read, &metadataBytes, &n.CreatedAt); err != nil {
+			continue
+		}
+		if metadataBytes != nil {
+			_ = json.Unmarshal(metadataBytes, &n.Metadata)
+		}
+		notifications = append(notifications, n)
+	}
+	if notifications == nil {
+		notifications = []Notification{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": notifications})
+}
+
+func (s *Service) handleDeleteNotification(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	notifID := c.Param("id")
+
+	tag, err := s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM notifications WHERE id = $1 AND user_id = $2", notifID, userID)
+	if err != nil {
+		s.logger.Error("failed to delete notification", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete notification"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "notification deleted"})
+}
+
+func (s *Service) handleGetDigestSettings(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	rows, err := s.db.Pool.Query(c.Request.Context(),
+		`SELECT id, digest_type, channel, last_sent_at, next_scheduled_at,
+			notification_count, enabled, settings, created_at, updated_at
+		 FROM notification_digests WHERE user_id = $1`, userID)
+	if err != nil {
+		s.logger.Error("failed to get digest settings", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get digest settings"})
+		return
+	}
+	defer rows.Close()
+
+	type digest struct {
+		ID                string          `json:"id"`
+		DigestType        string          `json:"digest_type"`
+		Channel           string          `json:"channel"`
+		LastSentAt        *time.Time      `json:"last_sent_at"`
+		NextScheduledAt   *time.Time      `json:"next_scheduled_at"`
+		NotificationCount int             `json:"notification_count"`
+		Enabled           bool            `json:"enabled"`
+		Settings          json.RawMessage `json:"settings"`
+		CreatedAt         time.Time       `json:"created_at"`
+		UpdatedAt         time.Time       `json:"updated_at"`
+	}
+
+	var digests []digest
+	for rows.Next() {
+		var d digest
+		if err := rows.Scan(&d.ID, &d.DigestType, &d.Channel, &d.LastSentAt, &d.NextScheduledAt,
+			&d.NotificationCount, &d.Enabled, &d.Settings, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			continue
+		}
+		digests = append(digests, d)
+	}
+	if digests == nil {
+		digests = []digest{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": digests})
+}
+
+func (s *Service) handleUpdateDigestSettings(c *gin.Context) {
+	userID := getUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	var req struct {
+		DigestType string          `json:"digest_type" binding:"required"`
+		Channel    string          `json:"channel"`
+		Enabled    bool            `json:"enabled"`
+		Settings   json.RawMessage `json:"settings"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.Channel == "" {
+		req.Channel = "email"
+	}
+
+	_, err := s.db.Pool.Exec(c.Request.Context(),
+		`INSERT INTO notification_digests (user_id, digest_type, channel, enabled, settings)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (user_id, digest_type, channel)
+		 DO UPDATE SET enabled = EXCLUDED.enabled, settings = EXCLUDED.settings, updated_at = NOW()`,
+		userID, req.DigestType, req.Channel, req.Enabled, req.Settings)
+	if err != nil {
+		s.logger.Error("failed to update digest settings", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update digest settings"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "digest settings updated"})
+}
+
 // RegisterRoutes registers the notification HTTP routes on the given router group.
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/notifications", svc.handleGetNotifications)
@@ -432,4 +585,10 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/notifications/mark-all-read", svc.handleMarkAllAsRead)
 	router.GET("/notifications/preferences", svc.handleGetPreferences)
 	router.PUT("/notifications/preferences", svc.handleUpdatePreferences)
+
+	// Phase 17D: Notification Center extensions
+	router.GET("/notifications/history", svc.handleGetNotificationHistory)
+	router.DELETE("/notifications/:id", svc.handleDeleteNotification)
+	router.GET("/notifications/digest", svc.handleGetDigestSettings)
+	router.PUT("/notifications/digest", svc.handleUpdateDigestSettings)
 }

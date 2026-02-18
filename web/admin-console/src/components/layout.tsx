@@ -57,6 +57,8 @@ import {
   UserMinus,
   ClipboardSignature,
   ArchiveRestore,
+  FileCheck,
+  Send,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -100,6 +102,7 @@ const navigationSections: NavSection[] = [
       { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
       { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, adminOnly: false },
       { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
+      { name: 'Notifications', href: '/notification-center', icon: Bell, adminOnly: false },
     ],
   },
   {
@@ -121,6 +124,8 @@ const navigationSections: NavSection[] = [
       { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
       { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
       { name: 'Lifecycle Workflows', href: '/lifecycle-workflows', icon: Workflow, adminOnly: true },
+      { name: 'Social Providers', href: '/social-providers', icon: Globe, adminOnly: true },
+      { name: 'Federation', href: '/federation-config', icon: Link2, adminOnly: true },
     ],
   },
   {
@@ -148,6 +153,8 @@ const navigationSections: NavSection[] = [
       { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, adminOnly: true },
       { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
       { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
+      { name: 'Privacy Dashboard', href: '/privacy-dashboard', icon: Shield, adminOnly: true },
+      { name: 'Consent Mgmt', href: '/consent-management', icon: FileCheck, adminOnly: true },
     ],
   },
   {
@@ -221,6 +228,8 @@ const navigationSections: NavSection[] = [
       { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
       { name: 'API Docs', href: '/api-docs', icon: BookOpen, adminOnly: true },
       { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
+      { name: 'Tenant Mgmt', href: '/tenant-management', icon: Building2, adminOnly: true },
+      { name: 'Notification Mgmt', href: '/notification-admin', icon: Send, adminOnly: true },
     ],
   },
 ]

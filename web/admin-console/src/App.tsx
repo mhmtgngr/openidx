@@ -75,6 +75,13 @@ import { EmailTemplatesPage } from './pages/email-templates'
 import { LifecyclePoliciesPage } from './pages/lifecycle-policies'
 import { AttestationCampaignsPage } from './pages/attestation-campaigns'
 import { AuditArchivalPage } from './pages/audit-archival'
+import { TenantManagementPage } from './pages/tenant-management'
+import { PrivacyDashboardPage } from './pages/privacy-dashboard'
+import { ConsentManagementPage } from './pages/consent-management'
+import { SocialProvidersPage } from './pages/social-providers'
+import { FederationConfigPage } from './pages/federation-config'
+import { NotificationCenterPage } from './pages/notification-center'
+import { NotificationAdminPage } from './pages/notification-admin'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -464,6 +471,39 @@ export default function App() {
           <Route path="audit-archival" element={
             <AdminRoute>
               <AuditArchivalPage />
+            </AdminRoute>
+          } />
+          <Route path="tenant-management" element={
+            <AdminRoute>
+              <TenantManagementPage />
+            </AdminRoute>
+          } />
+          <Route path="privacy-dashboard" element={
+            <AdminRoute>
+              <PrivacyDashboardPage />
+            </AdminRoute>
+          } />
+          <Route path="consent-management" element={
+            <AdminRoute>
+              <ConsentManagementPage />
+            </AdminRoute>
+          } />
+          <Route path="social-providers" element={
+            <AdminRoute>
+              <SocialProvidersPage />
+            </AdminRoute>
+          } />
+          <Route path="federation-config" element={
+            <AdminRoute>
+              <FederationConfigPage />
+            </AdminRoute>
+          } />
+          <Route path="notification-center" element={
+            <NotificationCenterPage />
+          } />
+          <Route path="notification-admin" element={
+            <AdminRoute>
+              <NotificationAdminPage />
             </AdminRoute>
           } />
         </Route>

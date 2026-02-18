@@ -111,7 +111,10 @@ export function NotificationBell() {
           ))
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="justify-center text-sm text-blue-600" onClick={() => navigate('/notification-preferences')}>
+        <DropdownMenuItem className="justify-center text-sm text-blue-600" onClick={() => navigate('/notification-center')}>
+          View All Notifications
+        </DropdownMenuItem>
+        <DropdownMenuItem className="justify-center text-sm text-muted-foreground" onClick={() => navigate('/notification-preferences')}>
           Manage Preferences
         </DropdownMenuItem>
       </DropdownMenuContent>
