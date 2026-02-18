@@ -2898,3 +2898,196 @@ INSERT INTO ai_agents (id, name, description, agent_type, status, capabilities, 
 ('b0000000-0000-0000-0000-000000000002', 'Analytics Assistant', 'Data analysis and reporting agent', 'assistant', 'active', '["query", "report", "alert"]'::jsonb, 'low', '{"read:analytics", "read:audit-logs"}'),
 ('b0000000-0000-0000-0000-000000000003', 'Provisioning Workflow', 'Automated user provisioning agent', 'autonomous', 'active', '["provision", "deprovision", "sync"]'::jsonb, 'high', '{"read:users", "write:users", "read:groups", "write:groups"}')
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- PHASE 16: ENTERPRISE OPERATIONS
+-- ============================================================================
+
+-- Bulk operations tracking
+CREATE TABLE IF NOT EXISTS bulk_operations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    total_items INTEGER DEFAULT 0,
+    processed_items INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    errors JSONB DEFAULT '[]',
+    parameters JSONB DEFAULT '{}',
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_operations_status ON bulk_operations(status);
+CREATE INDEX IF NOT EXISTS idx_bulk_operations_created ON bulk_operations(created_at DESC);
+
+-- Bulk operation individual items
+CREATE TABLE IF NOT EXISTS bulk_operation_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    operation_id UUID NOT NULL REFERENCES bulk_operations(id) ON DELETE CASCADE,
+    entity_id UUID,
+    entity_name VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'pending',
+    error_message TEXT,
+    processed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_op_items_operation ON bulk_operation_items(operation_id);
+
+-- Email templates (admin-customizable)
+CREATE TABLE IF NOT EXISTS email_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(100) UNIQUE NOT NULL,
+    subject VARCHAR(500) NOT NULL,
+    html_body TEXT NOT NULL,
+    text_body TEXT,
+    category VARCHAR(100) DEFAULT 'general',
+    variables JSONB DEFAULT '[]',
+    enabled BOOLEAN DEFAULT true,
+    updated_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Email branding per organization
+CREATE TABLE IF NOT EXISTS email_branding (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    logo_url VARCHAR(500),
+    primary_color VARCHAR(20) DEFAULT '#1e40af',
+    accent_color VARCHAR(20) DEFAULT '#3b82f6',
+    header_text VARCHAR(255),
+    footer_text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(org_id)
+);
+
+-- Lifecycle policies for de-provisioning automation
+CREATE TABLE IF NOT EXISTS lifecycle_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    policy_type VARCHAR(50) NOT NULL,
+    conditions JSONB DEFAULT '{}',
+    actions JSONB DEFAULT '{}',
+    enabled BOOLEAN DEFAULT false,
+    schedule VARCHAR(100),
+    grace_period_days INTEGER DEFAULT 7,
+    notify_before_days INTEGER DEFAULT 3,
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    next_run_at TIMESTAMP WITH TIME ZONE,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Lifecycle policy execution history
+CREATE TABLE IF NOT EXISTS lifecycle_executions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    policy_id UUID NOT NULL REFERENCES lifecycle_policies(id) ON DELETE CASCADE,
+    status VARCHAR(50) DEFAULT 'running',
+    users_scanned INTEGER DEFAULT 0,
+    users_affected INTEGER DEFAULT 0,
+    actions_taken JSONB DEFAULT '[]',
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_exec_policy ON lifecycle_executions(policy_id, started_at DESC);
+
+-- Attestation campaigns
+CREATE TABLE IF NOT EXISTS attestation_campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    campaign_type VARCHAR(50) NOT NULL,
+    scope JSONB DEFAULT '{}',
+    reviewer_strategy VARCHAR(50) DEFAULT 'manager',
+    status VARCHAR(50) DEFAULT 'draft',
+    due_date TIMESTAMP WITH TIME ZONE,
+    reminder_days JSONB DEFAULT '[7, 3, 1]',
+    escalation_after_days INTEGER DEFAULT 14,
+    auto_revoke_on_expiry BOOLEAN DEFAULT false,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_attestation_campaigns_status ON attestation_campaigns(status);
+
+-- Attestation campaign items
+CREATE TABLE IF NOT EXISTS attestation_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    campaign_id UUID NOT NULL REFERENCES attestation_campaigns(id) ON DELETE CASCADE,
+    reviewer_id UUID REFERENCES users(id),
+    user_id UUID REFERENCES users(id),
+    resource_type VARCHAR(100),
+    resource_id UUID,
+    resource_name VARCHAR(255),
+    decision VARCHAR(50) DEFAULT 'pending',
+    delegated_to UUID REFERENCES users(id),
+    delegated_at TIMESTAMP WITH TIME ZONE,
+    comments TEXT,
+    decided_at TIMESTAMP WITH TIME ZONE,
+    reminded_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_attestation_items_campaign ON attestation_items(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_attestation_items_reviewer ON attestation_items(reviewer_id, decision);
+
+-- Audit retention policies
+CREATE TABLE IF NOT EXISTS audit_retention_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    event_category VARCHAR(100) DEFAULT 'all',
+    retention_days INTEGER NOT NULL,
+    archive_enabled BOOLEAN DEFAULT true,
+    archive_format VARCHAR(50) DEFAULT 'json_gz',
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Audit archives
+CREATE TABLE IF NOT EXISTS audit_archives (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    date_range_start TIMESTAMP WITH TIME ZONE,
+    date_range_end TIMESTAMP WITH TIME ZONE,
+    event_count INTEGER DEFAULT 0,
+    file_size BIGINT DEFAULT 0,
+    file_path VARCHAR(500),
+    format VARCHAR(50) DEFAULT 'json_gz',
+    status VARCHAR(50) DEFAULT 'creating',
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_archives_status ON audit_archives(status);
+CREATE INDEX IF NOT EXISTS idx_audit_archives_dates ON audit_archives(date_range_start, date_range_end);
+
+-- Seed data: Default email templates
+INSERT INTO email_templates (id, name, slug, subject, html_body, text_body, category, variables) VALUES
+('c0000000-0000-0000-0000-000000000001', 'Welcome', 'welcome', 'Welcome to OpenIDX', '<html><body><h1>Welcome, {{.FirstName}}!</h1><p>Your account has been created. You can now log in at <a href="{{.LoginURL}}">{{.LoginURL}}</a>.</p><p>Username: {{.Username}}</p></body></html>', 'Welcome, {{.FirstName}}! Your account has been created. Log in at {{.LoginURL}}. Username: {{.Username}}', 'lifecycle', '["FirstName", "Username", "LoginURL"]'::jsonb),
+('c0000000-0000-0000-0000-000000000002', 'Password Reset', 'password-reset', 'Reset Your Password', '<html><body><h1>Password Reset</h1><p>Hi {{.FirstName}}, click the link below to reset your password:</p><p><a href="{{.ResetLink}}">Reset Password</a></p><p>This link expires in {{.ExpiryMinutes}} minutes.</p></body></html>', 'Hi {{.FirstName}}, reset your password: {{.ResetLink}} (expires in {{.ExpiryMinutes}} minutes)', 'authentication', '["FirstName", "ResetLink", "ExpiryMinutes"]'::jsonb),
+('c0000000-0000-0000-0000-000000000003', 'Invitation', 'invitation', 'You are Invited to OpenIDX', '<html><body><h1>You are Invited!</h1><p>{{.InviterName}} has invited you to join OpenIDX.</p><p><a href="{{.InviteLink}}">Accept Invitation</a></p><p>This invitation expires on {{.ExpiryDate}}.</p></body></html>', '{{.InviterName}} has invited you to join OpenIDX. Accept: {{.InviteLink}} (expires {{.ExpiryDate}})', 'lifecycle', '["InviterName", "InviteLink", "ExpiryDate"]'::jsonb),
+('c0000000-0000-0000-0000-000000000004', 'Email Verification', 'verification', 'Verify Your Email', '<html><body><h1>Verify Your Email</h1><p>Hi {{.FirstName}}, please verify your email address by clicking the link below:</p><p><a href="{{.VerifyLink}}">Verify Email</a></p></body></html>', 'Hi {{.FirstName}}, verify your email: {{.VerifyLink}}', 'authentication', '["FirstName", "VerifyLink"]'::jsonb),
+('c0000000-0000-0000-0000-000000000005', 'OTP Code', 'otp', 'Your One-Time Password', '<html><body><h1>Your OTP Code</h1><p>Your one-time password is: <strong>{{.OTPCode}}</strong></p><p>This code expires in {{.ExpiryMinutes}} minutes. Do not share this code with anyone.</p></body></html>', 'Your OTP code is: {{.OTPCode}}. Expires in {{.ExpiryMinutes}} minutes.', 'authentication', '["OTPCode", "ExpiryMinutes"]'::jsonb)
+ON CONFLICT (slug) DO NOTHING;
+
+-- Seed data: Default lifecycle policies (disabled)
+INSERT INTO lifecycle_policies (id, name, description, policy_type, conditions, actions, enabled, schedule) VALUES
+('d0000000-0000-0000-0000-000000000001', 'Stale Account Auto-Disable', 'Automatically disable accounts that have not logged in for 90 days', 'stale_account_disable', '{"inactive_days": 90}'::jsonb, '{"action": "disable", "notify_user": true}'::jsonb, false, 'daily'),
+('d0000000-0000-0000-0000-000000000002', 'Disabled Account Cleanup', 'Delete accounts that have been disabled for 180 days', 'disabled_account_cleanup', '{"disabled_days": 180}'::jsonb, '{"action": "delete", "notify_admin": true}'::jsonb, false, 'weekly')
+ON CONFLICT (id) DO NOTHING;
+
+-- Seed data: Default audit retention policies (disabled)
+INSERT INTO audit_retention_policies (id, name, event_category, retention_days, archive_enabled, enabled) VALUES
+('e0000000-0000-0000-0000-000000000001', 'Standard Retention', 'all', 365, true, false),
+('e0000000-0000-0000-0000-000000000002', 'Authentication Events', 'authentication', 90, true, false)
+ON CONFLICT (id) DO NOTHING;

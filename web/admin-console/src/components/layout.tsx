@@ -53,6 +53,10 @@ import {
   Fingerprint as FingerprintIcon,
   Bot,
   Lightbulb,
+  Mail,
+  UserMinus,
+  ClipboardSignature,
+  ArchiveRestore,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -190,6 +194,11 @@ const navigationSections: NavSection[] = [
     adminOnly: true,
     items: [
       { name: 'SAML Providers', href: '/saml-service-providers', icon: FingerprintIcon, adminOnly: true },
+      { name: 'Bulk Operations', href: '/bulk-operations', icon: Layers, adminOnly: true },
+      { name: 'Email Templates', href: '/email-templates', icon: Mail, adminOnly: true },
+      { name: 'Lifecycle Policies', href: '/lifecycle-policies', icon: UserMinus, adminOnly: true },
+      { name: 'Attestation', href: '/attestation-campaigns', icon: ClipboardSignature, adminOnly: true },
+      { name: 'Audit Archival', href: '/audit-archival', icon: ArchiveRestore, adminOnly: true },
     ],
   },
   {

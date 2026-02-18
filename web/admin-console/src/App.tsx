@@ -70,6 +70,11 @@ import { AIAgentsPage } from './pages/ai-agents'
 import { ISPMDashboardPage } from './pages/ispm-dashboard'
 import { AIRecommendationsPage } from './pages/ai-recommendations'
 import { PredictiveAnalyticsPage } from './pages/predictive-analytics'
+import { BulkOperationsPage } from './pages/bulk-operations'
+import { EmailTemplatesPage } from './pages/email-templates'
+import { LifecyclePoliciesPage } from './pages/lifecycle-policies'
+import { AttestationCampaignsPage } from './pages/attestation-campaigns'
+import { AuditArchivalPage } from './pages/audit-archival'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -434,6 +439,31 @@ export default function App() {
           <Route path="predictive-analytics" element={
             <AdminRoute>
               <PredictiveAnalyticsPage />
+            </AdminRoute>
+          } />
+          <Route path="bulk-operations" element={
+            <AdminRoute>
+              <BulkOperationsPage />
+            </AdminRoute>
+          } />
+          <Route path="email-templates" element={
+            <AdminRoute>
+              <EmailTemplatesPage />
+            </AdminRoute>
+          } />
+          <Route path="lifecycle-policies" element={
+            <AdminRoute>
+              <LifecyclePoliciesPage />
+            </AdminRoute>
+          } />
+          <Route path="attestation-campaigns" element={
+            <AdminRoute>
+              <AttestationCampaignsPage />
+            </AdminRoute>
+          } />
+          <Route path="audit-archival" element={
+            <AdminRoute>
+              <AuditArchivalPage />
             </AdminRoute>
           } />
         </Route>
