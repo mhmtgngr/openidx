@@ -1041,6 +1041,55 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/analytics/predictions/login-forecast", svc.handleLoginForecast)
 	router.GET("/analytics/predictions/risk-forecast", svc.handleRiskForecast)
 	router.GET("/analytics/predictions/capacity", svc.handleCapacityForecast)
+
+	// Phase 16: Enterprise Operations
+
+	// Bulk Operations
+	router.POST("/bulk-operations", svc.handleCreateBulkOperation)
+	router.GET("/bulk-operations", svc.handleListBulkOperations)
+	router.GET("/bulk-operations/export/users", svc.handleExportUsersCSV)
+	router.GET("/bulk-operations/:id", svc.handleGetBulkOperation)
+	router.DELETE("/bulk-operations/:id", svc.handleCancelBulkOperation)
+
+	// Email Template Management
+	router.GET("/email-templates", svc.handleListEmailTemplates)
+	router.GET("/email-templates/:id", svc.handleGetEmailTemplate)
+	router.PUT("/email-templates/:id", svc.handleUpdateEmailTemplate)
+	router.POST("/email-templates/:id/preview", svc.handlePreviewEmailTemplate)
+	router.POST("/email-templates/:id/reset", svc.handleResetEmailTemplate)
+	router.GET("/email-branding", svc.handleGetEmailBranding)
+	router.PUT("/email-branding", svc.handleUpdateEmailBranding)
+
+	// De-provisioning / Lifecycle Policies
+	router.GET("/lifecycle-policies", svc.handleListLifecyclePolicies)
+	router.POST("/lifecycle-policies", svc.handleCreateLifecyclePolicy)
+	router.GET("/lifecycle-policies/preview", svc.handlePreviewLifecyclePolicy)
+	router.GET("/lifecycle-policies/:id", svc.handleGetLifecyclePolicy)
+	router.PUT("/lifecycle-policies/:id", svc.handleUpdateLifecyclePolicy)
+	router.DELETE("/lifecycle-policies/:id", svc.handleDeleteLifecyclePolicy)
+	router.POST("/lifecycle-policies/:id/execute", svc.handleExecuteLifecyclePolicy)
+	router.GET("/lifecycle-policies/:id/executions", svc.handleListLifecycleExecutions)
+
+	// Attestation Campaigns
+	router.GET("/attestation-campaigns", svc.handleListAttestationCampaigns)
+	router.POST("/attestation-campaigns", svc.handleCreateAttestationCampaign)
+	router.GET("/attestation-campaigns/:id", svc.handleGetAttestationCampaign)
+	router.PUT("/attestation-campaigns/:id", svc.handleUpdateAttestationCampaign)
+	router.POST("/attestation-campaigns/:id/launch", svc.handleLaunchAttestationCampaign)
+	router.GET("/attestation-campaigns/:id/items", svc.handleListAttestationItems)
+	router.POST("/attestation-campaigns/:id/items/:itemId/decide", svc.handleDecideAttestationItem)
+	router.POST("/attestation-campaigns/:id/items/:itemId/delegate", svc.handleDelegateAttestationItem)
+	router.GET("/attestation-campaigns/:id/progress", svc.handleAttestationProgress)
+
+	// Audit Archival & Retention
+	router.GET("/audit-retention", svc.handleListRetentionPolicies)
+	router.POST("/audit-retention", svc.handleCreateRetentionPolicy)
+	router.PUT("/audit-retention/:id", svc.handleUpdateRetentionPolicy)
+	router.DELETE("/audit-retention/:id", svc.handleDeleteRetentionPolicy)
+	router.POST("/audit-archives", svc.handleCreateAuditArchive)
+	router.GET("/audit-archives", svc.handleListAuditArchives)
+	router.GET("/audit-archives/:id", svc.handleGetAuditArchive)
+	router.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
 }
 
 // HTTP Handlers
