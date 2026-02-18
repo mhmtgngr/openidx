@@ -2712,3 +2712,189 @@ CREATE TABLE IF NOT EXISTS error_catalog (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- ============================================================================
+-- Phase 15: AI & Intelligence
+-- ============================================================================
+
+-- AI Agent Identity Management
+CREATE TABLE IF NOT EXISTS ai_agents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    agent_type VARCHAR(50) NOT NULL DEFAULT 'assistant',
+    owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    capabilities JSONB DEFAULT '[]',
+    trust_level VARCHAR(20) NOT NULL DEFAULT 'low',
+    rate_limits JSONB DEFAULT '{"requests_per_minute": 60, "requests_per_hour": 1000}',
+    allowed_scopes TEXT[] DEFAULT '{}',
+    ip_allowlist TEXT[] DEFAULT '{}',
+    metadata JSONB DEFAULT '{}',
+    last_active_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_agents_status ON ai_agents(status);
+CREATE INDEX IF NOT EXISTS idx_ai_agents_owner ON ai_agents(owner_id);
+CREATE INDEX IF NOT EXISTS idx_ai_agents_type ON ai_agents(agent_type);
+
+CREATE TABLE IF NOT EXISTS ai_agent_credentials (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id UUID NOT NULL REFERENCES ai_agents(id) ON DELETE CASCADE,
+    credential_type VARCHAR(50) NOT NULL DEFAULT 'api_key',
+    key_prefix VARCHAR(12),
+    key_hash VARCHAR(128) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    expires_at TIMESTAMP WITH TIME ZONE,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    rotated_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_agent_creds_agent ON ai_agent_credentials(agent_id);
+CREATE INDEX IF NOT EXISTS idx_ai_agent_creds_hash ON ai_agent_credentials(key_hash);
+
+CREATE TABLE IF NOT EXISTS ai_agent_permissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id UUID NOT NULL REFERENCES ai_agents(id) ON DELETE CASCADE,
+    resource_type VARCHAR(100) NOT NULL,
+    resource_id VARCHAR(255),
+    actions TEXT[] NOT NULL DEFAULT '{}',
+    conditions JSONB DEFAULT '{}',
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_agent_perms_agent ON ai_agent_permissions(agent_id);
+CREATE INDEX IF NOT EXISTS idx_ai_agent_perms_resource ON ai_agent_permissions(resource_type, resource_id);
+
+CREATE TABLE IF NOT EXISTS ai_agent_activity (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id UUID NOT NULL REFERENCES ai_agents(id) ON DELETE CASCADE,
+    action VARCHAR(255) NOT NULL,
+    resource_type VARCHAR(100),
+    resource_id VARCHAR(255),
+    outcome VARCHAR(50) NOT NULL DEFAULT 'success',
+    details JSONB DEFAULT '{}',
+    ip_address VARCHAR(45),
+    duration_ms INT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_agent_activity_agent ON ai_agent_activity(agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_agent_activity_time ON ai_agent_activity(created_at DESC);
+
+-- Identity Security Posture Management (ISPM)
+CREATE TABLE IF NOT EXISTS ispm_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(50) NOT NULL,
+    check_type VARCHAR(100) NOT NULL UNIQUE,
+    enabled BOOLEAN DEFAULT true,
+    severity VARCHAR(20) NOT NULL DEFAULT 'medium',
+    thresholds JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ispm_findings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    rule_id UUID REFERENCES ispm_rules(id) ON DELETE SET NULL,
+    check_type VARCHAR(100) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    affected_entity_type VARCHAR(100),
+    affected_entity_id VARCHAR(255),
+    affected_entity_name VARCHAR(255),
+    status VARCHAR(50) NOT NULL DEFAULT 'open',
+    remediation_action VARCHAR(100),
+    remediation_details JSONB DEFAULT '{}',
+    dismissed_by UUID REFERENCES users(id),
+    dismissed_reason TEXT,
+    remediated_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ispm_findings_status ON ispm_findings(status);
+CREATE INDEX IF NOT EXISTS idx_ispm_findings_severity ON ispm_findings(severity);
+CREATE INDEX IF NOT EXISTS idx_ispm_findings_category ON ispm_findings(category);
+CREATE INDEX IF NOT EXISTS idx_ispm_findings_entity ON ispm_findings(affected_entity_type, affected_entity_id);
+CREATE INDEX IF NOT EXISTS idx_ispm_findings_created ON ispm_findings(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ispm_scores (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    overall_score INT NOT NULL,
+    category_scores JSONB NOT NULL DEFAULT '{}',
+    total_findings INT DEFAULT 0,
+    critical_findings INT DEFAULT 0,
+    high_findings INT DEFAULT 0,
+    medium_findings INT DEFAULT 0,
+    low_findings INT DEFAULT 0,
+    snapshot_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ispm_scores_date ON ispm_scores(snapshot_date);
+
+-- AI-Powered Access Recommendations
+CREATE TABLE IF NOT EXISTS ai_recommendations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    recommendation_type VARCHAR(100) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    title VARCHAR(500) NOT NULL,
+    description TEXT,
+    impact VARCHAR(20) NOT NULL DEFAULT 'medium',
+    effort VARCHAR(20) NOT NULL DEFAULT 'medium',
+    affected_entities JSONB DEFAULT '[]',
+    suggested_action JSONB DEFAULT '{}',
+    supporting_data JSONB DEFAULT '{}',
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    dismissed_reason TEXT,
+    applied_at TIMESTAMP WITH TIME ZONE,
+    applied_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_recommendations_status ON ai_recommendations(status);
+CREATE INDEX IF NOT EXISTS idx_ai_recommendations_category ON ai_recommendations(category);
+CREATE INDEX IF NOT EXISTS idx_ai_recommendations_impact ON ai_recommendations(impact);
+CREATE INDEX IF NOT EXISTS idx_ai_recommendations_created ON ai_recommendations(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS recommendation_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    recommendation_id UUID NOT NULL REFERENCES ai_recommendations(id) ON DELETE CASCADE,
+    previous_status VARCHAR(50),
+    new_status VARCHAR(50) NOT NULL,
+    changed_by UUID REFERENCES users(id),
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_recommendation_history_rec ON recommendation_history(recommendation_id, created_at DESC);
+
+-- Seed data: ISPM rules
+INSERT INTO ispm_rules (id, name, description, category, check_type, severity, thresholds) VALUES
+('a0000000-0000-0000-0000-000000000001', 'MFA Adoption Check', 'Detects users without MFA enabled', 'authentication', 'mfa_adoption', 'high', '{"min_adoption_pct": 90}'),
+('a0000000-0000-0000-0000-000000000002', 'Stale Account Detection', 'Finds users not logged in for extended period', 'accounts', 'stale_accounts', 'medium', '{"inactive_days": 90}'),
+('a0000000-0000-0000-0000-000000000003', 'Over-Privileged Users', 'Detects admin users who rarely use admin features', 'authorization', 'over_privileged', 'high', '{"unused_days": 30}'),
+('a0000000-0000-0000-0000-000000000004', 'Weak Password Detection', 'Finds accounts with passwords older than policy', 'authentication', 'weak_passwords', 'medium', '{"max_age_days": 90}'),
+('a0000000-0000-0000-0000-000000000005', 'Orphaned Permissions', 'Permissions for disabled users or deleted groups', 'authorization', 'orphaned_permissions', 'medium', '{}'),
+('a0000000-0000-0000-0000-000000000006', 'Shadow Admin Detection', 'Users with admin-equivalent access without admin role', 'authorization', 'shadow_admin', 'critical', '{}'),
+('a0000000-0000-0000-0000-000000000007', 'Shared Account Detection', 'Accounts with concurrent sessions from different IPs', 'accounts', 'shared_accounts', 'high', '{"max_concurrent_ips": 2}'),
+('a0000000-0000-0000-0000-000000000008', 'Dormant Permissions', 'Granted permissions unused for extended period', 'authorization', 'dormant_permissions', 'low', '{"unused_days": 30}'),
+('a0000000-0000-0000-0000-000000000009', 'Policy Gap Detection', 'Applications without conditional access policies', 'compliance', 'policy_gaps', 'medium', '{}'),
+('a0000000-0000-0000-0000-00000000000a', 'MFA Bypass Risk', 'Users with only weak MFA methods (SMS/email)', 'authentication', 'mfa_bypass_risk', 'high', '{}')
+ON CONFLICT DO NOTHING;
+
+-- Seed data: Sample AI agents
+INSERT INTO ai_agents (id, name, description, agent_type, status, capabilities, trust_level, allowed_scopes) VALUES
+('b0000000-0000-0000-0000-000000000001', 'CI/CD Pipeline Bot', 'Automated deployment and testing agent', 'workflow', 'active', '["deploy", "test", "scan"]'::jsonb, 'medium', '{"read:users", "read:applications", "write:deployments"}'),
+('b0000000-0000-0000-0000-000000000002', 'Analytics Assistant', 'Data analysis and reporting agent', 'assistant', 'active', '["query", "report", "alert"]'::jsonb, 'low', '{"read:analytics", "read:audit-logs"}'),
+('b0000000-0000-0000-0000-000000000003', 'Provisioning Workflow', 'Automated user provisioning agent', 'autonomous', 'active', '["provision", "deprovision", "sync"]'::jsonb, 'high', '{"read:users", "write:users", "read:groups", "write:groups"}')
+ON CONFLICT (id) DO NOTHING;

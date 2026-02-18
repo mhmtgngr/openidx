@@ -66,6 +66,10 @@ import { DeveloperSettingsPage } from './pages/developer-settings'
 import { ErrorCatalogPage } from './pages/error-catalog'
 import { OAuthPlaygroundPage } from './pages/oauth-playground'
 import { SystemHealthPage } from './pages/system-health'
+import { AIAgentsPage } from './pages/ai-agents'
+import { ISPMDashboardPage } from './pages/ispm-dashboard'
+import { AIRecommendationsPage } from './pages/ai-recommendations'
+import { PredictiveAnalyticsPage } from './pages/predictive-analytics'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
 
@@ -410,6 +414,26 @@ export default function App() {
           <Route path="system-health" element={
             <AdminRoute>
               <SystemHealthPage />
+            </AdminRoute>
+          } />
+          <Route path="ai-agents" element={
+            <AdminRoute>
+              <AIAgentsPage />
+            </AdminRoute>
+          } />
+          <Route path="ispm" element={
+            <AdminRoute>
+              <ISPMDashboardPage />
+            </AdminRoute>
+          } />
+          <Route path="ai-recommendations" element={
+            <AdminRoute>
+              <AIRecommendationsPage />
+            </AdminRoute>
+          } />
+          <Route path="predictive-analytics" element={
+            <AdminRoute>
+              <PredictiveAnalyticsPage />
             </AdminRoute>
           } />
         </Route>

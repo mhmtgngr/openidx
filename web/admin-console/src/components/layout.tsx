@@ -51,6 +51,8 @@ import {
   TrendingUp,
   PieChart,
   Fingerprint as FingerprintIcon,
+  Bot,
+  Lightbulb,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -171,6 +173,16 @@ const navigationSections: NavSection[] = [
       { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
       { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, adminOnly: true },
       { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
+    ],
+  },
+  {
+    label: 'AI & Intelligence',
+    adminOnly: true,
+    items: [
+      { name: 'AI Agents', href: '/ai-agents', icon: Bot, adminOnly: true },
+      { name: 'Security Posture', href: '/ispm', icon: ShieldCheck, adminOnly: true },
+      { name: 'Recommendations', href: '/ai-recommendations', icon: Lightbulb, adminOnly: true },
+      { name: 'Predictions', href: '/predictive-analytics', icon: TrendingUp, adminOnly: true },
     ],
   },
   {

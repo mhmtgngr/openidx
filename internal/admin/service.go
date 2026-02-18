@@ -998,6 +998,49 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/error-catalog", svc.handleCreateErrorCatalogEntry)
 	router.PUT("/error-catalog/:code", svc.handleUpdateErrorCatalogEntry)
 	router.DELETE("/error-catalog/:code", svc.handleDeleteErrorCatalogEntry)
+
+	// Phase 15: AI & Intelligence
+
+	// AI Agent Identity Management
+	router.GET("/ai-agents", svc.handleListAIAgents)
+	router.POST("/ai-agents", svc.handleCreateAIAgent)
+	router.GET("/ai-agents/analytics", svc.handleAIAgentAnalytics)
+	router.GET("/ai-agents/:id", svc.handleGetAIAgent)
+	router.PUT("/ai-agents/:id", svc.handleUpdateAIAgent)
+	router.DELETE("/ai-agents/:id", svc.handleDeleteAIAgent)
+	router.POST("/ai-agents/:id/suspend", svc.handleSuspendAIAgent)
+	router.POST("/ai-agents/:id/activate", svc.handleActivateAIAgent)
+	router.POST("/ai-agents/:id/rotate-credentials", svc.handleRotateAIAgentCredentials)
+	router.GET("/ai-agents/:id/activity", svc.handleListAIAgentActivity)
+	router.GET("/ai-agents/:id/permissions", svc.handleListAIAgentPermissions)
+	router.POST("/ai-agents/:id/permissions", svc.handleGrantAIAgentPermission)
+	router.DELETE("/ai-agents/:id/permissions/:permId", svc.handleRevokeAIAgentPermission)
+
+	// Identity Security Posture Management (ISPM)
+	router.GET("/ispm/score", svc.handleGetPostureScore)
+	router.GET("/ispm/findings", svc.handleListPostureFindings)
+	router.GET("/ispm/findings/:id", svc.handleGetPostureFinding)
+	router.POST("/ispm/findings/:id/dismiss", svc.handleDismissPostureFinding)
+	router.POST("/ispm/findings/:id/remediate", svc.handleRemediatePostureFinding)
+	router.GET("/ispm/trends", svc.handleGetPostureTrends)
+	router.GET("/ispm/rules", svc.handleListPostureRules)
+	router.PUT("/ispm/rules/:id", svc.handleUpdatePostureRule)
+	router.POST("/ispm/scan", svc.RunPostureChecks)
+
+	// AI-Powered Access Recommendations
+	router.GET("/recommendations", svc.handleListRecommendations)
+	router.GET("/recommendations/stats", svc.handleRecommendationStats)
+	router.GET("/recommendations/:id", svc.handleGetRecommendation)
+	router.POST("/recommendations/:id/accept", svc.handleAcceptRecommendation)
+	router.POST("/recommendations/:id/dismiss", svc.handleDismissRecommendation)
+	router.POST("/recommendations/:id/apply", svc.handleApplyRecommendation)
+	router.POST("/recommendations/generate", svc.handleGenerateRecommendations)
+
+	// Predictive Analytics
+	router.GET("/analytics/predictions", svc.handlePredictionsSummary)
+	router.GET("/analytics/predictions/login-forecast", svc.handleLoginForecast)
+	router.GET("/analytics/predictions/risk-forecast", svc.handleRiskForecast)
+	router.GET("/analytics/predictions/capacity", svc.handleCapacityForecast)
 }
 
 // HTTP Handlers
