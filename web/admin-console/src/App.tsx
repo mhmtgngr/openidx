@@ -86,6 +86,7 @@ import MFAManagement from './pages/mfa-management'
 import LoginAnomalies from './pages/login-anomalies'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
+import { ErrorBoundary } from './components/error-boundary'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -129,7 +130,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <>
+    <ErrorBoundary>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -523,6 +524,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster />
-    </>
+    </ErrorBoundary>
   )
 }

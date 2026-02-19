@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // UserConsent represents a user's consent record for privacy compliance
@@ -251,8 +253,7 @@ func (s *Service) handleListConsents(c *gin.Context) {
 	var total int
 	err := s.db.Pool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total)
 	if err != nil {
-		s.logger.Error("Failed to count consents", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count consents"})
+		respondError(c, s.logger, apperrors.Internal("Failed to count consents", err))
 		return
 	}
 
@@ -263,8 +264,7 @@ func (s *Service) handleListConsents(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, finalQuery, paginatedArgs...)
 	if err != nil {
-		s.logger.Error("Failed to query consents", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query consents"})
+		respondError(c, s.logger, apperrors.Internal("Failed to query consents", err))
 		return
 	}
 	defer rows.Close()
@@ -306,8 +306,7 @@ func (s *Service) handleConsentStats(c *gin.Context) {
 			SUM(CASE WHEN granted = false THEN 1 ELSE 0 END) AS revoked
 		 FROM user_consents GROUP BY consent_type ORDER BY consent_type`)
 	if err != nil {
-		s.logger.Error("Failed to query consent stats", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query consent stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to query consent stats", err))
 		return
 	}
 	defer rows.Close()
@@ -384,8 +383,7 @@ func (s *Service) handleListDSARs(c *gin.Context) {
 	var total int
 	err := s.db.Pool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total)
 	if err != nil {
-		s.logger.Error("Failed to count DSARs", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count DSARs"})
+		respondError(c, s.logger, apperrors.Internal("Failed to count DSARs", err))
 		return
 	}
 
@@ -396,8 +394,7 @@ func (s *Service) handleListDSARs(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, finalQuery, paginatedArgs...)
 	if err != nil {
-		s.logger.Error("Failed to query DSARs", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query DSARs"})
+		respondError(c, s.logger, apperrors.Internal("Failed to query DSARs", err))
 		return
 	}
 	defer rows.Close()
@@ -440,18 +437,18 @@ func (s *Service) handleCreateDSAR(c *gin.Context) {
 		RequestedDataCategories json.RawMessage `json:"requested_data_categories"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if req.UserID == "" || req.RequestType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and request_type are required"})
+		respondError(c, nil, apperrors.BadRequest("user_id and request_type are required"))
 		return
 	}
 
 	validTypes := map[string]bool{"export": true, "delete": true, "restrict": true}
 	if !validTypes[req.RequestType] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "request_type must be export, delete, or restrict"})
+		respondError(c, nil, apperrors.BadRequest("request_type must be export, delete, or restrict"))
 		return
 	}
 
@@ -469,8 +466,7 @@ func (s *Service) handleCreateDSAR(c *gin.Context) {
 		req.UserID, req.RequestType, req.Reason, categories, dueDate,
 	).Scan(&id)
 	if err != nil {
-		s.logger.Error("Failed to create DSAR", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create DSAR"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create DSAR", err))
 		return
 	}
 
@@ -506,7 +502,7 @@ func (s *Service) handleGetDSAR(c *gin.Context) {
 		&d.ProcessedBy, &d.ProcessedName, &d.Notes, &d.DueDate,
 		&d.CreatedAt, &d.UpdatedAt, &d.CompletedAt)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "DSAR not found"})
+		respondError(c, nil, apperrors.NotFound("DSAR"))
 		return
 	}
 
@@ -526,7 +522,7 @@ func (s *Service) handleUpdateDSAR(c *gin.Context) {
 		Notes  *string `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -563,7 +559,7 @@ func (s *Service) handleUpdateDSAR(c *gin.Context) {
 	sets = append(sets, "updated_at = NOW()")
 
 	if len(sets) <= 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		respondError(c, nil, apperrors.BadRequest("No fields to update"))
 		return
 	}
 
@@ -572,12 +568,11 @@ func (s *Service) handleUpdateDSAR(c *gin.Context) {
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update DSAR", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update DSAR"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update DSAR", err))
 		return
 	}
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "DSAR not found"})
+		respondError(c, nil, apperrors.NotFound("DSAR"))
 		return
 	}
 
@@ -598,12 +593,12 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 		`SELECT id, user_id, request_type, status FROM data_subject_requests WHERE id = $1`, id,
 	).Scan(&dsar.ID, &dsar.UserID, &dsar.RequestType, &dsar.Status)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "DSAR not found"})
+		respondError(c, nil, apperrors.NotFound("DSAR"))
 		return
 	}
 
 	if dsar.Status == "completed" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "DSAR is already completed"})
+		respondError(c, nil, apperrors.BadRequest("DSAR is already completed"))
 		return
 	}
 
@@ -654,8 +649,7 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 		// Write gzip file
 		exportDir := "/tmp/openidx-privacy"
 		if err := os.MkdirAll(exportDir, 0750); err != nil {
-			s.logger.Error("Failed to create export directory", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create export directory"})
+			respondError(c, s.logger, apperrors.Internal("Failed to create export directory", err))
 			return
 		}
 
@@ -664,8 +658,7 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 
 		f, err := os.Create(filePath)
 		if err != nil {
-			s.logger.Error("Failed to create export file", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create export file"})
+			respondError(c, s.logger, apperrors.Internal("Failed to create export file", err))
 			return
 		}
 
@@ -677,16 +670,14 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 		f.Close()
 
 		if encErr != nil {
-			s.logger.Error("Failed to write export data", zap.Error(encErr))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write export data"})
+			respondError(c, s.logger, apperrors.Internal("Failed to write export data", encErr))
 			return
 		}
 
 		// Get file size
 		fi, err := os.Stat(filePath)
 		if err != nil {
-			s.logger.Error("Failed to stat export file", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stat export file"})
+			respondError(c, s.logger, apperrors.Internal("Failed to stat export file", err))
 			return
 		}
 		fileSize := fi.Size()
@@ -696,8 +687,7 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 				processed_by = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $4`,
 			filePath, fileSize, nilIfEmpty(userIDStr), id)
 		if err != nil {
-			s.logger.Error("Failed to update DSAR after export", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update DSAR"})
+			respondError(c, s.logger, apperrors.Internal("Failed to update DSAR", err))
 			return
 		}
 
@@ -714,8 +704,7 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 			`UPDATE users SET email = $1, first_name = 'Deleted', last_name = 'Deleted', updated_at = NOW() WHERE id = $2`,
 			deletedEmail, dsar.UserID)
 		if err != nil {
-			s.logger.Error("Failed to anonymize user data", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to anonymize user data"})
+			respondError(c, s.logger, apperrors.Internal("Failed to anonymize user data", err))
 			return
 		}
 
@@ -723,15 +712,14 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 			`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
 			nilIfEmpty(userIDStr), id)
 		if err != nil {
-			s.logger.Error("Failed to update DSAR after delete", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update DSAR"})
+			respondError(c, s.logger, apperrors.Internal("Failed to update DSAR", err))
 			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "User data anonymized and DSAR completed"})
 
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Execution not supported for request type: %s", dsar.RequestType)})
+		respondError(c, nil, apperrors.BadRequest(fmt.Sprintf("Execution not supported for request type: %s", dsar.RequestType)))
 	}
 }
 
@@ -746,8 +734,7 @@ func (s *Service) handleListPrivacyRetention(c *gin.Context) {
 			enabled, last_executed_at, created_at, updated_at
 		 FROM privacy_retention_policies ORDER BY data_category`)
 	if err != nil {
-		s.logger.Error("Failed to list retention policies", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list retention policies"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list retention policies", err))
 		return
 	}
 	defer rows.Close()
@@ -783,18 +770,18 @@ func (s *Service) handleCreatePrivacyRetention(c *gin.Context) {
 		Enabled         bool            `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if req.Name == "" || req.DataCategory == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and data_category are required"})
+		respondError(c, nil, apperrors.BadRequest("name and data_category are required"))
 		return
 	}
 
 	validActions := map[string]bool{"delete": true, "anonymize": true}
 	if !validActions[req.Action] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be delete or anonymize"})
+		respondError(c, nil, apperrors.BadRequest("action must be delete or anonymize"))
 		return
 	}
 
@@ -810,8 +797,7 @@ func (s *Service) handleCreatePrivacyRetention(c *gin.Context) {
 		req.Name, req.DataCategory, req.RetentionDays, req.Action, anonymizeFields, req.Enabled,
 	).Scan(&id)
 	if err != nil {
-		s.logger.Error("Failed to create retention policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create retention policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create retention policy", err))
 		return
 	}
 
@@ -835,7 +821,7 @@ func (s *Service) handleUpdatePrivacyRetention(c *gin.Context) {
 		Enabled         *bool            `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -875,7 +861,7 @@ func (s *Service) handleUpdatePrivacyRetention(c *gin.Context) {
 	}
 
 	if len(sets) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		respondError(c, nil, apperrors.BadRequest("No fields to update"))
 		return
 	}
 
@@ -885,12 +871,11 @@ func (s *Service) handleUpdatePrivacyRetention(c *gin.Context) {
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update retention policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update retention policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update retention policy", err))
 		return
 	}
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Retention policy not found"})
+		respondError(c, nil, apperrors.NotFound("Retention policy"))
 		return
 	}
 
@@ -908,12 +893,11 @@ func (s *Service) handleDeletePrivacyRetention(c *gin.Context) {
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`DELETE FROM privacy_retention_policies WHERE id = $1`, id)
 	if err != nil {
-		s.logger.Error("Failed to delete retention policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete retention policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete retention policy", err))
 		return
 	}
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Retention policy not found"})
+		respondError(c, nil, apperrors.NotFound("Retention policy"))
 		return
 	}
 
@@ -964,8 +948,7 @@ func (s *Service) handleListPrivacyAssessments(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, baseQuery+whereClause+" ORDER BY created_at DESC", args...)
 	if err != nil {
-		s.logger.Error("Failed to list privacy assessments", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list privacy assessments"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list privacy assessments", err))
 		return
 	}
 	defer rows.Close()
@@ -1003,18 +986,18 @@ func (s *Service) handleCreatePrivacyAssessment(c *gin.Context) {
 		Mitigations        json.RawMessage `json:"mitigations"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if req.Title == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+		respondError(c, nil, apperrors.BadRequest("title is required"))
 		return
 	}
 
 	validRisk := map[string]bool{"low": true, "medium": true, "high": true, "critical": true}
 	if req.RiskLevel != "" && !validRisk[req.RiskLevel] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "risk_level must be low, medium, high, or critical"})
+		respondError(c, nil, apperrors.BadRequest("risk_level must be low, medium, high, or critical"))
 		return
 	}
 	if req.RiskLevel == "" {
@@ -1050,8 +1033,7 @@ func (s *Service) handleCreatePrivacyAssessment(c *gin.Context) {
 		req.RiskLevel, findings, mitigations, nilIfEmpty(userIDStr),
 	).Scan(&id)
 	if err != nil {
-		s.logger.Error("Failed to create privacy assessment", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create privacy assessment"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create privacy assessment", err))
 		return
 	}
 
@@ -1076,7 +1058,7 @@ func (s *Service) handleGetPrivacyAssessment(c *gin.Context) {
 		&a.RiskLevel, &a.Status, &a.Findings, &a.Mitigations, &a.AssessorID, &a.ReviewerID,
 		&a.ReviewNotes, &a.ApprovedAt, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Privacy assessment not found"})
+		respondError(c, nil, apperrors.NotFound("Privacy assessment"))
 		return
 	}
 
@@ -1104,7 +1086,7 @@ func (s *Service) handleUpdatePrivacyAssessment(c *gin.Context) {
 		ReviewNotes        *string          `json:"review_notes"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -1170,7 +1152,7 @@ func (s *Service) handleUpdatePrivacyAssessment(c *gin.Context) {
 	}
 
 	if len(sets) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		respondError(c, nil, apperrors.BadRequest("No fields to update"))
 		return
 	}
 
@@ -1180,12 +1162,11 @@ func (s *Service) handleUpdatePrivacyAssessment(c *gin.Context) {
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update privacy assessment", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update privacy assessment"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update privacy assessment", err))
 		return
 	}
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Privacy assessment not found"})
+		respondError(c, nil, apperrors.NotFound("Privacy assessment"))
 		return
 	}
 
@@ -1203,12 +1184,11 @@ func (s *Service) handleDeletePrivacyAssessment(c *gin.Context) {
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`DELETE FROM privacy_assessments WHERE id = $1`, id)
 	if err != nil {
-		s.logger.Error("Failed to delete privacy assessment", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete privacy assessment"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete privacy assessment", err))
 		return
 	}
 	if result.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Privacy assessment not found"})
+		respondError(c, nil, apperrors.NotFound("Privacy assessment"))
 		return
 	}
 

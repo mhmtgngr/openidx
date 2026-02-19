@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // TenantBranding represents organization-level tenant branding configuration
@@ -119,7 +120,7 @@ func (s *Service) handleUpdateTenantBranding(c *gin.Context) {
 		Metadata           json.RawMessage `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -140,8 +141,7 @@ func (s *Service) handleUpdateTenantBranding(c *gin.Context) {
 		req.BackgroundColor, req.BackgroundImageURL, req.LoginPageTitle, req.LoginPageMessage,
 		req.PortalTitle, req.CustomCSS, req.CustomFooter, req.PoweredByVisible, req.Metadata)
 	if err != nil {
-		s.logger.Error("Failed to update tenant branding", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update branding"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update branding", err))
 		return
 	}
 
@@ -164,7 +164,7 @@ func (s *Service) handleGetTenantSettings(c *gin.Context) {
 			 FROM tenant_settings WHERE org_id = $1 AND category = $2`, orgID, category,
 		).Scan(&ts.ID, &ts.OrgID, &ts.Category, &ts.Settings, &ts.UpdatedBy, &ts.CreatedAt, &ts.UpdatedAt)
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Settings not found for category"})
+			respondError(c, nil, apperrors.NotFound("Settings"))
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"data": []TenantSetting{ts}})
@@ -175,8 +175,7 @@ func (s *Service) handleGetTenantSettings(c *gin.Context) {
 		`SELECT id, org_id, category, settings, updated_by, created_at, updated_at
 		 FROM tenant_settings WHERE org_id = $1 ORDER BY category`, orgID)
 	if err != nil {
-		s.logger.Error("Failed to list tenant settings", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list settings"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list settings", err))
 		return
 	}
 	defer rows.Close()
@@ -208,7 +207,7 @@ func (s *Service) handleUpdateTenantSettings(c *gin.Context) {
 		Settings json.RawMessage `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -227,8 +226,7 @@ func (s *Service) handleUpdateTenantSettings(c *gin.Context) {
 		    settings = EXCLUDED.settings, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
 		orgID, req.Category, req.Settings, updatedBy)
 	if err != nil {
-		s.logger.Error("Failed to update tenant settings", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update settings", err))
 		return
 	}
 
@@ -248,8 +246,7 @@ func (s *Service) handleListTenantDomains(c *gin.Context) {
 		        ssl_enabled, primary_domain, created_at, updated_at
 		 FROM tenant_domains WHERE org_id = $1 ORDER BY primary_domain DESC, created_at`, orgID)
 	if err != nil {
-		s.logger.Error("Failed to list tenant domains", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list domains"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list domains", err))
 		return
 	}
 	defer rows.Close()
@@ -283,15 +280,14 @@ func (s *Service) handleCreateTenantDomain(c *gin.Context) {
 		DomainType string `json:"domain_type"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	// Generate a verification token (16 random bytes, hex-encoded)
 	tokenBytes := make([]byte, 16)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		s.logger.Error("Failed to generate verification token", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate verification token"})
+		respondError(c, s.logger, apperrors.Internal("Failed to generate verification token", err))
 		return
 	}
 	verificationToken := hex.EncodeToString(tokenBytes)
@@ -307,8 +303,7 @@ func (s *Service) handleCreateTenantDomain(c *gin.Context) {
 		&d.VerificationToken, &d.VerifiedAt, &d.SSLEnabled, &d.PrimaryDomain,
 		&d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
-		s.logger.Error("Failed to create tenant domain", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create domain"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create domain", err))
 		return
 	}
 
@@ -327,12 +322,11 @@ func (s *Service) handleDeleteTenantDomain(c *gin.Context) {
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		`DELETE FROM tenant_domains WHERE id = $1 AND org_id = $2`, domainID, orgID)
 	if err != nil {
-		s.logger.Error("Failed to delete tenant domain", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete domain"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete domain", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		respondError(c, nil, apperrors.NotFound("Domain"))
 		return
 	}
 
@@ -352,7 +346,7 @@ func (s *Service) handleVerifyTenantDomain(c *gin.Context) {
 		Token string `json:"token"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -362,12 +356,12 @@ func (s *Service) handleVerifyTenantDomain(c *gin.Context) {
 		domainID, orgID,
 	).Scan(&storedToken)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Domain not found"})
+		respondError(c, nil, apperrors.NotFound("Domain"))
 		return
 	}
 
 	if storedToken != req.Token {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Verification token does not match"})
+		respondError(c, nil, apperrors.BadRequest("Verification token does not match"))
 		return
 	}
 
@@ -375,8 +369,7 @@ func (s *Service) handleVerifyTenantDomain(c *gin.Context) {
 		`UPDATE tenant_domains SET verified = true, verified_at = NOW(), updated_at = NOW()
 		 WHERE id = $1 AND org_id = $2`, domainID, orgID)
 	if err != nil {
-		s.logger.Error("Failed to verify tenant domain", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify domain"})
+		respondError(c, s.logger, apperrors.Internal("Failed to verify domain", err))
 		return
 	}
 
@@ -393,7 +386,7 @@ func (s *Service) handleSwitchTenant(c *gin.Context) {
 		OrgID string `json:"org_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -409,7 +402,7 @@ func (s *Service) handleSwitchTenant(c *gin.Context) {
 		 FROM organizations WHERE id = $1`, req.OrgID,
 	).Scan(&org.ID, &org.Name, &org.DisplayName, &org.Domain, &org.Enabled)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Organization not found"})
+		respondError(c, nil, apperrors.NotFound("Organization"))
 		return
 	}
 
@@ -429,7 +422,7 @@ func (s *Service) handleGetCurrentTenant(c *gin.Context) {
 	userIDStr, _ := userID.(string)
 
 	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
+		respondError(c, nil, apperrors.BadRequest("User ID not found in context"))
 		return
 	}
 
@@ -448,8 +441,7 @@ func (s *Service) handleGetCurrentTenant(c *gin.Context) {
 		 LIMIT 1`, userIDStr,
 	).Scan(&org.ID, &org.Name, &org.DisplayName, &org.Domain, &org.Enabled)
 	if err != nil {
-		s.logger.Error("Failed to get current tenant", zap.Error(err), zap.String("user_id", userIDStr))
-		c.JSON(http.StatusNotFound, gin.H{"error": "No organization found for user"})
+		respondError(c, nil, apperrors.NotFound("Organization"))
 		return
 	}
 

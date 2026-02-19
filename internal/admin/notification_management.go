@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // NotificationRoutingRule represents a rule for routing notifications to channels
@@ -71,8 +72,7 @@ func (s *Service) handleListRoutingRules(c *gin.Context) {
 		`SELECT id, name, event_type, conditions, channels, template_overrides, priority, enabled, created_by, created_at, updated_at
 		 FROM notification_routing_rules ORDER BY priority, event_type`)
 	if err != nil {
-		s.logger.Error("Failed to list routing rules", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list routing rules"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list routing rules", err))
 		return
 	}
 	defer rows.Close()
@@ -105,12 +105,12 @@ func (s *Service) handleCreateRoutingRule(c *gin.Context) {
 		Priority   int             `json:"priority"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if req.Name == "" || req.EventType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and event_type are required"})
+		respondError(c, nil, apperrors.BadRequest("name and event_type are required"))
 		return
 	}
 
@@ -135,8 +135,7 @@ func (s *Service) handleCreateRoutingRule(c *gin.Context) {
 	).Scan(&rule.ID, &rule.Name, &rule.EventType, &rule.Conditions, &rule.Channels,
 		&rule.TemplateOverrides, &rule.Priority, &rule.Enabled, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
-		s.logger.Error("Failed to create routing rule", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create routing rule"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create routing rule", err))
 		return
 	}
 
@@ -156,7 +155,7 @@ func (s *Service) handleGetRoutingRule(c *gin.Context) {
 	).Scan(&r.ID, &r.Name, &r.EventType, &r.Conditions, &r.Channels,
 		&r.TemplateOverrides, &r.Priority, &r.Enabled, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Routing rule not found"})
+		respondError(c, nil, apperrors.NotFound("Routing rule"))
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -178,7 +177,7 @@ func (s *Service) handleUpdateRoutingRule(c *gin.Context) {
 		Enabled           *bool            `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -228,12 +227,11 @@ func (s *Service) handleUpdateRoutingRule(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update routing rule", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update routing rule"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update routing rule", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Routing rule not found"})
+		respondError(c, nil, apperrors.NotFound("Routing rule"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Routing rule updated"})
@@ -248,12 +246,11 @@ func (s *Service) handleDeleteRoutingRule(c *gin.Context) {
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM notification_routing_rules WHERE id = $1", id)
 	if err != nil {
-		s.logger.Error("Failed to delete routing rule", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete routing rule"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete routing rule", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Routing rule not found"})
+		respondError(c, nil, apperrors.NotFound("Routing rule"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Routing rule deleted"})
@@ -285,8 +282,7 @@ func (s *Service) handleListBroadcasts(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
-		s.logger.Error("Failed to list broadcasts", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list broadcasts"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list broadcasts", err))
 		return
 	}
 	defer rows.Close()
@@ -328,12 +324,12 @@ func (s *Service) handleCreateBroadcast(c *gin.Context) {
 		ScheduledAt *time.Time      `json:"scheduled_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if req.Title == "" || req.Body == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "title and body are required"})
+		respondError(c, nil, apperrors.BadRequest("title and body are required"))
 		return
 	}
 
@@ -365,8 +361,7 @@ func (s *Service) handleCreateBroadcast(c *gin.Context) {
 		&b.ScheduledAt, &b.SentAt, &b.Status, &b.TotalRecipients, &b.DeliveredCount, &b.ReadCount,
 		&b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
-		s.logger.Error("Failed to create broadcast", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create broadcast"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create broadcast", err))
 		return
 	}
 
@@ -388,7 +383,7 @@ func (s *Service) handleGetBroadcast(c *gin.Context) {
 		&b.ScheduledAt, &b.SentAt, &b.Status, &b.TotalRecipients, &b.DeliveredCount, &b.ReadCount,
 		&b.CreatedBy, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Broadcast not found"})
+		respondError(c, nil, apperrors.NotFound("Broadcast"))
 		return
 	}
 	c.JSON(http.StatusOK, b)
@@ -409,16 +404,16 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 		 FROM broadcast_messages WHERE id = $1`, id,
 	).Scan(&b.ID, &b.Title, &b.Body, &b.Channel, &b.TargetType, &b.TargetIDs, &b.Priority, &b.Status)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Broadcast not found"})
+		respondError(c, nil, apperrors.NotFound("Broadcast"))
 		return
 	}
 
 	if b.Status == "sent" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Broadcast has already been sent"})
+		respondError(c, nil, apperrors.BadRequest("Broadcast has already been sent"))
 		return
 	}
 	if b.Status == "cancelled" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Broadcast has been cancelled"})
+		respondError(c, nil, apperrors.BadRequest("Broadcast has been cancelled"))
 		return
 	}
 
@@ -430,11 +425,11 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 	case "role":
 		var roleIDs []string
 		if err := json.Unmarshal(b.TargetIDs, &roleIDs); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid target_ids for role target type"})
+			respondError(c, nil, apperrors.BadRequest("Invalid target_ids for role target type"))
 			return
 		}
 		if len(roleIDs) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "target_ids must not be empty for role target type"})
+			respondError(c, nil, apperrors.BadRequest("target_ids must not be empty for role target type"))
 			return
 		}
 		err = s.db.Pool.QueryRow(ctx,
@@ -443,23 +438,22 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 	case "group":
 		var groupIDs []string
 		if err := json.Unmarshal(b.TargetIDs, &groupIDs); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid target_ids for group target type"})
+			respondError(c, nil, apperrors.BadRequest("Invalid target_ids for group target type"))
 			return
 		}
 		if len(groupIDs) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "target_ids must not be empty for group target type"})
+			respondError(c, nil, apperrors.BadRequest("target_ids must not be empty for group target type"))
 			return
 		}
 		err = s.db.Pool.QueryRow(ctx,
 			`SELECT COUNT(DISTINCT user_id) FROM group_memberships WHERE group_id = ANY($1::uuid[])`, groupIDs,
 		).Scan(&recipientCount)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid target_type"})
+		respondError(c, nil, apperrors.BadRequest("Invalid target_type"))
 		return
 	}
 	if err != nil {
-		s.logger.Error("Failed to count target recipients", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count target recipients"})
+		respondError(c, s.logger, apperrors.Internal("Failed to count target recipients", err))
 		return
 	}
 
@@ -491,8 +485,7 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 
 	_, err = s.db.Pool.Exec(ctx, insertQuery, insertArgs...)
 	if err != nil {
-		s.logger.Error("Failed to insert broadcast notifications", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send broadcast notifications"})
+		respondError(c, s.logger, apperrors.Internal("Failed to send broadcast notifications", err))
 		return
 	}
 
@@ -503,8 +496,7 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 		 WHERE id = $2`,
 		recipientCount, id)
 	if err != nil {
-		s.logger.Error("Failed to update broadcast status", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update broadcast status"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update broadcast status", err))
 		return
 	}
 
@@ -527,23 +519,22 @@ func (s *Service) handleDeleteBroadcast(c *gin.Context) {
 	err := s.db.Pool.QueryRow(ctx,
 		"SELECT status FROM broadcast_messages WHERE id = $1", id).Scan(&status)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Broadcast not found"})
+		respondError(c, nil, apperrors.NotFound("Broadcast"))
 		return
 	}
 	if status != "draft" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Only draft broadcasts can be deleted"})
+		respondError(c, nil, apperrors.BadRequest("Only draft broadcasts can be deleted"))
 		return
 	}
 
 	tag, err := s.db.Pool.Exec(ctx,
 		"DELETE FROM broadcast_messages WHERE id = $1 AND status = 'draft'", id)
 	if err != nil {
-		s.logger.Error("Failed to delete broadcast", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete broadcast"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete broadcast", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Broadcast not found or not in draft status"})
+		respondError(c, nil, apperrors.NotFound("Broadcast"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Broadcast deleted"})
@@ -562,20 +553,17 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 	var totalSent, totalRead, totalUnread int
 	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications").Scan(&totalSent)
 	if err != nil {
-		s.logger.Error("Failed to count notifications", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = true").Scan(&totalRead)
 	if err != nil {
-		s.logger.Error("Failed to count read notifications", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = false").Scan(&totalUnread)
 	if err != nil {
-		s.logger.Error("Failed to count unread notifications", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 
@@ -583,8 +571,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 	channelRows, err := s.db.Pool.Query(ctx,
 		"SELECT channel, COUNT(*) FROM notifications GROUP BY channel")
 	if err != nil {
-		s.logger.Error("Failed to get channel breakdown", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 	defer channelRows.Close()
@@ -605,8 +592,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 		        total_recipients, delivered_count, read_count, created_by, created_at, updated_at
 		 FROM broadcast_messages ORDER BY created_at DESC LIMIT 5`)
 	if err != nil {
-		s.logger.Error("Failed to get recent broadcasts", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 	defer broadcastRows.Close()
@@ -630,8 +616,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 	err = s.db.Pool.QueryRow(ctx,
 		"SELECT COUNT(*) FROM notification_routing_rules WHERE enabled = true").Scan(&routingRulesCount)
 	if err != nil {
-		s.logger.Error("Failed to count routing rules", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get notification stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
 

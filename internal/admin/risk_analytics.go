@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // LoginAnomaly represents a high-risk or anomalous login event
@@ -99,8 +101,7 @@ func (s *Service) handleLoginAnomalies(c *gin.Context) {
 		LIMIT $3 OFFSET $4
 	`, minScore, days, limit, offset)
 	if err != nil {
-		s.logger.Error("Failed to query login anomalies", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query login anomalies"})
+		respondError(c, s.logger, apperrors.Internal("Failed to query login anomalies", err))
 		return
 	}
 	defer rows.Close()
@@ -226,8 +227,7 @@ func (s *Service) handleRiskOverview(c *gin.Context) {
 		&overview.UniqueUsers,
 	)
 	if err != nil {
-		s.logger.Error("Failed to query risk overview", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query risk overview"})
+		respondError(c, s.logger, apperrors.Internal("Failed to query risk overview", err))
 		return
 	}
 

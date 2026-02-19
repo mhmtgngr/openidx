@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // SocialProvider represents a social/external identity provider configuration
@@ -95,8 +96,7 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		 LEFT JOIN identity_providers ip ON sp.provider_id = ip.id
 		 ORDER BY sp.sort_order`)
 	if err != nil {
-		s.logger.Error("Failed to list social providers", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list social providers"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list social providers", err))
 		return
 	}
 	defer rows.Close()
@@ -144,7 +144,7 @@ func (s *Service) handleCreateSocialProvider(c *gin.Context) {
 		SortOrder        int             `json:"sort_order"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -160,8 +160,7 @@ func (s *Service) handleCreateSocialProvider(c *gin.Context) {
 		req.DefaultRole, req.AllowedDomains, req.AttributeMapping, req.Enabled, req.SortOrder,
 	).Scan(&id)
 	if err != nil {
-		s.logger.Error("Failed to create social provider", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create social provider"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create social provider", err))
 		return
 	}
 
@@ -186,7 +185,7 @@ func (s *Service) handleGetSocialProvider(c *gin.Context) {
 		&p.DefaultRole, &p.AllowedDomains, &p.AttributeMapping, &p.Enabled,
 		&p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Social provider not found"})
+		respondError(c, nil, apperrors.NotFound("Social provider"))
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -213,7 +212,7 @@ func (s *Service) handleUpdateSocialProvider(c *gin.Context) {
 		SortOrder        *int             `json:"sort_order"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -289,12 +288,11 @@ func (s *Service) handleUpdateSocialProvider(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update social provider", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update social provider"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update social provider", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Social provider not found"})
+		respondError(c, nil, apperrors.NotFound("Social provider"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Social provider updated"})
@@ -309,12 +307,11 @@ func (s *Service) handleDeleteSocialProvider(c *gin.Context) {
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM social_providers WHERE id = $1", id)
 	if err != nil {
-		s.logger.Error("Failed to delete social provider", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete social provider"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete social provider", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Social provider not found"})
+		respondError(c, nil, apperrors.NotFound("Social provider"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Social provider deleted"})
@@ -336,8 +333,7 @@ func (s *Service) handleListFederationRules(c *gin.Context) {
 		 LEFT JOIN identity_providers ip ON fr.provider_id = ip.id
 		 ORDER BY fr.priority, fr.email_domain`)
 	if err != nil {
-		s.logger.Error("Failed to list federation rules", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list federation rules"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list federation rules", err))
 		return
 	}
 	defer rows.Close()
@@ -373,7 +369,7 @@ func (s *Service) handleCreateFederationRule(c *gin.Context) {
 		Metadata     json.RawMessage `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -385,8 +381,7 @@ func (s *Service) handleCreateFederationRule(c *gin.Context) {
 		req.Name, req.EmailDomain, req.ProviderID, req.Priority, req.AutoRedirect, req.Enabled, req.Metadata,
 	).Scan(&id)
 	if err != nil {
-		s.logger.Error("Failed to create federation rule", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create federation rule"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create federation rule", err))
 		return
 	}
 
@@ -409,7 +404,7 @@ func (s *Service) handleUpdateFederationRule(c *gin.Context) {
 		Metadata     *json.RawMessage `json:"metadata"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -460,12 +455,11 @@ func (s *Service) handleUpdateFederationRule(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update federation rule", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update federation rule"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update federation rule", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Federation rule not found"})
+		respondError(c, nil, apperrors.NotFound("Federation rule"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Federation rule updated"})
@@ -480,12 +474,11 @@ func (s *Service) handleDeleteFederationRule(c *gin.Context) {
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM federation_rules WHERE id = $1", id)
 	if err != nil {
-		s.logger.Error("Failed to delete federation rule", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete federation rule"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete federation rule", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Federation rule not found"})
+		respondError(c, nil, apperrors.NotFound("Federation rule"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Federation rule deleted"})
@@ -510,8 +503,7 @@ func (s *Service) handleListUserIdentityLinks(c *gin.Context) {
 		 WHERE uil.user_id = $1
 		 ORDER BY uil.linked_at`, userID)
 	if err != nil {
-		s.logger.Error("Failed to list user identity links", zap.Error(err), zap.String("user_id", userID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list identity links"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list identity links", err))
 		return
 	}
 	defer rows.Close()
@@ -553,12 +545,11 @@ func (s *Service) handleDeleteIdentityLink(c *gin.Context) {
 			"DELETE FROM user_identity_links WHERE id = $1", linkID)
 	}
 	if err != nil {
-		s.logger.Error("Failed to delete identity link", zap.Error(err), zap.String("link_id", linkID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete identity link"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete identity link", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Identity link not found"})
+		respondError(c, nil, apperrors.NotFound("Identity link"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Identity link deleted"})
@@ -579,8 +570,7 @@ func (s *Service) handleListCustomClaims(c *gin.Context) {
 		 FROM custom_claims_mappings WHERE application_id = $1
 		 ORDER BY claim_name`, appID)
 	if err != nil {
-		s.logger.Error("Failed to list custom claims", zap.Error(err), zap.String("application_id", appID))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list custom claims"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list custom claims", err))
 		return
 	}
 	defer rows.Close()
@@ -619,7 +609,7 @@ func (s *Service) handleCreateCustomClaim(c *gin.Context) {
 		Enabled              bool            `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -634,8 +624,7 @@ func (s *Service) handleCreateCustomClaim(c *gin.Context) {
 		req.IncludeInUserinfo, req.Condition, req.Enabled,
 	).Scan(&id)
 	if err != nil {
-		s.logger.Error("Failed to create custom claim", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create custom claim"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create custom claim", err))
 		return
 	}
 
@@ -660,7 +649,7 @@ func (s *Service) handleUpdateCustomClaim(c *gin.Context) {
 		Enabled              *bool            `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -721,12 +710,11 @@ func (s *Service) handleUpdateCustomClaim(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update custom claim", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update custom claim"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update custom claim", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Custom claim not found"})
+		respondError(c, nil, apperrors.NotFound("Custom claim"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Custom claim updated"})
@@ -741,12 +729,11 @@ func (s *Service) handleDeleteCustomClaim(c *gin.Context) {
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM custom_claims_mappings WHERE id = $1", claimID)
 	if err != nil {
-		s.logger.Error("Failed to delete custom claim", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete custom claim"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete custom claim", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Custom claim not found"})
+		respondError(c, nil, apperrors.NotFound("Custom claim"))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Custom claim deleted"})

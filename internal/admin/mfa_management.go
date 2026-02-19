@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // MFAPolicy represents an MFA enforcement policy
@@ -70,8 +71,7 @@ func (s *Service) handleMFAEnrollmentStats(c *gin.Context) {
 	).Scan(&stats.TotalUsers, &stats.AnyMFA, &stats.TOTPCount, &stats.SMSCount,
 		&stats.EmailOTPCount, &stats.PushCount, &stats.WebAuthnCount)
 	if err != nil {
-		s.logger.Error("Failed to get MFA enrollment stats", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get MFA enrollment stats"})
+		respondError(c, s.logger, apperrors.Internal("Failed to get MFA enrollment stats", err))
 		return
 	}
 
@@ -89,8 +89,7 @@ func (s *Service) handleListMFAPolicies(c *gin.Context) {
 		`SELECT id, name, description, enabled, priority, conditions, required_methods, grace_period_hours, created_at, updated_at
 		 FROM mfa_policies ORDER BY priority, name`)
 	if err != nil {
-		s.logger.Error("Failed to list MFA policies", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list MFA policies"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list MFA policies", err))
 		return
 	}
 	defer rows.Close()
@@ -125,12 +124,12 @@ func (s *Service) handleCreateMFAPolicy(c *gin.Context) {
 		GracePeriodHours int             `json:"grace_period_hours"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
 	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		respondError(c, nil, apperrors.BadRequest("name is required"))
 		return
 	}
 
@@ -152,8 +151,7 @@ func (s *Service) handleCreateMFAPolicy(c *gin.Context) {
 	).Scan(&policy.ID, &policy.Name, &policy.Description, &policy.Enabled, &policy.Priority,
 		&policy.Conditions, &policy.RequiredMethods, &policy.GracePeriodHours, &policy.CreatedAt, &policy.UpdatedAt)
 	if err != nil {
-		s.logger.Error("Failed to create MFA policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create MFA policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to create MFA policy", err))
 		return
 	}
 
@@ -173,7 +171,7 @@ func (s *Service) handleGetMFAPolicy(c *gin.Context) {
 	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &p.Priority,
 		&p.Conditions, &p.RequiredMethods, &p.GracePeriodHours, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "MFA policy not found"})
+		respondError(c, nil, apperrors.NotFound("MFA policy"))
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -195,7 +193,7 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 		GracePeriodHours *int             `json:"grace_period_hours"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, nil, apperrors.BadRequest("Invalid request body"))
 		return
 	}
 
@@ -245,12 +243,11 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
-		s.logger.Error("Failed to update MFA policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update MFA policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to update MFA policy", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "MFA policy not found"})
+		respondError(c, nil, apperrors.NotFound("MFA policy"))
 		return
 	}
 
@@ -262,8 +259,7 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &p.Priority,
 		&p.Conditions, &p.RequiredMethods, &p.GracePeriodHours, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
-		s.logger.Error("Failed to fetch updated MFA policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch updated MFA policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to fetch updated MFA policy", err))
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -278,12 +274,11 @@ func (s *Service) handleDeleteMFAPolicy(c *gin.Context) {
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
 		"DELETE FROM mfa_policies WHERE id = $1", id)
 	if err != nil {
-		s.logger.Error("Failed to delete MFA policy", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete MFA policy"})
+		respondError(c, s.logger, apperrors.Internal("Failed to delete MFA policy", err))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "MFA policy not found"})
+		respondError(c, nil, apperrors.NotFound("MFA policy"))
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -314,8 +309,7 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 	var total int
 	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_mfa_methods").Scan(&total)
 	if err != nil {
-		s.logger.Error("Failed to count user MFA records", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count user MFA records"})
+		respondError(c, s.logger, apperrors.Internal("Failed to count user MFA records", err))
 		return
 	}
 
@@ -328,8 +322,7 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 		 ORDER BY m.username
 		 LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
-		s.logger.Error("Failed to list user MFA status", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list user MFA status"})
+		respondError(c, s.logger, apperrors.Internal("Failed to list user MFA status", err))
 		return
 	}
 	defer rows.Close()
@@ -368,7 +361,7 @@ func (s *Service) handleGetUserMFAStatus(c *gin.Context) {
 		&u.TOTPEnabled, &u.SMSEnabled, &u.EmailOTPEnabled,
 		&u.PushEnabled, &u.WebAuthnEnabled, &u.BackupCodesRemaining)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User MFA status not found"})
+		respondError(c, nil, apperrors.NotFound("user MFA status"))
 		return
 	}
 	c.JSON(http.StatusOK, u)
