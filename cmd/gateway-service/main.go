@@ -52,6 +52,8 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	cfg.LogSecurityWarnings(log)
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("gateway-service", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)

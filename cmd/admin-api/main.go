@@ -72,6 +72,8 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	cfg.LogSecurityWarnings(log)
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("admin-api", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
@@ -81,7 +83,12 @@ func main() {
 		defer shutdownTracer(context.Background())
 	}
 
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
+		SSLMode:     cfg.DatabaseSSLMode,
+		SSLRootCert: cfg.DatabaseSSLRootCert,
+		SSLCert:     cfg.DatabaseSSLCert,
+		SSLKey:      cfg.DatabaseSSLKey,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
@@ -94,6 +101,11 @@ func main() {
 		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
 		SentinelPassword:   cfg.RedisSentinelPassword,
 		Password:           cfg.GetRedisPassword(),
+		TLSEnabled:         cfg.RedisTLSEnabled,
+		TLSCACert:          cfg.RedisTLSCACert,
+		TLSCert:            cfg.RedisTLSCert,
+		TLSKey:             cfg.RedisTLSKey,
+		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))

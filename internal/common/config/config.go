@@ -111,6 +111,25 @@ type Config struct {
 
 	// TLS configuration for inter-service communication
 	TLS TLSConfig `mapstructure:"tls"`
+
+	// Database TLS configuration
+	DatabaseSSLMode     string `mapstructure:"database_ssl_mode"`      // disable, require, verify-ca, verify-full
+	DatabaseSSLRootCert string `mapstructure:"database_ssl_root_cert"` // Path to CA certificate
+	DatabaseSSLCert     string `mapstructure:"database_ssl_cert"`      // Path to client certificate (mTLS)
+	DatabaseSSLKey      string `mapstructure:"database_ssl_key"`       // Path to client private key (mTLS)
+
+	// Redis TLS configuration
+	RedisTLSEnabled    bool   `mapstructure:"redis_tls_enabled"`
+	RedisTLSCACert     string `mapstructure:"redis_tls_ca_cert"`      // CA cert path
+	RedisTLSCert       string `mapstructure:"redis_tls_cert"`         // Client cert path (mTLS)
+	RedisTLSKey        string `mapstructure:"redis_tls_key"`          // Client key path (mTLS)
+	RedisTLSSkipVerify bool   `mapstructure:"redis_tls_skip_verify"`  // For dev only
+
+	// Elasticsearch auth and TLS
+	ElasticsearchUsername string `mapstructure:"elasticsearch_username"`
+	ElasticsearchPassword string `mapstructure:"elasticsearch_password"`
+	ElasticsearchTLS      bool   `mapstructure:"elasticsearch_tls"`
+	ElasticsearchCACert   string `mapstructure:"elasticsearch_ca_cert"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption
@@ -340,6 +359,25 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("redis_sentinel_addresses", "")
 	v.SetDefault("redis_sentinel_password", "")
 
+	// Database TLS defaults
+	v.SetDefault("database_ssl_mode", "disable")
+	v.SetDefault("database_ssl_root_cert", "")
+	v.SetDefault("database_ssl_cert", "")
+	v.SetDefault("database_ssl_key", "")
+
+	// Redis TLS defaults
+	v.SetDefault("redis_tls_enabled", false)
+	v.SetDefault("redis_tls_ca_cert", "")
+	v.SetDefault("redis_tls_cert", "")
+	v.SetDefault("redis_tls_key", "")
+	v.SetDefault("redis_tls_skip_verify", false)
+
+	// Elasticsearch auth/TLS defaults
+	v.SetDefault("elasticsearch_username", "")
+	v.SetDefault("elasticsearch_password", "")
+	v.SetDefault("elasticsearch_tls", false)
+	v.SetDefault("elasticsearch_ca_cert", "")
+
 	// CSRF defaults (disabled by default, auto-enabled in production via warning)
 	v.SetDefault("csrf_enabled", false)
 	v.SetDefault("csrf_trusted_domain", "")
@@ -438,6 +476,19 @@ func bindEnvVars(v *viper.Viper) {
 		"sms.mutlucell_password":   "MUTLUCELL_PASSWORD",
 		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
 		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
+		"database_ssl_mode":         "DATABASE_SSL_MODE",
+		"database_ssl_root_cert":    "DATABASE_SSL_ROOT_CERT",
+		"database_ssl_cert":         "DATABASE_SSL_CERT",
+		"database_ssl_key":          "DATABASE_SSL_KEY",
+		"redis_tls_enabled":         "REDIS_TLS_ENABLED",
+		"redis_tls_ca_cert":         "REDIS_TLS_CA_CERT",
+		"redis_tls_cert":            "REDIS_TLS_CERT",
+		"redis_tls_key":             "REDIS_TLS_KEY",
+		"redis_tls_skip_verify":     "REDIS_TLS_SKIP_VERIFY",
+		"elasticsearch_username":    "ELASTICSEARCH_USERNAME",
+		"elasticsearch_password":    "ELASTICSEARCH_PASSWORD",
+		"elasticsearch_tls":         "ELASTICSEARCH_TLS",
+		"elasticsearch_ca_cert":     "ELASTICSEARCH_CA_CERT",
 		"redis_sentinel_enabled":     "REDIS_SENTINEL_ENABLED",
 		"redis_sentinel_master_name": "REDIS_SENTINEL_MASTER_NAME",
 		"redis_sentinel_addresses":   "REDIS_SENTINEL_ADDRESSES",
@@ -543,6 +594,15 @@ func (c *Config) ProductionWarnings() []string {
 	}
 	if !c.CSRFEnabled {
 		warnings = append(warnings, "csrf_enabled is false; enable CSRF protection for production deployments")
+	}
+	if c.DatabaseSSLMode == "" || c.DatabaseSSLMode == "disable" {
+		warnings = append(warnings, "database_ssl_mode is 'disable'; use 'verify-full' for production")
+	}
+	if !c.RedisTLSEnabled {
+		warnings = append(warnings, "redis_tls_enabled is false; enable TLS for Redis in production")
+	}
+	if !c.TLS.Enabled {
+		warnings = append(warnings, "tls.enabled is false; enable inter-service TLS for production")
 	}
 	return warnings
 }

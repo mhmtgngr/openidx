@@ -46,6 +46,8 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	cfg.LogSecurityWarnings(log)
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("audit-service", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
@@ -55,7 +57,12 @@ func main() {
 		defer shutdownTracer(context.Background())
 	}
 
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
+		SSLMode:     cfg.DatabaseSSLMode,
+		SSLRootCert: cfg.DatabaseSSLRootCert,
+		SSLCert:     cfg.DatabaseSSLCert,
+		SSLKey:      cfg.DatabaseSSLKey,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
@@ -69,6 +76,11 @@ func main() {
 		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
 		SentinelPassword:   cfg.RedisSentinelPassword,
 		Password:           cfg.GetRedisPassword(),
+		TLSEnabled:         cfg.RedisTLSEnabled,
+		TLSCACert:          cfg.RedisTLSCACert,
+		TLSCert:            cfg.RedisTLSCert,
+		TLSKey:             cfg.RedisTLSKey,
+		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
 	})
 	if err != nil {
 		log.Warn("Failed to connect to Redis, rate limiting will fail open", zap.Error(err))
@@ -79,7 +91,13 @@ func main() {
 	// Initialize Elasticsearch client (best-effort — audit works without ES)
 	var es *database.ElasticsearchClient
 	if cfg.ElasticsearchURL != "" {
-		es, err = database.NewElasticsearch(cfg.ElasticsearchURL)
+		es, err = database.NewElasticsearchFromConfig(database.ElasticsearchConfig{
+			URL:      cfg.ElasticsearchURL,
+			Username: cfg.ElasticsearchUsername,
+			Password: cfg.ElasticsearchPassword,
+			TLS:      cfg.ElasticsearchTLS,
+			CACert:   cfg.ElasticsearchCACert,
+		})
 		if err != nil {
 			log.Warn("Elasticsearch unavailable, full-text search disabled", zap.Error(err))
 		}

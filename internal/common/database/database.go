@@ -4,9 +4,14 @@ package database
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -20,8 +25,22 @@ type PostgresDB struct {
 	Pool *pgxpool.Pool
 }
 
-// NewPostgres creates a new PostgreSQL connection pool
-func NewPostgres(connString string) (*PostgresDB, error) {
+// PostgresTLSConfig holds TLS configuration for PostgreSQL connections
+type PostgresTLSConfig struct {
+	SSLMode     string // disable, require, verify-ca, verify-full
+	SSLRootCert string // Path to CA certificate
+	SSLCert     string // Path to client certificate (mTLS)
+	SSLKey      string // Path to client private key (mTLS)
+}
+
+// NewPostgres creates a new PostgreSQL connection pool.
+// An optional PostgresTLSConfig can be provided to configure SSL parameters.
+func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, error) {
+	// Apply TLS config to connection string if provided
+	if len(tlsCfg) > 0 {
+		connString = applyPostgresTLS(connString, tlsCfg[0])
+	}
+
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
@@ -51,6 +70,33 @@ func NewPostgres(connString string) (*PostgresDB, error) {
 	return &PostgresDB{Pool: pool}, nil
 }
 
+// applyPostgresTLS modifies the connection string to include SSL parameters
+func applyPostgresTLS(connString string, cfg PostgresTLSConfig) string {
+	if cfg.SSLMode == "" || cfg.SSLMode == "disable" {
+		return connString
+	}
+
+	u, err := url.Parse(connString)
+	if err != nil {
+		return connString
+	}
+
+	q := u.Query()
+	q.Set("sslmode", cfg.SSLMode)
+	if cfg.SSLRootCert != "" {
+		q.Set("sslrootcert", cfg.SSLRootCert)
+	}
+	if cfg.SSLCert != "" {
+		q.Set("sslcert", cfg.SSLCert)
+	}
+	if cfg.SSLKey != "" {
+		q.Set("sslkey", cfg.SSLKey)
+	}
+	u.RawQuery = q.Encode()
+
+	return u.String()
+}
+
 // Close closes the connection pool
 func (db *PostgresDB) Close() {
 	db.Pool.Close()
@@ -69,7 +115,7 @@ type RedisClient struct {
 }
 
 // RedisConfig holds configuration for creating a Redis client with optional
-// Sentinel failover support.
+// Sentinel failover support and TLS.
 type RedisConfig struct {
 	// URL is the standard Redis connection string (used when Sentinel is disabled)
 	URL string
@@ -82,12 +128,61 @@ type RedisConfig struct {
 
 	// Password for the Redis master (extracted from URL when using Sentinel)
 	Password string
+
+	// TLS configuration
+	TLSEnabled    bool
+	TLSCACert     string // CA cert path
+	TLSCert       string // Client cert path (mTLS)
+	TLSKey        string // Client key path (mTLS)
+	TLSSkipVerify bool   // Skip TLS verification (dev only)
+}
+
+// buildRedisTLSConfig constructs a *tls.Config from the RedisConfig TLS fields
+func buildRedisTLSConfig(cfg RedisConfig) (*tls.Config, error) {
+	if !cfg.TLSEnabled {
+		return nil, nil
+	}
+
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if cfg.TLSCACert != "" {
+		caCert, err := os.ReadFile(cfg.TLSCACert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read Redis CA cert %s: %w", cfg.TLSCACert, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse Redis CA certificate from %s", cfg.TLSCACert)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load Redis client certificate: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+
+	if cfg.TLSSkipVerify {
+		tlsCfg.InsecureSkipVerify = true
+	}
+
+	return tlsCfg, nil
 }
 
 // NewRedisFromConfig creates a Redis client from a RedisConfig.
 // When SentinelEnabled is true, it uses redis.NewFailoverClient with Sentinel
 // addresses for automatic master failover.
 func NewRedisFromConfig(cfg RedisConfig) (*RedisClient, error) {
+	tlsCfg, err := buildRedisTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	if cfg.SentinelEnabled {
 		if len(cfg.SentinelAddresses) == 0 {
 			return nil, fmt.Errorf("redis sentinel enabled but no sentinel addresses configured")
@@ -103,6 +198,7 @@ func NewRedisFromConfig(cfg RedisConfig) (*RedisClient, error) {
 			DialTimeout:      5 * time.Second,
 			ReadTimeout:      3 * time.Second,
 			WriteTimeout:     3 * time.Second,
+			TLSConfig:        tlsCfg,
 		}
 		client := redis.NewFailoverClient(opt)
 
@@ -115,12 +211,17 @@ func NewRedisFromConfig(cfg RedisConfig) (*RedisClient, error) {
 		return &RedisClient{Client: client}, nil
 	}
 
-	// Non-sentinel: delegate to existing NewRedis
-	return NewRedis(cfg.URL)
+	// Non-sentinel: parse URL and apply TLS
+	return newRedisWithTLS(cfg.URL, tlsCfg)
 }
 
-// NewRedis creates a new Redis client
+// NewRedis creates a new Redis client (backward-compatible, no TLS)
 func NewRedis(connString string) (*RedisClient, error) {
+	return newRedisWithTLS(connString, nil)
+}
+
+// newRedisWithTLS creates a Redis client with optional TLS configuration
+func newRedisWithTLS(connString string, tlsCfg *tls.Config) (*RedisClient, error) {
 	opt, err := redis.ParseURL(connString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Redis URL: %w", err)
@@ -133,6 +234,10 @@ func NewRedis(connString string) (*RedisClient, error) {
 	opt.DialTimeout = 5 * time.Second
 	opt.ReadTimeout = 3 * time.Second
 	opt.WriteTimeout = 3 * time.Second
+
+	if tlsCfg != nil {
+		opt.TLSConfig = tlsCfg
+	}
 
 	client := redis.NewClient(opt)
 
@@ -166,17 +271,52 @@ type ElasticsearchClient struct {
 	URL    string
 }
 
-// NewElasticsearch creates a new Elasticsearch client with connection validation
-func NewElasticsearch(url string) (*ElasticsearchClient, error) {
-	if url == "" {
+// ElasticsearchConfig holds configuration for creating an Elasticsearch client
+// with optional authentication and TLS.
+type ElasticsearchConfig struct {
+	URL      string
+	Username string
+	Password string
+	TLS      bool
+	CACert   string // CA cert path
+}
+
+// NewElasticsearchFromConfig creates an Elasticsearch client with auth and TLS support
+func NewElasticsearchFromConfig(cfg ElasticsearchConfig) (*ElasticsearchClient, error) {
+	if cfg.URL == "" {
 		return nil, fmt.Errorf("elasticsearch URL is required")
 	}
 
-	cfg := elasticsearch.Config{
-		Addresses: []string{url},
+	esCfg := elasticsearch.Config{
+		Addresses: []string{cfg.URL},
 	}
 
-	client, err := elasticsearch.NewClient(cfg)
+	if cfg.Username != "" {
+		esCfg.Username = cfg.Username
+		esCfg.Password = cfg.Password
+	}
+
+	if cfg.TLS {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+		if cfg.CACert != "" {
+			caCert, err := os.ReadFile(cfg.CACert)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read ES CA cert %s: %w", cfg.CACert, err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caCert) {
+				return nil, fmt.Errorf("failed to parse ES CA certificate from %s", cfg.CACert)
+			}
+			tlsCfg.RootCAs = pool
+		}
+
+		transport.TLSClientConfig = tlsCfg
+		esCfg.Transport = transport
+	}
+
+	client, err := elasticsearch.NewClient(esCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create elasticsearch client: %w", err)
 	}
@@ -188,7 +328,12 @@ func NewElasticsearch(url string) (*ElasticsearchClient, error) {
 	}
 	res.Body.Close()
 
-	return &ElasticsearchClient{Client: client, URL: url}, nil
+	return &ElasticsearchClient{Client: client, URL: cfg.URL}, nil
+}
+
+// NewElasticsearch creates a new Elasticsearch client with connection validation (backward-compatible)
+func NewElasticsearch(url string) (*ElasticsearchClient, error) {
+	return NewElasticsearchFromConfig(ElasticsearchConfig{URL: url})
 }
 
 // Ping verifies the Elasticsearch connection is alive
@@ -279,7 +424,7 @@ func (es *ElasticsearchClient) EnsureIndex(index, mapping string) error {
 	return nil
 }
 
-// esSearchResponse is the top-level Elasticsearch search response structure
+// EsSearchResponse is the top-level Elasticsearch search response structure
 type EsSearchResponse struct {
 	Hits struct {
 		Total struct {
