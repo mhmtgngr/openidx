@@ -472,6 +472,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				// not at startup (prevents crash when external hosts are unreachable).
 				b.WriteString(fmt.Sprintf("        set $%s %s;\n", varName, upstreamBase))
 				b.WriteString(fmt.Sprintf("        proxy_pass $%s;\n", varName))
+				// Rewrite Location headers so redirects stay on BrowZer domain
+				b.WriteString(fmt.Sprintf("        proxy_redirect https://%s/ /;\n", parsed.Host))
+				b.WriteString(fmt.Sprintf("        proxy_redirect http://%s/ /;\n", parsed.Host))
 				b.WriteString("        proxy_http_version 1.1;\n")
 				b.WriteString(fmt.Sprintf("        proxy_set_header Host %s;\n", parsed.Host))
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
@@ -479,6 +482,12 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
 				b.WriteString("        proxy_ssl_server_name on;\n")
 				b.WriteString("        proxy_ssl_verify off;\n")
+				// Rewrite HTML content that references the upstream domain
+				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
+				b.WriteString("        sub_filter_once off;\n")
+				b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
+				b.WriteString(fmt.Sprintf("        sub_filter 'https://%s' '';\n", parsed.Host))
+				b.WriteString(fmt.Sprintf("        sub_filter 'http://%s' '';\n", parsed.Host))
 			} else if parsed.Scheme == "https" {
 				// External HTTPS app: strip the prefix from ALL requests since the
 				// backend doesn't know about the BrowZer path prefix. Rewrite every
