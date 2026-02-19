@@ -187,9 +187,11 @@ type UserRoleAssignment struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 }
 
-// DirectoryAuthenticator is an interface for LDAP auth pass-through
+// DirectoryAuthenticator is an interface for LDAP/AD auth and password operations
 type DirectoryAuthenticator interface {
 	AuthenticateUser(ctx context.Context, directoryID, username, password string) error
+	ChangePassword(ctx context.Context, directoryID, username, oldPassword, newPassword string) error
+	ResetPassword(ctx context.Context, directoryID, username, newPassword string) error
 }
 
 
@@ -2672,6 +2674,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		// User Self-Service endpoints (require authentication)
 		identity.GET("/users/me", svc.handleGetCurrentUser)
 		identity.PUT("/users/me", svc.handleUpdateCurrentUser)
+		identity.GET("/users/me/password-info", svc.handleGetPasswordInfo)
 		identity.POST("/users/me/change-password", svc.handleChangePassword)
 		identity.POST("/users/me/mfa/setup", svc.handleSetupUserMFA)
 		identity.POST("/users/me/mfa/enable", svc.handleEnableUserMFA)
@@ -3844,32 +3847,84 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Get user's current password hash
+	ctx := c.Request.Context()
+
+	// Check if user is from an LDAP directory
+	var source *string
+	var directoryID *string
+	var username string
 	var passwordHash string
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
-		SELECT password_hash FROM users WHERE id = $1
-	`, userID).Scan(&passwordHash)
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT username, source, directory_id, password_hash FROM users WHERE id = $1
+	`, userID).Scan(&username, &source, &directoryID, &passwordHash)
 
 	if err != nil {
-		s.logger.Error("Failed to get user password hash", zap.String("user_id", userID), zap.Error(err))
+		s.logger.Error("Failed to get user info", zap.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "failed to verify password"})
 		return
 	}
 
-	// Verify current password using bcrypt directly
+	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
+		// LDAP user — change password via LDAP/AD
+		if err := s.directoryService.ChangePassword(ctx, *directoryID, username, req.CurrentPassword, req.NewPassword); err != nil {
+			s.logger.Warn("LDAP password change failed", zap.String("user_id", userID), zap.Error(err))
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		// Update password_changed_at in local DB (but NOT the hash — password stays in AD)
+		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1`, userID)
+		c.JSON(200, gin.H{"status": "password changed"})
+		return
+	}
+
+	// Local user — verify current password using bcrypt
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.CurrentPassword)); err != nil {
 		c.JSON(400, gin.H{"error": "current password is incorrect"})
 		return
 	}
 
 	// Set new password
-	if err := s.SetPassword(c.Request.Context(), userID, req.NewPassword); err != nil {
+	if err := s.SetPassword(ctx, userID, req.NewPassword); err != nil {
 		s.logger.Error("failed to set password", zap.String("user_id", userID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
 	}
 
 	c.JSON(200, gin.H{"status": "password changed"})
+}
+
+func (s *Service) handleGetPasswordInfo(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "unauthenticated"})
+		return
+	}
+
+	var source *string
+	var passwordChangedAt *time.Time
+	var passwordMustChange bool
+	err := s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT source, password_changed_at, password_must_change FROM users WHERE id = $1
+	`, userID).Scan(&source, &passwordChangedAt, &passwordMustChange)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	isLDAP := source != nil && *source == "ldap"
+	resp := gin.H{
+		"is_ldap":              isLDAP,
+		"password_must_change": passwordMustChange,
+	}
+	if source != nil {
+		resp["source"] = *source
+	} else {
+		resp["source"] = "local"
+	}
+	if passwordChangedAt != nil {
+		resp["password_changed_at"] = passwordChangedAt
+	}
+	c.JSON(200, resp)
 }
 
 func (s *Service) handleSetupUserMFA(c *gin.Context) {
@@ -4082,13 +4137,23 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL")
 
 	// Always return success to prevent email enumeration
-	// Look up user by email
+	// Look up user by email, including source
 	var userID string
+	var source *string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT id FROM users WHERE email = $1 AND enabled = true", req.Email).Scan(&userID)
+		"SELECT id, source FROM users WHERE email = $1 AND enabled = true", req.Email).Scan(&userID, &source)
 	if err != nil {
 		// User not found - still return success
 		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
+		return
+	}
+
+	// LDAP users cannot use email-based password reset — their password is managed by Active Directory
+	if source != nil && *source == "ldap" {
+		c.JSON(200, gin.H{
+			"message": "If an account with that email exists, a password reset link has been sent.",
+			"note":    "This account is managed by Active Directory. Please contact your administrator to reset your password.",
+		})
 		return
 	}
 
@@ -4182,26 +4247,69 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
 }
 
-// handleAdminResetPassword allows admins to trigger a password reset email for a user
+// handleAdminResetPassword allows admins to trigger a password reset email for a user.
+// For LDAP users, it resets the password directly in AD and flags password_must_change.
 func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	userID := c.Param("id")
+	ctx := c.Request.Context()
 
-	// Get user email
-	var email, firstName string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT email, first_name FROM users WHERE id = $1 AND enabled = true", userID).Scan(&email, &firstName)
+	// Get user info including source
+	var email, firstName, username string
+	var source *string
+	var directoryID *string
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT email, first_name, username, source, directory_id FROM users WHERE id = $1 AND enabled = true",
+		userID).Scan(&email, &firstName, &username, &source, &directoryID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
 
-	// Generate reset token
+	adminID, _ := c.Get("user_id")
+
+	// LDAP user — reset password in AD directly
+	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
+		var req struct {
+			NewPassword string `json:"newPassword"`
+		}
+		c.ShouldBindJSON(&req)
+
+		if req.NewPassword == "" {
+			// Generate a temporary password if not provided
+			tokenBytes := make([]byte, 16)
+			rand.Read(tokenBytes)
+			req.NewPassword = "Tmp!" + hex.EncodeToString(tokenBytes)[:12]
+		}
+
+		if err := s.directoryService.ResetPassword(ctx, *directoryID, username, req.NewPassword); err != nil {
+			s.logger.Error("Failed to reset AD password",
+				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+				zap.String("target_user_id", userID),
+				zap.Error(err))
+			c.JSON(500, gin.H{"error": "Failed to reset Active Directory password: " + err.Error()})
+			return
+		}
+
+		// Mark password_must_change so user is prompted at next login
+		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1`, userID)
+
+		s.logger.Info("Admin reset AD password",
+			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+			zap.String("target_user_id", userID))
+
+		c.JSON(200, gin.H{
+			"message": "Active Directory password has been reset. User must change password at next login.",
+			"source":  "ldap",
+		})
+		return
+	}
+
+	// Local user — existing email reset flow
 	tokenBytes := make([]byte, 32)
 	rand.Read(tokenBytes)
 	token := hex.EncodeToString(tokenBytes)
 
-	// Store token with 24 hour expiry (longer for admin-triggered resets)
-	_, err = s.db.Pool.Exec(c.Request.Context(), `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO password_reset_tokens (user_id, token, expires_at)
 		VALUES ($1, $2, $3)
 	`, userID, token, time.Now().Add(24*time.Hour))
@@ -4211,17 +4319,14 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Log the admin action
-	adminID, _ := c.Get("user_id")
 	s.logger.Info("Admin triggered password reset",
 		zap.String("admin_id", fmt.Sprintf("%v", adminID)),
 		zap.String("target_user_id", userID),
 		zap.String("target_email", email))
 
-	// Send password reset email
 	if s.emailService != nil {
 		baseURL := "http://localhost:3000"
-		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), email, firstName, token, baseURL); err != nil {
+		if err := s.emailService.SendPasswordResetEmail(ctx, email, firstName, token, baseURL); err != nil {
 			s.logger.Error("Failed to send password reset email", zap.Error(err))
 			c.JSON(500, gin.H{"error": "Failed to send reset email"})
 			return

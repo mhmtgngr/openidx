@@ -22,6 +22,7 @@ type LDAPConfig struct {
 	SyncInterval      int              `json:"sync_interval"` // minutes, 0=disabled
 	SyncEnabled       bool             `json:"sync_enabled"`
 	DeprovisionAction string           `json:"deprovision_action"` // "disable" or "delete"
+	DirectoryType     string           `json:"directory_type"`     // "active_directory" or "openldap"
 	AttributeMapping  AttributeMapping `json:"attribute_mapping"`
 }
 

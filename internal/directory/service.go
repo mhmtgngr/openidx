@@ -63,21 +63,49 @@ func (s *Service) TriggerSync(ctx context.Context, directoryID string, fullSync 
 
 // AuthenticateUser authenticates a user against their directory's LDAP
 func (s *Service) AuthenticateUser(ctx context.Context, directoryID, username, password string) error {
+	cfg, err := s.loadDirectoryConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+	connector := NewLDAPConnector(*cfg, s.logger)
+	return connector.AuthenticateUser(username, password)
+}
+
+// ChangePassword changes a user's password in their directory (user-initiated, requires old password)
+func (s *Service) ChangePassword(ctx context.Context, directoryID, username, oldPassword, newPassword string) error {
+	cfg, err := s.loadDirectoryConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+	connector := NewLDAPConnector(*cfg, s.logger)
+	return connector.ChangePassword(username, oldPassword, newPassword)
+}
+
+// ResetPassword resets a user's password in their directory (admin-initiated, no old password needed)
+func (s *Service) ResetPassword(ctx context.Context, directoryID, username, newPassword string) error {
+	cfg, err := s.loadDirectoryConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+	connector := NewLDAPConnector(*cfg, s.logger)
+	return connector.ResetPassword(username, newPassword)
+}
+
+// loadDirectoryConfig loads and parses the LDAP config for a directory integration
+func (s *Service) loadDirectoryConfig(ctx context.Context, directoryID string) (*LDAPConfig, error) {
 	var configBytes []byte
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT config FROM directory_integrations WHERE id = $1 AND enabled = true`,
 		directoryID).Scan(&configBytes)
 	if err != nil {
-		return fmt.Errorf("directory not found or disabled: %w", err)
+		return nil, fmt.Errorf("directory not found or disabled: %w", err)
 	}
 
 	var cfg LDAPConfig
 	if err := json.Unmarshal(configBytes, &cfg); err != nil {
-		return fmt.Errorf("invalid directory config: %w", err)
+		return nil, fmt.Errorf("invalid directory config: %w", err)
 	}
-
-	connector := NewLDAPConnector(cfg, s.logger)
-	return connector.AuthenticateUser(username, password)
+	return &cfg, nil
 }
 
 // GetSyncLogs returns recent sync logs for a directory

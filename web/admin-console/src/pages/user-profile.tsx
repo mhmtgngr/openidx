@@ -171,14 +171,21 @@ export function UserProfilePage() {
     },
   })
 
+  const { data: passwordInfo } = useQuery({
+    queryKey: ['password-info'],
+    queryFn: () => api.get<{ source: string; is_ldap: boolean; password_changed_at?: string; password_must_change: boolean }>('/api/v1/identity/users/me/password-info'),
+  })
+
   const changePasswordMutation = useMutation({
     mutationFn: ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) =>
       api.post<void>('/api/v1/identity/users/me/change-password', { currentPassword, newPassword }),
     onSuccess: () => {
-      toast({ title: 'Success', description: 'Password changed successfully' })
+      queryClient.invalidateQueries({ queryKey: ['password-info'] })
+      toast({ title: 'Success', description: passwordInfo?.is_ldap ? 'Active Directory password changed successfully' : 'Password changed successfully' })
     },
-    onError: () => {
-      toast({ title: 'Error', description: 'Failed to change password', variant: 'destructive' })
+    onError: (error: Error & { response?: { data?: { error?: string } } }) => {
+      const message = error?.response?.data?.error || 'Failed to change password'
+      toast({ title: 'Error', description: message, variant: 'destructive' })
     },
   })
 
@@ -975,9 +982,19 @@ export function UserProfilePage() {
           <Card>
             <CardHeader>
               <CardTitle>Change Password</CardTitle>
-              <CardDescription>Update your account password</CardDescription>
+              <CardDescription>
+                {passwordInfo?.is_ldap
+                  ? 'Your password is managed by Active Directory'
+                  : 'Update your account password'}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {passwordInfo?.is_ldap && (
+                <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950 rounded-md text-sm text-blue-700 dark:text-blue-300">
+                  <Shield className="h-4 w-4 flex-shrink-0" />
+                  <span>Changes will be applied directly to your Active Directory account. Your organization&apos;s password policy applies.</span>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password</Label>
                 <Input
@@ -1029,7 +1046,7 @@ export function UserProfilePage() {
                 }}
                 disabled={changePasswordMutation.isPending}
               >
-                Change Password
+                {passwordInfo?.is_ldap ? 'Change AD Password' : 'Change Password'}
               </Button>
             </CardContent>
           </Card>
