@@ -3368,3 +3368,7 @@ INSERT INTO notification_routing_rules (id, name, event_type, channels, enabled)
 ('f1700000-0000-0000-0003-000000000002', 'Access Reviews - In-App', 'review_assigned', '["in_app"]'::jsonb, true),
 ('f1700000-0000-0000-0003-000000000003', 'Password Expiry - Email', 'password_expiry', '["email"]'::jsonb, true)
 ON CONFLICT (id) DO NOTHING;
+
+-- Azure AD / Entra ID support
+ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);
+ALTER TABLE directory_sync_state ADD COLUMN IF NOT EXISTS last_delta_link TEXT;

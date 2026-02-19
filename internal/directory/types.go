@@ -1,7 +1,10 @@
-// Package directory provides LDAP/Active Directory synchronization
+// Package directory provides LDAP/Active Directory/Azure AD synchronization
 package directory
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // LDAPConfig holds LDAP connection and search configuration
 type LDAPConfig struct {
@@ -26,6 +29,26 @@ type LDAPConfig struct {
 	AttributeMapping  AttributeMapping `json:"attribute_mapping"`
 }
 
+// AzureADConfig holds Azure AD / Entra ID connection and sync configuration
+type AzureADConfig struct {
+	TenantID          string           `json:"tenant_id"`
+	ClientID          string           `json:"client_id"`
+	ClientSecret      string           `json:"client_secret"`
+	UserFilter        string           `json:"user_filter"`         // OData $filter for /users
+	GroupFilter       string           `json:"group_filter"`        // OData $filter for /groups
+	SyncInterval      int              `json:"sync_interval"`       // minutes
+	SyncEnabled       bool             `json:"sync_enabled"`
+	DeprovisionAction string           `json:"deprovision_action"`  // "disable" or "delete"
+	AttributeMapping  AttributeMapping `json:"attribute_mapping"`
+}
+
+// DirectoryConnector is the interface all directory connectors must implement
+type DirectoryConnector interface {
+	TestConnection(ctx context.Context) error
+	SearchUsers(ctx context.Context) ([]UserRecord, error)
+	SearchGroups(ctx context.Context) ([]GroupRecord, error)
+}
+
 // AttributeMapping maps LDAP attributes to OpenIDX user fields
 type AttributeMapping struct {
 	Username    string `json:"username"`
@@ -36,9 +59,10 @@ type AttributeMapping struct {
 	GroupName   string `json:"group_name"`
 }
 
-// UserRecord represents a user extracted from LDAP
+// UserRecord represents a user extracted from a directory
 type UserRecord struct {
 	DN          string
+	ExternalID  string // Azure AD objectId or other external identifier
 	Username    string
 	Email       string
 	FirstName   string
@@ -89,6 +113,7 @@ type SyncState struct {
 	LastSyncAt         *time.Time `json:"last_sync_at,omitempty"`
 	LastUSNChanged     *int64     `json:"last_usn_changed,omitempty"`
 	LastModifyTimestamp *string   `json:"last_modify_timestamp,omitempty"`
+	LastDeltaLink      *string    `json:"last_delta_link,omitempty"` // Azure AD delta query link
 	UsersSynced        int        `json:"users_synced"`
 	GroupsSynced       int        `json:"groups_synced"`
 	ErrorsCount        int        `json:"errors_count"`

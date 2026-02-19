@@ -192,7 +192,7 @@ type AdminDelegation struct {
 
 // DirectorySyncer defines the interface for directory sync operations
 type DirectorySyncer interface {
-	TestConnection(ctx context.Context, cfg interface{}) error
+	TestConnection(ctx context.Context, dirType string, configBytes []byte) error
 	TriggerSync(ctx context.Context, directoryID string, fullSync bool) error
 	GetSyncLogs(ctx context.Context, directoryID string, limit int) (interface{}, error)
 	GetSyncState(ctx context.Context, directoryID string) (interface{}, error)
@@ -1582,19 +1582,17 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 func (s *Service) handleTestConnection(c *gin.Context) {
 	id := c.Param("id")
 
+	var dirType string
 	var configBytes []byte
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT config FROM directory_integrations WHERE id = $1`, id).Scan(&configBytes)
+		`SELECT type, config FROM directory_integrations WHERE id = $1`, id).Scan(&dirType, &configBytes)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Directory not found"})
 		return
 	}
 
 	if s.directoryService != nil {
-		var cfg map[string]interface{}
-		json.Unmarshal(configBytes, &cfg)
-
-		if err := s.directoryService.TestConnection(c.Request.Context(), cfg); err != nil {
+		if err := s.directoryService.TestConnection(c.Request.Context(), dirType, configBytes); err != nil {
 			c.JSON(400, gin.H{"error": err.Error(), "success": false})
 			return
 		}

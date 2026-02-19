@@ -1510,15 +1510,19 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 		return nil, ErrAccountLocked
 	}
 
-	// Check if user is from an LDAP directory — authenticate against LDAP
-	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
-		s.logger.Debug("Authenticating LDAP user", zap.String("username", username), zap.String("directory_id", *directoryID))
+	// Check if user is from a directory — authenticate against directory
+	if source != nil && (*source == "ldap" || *source == "active_directory") && directoryID != nil && s.directoryService != nil {
+		s.logger.Debug("Authenticating directory user", zap.String("username", username), zap.String("source", *source), zap.String("directory_id", *directoryID))
 
 		if err := s.directoryService.AuthenticateUser(ctx, *directoryID, username, password); err != nil {
 			s.recordFailedLogin(ctx, userID, failedLoginCount)
-			s.logger.Debug("LDAP authentication failed", zap.String("username", username), zap.Error(err))
+			s.logger.Debug("Directory authentication failed", zap.String("username", username), zap.Error(err))
 			return nil, ErrInvalidCredentials
 		}
+	} else if source != nil && *source == "azure_ad" {
+		// Azure AD users must use SSO — cannot authenticate with username/password
+		s.logger.Debug("Azure AD user attempted password login", zap.String("username", username))
+		return nil, fmt.Errorf("this account uses Azure AD single sign-on")
 	} else {
 		// Local user — verify password with bcrypt
 		if passwordHash == "" {
@@ -3864,14 +3868,19 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 		return
 	}
 
-	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
-		// LDAP user — change password via LDAP/AD
+	if source != nil && *source == "azure_ad" {
+		c.JSON(400, gin.H{"error": "Password is managed by Azure Active Directory. Use the Azure AD portal or your organization's self-service password reset."})
+		return
+	}
+
+	if source != nil && (*source == "ldap" || *source == "active_directory") && directoryID != nil && s.directoryService != nil {
+		// LDAP/AD user — change password via directory
 		if err := s.directoryService.ChangePassword(ctx, *directoryID, username, req.CurrentPassword, req.NewPassword); err != nil {
-			s.logger.Warn("LDAP password change failed", zap.String("user_id", userID), zap.Error(err))
+			s.logger.Warn("Directory password change failed", zap.String("user_id", userID), zap.Error(err))
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		// Update password_changed_at in local DB (but NOT the hash — password stays in AD)
+		// Update password_changed_at in local DB (but NOT the hash — password stays in directory)
 		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1`, userID)
 		c.JSON(200, gin.H{"status": "password changed"})
 		return
@@ -3911,10 +3920,14 @@ func (s *Service) handleGetPasswordInfo(c *gin.Context) {
 		return
 	}
 
-	isLDAP := source != nil && *source == "ldap"
+	isDirectory := source != nil && (*source == "ldap" || *source == "active_directory" || *source == "azure_ad")
+	isLDAP := source != nil && (*source == "ldap" || *source == "active_directory")
+	isAzureAD := source != nil && *source == "azure_ad"
 	resp := gin.H{
-		"is_ldap":              isLDAP,
-		"password_must_change": passwordMustChange,
+		"is_ldap":               isLDAP,
+		"is_directory_managed":  isDirectory,
+		"is_azure_ad":           isAzureAD,
+		"password_must_change":  passwordMustChange,
 	}
 	if source != nil {
 		resp["source"] = *source
@@ -4148,11 +4161,15 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// LDAP users cannot use email-based password reset — their password is managed by Active Directory
-	if source != nil && *source == "ldap" {
+	// Directory-managed users cannot use email-based password reset
+	if source != nil && (*source == "ldap" || *source == "active_directory" || *source == "azure_ad") {
+		note := "This account is managed by Active Directory. Please contact your administrator to reset your password."
+		if *source == "azure_ad" {
+			note = "This account is managed by Azure Active Directory. Use the Azure AD portal or your organization's self-service password reset."
+		}
 		c.JSON(200, gin.H{
 			"message": "If an account with that email exists, a password reset link has been sent.",
-			"note":    "This account is managed by Active Directory. Please contact your administrator to reset your password.",
+			"note":    note,
 		})
 		return
 	}
@@ -4267,8 +4284,8 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 
 	adminID, _ := c.Get("user_id")
 
-	// LDAP user — reset password in AD directly
-	if source != nil && *source == "ldap" && directoryID != nil && s.directoryService != nil {
+	// Directory-managed user — reset password via directory
+	if source != nil && (*source == "ldap" || *source == "active_directory" || *source == "azure_ad") && directoryID != nil && s.directoryService != nil {
 		var req struct {
 			NewPassword string `json:"newPassword"`
 		}
@@ -4282,24 +4299,26 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		}
 
 		if err := s.directoryService.ResetPassword(ctx, *directoryID, username, req.NewPassword); err != nil {
-			s.logger.Error("Failed to reset AD password",
+			s.logger.Error("Failed to reset directory password",
 				zap.String("admin_id", fmt.Sprintf("%v", adminID)),
 				zap.String("target_user_id", userID),
+				zap.String("source", *source),
 				zap.Error(err))
-			c.JSON(500, gin.H{"error": "Failed to reset Active Directory password: " + err.Error()})
+			c.JSON(500, gin.H{"error": "Failed to reset directory password: " + err.Error()})
 			return
 		}
 
 		// Mark password_must_change so user is prompted at next login
 		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1`, userID)
 
-		s.logger.Info("Admin reset AD password",
+		s.logger.Info("Admin reset directory password",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-			zap.String("target_user_id", userID))
+			zap.String("target_user_id", userID),
+			zap.String("source", *source))
 
 		c.JSON(200, gin.H{
-			"message": "Active Directory password has been reset. User must change password at next login.",
-			"source":  "ldap",
+			"message": "Directory password has been reset. User must change password at next login.",
+			"source":  *source,
 		})
 		return
 	}

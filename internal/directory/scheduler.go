@@ -76,13 +76,13 @@ func (s *Scheduler) TriggerSync(ctx context.Context, directoryID string, fullSyn
 		// Use a background context — the triggering HTTP request context may be canceled
 		bgCtx := context.Background()
 
-		cfg, err := s.loadDirectoryConfig(bgCtx, directoryID)
+		dirType, configBytes, err := s.loadDirectoryConfig(bgCtx, directoryID)
 		if err != nil {
 			s.logger.Error("Failed to load directory config for sync", zap.String("id", directoryID), zap.Error(err))
 			return
 		}
 
-		if _, err := s.engine.RunSync(bgCtx, directoryID, cfg, fullSync); err != nil {
+		if _, err := s.engine.RunSync(bgCtx, directoryID, dirType, configBytes, fullSync); err != nil {
 			s.logger.Error("Directory sync failed", zap.String("id", directoryID), zap.Error(err))
 		}
 	}()
@@ -90,9 +90,15 @@ func (s *Scheduler) TriggerSync(ctx context.Context, directoryID string, fullSyn
 	return nil
 }
 
+// syncConfig holds the common sync scheduling fields extracted from any directory config type
+type syncConfig struct {
+	SyncEnabled  bool `json:"sync_enabled"`
+	SyncInterval int  `json:"sync_interval"`
+}
+
 func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, config FROM directory_integrations WHERE enabled = true`)
+		`SELECT id, type, config FROM directory_integrations WHERE enabled = true`)
 	if err != nil {
 		s.logger.Error("Failed to query directories for scheduling", zap.Error(err))
 		return
@@ -100,18 +106,19 @@ func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var id string
+		var id, dirType string
 		var configBytes []byte
-		if err := rows.Scan(&id, &configBytes); err != nil {
+		if err := rows.Scan(&id, &dirType, &configBytes); err != nil {
 			continue
 		}
 
-		var cfg LDAPConfig
-		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+		// Extract common sync scheduling fields from any config type
+		var sc syncConfig
+		if err := json.Unmarshal(configBytes, &sc); err != nil {
 			continue
 		}
 
-		if !cfg.SyncEnabled || cfg.SyncInterval <= 0 {
+		if !sc.SyncEnabled || sc.SyncInterval <= 0 {
 			continue
 		}
 
@@ -128,7 +135,7 @@ func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 			fullSync = true
 		} else {
 			elapsed := time.Since(*lastSyncAt)
-			if elapsed >= time.Duration(cfg.SyncInterval)*time.Minute {
+			if elapsed >= time.Duration(sc.SyncInterval)*time.Minute {
 				syncDue = true
 				// Do a full sync once per day, incremental otherwise
 				if elapsed >= 24*time.Hour {
@@ -145,6 +152,7 @@ func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 			if !alreadyRunning {
 				s.logger.Info("Triggering scheduled sync",
 					zap.String("directory_id", id),
+					zap.String("type", dirType),
 					zap.Bool("full", fullSync),
 				)
 				s.TriggerSync(ctx, id, fullSync)
@@ -153,18 +161,13 @@ func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 	}
 }
 
-func (s *Scheduler) loadDirectoryConfig(ctx context.Context, directoryID string) (LDAPConfig, error) {
+func (s *Scheduler) loadDirectoryConfig(ctx context.Context, directoryID string) (string, []byte, error) {
+	var dirType string
 	var configBytes []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT config FROM directory_integrations WHERE id = $1`, directoryID).Scan(&configBytes)
+		`SELECT type, config FROM directory_integrations WHERE id = $1`, directoryID).Scan(&dirType, &configBytes)
 	if err != nil {
-		return LDAPConfig{}, err
+		return "", nil, err
 	}
-
-	var cfg LDAPConfig
-	if err := json.Unmarshal(configBytes, &cfg); err != nil {
-		return LDAPConfig{}, err
-	}
-
-	return cfg, nil
+	return dirType, configBytes, nil
 }

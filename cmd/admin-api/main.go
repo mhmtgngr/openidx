@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -260,17 +259,8 @@ type directorySyncAdapter struct {
 	dirService *directory.Service
 }
 
-func (a *directorySyncAdapter) TestConnection(ctx context.Context, cfg interface{}) error {
-	// Convert interface{} config to directory.LDAPConfig
-	cfgBytes, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
-	var ldapCfg directory.LDAPConfig
-	if err := json.Unmarshal(cfgBytes, &ldapCfg); err != nil {
-		return fmt.Errorf("invalid LDAP config: %w", err)
-	}
-	return a.dirService.TestConnection(ctx, ldapCfg)
+func (a *directorySyncAdapter) TestConnection(ctx context.Context, dirType string, configBytes []byte) error {
+	return a.dirService.TestConnection(ctx, dirType, configBytes)
 }
 
 func (a *directorySyncAdapter) TriggerSync(ctx context.Context, directoryID string, fullSync bool) error {
