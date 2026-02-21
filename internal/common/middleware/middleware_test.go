@@ -24,6 +24,7 @@ func TestCORS(t *testing.T) {
 	t.Run("GET request with CORS headers", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/test", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
@@ -35,6 +36,7 @@ func TestCORS(t *testing.T) {
 	t.Run("OPTIONS preflight request", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("OPTIONS", "/test", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 204, w.Code)
