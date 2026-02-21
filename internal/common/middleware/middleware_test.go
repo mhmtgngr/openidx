@@ -240,8 +240,12 @@ func TestTimeout(t *testing.T) {
 		router := gin.New()
 		router.Use(Timeout(10 * time.Millisecond))
 		router.GET("/test", func(c *gin.Context) {
-			time.Sleep(50 * time.Millisecond)
-			c.String(200, "OK")
+			select {
+			case <-time.After(50 * time.Millisecond):
+				c.String(200, "OK")
+			case <-c.Request.Context().Done():
+				return
+			}
 		})
 
 		w := httptest.NewRecorder()

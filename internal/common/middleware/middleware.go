@@ -682,24 +682,10 @@ func Timeout(timeout time.Duration) gin.HandlerFunc {
 
 		c.Request = c.Request.WithContext(ctx)
 
-		done := make(chan struct{})
-		var mu sync.Mutex
-		timedOut := false
+		c.Next()
 
-		go func() {
-			c.Next()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			return
-		case <-ctx.Done():
-			mu.Lock()
-			timedOut = true
-			mu.Unlock()
-			_ = timedOut // prevent handler from writing after timeout
-			c.AbortWithStatusJSON(http.StatusGatewayTimeout, gin.H{
+		if ctx.Err() == context.DeadlineExceeded && !c.Writer.Written() {
+			c.JSON(http.StatusGatewayTimeout, gin.H{
 				"error": "request timeout",
 			})
 		}
