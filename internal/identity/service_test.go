@@ -14,19 +14,19 @@ import (
 func TestUserModel(t *testing.T) {
 	user := &User{
 		ID:            "user-001",
-		Username:      "john.doe",
-		Email:         "john@example.com",
-		FirstName:     "John",
-		LastName:      "Doe",
+		UserName:      "john.doe",
 		Enabled:       true,
 		EmailVerified: true,
 	}
+	user.SetFirstName("John")
+	user.SetLastName("Doe")
+	user.SetEmail("john@example.com")
 
 	assert.Equal(t, "user-001", user.ID)
-	assert.Equal(t, "john.doe", user.Username)
-	assert.Equal(t, "john@example.com", user.Email)
-	assert.Equal(t, "John", user.FirstName)
-	assert.Equal(t, "Doe", user.LastName)
+	assert.Equal(t, "john.doe", user.UserName)
+	assert.Equal(t, "john@example.com", user.GetEmail())
+	assert.Equal(t, "John", user.GetFirstName())
+	assert.Equal(t, "Doe", user.GetLastName())
 	assert.True(t, user.Enabled)
 	assert.True(t, user.EmailVerified)
 }
@@ -104,26 +104,32 @@ func TestCreateUser(t *testing.T) {
 	}{
 		{
 			name: "Valid user creation",
-			user: &User{
-				ID:            "user-001",
-				Username:      "john.doe",
-				Email:         "john@example.com",
-				FirstName:     "John",
-				LastName:      "Doe",
-				Enabled:       true,
-				EmailVerified: true,
-			},
+			user: func() *User {
+				u := &User{
+					ID:            "user-001",
+					UserName:      "john.doe",
+					Enabled:       true,
+					EmailVerified: true,
+				}
+				u.SetFirstName("John")
+				u.SetLastName("Doe")
+				u.SetEmail("john@example.com")
+				return u
+			}(),
 			expectedError: false,
 		},
 		{
 			name: "Empty username",
-			user: &User{
-				ID:        "user-002",
-				Username:  "",
-				Email:     "test@example.com",
-				FirstName: "Test",
-				LastName:  "User",
-			},
+			user: func() *User {
+				u := &User{
+					ID:       "user-002",
+					UserName: "",
+				}
+				u.SetFirstName("Test")
+				u.SetLastName("User")
+				u.SetEmail("test@example.com")
+				return u
+			}(),
 			expectedError: false,
 		},
 	}
@@ -188,13 +194,16 @@ func TestUpdateUser(t *testing.T) {
 		{
 			name:   "Update email and name",
 			userID: "user-001",
-			updates: &User{
-				ID:        "user-001",
-				Username:  "john.doe",
-				Email:     "newemail@example.com",
-				FirstName: "John",
-				LastName:  "Updated",
-			},
+			updates: func() *User {
+				u := &User{
+					ID:       "user-001",
+					UserName: "john.doe",
+				}
+				u.SetFirstName("John")
+				u.SetLastName("Updated")
+				u.SetEmail("newemail@example.com")
+				return u
+			}(),
 			expectedError: false,
 		},
 		{
@@ -438,15 +447,18 @@ func TestUserValidation(t *testing.T) {
 	}{
 		{
 			name: "Valid user",
-			user: &User{
-				ID:            "user-001",
-				Username:      "john.doe",
-				Email:         "john@example.com",
-				FirstName:     "John",
-				LastName:      "Doe",
-				Enabled:       true,
-				EmailVerified: true,
-			},
+			user: func() *User {
+				u := &User{
+					ID:            "user-001",
+					UserName:      "john.doe",
+					Enabled:       true,
+					EmailVerified: true,
+				}
+				u.SetFirstName("John")
+				u.SetLastName("Doe")
+				u.SetEmail("john@example.com")
+				return u
+			}(),
 			isValid: true,
 		},
 		{

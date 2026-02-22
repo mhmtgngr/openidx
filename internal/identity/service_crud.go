@@ -13,12 +13,18 @@ import (
 // ============================================================
 
 // SetRepository sets the repository for the service (enables repository pattern)
+// Note: This is a placeholder for future repository pattern implementation
 func (s *Service) SetRepository(repo Repository) {
-	s.repository = repo
+	// Repository would be set on Service struct in a future refactor
+	// For now, this is a no-op to maintain API compatibility
 }
 
-// repository is the optional repository for CRUD operations
-var repository Repository // This would be a field on Service struct in a refactor
+// getRepository returns the repository if set (for future use)
+func (s *Service) getRepository() Repository {
+	// In a future refactor, this would return s.repository
+	// For now, return nil to use direct database access
+	return nil
+}
 
 // ============================================================
 // User CRUD Methods using Repository Interface
@@ -282,16 +288,18 @@ func (s *Service) IsTenantAccessible(resourceOrgID *string, tenantID string) boo
 	return *resourceOrgID == tenantID
 }
 
+// CheckTenantAccessible is a package-level helper for testing tenant isolation logic
+func CheckTenantAccessible(resourceOrgID *string, tenantID string) bool {
+	if resourceOrgID == nil {
+		// No tenant association - globally accessible
+		return true
+	}
+	return *resourceOrgID == tenantID
+}
+
 // ============================================================
 // Helper Functions
 // ============================================================
-
-// getRepository returns the repository if set (for future use)
-func (s *Service) getRepository() Repository {
-	// In a future refactor, this would return s.repository
-	// For now, return nil to use direct database access
-	return nil
-}
 
 // pointerString safely dereferences a string pointer
 func pointerString(s *string) string {

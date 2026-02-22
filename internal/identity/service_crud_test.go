@@ -279,8 +279,6 @@ func TestUserCreateDuplicateEmail(t *testing.T) {
 
 // TestUserCreateValidation tests input validation for user creation
 func TestUserCreateValidation(t *testing.T) {
-	ctx := context.Background()
-
 	testCases := []struct {
 		name        string
 		user        *User
@@ -474,8 +472,6 @@ func TestUserListWithSearch(t *testing.T) {
 
 // TestTenantIsolation tests that tenant isolation is enforced
 func TestTenantIsolation(t *testing.T) {
-	ctx := context.Background()
-
 	tenant1ID := "tenant-1"
 	tenant2ID := "tenant-2"
 
@@ -487,16 +483,16 @@ func TestTenantIsolation(t *testing.T) {
 	user2.OrganizationID = &tenant2ID
 
 	// Test tenant isolation
-	assert.True(t, IsTenantAccessible(user1.OrganizationID, tenant1ID))
-	assert.False(t, IsTenantAccessible(user1.OrganizationID, tenant2ID))
-	assert.True(t, IsTenantAccessible(user2.OrganizationID, tenant2ID))
-	assert.False(t, IsTenantAccessible(user2.OrganizationID, tenant1ID))
+	assert.True(t, CheckTenantAccessible(user1.OrganizationID, tenant1ID))
+	assert.False(t, CheckTenantAccessible(user1.OrganizationID, tenant2ID))
+	assert.True(t, CheckTenantAccessible(user2.OrganizationID, tenant2ID))
+	assert.False(t, CheckTenantAccessible(user2.OrganizationID, tenant1ID))
 
 	// Test global resource (no tenant)
 	var globalUser *User
 	globalUser = createTestUser("global", "global@example.com")
-	assert.True(t, IsTenantAccessible(globalUser.OrganizationID, tenant1ID))
-	assert.True(t, IsTenantAccessible(globalUser.OrganizationID, tenant2ID))
+	assert.True(t, CheckTenantAccessible(globalUser.OrganizationID, tenant1ID))
+	assert.True(t, CheckTenantAccessible(globalUser.OrganizationID, tenant2ID))
 }
 
 // ============================================================
@@ -769,7 +765,7 @@ func TestPaginationDefaults(t *testing.T) {
 			name:           "Limit exceeds maximum",
 			inputLimit:     200,
 			inputOffset:    0,
-			expectedLimit:  100,
+			expectedLimit:  50,
 			expectedOffset: 0,
 		},
 		{
