@@ -2,11 +2,16 @@
   "phases": {
     "1": {
       "auth-core": "done",
-      "updated": "2026-02-22T22:45:47+00:00",
+      "updated": "2026-02-22T22:52:30+00:00",
       "rbac-middleware": "done",
-      "security-middleware": "done"
+      "security-middleware": "done",
+      "_phase": "done"
+    },
+    "2": {
+      "identity-crud": "running",
+      "updated": "2026-02-22T22:52:30+00:00"
     }
   },
-  "last_phase": "1",
-  "last_step": "security-middleware"
+  "last_phase": "2",
+  "last_step": "identity-crud"
 }
