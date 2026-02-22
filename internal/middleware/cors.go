@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -128,7 +129,7 @@ func CORS(cfg CORSConfig) gin.HandlerFunc {
 
 		// Set Access-Control-Max-Age for preflight caching
 		if cfg.MaxAge > 0 {
-			c.Header("Access-Control-Max-Age", string(rune(cfg.MaxAge)))
+			c.Header("Access-Control-Max-Age", fmt.Sprintf("%d", cfg.MaxAge))
 		}
 
 		// Handle preflight request

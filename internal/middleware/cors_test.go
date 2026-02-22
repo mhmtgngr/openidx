@@ -193,9 +193,9 @@ func TestCORS_MaxAge(t *testing.T) {
 		req.Header.Set("Origin", "https://example.com")
 		router.ServeHTTP(w, req)
 
-		// Note: The current implementation sets it as a rune, which may need fixing
 		maxAge := w.Header().Get("Access-Control-Max-Age")
 		assert.NotEmpty(t, maxAge)
+		assert.Equal(t, "3600", maxAge)
 	})
 }
 

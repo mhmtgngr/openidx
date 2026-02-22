@@ -73,77 +73,66 @@ func TestRequestID(t *testing.T) {
 }
 
 func TestRequireRoles(t *testing.T) {
-	router := gin.New()
-
-	// Setup test endpoint with role requirement
-	router.GET("/admin", RequireRoles("admin"), func(c *gin.Context) {
-		c.String(200, "OK")
-	})
-
-	router.GET("/user-or-admin", RequireRoles("user", "admin"), func(c *gin.Context) {
-		c.String(200, "OK")
-	})
+	// Setup test endpoint with role requirement using a custom middleware that sets roles first
+	setRoles := func(roles []string) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			c.Set("roles", roles)
+			c.Next()
+		}
+	}
 
 	t.Run("User has required role", func(t *testing.T) {
+		router := gin.New()
+		router.Use(setRoles([]string{"admin", "user"}))
+		router.GET("/admin", RequireRoles("admin"), func(c *gin.Context) {
+			c.String(200, "OK")
+		})
+
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/admin", nil)
-
-		// Simulate authenticated user with admin role
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = req
-		ctx.Set("roles", []string{"admin", "user"})
-
-		// Manually execute the middleware and handler
-		RequireRoles("admin")(ctx)
-		if !ctx.IsAborted() {
-			ctx.String(200, "OK")
-		}
+		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
 	})
 
 	t.Run("User missing required role", func(t *testing.T) {
+		router := gin.New()
+		router.Use(setRoles([]string{"user"}))
+		router.GET("/admin", RequireRoles("admin"), func(c *gin.Context) {
+			c.String(200, "OK")
+		})
+
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/admin", nil)
+		router.ServeHTTP(w, req)
 
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = req
-		ctx.Set("roles", []string{"user"})
-
-		RequireRoles("admin")(ctx)
-
-		assert.True(t, ctx.IsAborted())
 		assert.Equal(t, 403, w.Code)
 	})
 
 	t.Run("User has one of multiple required roles", func(t *testing.T) {
+		router := gin.New()
+		router.Use(setRoles([]string{"user"}))
+		router.GET("/user-or-admin", RequireRoles("user", "admin"), func(c *gin.Context) {
+			c.String(200, "OK")
+		})
+
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/user-or-admin", nil)
+		router.ServeHTTP(w, req)
 
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = req
-		ctx.Set("roles", []string{"user"})
-
-		RequireRoles("user", "admin")(ctx)
-		if !ctx.IsAborted() {
-			ctx.String(200, "OK")
-		}
-
-		assert.False(t, ctx.IsAborted())
 		assert.Equal(t, 200, w.Code)
 	})
 
 	t.Run("No roles in context", func(t *testing.T) {
+		router := gin.New()
+		router.GET("/admin", RequireRoles("admin"), func(c *gin.Context) {
+			c.String(200, "OK")
+		})
+
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/admin", nil)
+		router.ServeHTTP(w, req)
 
-		ctx, _ := gin.CreateTestContext(w)
-		ctx.Request = req
-		// Don't set roles
-
-		RequireRoles("admin")(ctx)
-
-		assert.True(t, ctx.IsAborted())
 		assert.Equal(t, 403, w.Code)
 	})
 }

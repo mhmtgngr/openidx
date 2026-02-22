@@ -212,6 +212,7 @@ func TestRequireRole_AdminAllowed(t *testing.T) {
 	router := gin.New()
 	router.GET("/admin", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin"})
+		c.Next()
 	}, middleware.RequireRole("admin"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "admin access granted"})
 	})
@@ -236,6 +237,7 @@ func TestRequireRole_UserDeniedAdminRoute(t *testing.T) {
 	router := gin.New()
 	router.GET("/admin", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"user"})
+		c.Next()
 	}, middleware.RequireRole("admin"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "admin access granted"})
 	})
@@ -260,6 +262,7 @@ func TestRequireRole_SuperAdminInheritsAdmin(t *testing.T) {
 	router := gin.New()
 	router.GET("/admin", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"super_admin"})
+		c.Next()
 	}, middleware.RequireRole("admin"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "admin access granted"})
 	})
@@ -306,6 +309,7 @@ func TestRequirePermission_Success(t *testing.T) {
 	router := gin.New()
 	router.GET("/users", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin"})
+		c.Next()
 	}, middleware.RequirePermission("users:read"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "users read granted"})
 	})
@@ -330,6 +334,7 @@ func TestRequirePermission_InsufficientPermissions(t *testing.T) {
 	router := gin.New()
 	router.DELETE("/users", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"auditor"})
+		c.Next()
 	}, middleware.RequirePermission("users:delete"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "users delete granted"})
 	})
@@ -354,6 +359,7 @@ func TestRequirePermission_MultiplePermissions_AllRequired(t *testing.T) {
 	router := gin.New()
 	router.POST("/users", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin"})
+		c.Next()
 	}, middleware.RequirePermission("users:write", "users:read"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "users write granted"})
 	})
@@ -378,6 +384,7 @@ func TestRequirePermission_MultiplePermissions_MissingOne(t *testing.T) {
 	router := gin.New()
 	router.DELETE("/users", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"operator"})
+		c.Next()
 	}, middleware.RequirePermission("users:delete", "tenants:manage"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "users delete granted"})
 	})
@@ -402,6 +409,7 @@ func TestRequireAny_Success(t *testing.T) {
 	router := gin.New()
 	router.GET("/reports", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"auditor"})
+		c.Next()
 	}, middleware.RequireAny("admin", "auditor", "operator"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -426,6 +434,7 @@ func TestRequireAny_Failure(t *testing.T) {
 	router := gin.New()
 	router.GET("/reports", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"user"})
+		c.Next()
 	}, middleware.RequireAny("admin", "auditor", "operator"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -450,6 +459,7 @@ func TestRequireAnyPermission_Success(t *testing.T) {
 	router := gin.New()
 	router.GET("/audit", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"auditor"})
+		c.Next()
 	}, middleware.RequireAnyPermission("audit:read", "users:write"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -474,6 +484,7 @@ func TestRequireAnyPermission_Failure(t *testing.T) {
 	router := gin.New()
 	router.GET("/audit", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"user"})
+		c.Next()
 	}, middleware.RequireAnyPermission("audit:export", "tenants:manage"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -498,6 +509,7 @@ func TestRequireAllRoles_Success(t *testing.T) {
 	router := gin.New()
 	router.GET("/special", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin", "auditor"})
+		c.Next()
 	}, middleware.RequireAllRoles("admin", "auditor"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -522,6 +534,7 @@ func TestRequireAllRoles_Failure(t *testing.T) {
 	router := gin.New()
 	router.GET("/special", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin"})
+		c.Next()
 	}, middleware.RequireAllRoles("admin", "auditor"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -547,6 +560,7 @@ func TestRequireAllRoles_WithHierarchy(t *testing.T) {
 	router := gin.New()
 	router.GET("/special", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"super_admin"})
+		c.Next()
 	}, middleware.RequireAllRoles("admin", "user"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
 	})
@@ -1070,7 +1084,7 @@ func TestFullMiddlewareChain(t *testing.T) {
 	})
 
 	// Test successful request
-	req := httptest.NewRequest("DELETE", "/users/user123", nil)
+	req := httptest.NewRequest("DELETE", "/admin/users/user123", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	w := httptest.NewRecorder()
 
@@ -1111,6 +1125,7 @@ func TestRequirePermission_InvalidFormat(t *testing.T) {
 	router := gin.New()
 	router.GET("/test", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin"})
+		c.Next()
 	}, middleware.RequirePermission("invalidformat"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 	})
