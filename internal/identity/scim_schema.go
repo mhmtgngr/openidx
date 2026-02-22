@@ -1144,16 +1144,19 @@ func applyGroupRemoveOp(group *Group, op SCIMPatchOp) error {
 	switch *op.Path {
 	case "members":
 		group.Members = nil
-	case strings.HasPrefix(*op.Path, "members["):
-		if op.Value != nil {
-			if filterValue, ok := op.Value.(string); ok {
-				var newMembers []Member
-				for _, m := range group.Members {
-					if m.Value != filterValue {
-						newMembers = append(newMembers, m)
+	default:
+		// Check for members[value] syntax
+		if strings.HasPrefix(*op.Path, "members[") {
+			if op.Value != nil {
+				if filterValue, ok := op.Value.(string); ok {
+					var newMembers []Member
+					for _, m := range group.Members {
+						if m.Value != filterValue {
+							newMembers = append(newMembers, m)
+						}
 					}
+					group.Members = newMembers
 				}
-				group.Members = newMembers
 			}
 		}
 	}

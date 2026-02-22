@@ -121,11 +121,13 @@ func FromUser(user User) UserDB {
 		for _, email := range user.Emails {
 			if email.Primary != nil && *email.Primary {
 				dbUser.Email = email.Value
-				return dbUser
+				break
 			}
 		}
 		// If no primary marked, use first email
-		dbUser.Email = user.Emails[0].Value
+		if dbUser.Email == "" {
+			dbUser.Email = user.Emails[0].Value
+		}
 	}
 
 	return dbUser
