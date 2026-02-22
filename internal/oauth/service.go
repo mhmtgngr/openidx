@@ -159,6 +159,7 @@ type Service struct {
 	identityService *identity.Service
 	riskService     *risk.Service
 	webhookService  WebhookPublisher
+	authorizeHandler *AuthorizeHandler
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -174,6 +175,11 @@ func (s *Service) SetRiskService(rs *risk.Service) {
 // SetWebhookService sets the webhook service for event publishing
 func (s *Service) SetWebhookService(ws WebhookPublisher) {
 	s.webhookService = ws
+}
+
+// AuthorizeHandler returns the authorization handler
+func (s *Service) AuthorizeHandler() *AuthorizeHandler {
+	return s.authorizeHandler
 }
 
 // NewService creates a new OAuth service
@@ -220,7 +226,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		issuer = "http://localhost:8006"
 	}
 
-	return &Service{
+	svc := &Service{
 		db:         db,
 		redis:      redis,
 		config:     cfg,
@@ -229,7 +235,12 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		publicKey:  &privateKey.PublicKey,
 		issuer:     issuer,
 		identityService: idSvc,
-	}, nil
+	}
+
+	// Initialize authorize handler
+	svc.authorizeHandler = NewAuthorizeHandler(svc, svc.logger)
+
+	return svc, nil
 }
 
 // getBlockedCountries returns the list of blocked country codes from system settings.
@@ -893,14 +904,24 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 	oauth := router.Group("/oauth")
 	{
-		// Authorization endpoint
+		// Authorization endpoint (legacy - using original implementation)
 		oauth.GET("/authorize", svc.handleAuthorize)
+
+		// Authorization endpoint v2 (using new AuthorizeHandler with full PKCE support)
+		oauth.GET("/authorize/v2", svc.handleAuthorizeV2)
 
 		// Consent endpoint (requires authentication)
 		if len(authMiddleware) > 0 {
 			oauth.POST("/authorize", append(authMiddleware, svc.handleAuthorizeConsent)...)
 		} else {
 			oauth.POST("/authorize", svc.handleAuthorizeConsent)
+		}
+
+		// Consent endpoint v2 (using new AuthorizeHandler with full PKCE support)
+		if len(authMiddleware) > 0 {
+			oauth.POST("/authorize/v2", append(authMiddleware, svc.handleAuthorizeConsentV2)...)
+		} else {
+			oauth.POST("/authorize/v2", svc.handleAuthorizeConsentV2)
 		}
 
 		// Server-rendered login form callback (for standard OIDC clients)
@@ -1123,6 +1144,12 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	loginURL.RawQuery = query.Encode()
 
 	c.Redirect(302, loginURL.String())
+}
+
+// handleAuthorizeV2 handles authorization using the new AuthorizeHandler with full PKCE support
+// This handler implements RFC 6749 (Authorization Code Flow) and RFC 7636 (PKCE)
+func (s *Service) handleAuthorizeV2(c *gin.Context) {
+	s.authorizeHandler.HandleAuthorizeRequest(c)
 }
 
 // renderLoginPage serves a minimal HTML login form for standard OIDC clients
@@ -2145,6 +2172,50 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"redirect_url": redirectURL.String(),
+	})
+}
+
+// handleAuthorizeConsentV2 handles authorization consent using the new AuthorizeHandler
+// This is called after user authentication and consent
+func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
+	var req struct {
+		AuthSession string `json:"auth_session" binding:"required"`
+		UserID      string `json:"user_id" binding:"required"`
+		SessionID   string `json:"session_id,omitempty"` // Optional session ID for linkage
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
+		return
+	}
+
+	// Issue authorization code using the handler
+	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, req.UserID, req.SessionID)
+	if err != nil {
+		s.logger.Error("Failed to issue authorization code", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		return
+	}
+
+	// Retrieve the stored request to build redirect
+	authReq, err := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
+	if err != nil {
+		s.logger.Error("Failed to retrieve authorization request", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Build redirect URI with authorization code
+	redirectURI, err := BuildRedirectURI(authReq.RedirectURI, code, authReq.State, "", "")
+	if err != nil {
+		s.logger.Error("Failed to build redirect URI", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"redirect_url": redirectURI,
+		"code":         code,
 	})
 }
 

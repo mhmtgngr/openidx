@@ -174,6 +174,15 @@ func (h *HealthService) LiveHandler() gin.HandlerFunc {
 	}
 }
 
+// RegisterStandardRoutes registers the standard /health/live and /health/ready endpoints
+// on the given Gin router. This is the recommended way to register health check endpoints.
+func (h *HealthService) RegisterStandardRoutes(router *gin.Engine) {
+	router.GET("/health/live", h.LiveHandler())
+	router.GET("/health/ready", h.ReadyHandler())
+	// Keep the full health check endpoint at /health for backward compatibility
+	router.GET("/health", h.Handler())
+}
+
 // ---------- Built-in checkers ----------
 
 // PostgresChecker checks the health of a PostgreSQL connection

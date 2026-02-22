@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/access"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/tlsutil"
@@ -134,52 +135,18 @@ func main() {
 	// Metrics endpoint
 	router.GET("/metrics", middleware.MetricsHandler())
 
-	// Health check endpoint
-	router.GET("/access/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": "access-service",
-			"version": Version,
-		})
-	})
+	// Initialize health service with database and Redis checks
+	healthService := health.NewHealthService(log)
+	healthService.SetVersion(Version)
+	healthService.RegisterCheck(health.NewPostgresChecker(db))
+	healthService.RegisterCheck(health.NewRedisChecker(redis))
 
-	// Also respond on /health for Docker healthcheck
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": "access-service",
-			"version": Version,
-		})
-	})
+	// Register standard health check endpoints
+	healthService.RegisterStandardRoutes(router)
 
-	// Readiness check endpoint
-	router.GET("/access/ready", func(c *gin.Context) {
-		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
-		if err := db.Ping(); err != nil {
-			status["status"] = "not ready"
-			status["postgres"] = err.Error()
-			c.JSON(http.StatusServiceUnavailable, status)
-			return
-		}
-		if err := redis.Ping(); err != nil {
-			status["redis"] = "unhealthy"
-		}
-		c.JSON(http.StatusOK, status)
-	})
-
-	router.GET("/ready", func(c *gin.Context) {
-		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
-		if err := db.Ping(); err != nil {
-			status["status"] = "not ready"
-			status["postgres"] = err.Error()
-			c.JSON(http.StatusServiceUnavailable, status)
-			return
-		}
-		if err := redis.Ping(); err != nil {
-			status["redis"] = "unhealthy"
-		}
-		c.JSON(http.StatusOK, status)
-	})
+	// Keep legacy /access/health and /access/ready endpoints for backward compatibility
+	router.GET("/access/health", healthService.Handler())
+	router.GET("/access/ready", healthService.ReadyHandler())
 
 	// Initialize access proxy service
 	accessService := access.NewService(db, redis, cfg, log)

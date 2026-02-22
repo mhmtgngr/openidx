@@ -58,34 +58,6 @@ func actorIDFromContext(ctx context.Context) string {
 	return "system"
 }
 
-// User represents a user in the system
-type User struct {
-	ID            string            `json:"id"`
-	Username      string            `json:"username"`
-	Email         string            `json:"email"`
-	FirstName     string            `json:"first_name"`
-	LastName      string            `json:"last_name"`
-	Enabled       bool              `json:"enabled"`
-	EmailVerified bool              `json:"email_verified"`
-	Attributes    map[string]string `json:"attributes,omitempty"`
-	Groups        []string          `json:"groups,omitempty"`
-	Roles         []string          `json:"roles,omitempty"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
-	LastLoginAt   *time.Time        `json:"last_login_at,omitempty"`
-	// Password policy fields
-	PasswordChangedAt    *time.Time `json:"password_changed_at,omitempty"`
-	PasswordMustChange   bool       `json:"password_must_change"`
-	// Account lockout fields
-	FailedLoginCount     int        `json:"failed_login_count"`
-	LastFailedLoginAt    *time.Time `json:"last_failed_login_at,omitempty"`
-	LockedUntil          *time.Time `json:"locked_until,omitempty"`
-	// Directory sync fields
-	Source               *string    `json:"source,omitempty"`
-	DirectoryID          *string    `json:"directory_id,omitempty"`
-	LdapDN               *string    `json:"ldap_dn,omitempty"`
-}
-
 // Session represents an active user session
 type Session struct {
 	ID        string    `json:"id"`
@@ -144,20 +116,6 @@ type TOTPEnrollment struct {
 // TOTPVerification represents a TOTP verification request
 type TOTPVerification struct {
 	Code string `json:"code"`
-}
-
-// Group represents a group in the system
-type Group struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	ParentID       *string   `json:"parent_id,omitempty"`
-	AllowSelfJoin  bool      `json:"allow_self_join"`
-	RequireApproval bool     `json:"require_approval"`
-	MaxMembers     *int      `json:"max_members,omitempty"`
-	MemberCount    int       `json:"member_count"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // GroupMember represents a user's membership in a group
@@ -525,23 +483,25 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	// Query from database
-	var user User
+	// Query from database - use UserDB for scanning
+	var dbUser UserDB
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
 		FROM users WHERE id = $1
 	`, userID).Scan(
-		&user.ID, &user.Username, &user.Email, &user.FirstName, &user.LastName,
-		&user.Enabled, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt,
-		&user.PasswordChangedAt, &user.PasswordMustChange, &user.FailedLoginCount,
-		&user.LastFailedLoginAt, &user.LockedUntil,
+		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
+		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
+		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
+		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	// Convert to SCIM User model
+	user := dbUser.ToUser()
 	return &user, nil
 }
 
@@ -603,16 +563,18 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 	var users []User
 	for rows.Next() {
-		var u User
+		var dbUser UserDB
 		if err := rows.Scan(
-			&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-			&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
-			&u.PasswordChangedAt, &u.PasswordMustChange, &u.FailedLoginCount,
-			&u.LastFailedLoginAt, &u.LockedUntil,
+			&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
+			&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
+			&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
+			&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
 		); err != nil {
 			return nil, 0, err
 		}
-		users = append(users, u)
+		// Convert to SCIM User model
+		user := dbUser.ToUser()
+		users = append(users, user)
 	}
 
 	return users, total, nil
@@ -620,30 +582,33 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *User) error {
-	s.logger.Info("Creating user", zap.String("username", user.Username))
+	// Convert SCIM User to UserDB for database operations
+	dbUser := FromUser(*user)
+
+	s.logger.Info("Creating user", zap.String("username", dbUser.Username))
 
 	// Generate UUID if not provided
-	if user.ID == "" {
-		user.ID = uuid.New().String()
+	if dbUser.ID == "" {
+		dbUser.ID = uuid.New().String()
 	}
 
 	now := time.Now()
-	user.CreatedAt = now
-	user.UpdatedAt = now
+	dbUser.CreatedAt = now
+	dbUser.UpdatedAt = now
 
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO users (id, username, email, first_name, last_name, enabled,
 		                   email_verified, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
-		user.Enabled, user.EmailVerified, user.CreatedAt, user.UpdatedAt)
+	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt)
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
 		s.logAuditEvent("identity", "user_management", "user.created", "success",
-			actorID, user.ID, "user", map[string]interface{}{
-				"username": user.Username,
-				"email":    user.Email,
+			actorID, dbUser.ID, "user", map[string]interface{}{
+				"username": dbUser.Username,
+				"email":    dbUser.Email,
 			})
 	}
 
@@ -654,15 +619,18 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
 
-	user.UpdatedAt = time.Now()
+	// Convert SCIM User to UserDB for database operations
+	dbUser := FromUser(*user)
+
+	dbUser.UpdatedAt = time.Now()
 
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
 		WHERE id = $1
-	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
-		user.Enabled, user.EmailVerified, user.UpdatedAt)
+	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -874,13 +842,13 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 
 	var groups []Group
 	for rows.Next() {
-		var g Group
+		var dbGroup GroupDB
 		if err := rows.Scan(
-			&g.ID, &g.Name, &g.Description, &g.ParentID, &g.AllowSelfJoin, &g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+			&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 		); err != nil {
 			return nil, 0, err
 		}
-		groups = append(groups, g)
+		groups = append(groups, dbGroup.ToGroup())
 	}
 
 	return groups, total, nil
@@ -890,19 +858,19 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	s.logger.Debug("Getting group", zap.String("group_id", groupID))
 
-	var g Group
+	var dbGroup GroupDB
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
 		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
 		FROM groups g WHERE g.id = $1
 	`, groupID).Scan(
-		&g.ID, &g.Name, &g.Description, &g.ParentID, &g.AllowSelfJoin, &g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 	)
 	if err != nil {
 		return nil, err
 	}
-
-	return &g, nil
+	group := dbGroup.ToGroup()
+	return &group, nil
 }
 
 // GetGroupMembers retrieves members of a group
@@ -935,7 +903,7 @@ func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupM
 
 // CreateGroup creates a new group
 func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
-	s.logger.Info("Creating group", zap.String("name", group.Name))
+	s.logger.Info("Creating group", zap.String("name", group.GetName()))
 
 	// Generate UUID if not provided
 	if group.ID == "" {
@@ -946,10 +914,13 @@ func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	group.CreatedAt = now
 	group.UpdatedAt = now
 
+	// Convert SCIM Group to GroupDB for database insert
+	dbGroup := FromGroup(*group)
+
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, group.ID, group.Name, group.Description, group.ParentID, group.CreatedAt, group.UpdatedAt)
+	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt)
 
 	return err
 }
@@ -960,11 +931,14 @@ func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 
 	group.UpdatedAt = time.Now()
 
+	// Convert SCIM Group to GroupDB for database update
+	dbGroup := FromGroup(*group)
+
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE groups
 		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5, require_approval = $6, max_members = $7, updated_at = $8
 		WHERE id = $1
-	`, group.ID, group.Name, group.Description, group.ParentID, group.AllowSelfJoin, group.RequireApproval, group.MaxMembers, group.UpdatedAt)
+	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt)
 
 	return err
 }
@@ -1077,16 +1051,16 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 
 	var users []User
 	for rows.Next() {
-		var u User
+		var dbUser UserDB
 		if err := rows.Scan(
-			&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-			&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
-			&u.PasswordChangedAt, &u.PasswordMustChange, &u.FailedLoginCount,
-			&u.LastFailedLoginAt, &u.LockedUntil,
+			&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
+			&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
+			&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
+			&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
 		); err != nil {
 			return nil, err
 		}
-		users = append(users, u)
+		users = append(users, dbUser.ToUser())
 	}
 
 	return users, nil
@@ -1170,13 +1144,13 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 
 	var groups []Group
 	for rows.Next() {
-		var g Group
+		var dbGroup GroupDB
 		if err := rows.Scan(
-			&g.ID, &g.Name, &g.Description, &g.ParentID, &g.AllowSelfJoin, &g.RequireApproval, &g.MaxMembers, &g.CreatedAt, &g.UpdatedAt, &g.MemberCount,
+			&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 		); err != nil {
 			return nil, err
 		}
-		groups = append(groups, g)
+		groups = append(groups, dbGroup.ToGroup())
 	}
 
 	return groups, nil
@@ -1632,7 +1606,7 @@ func (s *Service) GenerateTOTPSecret(ctx context.Context, userID string) (*TOTPE
 	// Generate TOTP key
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "OpenIDX",
-		AccountName: user.Email,
+		AccountName: user.GetEmail(),
 		SecretSize:  32,
 	})
 	if err != nil {
@@ -1949,7 +1923,7 @@ func (s *Service) checkUserInGroups(ctx context.Context, userID string, groups i
 	// Convert to string slice for comparison
 	var userGroupNames []string
 	for _, group := range userGroups {
-		userGroupNames = append(userGroupNames, group.Name)
+		userGroupNames = append(userGroupNames, group.GetName())
 	}
 
 	// Check if user is in any required group
@@ -2106,12 +2080,12 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 
 	var groups []Group
 	for rows.Next() {
-		var g Group
-		err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.ParentID, &g.CreatedAt, &g.UpdatedAt)
+		var dbGroup GroupDB
+		err := rows.Scan(&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.CreatedAt, &dbGroup.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
-		groups = append(groups, g)
+		groups = append(groups, dbGroup.ToGroup())
 	}
 
 	return groups, nil
@@ -2988,14 +2962,14 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 			user.ID, token)
 		if err == nil {
 			baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
-			s.emailService.SendVerificationEmail(c.Request.Context(), user.Email, user.FirstName, token, baseURL)
+			s.emailService.SendVerificationEmail(c.Request.Context(), user.GetEmail(), user.GetFirstName(), token, baseURL)
 		}
 	}
 
 	// Publish webhook event (best-effort)
 	if s.webhookService != nil {
 		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
-			"user_id": user.ID, "username": user.Username, "email": user.Email,
+			"user_id": user.ID, "username": user.GetUsername(), "email": user.GetEmail(),
 		})
 	}
 
@@ -3772,10 +3746,10 @@ func (s *Service) handleGetCurrentUser(c *gin.Context) {
 	// Return user profile with camelCase fields matching frontend expectations
 	c.JSON(200, gin.H{
 		"id":            user.ID,
-		"username":      user.Username,
-		"email":         user.Email,
-		"firstName":     user.FirstName,
-		"lastName":      user.LastName,
+		"username":      user.GetUsername(),
+		"email":         user.GetEmail(),
+		"firstName":     user.GetFirstName(),
+		"lastName":      user.GetLastName(),
 		"enabled":       user.Enabled,
 		"emailVerified": user.EmailVerified,
 		"createdAt":     user.CreatedAt,
@@ -3811,9 +3785,9 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 	}
 
 	// Update allowed fields
-	user.FirstName = req.FirstName
-	user.LastName = req.LastName
-	user.Email = req.Email
+	user.SetFirstName(req.FirstName)
+	user.SetLastName(req.LastName)
+	user.SetEmail(req.Email)
 	user.Enabled = req.Enabled
 
 	if err := s.UpdateUser(c.Request.Context(), user); err != nil {
@@ -3824,10 +3798,10 @@ func (s *Service) handleUpdateCurrentUser(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"id":            user.ID,
-		"username":      user.Username,
-		"email":         user.Email,
-		"firstName":     user.FirstName,
-		"lastName":      user.LastName,
+		"username":      user.GetUsername(),
+		"email":         user.GetEmail(),
+		"firstName":     user.GetFirstName(),
+		"lastName":      user.GetLastName(),
 		"enabled":       user.Enabled,
 		"emailVerified": user.EmailVerified,
 		"createdAt":     user.CreatedAt,
@@ -4054,7 +4028,7 @@ func (s *Service) handleExportUsersCSV(c *gin.Context) {
 		if !u.Enabled {
 			enabled = "false"
 		}
-		writer.Write([]string{u.Username, u.Email, u.FirstName, u.LastName, enabled})
+		writer.Write([]string{u.GetUsername(), u.GetEmail(), u.GetFirstName(), u.GetLastName(), enabled})
 	}
 	writer.Flush()
 }
@@ -4113,13 +4087,12 @@ func (s *Service) handleImportUsersCSV(c *gin.Context) {
 		}
 
 		user := &User{
-			Username:      username,
-			Email:         email,
-			FirstName:     getField("first_name"),
-			LastName:      getField("last_name"),
-			Enabled:       getField("enabled") != "false",
-			EmailVerified: false,
+			UserName: username,
+			Emails:   []Email{{Value: email, Primary: boolPtr(true)}},
+			Name:     &Name{GivenName: stringPtr(getField("first_name")), FamilyName: stringPtr(getField("last_name"))},
+			Enabled:  getField("enabled") != "false",
 		}
+		user.SetEmailVerified(false)
 
 		if err := s.CreateUser(c.Request.Context(), user); err != nil {
 			errCount++
@@ -4678,12 +4651,10 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 
 	// Create user
 	user := &User{
-		Username:      req.Username,
-		Email:         email,
-		FirstName:     req.FirstName,
-		LastName:      req.LastName,
-		Enabled:       true,
-		EmailVerified: true,
+		UserName: req.Username,
+		Emails:   []Email{{Value: email, Primary: boolPtr(true), Verified: boolPtr(true)}},
+		Name:     &Name{GivenName: stringPtr(req.FirstName), FamilyName: stringPtr(req.LastName)},
+		Enabled:  true,
 	}
 
 	if err := s.CreateUser(c.Request.Context(), user); err != nil {
@@ -4726,7 +4697,7 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	// Publish webhook
 	if s.webhookService != nil {
 		s.webhookService.Publish(c.Request.Context(), "user.created", map[string]interface{}{
-			"user_id": user.ID, "username": user.Username, "email": email, "source": "invitation",
+			"user_id": user.ID, "username": user.GetUsername(), "email": email, "source": "invitation",
 		})
 	}
 

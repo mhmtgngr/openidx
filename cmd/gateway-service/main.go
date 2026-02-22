@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/tlsutil"
@@ -78,19 +79,15 @@ func main() {
 	// Metrics endpoint
 	router.GET("/metrics", middleware.MetricsHandler())
 
-	// Health check endpoint
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": "gateway-service",
-			"version": Version,
-		})
-	})
+	// Initialize health service (no dependencies for gateway)
+	healthService := health.NewHealthService(log)
+	healthService.SetVersion(Version)
 
-	// Readiness check endpoint
-	router.GET("/ready", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
-	})
+	// Register standard health check endpoints (/health/live, /health/ready, /health)
+	healthService.RegisterStandardRoutes(router)
+
+	// Keep legacy /ready endpoint for backward compatibility
+	router.GET("/ready", healthService.ReadyHandler())
 
 	// Configure upstream services
 	services := []ServiceConfig{

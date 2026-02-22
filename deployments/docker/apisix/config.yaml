@@ -1,16 +1,35 @@
 apisix:
   node_listen: 9080
   enable_ipv6: false
-  enable_admin: false
+  enable_admin: true
+  admin_key:
+    - name: admin
+      key: edd1c9f034335f136f87ad84b625c8f1
+      schema: admin
+  port_admin: 9180
+  admin_allow_ip:
+    - 127.0.0.1
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
   ssl:
     enable: true
     listen:
       - port: 9443
 
 deployment:
-  role: data_plane
-  role_data_plane:
-    config_provider: yaml
+  role: traditional
+  role_traditional:
+    config_provider: etcd
+  admin:
+    admin_key:
+      - name: admin
+        key: edd1c9f034335f136f87ad84b625c8f1
+        schema: admin
+  etcd:
+    host:
+      - "http://etcd:2379"
+    prefix: "/apisix"
 
 plugin_attr:
   prometheus:

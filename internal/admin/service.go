@@ -856,6 +856,7 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Dashboard
 	router.GET("/dashboard", svc.handleGetDashboard)
+	router.GET("/dashboard/stats", svc.handleGetDashboardStats)
 	
 	// Settings
 	router.GET("/settings", svc.handleGetSettings)

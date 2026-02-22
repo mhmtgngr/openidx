@@ -174,7 +174,7 @@ func (s *Service) handleEnrollEmailOTP(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get user"})
 			return
 		}
-		email = user.Email
+		email = GetEmail(*user)
 	}
 
 	if email == "" {

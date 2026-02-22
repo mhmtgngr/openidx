@@ -98,13 +98,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix-wrapper.sh:/usr/local/bin/apisix-wrapper.sh:ro
       - apisix_config:/apisix-conf
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        ln -sf /apisix-conf/apisix.yaml /usr/local/apisix/conf/apisix.yaml
-        exec /docker-entrypoint.sh docker-start
+    entrypoint: ["/bin/sh", "/usr/local/bin/apisix-wrapper.sh"]
     ports:
       - "8088:9080"
       - "8443:9443"
@@ -1151,15 +1147,15 @@ services:
       dockerfile: ../../deployments/docker/Dockerfile.admin-console
       network: host
       args:
-        - VITE_API_URL=http://localhost:8088
-        - VITE_OAUTH_URL=http://localhost:8006
+        - VITE_API_URL=http://openidx.tdv.org:8088
+        - VITE_OAUTH_URL=http://openidx.tdv.org:8006
         - VITE_OAUTH_CLIENT_ID=admin-console
         - VITE_AUTH_PROVIDER=openidx
     container_name: openidx-admin-console
     restart: unless-stopped
     environment:
-      - VITE_API_URL=http://localhost:8088
-      - VITE_OAUTH_URL=http://localhost:8006
+      - VITE_API_URL=http://openidx.tdv.org:8088
+      - VITE_OAUTH_URL=http://openidx.tdv.org:8006
       - VITE_OAUTH_CLIENT_ID=admin-console
       - VITE_AUTH_PROVIDER=openidx
     ports:
