@@ -64,10 +64,10 @@ func (s *EnhancedService) CreateUser(ctx context.Context, user *User) error {
 	defer timer.Stop()
 
 	// Sanitize input
-	user.GetUsername() = validation.SanitizeUsername(user.GetUsername())
-	user.GetEmail() = validation.SanitizeEmail(user.GetEmail())
-	user.GetFirstName() = validation.SanitizeString(user.GetFirstName())
-	user.GetLastName() = validation.SanitizeString(user.GetLastName())
+	user.SetUsername(validation.SanitizeUsername(user.GetUsername()))
+	user.SetEmail(validation.SanitizeEmail(user.GetEmail()))
+	user.SetFirstName(validation.SanitizeString(user.GetFirstName()))
+	user.SetLastName(validation.SanitizeString(user.GetLastName()))
 
 	// Validate input
 	if err := s.ValidateUser(user); err != nil {
@@ -133,14 +133,14 @@ func (s *EnhancedService) GetUser(ctx context.Context, userID string) (*User, er
 		return nil, errors.ValidationError(err.Error())
 	}
 
-	var user User
+	var dbUser UserDB
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at
 		FROM users WHERE id = $1
 	`, userID).Scan(
-		&user.ID, &user.GetUsername(), &user.GetEmail(), &user.GetFirstName(), &user.GetLastName(),
-		&user.Enabled, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt,
+		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
+		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 	)
 
 	if err != nil {
@@ -151,6 +151,7 @@ func (s *EnhancedService) GetUser(ctx context.Context, userID string) (*User, er
 		return nil, errors.DatabaseError("get user", err)
 	}
 
+	user := dbUser.ToUser()
 	return &user, nil
 }
 
@@ -163,10 +164,10 @@ func (s *EnhancedService) UpdateUser(ctx context.Context, user *User) error {
 	defer timer.Stop()
 
 	// Sanitize input
-	user.GetUsername() = validation.SanitizeUsername(user.GetUsername())
-	user.GetEmail() = validation.SanitizeEmail(user.GetEmail())
-	user.GetFirstName() = validation.SanitizeString(user.GetFirstName())
-	user.GetLastName() = validation.SanitizeString(user.GetLastName())
+	user.SetUsername(validation.SanitizeUsername(user.GetUsername()))
+	user.SetEmail(validation.SanitizeEmail(user.GetEmail()))
+	user.SetFirstName(validation.SanitizeString(user.GetFirstName()))
+	user.SetLastName(validation.SanitizeString(user.GetLastName()))
 
 	// Validate input
 	if err := s.ValidateUser(user); err != nil {
@@ -283,7 +284,7 @@ func (s *EnhancedService) ListUsers(ctx context.Context, offset, limit int) ([]U
 
 	var users []User
 	for rows.Next() {
-		var u User
+		var u UserDB
 		if err := rows.Scan(
 			&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
 			&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
@@ -291,7 +292,7 @@ func (s *EnhancedService) ListUsers(ctx context.Context, offset, limit int) ([]U
 			s.logger.Error("Failed to scan user", zap.Error(err))
 			return nil, 0, errors.DatabaseError("scan user", err)
 		}
-		users = append(users, u)
+		users = append(users, u.ToUser())
 	}
 
 	return users, total, nil

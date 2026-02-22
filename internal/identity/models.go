@@ -148,6 +148,7 @@ type Email struct {
 	Type       *string `json:"type,omitempty" db:"type"` // work, home, other
 	Primary    *bool   `json:"primary,omitempty" db:"primary"`
 	Display    *string `json:"display,omitempty" db:"display"`
+	Verified   *bool   `json:"verified,omitempty" db:"verified"`
 }
 
 // PhoneNumber represents a phone number with SCIM-compatible structure

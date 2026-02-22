@@ -1321,10 +1321,10 @@ func (s *Service) handleLogin(c *gin.Context) {
 	// Log successful login audit event
 	go s.logAuditEvent(context.Background(), "authentication", "security", "login", "success",
 		user.ID, clientIP, user.ID, "user",
-		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
+		map[string]interface{}{"username": user.UserName, "email": user.GetEmail(), "user_agent": userAgent})
 
 	// Country-based login blocking
-	if err := s.checkCountryBlock(c.Request.Context(), clientIP, user.ID, user.Username); err != nil {
+	if err := s.checkCountryBlock(c.Request.Context(), clientIP, user.ID, user.UserName); err != nil {
 		c.JSON(403, gin.H{
 			"error":             "access_denied",
 			"error_description": "Authentication is not available from your location.",
@@ -1434,7 +1434,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 		lc := &identity.LoginContext{
 			UserID:         user.ID,
-			Username:       user.Username,
+			Username:       user.UserName,
 			IPAddress:      clientIP,
 			UserAgent:      userAgent,
 			Latitude:       geo_lat,
@@ -1698,7 +1698,7 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 			return
 		}
 
-		_, verifyErr = s.identityService.FinishWebAuthnAuthentication(c.Request.Context(), user.Username, parsedResponse)
+		_, verifyErr = s.identityService.FinishWebAuthnAuthentication(c.Request.Context(), user.UserName, parsedResponse)
 		if verifyErr == nil {
 			valid = true
 		}
@@ -1821,7 +1821,7 @@ func (s *Service) handleMFAWebAuthnBegin(c *gin.Context) {
 	}
 
 	// Begin WebAuthn authentication
-	options, err := s.identityService.BeginWebAuthnAuthentication(c.Request.Context(), user.Username)
+	options, err := s.identityService.BeginWebAuthnAuthentication(c.Request.Context(), user.UserName)
 	if err != nil {
 		s.logger.Error("Failed to begin WebAuthn authentication",
 			zap.String("user_id", userID),
@@ -2087,12 +2087,12 @@ func (s *Service) handleCallback(c *gin.Context) {
 		user = &existingUsers[0]
 	} else {
 		user = &identity.User{
-			Username:      claims.Email,
-			Email:         claims.Email,
-			FirstName:     claims.Name,
+			UserName:      claims.Email,
 			Enabled:       true,
 			EmailVerified: true,
 		}
+		user.SetEmail(claims.Email)
+		user.SetFirstName(claims.Name)
 		if err := s.identityService.CreateUser(c.Request.Context(), user); err != nil {
 			s.logger.Error("Failed to create SSO user", zap.Error(err))
 			c.JSON(500, gin.H{"error": "failed to provision user"})
