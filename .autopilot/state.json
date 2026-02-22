@@ -2,9 +2,10 @@
   "phases": {
     "1": {
       "auth-core": "done",
-      "updated": "2026-02-22T22:06:57+00:00"
+      "updated": "2026-02-22T22:27:43+00:00",
+      "rbac-middleware": "running"
     }
   },
   "last_phase": "1",
-  "last_step": "auth-core"
+  "last_step": "rbac-middleware"
 }
