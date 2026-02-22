@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/openidx/openidx/internal/common/health"
 )
 
 // IntegrationHealth represents the health of a single integration
@@ -467,4 +469,138 @@ func (s *Service) checkGuacamoleConnectionHealth(ctx context.Context, connection
 	health.Details["protocol"] = conn.Protocol
 
 	return health
+}
+
+// ---------- Health Checkers for common/health package ----------
+
+// ZitiHealthChecker implements health.HealthChecker for Ziti integration
+type ZitiHealthChecker struct {
+	service *Service
+}
+
+func (z *ZitiHealthChecker) Name() string {
+	return "ziti"
+}
+
+func (z *ZitiHealthChecker) Check(ctx context.Context) health.DependencyCheck {
+	start := time.Now()
+
+	zitiHealth := z.service.checkZitiHealth(ctx)
+	latency := time.Since(start)
+
+	status := "up"
+	details := ""
+	if zitiHealth.Status == "unavailable" {
+		status = "down"
+		details = zitiHealth.ErrorMessage
+	} else if zitiHealth.Status == "unhealthy" {
+		status = "down"
+		details = zitiHealth.ErrorMessage
+	} else if zitiHealth.Status == "degraded" {
+		status = "degraded"
+		details = zitiHealth.ErrorMessage
+	} else if latency > 500*time.Millisecond {
+		status = "degraded"
+		details = "high latency"
+	}
+
+	return health.DependencyCheck{
+		Status:    status,
+		Latency:   latency.String(),
+		Details:   details,
+		CheckedAt: time.Now(),
+	}
+}
+
+// GuacamoleHealthChecker implements health.HealthChecker for Guacamole integration
+type GuacamoleHealthChecker struct {
+	service *Service
+}
+
+func (g *GuacamoleHealthChecker) Name() string {
+	return "guacamole"
+}
+
+func (g *GuacamoleHealthChecker) Check(ctx context.Context) health.DependencyCheck {
+	start := time.Now()
+
+	guacHealth := g.service.checkGuacamoleHealth(ctx)
+	latency := time.Since(start)
+
+	status := "up"
+	details := ""
+	if guacHealth.Status == "unavailable" {
+		status = "down"
+		details = guacHealth.ErrorMessage
+	} else if guacHealth.Status == "unhealthy" {
+		status = "down"
+		details = guacHealth.ErrorMessage
+	} else if guacHealth.Status == "degraded" {
+		status = "degraded"
+		details = guacHealth.ErrorMessage
+	} else if latency > 500*time.Millisecond {
+		status = "degraded"
+		details = "high latency"
+	}
+
+	return health.DependencyCheck{
+		Status:    status,
+		Latency:   latency.String(),
+		Details:   details,
+		CheckedAt: time.Now(),
+	}
+}
+
+// BrowZerHealthChecker implements health.HealthChecker for BrowZer integration
+type BrowZerHealthChecker struct {
+	service *Service
+}
+
+func (b *BrowZerHealthChecker) Name() string {
+	return "browzer"
+}
+
+func (b *BrowZerHealthChecker) Check(ctx context.Context) health.DependencyCheck {
+	start := time.Now()
+
+	browzerHealth := b.service.checkBrowZerHealth(ctx)
+	latency := time.Since(start)
+
+	status := "up"
+	details := ""
+	if browzerHealth.Status == "unavailable" {
+		status = "down"
+		details = browzerHealth.ErrorMessage
+	} else if browzerHealth.Status == "disabled" {
+		status = "up"
+		details = "feature disabled"
+	} else if browzerHealth.Status == "degraded" {
+		status = "degraded"
+		details = browzerHealth.ErrorMessage
+	} else if latency > 500*time.Millisecond {
+		status = "degraded"
+		details = "high latency"
+	}
+
+	return health.DependencyCheck{
+		Status:    status,
+		Latency:   latency.String(),
+		Details:   details,
+		CheckedAt: time.Now(),
+	}
+}
+
+// GetZitiHealthChecker returns a health.HealthChecker for Ziti integration
+func (s *Service) GetZitiHealthChecker() health.HealthChecker {
+	return &ZitiHealthChecker{service: s}
+}
+
+// GetGuacamoleHealthChecker returns a health.HealthChecker for Guacamole integration
+func (s *Service) GetGuacamoleHealthChecker() health.HealthChecker {
+	return &GuacamoleHealthChecker{service: s}
+}
+
+// GetBrowZerHealthChecker returns a health.HealthChecker for BrowZer integration
+func (s *Service) GetBrowZerHealthChecker() health.HealthChecker {
+	return &BrowZerHealthChecker{service: s}
 }

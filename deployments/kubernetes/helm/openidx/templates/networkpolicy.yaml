@@ -1,0 +1,534 @@
+{{- if .Values.networkPolicy.enabled }}
+###############################################################################
+# Default Deny Ingress — zero-trust baseline for all OpenIDX pods
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-default-deny-ingress
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: openidx
+  policyTypes:
+    - Ingress
+---
+###############################################################################
+# Identity Service (port 8001)
+# Receives traffic from: APISIX gateway, admin-api
+###############################################################################
+{{- if .Values.identityService.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-identity-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: identity-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: identity-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8001
+    # admin-api aggregation
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: 8001
+{{- end }}
+---
+###############################################################################
+# Governance Service (port 8002)
+# Receives traffic from: APISIX gateway, admin-api, access-service
+###############################################################################
+{{- if .Values.governanceService.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-governance-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: governance-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: governance-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8002
+    # admin-api aggregation
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: 8002
+    # access-service policy checks
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: access-service
+      ports:
+        - protocol: TCP
+          port: 8002
+{{- end }}
+---
+###############################################################################
+# Provisioning Service (port 8003)
+# Receives traffic from: APISIX gateway, admin-api
+###############################################################################
+{{- if .Values.provisioningService.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-provisioning-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: provisioning-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: provisioning-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8003
+    # admin-api aggregation
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: 8003
+{{- end }}
+---
+###############################################################################
+# Audit Service (port 8004)
+# Receives traffic from: APISIX gateway, admin-api, access-service
+###############################################################################
+{{- if .Values.auditService.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-audit-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: audit-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8004
+    # admin-api aggregation
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: 8004
+    # access-service audit logging
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: access-service
+      ports:
+        - protocol: TCP
+          port: 8004
+{{- end }}
+---
+###############################################################################
+# Admin API (port 8005)
+# Receives traffic from: APISIX gateway
+###############################################################################
+{{- if .Values.adminApi.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-admin-api-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin-api
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8005
+{{- end }}
+---
+###############################################################################
+# OAuth Service (port 8006)
+# Receives traffic from: APISIX gateway, admin-console (login flow)
+###############################################################################
+{{- if .Values.oauthService.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-oauth-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: oauth-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: oauth-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8006
+    # admin-console login flow
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-console
+      ports:
+        - protocol: TCP
+          port: 8006
+{{- end }}
+---
+###############################################################################
+# Access Service (port 8007)
+# Receives traffic from: APISIX gateway
+###############################################################################
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-access-service-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: access-service
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: access-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 8007
+---
+###############################################################################
+# Admin Console (port 80)
+# Receives traffic from: APISIX gateway / ingress controller
+###############################################################################
+{{- if .Values.adminConsole.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-admin-console-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-console
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin-console
+  policyTypes:
+    - Ingress
+  ingress:
+    # APISIX gateway / ingress controller
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: apisix
+      ports:
+        - protocol: TCP
+          port: 80
+    # Allow ingress controller (nginx)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+{{- end }}
+---
+###############################################################################
+# PostgreSQL (port 5432)
+# Receives traffic from: all backend services
+###############################################################################
+{{- if .Values.postgresql.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-postgres-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: primary
+      app.kubernetes.io/name: postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    # identity-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: identity-service
+      ports:
+        - protocol: TCP
+          port: 5432
+    # governance-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: governance-service
+      ports:
+        - protocol: TCP
+          port: 5432
+    # provisioning-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: provisioning-service
+      ports:
+        - protocol: TCP
+          port: 5432
+    # audit-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: audit-service
+      ports:
+        - protocol: TCP
+          port: 5432
+    # admin-api
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: 5432
+    # oauth-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: oauth-service
+      ports:
+        - protocol: TCP
+          port: 5432
+    # access-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: access-service
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+---
+###############################################################################
+# Redis (port 6379)
+# Receives traffic from: all backend services
+###############################################################################
+{{- if .Values.redis.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-redis-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: master
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    # identity-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: identity-service
+      ports:
+        - protocol: TCP
+          port: 6379
+    # governance-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: governance-service
+      ports:
+        - protocol: TCP
+          port: 6379
+    # provisioning-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: provisioning-service
+      ports:
+        - protocol: TCP
+          port: 6379
+    # audit-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: audit-service
+      ports:
+        - protocol: TCP
+          port: 6379
+    # admin-api
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: admin-api
+      ports:
+        - protocol: TCP
+          port: 6379
+    # oauth-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: oauth-service
+      ports:
+        - protocol: TCP
+          port: 6379
+    # access-service
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: access-service
+      ports:
+        - protocol: TCP
+          port: 6379
+{{- end }}
+---
+###############################################################################
+# Elasticsearch (port 9200)
+# Receives traffic from: audit-service only
+###############################################################################
+{{- if .Values.elasticsearch.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "openidx.fullname" . }}-elasticsearch-allow
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: elasticsearch-master
+  policyTypes:
+    - Ingress
+  ingress:
+    # audit-service only
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "openidx.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: audit-service
+      ports:
+        - protocol: TCP
+          port: 9200
+    # Elasticsearch inter-node communication (transport)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: elasticsearch-master
+      ports:
+        - protocol: TCP
+          port: 9300
+{{- end }}
+{{- end }}

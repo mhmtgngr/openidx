@@ -5,6 +5,7 @@
 package access
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -53,16 +54,82 @@ type BrowZerTargetManager struct {
 	routerConfigPath string
 	certsPath        string
 	domain           string
+	dnsResolvers     string // nginx resolver addresses (auto-detected from /etc/resolv.conf)
 	mu               sync.Mutex
 }
 
 // NewBrowZerTargetManager creates a new target manager
 func NewBrowZerTargetManager(db *database.PostgresDB, logger *zap.Logger, targetsPath string) *BrowZerTargetManager {
-	return &BrowZerTargetManager{
+	tm := &BrowZerTargetManager{
 		db:          db,
 		logger:      logger.With(zap.String("component", "browzer_targets")),
 		targetsPath: targetsPath,
 	}
+	tm.dnsResolvers = tm.detectDNSResolvers()
+	return tm
+}
+
+// detectDNSResolvers reads /etc/resolv.conf to build the nginx resolver string.
+// Docker's embedded DNS (127.0.0.11) round-robins queries to external servers,
+// so if a public DNS (e.g. 8.8.8.8) returns NXDOMAIN for an internal domain before
+// the corporate DNS responds, resolution fails. To fix this, we extract the external
+// DNS servers and prefer private/corporate ones that can resolve both internal and
+// external domains. If none are found, fall back to 127.0.0.11.
+func (tm *BrowZerTargetManager) detectDNSResolvers() string {
+	f, err := os.Open("/etc/resolv.conf")
+	if err != nil {
+		return "127.0.0.11"
+	}
+	defer f.Close()
+
+	var allServers []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Docker adds: # ExtServers: [8.8.8.8 8.8.4.4 10.10.12.30]
+		if strings.Contains(line, "ExtServers:") {
+			start := strings.Index(line, "[")
+			end := strings.Index(line, "]")
+			if start >= 0 && end > start {
+				allServers = strings.Fields(line[start+1 : end])
+			}
+		}
+	}
+
+	// Filter to private/corporate DNS servers (RFC 1918 ranges).
+	// These can resolve both internal and external domains, unlike public DNS
+	// which returns NXDOMAIN for internal corporate domains.
+	var privateServers []string
+	for _, s := range allServers {
+		if isPrivateIP(s) {
+			privateServers = append(privateServers, s)
+		}
+	}
+
+	var result string
+	if len(privateServers) > 0 {
+		result = strings.Join(privateServers, " ")
+	} else if len(allServers) > 0 {
+		// No private servers found — use all (probably no internal domains)
+		result = "127.0.0.11 " + strings.Join(allServers, " ")
+	} else {
+		result = "127.0.0.11"
+	}
+
+	tm.logger.Info("Detected DNS resolvers for nginx",
+		zap.String("resolvers", result),
+		zap.Strings("all_ext_servers", allServers),
+		zap.Strings("private_servers", privateServers))
+	return result
+}
+
+// isPrivateIP returns true if the IP is in RFC 1918 private ranges
+// (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+func isPrivateIP(ip string) bool {
+	return strings.HasPrefix(ip, "10.") ||
+		strings.HasPrefix(ip, "192.168.") ||
+		(strings.HasPrefix(ip, "172.") && len(ip) > 4 && ip[4] == '.' &&
+			ip[3] >= '1' && ip[3] <= '3') // 172.16-31.x.x
 }
 
 // SetRouterConfigPath sets the path for the nginx router config file
@@ -336,6 +403,16 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		})
 	}
 
+	// Check if any route has an external upstream (needs resolver for runtime DNS)
+	hasExternal := false
+	for _, m := range mappings {
+		parsed, _ := url.Parse(m.upstream)
+		if parsed != nil && parsed.Scheme == "https" {
+			hasExternal = true
+			break
+		}
+	}
+
 	// Build nginx config
 	var b strings.Builder
 	b.WriteString("# Auto-generated BrowZer router config — do not edit manually\n")
@@ -349,7 +426,15 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	b.WriteString("server {\n")
 	b.WriteString("    listen 80;\n")
 	b.WriteString("    server_name _;\n")
-	b.WriteString("    absolute_redirect off;\n\n")
+	b.WriteString("    absolute_redirect off;\n")
+	// Use detected DNS resolvers for external upstream resolution at runtime.
+	// Without this, nginx resolves hostnames at config load time and crashes if DNS fails.
+	// Includes Docker embedded DNS (127.0.0.11) plus host DNS servers from /etc/resolv.conf
+	// so internal/corporate domains can be resolved.
+	if hasExternal {
+		b.WriteString(fmt.Sprintf("    resolver %s valid=30s ipv6=off;\n", tm.dnsResolvers))
+	}
+	b.WriteString("\n")
 
 	// Generate location blocks for each path-based route
 	for _, m := range mappings {
@@ -359,6 +444,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		}
 
 		b.WriteString(fmt.Sprintf("    location %s {\n", pathWithSlash))
+
+		// Generate a safe variable name from the path prefix (e.g. /psm/ -> upstream_psm)
+		varName := "upstream_" + strings.ReplaceAll(strings.Trim(m.pathPrefix, "/"), "-", "_")
 
 		if m.isGuac {
 			// Guacamole keeps the prefix (it expects /guacamole)
@@ -380,20 +468,34 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			if upstreamPath != "" && upstreamPath != "/" {
 				// Upstream has a non-root path (e.g. https://psm.tdv.org/psm).
 				// Pass the URI through as-is — nginx forwards /psm/... to upstream /psm/...
-				// No rewrite or sub_filter needed since the prefix matches the app's path.
-				b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
+				// Use variable-based proxy_pass so nginx resolves DNS at request time,
+				// not at startup (prevents crash when external hosts are unreachable).
+				b.WriteString(fmt.Sprintf("        set $%s %s;\n", varName, upstreamBase))
+				b.WriteString(fmt.Sprintf("        proxy_pass $%s;\n", varName))
+				// Rewrite Location headers so redirects stay on BrowZer domain
+				b.WriteString(fmt.Sprintf("        proxy_redirect https://%s/ /;\n", parsed.Host))
+				b.WriteString(fmt.Sprintf("        proxy_redirect http://%s/ /;\n", parsed.Host))
 				b.WriteString("        proxy_http_version 1.1;\n")
 				b.WriteString(fmt.Sprintf("        proxy_set_header Host %s;\n", parsed.Host))
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
 				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+				b.WriteString("        proxy_ssl_server_name on;\n")
 				b.WriteString("        proxy_ssl_verify off;\n")
+				// Rewrite HTML content that references the upstream domain
+				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
+				b.WriteString("        sub_filter_once off;\n")
+				b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
+				b.WriteString(fmt.Sprintf("        sub_filter 'https://%s' '';\n", parsed.Host))
+				b.WriteString(fmt.Sprintf("        sub_filter 'http://%s' '';\n", parsed.Host))
 			} else if parsed.Scheme == "https" {
 				// External HTTPS app: strip the prefix from ALL requests since the
 				// backend doesn't know about the BrowZer path prefix. Rewrite every
 				// URI from /prefix/... to /... before proxying.
+				// Use variable-based proxy_pass for runtime DNS resolution.
+				b.WriteString(fmt.Sprintf("        set $%s %s;\n", varName, upstreamBase))
 				b.WriteString(fmt.Sprintf("        rewrite ^%s(/.*)?$ $1 break;\n", pathTrimmed))
-				b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
+				b.WriteString(fmt.Sprintf("        proxy_pass $%s;\n", varName))
 				b.WriteString(fmt.Sprintf("        proxy_redirect / %s;\n", pathWithSlash))
 				b.WriteString("        proxy_http_version 1.1;\n")
 				b.WriteString(fmt.Sprintf("        proxy_set_header Host %s;\n", parsed.Host))

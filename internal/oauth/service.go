@@ -159,6 +159,7 @@ type Service struct {
 	identityService *identity.Service
 	riskService     *risk.Service
 	webhookService  WebhookPublisher
+	authorizeHandler *AuthorizeHandler
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -174,6 +175,11 @@ func (s *Service) SetRiskService(rs *risk.Service) {
 // SetWebhookService sets the webhook service for event publishing
 func (s *Service) SetWebhookService(ws WebhookPublisher) {
 	s.webhookService = ws
+}
+
+// AuthorizeHandler returns the authorization handler
+func (s *Service) AuthorizeHandler() *AuthorizeHandler {
+	return s.authorizeHandler
 }
 
 // NewService creates a new OAuth service
@@ -220,7 +226,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		issuer = "http://localhost:8006"
 	}
 
-	return &Service{
+	svc := &Service{
 		db:         db,
 		redis:      redis,
 		config:     cfg,
@@ -229,7 +235,12 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		publicKey:  &privateKey.PublicKey,
 		issuer:     issuer,
 		identityService: idSvc,
-	}, nil
+	}
+
+	// Initialize authorize handler
+	svc.authorizeHandler = NewAuthorizeHandler(svc, svc.logger)
+
+	return svc, nil
 }
 
 // getBlockedCountries returns the list of blocked country codes from system settings.
@@ -893,14 +904,24 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 	oauth := router.Group("/oauth")
 	{
-		// Authorization endpoint
+		// Authorization endpoint (legacy - using original implementation)
 		oauth.GET("/authorize", svc.handleAuthorize)
+
+		// Authorization endpoint v2 (using new AuthorizeHandler with full PKCE support)
+		oauth.GET("/authorize/v2", svc.handleAuthorizeV2)
 
 		// Consent endpoint (requires authentication)
 		if len(authMiddleware) > 0 {
 			oauth.POST("/authorize", append(authMiddleware, svc.handleAuthorizeConsent)...)
 		} else {
 			oauth.POST("/authorize", svc.handleAuthorizeConsent)
+		}
+
+		// Consent endpoint v2 (using new AuthorizeHandler with full PKCE support)
+		if len(authMiddleware) > 0 {
+			oauth.POST("/authorize/v2", append(authMiddleware, svc.handleAuthorizeConsentV2)...)
+		} else {
+			oauth.POST("/authorize/v2", svc.handleAuthorizeConsentV2)
 		}
 
 		// Server-rendered login form callback (for standard OIDC clients)
@@ -925,6 +946,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Step-up MFA endpoints (mid-session re-auth)
 		oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
 		oauth.POST("/stepup-verify", svc.handleStepUpVerify)
+		oauth.GET("/stepup-status/:id", svc.handleStepUpStatus)
 
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
@@ -1124,6 +1146,12 @@ func (s *Service) handleAuthorize(c *gin.Context) {
 	c.Redirect(302, loginURL.String())
 }
 
+// handleAuthorizeV2 handles authorization using the new AuthorizeHandler with full PKCE support
+// This handler implements RFC 6749 (Authorization Code Flow) and RFC 7636 (PKCE)
+func (s *Service) handleAuthorizeV2(c *gin.Context) {
+	s.authorizeHandler.HandleAuthorizeRequest(c)
+}
+
 // renderLoginPage serves a minimal HTML login form for standard OIDC clients
 func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string) {
 	errHTML := ""
@@ -1293,10 +1321,10 @@ func (s *Service) handleLogin(c *gin.Context) {
 	// Log successful login audit event
 	go s.logAuditEvent(context.Background(), "authentication", "security", "login", "success",
 		user.ID, clientIP, user.ID, "user",
-		map[string]interface{}{"username": user.Username, "email": user.Email, "user_agent": userAgent})
+		map[string]interface{}{"username": user.UserName, "email": user.GetEmail(), "user_agent": userAgent})
 
 	// Country-based login blocking
-	if err := s.checkCountryBlock(c.Request.Context(), clientIP, user.ID, user.Username); err != nil {
+	if err := s.checkCountryBlock(c.Request.Context(), clientIP, user.ID, user.UserName); err != nil {
 		c.JSON(403, gin.H{
 			"error":             "access_denied",
 			"error_description": "Authentication is not available from your location.",
@@ -1393,13 +1421,70 @@ func (s *Service) handleLogin(c *gin.Context) {
 		browserTrusted = tb != nil
 	}
 
-	// Force MFA if risk score is high (>= 70) and MFA is available, unless browser is trusted
-	forceMFA := riskScore >= 70 && mfaEnabled && !browserTrusted
+	// Adaptive risk assessment via identity service (replaces hardcoded threshold)
+	var riskAssessment *identity.RiskAssessment
+	if s.identityService != nil {
+		var geo_lat, geo_lon float64
+		if s.riskService != nil {
+			geo, _ := s.riskService.GeoIPLookup(c.Request.Context(), clientIP)
+			if geo != nil {
+				geo_lat = geo.Lat
+				geo_lon = geo.Lon
+			}
+		}
+		lc := &identity.LoginContext{
+			UserID:         user.ID,
+			Username:       user.UserName,
+			IPAddress:      clientIP,
+			UserAgent:      userAgent,
+			Latitude:       geo_lat,
+			Longitude:      geo_lon,
+			DeviceID:       fingerprint,
+			BrowserHash:    fingerprint,
+			KnownDevice:    deviceTrusted,
+			TrustedBrowser: browserTrusted,
+		}
+		assessment, assessErr := s.identityService.AssessLoginRisk(c.Request.Context(), lc)
+		if assessErr == nil && assessment != nil {
+			riskAssessment = assessment
+			// Use assessment score/factors if available (more sophisticated than raw risk score)
+			riskScore = assessment.Score
+			riskFactors = assessment.Factors
+		}
+	}
 
-	// Skip MFA if browser is trusted (unless high risk)
+	// Determine MFA requirement from risk assessment (or fall back to legacy threshold)
+	requireMFA := false
+	denyAccess := false
+	if riskAssessment != nil {
+		requireMFA = riskAssessment.RequiresMFA && mfaEnabled && !browserTrusted
+		denyAccess = riskAssessment.DenyAccess
+		// Filter available MFA methods by risk-allowed methods
+		if requireMFA && len(riskAssessment.AllowedMethods) > 0 {
+			allowedSet := make(map[string]bool)
+			for _, m := range riskAssessment.AllowedMethods {
+				allowedSet[m] = true
+			}
+			filtered := []string{}
+			for _, m := range availableMFAMethods {
+				if allowedSet[m] {
+					filtered = append(filtered, m)
+				}
+			}
+			if len(filtered) > 0 {
+				availableMFAMethods = filtered
+			}
+		}
+	} else {
+		// Legacy fallback: hardcoded threshold
+		requireMFA = riskScore >= 70 && mfaEnabled && !browserTrusted
+		denyAccess = riskScore >= 70 && !mfaEnabled
+	}
+
+	// Skip MFA if browser is trusted and risk is not high
 	skipMFA := browserTrusted && riskScore < 70
 
-	if mfaEnabled && !skipMFA && (forceMFA || (totpStatus != nil && totpStatus.Enabled)) {
+	if mfaEnabled && !skipMFA && (requireMFA || (totpStatus != nil && totpStatus.Enabled)) {
 		// MFA required — store partial auth in Redis and return MFA challenge
 		mfaSession := GenerateRandomToken(32)
 		mfaData := map[string]string{
@@ -1417,14 +1502,20 @@ func (s *Service) handleLogin(c *gin.Context) {
 		// Delete the login session from Redis (password step is done)
 		s.redis.Client.Del(c.Request.Context(), "login_session:"+req.LoginSession)
 
+		riskLevel := "medium"
+		if riskAssessment != nil {
+			riskLevel = riskAssessment.Level
+		}
+
 		c.JSON(200, gin.H{
-			"mfa_required":   true,
-			"mfa_session":    mfaSession,
-			"mfa_methods":    availableMFAMethods,
-			"risk_score":     riskScore,
-			"risk_factors":   riskFactors,
-			"device_trusted": deviceTrusted,
-			"can_trust_browser": !browserTrusted, // Offer to trust if not already trusted
+			"mfa_required":     true,
+			"mfa_session":      mfaSession,
+			"mfa_methods":      availableMFAMethods,
+			"risk_score":       riskScore,
+			"risk_level":       riskLevel,
+			"risk_factors":     riskFactors,
+			"device_trusted":   deviceTrusted,
+			"can_trust_browser": !browserTrusted,
 		})
 		return
 	}
@@ -1440,9 +1531,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 			map[string]interface{}{"reason": "trusted_browser", "fingerprint": fingerprint})
 	}
 
-	// High risk but no MFA available — deny access
-	if riskScore >= 70 && !mfaEnabled {
-		s.logger.Warn("High risk login denied — no MFA available",
+	// Deny access if risk assessment says so (or legacy: high risk + no MFA)
+	if denyAccess {
+		s.logger.Warn("Login denied by risk assessment",
 			zap.String("user_id", user.ID),
 			zap.Int("risk_score", riskScore),
 		)
@@ -1607,7 +1698,7 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 			return
 		}
 
-		_, verifyErr = s.identityService.FinishWebAuthnAuthentication(c.Request.Context(), user.Username, parsedResponse)
+		_, verifyErr = s.identityService.FinishWebAuthnAuthentication(c.Request.Context(), user.UserName, parsedResponse)
 		if verifyErr == nil {
 			valid = true
 		}
@@ -1730,7 +1821,7 @@ func (s *Service) handleMFAWebAuthnBegin(c *gin.Context) {
 	}
 
 	// Begin WebAuthn authentication
-	options, err := s.identityService.BeginWebAuthnAuthentication(c.Request.Context(), user.Username)
+	options, err := s.identityService.BeginWebAuthnAuthentication(c.Request.Context(), user.UserName)
 	if err != nil {
 		s.logger.Error("Failed to begin WebAuthn authentication",
 			zap.String("user_id", userID),
@@ -1996,12 +2087,12 @@ func (s *Service) handleCallback(c *gin.Context) {
 		user = &existingUsers[0]
 	} else {
 		user = &identity.User{
-			Username:      claims.Email,
-			Email:         claims.Email,
-			FirstName:     claims.Name,
+			UserName:      claims.Email,
 			Enabled:       true,
 			EmailVerified: true,
 		}
+		user.SetEmail(claims.Email)
+		user.SetFirstName(claims.Name)
 		if err := s.identityService.CreateUser(c.Request.Context(), user); err != nil {
 			s.logger.Error("Failed to create SSO user", zap.Error(err))
 			c.JSON(500, gin.H{"error": "failed to provision user"})
@@ -2081,6 +2172,50 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 
 	c.JSON(200, gin.H{
 		"redirect_url": redirectURL.String(),
+	})
+}
+
+// handleAuthorizeConsentV2 handles authorization consent using the new AuthorizeHandler
+// This is called after user authentication and consent
+func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
+	var req struct {
+		AuthSession string `json:"auth_session" binding:"required"`
+		UserID      string `json:"user_id" binding:"required"`
+		SessionID   string `json:"session_id,omitempty"` // Optional session ID for linkage
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": err.Error()})
+		return
+	}
+
+	// Issue authorization code using the handler
+	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, req.UserID, req.SessionID)
+	if err != nil {
+		s.logger.Error("Failed to issue authorization code", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		return
+	}
+
+	// Retrieve the stored request to build redirect
+	authReq, err := s.authorizeHandler.GetStoredAuthorizationRequest(c.Request.Context(), req.AuthSession)
+	if err != nil {
+		s.logger.Error("Failed to retrieve authorization request", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	// Build redirect URI with authorization code
+	redirectURI, err := BuildRedirectURI(authReq.RedirectURI, code, authReq.State, "", "")
+	if err != nil {
+		s.logger.Error("Failed to build redirect URI", zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"redirect_url": redirectURI,
+		"code":         code,
 	})
 }
 
@@ -2512,86 +2647,7 @@ func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 	c.JSON(200, gin.H{"client_secret": secret})
 }
 
-// handleStepUpChallenge creates a step-up MFA challenge for an active session
-func (s *Service) handleStepUpChallenge(c *gin.Context) {
-	var req struct {
-		SessionID string `json:"session_id"`
-		UserID    string `json:"user_id"`
-		Reason    string `json:"reason"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request"})
-		return
-	}
-
-	if s.riskService == nil {
-		c.JSON(500, gin.H{"error": "risk service not available"})
-		return
-	}
-
-	challengeID, err := s.riskService.CreateStepUpChallenge(c.Request.Context(), req.UserID, req.SessionID, req.Reason)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to create challenge", "error_description": err.Error()})
-		return
-	}
-
-	// Check what MFA methods are available
-	mfaMethods := []string{}
-	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), req.UserID)
-	if totpStatus != nil && totpStatus.Enabled {
-		mfaMethods = append(mfaMethods, "totp")
-	}
-
-	c.JSON(200, gin.H{
-		"challenge_id": challengeID,
-		"mfa_methods":  mfaMethods,
-		"expires_in":   300, // 5 minutes
-	})
-}
-
-// handleStepUpVerify verifies a step-up MFA challenge
-func (s *Service) handleStepUpVerify(c *gin.Context) {
-	var req struct {
-		ChallengeID string `json:"challenge_id"`
-		UserID      string `json:"user_id"`
-		TOTPCode    string `json:"totp_code"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request"})
-		return
-	}
-
-	if s.riskService == nil {
-		c.JSON(500, gin.H{"error": "risk service not available"})
-		return
-	}
-
-	// Verify TOTP code
-	valid, err := s.identityService.VerifyTOTP(c.Request.Context(), req.UserID, req.TOTPCode)
-	if err != nil || !valid {
-		c.JSON(401, gin.H{"error": "invalid_code", "error_description": "Invalid TOTP code"})
-		return
-	}
-
-	// Complete the challenge
-	if err := s.riskService.CompleteStepUpChallenge(c.Request.Context(), req.ChallengeID, req.UserID); err != nil {
-		c.JSON(400, gin.H{"error": "challenge_failed", "error_description": err.Error()})
-		return
-	}
-
-	// Update proxy session auth_methods if possible
-	s.db.Pool.Exec(c.Request.Context(),
-		`UPDATE proxy_sessions SET auth_methods = array_append(COALESCE(auth_methods, '{}'), 'step_up_mfa')
-		 WHERE user_id = $1 AND revoked = false AND expires_at > NOW()`, req.UserID)
-
-	go s.logAuditEvent(context.Background(), "authentication", "security", "step_up_mfa", "success",
-		req.UserID, c.ClientIP(), req.UserID, "user",
-		map[string]interface{}{"challenge_id": req.ChallengeID})
-
-	c.JSON(200, gin.H{"status": "verified"})
-}
+// handleStepUpChallenge and handleStepUpVerify are in stepup.go
 
 // checkConcurrentSessions checks if the user has reached the concurrent session limit
 // and returns the action to take based on the session policy.

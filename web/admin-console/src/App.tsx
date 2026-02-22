@@ -75,8 +75,18 @@ import { EmailTemplatesPage } from './pages/email-templates'
 import { LifecyclePoliciesPage } from './pages/lifecycle-policies'
 import { AttestationCampaignsPage } from './pages/attestation-campaigns'
 import { AuditArchivalPage } from './pages/audit-archival'
+import { TenantManagementPage } from './pages/tenant-management'
+import { PrivacyDashboardPage } from './pages/privacy-dashboard'
+import { ConsentManagementPage } from './pages/consent-management'
+import { SocialProvidersPage } from './pages/social-providers'
+import { FederationConfigPage } from './pages/federation-config'
+import { NotificationCenterPage } from './pages/notification-center'
+import { NotificationAdminPage } from './pages/notification-admin'
+import MFAManagement from './pages/mfa-management'
+import LoginAnomalies from './pages/login-anomalies'
 import { LoadingSpinner } from './components/ui/loading-spinner'
 import { Toaster } from './components/ui/toaster'
+import { ErrorBoundary } from './components/error-boundary'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -120,7 +130,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <>
+    <ErrorBoundary>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -466,11 +476,54 @@ export default function App() {
               <AuditArchivalPage />
             </AdminRoute>
           } />
+          <Route path="tenant-management" element={
+            <AdminRoute>
+              <TenantManagementPage />
+            </AdminRoute>
+          } />
+          <Route path="privacy-dashboard" element={
+            <AdminRoute>
+              <PrivacyDashboardPage />
+            </AdminRoute>
+          } />
+          <Route path="consent-management" element={
+            <AdminRoute>
+              <ConsentManagementPage />
+            </AdminRoute>
+          } />
+          <Route path="social-providers" element={
+            <AdminRoute>
+              <SocialProvidersPage />
+            </AdminRoute>
+          } />
+          <Route path="federation-config" element={
+            <AdminRoute>
+              <FederationConfigPage />
+            </AdminRoute>
+          } />
+          <Route path="notification-center" element={
+            <NotificationCenterPage />
+          } />
+          <Route path="notification-admin" element={
+            <AdminRoute>
+              <NotificationAdminPage />
+            </AdminRoute>
+          } />
+          <Route path="mfa-management" element={
+            <AdminRoute>
+              <MFAManagement />
+            </AdminRoute>
+          } />
+          <Route path="login-anomalies" element={
+            <AdminRoute>
+              <LoginAnomalies />
+            </AdminRoute>
+          } />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster />
-    </>
+    </ErrorBoundary>
   )
 }

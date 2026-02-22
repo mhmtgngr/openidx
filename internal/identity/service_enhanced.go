@@ -43,14 +43,14 @@ func NewEnhancedService(db *database.PostgresDB, redis *database.RedisClient, cf
 // ValidateUser validates user input
 func (s *EnhancedService) ValidateUser(user *User) error {
 	return validation.ValidateAll(
-		func() error { return validation.ValidateRequired("username", user.Username) },
-		func() error { return validation.ValidateUsername("username", user.Username) },
-		func() error { return validation.ValidateRequired("email", user.Email) },
-		func() error { return validation.ValidateEmail("email", user.Email) },
-		func() error { return validation.ValidateRequired("first_name", user.FirstName) },
-		func() error { return validation.ValidateMaxLength("first_name", user.FirstName, 50) },
-		func() error { return validation.ValidateRequired("last_name", user.LastName) },
-		func() error { return validation.ValidateMaxLength("last_name", user.LastName, 50) },
+		func() error { return validation.ValidateRequired("username", user.GetUsername()) },
+		func() error { return validation.ValidateUsername("username", user.GetUsername()) },
+		func() error { return validation.ValidateRequired("email", user.GetEmail()) },
+		func() error { return validation.ValidateEmail("email", user.GetEmail()) },
+		func() error { return validation.ValidateRequired("first_name", user.GetFirstName()) },
+		func() error { return validation.ValidateMaxLength("first_name", user.GetFirstName(), 50) },
+		func() error { return validation.ValidateRequired("last_name", user.GetLastName()) },
+		func() error { return validation.ValidateMaxLength("last_name", user.GetLastName(), 50) },
 	)
 }
 
@@ -58,21 +58,21 @@ func (s *EnhancedService) ValidateUser(user *User) error {
 func (s *EnhancedService) CreateUser(ctx context.Context, user *User) error {
 	// Start performance timer
 	timer := s.perf.StartContextTimer(ctx, "create_user",
-		zap.String("username", user.Username),
-		zap.String("email", user.Email),
+		zap.String("username", user.GetUsername()),
+		zap.String("email", user.GetEmail()),
 	)
 	defer timer.Stop()
 
 	// Sanitize input
-	user.Username = validation.SanitizeUsername(user.Username)
-	user.Email = validation.SanitizeEmail(user.Email)
-	user.FirstName = validation.SanitizeString(user.FirstName)
-	user.LastName = validation.SanitizeString(user.LastName)
+	user.SetUsername(validation.SanitizeUsername(user.GetUsername()))
+	user.SetEmail(validation.SanitizeEmail(user.GetEmail()))
+	user.SetFirstName(validation.SanitizeString(user.GetFirstName()))
+	user.SetLastName(validation.SanitizeString(user.GetLastName()))
 
 	// Validate input
 	if err := s.ValidateUser(user); err != nil {
 		s.logger.Warn("User validation failed",
-			zap.String("username", user.Username),
+			zap.String("username", user.GetUsername()),
 			zap.Error(err),
 		)
 		return errors.ValidationError(err.Error())
@@ -81,13 +81,13 @@ func (s *EnhancedService) CreateUser(ctx context.Context, user *User) error {
 	// Check if user already exists
 	var exists bool
 	err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 OR email = $2)",
-		user.Username, user.Email).Scan(&exists)
+		user.GetUsername(), user.GetEmail()).Scan(&exists)
 	if err != nil {
 		s.logger.Error("Failed to check user existence", zap.Error(err))
 		return errors.DatabaseError("check user existence", err)
 	}
 	if exists {
-		return errors.UserAlreadyExists(user.Username)
+		return errors.UserAlreadyExists(user.GetUsername())
 	}
 
 	// Create user
@@ -99,25 +99,25 @@ func (s *EnhancedService) CreateUser(ctx context.Context, user *User) error {
 		INSERT INTO users (id, username, email, first_name, last_name, enabled,
 		                   email_verified, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
+	`, user.ID, user.GetUsername(), user.GetEmail(), user.GetFirstName(), user.GetLastName(),
 		user.Enabled, user.EmailVerified, user.CreatedAt, user.UpdatedAt)
 
 	if err != nil {
 		s.logger.Error("Failed to create user",
-			zap.String("username", user.Username),
+			zap.String("username", user.GetUsername()),
 			zap.Error(err),
 		)
 		return errors.DatabaseError("create user", err)
 	}
 
 	// Audit log
-	s.audit.LogUserCreated("system", "", user.ID, user.Username, map[string]interface{}{
-		"email": user.Email,
+	s.audit.LogUserCreated("system", "", user.ID, user.GetUsername(), map[string]interface{}{
+		"email": user.GetEmail(),
 	})
 
 	s.logger.Info("User created successfully",
 		zap.String("user_id", user.ID),
-		zap.String("username", user.Username),
+		zap.String("username", user.GetUsername()),
 	)
 
 	return nil
@@ -133,14 +133,14 @@ func (s *EnhancedService) GetUser(ctx context.Context, userID string) (*User, er
 		return nil, errors.ValidationError(err.Error())
 	}
 
-	var user User
+	var dbUser UserDB
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at
 		FROM users WHERE id = $1
 	`, userID).Scan(
-		&user.ID, &user.Username, &user.Email, &user.FirstName, &user.LastName,
-		&user.Enabled, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt, &user.LastLoginAt,
+		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
+		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 	)
 
 	if err != nil {
@@ -151,6 +151,7 @@ func (s *EnhancedService) GetUser(ctx context.Context, userID string) (*User, er
 		return nil, errors.DatabaseError("get user", err)
 	}
 
+	user := dbUser.ToUser()
 	return &user, nil
 }
 
@@ -158,15 +159,15 @@ func (s *EnhancedService) GetUser(ctx context.Context, userID string) (*User, er
 func (s *EnhancedService) UpdateUser(ctx context.Context, user *User) error {
 	timer := s.perf.StartContextTimer(ctx, "update_user",
 		zap.String("user_id", user.ID),
-		zap.String("username", user.Username),
+		zap.String("username", user.GetUsername()),
 	)
 	defer timer.Stop()
 
 	// Sanitize input
-	user.Username = validation.SanitizeUsername(user.Username)
-	user.Email = validation.SanitizeEmail(user.Email)
-	user.FirstName = validation.SanitizeString(user.FirstName)
-	user.LastName = validation.SanitizeString(user.LastName)
+	user.SetUsername(validation.SanitizeUsername(user.GetUsername()))
+	user.SetEmail(validation.SanitizeEmail(user.GetEmail()))
+	user.SetFirstName(validation.SanitizeString(user.GetFirstName()))
+	user.SetLastName(validation.SanitizeString(user.GetLastName()))
 
 	// Validate input
 	if err := s.ValidateUser(user); err != nil {
@@ -186,7 +187,7 @@ func (s *EnhancedService) UpdateUser(ctx context.Context, user *User) error {
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
 		WHERE id = $1
-	`, user.ID, user.Username, user.Email, user.FirstName, user.LastName,
+	`, user.ID, user.GetUsername(), user.GetEmail(), user.GetFirstName(), user.GetLastName(),
 		user.Enabled, user.EmailVerified, user.UpdatedAt)
 
 	if err != nil {
@@ -201,8 +202,8 @@ func (s *EnhancedService) UpdateUser(ctx context.Context, user *User) error {
 
 	// Audit log
 	s.audit.LogUserUpdated("system", "", user.ID, map[string]interface{}{
-		"username": user.Username,
-		"email":    user.Email,
+		"username": user.GetUsername(),
+		"email":    user.GetEmail(),
 	})
 
 	s.logger.Info("User updated successfully", zap.String("user_id", user.ID))
@@ -238,7 +239,7 @@ func (s *EnhancedService) DeleteUser(ctx context.Context, userID string) error {
 	}
 
 	// Audit log
-	s.audit.LogUserDeleted("system", "", user.ID, user.Username)
+	s.audit.LogUserDeleted("system", "", user.ID, user.GetUsername())
 
 	s.logger.Info("User deleted successfully", zap.String("user_id", userID))
 
@@ -283,7 +284,7 @@ func (s *EnhancedService) ListUsers(ctx context.Context, offset, limit int) ([]U
 
 	var users []User
 	for rows.Next() {
-		var u User
+		var u UserDB
 		if err := rows.Scan(
 			&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
 			&u.Enabled, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
@@ -291,7 +292,7 @@ func (s *EnhancedService) ListUsers(ctx context.Context, offset, limit int) ([]U
 			s.logger.Error("Failed to scan user", zap.Error(err))
 			return nil, 0, errors.DatabaseError("scan user", err)
 		}
-		users = append(users, u)
+		users = append(users, u.ToUser())
 	}
 
 	return users, total, nil

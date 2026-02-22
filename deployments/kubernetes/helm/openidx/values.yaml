@@ -360,6 +360,10 @@ podAntiAffinity:
   enabled: true
   weight: 100
 
+# Network Policy — zero-trust network segmentation
+networkPolicy:
+  enabled: false
+
 # TLS for inter-service communication (opt-in)
 serviceTLS:
   enabled: false

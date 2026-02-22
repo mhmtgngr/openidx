@@ -4,11 +4,15 @@ FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache git ca-certificates
 RUN echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
 
+# Configure git to not prompt for credentials
+RUN git config --global url."https://proxy.golang.org/github.com/".insteadOf "https://github.com/"
+ENV GOPROXY=https://proxy.golang.org,direct
+ENV GOSUMDB=off
+
 WORKDIR /app
 
 COPY . .
 
-RUN go mod tidy
 RUN go mod download
 
 ARG VERSION=dev

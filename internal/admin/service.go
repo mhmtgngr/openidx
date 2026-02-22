@@ -192,7 +192,7 @@ type AdminDelegation struct {
 
 // DirectorySyncer defines the interface for directory sync operations
 type DirectorySyncer interface {
-	TestConnection(ctx context.Context, cfg interface{}) error
+	TestConnection(ctx context.Context, dirType string, configBytes []byte) error
 	TriggerSync(ctx context.Context, directoryID string, fullSync bool) error
 	GetSyncLogs(ctx context.Context, directoryID string, limit int) (interface{}, error)
 	GetSyncState(ctx context.Context, directoryID string) (interface{}, error)
@@ -856,6 +856,7 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Dashboard
 	router.GET("/dashboard", svc.handleGetDashboard)
+	router.GET("/dashboard/stats", svc.handleGetDashboardStats)
 	
 	// Settings
 	router.GET("/settings", svc.handleGetSettings)
@@ -1090,6 +1091,85 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/audit-archives", svc.handleListAuditArchives)
 	router.GET("/audit-archives/:id", svc.handleGetAuditArchive)
 	router.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
+
+	// Phase 17: Multi-Tenancy, Privacy, Federation & Notifications
+
+	// 17A: Tenant Branding & Management
+	router.POST("/tenants/switch", svc.handleSwitchTenant)
+	router.GET("/tenants/current", svc.handleGetCurrentTenant)
+	router.GET("/tenants/:orgId/branding", svc.handleGetTenantBranding)
+	router.PUT("/tenants/:orgId/branding", svc.handleUpdateTenantBranding)
+	router.GET("/tenants/:orgId/settings", svc.handleGetTenantSettings)
+	router.PUT("/tenants/:orgId/settings", svc.handleUpdateTenantSettings)
+	router.GET("/tenants/:orgId/domains", svc.handleListTenantDomains)
+	router.POST("/tenants/:orgId/domains", svc.handleCreateTenantDomain)
+	router.DELETE("/tenants/:orgId/domains/:domainId", svc.handleDeleteTenantDomain)
+	router.POST("/tenants/:orgId/domains/:domainId/verify", svc.handleVerifyTenantDomain)
+
+	// 17B: Privacy & GDPR
+	router.GET("/privacy/dashboard", svc.handlePrivacyDashboard)
+	router.GET("/privacy/consents", svc.handleListConsents)
+	router.GET("/privacy/consents/stats", svc.handleConsentStats)
+	router.GET("/privacy/dsars", svc.handleListDSARs)
+	router.POST("/privacy/dsars", svc.handleCreateDSAR)
+	router.GET("/privacy/dsars/:id", svc.handleGetDSAR)
+	router.PUT("/privacy/dsars/:id", svc.handleUpdateDSAR)
+	router.POST("/privacy/dsars/:id/execute", svc.handleExecuteDSAR)
+	router.GET("/privacy/retention", svc.handleListPrivacyRetention)
+	router.POST("/privacy/retention", svc.handleCreatePrivacyRetention)
+	router.PUT("/privacy/retention/:id", svc.handleUpdatePrivacyRetention)
+	router.DELETE("/privacy/retention/:id", svc.handleDeletePrivacyRetention)
+	router.GET("/privacy/assessments", svc.handleListPrivacyAssessments)
+	router.POST("/privacy/assessments", svc.handleCreatePrivacyAssessment)
+	router.GET("/privacy/assessments/:id", svc.handleGetPrivacyAssessment)
+	router.PUT("/privacy/assessments/:id", svc.handleUpdatePrivacyAssessment)
+	router.DELETE("/privacy/assessments/:id", svc.handleDeletePrivacyAssessment)
+
+	// 17C: Federation & SSO
+	router.GET("/social-providers", svc.handleListSocialProviders)
+	router.POST("/social-providers", svc.handleCreateSocialProvider)
+	router.GET("/social-providers/:id", svc.handleGetSocialProvider)
+	router.PUT("/social-providers/:id", svc.handleUpdateSocialProvider)
+	router.DELETE("/social-providers/:id", svc.handleDeleteSocialProvider)
+	router.GET("/federation/rules", svc.handleListFederationRules)
+	router.POST("/federation/rules", svc.handleCreateFederationRule)
+	router.PUT("/federation/rules/:id", svc.handleUpdateFederationRule)
+	router.DELETE("/federation/rules/:id", svc.handleDeleteFederationRule)
+	router.GET("/users/:id/identity-links", svc.handleListUserIdentityLinks)
+	router.DELETE("/users/:id/identity-links/:linkId", svc.handleDeleteIdentityLink)
+	router.GET("/applications/:id/claims", svc.handleListCustomClaims)
+	router.POST("/applications/:id/claims", svc.handleCreateCustomClaim)
+	router.PUT("/applications/:id/claims/:claimId", svc.handleUpdateCustomClaim)
+	router.DELETE("/applications/:id/claims/:claimId", svc.handleDeleteCustomClaim)
+
+	// 17D: Notification Management
+	router.GET("/notifications/routing-rules", svc.handleListRoutingRules)
+	router.POST("/notifications/routing-rules", svc.handleCreateRoutingRule)
+	router.GET("/notifications/routing-rules/:id", svc.handleGetRoutingRule)
+	router.PUT("/notifications/routing-rules/:id", svc.handleUpdateRoutingRule)
+	router.DELETE("/notifications/routing-rules/:id", svc.handleDeleteRoutingRule)
+	router.GET("/notifications/broadcasts", svc.handleListBroadcasts)
+	router.POST("/notifications/broadcasts", svc.handleCreateBroadcast)
+	router.GET("/notifications/broadcasts/:id", svc.handleGetBroadcast)
+	router.POST("/notifications/broadcasts/:id/send", svc.handleSendBroadcast)
+	router.DELETE("/notifications/broadcasts/:id", svc.handleDeleteBroadcast)
+	router.GET("/notifications/stats", svc.handleNotificationStats)
+
+	// Phase 18: MFA Management & Risk Analytics
+	// 18A: MFA Management
+	router.GET("/mfa/enrollment-stats", svc.handleMFAEnrollmentStats)
+	router.GET("/mfa/policies", svc.handleListMFAPolicies)
+	router.POST("/mfa/policies", svc.handleCreateMFAPolicy)
+	router.GET("/mfa/policies/:id", svc.handleGetMFAPolicy)
+	router.PUT("/mfa/policies/:id", svc.handleUpdateMFAPolicy)
+	router.DELETE("/mfa/policies/:id", svc.handleDeleteMFAPolicy)
+	router.GET("/mfa/user-status", svc.handleListUserMFAStatus)
+	router.GET("/mfa/user-status/:id", svc.handleGetUserMFAStatus)
+
+	// 18B: Login Anomaly Analytics
+	router.GET("/risk/anomalies", svc.handleLoginAnomalies)
+	router.GET("/risk/user-profile/:id", svc.handleUserRiskProfile)
+	router.GET("/risk/overview", svc.handleRiskOverview)
 }
 
 // HTTP Handlers
@@ -1503,19 +1583,17 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 func (s *Service) handleTestConnection(c *gin.Context) {
 	id := c.Param("id")
 
+	var dirType string
 	var configBytes []byte
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT config FROM directory_integrations WHERE id = $1`, id).Scan(&configBytes)
+		`SELECT type, config FROM directory_integrations WHERE id = $1`, id).Scan(&dirType, &configBytes)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Directory not found"})
 		return
 	}
 
 	if s.directoryService != nil {
-		var cfg map[string]interface{}
-		json.Unmarshal(configBytes, &cfg)
-
-		if err := s.directoryService.TestConnection(c.Request.Context(), cfg); err != nil {
+		if err := s.directoryService.TestConnection(c.Request.Context(), dirType, configBytes); err != nil {
 			c.JSON(400, gin.H{"error": err.Error(), "success": false})
 			return
 		}

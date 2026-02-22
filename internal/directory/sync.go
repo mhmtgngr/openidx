@@ -2,6 +2,7 @@ package directory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ func NewSyncEngine(db *database.PostgresDB, logger *zap.Logger) *SyncEngine {
 }
 
 // RunSync executes a directory sync (full or incremental)
-func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, cfg LDAPConfig, fullSync bool) (*SyncResult, error) {
+func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, dirType string, configBytes []byte, fullSync bool) (*SyncResult, error) {
 	start := time.Now()
 	result := &SyncResult{}
 
@@ -49,7 +50,7 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, cfg LDAPCo
 		`UPDATE directory_integrations SET sync_status = 'syncing', updated_at = NOW() WHERE id = $1`,
 		directoryID)
 
-	syncErr := e.doSync(ctx, directoryID, cfg, fullSync, result)
+	syncErr := e.doSync(ctx, directoryID, dirType, configBytes, fullSync, result)
 
 	result.Duration = time.Since(start)
 	status := "success"
@@ -99,6 +100,7 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, cfg LDAPCo
 	e.logger.Info("Directory sync completed",
 		zap.String("directory_id", directoryID),
 		zap.String("type", syncType),
+		zap.String("dir_type", dirType),
 		zap.Int("users_added", result.UsersAdded),
 		zap.Int("users_updated", result.UsersUpdated),
 		zap.Int("users_disabled", result.UsersDisabled),
@@ -109,7 +111,26 @@ func (e *SyncEngine) RunSync(ctx context.Context, directoryID string, cfg LDAPCo
 	return result, nil
 }
 
-func (e *SyncEngine) doSync(ctx context.Context, directoryID string, cfg LDAPConfig, fullSync bool, result *SyncResult) error {
+func (e *SyncEngine) doSync(ctx context.Context, directoryID, dirType string, configBytes []byte, fullSync bool, result *SyncResult) error {
+	switch dirType {
+	case "ldap", "active_directory":
+		var cfg LDAPConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid LDAP config: %w", err)
+		}
+		return e.doSyncLDAP(ctx, directoryID, cfg, fullSync, result)
+	case "azure_ad":
+		var cfg AzureADConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid Azure AD config: %w", err)
+		}
+		return e.doSyncAzureAD(ctx, directoryID, cfg, fullSync, result)
+	default:
+		return fmt.Errorf("unsupported directory type: %s", dirType)
+	}
+}
+
+func (e *SyncEngine) doSyncLDAP(ctx context.Context, directoryID string, cfg LDAPConfig, fullSync bool, result *SyncResult) error {
 	connector := NewLDAPConnector(cfg, e.logger)
 
 	// Sync users
@@ -124,6 +145,30 @@ func (e *SyncEngine) doSync(ctx context.Context, directoryID string, cfg LDAPCon
 
 	// Sync group memberships
 	if err := e.syncMemberships(ctx, connector, directoryID, cfg); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("membership sync error: %v", err))
+	}
+
+	return nil
+}
+
+func (e *SyncEngine) doSyncAzureAD(ctx context.Context, directoryID string, cfg AzureADConfig, fullSync bool, result *SyncResult) error {
+	connector := NewAzureADConnector(cfg, e.logger)
+	if err := connector.ensureToken(ctx); err != nil {
+		return fmt.Errorf("failed to acquire Azure AD token: %w", err)
+	}
+
+	// Sync users
+	if err := e.syncAzureADUsers(ctx, connector, directoryID, cfg, fullSync, result); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("user sync error: %v", err))
+	}
+
+	// Sync groups
+	if err := e.syncAzureADGroups(ctx, connector, directoryID, result); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("group sync error: %v", err))
+	}
+
+	// Sync memberships
+	if err := e.syncAzureADMemberships(ctx, connector, directoryID); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("membership sync error: %v", err))
 	}
 
@@ -434,6 +479,272 @@ func (e *SyncEngine) syncMemberships(ctx context.Context, connector *LDAPConnect
 		// Re-insert current members
 		for _, memberDN := range record.MemberDNs {
 			userID, found := userDNMap[memberDN]
+			if !found {
+				continue
+			}
+			e.db.Pool.Exec(ctx,
+				`INSERT INTO group_memberships (user_id, group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				userID, groupID)
+		}
+	}
+
+	return nil
+}
+
+// Azure AD sync helpers
+
+type dbAzureUser struct {
+	ID         string
+	Username   string
+	Email      string
+	FirstName  string
+	LastName   string
+	ExternalID string
+	Enabled    bool
+}
+
+func (e *SyncEngine) syncAzureADUsers(ctx context.Context, connector *AzureADConnector, directoryID string, cfg AzureADConfig, fullSync bool, result *SyncResult) error {
+	var records []UserRecord
+
+	if fullSync {
+		users, err := connector.SearchUsers(ctx)
+		if err != nil {
+			return err
+		}
+		records = users
+	} else {
+		// Incremental sync using delta query
+		var deltaLink *string
+		e.db.Pool.QueryRow(ctx,
+			`SELECT last_delta_link FROM directory_sync_state WHERE directory_id = $1`,
+			directoryID).Scan(&deltaLink)
+
+		dl := ""
+		if deltaLink != nil {
+			dl = *deltaLink
+		}
+		users, newDeltaLink, err := connector.SearchUsersIncremental(ctx, dl)
+		if err != nil {
+			return err
+		}
+		records = users
+
+		// Save new delta link
+		if newDeltaLink != "" {
+			e.db.Pool.Exec(ctx,
+				`UPDATE directory_sync_state SET last_delta_link = $2, updated_at = NOW() WHERE directory_id = $1`,
+				directoryID, newDeltaLink)
+		}
+	}
+
+	// Build map of existing DB users for this directory (keyed by external_id)
+	dbUsers := make(map[string]dbAzureUser)
+	rows, err := e.db.Pool.Query(ctx,
+		`SELECT id, username, email, first_name, last_name, COALESCE(external_id, ''), enabled
+		 FROM users WHERE directory_id = $1`, directoryID)
+	if err != nil {
+		return fmt.Errorf("failed to query existing users: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u dbAzureUser
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName, &u.ExternalID, &u.Enabled); err != nil {
+			continue
+		}
+		if u.ExternalID != "" {
+			dbUsers[u.ExternalID] = u
+		}
+	}
+
+	// Process records
+	seenIDs := make(map[string]bool)
+	for _, record := range records {
+		if record.Username == "" || record.Email == "" {
+			continue
+		}
+		seenIDs[record.ExternalID] = true
+
+		existing, found := dbUsers[record.ExternalID]
+		if found {
+			if existing.Username != record.Username || existing.Email != record.Email ||
+				existing.FirstName != record.FirstName || existing.LastName != record.LastName {
+				_, err := e.db.Pool.Exec(ctx,
+					`UPDATE users SET username = $2, email = $3, first_name = $4, last_name = $5, updated_at = NOW()
+					 WHERE id = $1`,
+					existing.ID, record.Username, record.Email, record.FirstName, record.LastName)
+				if err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("failed to update user %s: %v", record.Username, err))
+				} else {
+					result.UsersUpdated++
+				}
+			}
+		} else {
+			// Create new Azure AD user with an unusable password
+			randomPwd := fmt.Sprintf("azuread-nologin-%d", time.Now().UnixNano())
+			hash, _ := bcrypt.GenerateFromPassword([]byte(randomPwd), bcrypt.DefaultCost)
+
+			_, err := e.db.Pool.Exec(ctx,
+				`INSERT INTO users (username, email, first_name, last_name, password_hash, enabled, email_verified, source, directory_id, external_id)
+				 VALUES ($1, $2, $3, $4, $5, true, true, 'azure_ad', $6, $7)
+				 ON CONFLICT (username) DO NOTHING`,
+				record.Username, record.Email, record.FirstName, record.LastName, string(hash), directoryID, record.ExternalID)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("failed to create user %s: %v", record.Username, err))
+			} else {
+				result.UsersAdded++
+			}
+		}
+	}
+
+	// Deprovision: users in DB but not in Azure AD (only for full sync)
+	if fullSync {
+		for extID, user := range dbUsers {
+			if !seenIDs[extID] && user.Enabled {
+				action := cfg.DeprovisionAction
+				if action == "" {
+					action = "disable"
+				}
+				if action == "delete" {
+					if _, err := e.db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, user.ID); err != nil {
+						result.Errors = append(result.Errors, fmt.Sprintf("failed to delete user %s: %v", user.Username, err))
+					} else {
+						result.UsersDisabled++
+					}
+				} else {
+					if _, err := e.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1`, user.ID); err != nil {
+						result.Errors = append(result.Errors, fmt.Sprintf("failed to disable user %s: %v", user.Username, err))
+					} else {
+						result.UsersDisabled++
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *SyncEngine) syncAzureADGroups(ctx context.Context, connector *AzureADConnector, directoryID string, result *SyncResult) error {
+	groups, err := connector.SearchGroups(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Existing groups keyed by external_id
+	dbGroups := make(map[string]string) // external_id -> id
+	rows, err := e.db.Pool.Query(ctx,
+		`SELECT id, COALESCE(external_id, '') FROM groups WHERE directory_id = $1`, directoryID)
+	if err != nil {
+		return fmt.Errorf("failed to query existing groups: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, extID string
+		if err := rows.Scan(&id, &extID); err != nil {
+			continue
+		}
+		if extID != "" {
+			dbGroups[extID] = id
+		}
+	}
+
+	seenIDs := make(map[string]bool)
+	for _, group := range groups {
+		if group.Name == "" {
+			continue
+		}
+		seenIDs[group.DN] = true // DN is the Azure objectId
+
+		if _, found := dbGroups[group.DN]; found {
+			_, err := e.db.Pool.Exec(ctx,
+				`UPDATE groups SET name = $2, description = $3, updated_at = NOW() WHERE external_id = $1 AND directory_id = $4`,
+				group.DN, group.Name, group.Description, directoryID)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("failed to update group %s: %v", group.Name, err))
+			} else {
+				result.GroupsUpdated++
+			}
+		} else {
+			_, err := e.db.Pool.Exec(ctx,
+				`INSERT INTO groups (name, description, source, directory_id, external_id)
+				 VALUES ($1, $2, 'azure_ad', $3, $4)
+				 ON CONFLICT (name) DO NOTHING`,
+				group.Name, group.Description, directoryID, group.DN)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("failed to create group %s: %v", group.Name, err))
+			} else {
+				result.GroupsAdded++
+			}
+		}
+	}
+
+	// Delete groups that no longer exist in Azure AD
+	for extID, id := range dbGroups {
+		if !seenIDs[extID] {
+			if _, err := e.db.Pool.Exec(ctx, `DELETE FROM groups WHERE id = $1`, id); err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("failed to delete group: %v", err))
+			} else {
+				result.GroupsDeleted++
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *SyncEngine) syncAzureADMemberships(ctx context.Context, connector *AzureADConnector, directoryID string) error {
+	// Build user external_id -> ID map
+	userExtMap := make(map[string]string)
+	uRows, err := e.db.Pool.Query(ctx,
+		`SELECT id, external_id FROM users WHERE directory_id = $1 AND external_id IS NOT NULL`, directoryID)
+	if err != nil {
+		return err
+	}
+	defer uRows.Close()
+	for uRows.Next() {
+		var id string
+		var extID *string
+		if err := uRows.Scan(&id, &extID); err == nil && extID != nil {
+			userExtMap[*extID] = id
+		}
+	}
+
+	// Build group external_id -> ID map
+	groupExtMap := make(map[string]string)
+	gRows, err := e.db.Pool.Query(ctx,
+		`SELECT id, external_id FROM groups WHERE directory_id = $1 AND external_id IS NOT NULL`, directoryID)
+	if err != nil {
+		return err
+	}
+	defer gRows.Close()
+	for gRows.Next() {
+		var id string
+		var extID *string
+		if err := gRows.Scan(&id, &extID); err == nil && extID != nil {
+			groupExtMap[*extID] = id
+		}
+	}
+
+	// For each group, fetch members from Azure AD and sync
+	for azureGroupID, groupID := range groupExtMap {
+		memberIDs, err := connector.SearchGroupMembers(ctx, azureGroupID)
+		if err != nil {
+			e.logger.Warn("Failed to fetch Azure AD group members",
+				zap.String("group_id", azureGroupID), zap.Error(err))
+			continue
+		}
+
+		// Clear existing memberships for this group (Azure AD-managed)
+		e.db.Pool.Exec(ctx,
+			`DELETE FROM group_memberships WHERE group_id = $1 AND user_id IN (
+				SELECT id FROM users WHERE directory_id = $2
+			)`, groupID, directoryID)
+
+		// Re-insert current members
+		for _, memberAzureID := range memberIDs {
+			userID, found := userExtMap[memberAzureID]
 			if !found {
 				continue
 			}

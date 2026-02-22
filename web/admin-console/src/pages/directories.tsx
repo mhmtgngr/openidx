@@ -55,6 +55,7 @@ import { useToast } from '../hooks/use-toast'
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 
 interface DirectoryConfig {
+  // LDAP fields
   host: string
   port: number
   use_tls: boolean
@@ -80,6 +81,10 @@ interface DirectoryConfig {
     display_name: string
     group_name: string
   }
+  // Azure AD fields (used when type='azure_ad')
+  tenant_id: string
+  client_id: string
+  client_secret: string
 }
 
 interface DirectoryIntegration {
@@ -136,6 +141,9 @@ const defaultConfig: DirectoryConfig = {
     display_name: 'cn',
     group_name: 'cn',
   },
+  tenant_id: '',
+  client_id: '',
+  client_secret: '',
 }
 
 const adDefaults: DirectoryConfig['attribute_mapping'] = {
@@ -154,6 +162,15 @@ const ldapDefaults: DirectoryConfig['attribute_mapping'] = {
   last_name: 'sn',
   display_name: 'cn',
   group_name: 'cn',
+}
+
+const azureAdDefaults: DirectoryConfig['attribute_mapping'] = {
+  username: 'userPrincipalName',
+  email: 'mail',
+  first_name: 'givenName',
+  last_name: 'surname',
+  display_name: 'displayName',
+  group_name: 'displayName',
 }
 
 interface DirectoryFormData {
@@ -360,7 +377,7 @@ export function DirectoriesPage() {
                     <TableCell className="font-medium">{dir.name}</TableCell>
                     <TableCell>
                       <Badge variant="outline">
-                        {dir.type === 'active_directory' ? 'Active Directory' : 'LDAP'}
+                        {dir.type === 'azure_ad' ? 'Azure AD' : dir.type === 'active_directory' ? 'Active Directory' : 'LDAP'}
                       </Badge>
                     </TableCell>
                     <TableCell>{statusBadge(dir.sync_status)}</TableCell>
@@ -518,98 +535,147 @@ export function DirectoriesPage() {
                   <Label>Type</Label>
                   <Select
                     value={formData.type}
-                    onValueChange={(v) => setFormData({ ...formData, type: v })}
+                    onValueChange={(v) => {
+                      const mapping = v === 'active_directory' ? adDefaults : v === 'azure_ad' ? azureAdDefaults : ldapDefaults
+                      setFormData({ ...formData, type: v, config: { ...formData.config, attribute_mapping: mapping } })
+                    }}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="ldap">LDAP (OpenLDAP, etc.)</SelectItem>
                       <SelectItem value="active_directory">Active Directory</SelectItem>
+                      <SelectItem value="azure_ad">Azure AD / Entra ID</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Host</Label>
-                  <Input
-                    value={formData.config.host}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, host: e.target.value },
-                    })}
-                    placeholder="ldap.example.com"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Port</Label>
-                  <Input
-                    type="number"
-                    value={formData.config.port}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, port: parseInt(e.target.value) || 389 },
-                    })}
-                  />
-                </div>
-              </div>
+              {formData.type === 'azure_ad' ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Tenant ID</Label>
+                    <Input
+                      value={formData.config.tenant_id}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, tenant_id: e.target.value },
+                      })}
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    />
+                    <p className="text-xs text-muted-foreground">Azure AD tenant (directory) ID from the Azure portal</p>
+                  </div>
 
-              <div className="flex items-center gap-6">
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={formData.config.use_tls}
-                    onCheckedChange={(v) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, use_tls: v, port: v ? 636 : 389 },
-                    })}
-                  />
-                  <Label>LDAPS (TLS)</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={formData.config.start_tls}
-                    onCheckedChange={(v) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, start_tls: v },
-                    })}
-                  />
-                  <Label>StartTLS</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={formData.config.skip_tls_verify}
-                    onCheckedChange={(v) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, skip_tls_verify: v },
-                    })}
-                  />
-                  <Label>Skip TLS Verify</Label>
-                </div>
-              </div>
+                  <div className="space-y-2">
+                    <Label>Client ID (Application ID)</Label>
+                    <Input
+                      value={formData.config.client_id}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, client_id: e.target.value },
+                      })}
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    />
+                    <p className="text-xs text-muted-foreground">App registration client ID with Microsoft Graph API permissions</p>
+                  </div>
 
-              <div className="space-y-2">
-                <Label>Bind DN</Label>
-                <Input
-                  value={formData.config.bind_dn}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    config: { ...formData.config, bind_dn: e.target.value },
-                  })}
-                  placeholder="cn=admin,dc=example,dc=com"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label>Client Secret</Label>
+                    <Input
+                      type="password"
+                      value={formData.config.client_secret}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, client_secret: e.target.value },
+                      })}
+                    />
+                    <p className="text-xs text-muted-foreground">Client secret from the app registration certificates &amp; secrets</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Host</Label>
+                      <Input
+                        value={formData.config.host}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, host: e.target.value },
+                        })}
+                        placeholder="ldap.example.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Port</Label>
+                      <Input
+                        type="number"
+                        value={formData.config.port}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, port: parseInt(e.target.value) || 389 },
+                        })}
+                      />
+                    </div>
+                  </div>
 
-              <div className="space-y-2">
-                <Label>Bind Password</Label>
-                <Input
-                  type="password"
-                  value={formData.config.bind_password}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    config: { ...formData.config, bind_password: e.target.value },
-                  })}
-                />
-              </div>
+                  <div className="flex items-center gap-6">
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        checked={formData.config.use_tls}
+                        onCheckedChange={(v) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, use_tls: v, port: v ? 636 : 389 },
+                        })}
+                      />
+                      <Label>LDAPS (TLS)</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        checked={formData.config.start_tls}
+                        onCheckedChange={(v) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, start_tls: v },
+                        })}
+                      />
+                      <Label>StartTLS</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        checked={formData.config.skip_tls_verify}
+                        onCheckedChange={(v) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, skip_tls_verify: v },
+                        })}
+                      />
+                      <Label>Skip TLS Verify</Label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Bind DN</Label>
+                    <Input
+                      value={formData.config.bind_dn}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, bind_dn: e.target.value },
+                      })}
+                      placeholder="cn=admin,dc=example,dc=com"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Bind Password</Label>
+                    <Input
+                      type="password"
+                      value={formData.config.bind_password}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, bind_password: e.target.value },
+                      })}
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="flex items-center space-x-2">
                 <Switch
@@ -624,86 +690,119 @@ export function DirectoriesPage() {
           {/* Search Tab */}
           {activeTab === 'search' && (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Base DN</Label>
-                <Input
-                  value={formData.config.base_dn}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    config: { ...formData.config, base_dn: e.target.value },
-                  })}
-                  placeholder="dc=example,dc=com"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>User Base DN (optional)</Label>
-                  <Input
-                    value={formData.config.user_base_dn}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, user_base_dn: e.target.value },
-                    })}
-                    placeholder="ou=people,dc=example,dc=com"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Group Base DN (optional)</Label>
-                  <Input
-                    value={formData.config.group_base_dn}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, group_base_dn: e.target.value },
-                    })}
-                    placeholder="ou=groups,dc=example,dc=com"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>User Filter</Label>
-                  <Input
-                    value={formData.config.user_filter}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, user_filter: e.target.value },
-                    })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Group Filter</Label>
-                  <Input
-                    value={formData.config.group_filter}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, group_filter: e.target.value },
-                    })}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Member Attribute</Label>
-                  <Input
-                    value={formData.config.member_attribute}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, member_attribute: e.target.value },
-                    })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Page Size</Label>
-                  <Input
-                    type="number"
-                    value={formData.config.page_size}
-                    onChange={(e) => setFormData({
-                      ...formData,
-                      config: { ...formData.config, page_size: parseInt(e.target.value) || 500 },
-                    })}
-                  />
-                </div>
-              </div>
+              {formData.type === 'azure_ad' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>User Filter (OData $filter)</Label>
+                      <Input
+                        value={formData.config.user_filter}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, user_filter: e.target.value },
+                        })}
+                        placeholder="accountEnabled eq true"
+                      />
+                      <p className="text-xs text-muted-foreground">OData filter expression for Microsoft Graph /users endpoint</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Group Filter (OData $filter)</Label>
+                      <Input
+                        value={formData.config.group_filter}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, group_filter: e.target.value },
+                        })}
+                        placeholder="securityEnabled eq true"
+                      />
+                      <p className="text-xs text-muted-foreground">OData filter expression for Microsoft Graph /groups endpoint</p>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label>Base DN</Label>
+                    <Input
+                      value={formData.config.base_dn}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        config: { ...formData.config, base_dn: e.target.value },
+                      })}
+                      placeholder="dc=example,dc=com"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>User Base DN (optional)</Label>
+                      <Input
+                        value={formData.config.user_base_dn}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, user_base_dn: e.target.value },
+                        })}
+                        placeholder="ou=people,dc=example,dc=com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Group Base DN (optional)</Label>
+                      <Input
+                        value={formData.config.group_base_dn}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, group_base_dn: e.target.value },
+                        })}
+                        placeholder="ou=groups,dc=example,dc=com"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>User Filter</Label>
+                      <Input
+                        value={formData.config.user_filter}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, user_filter: e.target.value },
+                        })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Group Filter</Label>
+                      <Input
+                        value={formData.config.group_filter}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, group_filter: e.target.value },
+                        })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Member Attribute</Label>
+                      <Input
+                        value={formData.config.member_attribute}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, member_attribute: e.target.value },
+                        })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Page Size</Label>
+                      <Input
+                        type="number"
+                        value={formData.config.page_size}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          config: { ...formData.config, page_size: parseInt(e.target.value) || 500 },
+                        })}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
 

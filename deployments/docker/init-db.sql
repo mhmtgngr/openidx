@@ -3091,3 +3091,284 @@ INSERT INTO audit_retention_policies (id, name, event_category, retention_days, 
 ('e0000000-0000-0000-0000-000000000001', 'Standard Retention', 'all', 365, true, false),
 ('e0000000-0000-0000-0000-000000000002', 'Authentication Events', 'authentication', 90, true, false)
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- PHASE 17: MULTI-TENANCY, PRIVACY, FEDERATION & NOTIFICATIONS
+-- ============================================================================
+
+-- 17A: Tenant branding customization
+CREATE TABLE IF NOT EXISTS tenant_branding (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    logo_url VARCHAR(500) DEFAULT '',
+    favicon_url VARCHAR(500) DEFAULT '',
+    primary_color VARCHAR(20) DEFAULT '#1e40af',
+    secondary_color VARCHAR(20) DEFAULT '#3b82f6',
+    background_color VARCHAR(20) DEFAULT '#f8fafc',
+    background_image_url VARCHAR(500) DEFAULT '',
+    login_page_title VARCHAR(255) DEFAULT 'Sign In',
+    login_page_message TEXT DEFAULT '',
+    portal_title VARCHAR(255) DEFAULT 'OpenIDX Portal',
+    custom_css TEXT DEFAULT '',
+    custom_footer TEXT DEFAULT '',
+    powered_by_visible BOOLEAN DEFAULT true,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(org_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_branding_org ON tenant_branding(org_id);
+
+-- 17A: Tenant-scoped settings
+CREATE TABLE IF NOT EXISTS tenant_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    category VARCHAR(100) NOT NULL,
+    settings JSONB NOT NULL DEFAULT '{}',
+    updated_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(org_id, category)
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_settings_org ON tenant_settings(org_id);
+
+-- 17A: Tenant domain mappings
+CREATE TABLE IF NOT EXISTS tenant_domains (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    domain VARCHAR(255) NOT NULL UNIQUE,
+    domain_type VARCHAR(50) NOT NULL DEFAULT 'subdomain',
+    verified BOOLEAN DEFAULT false,
+    verification_token VARCHAR(255),
+    verified_at TIMESTAMP WITH TIME ZONE,
+    ssl_enabled BOOLEAN DEFAULT false,
+    primary_domain BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_domains_org ON tenant_domains(org_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_domains_domain ON tenant_domains(domain);
+
+-- 17B: User consents tracking (GDPR)
+CREATE TABLE IF NOT EXISTS user_consents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    consent_type VARCHAR(100) NOT NULL,
+    version VARCHAR(50) NOT NULL DEFAULT '1.0',
+    granted BOOLEAN NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    metadata JSONB DEFAULT '{}',
+    granted_at TIMESTAMP WITH TIME ZONE,
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_consents_user ON user_consents(user_id, consent_type);
+CREATE INDEX IF NOT EXISTS idx_user_consents_type ON user_consents(consent_type, granted);
+
+-- 17B: Data Subject Access Requests (DSARs)
+CREATE TABLE IF NOT EXISTS data_subject_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    request_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    reason TEXT,
+    requested_data_categories JSONB DEFAULT '[]',
+    result_file_path VARCHAR(500),
+    result_file_size BIGINT,
+    processed_by UUID REFERENCES users(id),
+    notes TEXT,
+    due_date TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_dsar_user ON data_subject_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_dsar_status ON data_subject_requests(status);
+
+-- 17B: Privacy retention policies
+CREATE TABLE IF NOT EXISTS privacy_retention_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    data_category VARCHAR(100) NOT NULL,
+    retention_days INTEGER NOT NULL,
+    action VARCHAR(50) NOT NULL DEFAULT 'delete',
+    anonymize_fields JSONB DEFAULT '[]',
+    enabled BOOLEAN DEFAULT false,
+    last_executed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_retention_category ON privacy_retention_policies(data_category);
+
+-- 17B: Privacy Impact Assessments
+CREATE TABLE IF NOT EXISTS privacy_assessments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    data_categories JSONB DEFAULT '[]',
+    processing_purposes JSONB DEFAULT '[]',
+    risk_level VARCHAR(50) DEFAULT 'low',
+    status VARCHAR(50) DEFAULT 'draft',
+    findings JSONB DEFAULT '[]',
+    mitigations JSONB DEFAULT '[]',
+    assessor_id UUID REFERENCES users(id),
+    reviewer_id UUID REFERENCES users(id),
+    review_notes TEXT,
+    approved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_assessments_status ON privacy_assessments(status);
+CREATE INDEX IF NOT EXISTS idx_privacy_assessments_risk ON privacy_assessments(risk_level);
+
+-- 17C: Social login provider configurations
+CREATE TABLE IF NOT EXISTS social_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider_id UUID NOT NULL REFERENCES identity_providers(id) ON DELETE CASCADE,
+    provider_key VARCHAR(50) NOT NULL UNIQUE,
+    display_name VARCHAR(255) NOT NULL,
+    icon_url VARCHAR(500) DEFAULT '',
+    button_color VARCHAR(20) DEFAULT '',
+    button_text VARCHAR(255) DEFAULT '',
+    auto_create_users BOOLEAN DEFAULT true,
+    auto_link_by_email BOOLEAN DEFAULT true,
+    default_role VARCHAR(255) DEFAULT 'user',
+    allowed_domains JSONB DEFAULT '[]',
+    attribute_mapping JSONB DEFAULT '{}',
+    enabled BOOLEAN DEFAULT true,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_social_providers_key ON social_providers(provider_key);
+
+-- 17C: Federation rules
+CREATE TABLE IF NOT EXISTS federation_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    email_domain VARCHAR(255) NOT NULL UNIQUE,
+    provider_id UUID NOT NULL REFERENCES identity_providers(id) ON DELETE CASCADE,
+    priority INTEGER DEFAULT 0,
+    auto_redirect BOOLEAN DEFAULT false,
+    enabled BOOLEAN DEFAULT true,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_federation_rules_domain ON federation_rules(email_domain);
+
+-- 17C: User identity links
+CREATE TABLE IF NOT EXISTS user_identity_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider_id UUID NOT NULL REFERENCES identity_providers(id) ON DELETE CASCADE,
+    external_id VARCHAR(255) NOT NULL,
+    external_email VARCHAR(255),
+    external_username VARCHAR(255),
+    display_name VARCHAR(255),
+    profile_data JSONB DEFAULT '{}',
+    is_primary BOOLEAN DEFAULT false,
+    linked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(provider_id, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_identity_links_user ON user_identity_links(user_id);
+
+-- 17C: Custom claims mappings
+CREATE TABLE IF NOT EXISTS custom_claims_mappings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    claim_name VARCHAR(255) NOT NULL,
+    source_type VARCHAR(50) NOT NULL,
+    source_value VARCHAR(500) NOT NULL,
+    claim_type VARCHAR(50) DEFAULT 'string',
+    include_in_id_token BOOLEAN DEFAULT true,
+    include_in_access_token BOOLEAN DEFAULT false,
+    include_in_userinfo BOOLEAN DEFAULT true,
+    condition JSONB DEFAULT '{}',
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(application_id, claim_name)
+);
+CREATE INDEX IF NOT EXISTS idx_custom_claims_app ON custom_claims_mappings(application_id);
+
+-- 17D: Notification routing rules
+CREATE TABLE IF NOT EXISTS notification_routing_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    conditions JSONB DEFAULT '{}',
+    channels JSONB NOT NULL DEFAULT '["in_app"]',
+    template_overrides JSONB DEFAULT '{}',
+    priority INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT true,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_event ON notification_routing_rules(event_type, enabled);
+
+-- 17D: Notification digests
+CREATE TABLE IF NOT EXISTS notification_digests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    digest_type VARCHAR(50) NOT NULL DEFAULT 'daily',
+    channel VARCHAR(50) NOT NULL DEFAULT 'email',
+    last_sent_at TIMESTAMP WITH TIME ZONE,
+    next_scheduled_at TIMESTAMP WITH TIME ZONE,
+    notification_count INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT true,
+    settings JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, digest_type, channel)
+);
+CREATE INDEX IF NOT EXISTS idx_digests_user ON notification_digests(user_id);
+CREATE INDEX IF NOT EXISTS idx_digests_next ON notification_digests(next_scheduled_at, enabled);
+
+-- 17D: Broadcast messages
+CREATE TABLE IF NOT EXISTS broadcast_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    channel VARCHAR(50) NOT NULL DEFAULT 'in_app',
+    target_type VARCHAR(50) NOT NULL DEFAULT 'all',
+    target_ids JSONB DEFAULT '[]',
+    priority VARCHAR(20) DEFAULT 'normal',
+    scheduled_at TIMESTAMP WITH TIME ZONE,
+    sent_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(50) DEFAULT 'draft',
+    total_recipients INTEGER DEFAULT 0,
+    delivered_count INTEGER DEFAULT 0,
+    read_count INTEGER DEFAULT 0,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcast_messages(status);
+CREATE INDEX IF NOT EXISTS idx_broadcasts_created ON broadcast_messages(created_at DESC);
+
+-- Phase 17 Seed data
+INSERT INTO tenant_branding (id, org_id, logo_url, primary_color, secondary_color, login_page_title, portal_title)
+SELECT 'f1700000-0000-0000-0000-000000000001', id, '', '#1e40af', '#3b82f6', 'Sign In', 'OpenIDX Portal'
+FROM organizations WHERE slug = 'openidx'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO privacy_retention_policies (id, name, data_category, retention_days, action, enabled) VALUES
+('f1700000-0000-0000-0001-000000000001', 'Audit Log Retention', 'audit_logs', 365, 'delete', false),
+('f1700000-0000-0000-0001-000000000002', 'Session Data Retention', 'sessions', 90, 'delete', false),
+('f1700000-0000-0000-0001-000000000003', 'Login History Retention', 'login_history', 180, 'anonymize', false)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO notification_routing_rules (id, name, event_type, channels, enabled) VALUES
+('f1700000-0000-0000-0003-000000000001', 'Security Alerts - All Channels', 'security_alert', '["in_app", "email"]'::jsonb, true),
+('f1700000-0000-0000-0003-000000000002', 'Access Reviews - In-App', 'review_assigned', '["in_app"]'::jsonb, true),
+('f1700000-0000-0000-0003-000000000003', 'Password Expiry - Email', 'password_expiry', '["email"]'::jsonb, true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Azure AD / Entra ID support
+ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);
+ALTER TABLE directory_sync_state ADD COLUMN IF NOT EXISTS last_delta_link TEXT;

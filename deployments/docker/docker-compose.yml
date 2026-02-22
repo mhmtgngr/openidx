@@ -8,6 +8,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: openidx-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: openidx
       POSTGRES_USER: openidx
@@ -30,6 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: openidx-redis
+    restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}
     volumes:
       - redis_data:/data
@@ -46,6 +48,7 @@ services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
     container_name: openidx-elasticsearch
+    restart: unless-stopped
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -92,15 +95,12 @@ services:
   apisix:
     image: apache/apisix:3.8.0-debian
     container_name: openidx-apisix
+    restart: unless-stopped
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./apisix-wrapper.sh:/usr/local/bin/apisix-wrapper.sh:ro
       - apisix_config:/apisix-conf
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        ln -sf /apisix-conf/apisix.yaml /usr/local/apisix/conf/apisix.yaml
-        exec /docker-entrypoint.sh docker-start
+    entrypoint: ["/bin/sh", "/usr/local/bin/apisix-wrapper.sh"]
     ports:
       - "8088:9080"
       - "8443:9443"
@@ -121,6 +121,7 @@ services:
   etcd:
     image: quay.io/coreos/etcd:v3.5.12
     container_name: openidx-etcd
+    restart: unless-stopped
     command:
       - /usr/local/bin/etcd
       - --data-dir=/etcd-data
@@ -139,6 +140,7 @@ services:
   opa:
     image: openpolicyagent/opa:0.61.0
     container_name: openidx-opa
+    restart: unless-stopped
     command:
       - "run"
       - "--server"
@@ -164,6 +166,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.identity-service
       network: host
     container_name: openidx-identity-service
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -188,6 +191,12 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - openidx-network
 
@@ -197,6 +206,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.governance-service
       network: host
     container_name: openidx-governance-service
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -216,6 +226,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - openidx-network
 
@@ -225,6 +241,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.provisioning-service
       network: host
     container_name: openidx-provisioning-service
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -243,6 +260,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - openidx-network
 
@@ -252,6 +275,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.audit-service
       network: host
     container_name: openidx-audit-service
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -268,6 +292,12 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - openidx-network
 
@@ -277,6 +307,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.admin-api
       network: host
     container_name: openidx-admin-api
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -301,6 +332,12 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - openidx-network
 
@@ -314,6 +351,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.oauth-service
       network: host
     container_name: openidx-oauth-service
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -347,6 +385,7 @@ services:
   tls-proxy:
     image: nginx:alpine
     container_name: openidx-tls-proxy
+    restart: unless-stopped
     volumes:
       - browzer_certs:/certs:ro
     ports:
@@ -414,6 +453,7 @@ services:
   ziti-controller:
     image: openziti/ziti-controller:latest
     container_name: openidx-ziti-controller
+    restart: unless-stopped
     environment:
       - ZITI_BOOTSTRAP=true
       - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
@@ -484,6 +524,7 @@ services:
   ziti-router:
     image: openziti/ziti-router:latest
     container_name: openidx-ziti-router
+    restart: unless-stopped
     environment:
       - ZITI_BOOTSTRAP=true
       - ZITI_BOOTSTRAP_ENROLLMENT=true
@@ -638,6 +679,7 @@ services:
   browzer-bootstrapper:
     image: ghcr.io/openziti/ziti-browzer-bootstrapper:latest
     container_name: openidx-browzer-bootstrapper
+    restart: unless-stopped
     entrypoint: ["/bin/bash", "/browzer-entrypoint.sh"]
     environment:
       - ZITI_BROWZER_BOOTSTRAPPER_LOGLEVEL=debug
@@ -677,6 +719,7 @@ services:
   browzer-router:
     image: nginx:alpine
     container_name: openidx-browzer-router
+    restart: unless-stopped
     entrypoint: ["/bin/sh", "/browzer-router-entrypoint.sh"]
     volumes:
       - browzer_config:/shared-config
@@ -697,6 +740,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.demo-app
       network: host
     container_name: openidx-demo-app
+    restart: unless-stopped
     ports:
       - "8090:8090"
     healthcheck:
@@ -718,6 +762,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.simple-web
       network: host
     container_name: openidx-simple-web
+    restart: unless-stopped
     ports:
       - "8091:8091"
     healthcheck:
@@ -736,12 +781,14 @@ services:
   guacd:
     image: guacamole/guacd:latest
     container_name: openidx-guacd
+    restart: unless-stopped
     networks:
       - openidx-network
 
   guacamole:
     image: guacamole/guacamole:latest
     container_name: openidx-guacamole
+    restart: unless-stopped
     entrypoint: /bin/bash
     command:
       - -c
@@ -785,6 +832,7 @@ services:
   guacamole-zbr-proxy:
     image: nginx:alpine
     container_name: openidx-guacamole-zbr-proxy
+    restart: unless-stopped
     entrypoint: /bin/sh
     command:
       - -c
@@ -1032,6 +1080,7 @@ services:
       dockerfile: deployments/docker/Dockerfile.access-service
       network: host
     container_name: openidx-access-service
+    restart: unless-stopped
     environment:
       - APP_ENV=development
       - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
@@ -1098,14 +1147,15 @@ services:
       dockerfile: ../../deployments/docker/Dockerfile.admin-console
       network: host
       args:
-        - VITE_API_URL=http://localhost:8088
-        - VITE_OAUTH_URL=http://localhost:8006
+        - VITE_API_URL=http://openidx.tdv.org:8088
+        - VITE_OAUTH_URL=http://openidx.tdv.org:8006
         - VITE_OAUTH_CLIENT_ID=admin-console
         - VITE_AUTH_PROVIDER=openidx
     container_name: openidx-admin-console
+    restart: unless-stopped
     environment:
-      - VITE_API_URL=http://localhost:8088
-      - VITE_OAUTH_URL=http://localhost:8006
+      - VITE_API_URL=http://openidx.tdv.org:8088
+      - VITE_OAUTH_URL=http://openidx.tdv.org:8006
       - VITE_OAUTH_CLIENT_ID=admin-console
       - VITE_AUTH_PROVIDER=openidx
     ports:
@@ -1113,6 +1163,12 @@ services:
     depends_on:
       - admin-api
       - oauth-service
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/ > /dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - openidx-network
 
@@ -1123,6 +1179,7 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     container_name: openidx-mailpit
+    restart: unless-stopped
     ports:
       - "8025:8025"
       - "1025:1025"

@@ -2,7 +2,32 @@
   "permissions": {
     "allow": [
       "Bash(docker compose:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(export PATH=~/go/go/bin:$PATH && go test -count=1 ./... 2>&1)",
+      "Bash(docker restart:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker cp /tmp/simple-zai-webhook2.json n8n:/tmp/simple-zai-webhook2.json && docker exec n8n n8n import:workflow --input=/tmp/simple-zai-webhook2.json 2>&1)",
+      "Bash(podman restart n8n 2>&1 && sleep 10 && curl -s -X POST http://localhost:5678/webhook/zai-test -H \"Content-Type: application/json\" -d '{\"task\": \"Say hello\"}' 2>&1)",
+      "Bash(podman exec:*)",
+      "Bash(grep:*)",
+      "Bash(podman ps:*)",
+      "Bash(tail:*)",
+      "Bash(podman stop:*)",
+      "Bash(cd:*)",
+      "Bash(podman restart:*)",
+      "Bash(podman start:*)",
+      "Bash(podman rm:*)",
+      "Bash(podman-compose up:*)",
+      "Bash(chmod +x:*)",
+      "Bash(sleep 10:*)",
+      "Bash(ip addr:*)",
+      "Bash(podman network:*)",
+      "Bash(podman logs:*)",
+      "Bash(podman run:*)",
+      "Bash(echo Python parsing failed, showing raw...:*)",
+      "Bash(podman-compose build:*)",
+      "Bash(cat:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

@@ -104,8 +104,8 @@ func (s *Service) BeginWebAuthnRegistration(ctx context.Context, userID string) 
 	userIDBytes, _ := uuid.Parse(userID)
 	webauthnUser := &WebAuthnUser{
 		ID:          userIDBytes[:],
-		Name:        user.Username,
-		DisplayName: fmt.Sprintf("%s %s", user.FirstName, user.LastName),
+		Name:        user.UserName,
+		DisplayName: fmt.Sprintf("%s %s", user.GetFirstName(), user.GetLastName()),
 		Credentials: webauthnCreds,
 	}
 
@@ -127,7 +127,7 @@ func (s *Service) BeginWebAuthnRegistration(ctx context.Context, userID string) 
 
 	s.logger.Info("WebAuthn registration initiated",
 		zap.String("user_id", userID),
-		zap.String("username", user.Username))
+		zap.String("username", user.UserName))
 
 	return options, nil
 }
@@ -173,8 +173,8 @@ func (s *Service) FinishWebAuthnRegistration(ctx context.Context, userID string,
 	userIDBytes, _ := uuid.Parse(userID)
 	webauthnUser := &WebAuthnUser{
 		ID:          userIDBytes[:],
-		Name:        user.Username,
-		DisplayName: fmt.Sprintf("%s %s", user.FirstName, user.LastName),
+		Name:        user.UserName,
+		DisplayName: fmt.Sprintf("%s %s", user.GetFirstName(), user.GetLastName()),
 		Credentials: webauthnCreds,
 	}
 

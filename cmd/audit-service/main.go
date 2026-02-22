@@ -19,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/tlsutil"
@@ -46,6 +47,8 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	cfg.LogSecurityWarnings(log)
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("audit-service", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
@@ -55,7 +58,12 @@ func main() {
 		defer shutdownTracer(context.Background())
 	}
 
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
+		SSLMode:     cfg.DatabaseSSLMode,
+		SSLRootCert: cfg.DatabaseSSLRootCert,
+		SSLCert:     cfg.DatabaseSSLCert,
+		SSLKey:      cfg.DatabaseSSLKey,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
@@ -69,6 +77,11 @@ func main() {
 		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
 		SentinelPassword:   cfg.RedisSentinelPassword,
 		Password:           cfg.GetRedisPassword(),
+		TLSEnabled:         cfg.RedisTLSEnabled,
+		TLSCACert:          cfg.RedisTLSCACert,
+		TLSCert:            cfg.RedisTLSCert,
+		TLSKey:             cfg.RedisTLSKey,
+		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
 	})
 	if err != nil {
 		log.Warn("Failed to connect to Redis, rate limiting will fail open", zap.Error(err))
@@ -79,7 +92,13 @@ func main() {
 	// Initialize Elasticsearch client (best-effort — audit works without ES)
 	var es *database.ElasticsearchClient
 	if cfg.ElasticsearchURL != "" {
-		es, err = database.NewElasticsearch(cfg.ElasticsearchURL)
+		es, err = database.NewElasticsearchFromConfig(database.ElasticsearchConfig{
+			URL:      cfg.ElasticsearchURL,
+			Username: cfg.ElasticsearchUsername,
+			Password: cfg.ElasticsearchPassword,
+			TLS:      cfg.ElasticsearchTLS,
+			CACert:   cfg.ElasticsearchCACert,
+		})
 		if err != nil {
 			log.Warn("Elasticsearch unavailable, full-text search disabled", zap.Error(err))
 		}
@@ -121,29 +140,21 @@ func main() {
 	audit.RegisterRoutes(router, auditService)
 	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService)
 
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": "audit-service",
-			"version": Version,
-		})
-	})
+	// Initialize health service with database check
+	healthService := health.NewHealthService(log)
+	healthService.SetVersion(Version)
+	healthService.RegisterCheck(health.NewPostgresChecker(db))
 
-	router.GET("/ready", func(c *gin.Context) {
-		if err := db.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
-			return
-		}
-		esStatus := "not configured"
-		if es != nil {
-			if err := es.Ping(); err != nil {
-				esStatus = "unhealthy"
-			} else {
-				esStatus = "healthy"
-			}
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready", "elasticsearch": esStatus})
-	})
+	// Add Elasticsearch check if configured (optional dependency)
+	if es != nil {
+		healthService.RegisterCheck(&elasticsearchChecker{client: es})
+	}
+
+	// Register standard health check endpoints (/health/live, /health/ready, /health)
+	healthService.RegisterStandardRoutes(router)
+
+	// Keep legacy /ready endpoint for backward compatibility
+	router.GET("/ready", healthService.ReadyHandler())
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -174,4 +185,43 @@ func main() {
 	}
 
 	log.Info("Server exited")
+}
+
+// elasticsearchChecker implements health.HealthChecker for Elasticsearch
+type elasticsearchChecker struct {
+	client *database.ElasticsearchClient
+}
+
+func (e *elasticsearchChecker) Name() string {
+	return "elasticsearch"
+}
+
+func (e *elasticsearchChecker) Check(ctx context.Context) health.DependencyCheck {
+	start := time.Now()
+
+	err := e.client.Ping()
+	latency := time.Since(start)
+
+	if err != nil {
+		return health.DependencyCheck{
+			Status:    "down",
+			Latency:   latency.String(),
+			Details:   fmt.Sprintf("ping failed: %v", err),
+			CheckedAt: time.Now(),
+		}
+	}
+
+	status := "up"
+	details := ""
+	if latency > 500*time.Millisecond {
+		status = "degraded"
+		details = fmt.Sprintf("high latency: %s", latency.String())
+	}
+
+	return health.DependencyCheck{
+		Status:    status,
+		Latency:   latency.String(),
+		Details:   details,
+		CheckedAt: time.Now(),
+	}
 }

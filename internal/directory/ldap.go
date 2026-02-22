@@ -2,11 +2,27 @@ package directory
 
 import (
 	"crypto/tls"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf16"
 
 	"github.com/go-ldap/ldap/v3"
 	"go.uber.org/zap"
 )
+
+// ErrPasswordComplexity indicates the password doesn't meet AD complexity requirements
+var ErrPasswordComplexity = errors.New("password does not meet complexity requirements")
+
+// ErrPasswordTooShort indicates the password is too short
+var ErrPasswordTooShort = errors.New("password is too short")
+
+// ErrPasswordHistory indicates the password was recently used
+var ErrPasswordHistory = errors.New("password was recently used and cannot be reused")
+
+// ErrPasswordInvalid indicates the current password is incorrect
+var ErrPasswordInvalid = errors.New("current password is incorrect")
 
 // LDAPConnector manages LDAP connections and searches
 type LDAPConnector struct {
@@ -180,6 +196,80 @@ func (c *LDAPConnector) AuthenticateUser(username, password string) error {
 	}
 	defer conn.Close()
 
+	userDN, err := c.findUserDN(conn, username)
+	if err != nil {
+		return err
+	}
+
+	// Bind as the user to verify password
+	if err := conn.Bind(userDN, password); err != nil {
+		return fmt.Errorf("LDAP authentication failed: %w", err)
+	}
+
+	return nil
+}
+
+// ChangePassword changes a user's password via LDAP Password Modify Extended Operation (RFC 3062).
+// The user's current password is verified first by rebinding.
+func (c *LDAPConnector) ChangePassword(username, oldPassword, newPassword string) error {
+	conn, err := c.Connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	userDN, err := c.findUserDN(conn, username)
+	if err != nil {
+		return err
+	}
+
+	// Re-bind as the user to verify old password
+	if err := conn.Bind(userDN, oldPassword); err != nil {
+		return ErrPasswordInvalid
+	}
+
+	if c.isActiveDirectory() {
+		// AD: use unicodePwd attribute replace (old → new)
+		return c.changePasswordAD(conn, userDN, oldPassword, newPassword)
+	}
+
+	// Standard LDAP: Password Modify Extended Operation (RFC 3062)
+	req := ldap.NewPasswordModifyRequest(userDN, oldPassword, newPassword)
+	_, err = conn.PasswordModify(req)
+	if err != nil {
+		return c.parseLDAPPasswordError(err)
+	}
+	return nil
+}
+
+// ResetPassword resets a user's password without knowing the old password (admin/service account operation).
+func (c *LDAPConnector) ResetPassword(username, newPassword string) error {
+	conn, err := c.Connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	userDN, err := c.findUserDN(conn, username)
+	if err != nil {
+		return err
+	}
+
+	if c.isActiveDirectory() {
+		return c.resetPasswordAD(conn, userDN, newPassword)
+	}
+
+	// Standard LDAP: Password Modify with empty old password (service account privilege)
+	req := ldap.NewPasswordModifyRequest(userDN, "", newPassword)
+	_, err = conn.PasswordModify(req)
+	if err != nil {
+		return c.parseLDAPPasswordError(err)
+	}
+	return nil
+}
+
+// findUserDN looks up a user's DN by username
+func (c *LDAPConnector) findUserDN(conn *ldap.Conn, username string) (string, error) {
 	baseDN := c.cfg.UserBaseDN
 	if baseDN == "" {
 		baseDN = c.cfg.BaseDN
@@ -214,21 +304,89 @@ func (c *LDAPConnector) AuthenticateUser(username, password string) error {
 
 	result, err := conn.Search(searchReq)
 	if err != nil {
-		return fmt.Errorf("user search failed: %w", err)
+		return "", fmt.Errorf("user search failed: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
-		return fmt.Errorf("user not found in LDAP")
+		return "", fmt.Errorf("user not found in LDAP")
 	}
 
-	userDN := result.Entries[0].DN
+	return result.Entries[0].DN, nil
+}
 
-	// Bind as the user to verify password
-	if err := conn.Bind(userDN, password); err != nil {
-		return fmt.Errorf("LDAP authentication failed: %w", err)
+// changePasswordAD changes a user's password via AD's unicodePwd attribute.
+// Requires the connection to be bound as the user (old password already verified).
+func (c *LDAPConnector) changePasswordAD(conn *ldap.Conn, userDN, oldPassword, newPassword string) error {
+	modReq := ldap.NewModifyRequest(userDN, nil)
+	modReq.Delete("unicodePwd", []string{string(encodePasswordAD(oldPassword))})
+	modReq.Add("unicodePwd", []string{string(encodePasswordAD(newPassword))})
+
+	if err := conn.Modify(modReq); err != nil {
+		return c.parseLDAPPasswordError(err)
 	}
-
 	return nil
+}
+
+// resetPasswordAD resets a user's password via AD's unicodePwd attribute (admin/service account operation).
+func (c *LDAPConnector) resetPasswordAD(conn *ldap.Conn, userDN, newPassword string) error {
+	modReq := ldap.NewModifyRequest(userDN, nil)
+	modReq.Replace("unicodePwd", []string{string(encodePasswordAD(newPassword))})
+
+	if err := conn.Modify(modReq); err != nil {
+		return c.parseLDAPPasswordError(err)
+	}
+	return nil
+}
+
+// encodePasswordAD encodes a password for AD's unicodePwd attribute (UTF-16LE with surrounding quotes)
+func encodePasswordAD(password string) []byte {
+	quoted := "\"" + password + "\""
+	runes := utf16.Encode([]rune(quoted))
+	buf := make([]byte, len(runes)*2)
+	for i, r := range runes {
+		binary.LittleEndian.PutUint16(buf[i*2:], r)
+	}
+	return buf
+}
+
+// isActiveDirectory returns true if the directory type is configured as Active Directory
+func (c *LDAPConnector) isActiveDirectory() bool {
+	return c.cfg.DirectoryType == "active_directory"
+}
+
+// parseLDAPPasswordError converts LDAP error codes to user-friendly error messages
+func (c *LDAPConnector) parseLDAPPasswordError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	errStr := err.Error()
+
+	// AD returns constraint violation (LDAP result code 19) with data codes in the message
+	var ldapErr *ldap.Error
+	if errors.As(err, &ldapErr) {
+		switch ldapErr.ResultCode {
+		case ldap.LDAPResultConstraintViolation:
+			// Parse AD sub-error codes from the diagnostic message
+			if strings.Contains(errStr, "0052D") || strings.Contains(errStr, "052D") {
+				return ErrPasswordComplexity
+			}
+			if strings.Contains(errStr, "00524") || strings.Contains(errStr, "0524") {
+				return ErrPasswordTooShort
+			}
+			if strings.Contains(errStr, "00553") || strings.Contains(errStr, "0553") {
+				return ErrPasswordHistory
+			}
+			return fmt.Errorf("password policy violation: %w", err)
+		case ldap.LDAPResultInvalidCredentials:
+			return ErrPasswordInvalid
+		case ldap.LDAPResultUnwillingToPerform:
+			return fmt.Errorf("server refused password change (TLS may be required): %w", err)
+		}
+	}
+
+	c.logger.Warn("LDAP password operation failed", zap.Error(err))
+	return fmt.Errorf("password change failed: %w", err)
 }
 
 // userAttributes returns the list of LDAP attributes to fetch for users

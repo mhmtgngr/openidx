@@ -18,6 +18,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/opa"
@@ -49,6 +50,8 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	cfg.LogSecurityWarnings(log)
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("governance-service", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
@@ -59,7 +62,12 @@ func main() {
 	}
 
 	// Initialize database connection
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
+		SSLMode:     cfg.DatabaseSSLMode,
+		SSLRootCert: cfg.DatabaseSSLRootCert,
+		SSLCert:     cfg.DatabaseSSLCert,
+		SSLKey:      cfg.DatabaseSSLKey,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
@@ -73,6 +81,11 @@ func main() {
 		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
 		SentinelPassword:   cfg.RedisSentinelPassword,
 		Password:           cfg.GetRedisPassword(),
+		TLSEnabled:         cfg.RedisTLSEnabled,
+		TLSCACert:          cfg.RedisTLSCACert,
+		TLSCert:            cfg.RedisTLSCert,
+		TLSKey:             cfg.RedisTLSKey,
+		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -121,29 +134,17 @@ func main() {
 	governanceService.StartJITExpirationChecker(bgCtx)
 	go governanceService.StartCampaignScheduler(bgCtx)
 
-	// Health check endpoint
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": "governance-service",
-			"version": Version,
-		})
-	})
+	// Initialize health service with database and Redis checks
+	healthService := health.NewHealthService(log)
+	healthService.SetVersion(Version)
+	healthService.RegisterCheck(health.NewPostgresChecker(db))
+	healthService.RegisterCheck(health.NewRedisChecker(redis))
 
-	// Readiness check endpoint
-	router.GET("/ready", func(c *gin.Context) {
-		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
-		if err := db.Ping(); err != nil {
-			status["status"] = "not ready"
-			status["postgres"] = err.Error()
-			c.JSON(http.StatusServiceUnavailable, status)
-			return
-		}
-		if err := redis.Ping(); err != nil {
-			status["redis"] = "unhealthy"
-		}
-		c.JSON(http.StatusOK, status)
-	})
+	// Register standard health check endpoints (/health/live, /health/ready, /health)
+	healthService.RegisterStandardRoutes(router)
+
+	// Keep legacy /ready endpoint for backward compatibility
+	router.GET("/ready", healthService.ReadyHandler())
 
 	// Create HTTP server
 	server := &http.Server{

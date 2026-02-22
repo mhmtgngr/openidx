@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/opa"
@@ -72,6 +72,8 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	cfg.LogSecurityWarnings(log)
+
 	// Initialize tracing
 	tracingCfg := tracing.ConfigFromEnv("admin-api", cfg.Environment)
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
@@ -81,7 +83,12 @@ func main() {
 		defer shutdownTracer(context.Background())
 	}
 
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
+		SSLMode:     cfg.DatabaseSSLMode,
+		SSLRootCert: cfg.DatabaseSSLRootCert,
+		SSLCert:     cfg.DatabaseSSLCert,
+		SSLKey:      cfg.DatabaseSSLKey,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
@@ -94,6 +101,11 @@ func main() {
 		SentinelAddresses:  cfg.GetRedisSentinelAddresses(),
 		SentinelPassword:   cfg.RedisSentinelPassword,
 		Password:           cfg.GetRedisPassword(),
+		TLSEnabled:         cfg.RedisTLSEnabled,
+		TLSCACert:          cfg.RedisTLSCACert,
+		TLSCert:            cfg.RedisTLSCert,
+		TLSKey:             cfg.RedisTLSKey,
+		TLSSkipVerify:      cfg.RedisTLSSkipVerify,
 	})
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
@@ -125,28 +137,17 @@ func main() {
 	// Metrics endpoint
 	router.GET("/metrics", middleware.MetricsHandler())
 
-	// Public routes
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "healthy",
-			"service": "admin-api",
-			"version": Version,
-		})
-	})
+	// Initialize health service with database and Redis checks
+	healthService := health.NewHealthService(log)
+	healthService.SetVersion(Version)
+	healthService.RegisterCheck(health.NewPostgresChecker(db))
+	healthService.RegisterCheck(health.NewRedisChecker(redis))
 
-	router.GET("/ready", func(c *gin.Context) {
-		status := gin.H{"status": "ready", "postgres": "ok", "redis": "ok"}
-		if err := db.Ping(); err != nil {
-			status["status"] = "not ready"
-			status["postgres"] = err.Error()
-			c.JSON(http.StatusServiceUnavailable, status)
-			return
-		}
-		if err := redis.Ping(); err != nil {
-			status["redis"] = "unhealthy"
-		}
-		c.JSON(http.StatusOK, status)
-	})
+	// Register standard health check endpoints (/health/live, /health/ready, /health)
+	healthService.RegisterStandardRoutes(router)
+
+	// Keep legacy /ready endpoint for backward compatibility
+	router.GET("/ready", healthService.ReadyHandler())
 
 	// Initialize directory service
 	dirService := directory.NewService(db, log)
@@ -248,17 +249,8 @@ type directorySyncAdapter struct {
 	dirService *directory.Service
 }
 
-func (a *directorySyncAdapter) TestConnection(ctx context.Context, cfg interface{}) error {
-	// Convert interface{} config to directory.LDAPConfig
-	cfgBytes, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
-	var ldapCfg directory.LDAPConfig
-	if err := json.Unmarshal(cfgBytes, &ldapCfg); err != nil {
-		return fmt.Errorf("invalid LDAP config: %w", err)
-	}
-	return a.dirService.TestConnection(ctx, ldapCfg)
+func (a *directorySyncAdapter) TestConnection(ctx context.Context, dirType string, configBytes []byte) error {
+	return a.dirService.TestConnection(ctx, dirType, configBytes)
 }
 
 func (a *directorySyncAdapter) TriggerSync(ctx context.Context, directoryID string, fullSync bool) error {

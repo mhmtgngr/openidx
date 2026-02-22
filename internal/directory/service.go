@@ -50,10 +50,26 @@ func (s *Service) Stop() {
 	s.logger.Info("Directory service stopped")
 }
 
-// TestConnection tests LDAP connectivity for a given config
-func (s *Service) TestConnection(ctx context.Context, cfg LDAPConfig) error {
-	connector := NewLDAPConnector(cfg, s.logger)
-	return connector.TestConnection()
+// TestConnection tests connectivity for a given directory config
+func (s *Service) TestConnection(ctx context.Context, dirType string, configBytes []byte) error {
+	switch dirType {
+	case "ldap", "active_directory":
+		var cfg LDAPConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid LDAP config: %w", err)
+		}
+		connector := NewLDAPConnector(cfg, s.logger)
+		return connector.TestConnection()
+	case "azure_ad":
+		var cfg AzureADConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid Azure AD config: %w", err)
+		}
+		connector := NewAzureADConnector(cfg, s.logger)
+		return connector.TestConnection(ctx)
+	default:
+		return fmt.Errorf("unsupported directory type: %s", dirType)
+	}
 }
 
 // TriggerSync manually starts a sync for a directory
@@ -61,23 +77,97 @@ func (s *Service) TriggerSync(ctx context.Context, directoryID string, fullSync 
 	return s.scheduler.TriggerSync(ctx, directoryID, fullSync)
 }
 
-// AuthenticateUser authenticates a user against their directory's LDAP
+// AuthenticateUser authenticates a user against their directory
 func (s *Service) AuthenticateUser(ctx context.Context, directoryID, username, password string) error {
+	dirType, configBytes, err := s.loadDirectoryTypeAndConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+
+	switch dirType {
+	case "ldap", "active_directory":
+		var cfg LDAPConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid LDAP config: %w", err)
+		}
+		connector := NewLDAPConnector(cfg, s.logger)
+		return connector.AuthenticateUser(username, password)
+	case "azure_ad":
+		return fmt.Errorf("azure_ad users must authenticate via SSO")
+	default:
+		return fmt.Errorf("unsupported directory type: %s", dirType)
+	}
+}
+
+// ChangePassword changes a user's password in their directory (user-initiated, requires old password)
+func (s *Service) ChangePassword(ctx context.Context, directoryID, username, oldPassword, newPassword string) error {
+	dirType, configBytes, err := s.loadDirectoryTypeAndConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+
+	switch dirType {
+	case "ldap", "active_directory":
+		var cfg LDAPConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid LDAP config: %w", err)
+		}
+		connector := NewLDAPConnector(cfg, s.logger)
+		return connector.ChangePassword(username, oldPassword, newPassword)
+	case "azure_ad":
+		return fmt.Errorf("password is managed by Azure Active Directory")
+	default:
+		return fmt.Errorf("unsupported directory type: %s", dirType)
+	}
+}
+
+// ResetPassword resets a user's password in their directory (admin-initiated, no old password needed)
+func (s *Service) ResetPassword(ctx context.Context, directoryID, username, newPassword string) error {
+	dirType, configBytes, err := s.loadDirectoryTypeAndConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+
+	switch dirType {
+	case "ldap", "active_directory":
+		var cfg LDAPConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid LDAP config: %w", err)
+		}
+		connector := NewLDAPConnector(cfg, s.logger)
+		return connector.ResetPassword(username, newPassword)
+	case "azure_ad":
+		var cfg AzureADConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid Azure AD config: %w", err)
+		}
+		// For Azure AD, username is actually the user's external_id (Azure objectId)
+		// Look up the external_id for this user
+		var externalID *string
+		s.db.Pool.QueryRow(ctx,
+			`SELECT external_id FROM users WHERE username = $1 AND directory_id = $2`,
+			username, directoryID).Scan(&externalID)
+		if externalID == nil {
+			return fmt.Errorf("user not found in Azure AD directory")
+		}
+		connector := NewAzureADConnector(cfg, s.logger)
+		return connector.ResetPassword(ctx, *externalID, newPassword)
+	default:
+		return fmt.Errorf("unsupported directory type: %s", dirType)
+	}
+}
+
+// loadDirectoryTypeAndConfig loads the type and raw config for a directory integration
+func (s *Service) loadDirectoryTypeAndConfig(ctx context.Context, directoryID string) (string, []byte, error) {
+	var dirType string
 	var configBytes []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT config FROM directory_integrations WHERE id = $1 AND enabled = true`,
-		directoryID).Scan(&configBytes)
+		`SELECT type, config FROM directory_integrations WHERE id = $1 AND enabled = true`,
+		directoryID).Scan(&dirType, &configBytes)
 	if err != nil {
-		return fmt.Errorf("directory not found or disabled: %w", err)
+		return "", nil, fmt.Errorf("directory not found or disabled: %w", err)
 	}
-
-	var cfg LDAPConfig
-	if err := json.Unmarshal(configBytes, &cfg); err != nil {
-		return fmt.Errorf("invalid directory config: %w", err)
-	}
-
-	connector := NewLDAPConnector(cfg, s.logger)
-	return connector.AuthenticateUser(username, password)
+	return dirType, configBytes, nil
 }
 
 // GetSyncLogs returns recent sync logs for a directory
