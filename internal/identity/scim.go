@@ -201,7 +201,7 @@ func (s *Service) HandleSCIMGetUser(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, user.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -231,7 +231,7 @@ func (s *Service) HandleSCIMReplaceUser(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, existing.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -302,7 +302,7 @@ func (s *Service) HandleSCIMPatchUser(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, user.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -344,7 +344,7 @@ func (s *Service) HandleSCIMDeleteUser(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, user.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -487,7 +487,7 @@ func (s *Service) HandleSCIMGetGroup(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, group.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -516,7 +516,7 @@ func (s *Service) HandleSCIMReplaceGroup(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, existing.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -586,7 +586,7 @@ func (s *Service) HandleSCIMPatchGroup(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, group.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -626,7 +626,7 @@ func (s *Service) HandleSCIMDeleteGroup(c *gin.Context) {
 
 	// Enforce tenant isolation
 	if !s.checkSCIMTenantAccess(c, group.OrganizationID) {
-		c.JSON(http.StatusForbidden, SCIMErrorFromAppError(403, "", "Access denied"))
+		c.JSON(http.StatusForbidden, SCIMErrorMap(403, "", "Access denied"))
 		return
 	}
 
@@ -953,14 +953,14 @@ func SCIMAuthMiddleware(validTokens map[string]string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, SCIMErrorFromAppError(401, "", "Missing Authorization header"))
+			c.JSON(http.StatusUnauthorized, SCIMErrorMap(401, "", "Missing Authorization header"))
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.JSON(http.StatusUnauthorized, SCIMErrorFromAppError(401, "", "Invalid Authorization header format"))
+			c.JSON(http.StatusUnauthorized, SCIMErrorMap(401, "", "Invalid Authorization header format"))
 			c.Abort()
 			return
 		}
@@ -970,7 +970,7 @@ func SCIMAuthMiddleware(validTokens map[string]string) gin.HandlerFunc {
 		// Validate token
 		tenantID, ok := validTokens[token]
 		if !ok {
-			c.JSON(http.StatusUnauthorized, SCIMErrorFromAppError(401, "", "Invalid Bearer token"))
+			c.JSON(http.StatusUnauthorized, SCIMErrorMap(401, "", "Invalid Bearer token"))
 			c.Abort()
 			return
 		}
@@ -984,8 +984,8 @@ func SCIMAuthMiddleware(validTokens map[string]string) gin.HandlerFunc {
 	}
 }
 
-// SCIMErrorFromAppError creates a SCIM error from HTTP status and details
-func SCIMErrorFromAppError(status int, scimType, detail string) map[string]interface{} {
+// SCIMErrorMap creates a SCIM error from HTTP status and details
+func SCIMErrorMap(status int, scimType, detail string) map[string]interface{} {
 	return gin.H{
 		"schemas":  []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
 		"status":   strconv.Itoa(status),
