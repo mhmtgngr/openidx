@@ -36,9 +36,10 @@
     },
     "6": {
       "risk-scoring": "done",
-      "updated": "2026-02-23T06:17:08+00:00"
+      "updated": "2026-02-23T06:32:16+00:00",
+      "behavioral-analytics": "running"
     }
   },
   "last_phase": "6",
-  "last_step": "risk-scoring"
+  "last_step": "behavioral-analytics"
 }
