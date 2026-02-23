@@ -511,3 +511,13 @@ func (r *RiskAssessment) GetHighRiskSignals() []Signal {
 	}
 	return highRisk
 }
+
+// String returns the string representation of the RiskLevel
+func (r RiskLevel) String() string {
+	return string(r)
+}
+
+// String returns the string representation of the Recommendation
+func (r Recommendation) String() string {
+	return string(r)
+}

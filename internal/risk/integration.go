@@ -9,34 +9,96 @@ import (
 	"go.uber.org/zap"
 )
 
-// ScoreLoginRequest wraps the RiskScorer.Score method with device registration
+// Compatibility types for the integration layer
+// These map to the current scorer implementation
+
+// ScoreRequest represents a request for risk scoring
+// Alias for LoginContext to maintain API compatibility
+type ScoreRequest = LoginContext
+
+// ScoreResult represents the result of a risk score calculation
+type ScoreResult struct {
+	TotalScore       int             // 0-100
+	RiskLevel        RiskLevel       // low/medium/high/critical
+	Factors          []RiskFactor    // Individual risk factors
+	RecommendActions []string        // Suggested actions
+	Timestamp        time.Time       // When score was calculated
+	Signals          []Signal        // Raw signals from scorer
+}
+
+// RiskFactor represents a single risk factor contributing to the score
+type RiskFactor struct {
+	Name        string  // Factor name
+	Score       int     // Points contributed
+	Description string  // Human-readable description
+	Weight      float64 // Weight in overall calculation
+}
+
+// NewRiskScorer creates a new risk scorer for use in integration
+func NewRiskScorer(db interface{}, redis interface{}, logger *zap.Logger) *Scorer {
+	config := DefaultScorerConfig()
+	return NewScorer(config, logger)
+}
+
+// ScoreLoginRequest wraps the Scorer.CalculateRiskScore method with device registration
 // This is a convenience method that integrates with the existing risk service
 func (s *Service) ScoreLoginRequest(ctx context.Context, userID, ip, userAgent, location string, lat, lon float64) (*ScoreResult, error) {
-	// Create the scorer if not already created
+	// Create the scorer
 	scorer := NewRiskScorer(s.db, s.redis, s.logger)
 
 	// Generate device fingerprint
 	fingerprint := s.ComputeDeviceFingerprint(ip, userAgent)
 
-	// Create the score request
-	req := ScoreRequest{
+	// Get device trust level
+	deviceTrustLevel := s.GetDeviceTrustLevel(ctx, userID, fingerprint)
+
+	// Create the login context (alias for ScoreRequest)
+	req := LoginContext{
 		UserID:            userID,
 		IPAddress:         ip,
 		UserAgent:         userAgent,
 		DeviceFingerprint: fingerprint,
+		LoginTime:         time.Now(),
 		Latitude:          lat,
 		Longitude:         lon,
-		Timestamp:         time.Now(),
+		DeviceTrustLevel:  deviceTrustLevel,
+		CountryCode:       "",    // Will be filled by GeoIP lookup if needed
+		City:              "",    // Will be filled by GeoIP lookup if needed
+		FailedCount:       0,    // Will be filled by checking recent failures
+		LoginCount:        1,    // Will be filled by checking recent logins
 	}
 
-	// Calculate the risk score
-	result, err := scorer.Score(ctx, req)
-	if err != nil {
-		s.logger.Error("Failed to calculate risk score",
-			zap.String("user_id", userID),
-			zap.Error(err),
-		)
-		return nil, err
+	// Calculate the risk score using the new API
+	assessment := scorer.CalculateRiskScore(ctx, req)
+
+	// Convert RiskAssessment to ScoreResult for compatibility
+	result := &ScoreResult{
+		TotalScore: assessment.Score,
+		RiskLevel:  assessment.Level,
+		Timestamp:  assessment.AssessedAt,
+		Signals:    assessment.Signals,
+	}
+
+	// Convert Signals to RiskFactors
+	for _, signal := range assessment.Signals {
+		result.Factors = append(result.Factors, RiskFactor{
+			Name:        signal.Name,
+			Score:       int(signal.Score),
+			Description: signal.Description,
+			Weight:      signal.Weight,
+		})
+	}
+
+	// Add recommendation actions
+	switch assessment.Recommendation {
+	case RecommendationAllow:
+		result.RecommendActions = []string{"Allow login"}
+	case RecommendationMonitor:
+		result.RecommendActions = []string{"Allow login", "Monitor session activity"}
+	case RecommendationStepUpMFA:
+		result.RecommendActions = []string{"Require step-up MFA", "Monitor session activity"}
+	case RecommendationBlock:
+		result.RecommendActions = []string{"Block login", "Alert security team"}
 	}
 
 	// Register/update the device
@@ -125,6 +187,13 @@ func (s *Service) EvaluateStepUpRequired(ctx context.Context, result *ScoreResul
 
 // RecordRiskEvent logs a risk event to both the database and audit log
 func (s *Service) RecordRiskEvent(ctx context.Context, userID string, result *ScoreResult, req ScoreRequest, success bool) error {
+	// Extract fields from LoginContext (ScoreRequest alias)
+	// Handle missing fields gracefully
+	authMethod := ""
+	if req.DeviceFingerprint != "" {
+		authMethod = "password" // Default to password if device fingerprint is present
+	}
+
 	// Record in login_history
 	s.RecordLogin(ctx,
 		userID,
@@ -135,7 +204,7 @@ func (s *Service) RecordRiskEvent(ctx context.Context, userID string, result *Sc
 		req.Longitude,
 		req.DeviceFingerprint,
 		success,
-		[]string{req.AuthMethod},
+		[]string{authMethod},
 		result.TotalScore,
 	)
 

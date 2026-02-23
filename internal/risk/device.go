@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -246,7 +247,7 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 
 	fp := &DeviceFingerprint{
 		Hash:         fingerprint,
-		TrustLevel:   TrustLevelUnknown,
+		TrustLevel:   trustLevel,
 		FirstSeen:    now,
 		LastSeen:     now,
 		SeenCount:    seenCount,
@@ -555,6 +556,11 @@ func normalizeTimezone(tz string) string {
 
 // IsPrivateIP checks if an IP is private/local
 func IsPrivateIP(ip string) bool {
+	// Handle localhost hostname
+	if ip == "localhost" {
+		return true
+	}
+
 	parsedIP := parseIP(ip)
 	if parsedIP == nil {
 		return false
@@ -583,17 +589,13 @@ func IsPrivateIP(ip string) bool {
 }
 
 // parseIP is a helper to parse IP addresses
-func parseIP(ip string) interface{} {
-	// This would use net.ParseIP in actual implementation
-	// For now, return nil as placeholder
-	return nil
+func parseIP(ip string) net.IP {
+	return net.ParseIP(ip)
 }
 
 // parseCIDR is a helper to parse CIDR notation
-func parseCIDR(cidr string) (interface{}, interface{}, error) {
-	// This would use net.ParseCIDR in actual implementation
-	// For now, return nil as placeholder
-	return nil, nil, nil
+func parseCIDR(cidr string) (net.IP, *net.IPNet, error) {
+	return net.ParseCIDR(cidr)
 }
 
 // Redis keys for device tracking
