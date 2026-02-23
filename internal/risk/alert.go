@@ -191,7 +191,7 @@ func (a *AlertManager) GenerateAlert(ctx context.Context, alert *Alert) error {
 		zap.String("alert_id", alert.ID),
 		zap.String("type", string(alert.Type)),
 		zap.String("severity", string(alert.Severity)),
-		zap.String("user_id", func() string { if alert.UserID != nil { return *alert.UserID } else return "" }()),
+		zap.String("user_id", func() string { if alert.UserID != nil { return *alert.UserID } else { return "" } }()),
 	)
 
 	return nil
@@ -199,6 +199,11 @@ func (a *AlertManager) GenerateAlert(ctx context.Context, alert *Alert) error {
 
 // storeAlert persists the alert to the database
 func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
+	if a.db == nil || a.db.Pool == nil {
+		// No database - skip persistence but don't fail
+		return nil
+	}
+
 	detailsJSON, _ := json.Marshal(alert.Details)
 	actionsJSON, _ := json.Marshal(alert.RemediationActions)
 	deliveriesJSON, _ := json.Marshal(alert.Deliveries)

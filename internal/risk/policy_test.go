@@ -83,7 +83,7 @@ func TestPolicyEngine_determineRiskLevel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
+		t.Run(string(tt.expected), func(t *testing.T) {
 			result := engine.determineRiskLevel(tt.score, policy)
 			if result != tt.expected {
 				t.Errorf("determineRiskLevel(%d) = %v, want %v",
@@ -287,27 +287,7 @@ func TestTenantPolicy_Validation(t *testing.T) {
 	}
 }
 
-// TestRiskLevel_String tests risk level string representation
-func TestRiskLevel_String(t *testing.T) {
-	tests := []struct {
-		level    RiskLevel
-		expected string
-	}{
-		{RiskLevelLow, "low"},
-		{RiskLevelMedium, "medium"},
-		{RiskLevelHigh, "high"},
-		{RiskLevelCritical, "critical"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			result := string(tt.level)
-			if result != tt.expected {
-				t.Errorf("RiskLevel string = %s, want %s", result, tt.expected)
-			}
-		})
-	}
-}
+// TestRiskLevel_String is defined in scorer_test.go to avoid duplication
 
 // TestAuthAction_String tests auth action string representation
 func TestAuthAction_String(t *testing.T) {
@@ -324,7 +304,7 @@ func TestAuthAction_String(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
+		t.Run(string(tt.expected), func(t *testing.T) {
 			result := string(tt.action)
 			if result != tt.expected {
 				t.Errorf("AuthAction string = %s, want %s", result, tt.expected)

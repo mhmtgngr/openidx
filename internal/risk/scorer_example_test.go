@@ -9,8 +9,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// ExampleScorer_CalculateRiskScore demonstrates basic risk scoring
-func ExampleScorer_CalculateRiskScore() {
+// DemoScorer_CalculateRiskScore demonstrates basic risk scoring
+func DemoScorer_CalculateRiskScore() {
 	// Create a scorer with default configuration
 	config := DefaultScorerConfig()
 	scorer := NewScorer(config, zap.NewNop())
@@ -53,8 +53,8 @@ func ExampleScorer_CalculateRiskScore() {
 	// Allow login - low risk
 }
 
-// ExampleScorer_ImpossibleTravel demonstrates impossible travel detection
-func ExampleScorer_ImpossibleTravel() {
+// DemoScorer_ImpossibleTravel demonstrates impossible travel detection
+func DemoScorer_ImpossibleTravel() {
 	config := DefaultScorerConfig()
 	scorer := NewScorer(config, zap.NewNop())
 	ctx := context.Background()
@@ -107,8 +107,8 @@ func ExampleScorer_ImpossibleTravel() {
 	// SF to Tokyo in 30 minutes - impossible travel risk: true
 }
 
-// ExampleScorer_HighRiskScenario demonstrates a high-risk login scenario
-func ExampleScorer_HighRiskScenario() {
+// DemoScorer_HighRiskScenario demonstrates a high-risk login scenario
+func DemoScorer_HighRiskScenario() {
 	config := DefaultScorerConfig()
 	scorer := NewScorer(config, zap.NewNop())
 	ctx := context.Background()
@@ -131,8 +131,8 @@ func ExampleScorer_HighRiskScenario() {
 	// Output: High risk scenario - Score: 66, Level: high, Recommendation: step_up_mfa
 }
 
-// ExampleScorer_TrustedDevice demonstrates a low-risk trusted device login
-func ExampleScorer_TrustedDevice() {
+// DemoScorer_TrustedDevice demonstrates a low-risk trusted device login
+func DemoScorer_TrustedDevice() {
 	config := DefaultScorerConfig()
 	scorer := NewScorer(config, zap.NewNop())
 	ctx := context.Background()

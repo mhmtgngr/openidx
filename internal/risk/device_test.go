@@ -80,7 +80,7 @@ func TestComputeFingerprint(t *testing.T) {
 
 			// Verify it's a valid hex string
 			for _, c := range fp {
-				if !isHexDigit(c) {
+				if !isHexDigit(byte(c)) {
 					t.Errorf("Fingerprint contains invalid character: %c", c)
 					break
 				}

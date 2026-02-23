@@ -12,8 +12,8 @@ import (
 // TestCheckImpossibleTravel tests the impossible travel detection logic
 func TestCheckImpossibleTravel(t *testing.T) {
 	config := DefaultIPIntelligenceConfig()
-	ipIntel := NewIPIntelligence(nil, nil, config, zap.NewNop())
-	ctx := context.Background()
+	_ = NewIPIntelligence(nil, nil, config, zap.NewNop())
+	_ = context.Background()
 
 	now := time.Now()
 

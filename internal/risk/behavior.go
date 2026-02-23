@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -42,13 +41,7 @@ type BehaviorProfile struct {
 	ProfileEstablished   bool        `json:"profile_established"`   // True if enough data collected
 }
 
-// GeoPoint represents a geographic location
-type GeoPoint struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Country   string  `json:"country,omitempty"`
-	City      string  `json:"city,omitempty"`
-}
+// GeoPoint is defined in scorer.go to avoid duplication
 
 // BehaviorConfig holds configuration for behavioral analytics
 type BehaviorConfig struct {
@@ -432,12 +425,7 @@ func (b *BehaviorTracker) computeDeviceFingerprint(ip, userAgent string) string 
 	return fmt.Sprintf("%s|%s", subnet, normalizedUA)
 }
 
-// normalizeUserAgent creates a normalized version of the user agent
-func normalizeUserAgent(ua string) string {
-	// Simple normalization - convert to lowercase
-	ua = fmt.Sprintf("%s", ua)
-	return ua
-}
+// normalizeUserAgent is defined in device.go to avoid duplication
 
 // GetTypicalLoginHours returns the user's typical login hours as a histogram
 func (b *BehaviorTracker) GetTypicalLoginHours(ctx context.Context, userID string) (map[int]int, error) {
@@ -511,11 +499,4 @@ func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
 	return earthRadius * c
 }
 
-// parseIP is a helper to parse IP addresses
-func parseIP(ip string) *net.IPAddr {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return nil
-	}
-	return &net.IPAddr{IP: parsed}
-}
+// parseIP is defined in device.go to avoid duplication

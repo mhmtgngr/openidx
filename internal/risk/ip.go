@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	_ "github.com/redis/go-redis/v9" // Imported for side effects
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"

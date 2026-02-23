@@ -19,15 +19,7 @@ const (
 	policyKeyPrefix = "policy:tenant:"
 )
 
-// RiskLevel represents the risk category
-type RiskLevel string
-
-const (
-	RiskLevelLow      RiskLevel = "low"
-	RiskLevelMedium   RiskLevel = "medium"
-	RiskLevelHigh     RiskLevel = "high"
-	RiskLevelCritical RiskLevel = "critical"
-)
+// RiskLevel is defined in scorer.go to avoid duplication
 
 // AuthAction represents the authentication action to take
 type AuthAction string
@@ -433,9 +425,13 @@ type IPRiskResult struct {
 func (p *PolicyEngine) checkIPRisk(ctx context.Context, ip string) IPRiskResult {
 	result := IPRiskResult{}
 
+	if p.db == nil || p.db.Pool == nil {
+		// No database - no IP threat data available
+		return result
+	}
+
 	// Check if IP is on blocklist
 	var blocked bool
-	var reason string
 	err := p.db.Pool.QueryRow(ctx,
 		`SELECT blocked FROM ip_blocklist WHERE ip_address = $1 AND (permanent = true OR blocked_until > NOW())`,
 		ip).Scan(&blocked)
@@ -473,6 +469,11 @@ func (p *PolicyEngine) checkIPRisk(ctx context.Context, ip string) IPRiskResult 
 
 // checkDeviceRisk checks device-based risk factors
 func (p *PolicyEngine) checkDeviceRisk(ctx context.Context, userID, fingerprint string) int {
+	if p.db == nil || p.db.Pool == nil {
+		// No database - assume unknown device risk
+		return 30
+	}
+
 	var trusted bool
 	err := p.db.Pool.QueryRow(ctx,
 		`SELECT trusted FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
@@ -492,6 +493,11 @@ func (p *PolicyEngine) checkDeviceRisk(ctx context.Context, userID, fingerprint 
 
 // checkFailedAttempts checks for recent failed login attempts
 func (p *PolicyEngine) checkFailedAttempts(ctx context.Context, userID, ip string) int {
+	if p.db == nil || p.db.Pool == nil {
+		// No database - no failure data available
+		return 0
+	}
+
 	var count int
 
 	// Check user-specific failures

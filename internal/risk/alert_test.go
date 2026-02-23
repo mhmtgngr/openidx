@@ -554,16 +554,4 @@ func TestAlert_NewDeviceComboAlert(t *testing.T) {
 	}
 }
 
-// Helper function to check if string contains substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsInString(s, substr))
-}
-
-func containsInString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
+// contains helper is defined in scorer_test.go to avoid duplication

@@ -2,7 +2,6 @@
 package risk
 
 import (
-	"context"
 	"net"
 	"testing"
 	"time"
