@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -283,7 +284,6 @@ func (s *Searcher) scanEvents(rows pgx.Rows) ([]*AuditEvent, error) {
 		}
 
 		// Verify hash integrity
-		logger := NewLogger(s.secret)
 		if err := event.VerifyHash(s.secret); err != nil {
 			// Log but don't fail - the event is still returned
 			// Callers can check the hash themselves

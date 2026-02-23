@@ -17,14 +17,14 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 )
 
-// AuditEvent represents an audit log entry
-type AuditEvent struct {
+// ServiceAuditEvent represents an audit log entry for the service layer
+type ServiceAuditEvent struct {
 	ID          string                 `json:"id"`
 	Timestamp   time.Time              `json:"timestamp"`
 	EventType   EventType              `json:"event_type"`
 	Category    EventCategory          `json:"category"`
 	Action      string                 `json:"action"`
-	Outcome     EventOutcome           `json:"outcome"`
+	Outcome     ServiceEventOutcome           `json:"outcome"`
 	ActorID     string                 `json:"actor_id,omitempty"`
 	ActorType   string                 `json:"actor_type,omitempty"`
 	ActorIP     string                 `json:"actor_ip,omitempty"`
@@ -60,26 +60,26 @@ const (
 	CategoryAccess      EventCategory = "access"
 )
 
-// EventOutcome defines the outcome of an event
-type EventOutcome string
+// ServiceEventOutcome defines the outcome of an event
+type ServiceEventOutcome string
 
 const (
-	OutcomeSuccess EventOutcome = "success"
-	OutcomeFailure EventOutcome = "failure"
-	OutcomePending EventOutcome = "pending"
+	ServiceOutcomeSuccess ServiceEventOutcome = "success"
+	ServiceOutcomeFailure ServiceEventOutcome = "failure"
+	ServiceOutcomePending ServiceEventOutcome = "pending"
 )
 
 // AuditQuery defines parameters for querying audit logs
 type AuditQuery struct {
-	StartTime  *time.Time    `json:"start_time,omitempty"`
-	EndTime    *time.Time    `json:"end_time,omitempty"`
-	EventType  EventType     `json:"event_type,omitempty"`
-	Category   EventCategory `json:"category,omitempty"`
-	ActorID    string        `json:"actor_id,omitempty"`
-	TargetID   string        `json:"target_id,omitempty"`
-	Outcome    EventOutcome  `json:"outcome,omitempty"`
-	Offset     int           `json:"offset"`
-	Limit      int           `json:"limit"`
+	StartTime  *time.Time            `json:"start_time,omitempty"`
+	EndTime    *time.Time            `json:"end_time,omitempty"`
+	EventType  EventType             `json:"event_type,omitempty"`
+	Category   EventCategory         `json:"category,omitempty"`
+	ActorID    string                `json:"actor_id,omitempty"`
+	TargetID   string                `json:"target_id,omitempty"`
+	Outcome    ServiceEventOutcome   `json:"outcome,omitempty"`
+	Offset     int                   `json:"offset"`
+	Limit      int                   `json:"limit"`
 }
 
 // ComplianceReport represents a compliance report
@@ -195,7 +195,7 @@ func (s *Service) InitElasticsearch() error {
 }
 
 // LogEvent logs an audit event to PostgreSQL and Elasticsearch
-func (s *Service) LogEvent(ctx context.Context, event *AuditEvent) error {
+func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error {
 	s.logger.Debug("Logging audit event",
 		zap.String("event_type", string(event.EventType)),
 		zap.String("action", event.Action))
@@ -229,7 +229,7 @@ func (s *Service) LogEvent(ctx context.Context, event *AuditEvent) error {
 }
 
 // QueryEvents queries audit events with filtering
-func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]AuditEvent, int, error) {
+func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]ServiceAuditEvent, int, error) {
 	s.logger.Debug("Querying audit events")
 
 	// Build dynamic query with filters
@@ -318,9 +318,9 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]AuditEv
 	}
 	defer rows.Close()
 
-	var events []AuditEvent
+	var events []ServiceAuditEvent
 	for rows.Next() {
-		var e AuditEvent
+		var e ServiceAuditEvent
 		var details []byte
 		if err := rows.Scan(
 			&e.ID, &e.Timestamp, &e.EventType, &e.Category, &e.Action, &e.Outcome,
@@ -962,8 +962,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		audit.POST("/export", svc.handleExportEvents)
 
 		// Enhanced compliance reports (Phase 12)
-		audit.POST("/reports/soc2-detailed", svc.handleGenerateSOC2Detailed)
-		audit.POST("/reports/iso27001-detailed", svc.handleGenerateISO27001Detailed)
+		audit.POST("/reports/soc2-detailed", svc.handleGenerateSOC2DetailedV2)
+		audit.POST("/reports/iso27001-detailed", svc.handleGenerateISO27001DetailedV2)
 		audit.GET("/reports/:id/evidence", svc.handleDownloadEvidence)
 	}
 }
@@ -1113,7 +1113,7 @@ func (s *Service) handleListEvents(c *gin.Context) {
 		query.Category = EventCategory(category)
 	}
 	if outcome := c.Query("outcome"); outcome != "" {
-		query.Outcome = EventOutcome(outcome)
+		query.Outcome = ServiceEventOutcome(outcome)
 	}
 	if actorID := c.Query("actor_id"); actorID != "" {
 		query.ActorID = actorID
@@ -1130,7 +1130,7 @@ func (s *Service) handleListEvents(c *gin.Context) {
 }
 
 func (s *Service) handleLogEvent(c *gin.Context) {
-	var event AuditEvent
+	var event ServiceAuditEvent
 	if err := c.ShouldBindJSON(&event); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -1146,7 +1146,7 @@ func (s *Service) handleLogEvent(c *gin.Context) {
 
 func (s *Service) handleGetEvent(c *gin.Context) {
 	eventID := c.Param("id")
-	var e AuditEvent
+	var e ServiceAuditEvent
 	var details []byte
 	err := s.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT id, timestamp, event_type, category, action, outcome,
@@ -1292,7 +1292,7 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 		EndTime   *time.Time    `json:"end_time"`
 		EventType EventType     `json:"event_type"`
 		Category  EventCategory `json:"category"`
-		Outcome   EventOutcome  `json:"outcome"`
+		Outcome   ServiceEventOutcome  `json:"outcome"`
 		Format    string        `json:"format"`
 	}
 
@@ -1310,7 +1310,7 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 		}
 		req.EventType = EventType(c.Query("event_type"))
 		req.Category = EventCategory(c.Query("category"))
-		req.Outcome = EventOutcome(c.Query("outcome"))
+		req.Outcome = ServiceEventOutcome(c.Query("outcome"))
 		req.Format = c.Query("format")
 	}
 

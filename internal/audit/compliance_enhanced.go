@@ -1005,7 +1005,7 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 }
 
 // handleGenerateSOC2Detailed handles POST requests to generate a detailed SOC 2 report.
-func (s *Service) handleGenerateSOC2Detailed(c *gin.Context) {
+func (s *Service) handleGenerateSOC2DetailedV2(c *gin.Context) {
 	var req struct {
 		StartDate string `json:"start_date"`
 		EndDate   string `json:"end_date"`
@@ -1041,7 +1041,7 @@ func (s *Service) handleGenerateSOC2Detailed(c *gin.Context) {
 }
 
 // handleGenerateISO27001Detailed handles POST requests to generate a detailed ISO 27001 report.
-func (s *Service) handleGenerateISO27001Detailed(c *gin.Context) {
+func (s *Service) handleGenerateISO27001DetailedV2(c *gin.Context) {
 	var req struct {
 		StartDate string `json:"start_date"`
 		EndDate   string `json:"end_date"`

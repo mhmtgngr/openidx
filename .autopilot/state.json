@@ -42,9 +42,10 @@
     },
     "7": {
       "audit-logging": "done",
-      "updated": "2026-02-23T07:52:56+00:00"
+      "updated": "2026-02-23T08:08:24+00:00",
+      "compliance-streaming": "running"
     }
   },
   "last_phase": "7",
-  "last_step": "audit-logging"
+  "last_step": "compliance-streaming"
 }

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -267,5 +269,6 @@ func NewDevelopmentLogger() (*zap.Logger, error) {
 
 func NewJSONLogger(encoderConfig zapcore.EncoderConfig) (*zap.Logger, error) {
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
-	return zap.New(zapcore.NewCore(encoder, zapcore.AddSync(zapcore.AddSync(zap.Open("stdout"))), zapcore.InfoLevel))
+	core := zapcore.NewCore(encoder, zapcore.AddSync(os.Stdout), zapcore.InfoLevel)
+	return zap.New(core), nil
 }
