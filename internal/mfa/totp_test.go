@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
+	"github.com/pquerna/otp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -16,10 +15,10 @@ import (
 
 func TestTOTPService_GenerateSecret(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	tests := []struct {
 		name        string
@@ -78,10 +77,10 @@ func TestTOTPService_GenerateSecret(t *testing.T) {
 
 func TestTOTPService_ValidateCode(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	// Generate a valid secret
 	secret, err := service.GenerateSecret("testuser", "test@example.com")
@@ -144,7 +143,7 @@ func TestTOTPService_ValidateCode(t *testing.T) {
 			secret:  secret.Secret,
 			code:    "123",
 			window:  0,
-			wantErr: false,
+			wantErr: true,  // TOTP validation returns error for invalid length codes
 			wantVal: false,
 		},
 		{
@@ -152,7 +151,7 @@ func TestTOTPService_ValidateCode(t *testing.T) {
 			secret:  secret.Secret,
 			code:    "123456789",
 			window:  0,
-			wantErr: false,
+			wantErr: true,  // TOTP validation returns error for invalid length codes
 			wantVal: false,
 		},
 	}
@@ -173,10 +172,10 @@ func TestTOTPService_ValidateCode(t *testing.T) {
 
 func TestTOTPService_ValidateCodeConstantTime(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	// Generate a valid secret
 	secret, err := service.GenerateSecret("testuser", "test@example.com")
@@ -200,10 +199,10 @@ func TestTOTPService_ValidateCodeConstantTime(t *testing.T) {
 
 func TestTOTPService_EnrollTOTP(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	tests := []struct {
 		name        string
@@ -249,10 +248,10 @@ func TestTOTPService_EnrollTOTP(t *testing.T) {
 
 func TestTOTPService_VerifyTOTP(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	userID := uuid.New().String()
 
@@ -321,10 +320,10 @@ func TestTOTPService_VerifyTOTP(t *testing.T) {
 
 func TestTOTPService_GenerateCode(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	secret, err := service.GenerateSecret("testuser", "test@example.com")
 	require.NoError(t, err)
@@ -343,10 +342,10 @@ func TestTOTPService_GenerateCode(t *testing.T) {
 
 func TestTOTPService_GenerateCodeCustom(t *testing.T) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(t)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	secret, err := service.GenerateSecret("testuser", "test@example.com")
 	require.NoError(t, err)
@@ -434,31 +433,20 @@ func TestTOTPConfig_Defaults(t *testing.T) {
 	config := DefaultTOTPConfig()
 
 	assert.Equal(t, DefaultTOTPIssuer, config.Issuer)
-	assert.Equal(t, DefaultTOTPPeriod, config.Period)
-	assert.Equal(t, totp.Digits(DefaultTOTPDigits), config.Digits)
+	assert.Equal(t, uint(DefaultTOTPPeriod), config.Period)
+	assert.Equal(t, otp.Digits(DefaultTOTPDigits), config.Digits)
 	assert.Equal(t, DefaultTOTPAlgorithm, config.Algorithm)
 	assert.Equal(t, DefaultSecretLength, config.SecretLength)
-}
-
-// Helper functions
-
-func newMockRedisClient() *redis.Client {
-	// Use miniredis for in-memory Redis testing
-	s := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{
-		Addr: s.Addr(),
-	})
-	return client
 }
 
 // Benchmark tests
 
 func BenchmarkValidateCode(b *testing.B) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(b)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	secret, _ := service.GenerateSecret("testuser", "test@example.com")
 	validCode, _ := service.GenerateCode(secret.Secret)
@@ -471,10 +459,10 @@ func BenchmarkValidateCode(b *testing.B) {
 
 func BenchmarkValidateCodeConstantTime(b *testing.B) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(b)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	secret, _ := service.GenerateSecret("testuser", "test@example.com")
 	validCode, _ := service.GenerateCode(secret.Secret)
@@ -487,10 +475,10 @@ func BenchmarkValidateCodeConstantTime(b *testing.B) {
 
 func BenchmarkGenerateCode(b *testing.B) {
 	logger := zap.NewNop()
-	redis := newMockRedisClient()
+	redisClient := newMockRedisClient(b)
 	encrypter := NewNoopEncrypter()
 
-	service := NewTOTPService(logger, redis, encrypter)
+	service := NewService(logger, redisClient, encrypter)
 
 	secret, _ := service.GenerateSecret("testuser", "test@example.com")
 

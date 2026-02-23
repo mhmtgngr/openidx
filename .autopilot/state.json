@@ -16,11 +16,19 @@
     },
     "3": {
       "oauth-core": "done",
-      "updated": "2026-02-23T01:59:53+00:00",
+      "updated": "2026-02-23T02:30:34+00:00",
       "oidc-discovery": "done",
-      "saml-sso": "done"
+      "saml-sso": "done",
+      "_phase": "done"
+    },
+    "4": {
+      "totp-recovery": "done",
+      "updated": "2026-02-23T04:09:19+00:00",
+      "_phase": "done",
+      "webauthn-passkeys": "done",
+      "adaptive-mfa": "done"
     }
   },
-  "last_phase": "3",
-  "last_step": "saml-sso"
+  "last_phase": "4",
+  "last_step": "adaptive-mfa"
 }
