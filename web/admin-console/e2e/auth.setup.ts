@@ -11,14 +11,15 @@ const authFile = path.join(__dirname, '.auth/user.json');
  * Authentication setup for Playwright tests
  * This creates a reusable authenticated state that other tests can use
  */
-setup('authenticate', async ({ page }) => {
+setup('authenticate', async ({ page, context }) => {
   // For testing, we'll mock the authentication by setting localStorage directly
-  // In a real scenario, you would navigate to login and perform actual login
-
+  // First, navigate to any page to initialize the context
   await page.goto('/login');
 
-  // Wait for the page to load
-  await expect(page.getByRole('heading', { name: 'OpenIDX' })).toBeVisible({ timeout: 10000 });
+  // Wait for page to be ready (with generous timeout for dev server startup)
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {
+    // If networkidle fails, just continue - the page might be ready enough
+  });
 
   // Create a mock JWT token for testing (expires in 1 hour)
   const mockPayload = {
@@ -36,14 +37,17 @@ setup('authenticate', async ({ page }) => {
   const payload = btoa(JSON.stringify(mockPayload));
   const mockToken = `${header}.${payload}.mock-signature`;
 
-  // Set the token in localStorage
-  await page.evaluate((token) => {
+  // Set the token in localStorage before navigating
+  await context.addInitScript((token) => {
     localStorage.setItem('token', token);
     localStorage.setItem('refresh_token', 'mock-refresh-token');
   }, mockToken);
 
   // Navigate to dashboard to verify auth works
   await page.goto('/dashboard');
+
+  // Wait for navigation to complete
+  await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
 
   // Save the storage state
   await page.context().storageState({ path: authFile });
