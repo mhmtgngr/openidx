@@ -22,9 +22,6 @@ var (
 	// ErrInvalidToken is returned when token validation fails
 	ErrInvalidToken = errors.New("invalid token")
 
-	// ErrTokenExpired is returned when token has expired
-	ErrTokenExpired = errors.New("token expired")
-
 	// ErrMissingRoles is returned when no roles are found in context
 	ErrMissingRoles = errors.New("no roles found in context")
 
