@@ -9,9 +9,9 @@
     },
     "2": {
       "identity-crud": "done",
-      "updated": "2026-02-22T23:39:13+00:00",
+      "updated": "2026-02-22T23:56:47+00:00",
       "scim-provisioning": "done",
-      "directory-sync": "running"
+      "directory-sync": "done"
     }
   },
   "last_phase": "2",

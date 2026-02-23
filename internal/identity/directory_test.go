@@ -470,13 +470,9 @@ func TestLDAPSyncer_SyncAll(t *testing.T) {
 	syncer := NewLDAPSyncer(dir, client, repo, zap.NewNop(), events.NewMemoryBus(), nil)
 
 	// Update mock to return group entries for second call
-	originalSearchGroups := client.SearchGroups
-	client.SearchGroups = func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error) {
+	client.SearchGroupsFunc = func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error) {
 		return groupEntries, nil
 	}
-	defer func() {
-		client.SearchGroups = originalSearchGroups
-	}()
 
 	ctx := context.Background()
 	result, err := syncer.SyncAll(ctx)

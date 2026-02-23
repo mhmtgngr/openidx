@@ -741,6 +741,10 @@ type MockLDAPClient struct {
 	ShouldDelay     bool
 	DelayDuration   time.Duration
 	Connected       bool
+	// SearchGroupsFunc allows overriding the SearchGroups behavior for testing
+	SearchGroupsFunc func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error)
+	// SearchUsersFunc allows overriding the SearchUsers behavior for testing
+	SearchUsersFunc   func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error)
 }
 
 // Connect establishes a connection
@@ -760,6 +764,9 @@ func (m *MockLDAPClient) Close() error {
 
 // SearchUsers searches for users
 func (m *MockLDAPClient) SearchUsers(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error) {
+	if m.SearchUsersFunc != nil {
+		return m.SearchUsersFunc(ctx, baseDN, filter, attrs)
+	}
 	if m.SearchError != nil {
 		return nil, m.SearchError
 	}
@@ -771,6 +778,9 @@ func (m *MockLDAPClient) SearchUsers(ctx context.Context, baseDN, filter string,
 
 // SearchGroups searches for groups
 func (m *MockLDAPClient) SearchGroups(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error) {
+	if m.SearchGroupsFunc != nil {
+		return m.SearchGroupsFunc(ctx, baseDN, filter, attrs)
+	}
 	if m.SearchError != nil {
 		return nil, m.SearchError
 	}

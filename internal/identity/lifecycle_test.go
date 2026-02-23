@@ -590,7 +590,7 @@ func TestLifecycleManager_CanLogin(t *testing.T) {
 			userState: StateCreated,
 			active:   true,
 			enabled:  true,
-			canLogin: true, // Created users are allowed to login
+			canLogin: false, // Created users must transition to Active before login
 		},
 		{
 			name:     "Locked user cannot login",
