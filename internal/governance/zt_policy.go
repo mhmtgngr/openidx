@@ -643,10 +643,11 @@ func (e *ZTPolicyEvaluator) compareTimeInRange(fieldValue, conditionValue interf
 
 	// Handle overnight ranges (e.g., 22:00 to 06:00)
 	if endTime.Before(startTime) {
-		return currentTimeParsed.After(startTime) || currentTimeParsed.Before(endTime)
+		return !currentTimeParsed.Before(startTime) || currentTimeParsed.Before(endTime)
 	}
 
-	return currentTimeParsed.After(startTime) && currentTimeParsed.Before(endTime)
+	// Use !Before for inclusive start (>=) and Before for exclusive end (<)
+	return !currentTimeParsed.Before(startTime) && currentTimeParsed.Before(endTime)
 }
 
 func (e *ZTPolicyEvaluator) compareDayOfWeek(fieldValue, conditionValue interface{}, currentTime time.Time) bool {
