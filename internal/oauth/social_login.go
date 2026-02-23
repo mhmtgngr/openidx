@@ -262,10 +262,10 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 	// Fallback: generate tokens directly using the SAML token flow
 	samlUser := &SAMLUser{
 		ID:        userID,
-		Email:     userInfo.Email,
-		FirstName: userInfo.FirstName,
-		LastName:  userInfo.LastName,
-		Name:      userInfo.Name,
+		Email:       userInfo.Email,
+		FirstName:   userInfo.FirstName,
+		LastName:    userInfo.LastName,
+		DisplayName: userInfo.Name,
 	}
 
 	tokenResponse, err := s.generateTokensForUser(c.Request.Context(), samlUser, "admin-console", []string{"openid", "profile", "email"})

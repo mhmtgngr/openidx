@@ -42,7 +42,6 @@ type LogoutRequest struct {
 
 // LogoutNameID represents the NameID in a LogoutRequest
 type LogoutNameID struct {
-	XMLName xml.Name `xml:"NameID"`
 	Format  string   `xml:"Format,attr,omitempty"`
 	Value   string   `xml:",chardata"`
 }
@@ -63,21 +62,18 @@ type LogoutResponse struct {
 
 // LogoutResponseStatus represents the status in a LogoutResponse
 type LogoutResponseStatus struct {
-	XMLName    xml.Name           `xml:"Status"`
-	StatusCode LogoutStatusCode   `xml:"StatusCode"`
+	StatusCode    LogoutStatusCode    `xml:"StatusCode"`
 	StatusMessage *LogoutStatusMessage `xml:"StatusMessage,omitempty"`
 }
 
 // LogoutStatusCode represents the status code
 type LogoutStatusCode struct {
-	XMLName xml.Name `xml:"StatusCode"`
-	Value   string   `xml:"Value,attr"`
+	Value string `xml:"Value,attr"`
 }
 
 // LogoutStatusMessage represents an optional status message
 type LogoutStatusMessage struct {
-	XMLName xml.Name `xml:"StatusMessage"`
-	Value   string   `xml:",chardata"`
+	Value string `xml:",chardata"`
 }
 
 // SAMLSession represents a SAML session for logout tracking

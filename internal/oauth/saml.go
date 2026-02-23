@@ -8,16 +8,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -578,6 +576,29 @@ func (s *Service) getUserRoles(ctx context.Context, userID string) []string {
 	return roles
 }
 
+// getUserGroups fetches group names for a user
+func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT g.name
+		FROM groups g
+		INNER JOIN user_groups ug ON ug.group_id = g.id
+		WHERE ug.user_id = $1
+	`, userID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var groups []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			groups = append(groups, name)
+		}
+	}
+	return groups
+}
+
 // buildSAMLResponseForUser creates a SAML Response for a user
 func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvider, authnReq *AuthnRequest) (string, error) {
 	// Determine NameID format and value
@@ -682,7 +703,8 @@ func generateTransientID(userID, spEntityID string) string {
 func (s *Service) sendSAMLResponseToSP(c *gin.Context, acsURL, samlResponse, relayState string) {
 	encodedResponse := base64.StdEncoding.EncodeToString([]byte(samlResponse))
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
+	// Build HTML page with auto-submit form
+	htmlContent := `<!DOCTYPE html>
 <html>
 <head>
 	<title>SAML SSO</title>
@@ -692,8 +714,8 @@ func (s *Service) sendSAMLResponseToSP(c *gin.Context, acsURL, samlResponse, rel
 		h2 { margin: 0 0 1rem 0; color: #333; }
 		p { color: #666; margin-bottom: 1.5rem; }
 		.progress { width: 200px; height: 4px; background: #e0e0e0; border-radius: 2px; margin: 0 auto; overflow: hidden; }
-		.progress-bar { height: 100%; background: #4285f4; animation: progress 1.5s ease-in-out; }
-		@keyframes progress { from { width: 0; } to { width: 100%; } }
+		.progress-bar { height: 100%%; background: #4285f4; animation: progress 1.5s ease-in-out; }
+		@keyframes progress { from { width: 0; } to { width: 100%%; } }
 	</style>
 </head>
 <body onload="document.forms[0].submit()">
@@ -705,16 +727,16 @@ func (s *Service) sendSAMLResponseToSP(c *gin.Context, acsURL, samlResponse, rel
 			<p>JavaScript is required. Please click the button below to continue.</p>
 		</noscript>
 	</div>
-	<form method="POST" action="%s" style="display:none">
-		<input type="hidden" name="SAMLResponse" value="%s" />
-		<input type="hidden" name="RelayState" value="%s" />
+	<form method="POST" action="` + html.EscapeString(acsURL) + `" style="display:none">
+		<input type="hidden" name="SAMLResponse" value="` + html.EscapeString(encodedResponse) + `" />
+		<input type="hidden" name="RelayState" value="` + html.EscapeString(relayState) + `" />
 		<noscript><input type="submit" value="Continue" /></noscript>
 	</form>
 </body>
-</html>`, acsURL, html.EscapeString(encodedResponse), html.EscapeString(relayState))
+</html>`
 
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, html)
+	c.String(http.StatusOK, htmlContent)
 }
 
 // signSAMLAssertion signs the SAML assertion with RSA-SHA256
@@ -968,6 +990,51 @@ type IdPAttributeValue struct {
 	XMLName xml.Name `xml:"saml:AttributeValue"`
 	Type    string   `xml:"xsi:type,attr,omitempty"`
 	Value   string   `xml:",chardata"`
+}
+
+// IdPSignatureXML represents an XML Signature (for SAML signature validation)
+type IdPSignatureXML struct {
+	XMLName      xml.Name          `xml:"ds:Signature"`
+	XMLNS        string            `xml:"xmlns:ds,attr"`
+	ID           string            `xml:"ID,attr,omitempty"`
+	SignedInfo   IdPSignedInfo     `xml:"ds:SignedInfo"`
+	SignatureValue string          `xml:"ds:SignatureValue"`
+	KeyInfo      *IdPKeyInfo       `xml:"ds:KeyInfo,omitempty"`
+}
+
+// IdPSignedInfo contains the signed information
+type IdPSignedInfo struct {
+	XMLName                 xml.Name             `xml:"ds:SignedInfo"`
+	CanonicalizationMethod  IdPAlgorithm          `xml:"ds:CanonicalizationMethod"`
+	SignatureMethod         IdPAlgorithm          `xml:"ds:SignatureMethod"`
+	Reference               IdPReference          `xml:"ds:Reference"`
+}
+
+// IdPAlgorithm represents a signature algorithm
+type IdPAlgorithm struct {
+	XMLName    xml.Name `xml:"ds:CanonicalizationMethod"`
+	Algorithm  string   `xml:"Algorithm,attr"`
+}
+
+// IdPReference represents a signature reference
+type IdPReference struct {
+	XMLName     xml.Name        `xml:"ds:Reference"`
+	URI         string          `xml:"URI,attr"`
+	Transforms  IdPTransforms   `xml:"ds:Transforms"`
+	DigestMethod IdPAlgorithm   `xml:"ds:DigestMethod"`
+	DigestValue string          `xml:"ds:DigestValue"`
+}
+
+// IdPTransforms contains transformation steps
+type IdPTransforms struct {
+	XMLName  xml.Name          `xml:"ds:Transforms"`
+	Transform []IdPTransform   `xml:"ds:Transform"`
+}
+
+// IdPTransform represents a single transform
+type IdPTransform struct {
+	XMLName    xml.Name `xml:"ds:Transform"`
+	Algorithm  string   `xml:"Algorithm,attr"`
 }
 
 // logAuditEvent logs an audit event (placeholder - should integrate with audit service)
