@@ -7,30 +7,31 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"github.com/redis/go-redis/v9"
 )
 
-// Service provides high-level MFA operations combining TOTP logic and persistence
-type Service struct {
-	totp      *TOTPService
+// MFAService provides high-level MFA operations combining TOTP logic and persistence
+type MFAService struct {
+	totp      *Service  // TOTPService from totp.go
 	repo      Repository
 	logger    *zap.Logger
 	redis     *redis.Client
 	encrypter SecretEncrypter
 }
 
-// NewService creates a new MFA service
-func NewService(
+// NewMFAService creates a new MFA service
+func NewMFAService(
 	logger *zap.Logger,
-	pool *PGPool,
+	pool *pgxpool.Pool,
 	redisClient *redis.Client,
 	encrypter SecretEncrypter,
-) *Service {
+) *MFAService {
 	repo := NewPostgreSQLRepository(pool, logger)
-	totpService := NewTOTPService(logger, redisClient, encrypter)
+	totpService := NewService(logger, redisClient, encrypter)
 
-	return &Service{
+	return &MFAService{
 		totp:      totpService,
 		repo:      repo,
 		logger:    logger,
@@ -39,14 +40,9 @@ func NewService(
 	}
 }
 
-// PGPool is a minimal interface for pgxpool.Pool
-type PGPool interface {
-	Ping(ctx context.Context) error
-}
-
 // EnrollTOTP initiates TOTP enrollment for a user
 // Returns the enrollment details with QR code URL and stores the encrypted secret
-func (s *Service) EnrollTOTP(ctx context.Context, userID uuid.UUID, accountName string) (*TOTPSecret, error) {
+func (s *MFAService) EnrollTOTP(ctx context.Context, userID uuid.UUID, accountName string) (*TOTPSecret, error) {
 	// Check if user already has TOTP enrolled
 	existing, err := s.repo.GetTOTPByUserID(ctx, userID)
 	if err == nil && existing != nil {
@@ -98,7 +94,7 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID uuid.UUID, accountName 
 }
 
 // VerifyAndEnableTOTP verifies a TOTP code during enrollment and enables the factor
-func (s *Service) VerifyAndEnableTOTP(ctx context.Context, userID uuid.UUID, code string) error {
+func (s *MFAService) VerifyAndEnableTOTP(ctx context.Context, userID uuid.UUID, code string) error {
 	// Get the enrollment
 	enrollment, err := s.repo.GetTOTPByUserID(ctx, userID)
 	if err != nil {
@@ -145,7 +141,7 @@ func (s *Service) VerifyAndEnableTOTP(ctx context.Context, userID uuid.UUID, cod
 }
 
 // AuthenticateTOTP validates a TOTP code during authentication
-func (s *Service) AuthenticateTOTP(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
+func (s *MFAService) AuthenticateTOTP(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
 	// Get the enrollment
 	enrollment, err := s.repo.GetTOTPByUserID(ctx, userID)
 	if err != nil {
@@ -188,7 +184,7 @@ func (s *Service) AuthenticateTOTP(ctx context.Context, userID uuid.UUID, code s
 }
 
 // DisableTOTP disables TOTP for a user
-func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID) error {
+func (s *MFAService) DisableTOTP(ctx context.Context, userID uuid.UUID) error {
 	enrollment, err := s.repo.GetTOTPByUserID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("totp enrollment not found: %w", err)
@@ -207,7 +203,7 @@ func (s *Service) DisableTOTP(ctx context.Context, userID uuid.UUID) error {
 }
 
 // GetTOTPStatus returns the TOTP enrollment status for a user
-func (s *Service) GetTOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPEnrollment, error) {
+func (s *MFAService) GetTOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPEnrollment, error) {
 	enrollment, err := s.repo.GetTOTPByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("totp enrollment not found: %w", err)
@@ -219,7 +215,7 @@ func (s *Service) GetTOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPEnr
 }
 
 // DeleteTOTP completely removes TOTP enrollment for a user
-func (s *Service) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
+func (s *MFAService) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 	if err := s.repo.DeleteTOTP(ctx, userID); err != nil {
 		return fmt.Errorf("failed to delete TOTP enrollment: %w", err)
 	}

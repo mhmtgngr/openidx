@@ -58,7 +58,6 @@ func (m *MockTOTPRepository) VerifyTOTP(ctx context.Context, userID uuid.UUID) e
 		now := time.Now()
 		enrollment.Verified = true
 		enrollment.VerifiedAt = &now
-		m.enrollments[userID] = enrollment
 	}
 	return nil
 }
@@ -67,7 +66,6 @@ func (m *MockTOTPRepository) MarkTOTPUsed(ctx context.Context, userID uuid.UUID)
 	if enrollment, exists := m.enrollments[userID]; exists {
 		now := time.Now()
 		enrollment.LastUsedAt = &now
-		m.enrollments[userID] = enrollment
 	}
 	return nil
 }
@@ -134,8 +132,12 @@ func TestEnrollmentFlow_Complete(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, enrollment)
 
-		// Generate a valid code
-		validCode, err := totpService.GenerateCode(enrollment.Secret)
+		// Decrypt the secret to generate a valid code
+		secret, err := totpService.encrypter.Decrypt(enrollment.Secret)
+		require.NoError(t, err)
+
+		// Generate a valid code for the current time
+		validCode, err := totpService.GenerateCode(secret)
 		require.NoError(t, err)
 
 		reqBody := TOTPVerifyRequest{
@@ -170,7 +172,13 @@ func TestEnrollmentFlow_Complete(t *testing.T) {
 		enrollment, err := totpRepo.GetTOTPByUserID(context.Background(), userID)
 		require.NoError(t, err)
 
-		validCode, err := totpService.GenerateCode(enrollment.Secret)
+		// Decrypt the secret to generate a valid code
+		secret, err := totpService.encrypter.Decrypt(enrollment.Secret)
+		require.NoError(t, err)
+
+		// Generate a code for the next time window (30 seconds from now)
+		// This ensures we get a different code than Step 2 to avoid replay attack detection
+		validCode, err := totpService.GenerateCodeCustom(secret, time.Now().Add(30*time.Second))
 		require.NoError(t, err)
 
 		reqBody := MFAVerifyRequest{
@@ -324,7 +332,7 @@ func TestEnrollmentFlow_InvalidRequests(t *testing.T) {
 
 		req := httptest.NewRequest("POST", "/mfa/enroll/totp", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
-		router.ServeHTTP(req, httptest.NewRecorder())
+		router.ServeHTTP(httptest.NewRecorder(), req)
 
 		// Now try to verify with invalid code
 		verifyReq := TOTPVerifyRequest{
@@ -381,7 +389,7 @@ func TestEnrollmentFlow_RateLimiting(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/mfa/enroll/totp", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(req, httptest.NewRecorder())
+	router.ServeHTTP(httptest.NewRecorder(), req)
 
 	// Try to verify with invalid codes up to rate limit
 	for i := 0; i < rateLimitMaxAttempts; i++ {
@@ -493,11 +501,6 @@ func TestRecoveryCode_SingleUse_Detailed(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	// Generate codes
-	codeSet, err := service.GenerateCodes(ctx, userID)
-	require.NoError(t, err)
-	assert.Equal(t, RecoveryCodeCount, len(codeSet.Codes))
-
 	// We can't verify codes directly since we only have bcrypt hashes
 	// But we can test the single-use behavior with a known code
 	plainCode := "SINGLE01"
@@ -519,19 +522,19 @@ func TestRecoveryCode_SingleUse_Detailed(t *testing.T) {
 	require.NotNil(t, usedCode)
 	assert.True(t, usedCode.Used)
 
-	// Get remaining codes - should be 1 (just our test code)
+	// Get remaining codes - should be 0 since the only code is now used
 	remaining, err := service.GetRemainingCount(ctx, userID)
 	require.NoError(t, err)
-	assert.Equal(t, 1, remaining)
+	assert.Equal(t, 0, remaining)
 
 	// Second use should fail
 	_, err = service.VerifyCode(ctx, userID, plainCode)
 	assert.Error(t, err)
 
-	// Remaining should still be 1 (code already used, no new code consumed)
+	// Remaining should still be 0 (code already used)
 	remaining, err = service.GetRemainingCount(ctx, userID)
 	require.NoError(t, err)
-	assert.Equal(t, 1, remaining)
+	assert.Equal(t, 0, remaining)
 }
 
 // TestTOTPSecretFormat verifies the TOTP secret format

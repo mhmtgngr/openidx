@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -23,7 +24,7 @@ const (
 	DefaultTOTPDigits = 6
 
 	// DefaultTOTPAlgorithm is the default algorithm (SHA1, SHA256, SHA512)
-	DefaultTOTPAlgorithm = totp.AlgorithmSHA1
+	DefaultTOTPAlgorithm = otp.AlgorithmSHA1
 
 	// DefaultTOTPWindow is the default time window for validation (allows clock skew)
 	// Window of 1 means +/-1 time step, allowing for clock drift tolerance
@@ -61,8 +62,8 @@ type TOTPSecret struct {
 type TOTPConfig struct {
 	Issuer   string        // Issuer name for TOTP
 	Period   uint          // Time step period in seconds
-	Digits   totp.Digits   // Number of digits (6 or 8)
-	Algorithm totp.Algorithm // Hash algorithm
+	Digits   otp.Digits   // Number of digits (6 or 8)
+	Algorithm otp.Algorithm // Hash algorithm
 	SecretLength int       // Length of generated secret in bytes
 }
 
@@ -71,7 +72,7 @@ func DefaultTOTPConfig() *TOTPConfig {
 	return &TOTPConfig{
 		Issuer:     DefaultTOTPIssuer,
 		Period:    DefaultTOTPPeriod,
-		Digits:    totp.Digits(DefaultTOTPDigits),
+		Digits:    otp.Digits(DefaultTOTPDigits),
 		Algorithm: DefaultTOTPAlgorithm,
 		SecretLength: DefaultSecretLength,
 	}
@@ -108,6 +109,11 @@ func NewService(logger *zap.Logger, redis RedisClient, encrypter SecretEncrypter
 	}
 }
 
+// NewTOTPService is an alias for NewService for external use
+func NewTOTPService(logger *zap.Logger, redis RedisClient, encrypter SecretEncrypter) *Service {
+	return NewService(logger, redis, encrypter)
+}
+
 // NewServiceWithConfig creates a new TOTP service with custom configuration
 func NewServiceWithConfig(logger *zap.Logger, redis RedisClient, encrypter SecretEncrypter, config *TOTPConfig) *Service {
 	return &Service{
@@ -116,6 +122,11 @@ func NewServiceWithConfig(logger *zap.Logger, redis RedisClient, encrypter Secre
 		redis:     redis,
 		encrypter: encrypter,
 	}
+}
+
+// NewTOTPServiceWithConfig is an alias for NewServiceWithConfig for external use
+func NewTOTPServiceWithConfig(logger *zap.Logger, redis RedisClient, encrypter SecretEncrypter, config *TOTPConfig) *Service {
+	return NewServiceWithConfig(logger, redis, encrypter, config)
 }
 
 // GenerateSecret generates a new TOTP secret for a user
@@ -131,7 +142,7 @@ func (s *Service) GenerateSecret(userID, accountName string) (*TOTPSecret, error
 		Period:      s.config.Period,
 		Digits:      s.config.Digits,
 		Algorithm:   s.config.Algorithm,
-		SecretSize:  s.config.SecretLength,
+		SecretSize:  uint(s.config.SecretLength),
 	})
 	if err != nil {
 		s.logger.Error("Failed to generate TOTP secret",
