@@ -809,17 +809,6 @@ func TestConditionGroup_MarshalJSON(t *testing.T) {
 	}
 }
 
-// Helper function to parse time from hour string
-func parseTime(t *testing.T, timeStr string) time.Time {
-	parsed, err := time.Parse("15:04", timeStr)
-	if err != nil {
-		t.Fatalf("Failed to parse time %s: %v", timeStr, err)
-	}
-	// Return with today's date
-	now := time.Now()
-	return time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), 0, 0, time.Local)
-}
-
 // BenchmarkZTPolicyEvaluator_Evaluate benchmarks policy evaluation
 func BenchmarkZTPolicyEvaluator_Evaluate(b *testing.B) {
 	eval := NewZTPolicyEvaluator()

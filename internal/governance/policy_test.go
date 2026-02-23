@@ -26,11 +26,13 @@ package openidx
 default allow = false
 
 allow {
-	input.user.roles[_] == "admin"
+	some i
+	input.user.roles[i] == "admin"
 }
 
 allow {
-	input.user.roles[_] == "user"
+	some i
+	input.user.roles[i] == "user"
 	input.resource.type == "public"
 }
 
@@ -67,7 +69,8 @@ package test
 default allow = false
 
 allow {
-	input.user.roles[_] == "admin"
+	some i
+	input.user.roles[i] == "admin"
 }
 
 allow {
@@ -203,7 +206,8 @@ allow {
 }
 
 allow {
-	input.user.roles[_] == "prod_admin"
+	some i
+	input.user.roles[i] == "prod_admin"
 	input.context.environment == "production"
 }
 
@@ -213,9 +217,7 @@ deny[msg] {
 }
 
 warnings[msg] {
-	input.context.time
-	hour := time.clock_ns(input.context.time)[0]
-	hour < 6
+	input.context.attributes["off_hours"] == "true"
 	msg := "Access during off-hours is monitored"
 }
 `)
@@ -378,13 +380,14 @@ allow {
 }
 
 allow {
-	input.user.roles[_] == "admin"
+	some i
+	input.user.roles[i] == "admin"
 }
 
 deny[msg] {
 	input.action == "delete"
 	input.user.id != input.resource.owner
-	not input.user.roles[_] == "admin"
+	not count([i | input.user.roles[i] == "admin"]) > 0
 	msg = "Only resource owner or admin can delete"
 }
 `)
@@ -450,22 +453,31 @@ package multirole
 default allow = false
 
 allow {
-	input.user.roles[_] == "reader"
+	some i
+	input.user.roles[i] == "reader"
 	input.action == "read"
 }
 
 allow {
-	input.user.roles[_] == "writer"
-	input.action in ["read", "write"]
+	some i
+	input.user.roles[i] == "writer"
+	input.action == "read"
 }
 
 allow {
-	input.user.roles[_] == "admin"
+	some i
+	input.user.roles[i] == "writer"
+	input.action == "write"
+}
+
+allow {
+	some i
+	input.user.roles[i] == "admin"
 }
 
 deny[msg] {
 	input.action == "delete"
-	not input.user.roles[_] == "admin"
+	not count([i | input.user.roles[i] == "admin"]) > 0
 	msg = "Only admins can delete"
 }
 `)
@@ -652,7 +664,8 @@ func BenchmarkPolicyEvaluator_Evaluation(b *testing.B) {
 package bench
 
 allow {
-	input.user.roles[_] == "admin"
+	some i
+	input.user.roles[i] == "admin"
 }
 
 allow {

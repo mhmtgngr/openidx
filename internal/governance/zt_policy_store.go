@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -653,11 +652,6 @@ func (s *ZTPolicyStore) BulkUpdate(ctx context.Context, policies []ZTPolicy, cha
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
-
-	// Wrap with a temporary store that uses the transaction
-	tempDB := &database.PostgresDB{
-		Pool: &pgxpool.Pool{},
-	}
 
 	// Use a wrapper that implements the same interface but uses the transaction
 	updated := make([]ZTPolicy, 0, len(policies))

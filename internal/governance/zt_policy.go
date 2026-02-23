@@ -320,7 +320,7 @@ func (e *ZTPolicyEvaluator) evaluateConditions(group ConditionGroup, input ZTPol
 				return true
 			}
 		}
-		return len(results) > 0
+		return false
 	default:
 		return false
 	}
@@ -683,6 +683,13 @@ func (e *ZTPolicyEvaluator) compareDayOfWeek(fieldValue, conditionValue interfac
 				if parseDayOfWeek(dayStr) == dayOfWeek {
 					return true
 				}
+			}
+		}
+		return false
+	case []int:
+		for _, day := range v {
+			if dayOfWeek == day {
+				return true
 			}
 		}
 		return false

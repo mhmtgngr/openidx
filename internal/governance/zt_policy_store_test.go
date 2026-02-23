@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"go.uber.org/zap/zaptest"
@@ -658,7 +657,7 @@ func TestZTPolicyStore_GetByVersion(t *testing.T) {
 
 	// Update to create version 2
 	created.Description = "Updated"
-	updated, err := store.Update(ctx, *created, "test-user")
+	_, err = store.Update(ctx, *created, "test-user")
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}

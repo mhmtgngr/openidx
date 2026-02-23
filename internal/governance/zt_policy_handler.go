@@ -291,7 +291,7 @@ func (h *ZTPolicyHandler) SetPolicyEnabled(c *gin.Context) {
 	id := c.Param("id")
 
 	var req struct {
-		Enabled bool `json:"enabled" binding:"required"`
+		Enabled bool `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
