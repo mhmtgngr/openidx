@@ -24,14 +24,14 @@ const (
 	CampaignStatusCancelled  CampaignStatus = "cancelled"
 )
 
-// ReviewDecision represents the decision on a certification review item
-type ReviewDecision string
+// CertificationDecision represents the decision on a certification review item
+type CertificationDecision string
 
 const (
-	DecisionConfirm    ReviewDecision = "confirm"
-	DecisionRevoke     ReviewDecision = "revoke"
-	DecisionModify     ReviewDecision = "modify"
-	DecisionPending    ReviewDecision = "pending"
+	DecisionConfirm    CertificationDecision = "confirm"
+	DecisionRevoke     CertificationDecision = "revoke"
+	DecisionModify     CertificationDecision = "modify"
+	DecisionPending    CertificationDecision = "pending"
 )
 
 // CampaignScope defines what resources are included in the campaign
@@ -80,7 +80,7 @@ type CertificationItem struct {
 	ResourceName     string         `json:"resource_name,omitempty"`
 	ReviewerID       string         `json:"reviewer_id"`
 	ReviewerName     string         `json:"reviewer_name,omitempty"`
-	Decision         ReviewDecision `json:"decision"`
+	Decision         CertificationDecision `json:"decision"`
 	Comments         string         `json:"comments"`
 	ReviewedAt       *time.Time     `json:"reviewed_at,omitempty"`
 	OriginalGrantDate time.Time     `json:"original_grant_date"`
@@ -344,7 +344,7 @@ func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *Ce
 }
 
 // ReviewItem records a decision on a certification item
-func (s *CertificationService) ReviewItem(ctx context.Context, itemID string, decision ReviewDecision, reviewerID, comments string) error {
+func (s *CertificationService) ReviewItem(ctx context.Context, itemID string, decision CertificationDecision, reviewerID, comments string) error {
 	// Verify the item exists and is pending
 	var currentReviewerID string
 	var currentStatus string
