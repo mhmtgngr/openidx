@@ -132,20 +132,6 @@ type OIDCDiscovery struct {
 	BackchannelLogoutSessionSupported    bool     `json:"backchannel_logout_session_supported,omitempty"`
 }
 
-// JWKS represents JSON Web Key Set
-type JWKS struct {
-	Keys []JWK `json:"keys"`
-}
-
-// JWK represents a JSON Web Key
-type JWK struct {
-	Kty string `json:"kty"`
-	Use string `json:"use"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-}
 
 // Service provides OAuth/OIDC operations
 type Service struct {
@@ -2920,16 +2906,100 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	})
 }
 
-// logAuditEvent writes an audit event directly to the audit_events table
-func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, outcome, actorID, actorIP, targetID, targetType string, details map[string]interface{}) {
-	detailsJSON, _ := json.Marshal(details)
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
-		                          actor_id, actor_type, actor_ip, target_id, target_type,
-		                          resource_id, details)
-		VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', $6, $7, $8, $7, $9)
-	`, eventType, category, action, outcome, actorID, actorIP, targetID, targetType, detailsJSON)
-	if err != nil {
-		s.logger.Error("Failed to log audit event", zap.Error(err))
+// generateTokensForUser generates access and ID tokens for a user (used for social login fallback)
+func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, clientID string, scopes []string) (*TokenFlowResponse, error) {
+	now := time.Now()
+	accessLifetime := 1 * time.Hour
+
+	// Generate access token
+	accessToken := generateRandomToken(32)
+	accessExpiry := now.Add(accessLifetime)
+
+	// Store access token
+	accessTokenData := &AccessTokenData{
+		Token:     accessToken,
+		ClientID:  clientID,
+		UserID:    user.ID,
+		Scope:     strings.Join(scopes, " "),
+		ExpiresAt: accessExpiry,
+		CreatedAt: now,
 	}
+
+	// Store in Redis
+	key := fmt.Sprintf("access_token:%s", accessToken)
+	data, _ := json.Marshal(accessTokenData)
+	s.redis.Client.Set(ctx, key, data, accessLifetime)
+
+	// Create JWT for access token
+	claims := jwt.MapClaims{
+		"sub": user.ID,
+		"aud": clientID,
+		"iss": s.issuer,
+		"exp": accessExpiry.Unix(),
+		"iat": now.Unix(),
+	}
+
+	if containsScope(scopes, "profile") {
+		claims["name"] = user.DisplayName
+		claims["given_name"] = user.FirstName
+		claims["family_name"] = user.LastName
+	}
+	if containsScope(scopes, "email") {
+		claims["email"] = user.Email
+		claims["email_verified"] = true
+	}
+
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signedToken, err := jwtToken.SignedString(s.privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign access token: %w", err)
+	}
+
+	response := &TokenFlowResponse{
+		AccessToken: signedToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   int64(accessLifetime.Seconds()),
+	}
+
+	// Generate ID token for openid scope
+	if containsScope(scopes, "openid") {
+		idClaims := jwt.MapClaims{
+			"iss":            s.issuer,
+			"sub":            user.ID,
+			"aud":            clientID,
+			"exp":            accessExpiry.Unix(),
+			"iat":            now.Unix(),
+			"auth_time":      now.Unix(),
+			"email":          user.Email,
+			"email_verified": true,
+		}
+		if user.DisplayName != "" {
+			idClaims["name"] = user.DisplayName
+		}
+		if user.FirstName != "" {
+			idClaims["given_name"] = user.FirstName
+		}
+		if user.LastName != "" {
+			idClaims["family_name"] = user.LastName
+		}
+
+		idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
+		signedIDToken, err := idToken.SignedString(s.privateKey)
+		if err == nil {
+			response.IDToken = signedIDToken
+		}
+	}
+
+	return response, nil
 }
+
+// containsScope checks if a scope exists in a slice
+func containsScope(scopes []string, scope string) bool {
+	for _, s := range scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+

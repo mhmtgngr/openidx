@@ -9,11 +9,18 @@
     },
     "2": {
       "identity-crud": "done",
-      "updated": "2026-02-22T23:56:47+00:00",
+      "updated": "2026-02-23T00:35:35+00:00",
       "scim-provisioning": "done",
-      "directory-sync": "done"
+      "directory-sync": "done",
+      "_phase": "done"
+    },
+    "3": {
+      "oauth-core": "done",
+      "updated": "2026-02-23T01:59:53+00:00",
+      "oidc-discovery": "done",
+      "saml-sso": "done"
     }
   },
-  "last_phase": "2",
-  "last_step": "directory-sync"
+  "last_phase": "3",
+  "last_step": "saml-sso"
 }
