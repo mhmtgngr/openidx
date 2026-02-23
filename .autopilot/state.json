@@ -23,10 +23,11 @@
     },
     "4": {
       "totp-recovery": "done",
-      "updated": "2026-02-23T02:38:27+00:00",
-      "_phase": "done"
+      "updated": "2026-02-23T03:23:30+00:00",
+      "_phase": "done",
+      "webauthn-passkeys": "running"
     }
   },
   "last_phase": "4",
-  "last_step": "totp-recovery"
+  "last_step": "webauthn-passkeys"
 }
