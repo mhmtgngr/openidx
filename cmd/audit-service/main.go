@@ -205,6 +205,10 @@ func (e *elasticsearchChecker) Name() string {
 	return "elasticsearch"
 }
 
+func (e *elasticsearchChecker) IsCritical() bool {
+	return false // Elasticsearch is optional for audit service
+}
+
 func (e *elasticsearchChecker) Check(ctx context.Context) newhealth.ComponentStatus {
 	start := time.Now()
 
