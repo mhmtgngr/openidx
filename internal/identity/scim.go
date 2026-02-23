@@ -2,7 +2,6 @@
 package identity
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -791,7 +790,6 @@ func (s *Service) HandleSCIMResourceTypes(c *gin.Context) {
 			"endpoint":   baseURL + "/scim/v2/Users",
 			"description": "User Account",
 			"schema":     "urn:ietf:params:scim:schemas:core:2.0:User",
-			"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
 		},
 		{
 			"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
@@ -800,7 +798,6 @@ func (s *Service) HandleSCIMResourceTypes(c *gin.Context) {
 			"endpoint":   baseURL + "/scim/v2/Groups",
 			"description": "Group",
 			"schema":     "urn:ietf:params:scim:schemas:core:2.0:Group",
-			"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
 		},
 	}
 
