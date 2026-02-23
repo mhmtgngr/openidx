@@ -26,9 +26,10 @@ const (
 	DefaultTOTPAlgorithm = totp.AlgorithmSHA1
 
 	// DefaultTOTPWindow is the default time window for validation (allows clock skew)
+	// Window of 1 means +/-1 time step, allowing for clock drift tolerance
 	DefaultTOTPWindow = 1
 
-	// DefaultSecretLength is the default length for TOTP secrets in bytes
+	// DefaultSecretLength is the default length for TOTP secrets in bytes (RFC 6238 recommends 20)
 	DefaultSecretLength = 20
 
 	// Redis key prefix for used code tracking (replay attack prevention)
@@ -36,6 +37,15 @@ const (
 
 	// Redis key TTL for used codes (slightly longer than the window * period)
 	redisUsedCodeTTL = 5 * time.Minute
+
+	// Redis key prefix for rate limiting TOTP verification attempts
+	redisRateLimitPrefix = "mfa:totp:ratelimit:"
+
+	// Rate limit window for TOTP verification (5 attempts per minute)
+	rateLimitWindow = time.Minute
+
+	// Max verification attempts per rate limit window
+	rateLimitMaxAttempts = 5
 )
 
 // TOTPSecret represents a TOTP secret with its QR code URL
@@ -293,13 +303,32 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, accountName string) (*
 }
 
 // VerifyTOTP validates a TOTP code during authentication or enrollment verification
-// It includes replay attack prevention using Redis
+// It includes replay attack prevention using Redis and rate limiting (5 attempts per minute)
 func (s *Service) VerifyTOTP(ctx context.Context, userID, secret, code string) (bool, error) {
 	if secret == "" {
 		return false, fmt.Errorf("secret not found for user")
 	}
 	if code == "" {
 		return false, fmt.Errorf("code cannot be empty")
+	}
+
+	// Check rate limit before proceeding
+	rateLimitKey := s.buildRateLimitKey(userID)
+	if err := s.checkRateLimit(ctx, rateLimitKey); err != nil {
+		s.logger.Warn("TOTP verification rate limit exceeded",
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return false, fmt.Errorf("rate limit exceeded: %w", err)
+	}
+
+	// Increment rate limit counter
+	if err := s.incrementRateLimit(ctx, rateLimitKey); err != nil {
+		s.logger.Error("Failed to increment rate limit",
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		// Don't fail verification if we can't track rate limit
 	}
 
 	// Check for replay attacks - verify the code hasn't been used before
@@ -322,7 +351,7 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, secret, code string) (
 		return false, nil // Code was already used, don't reveal if it was valid
 	}
 
-	// Validate the code using constant-time comparison
+	// Validate the code using constant-time comparison with +/-1 window drift tolerance
 	valid, err := s.ValidateCodeConstantTime(secret, code, DefaultTOTPWindow)
 	if err != nil {
 		return false, fmt.Errorf("validation failed: %w", err)
@@ -354,6 +383,60 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, secret, code string) (
 // buildUsedCodeKey creates a Redis key for tracking used codes
 func (s *Service) buildUsedCodeKey(userID, code string) string {
 	return fmt.Sprintf("%s%s:%s", redisUsedCodePrefix, userID, code)
+}
+
+// buildRateLimitKey creates a Redis key for rate limiting verification attempts
+func (s *Service) buildRateLimitKey(userID string) string {
+	return fmt.Sprintf("%s%s", redisRateLimitPrefix, userID)
+}
+
+// checkRateLimit checks if the user has exceeded the rate limit (5 attempts per minute)
+func (s *Service) checkRateLimit(ctx context.Context, key string) error {
+	result := s.redis.Get(ctx, key)
+	if result.Err() == redis.Nil {
+		return nil // No rate limit hit yet
+	}
+	if result.Err() != nil {
+		return fmt.Errorf("redis error: %w", result.Err())
+	}
+
+	countStr := result.Val()
+	if countStr == "" {
+		return nil
+	}
+
+	var count int64
+	if _, err := fmt.Sscanf(countStr, "%d", &count); err != nil {
+		return nil
+	}
+
+	if count >= rateLimitMaxAttempts {
+		return fmt.Errorf("rate limit exceeded")
+	}
+
+	return nil
+}
+
+// incrementRateLimit increments the rate limit counter for a user
+func (s *Service) incrementRateLimit(ctx context.Context, key string) error {
+	// Use Redis INCR with expiration
+	result := s.redis.Get(ctx, key)
+	count := int64(0)
+
+	if result.Err() == nil {
+		if countStr := result.Val(); countStr != "" {
+			fmt.Sscanf(countStr, "%d", &count)
+		}
+	}
+
+	count++
+
+	// Store the updated count with expiration
+	if err := s.redis.Set(ctx, key, fmt.Sprintf("%d", count), rateLimitWindow).Err(); err != nil {
+		return fmt.Errorf("failed to set rate limit: %w", err)
+	}
+
+	return nil
 }
 
 // checkCodeUsed checks if a code has been used before (replay attack prevention)
