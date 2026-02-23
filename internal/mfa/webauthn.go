@@ -30,21 +30,21 @@ type WebAuthnConfig struct {
 	RPOrigins     []string // Allowed origins for WebAuthn (e.g., https://example.com)
 	Timeout       int      // Timeout in milliseconds for ceremonies
 	UserVerification string // User verification requirement ("required", "preferred", "discouraged")
-	AuthenticatorSelection webauthn.AuthenticatorSelection
+	AuthenticatorSelection protocol.AuthenticatorSelection
 }
 
 // DefaultWebAuthnConfig returns default WebAuthn configuration
 func DefaultWebAuthnConfig(rpID string, origins []string) *WebAuthnConfig {
+	discouraged := protocol.ResidentKeyRequirementDiscouraged
 	return &WebAuthnConfig{
 		RPDisplayName: "OpenIDX",
 		RPID:          rpID,
 		RPOrigins:     origins,
 		Timeout:       60000, // 60 seconds
 		UserVerification: "preferred",
-		AuthenticatorSelection: webauthn.AuthenticatorSelection{
-			RequireResidentKey: protocol.ResidentKeyNotRequired(),
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			ResidentKey:        discouraged,
 			UserVerification:   protocol.VerificationPreferred,
-			AuthenticatorAttachment: protocol.AuthenticatorAttachmentUnspecified,
 		},
 	}
 }
@@ -138,16 +138,6 @@ type RegistrationFinishRequest struct {
 	SessionID string                 `json:"session_id"`
 }
 
-// LoginBeginRequest initiates WebAuthn login
-type LoginBeginRequest struct {
-	UserID uuid.UUID `json:"user_id" binding:"required"`
-}
-
-// LoginFinishRequest completes WebAuthn login
-type LoginFinishRequest struct {
-	UserID    uuid.UUID              `json:"user_id" binding:"required"`
-	Response  protocol.CredentialAssertionResponse `json:"response"`
-}
 
 // BeginRegistration starts the WebAuthn registration ceremony
 // Generates a challenge and credential creation options for the client
@@ -173,21 +163,13 @@ func (s *WebAuthnService) BeginRegistration(
 		return nil, fmt.Errorf("failed to get existing credentials: %w", err)
 	}
 
-	// Create webauthn.User from existing credentials
-	user := &webauthnUser{
-		WebAuthnCredential: &WebAuthnCredential{
-			UserID:     userID,
-			UserHandle: userID[:], // Use UUID bytes as user handle
-		},
-	}
-
 	// Set display name and username
 	userDisplayName := displayName
 	if userDisplayName == "" {
 		userDisplayName = username
 	}
 
-	// Convert existing credentials to webauthn.Credential
+	// Convert existing credentials to webauthn.Credential for the user
 	credentials := make([]webauthn.Credential, len(existingCredentials))
 	for i, cred := range existingCredentials {
 		credentialID, err := base64.RawURLEncoding.DecodeString(cred.CredentialID)
@@ -218,11 +200,35 @@ func (s *WebAuthnService) BeginRegistration(
 		}
 	}
 
+	// Convert existing credentials to CredentialDescriptor for exclusion list
+	excludeList := make([]protocol.CredentialDescriptor, len(existingCredentials))
+	for i, cred := range existingCredentials {
+		credentialID, err := base64.RawURLEncoding.DecodeString(cred.CredentialID)
+		if err != nil {
+			s.logger.Error("Failed to decode credential ID",
+				zap.String("credential_id", cred.CredentialID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Convert transports
+		var transports []protocol.AuthenticatorTransport
+		for _, t := range cred.Transports {
+			transports = append(transports, protocol.AuthenticatorTransport(t))
+		}
+
+		excludeList[i] = protocol.CredentialDescriptor{
+			Type:         protocol.PublicKeyCredentialType,
+			CredentialID: protocol.URLEncodedBase64(credentialID),
+			Transport:    transports,
+		}
+	}
+
 	// Create registration options
 	options := []webauthn.RegistrationOption{
 		webauthn.WithAuthenticatorSelection(s.config.AuthenticatorSelection),
-		webauthn.WithUserVerification(protocol.UserVerificationPreference(s.config.UserVerification)),
-		webauthn.WithExclusions(credentials),
+		webauthn.WithExclusions(excludeList),
 	}
 
 	// Begin registration
@@ -245,7 +251,7 @@ func (s *WebAuthnService) BeginRegistration(
 
 	// Store session data for later verification
 	// Use a unique session key
-	sessionKey := fmt.Sprintf("webauthn:registration:%s:%s", userID.String(), sessionData.Challenge.String())
+	sessionKey := fmt.Sprintf("webauthn:registration:%s:%s", userID.String(), sessionData.Challenge)
 	if err := s.store.StoreSession(ctx, sessionKey, sessionData, time.Duration(s.config.Timeout)*time.Millisecond); err != nil {
 		s.logger.Error("Failed to store session data",
 			zap.String("user_id", userID.String()),
@@ -256,13 +262,13 @@ func (s *WebAuthnService) BeginRegistration(
 
 	// Store the friendly name for use in finish registration
 	if friendlyName != "" {
-		friendlyNameKey := fmt.Sprintf("webauthn:friendly:%s:%s", userID.String(), sessionData.Challenge.String())
+		friendlyNameKey := fmt.Sprintf("webauthn:friendly:%s:%s", userID.String(), sessionData.Challenge)
 		_ = s.store.StoreSession(ctx, friendlyNameKey, []byte(friendlyName), time.Duration(s.config.Timeout)*time.Millisecond)
 	}
 
 	s.logger.Info("WebAuthn registration begun",
 		zap.String("user_id", userID.String()),
-		zap.String("challenge", sessionData.Challenge.String()),
+		zap.String("challenge", sessionData.Challenge),
 	)
 
 	return &CredentialCreationOptions{
@@ -283,8 +289,18 @@ func (s *WebAuthnService) FinishRegistration(
 		zap.String("user_id", userID.String()),
 	)
 
-	// Get the challenge from response
-	challenge := response.Response.CollectedClientData.Challenge
+	// Parse the credential creation response
+	parsedResponse, err := response.Parse()
+	if err != nil {
+		s.logger.Error("Failed to parse response",
+			zap.String("user_id", userID.String()),
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Get the challenge from parsed response
+	challenge := string(parsedResponse.Response.CollectedClientData.Challenge)
 
 	// Retrieve session data
 	sessionKey := fmt.Sprintf("webauthn:registration:%s:%s", userID.String(), challenge)
@@ -326,8 +342,8 @@ func (s *WebAuthnService) FinishRegistration(
 		friendlyName = string(friendlyNameBytes)
 	}
 
-	// Create a credential object for the webauthn library
-	credential, err := s.webAuthn.FinishRegistration(
+	// Create a credential object for the webauthn library using parsed response
+	credential, err := s.webAuthn.CreateCredential(
 		&webAuthnUserData{
 			id:          user.UserID[:],
 			displayName: user.DisplayName,
@@ -335,7 +351,7 @@ func (s *WebAuthnService) FinishRegistration(
 			credentials: nil, // We don't need existing creds for registration
 		},
 		sessionData,
-		response,
+		parsedResponse,
 	)
 	if err != nil {
 		s.logger.Error("Failed to finish registration",
@@ -366,8 +382,8 @@ func (s *WebAuthnService) FinishRegistration(
 		UserID:          userID,
 		UserHandle:      userID[:],
 		FriendlyName:    friendlyName,
-		BackupEligible:  response.Response.AuthenticatorData.Flags.HasBackupEligible(),
-		BackupState:     response.Response.AuthenticatorData.Flags.HasBackupState(),
+		BackupEligible:  parsedResponse.Response.AttestationObject.AuthData.Flags.HasBackupEligible(),
+		BackupState:     parsedResponse.Response.AttestationObject.AuthData.Flags.HasBackupState(),
 		CreatedAt:       time.Now(),
 	}
 
@@ -459,7 +475,7 @@ func (s *WebAuthnService) BeginLogin(
 
 	// Create login options
 	options := []webauthn.LoginOption{
-		webauthn.WithUserVerification(protocol.UserVerificationPreference(s.config.UserVerification)),
+		webauthn.WithUserVerification(protocol.UserVerificationRequirement(s.config.UserVerification)),
 	}
 
 	// Begin login
@@ -481,7 +497,7 @@ func (s *WebAuthnService) BeginLogin(
 	}
 
 	// Store session data
-	sessionKey := fmt.Sprintf("webauthn:login:%s:%s", userID.String(), sessionData.Challenge.String())
+	sessionKey := fmt.Sprintf("webauthn:login:%s:%s", userID.String(), sessionData.Challenge)
 	if err := s.store.StoreSession(ctx, sessionKey, sessionData, time.Duration(s.config.Timeout)*time.Millisecond); err != nil {
 		s.logger.Error("Failed to store session data",
 			zap.String("user_id", userID.String()),
@@ -492,7 +508,7 @@ func (s *WebAuthnService) BeginLogin(
 
 	s.logger.Info("WebAuthn login begun",
 		zap.String("user_id", userID.String()),
-		zap.String("challenge", sessionData.Challenge.String()),
+		zap.String("challenge", sessionData.Challenge),
 	)
 
 	return &CredentialAssertionOptions{
@@ -513,8 +529,18 @@ func (s *WebAuthnService) FinishLogin(
 		zap.String("user_id", userID.String()),
 	)
 
-	// Get the challenge from response
-	challenge := response.Response.CollectedClientData.Challenge
+	// Parse the credential assertion response
+	parsedResponse, err := response.Parse()
+	if err != nil {
+		s.logger.Error("Failed to parse response",
+			zap.String("user_id", userID.String()),
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Get the challenge from parsed response
+	challenge := string(parsedResponse.Response.CollectedClientData.Challenge)
 
 	// Retrieve session data
 	sessionKey := fmt.Sprintf("webauthn:login:%s:%s", userID.String(), challenge)
@@ -584,7 +610,7 @@ func (s *WebAuthnService) FinishLogin(
 		}
 
 		// Check if this is the credential being used
-		responseID := base64.RawURLEncoding.EncodeToString(response.Response.AuthenticatorData.AttData.CredentialID)
+		responseID := base64.RawURLEncoding.EncodeToString(parsedResponse.Response.AuthenticatorData.AttData.CredentialID)
 		if responseID == cred.CredentialID {
 			usedCred = cred
 		}
@@ -597,8 +623,8 @@ func (s *WebAuthnService) FinishLogin(
 		return nil, fmt.Errorf("credential not found")
 	}
 
-	// Finish login (verify assertion)
-	credential, err := s.webAuthn.FinishLogin(
+	// Validate login with parsed response
+	credential, err := s.webAuthn.ValidateLogin(
 		&webAuthnUserData{
 			id:          user.UserID[:],
 			displayName: user.DisplayName,
@@ -606,7 +632,7 @@ func (s *WebAuthnService) FinishLogin(
 			credentials: webAuthnCredentials,
 		},
 		sessionData,
-		response,
+		parsedResponse,
 	)
 	if err != nil {
 		s.logger.Error("Failed to finish login",
