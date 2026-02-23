@@ -121,11 +121,13 @@ func FromUser(user User) UserDB {
 		for _, email := range user.Emails {
 			if email.Primary != nil && *email.Primary {
 				dbUser.Email = email.Value
-				return dbUser
+				break
 			}
 		}
 		// If no primary marked, use first email
-		dbUser.Email = user.Emails[0].Value
+		if dbUser.Email == "" {
+			dbUser.Email = user.Emails[0].Value
+		}
 	}
 
 	return dbUser
@@ -178,13 +180,14 @@ func (g *GroupDB) ToGroup() Group {
 	if g.OrganizationID != nil {
 		group.OrganizationID = g.OrganizationID
 	}
-	if g.Description != nil {
+	if g.Description != nil || g.ParentID != nil {
 		group.Attributes = make(map[string]string)
-		group.Attributes["description"] = *g.Description
-	}
-	if g.ParentID != nil {
-		group.Attributes = make(map[string]string)
-		group.Attributes["parentId"] = *g.ParentID
+		if g.Description != nil {
+			group.Attributes["description"] = *g.Description
+		}
+		if g.ParentID != nil {
+			group.Attributes["parentId"] = *g.ParentID
+		}
 	}
 
 	return group

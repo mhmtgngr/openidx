@@ -2,11 +2,18 @@
   "phases": {
     "1": {
       "auth-core": "done",
-      "updated": "2026-02-22T22:45:47+00:00",
+      "updated": "2026-02-22T22:52:30+00:00",
       "rbac-middleware": "done",
-      "security-middleware": "done"
+      "security-middleware": "done",
+      "_phase": "done"
+    },
+    "2": {
+      "identity-crud": "done",
+      "updated": "2026-02-22T23:56:47+00:00",
+      "scim-provisioning": "done",
+      "directory-sync": "done"
     }
   },
-  "last_phase": "1",
-  "last_step": "security-middleware"
+  "last_phase": "2",
+  "last_step": "directory-sync"
 }
