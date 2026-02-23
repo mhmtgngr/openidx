@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -18,7 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/common/errors"
+	commonerrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 var (
@@ -127,7 +126,7 @@ func (r *ClientRepository) Create(ctx context.Context, req *CreateClientRequest)
 	}
 	for _, gt := range req.GrantTypes {
 		if !validGrantTypes[gt] {
-			return nil, errors.BadRequest(fmt.Sprintf("invalid grant_type: %s", gt))
+			return nil, commonerrors.BadRequest(fmt.Sprintf("invalid grant_type: %s", gt))
 		}
 	}
 
@@ -174,10 +173,10 @@ func (r *ClientRepository) Create(ctx context.Context, req *CreateClientRequest)
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
 			// Unique constraint violation
-			return nil, errors.Conflict("Client ID already exists").WithMetadata("client_id", clientID)
+			return nil, commonerrors.Conflict("Client ID already exists").WithMetadata("client_id", clientID)
 		}
 		r.logger.Error("Failed to create OAuth client", zap.Error(err))
-		return nil, errors.DatabaseError("insert oauth_client", err)
+		return nil, commonerrors.DatabaseError("insert oauth_client", err)
 	}
 
 	r.logger.Info("Created OAuth client",
@@ -209,10 +208,10 @@ func (r *ClientRepository) GetByID(ctx context.Context, id string) (*Client, err
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.NotFound("OAuth client").WithMetadata("id", id)
+			return nil, commonerrors.NotFound("OAuth client").WithMetadata("id", id)
 		}
 		r.logger.Error("Failed to get OAuth client by ID", zap.Error(err))
-		return nil, errors.DatabaseError("select oauth_client", err)
+		return nil, commonerrors.DatabaseError("select oauth_client", err)
 	}
 
 	return &client, nil
@@ -240,10 +239,10 @@ func (r *ClientRepository) GetByClientID(ctx context.Context, clientID string) (
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errors.Unauthorized("Invalid client").WithMetadata("client_id", clientID)
+			return nil, commonerrors.Unauthorized("Invalid client").WithMetadata("client_id", clientID)
 		}
 		r.logger.Error("Failed to get OAuth client by client_id", zap.Error(err))
-		return nil, errors.DatabaseError("select oauth_client by client_id", err)
+		return nil, commonerrors.DatabaseError("select oauth_client by client_id", err)
 	}
 
 	return &client, nil
@@ -275,7 +274,7 @@ func (r *ClientRepository) List(ctx context.Context, tenantID string, limit, off
 	err := r.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		r.logger.Error("Failed to count OAuth clients", zap.Error(err))
-		return nil, 0, errors.DatabaseError("count oauth_clients", err)
+		return nil, 0, commonerrors.DatabaseError("count oauth_clients", err)
 	}
 
 	// Add pagination
@@ -292,7 +291,7 @@ func (r *ClientRepository) List(ctx context.Context, tenantID string, limit, off
 	rows, err := r.db.Pool.Query(ctx, baseQuery, args...)
 	if err != nil {
 		r.logger.Error("Failed to list OAuth clients", zap.Error(err))
-		return nil, 0, errors.DatabaseError("list oauth_clients", err)
+		return nil, 0, commonerrors.DatabaseError("list oauth_clients", err)
 	}
 	defer rows.Close()
 
@@ -307,13 +306,13 @@ func (r *ClientRepository) List(ctx context.Context, tenantID string, limit, off
 			&client.RefreshTokenLifetime, &client.CreatedAt, &client.UpdatedAt,
 		)
 		if err != nil {
-			return nil, 0, errors.DatabaseError("scan oauth_client", err)
+			return nil, 0, commonerrors.DatabaseError("scan oauth_client", err)
 		}
 		clients = append(clients, &client)
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, 0, errors.DatabaseError("iterate oauth_clients", err)
+		return nil, 0, commonerrors.DatabaseError("iterate oauth_clients", err)
 	}
 
 	return clients, total, nil
@@ -336,7 +335,7 @@ func (r *ClientRepository) Update(ctx context.Context, id string, req *UpdateCli
 	}
 	if req.RedirectURIs != nil {
 		if len(*req.RedirectURIs) == 0 {
-			return nil, errors.BadRequest("redirect_uris cannot be empty")
+			return nil, commonerrors.BadRequest("redirect_uris cannot be empty")
 		}
 		client.RedirectURIs = *req.RedirectURIs
 	}
@@ -380,7 +379,7 @@ func (r *ClientRepository) Update(ctx context.Context, id string, req *UpdateCli
 
 	if err != nil {
 		r.logger.Error("Failed to update OAuth client", zap.Error(err))
-		return nil, errors.DatabaseError("update oauth_client", err)
+		return nil, commonerrors.DatabaseError("update oauth_client", err)
 	}
 
 	r.logger.Info("Updated OAuth client",
@@ -403,12 +402,12 @@ func (r *ClientRepository) Delete(ctx context.Context, id string) error {
 	result, err := r.db.Pool.Exec(ctx, query, id)
 	if err != nil {
 		r.logger.Error("Failed to delete OAuth client", zap.Error(err))
-		return errors.DatabaseError("delete oauth_client", err)
+		return commonerrors.DatabaseError("delete oauth_client", err)
 	}
 
 	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
-		return errors.NotFound("OAuth client").WithMetadata("id", id)
+		return commonerrors.NotFound("OAuth client").WithMetadata("id", id)
 	}
 
 	r.logger.Info("Deleted OAuth client", zap.String("id", id))
@@ -434,7 +433,7 @@ func (r *ClientRepository) RegenerateSecret(ctx context.Context, id string) (str
 	_, err = r.db.Pool.Exec(ctx, query, client.ID, client.ClientSecretHash, client.UpdatedAt)
 	if err != nil {
 		r.logger.Error("Failed to regenerate client secret", zap.Error(err))
-		return "", errors.DatabaseError("update client_secret", err)
+		return "", commonerrors.DatabaseError("update client_secret", err)
 	}
 
 	r.logger.Info("Regenerated client secret", zap.String("client_id", client.ClientID))

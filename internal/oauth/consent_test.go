@@ -2,14 +2,11 @@
 package oauth
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // Test Scope Definitions

@@ -74,16 +74,21 @@ type Address struct {
 	Country     string `json:"country,omitempty"`
 }
 
+// IdentityService defines the interface for user identity operations
+type IdentityService interface {
+	GetUser(ctx context.Context, id string) (*identity.User, error)
+}
+
 // OIDCProvider provides OpenID Connect functionality
 type OIDCProvider struct {
 	service          *Service
-	identityService  *identity.Service
+	identityService  IdentityService
 	logger           *zap.Logger
 	issuer           string
 }
 
 // NewOIDCProvider creates a new OIDC provider
-func NewOIDCProvider(service *Service, identitySvc *identity.Service, logger *zap.Logger, issuer string) *OIDCProvider {
+func NewOIDCProvider(service *Service, identitySvc IdentityService, logger *zap.Logger, issuer string) *OIDCProvider {
 	return &OIDCProvider{
 		service:         service,
 		identityService: identitySvc,
@@ -195,12 +200,12 @@ func (p *OIDCProvider) GenerateIDToken(ctx context.Context, req *IDTokenRequest)
 	if strings.Contains(req.Scope, "address") && len(user.Addresses) > 0 {
 		addr := user.Addresses[0]
 		oidcAddr := &Address{
-			Formatted:     addr.Formatted != nil,
-			StreetAddress: addr.StreetAddress != nil,
-			Locality:      addr.Locality != nil,
-			Region:        addr.Region != nil,
-			PostalCode:    addr.PostalCode != nil,
-			Country:       addr.Country != nil,
+			Formatted:     "",
+			StreetAddress: "",
+			Locality:      "",
+			Region:        "",
+			PostalCode:    "",
+			Country:       "",
 		}
 		if addr.Formatted != nil {
 			oidcAddr.Formatted = *addr.Formatted
@@ -271,7 +276,7 @@ func (p *OIDCProvider) generatePairwiseSubject(userID, clientID, sectorIdentifie
 // hashHalf computes the first half of a SHA-256 hash (used for at_hash and c_hash)
 // Implements OpenID Connect Core 1.0 §3.2.2.1
 func (p *OIDCProvider) hashHalf(data string) string {
-	h := sha256.Sum256([]byte(data))
+	hash := sha256.Sum256([]byte(data))
 	return base64.RawURLEncoding.EncodeToString(hash[:len(hash)/2])
 }
 
@@ -445,14 +450,21 @@ func (p *OIDCProvider) validateAccessToken(ctx context.Context, accessToken stri
 		return "", "", ErrMissingBearerToken
 	}
 
-	// Try to get the access token from store
-	tokenData, err := p.service.store.GetAccessToken(ctx, accessToken)
-	if err != nil {
+	// Try to get the access token from Redis
+	cacheKey := "access_token:" + accessToken
+	data, err := p.service.redis.Client.HMGet(ctx, cacheKey, "user_id", "scope").Result()
+	if err != nil || data[0] == nil {
 		p.logger.Warn("Invalid access token in UserInfo request", zap.Error(err))
 		return "", "", ErrInvalidAccessToken
 	}
 
-	return tokenData.UserID, tokenData.Scope, nil
+	userID := data[0].(string)
+	scope := ""
+	if data[1] != nil {
+		scope = data[1].(string)
+	}
+
+	return userID, scope, nil
 }
 
 // ExtractBearerToken extracts the Bearer token from the Authorization header
@@ -467,6 +479,7 @@ func ExtractBearerToken(authHeader string) (string, error) {
 	}
 
 	token := strings.TrimPrefix(authHeader, bearerPrefix)
+	token = strings.TrimSpace(token)
 	if token == "" {
 		return "", ErrMissingBearerToken
 	}

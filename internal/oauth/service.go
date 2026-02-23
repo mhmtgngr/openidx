@@ -132,20 +132,6 @@ type OIDCDiscovery struct {
 	BackchannelLogoutSessionSupported    bool     `json:"backchannel_logout_session_supported,omitempty"`
 }
 
-// JWKS represents JSON Web Key Set
-type JWKS struct {
-	Keys []JWK `json:"keys"`
-}
-
-// JWK represents a JSON Web Key
-type JWK struct {
-	Kty string `json:"kty"`
-	Use string `json:"use"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-}
 
 // Service provides OAuth/OIDC operations
 type Service struct {

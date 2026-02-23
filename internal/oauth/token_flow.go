@@ -3,8 +3,8 @@ package oauth
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,8 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/errors"
 )
 
 // OAuth 2.0 Token Error Codes (RFC 6749 Section 5.2)
@@ -41,8 +39,8 @@ type TokenRequest struct {
 	CodeVerifier string `form:"code_verifier"`
 }
 
-// TokenResponse represents a successful token response (RFC 6749 Section 5.1)
-type TokenResponse struct {
+// TokenFlowResponse represents a successful token response (RFC 6749 Section 5.1)
+type TokenFlowResponse struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int64  `json:"expires_in"`
@@ -98,7 +96,7 @@ func (f *TokenFlow) HandleToken(c *gin.Context) {
 	}
 
 	// Authenticate the client
-	client, err := f.authenticateClient(ctx, c, req)
+	client, err := f.authenticateClient(ctx, c, &req)
 	if err != nil {
 		f.logger.Warn("Client authentication failed", zap.Error(err))
 		c.Header("WWW-Authenticate", `Basic realm="OAuth Token"`)
@@ -451,7 +449,7 @@ func (f *TokenFlow) handleClientCredentialsGrant(ctx context.Context, c *gin.Con
 }
 
 // issueTokens creates and returns access token (and optionally ID token)
-func (f *TokenFlow) issueTokens(ctx context.Context, client *Client, userID, scope, familyID string) (*TokenResponse, error) {
+func (f *TokenFlow) issueTokens(ctx context.Context, client *Client, userID, scope, familyID string) (*TokenFlowResponse, error) {
 	now := time.Now()
 
 	// Determine token lifetimes
@@ -479,7 +477,7 @@ func (f *TokenFlow) issueTokens(ctx context.Context, client *Client, userID, sco
 	}
 
 	// Build token response
-	response := &TokenResponse{
+	response := &TokenFlowResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
 		ExpiresIn:   int64(accessLifetime.Seconds()),
@@ -576,7 +574,7 @@ func isScopeSubset(requested, allowed string) bool {
 
 // hashHalf computes the first half of a SHA-256 hash (used for at_hash and c_hash)
 func hashHalf(data string) string {
-	h := jwt.SigningMethodRS256.Hash()
+	h := sha256.New()
 	h.Write([]byte(data))
 	hash := h.Sum(nil)
 	return base64.RawURLEncoding.EncodeToString(hash[:len(hash)/2])

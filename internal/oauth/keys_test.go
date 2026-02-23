@@ -2,7 +2,6 @@
 package oauth
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -11,11 +10,11 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"

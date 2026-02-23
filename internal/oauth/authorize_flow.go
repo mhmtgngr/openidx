@@ -9,13 +9,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/errors"
 )
 
 // OAuth 2.0 Error Codes (RFC 6749 Section 4.1.2.1)
@@ -33,8 +30,8 @@ const (
 	ErrorUnsupportedGrantType  = "unsupported_grant_type"
 )
 
-// AuthorizeRequest represents a parsed OAuth 2.0 authorization request
-type AuthorizeRequest struct {
+// FlowAuthorizeRequest represents a parsed OAuth 2.0 authorization request
+type FlowAuthorizeRequest struct {
 	ClientID             string
 	RedirectURI          string
 	ResponseType         string
@@ -169,8 +166,8 @@ func (f *AuthorizeFlow) HandleAuthorize(c *gin.Context) {
 }
 
 // parseRequest parses the authorization request from query parameters
-func (f *AuthorizeFlow) parseRequest(c *gin.Context) (*AuthorizeRequest, error) {
-	req := &AuthorizeRequest{
+func (f *AuthorizeFlow) parseRequest(c *gin.Context) (*FlowAuthorizeRequest, error) {
+	req := &FlowAuthorizeRequest{
 		ClientID:            c.Query("client_id"),
 		RedirectURI:         c.Query("redirect_uri"),
 		ResponseType:        c.Query("response_type"),
@@ -258,7 +255,7 @@ func (f *AuthorizeFlow) validateResponseType(client *Client, responseType string
 }
 
 // validatePKCE validates PKCE parameters according to RFC 7636
-func (f *AuthorizeFlow) validatePKCE(client *Client, req *AuthorizeRequest) error {
+func (f *AuthorizeFlow) validatePKCE(client *Client, req *FlowAuthorizeRequest) error {
 	// If PKCE is required for this client, code_challenge must be present
 	if client.PKCERequired && req.CodeChallenge == "" {
 		return errors.New("PKCE is required for this client")
@@ -301,7 +298,7 @@ func (f *AuthorizeFlow) getUserSession(c *gin.Context) (*UserSession, error) {
 }
 
 // generateAuthorizationCode creates and stores an authorization code
-func (f *AuthorizeFlow) generateAuthorizationCode(ctx context.Context, client *Client, userID string, req *AuthorizeRequest) (string, error) {
+func (f *AuthorizeFlow) generateAuthorizationCode(ctx context.Context, client *Client, userID string, req *FlowAuthorizeRequest) (string, error) {
 	// Generate the authorization code
 	code := f.store.GenerateToken()
 
@@ -360,7 +357,7 @@ func (f *AuthorizeFlow) redirectWithCode(c *gin.Context, redirectURI, code, stat
 }
 
 // redirectError redirects to the client's redirect_uri with an error response
-func (f *AuthorizeFlow) redirectError(c *gin.Context, req *AuthorizeRequest, errorCode, description string) {
+func (f *AuthorizeFlow) redirectError(c *gin.Context, req *FlowAuthorizeRequest, errorCode, description string) {
 	// Use the redirect URI from the request if available
 	redirectURI := req.RedirectURI
 	if redirectURI == "" {
@@ -396,7 +393,7 @@ func (f *AuthorizeFlow) redirectError(c *gin.Context, req *AuthorizeRequest, err
 }
 
 // redirectToLogin redirects the user to the login page
-func (f *AuthorizeFlow) redirectToLogin(c *gin.Context, req *AuthorizeRequest, client *Client) {
+func (f *AuthorizeFlow) redirectToLogin(c *gin.Context, req *FlowAuthorizeRequest, client *Client) {
 	// Store the authorization request in Redis for after login
 	sessionID := f.store.GenerateToken()
 
@@ -493,28 +490,6 @@ func isValidBase64URL(s string) bool {
 		}
 	}
 	return len(s) > 0
-}
-
-// BuildScopeString builds a normalized scope string from a list
-func BuildScopeString(scopes []string) string {
-	if len(scopes) == 0 {
-		return ""
-	}
-
-	// Deduplicate and normalize
-	scopeMap := make(map[string]bool)
-	for _, scope := range scopes {
-		if scope != "" {
-			scopeMap[scope] = true
-		}
-	}
-
-	result := make([]string, 0, len(scopeMap))
-	for scope := range scopeMap {
-		result = append(result, scope)
-	}
-
-	return strings.Join(result, " ")
 }
 
 // DefaultScopes returns the default scopes for a given grant type
