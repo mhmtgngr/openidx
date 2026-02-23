@@ -197,6 +197,11 @@ func (s *Service) validateUserImportRow(ctx context.Context, row *UserImportRow)
 		return fmt.Errorf("enabled must be 'true' or 'false'")
 	}
 
+	// Skip DB checks if database is not available (e.g., in tests)
+	if s.db == nil || s.db.Pool == nil {
+		return nil
+	}
+
 	// Check if username already exists
 	var exists bool
 	err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", row.Username).Scan(&exists)

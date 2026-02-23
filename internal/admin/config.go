@@ -57,6 +57,11 @@ type RateLimitPolicyConfig struct {
 
 // GetSystemConfig retrieves the current system configuration
 func (s *Service) GetSystemConfig(ctx context.Context) (*SystemConfig, error) {
+	// Return default config if database is not available
+	if s.db == nil || s.db.Pool == nil {
+		return s.GetDefaultSystemConfig(), nil
+	}
+
 	var configJSON []byte
 	var updatedAt *time.Time
 

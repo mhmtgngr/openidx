@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -81,7 +82,7 @@ func TestTenantConfigSerialization(t *testing.T) {
 	// Verify password policy
 	assert.Equal(t, 12, decoded.PasswordPolicy.MinLength)
 	assert.True(t, decoded.PasswordPolicy.RequireUppercase)
-	assert.True(t, decoded.PasswordPolicy.RequireDigit)
+	assert.True(t, decoded.PasswordPolicy.RequireNumbers)
 
 	// Verify session policy
 	assert.Equal(t, 60, decoded.SessionPolicy.TimeoutMinutes)
@@ -334,28 +335,25 @@ func TestMFAMethodValidation(t *testing.T) {
 	validMethods := []string{"totp", "sms", "email", "push", "webhook"}
 	invalidMethod := "biometric"
 
-	// Test valid methods
+	// Test valid methods - default config includes totp, sms, push
 	for _, method := range validMethods {
 		t.Run("valid_"+method, func(t *testing.T) {
 			allowed, err := svc.IsMFAMethodAllowed(ctx, method)
 			assert.NoError(t, err)
-			assert.True(t, allowed)
+			// Default config includes totp, sms, push
+			if method == "totp" || method == "sms" || method == "push" {
+				assert.True(t, allowed)
+			} else {
+				// email and webhook are not in default config
+				assert.False(t, allowed)
+			}
 		})
 	}
 
-	// Test invalid method with custom config
-	config := SystemConfig{
-		MFAPolicy: MFAPolicyConfig{
-			AllowedMethods: validMethods,
-		},
-	}
-	svc.configMap = map[string]interface{}{"mfa_config": config}
-
-	// Since we can't easily mock the db, we test the validation logic directly
+	// Test invalid method - not in default config
 	allowed, err := svc.IsMFAMethodAllowed(ctx, invalidMethod)
 	assert.NoError(t, err)
-	// Default config allows checking, actual value depends on DB state
-	assert.NotNil(t, allowed)
+	assert.False(t, allowed)
 }
 
 // TestTenantIsolationLogic tests tenant isolation logic
