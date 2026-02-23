@@ -27,15 +27,10 @@ const (
 	ErrorInvalidScope          = "invalid_scope"
 	ErrorServerError           = "server_error"
 	ErrorTemporarilyUnavailable = "temporarily_unavailable"
-)
-
-// PKCE Error Codes (RFC 7636)
-const (
-	ErrorInvalidRequest  = "invalid_request"
-	ErrorInvalidClient   = "invalid_client"
-	ErrorInvalidGrant    = "invalid_grant"
-	ErrorUnauthorizedClient = "unauthorized_client"
-	ErrorUnsupportedGrantType = "unsupported_grant_type"
+	// Additional error codes for token endpoint
+	ErrorInvalidClient         = "invalid_client"
+	ErrorInvalidGrant          = "invalid_grant"
+	ErrorUnsupportedGrantType  = "unsupported_grant_type"
 )
 
 // AuthorizeRequest represents a parsed OAuth 2.0 authorization request

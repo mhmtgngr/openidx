@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -289,13 +290,8 @@ func calculateCodeChallenge(verifier, method string) string {
 }
 
 func sha256Hash(data []byte) []byte {
-	h := make([]byte, 32)
-	// Simple SHA-256 implementation for testing
-	// In real code, use crypto/sha256
-	for i := range data {
-		h[i%32] ^= data[i]
-	}
-	return h
+	h := sha256.Sum256(data)
+	return h[:]
 }
 
 // Test Authorization Code Storage

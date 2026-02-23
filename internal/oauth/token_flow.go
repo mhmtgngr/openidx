@@ -3,6 +3,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ const (
 	TokenErrorUnauthorizedClient       = "unauthorized_client"
 	TokenErrorUnsupportedGrantType     = "unsupported_grant_type"
 	TokenErrorInvalidScope             = "invalid_scope"
+	TokenErrorServerError              = "server_error"
 )
 
 // TokenRequest represents a token request
