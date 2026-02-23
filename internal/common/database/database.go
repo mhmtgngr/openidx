@@ -98,8 +98,9 @@ func applyPostgresTLS(connString string, cfg PostgresTLSConfig) string {
 }
 
 // Close closes the connection pool
-func (db *PostgresDB) Close() {
+func (db *PostgresDB) Close() error {
 	db.Pool.Close()
+	return nil
 }
 
 // Ping verifies the database connection is alive

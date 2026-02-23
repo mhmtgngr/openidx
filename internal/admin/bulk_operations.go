@@ -2,9 +2,7 @@ package admin
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -315,61 +313,6 @@ func (s *Service) handleCancelBulkOperation(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Operation cancelled"})
-}
-
-func (s *Service) handleExportUsersCSV(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
-
-	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.enabled,
-		        u.email_verified, u.created_at, u.last_login_at,
-		        COALESCE(string_agg(DISTINCT r.name, ', '), '') as roles,
-		        COALESCE(string_agg(DISTINCT g.name, ', '), '') as groups
-		 FROM users u
-		 LEFT JOIN user_roles ur ON u.id = ur.user_id
-		 LEFT JOIN roles r ON ur.role_id = r.id
-		 LEFT JOIN group_memberships gm ON u.id = gm.user_id
-		 LEFT JOIN groups g ON gm.group_id = g.id
-		 GROUP BY u.id ORDER BY u.username`)
-	if err != nil {
-		s.logger.Error("Failed to export users", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to export users"})
-		return
-	}
-	defer rows.Close()
-
-	c.Header("Content-Type", "text/csv")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=users_export_%s.csv", time.Now().Format("2006-01-02")))
-
-	w := csv.NewWriter(c.Writer)
-	_ = w.Write([]string{"ID", "Username", "Email", "First Name", "Last Name", "Enabled", "Email Verified", "Created At", "Last Login", "Roles", "Groups"})
-
-	for rows.Next() {
-		var id, username, email, firstName, lastName, roles, groups string
-		var enabled, emailVerified bool
-		var createdAt time.Time
-		var lastLogin *time.Time
-
-		if err := rows.Scan(&id, &username, &email, &firstName, &lastName, &enabled,
-			&emailVerified, &createdAt, &lastLogin, &roles, &groups); err != nil {
-			continue
-		}
-
-		lastLoginStr := ""
-		if lastLogin != nil {
-			lastLoginStr = lastLogin.Format(time.RFC3339)
-		}
-
-		_ = w.Write([]string{
-			id, username, email, firstName, lastName,
-			boolStr(enabled), boolStr(emailVerified),
-			createdAt.Format(time.RFC3339), lastLoginStr,
-			roles, groups,
-		})
-	}
-	w.Flush()
 }
 
 func boolStr(b bool) string {

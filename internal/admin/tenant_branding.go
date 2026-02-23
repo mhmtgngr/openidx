@@ -12,8 +12,8 @@ import (
 	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
-// TenantBranding represents organization-level tenant branding configuration
-type TenantBranding struct {
+// TenantBrandingRecord represents organization-level tenant branding configuration in the database
+type TenantBrandingRecord struct {
 	ID                 string          `json:"id"`
 	OrgID              string          `json:"org_id"`
 	LogoURL            string          `json:"logo_url"`
@@ -59,15 +59,15 @@ type TenantDomain struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
-// handleGetTenantBranding retrieves the branding configuration for a tenant organization
-func (s *Service) handleGetTenantBranding(c *gin.Context) {
+// handleGetTenantBrandingRecord retrieves the branding configuration for a tenant organization
+func (s *Service) handleGetTenantBrandingRecord(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
 
 	orgID := c.Param("orgId")
 
-	var b TenantBranding
+	var b TenantBrandingRecord
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, org_id, logo_url, favicon_url, primary_color, secondary_color,
 		        background_color, background_image_url, login_page_title, login_page_message,
@@ -80,7 +80,7 @@ func (s *Service) handleGetTenantBranding(c *gin.Context) {
 		&b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		// Return defaults if no branding exists
-		c.JSON(http.StatusOK, TenantBranding{
+		c.JSON(http.StatusOK, TenantBrandingRecord{
 			OrgID:            orgID,
 			PrimaryColor:     "#1e40af",
 			SecondaryColor:   "#3b82f6",
@@ -96,8 +96,8 @@ func (s *Service) handleGetTenantBranding(c *gin.Context) {
 	c.JSON(http.StatusOK, b)
 }
 
-// handleUpdateTenantBranding upserts the branding configuration for a tenant organization
-func (s *Service) handleUpdateTenantBranding(c *gin.Context) {
+// handleUpdateTenantBrandingRecord upserts the branding configuration for a tenant organization
+func (s *Service) handleUpdateTenantBrandingRecord(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
@@ -446,7 +446,7 @@ func (s *Service) handleGetCurrentTenant(c *gin.Context) {
 	}
 
 	// Also fetch branding for the organization
-	var branding TenantBranding
+	var branding TenantBrandingRecord
 	brandingErr := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, org_id, logo_url, favicon_url, primary_color, secondary_color,
 		        background_color, background_image_url, login_page_title, login_page_message,
@@ -460,7 +460,7 @@ func (s *Service) handleGetCurrentTenant(c *gin.Context) {
 		&branding.PoweredByVisible, &branding.Metadata, &branding.CreatedAt, &branding.UpdatedAt)
 	if brandingErr != nil {
 		// Use defaults if no branding exists
-		branding = TenantBranding{
+		branding = TenantBrandingRecord{
 			OrgID:            org.ID,
 			PrimaryColor:     "#1e40af",
 			SecondaryColor:   "#3b82f6",

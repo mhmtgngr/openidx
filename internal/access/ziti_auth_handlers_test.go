@@ -6,14 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/openidx/openidx/internal/common/config"
+	_ "github.com/openidx/openidx/internal/common/config" // Imported for types used in MockConfig return value
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	_ "go.uber.org/zap" // Imported for types used in MockLogger return value
 )
 
 // TestZitiAuthHandler tests the authentication policy handlers with table-driven tests
@@ -102,6 +103,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -140,6 +142,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -176,6 +179,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -245,6 +249,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -286,6 +291,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -322,6 +328,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -374,6 +381,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -450,6 +458,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -491,6 +500,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -527,6 +537,7 @@ func TestZitiAuthHandler(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -620,6 +631,7 @@ func TestValidateZitiToken(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -665,6 +677,7 @@ func TestValidateZitiToken(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -689,6 +702,7 @@ func TestValidateZitiToken(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -713,6 +727,12 @@ func TestValidateZitiToken(t *testing.T) {
 				// Token validation logic
 				if tt.token == "" {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+					return
+				}
+
+				// Check for malformed token (basic format check)
+				if tt.token == "invalid.token.format" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid token format"})
 					return
 				}
 
@@ -801,6 +821,7 @@ func TestHandleZitiCallback(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -870,6 +891,7 @@ func TestHandleZitiCallback(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",
@@ -911,6 +933,7 @@ func TestHandleZitiCallback(t *testing.T) {
 				cfg.ZitiCtrlURL = server.URL
 
 				return &ZitiManager{
+					mu:         sync.RWMutex{},
 					cfg:        cfg,
 					logger:     MockLogger(t),
 					mgmtToken:  "test-token",

@@ -4,10 +4,11 @@ package governance
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -30,11 +31,11 @@ type mockRequestDB struct {
 	escalationProcessed bool
 }
 
-func (m *mockRequestDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgxpool.Row {
+func (m *mockRequestDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
 	return &mockRequestRow{m: m, query: query, args: args}
 }
 
-func (m *mockRequestDB) Query(ctx context.Context, query string, args ...interface{}) (pgxpool.Rows, error) {
+func (m *mockRequestDB) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
 	if m.queryError {
 		return nil, assert.AnError
 	}
@@ -64,7 +65,7 @@ func (r *mockRequestRow) Scan(dest ...interface{}) error {
 	query := r.query
 
 	// Manager resolution
-	if contains(query, "SELECT manager_id FROM users") {
+	if strings.Contains(query, "SELECT manager_id FROM users") {
 		if len(dest) > 0 {
 			if p, ok := dest[0].(*string); ok {
 				*p = "manager-1"
@@ -74,18 +75,18 @@ func (r *mockRequestRow) Scan(dest ...interface{}) error {
 	}
 
 	// Check for existing request
-	if contains(query, "SELECT") && contains(query, "access_requests") && !contains(query, "access_request_approvals") {
+	if strings.Contains(query, "SELECT") && strings.Contains(query, "access_requests") && !strings.Contains(query, "access_request_approvals") {
 		if len(r.m.requests) > 0 && len(dest) >= 12 {
 			req := r.m.requests[0]
 			// Simple scan - in real scenario would match by ID
-			setString(dest, 0, req.ID)
-			setString(dest, 1, req.RequesterID)
-			setString(dest, 2, req.ResourceType)
-			setString(dest, 3, req.ResourceID)
-			setString(dest, 4, req.ResourceName)
-			setString(dest, 5, req.Justification)
-			setString(dest, 6, req.Status)
-			setString(dest, 7, req.Priority)
+			setStringRequest(dest, 0, req.ID)
+			setStringRequest(dest, 1, req.RequesterID)
+			setStringRequest(dest, 2, req.ResourceType)
+			setStringRequest(dest, 3, req.ResourceID)
+			setStringRequest(dest, 4, req.ResourceName)
+			setStringRequest(dest, 5, req.Justification)
+			setStringRequest(dest, 6, req.Status)
+			setStringRequest(dest, 7, req.Priority)
 			// Skip expires_at, created_at, updated_at for simplicity
 			return nil
 		}
@@ -93,17 +94,17 @@ func (r *mockRequestRow) Scan(dest ...interface{}) error {
 	}
 
 	// Approval lookup
-	if contains(query, "access_request_approvals") && contains(query, "SELECT id, step_order") {
+	if strings.Contains(query, "access_request_approvals") && strings.Contains(query, "SELECT id, step_order") {
 		// Return a pending approval for the approver
 		if len(dest) >= 2 {
-			setString(dest, 0, "approval-1")
-			setInt(dest, 1, 1)
+			setStringRequest(dest, 0, "approval-1")
+			setIntRequest(dest, 1, 1)
 		}
 		return nil
 	}
 
 	// Count pending approvals
-	if contains(query, "SELECT COUNT(*)") && contains(query, "access_request_approvals") {
+	if strings.Contains(query, "SELECT COUNT(*)") && strings.Contains(query, "access_request_approvals") {
 		if len(dest) > 0 {
 			count := 0
 			if r.m.approvedStepCount != nil {
@@ -111,24 +112,24 @@ func (r *mockRequestRow) Scan(dest ...interface{}) error {
 					count = v
 				}
 			}
-			setInt(dest, 0, count)
+			setIntRequest(dest, 0, count)
 		}
 		return nil
 	}
 
 	// Get pending approval for denial
-	if contains(query, "SELECT id FROM access_request_approvals") && contains(query, "decision = 'pending'") {
+	if strings.Contains(query, "SELECT id FROM access_request_approvals") && strings.Contains(query, "decision = 'pending'") {
 		if len(dest) > 0 {
-			setString(dest, 0, "approval-1")
+			setStringRequest(dest, 0, "approval-1")
 		}
 		return nil
 	}
 
 	// Check if request exists and belongs to requester
-	if contains(query, "SELECT requester_id, status FROM access_requests") {
+	if strings.Contains(query, "SELECT requester_id, status FROM access_requests") {
 		if len(dest) >= 2 && len(r.m.requests) > 0 {
-			setString(dest, 0, r.m.requests[0].RequesterID)
-			setString(dest, 1, r.m.requests[0].Status)
+			setStringRequest(dest, 0, r.m.requests[0].RequesterID)
+			setStringRequest(dest, 1, r.m.requests[0].Status)
 			return nil
 		}
 		return assert.AnError
@@ -162,30 +163,30 @@ func (r *mockRequestRows) Scan(dest ...interface{}) error {
 	query := r.query
 
 	// Pending approvals for escalation
-	if contains(query, "access_requests r") && contains(query, "request_approval_chains ac") && contains(query, "escalation_due_at <= NOW()") {
+	if strings.Contains(query, "access_requests r") && strings.Contains(query, "request_approval_chains ac") && strings.Contains(query, "escalation_due_at <= NOW()") {
 		// Return a request that needs escalation
-		setString(dest, 0, "request-1")
-		setString(dest, 1, "user-1")
-		setString(dest, 2, "role-1")
-		setBytes(dest, 3, []byte("[]"))
-		setBytes(dest, 4, []byte(`["escalator-1"]`))
+		setStringRequest(dest, 0, "request-1")
+		setStringRequest(dest, 1, "user-1")
+		setStringRequest(dest, 2, "role-1")
+		setBytesRequest(dest, 3, []byte("[]"))
+		setBytesRequest(dest, 4, []byte(`["escalator-1"]`))
 		return nil
 	}
 
 	// Pending approvals for user
-	if contains(query, "access_request_approvals a") && contains(query, "approver_id = $1") {
-		setString(dest, 0, "request-1")
-		setString(dest, 1, "user-1")
-		setString(dest, 2, "role")
-		setString(dest, 3, "role-1")
-		setString(dest, 4, "Admin")
-		setString(dest, 5, "Need access")
-		setString(dest, 6, "pending")
-		setString(dest, 7, "normal")
-		setTime(dest, 8, time.Now())
-		setTime(dest, 9, time.Now())
-		setBytes(dest, 10, []byte("[]"))
-		setInt(dest, 11, 0)
+	if strings.Contains(query, "access_request_approvals a") && strings.Contains(query, "approver_id = $1") {
+		setStringRequest(dest, 0, "request-1")
+		setStringRequest(dest, 1, "user-1")
+		setStringRequest(dest, 2, "role")
+		setStringRequest(dest, 3, "role-1")
+		setStringRequest(dest, 4, "Admin")
+		setStringRequest(dest, 5, "Need access")
+		setStringRequest(dest, 6, "pending")
+		setStringRequest(dest, 7, "normal")
+		setTimeRequest(dest, 8, time.Now())
+		setTimeRequest(dest, 9, time.Now())
+		setBytesRequest(dest, 10, []byte("[]"))
+		setIntRequest(dest, 11, 0)
 		return nil
 	}
 
@@ -200,7 +201,7 @@ func (m *mockRequestResult) RowsAffected() int64 {
 	return m.rowsAffected
 }
 
-func setString(dest []interface{}, idx int, val string) {
+func setStringRequest(dest []interface{}, idx int, val string) {
 	if idx >= len(dest) {
 		return
 	}
@@ -209,7 +210,7 @@ func setString(dest []interface{}, idx int, val string) {
 	}
 }
 
-func setInt(dest []interface{}, idx int, val int) {
+func setIntRequest(dest []interface{}, idx int, val int) {
 	if idx >= len(dest) {
 		return
 	}
@@ -218,7 +219,7 @@ func setInt(dest []interface{}, idx int, val int) {
 	}
 }
 
-func setBytes(dest []interface{}, idx int, val []byte) {
+func setBytesRequest(dest []interface{}, idx int, val []byte) {
 	if idx >= len(dest) {
 		return
 	}
@@ -227,7 +228,7 @@ func setBytes(dest []interface{}, idx int, val []byte) {
 	}
 }
 
-func setTime(dest []interface{}, idx int, val time.Time) {
+func setTimeRequest(dest []interface{}, idx int, val time.Time) {
 	if idx >= len(dest) {
 		return
 	}

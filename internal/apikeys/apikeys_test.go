@@ -7,13 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -95,8 +95,6 @@ func (m *mockRows) Err() error {
 	}
 	return nil
 }
-
-type pgconn struct{}
 
 type mockCommandTag struct {
 	rowsAffected int64
@@ -328,7 +326,7 @@ func TestAPIKeyValidation(t *testing.T) {
 						Scopes:           []string{"read", "write"},
 						Status:           "active",
 					}
-					data, _ := json.Marshal(info)
+					_, _ = json.Marshal(info)
 					return &mockRow{
 						scanFunc: func(dest ...interface{}) error {
 							// Simulate database row
@@ -558,9 +556,9 @@ func TestAPIKeyRevocation(t *testing.T) {
 						},
 					}
 				}
-				calledDel := false
+				_ = false // placeholder for deleted variable
 				r.delFn = func(ctx context.Context, keys ...string) *redis.IntCmd {
-					calledDel = true
+					_ = true // was calledDel
 					if len(keys) != 1 {
 						t.Errorf("expected 1 key to delete, got %d", len(keys))
 					}

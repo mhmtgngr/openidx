@@ -6,9 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,13 +13,16 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/access"
+	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/metrics"
+	"github.com/openidx/openidx/internal/server"
 )
 
 var (
@@ -131,18 +131,19 @@ func main() {
 		c.Next()
 	})
 	router.Use(middleware.PrometheusMetrics("access-service"))
+	router.Use(api.StandardVersionMiddleware())
 
 	// Metrics endpoint
-	router.GET("/metrics", middleware.MetricsHandler())
+	router.GET("/metrics", metrics.Handler())
 
 	// Initialize health service with database and Redis checks
-	healthService := health.NewHealthService(log)
+	healthService := newhealth.NewHealthService(log)
 	healthService.SetVersion(Version)
-	healthService.RegisterCheck(health.NewPostgresChecker(db))
-	healthService.RegisterCheck(health.NewRedisChecker(redis))
+	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
+	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
 
 	// Register standard health check endpoints
-	healthService.RegisterStandardRoutes(router)
+	healthService.RegisterStandardRoutes(router, "")
 
 	// Keep legacy /access/health and /access/ready endpoints for backward compatibility
 	router.GET("/access/health", healthService.Handler())
@@ -317,7 +318,7 @@ func main() {
 		port = 8007
 	}
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      router,
 		ReadTimeout:  30 * time.Second,
@@ -325,28 +326,30 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// Build shutdownables list
+	var shutdownables []server.Shutdownable
+	shutdownables = append(shutdownables, server.CloseDB(db))
+	shutdownables = append(shutdownables, server.CloseRedis(redis))
+	if shutdownTracer != nil {
+		shutdownables = append(shutdownables, server.CloseTracer(shutdownTracer))
+	}
+
+	// Create graceful manager
+	graceful := server.New(server.Config{
+		Server:         httpServer,
+		Logger:         log,
+		Shutdownables:  shutdownables,
+		ShutdownTimeout: 30 * time.Second,
+	})
+
 	// Start server in goroutine
 	go func() {
 		log.Info("Starting Access Proxy service", zap.Int("port", port))
-		if err := tlsutil.ListenAndServe(server, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
+		if err := tlsutil.ListenAndServe(httpServer, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
 			log.Fatal("Failed to start server", zap.Error(err))
 		}
 	}()
 
-	// Wait for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	log.Info("Shutting down server...")
-
-	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.Error("Server forced to shutdown", zap.Error(err))
-	}
-
-	log.Info("Server exited")
+	// Wait for shutdown signal
+	graceful.Start()
 }

@@ -26,14 +26,14 @@ type Tenant struct {
 
 // TenantConfig contains tenant-specific configuration
 type TenantConfig struct {
-	Branding           TenantBranding           `json:"branding"`
-	Security           TenantSecurity           `json:"security"`
-	Features           TenantFeatures           `json:"features"`
-	Limits             TenantLimits             `json:"limits"`
-	PasswordPolicy     PasswordPolicy           `json:"password_policy"`
-	SessionPolicy      SessionPolicy            `json:"session_policy"`
-	MFAPolicy          MFAPolicy                `json:"mfa_policy"`
-	RateLimit          RateLimitConfig          `json:"rate_limit"`
+	Branding           TenantBranding       `json:"branding"`
+	Security           TenantSecurity       `json:"security"`
+	Features           TenantFeatures       `json:"features"`
+	Limits             TenantLimits         `json:"limits"`
+	PasswordPolicy     PasswordPolicy       `json:"password_policy"`
+	SessionPolicy      SessionPolicy        `json:"session_policy"`
+	MFAPolicy          TenantMFAPolicy      `json:"mfa_policy"`
+	RateLimit          RateLimitConfig      `json:"rate_limit"`
 }
 
 // TenantBranding contains branding customization for a tenant
@@ -75,8 +75,8 @@ type SessionPolicy struct {
 	MaxConcurrent   int `json:"max_concurrent"`
 }
 
-// MFAPolicy defines MFA requirements
-type MFAPolicy struct {
+// TenantMFAPolicy defines MFA requirements for a tenant
+type TenantMFAPolicy struct {
 	RequiredForRoles []string `json:"required_for_roles"`
 	AllowedMethods   []string `json:"allowed_methods"` // totp, sms, email, webhook
 }
@@ -357,7 +357,7 @@ func DefaultTenantConfig() TenantConfig {
 			TimeoutMinutes: 60,
 			MaxConcurrent:  5,
 		},
-		MFAPolicy: MFAPolicy{
+		MFAPolicy: TenantMFAPolicy{
 			RequiredForRoles: []string{"admin"},
 			AllowedMethods:   []string{"totp", "sms"},
 		},

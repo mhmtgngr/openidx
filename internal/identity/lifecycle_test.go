@@ -774,6 +774,18 @@ func (m *MockLifecycleRepository) GetUser(ctx context.Context, id string) (*User
 	return nil, fmt.Errorf("user not found")
 }
 
+func (m *MockLifecycleRepository) GetUserByUsername(ctx context.Context, username string) (*User, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetUserByExternalID(ctx context.Context, externalID string) (*User, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (m *MockLifecycleRepository) UpdateUser(ctx context.Context, user *User) error {
 	if m.user != nil && m.user.ID == user.ID {
 		m.user = user
@@ -781,6 +793,102 @@ func (m *MockLifecycleRepository) UpdateUser(ctx context.Context, user *User) er
 	if m.users != nil {
 		m.users[user.ID] = user
 	}
+	return nil
+}
+
+func (m *MockLifecycleRepository) CreateUser(ctx context.Context, user *User) error {
+	if m.users == nil {
+		m.users = make(map[string]*User)
+	}
+	m.users[user.ID] = user
+	return nil
+}
+
+func (m *MockLifecycleRepository) DeleteUser(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) ListUsers(ctx context.Context, filter UserFilter) (*ListResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) ListUsersByGroup(ctx context.Context, groupID string, filter UserFilter) (*ListResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) CreateGroup(ctx context.Context, group *Group) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) GetGroup(ctx context.Context, id string) (*Group, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetGroupByDisplayName(ctx context.Context, displayName string) (*Group, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetGroupByExternalID(ctx context.Context, externalID string) (*Group, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) UpdateGroup(ctx context.Context, group *Group) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) DeleteGroup(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) ListGroups(ctx context.Context, filter GroupFilter) (*ListResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) ListGroupsByUser(ctx context.Context, userID string, filter GroupFilter) (*ListResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) AddGroupMember(ctx context.Context, groupID, userID string) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) RemoveGroupMember(ctx context.Context, groupID, userID string) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) CreateOrganization(ctx context.Context, org *Organization) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) GetOrganization(ctx context.Context, id string) (*Organization, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetOrganizationByName(ctx context.Context, name string) (*Organization, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetOrganizationByDomain(ctx context.Context, domain string) (*Organization, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) GetOrganizationByExternalID(ctx context.Context, externalID string) (*Organization, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) UpdateOrganization(ctx context.Context, org *Organization) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) DeleteOrganization(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *MockLifecycleRepository) ListOrganizations(ctx context.Context, filter OrganizationFilter) (*ListResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *MockLifecycleRepository) Ping(ctx context.Context) error {
 	return nil
 }
 

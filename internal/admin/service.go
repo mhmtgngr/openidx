@@ -1097,8 +1097,8 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// 17A: Tenant Branding & Management
 	router.POST("/tenants/switch", svc.handleSwitchTenant)
 	router.GET("/tenants/current", svc.handleGetCurrentTenant)
-	router.GET("/tenants/:orgId/branding", svc.handleGetTenantBranding)
-	router.PUT("/tenants/:orgId/branding", svc.handleUpdateTenantBranding)
+	router.GET("/tenants/:orgId/branding", svc.handleGetTenantBrandingRecord)
+	router.PUT("/tenants/:orgId/branding", svc.handleUpdateTenantBrandingRecord)
 	router.GET("/tenants/:orgId/settings", svc.handleGetTenantSettings)
 	router.PUT("/tenants/:orgId/settings", svc.handleUpdateTenantSettings)
 	router.GET("/tenants/:orgId/domains", svc.handleListTenantDomains)
