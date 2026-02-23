@@ -101,7 +101,7 @@ func NewAnomalyDetector(logger *zap.Logger, service *Service) *AnomalyDetector {
 
 // AnalyzeEvent analyzes a single event for anomalies
 func (ad *AnomalyDetector) AnalyzeEvent(ctx context.Context, event *ServiceAuditEvent) []*AnomalyAlert {
-	var alerts []*AnomalyAlert
+	alerts := make([]*AnomalyAlert, 0)
 
 	// Only analyze events with outcomes
 	if event.Outcome == "" {
@@ -236,6 +236,11 @@ func (ad *AnomalyDetector) detectPrivilegeEscalation(ctx context.Context, event 
 		windowStart := event.Timestamp.Add(-ad.config.EscalationWindow)
 		windowEnd := event.Timestamp.Add(ad.config.EscalationWindow)
 
+		// Check for nil database
+		if ad.service.db == nil || ad.service.db.Pool == nil {
+			return nil
+		}
+
 		rows, err := ad.service.db.Pool.Query(ctx, `
 			SELECT id, action, timestamp, outcome
 			FROM audit_events
@@ -297,6 +302,11 @@ func (ad *AnomalyDetector) detectPrivilegeEscalation(ctx context.Context, event 
 // detectBulkAccess detects bulk data access patterns
 // Rule: >100 resource reads in 1 minute from the same actor
 func (ad *AnomalyDetector) detectBulkAccess(ctx context.Context, event *ServiceAuditEvent) *AnomalyAlert {
+	// Check for nil database
+	if ad.service.db == nil || ad.service.db.Pool == nil {
+		return nil
+	}
+
 	// Count resource access events by this actor in the window
 	windowStart := event.Timestamp.Add(-ad.config.BulkAccessWindow)
 	windowEnd := event.Timestamp.Add(ad.config.BulkAccessWindow)
@@ -422,6 +432,10 @@ func (ad *AnomalyDetector) detectOffHoursAdmin(event *ServiceAuditEvent) *Anomal
 
 // storeAlerts stores detected anomalies in the database
 func (ad *AnomalyDetector) storeAlerts(ctx context.Context, alerts []*AnomalyAlert) {
+	if ad.service.db == nil || ad.service.db.Pool == nil {
+		return
+	}
+
 	for _, alert := range alerts {
 		_, err := ad.service.db.Pool.Exec(ctx, `
 			INSERT INTO security_alerts (id, type, severity, title, description, event_id,

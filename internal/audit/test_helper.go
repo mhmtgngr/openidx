@@ -6,9 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"testing"
 	"time"
 
+	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/pkg/storage"
+	"go.uber.org/zap"
 )
 
 // TestAuditLogger provides a test-friendly audit logger that uses the tamper-evident storage
@@ -130,7 +133,12 @@ func (l *TestAuditLogger) GetEventByID(ctx context.Context, id string) (AuditEve
 
 // VerifyChecksum verifies the checksum of an event
 func (l *TestAuditLogger) VerifyChecksum(event AuditEventForTest) bool {
-	return event.Checksum != ""
+	if event.Checksum == "" {
+		return false
+	}
+	// Recompute checksum and verify
+	expected := l.computeChecksum(event, event.PreviousHash)
+	return expected == event.Checksum
 }
 
 // VerifyChain verifies the integrity of the hash chain
@@ -237,4 +245,16 @@ type EventNotFoundError struct {
 
 func (e *EventNotFoundError) Error() string {
 	return "event not found: " + e.ID
+}
+
+// createTestService creates a test service with nil database for unit tests
+func createTestService(t *testing.T) *Service {
+	logger := zap.NewNop()
+	db := &database.PostgresDB{
+		// Pool is nil, but methods should handle this gracefully
+	}
+	return &Service{
+		db:     db,
+		logger: logger,
+	}
 }

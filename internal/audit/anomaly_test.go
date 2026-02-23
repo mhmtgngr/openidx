@@ -3,6 +3,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -119,15 +120,17 @@ func TestBruteForceDetection_WindowExpiry(t *testing.T) {
 	alerts := detector.AnalyzeEvent(ctx, newEvent)
 	assert.Empty(t, alerts, "Old attempts should be expired")
 
-	// Need 5 more attempts to trigger
+	// Need 4 more attempts to trigger (already have 1 from above)
 	for i := 0; i < 4; i++ {
 		event := *newEvent
 		event.ID = generateUUID()
+		event.Timestamp = time.Now().UTC()
 		alerts = detector.AnalyzeEvent(ctx, &event)
+		if len(alerts) > 0 {
+			break // Alert triggered, exit loop
+		}
 	}
-
-	alerts = detector.AnalyzeEvent(ctx, newEvent)
-	assert.Len(t, alerts, 1, "Should trigger with 5 new attempts")
+	assert.Len(t, alerts, 1, "Should trigger with 5 total new attempts")
 }
 
 func TestPrivilegeEscalationDetection(t *testing.T) {
@@ -168,16 +171,15 @@ func TestBulkAccessDetection(t *testing.T) {
 
 	// This requires database queries to count events
 	event := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeAuthorization,
-		Category:    CategoryAccess,
-		Action:      "resource.read",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "bulk-user-123",
-		ActorIP:     "192.168.1.102",
-		ResourceID:  "resource-456",
-		ResourceType: "document",
+		ID:        generateUUID(),
+		Timestamp: time.Now().UTC(),
+		EventType: EventTypeAuthorization,
+		Category:  CategoryAccess,
+		Action:    "resource.read",
+		Outcome:   ServiceOutcomeSuccess,
+		ActorID:   "bulk-user-123",
+		ActorIP:   "192.168.1.102",
+		ResourceID: "resource-456",
 	}
 
 	alerts := detector.AnalyzeEvent(ctx, event)
@@ -531,28 +533,5 @@ func BenchmarkAnalyzeEvent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		detector.AnalyzeEvent(ctx, event)
-	}
-}
-
-func BenchmarkMatchesFilters(b *testing.B) {
-	filters := &StreamFilters{
-		EventTypes: []EventType{EventTypeAuthentication, EventTypeAuthorization},
-		Categories: []EventCategory{CategorySecurity},
-	}
-
-	client := &StreamClient{
-		Filters: filters,
-	}
-
-	event := &ServiceAuditEvent{
-		EventType: EventTypeAuthentication,
-		Category:  CategorySecurity,
-		ActorID:   "user-123",
-		Outcome:   ServiceOutcomeSuccess,
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		client.matchesFilters(event)
 	}
 }

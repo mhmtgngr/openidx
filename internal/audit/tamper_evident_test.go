@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 )
 
 // TestAuditEvent_ComputeHash tests HMAC-SHA256 hash computation

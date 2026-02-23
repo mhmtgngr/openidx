@@ -3,6 +3,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -393,15 +394,6 @@ func TestGDPRReportSerialization(t *testing.T) {
 	assert.Equal(t, report.ReportID, unmarshaled.ReportID)
 	assert.Equal(t, report.DataAccessLogs.TotalAccessEvents, unmarshaled.DataAccessLogs.TotalAccessEvents)
 	assert.Equal(t, report.DataSubjectRequests.ComplianceStatus, unmarshaled.DataSubjectRequests.ComplianceStatus)
-}
-
-// Helper function to create a test service
-func createTestService(t *testing.T) *Service {
-	// This would typically set up a test database connection
-	// For now, return a minimal service struct
-	return &Service{
-		// Initialize with test configuration
-	}
 }
 
 // Run benchmarks

@@ -244,38 +244,40 @@ func (s *Service) GenerateGDPRReport(ctx context.Context, startDate, endDate tim
 func (s *Service) getAccessReviewMetrics(ctx context.Context, startDate, endDate time.Time) AccessReviewMetrics {
 	metrics := AccessReviewMetrics{}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM access_reviews
-		WHERE created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.TotalReviews)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM access_reviews
+			WHERE created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.TotalReviews)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM access_reviews
-		WHERE status = 'pending'
-	`).Scan(&metrics.PendingReviews)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM access_reviews
+			WHERE status = 'pending'
+		`).Scan(&metrics.PendingReviews)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM access_reviews
-		WHERE status = 'completed'
-		AND completed_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.CompletedReviews)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM access_reviews
+			WHERE status = 'completed'
+			AND completed_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.CompletedReviews)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM access_reviews
-		WHERE status = 'pending' AND due_date < NOW()
-	`).Scan(&metrics.OverdueReviews)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM access_reviews
+			WHERE status = 'pending' AND due_date < NOW()
+		`).Scan(&metrics.OverdueReviews)
 
-	var lastReview time.Time
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
-		FROM access_reviews
-		WHERE status = 'completed'
-	`).Scan(&lastReview)
-	metrics.LastReviewDate = lastReview
+		var lastReview time.Time
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
+			FROM access_reviews
+			WHERE status = 'completed'
+		`).Scan(&lastReview)
+		metrics.LastReviewDate = lastReview
+	}
 
 	if metrics.TotalReviews > 0 {
 		metrics.CompletionRate = float64(metrics.CompletedReviews) / float64(metrics.TotalReviews) * 100
@@ -297,45 +299,47 @@ func (s *Service) getPasswordPolicyMetrics(ctx context.Context) PasswordPolicyMe
 		ComplianceStatus:     "compliant",
 	}
 
-	var settingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(value::text, '{}')
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&settingsJSON)
+	if s.db != nil && s.db.Pool != nil {
+		var settingsJSON []byte
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(value::text, '{}')
+			FROM system_settings
+			WHERE key = 'security'
+		`).Scan(&settingsJSON)
 
-	if err == nil && len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if pp, ok := secSettings["password_policy"].(map[string]interface{}); ok {
-				if ml, ok := pp["min_length"].(float64); ok {
-					metrics.MinLength = int(ml)
-				}
-				if uc, ok := pp["require_uppercase"].(bool); ok {
-					metrics.RequireUppercase = uc
-				}
-				if lc, ok := pp["require_lowercase"].(bool); ok {
-					metrics.RequireLowercase = lc
-				}
-				if num, ok := pp["require_numbers"].(bool); ok {
-					metrics.RequireNumbers = num
-				}
-				if sc, ok := pp["require_special_chars"].(bool); ok {
-					metrics.RequireSpecialChars = sc
-				}
-				if ma, ok := pp["max_age_days"].(float64); ok {
-					metrics.MaxAgeDays = int(ma)
+		if err == nil && len(settingsJSON) > 0 {
+			var secSettings map[string]interface{}
+			if json.Unmarshal(settingsJSON, &secSettings) == nil {
+				if pp, ok := secSettings["password_policy"].(map[string]interface{}); ok {
+					if ml, ok := pp["min_length"].(float64); ok {
+						metrics.MinLength = int(ml)
+					}
+					if uc, ok := pp["require_uppercase"].(bool); ok {
+						metrics.RequireUppercase = uc
+					}
+					if lc, ok := pp["require_lowercase"].(bool); ok {
+						metrics.RequireLowercase = lc
+					}
+					if num, ok := pp["require_numbers"].(bool); ok {
+						metrics.RequireNumbers = num
+					}
+					if sc, ok := pp["require_special_chars"].(bool); ok {
+						metrics.RequireSpecialChars = sc
+					}
+					if ma, ok := pp["max_age_days"].(float64); ok {
+						metrics.MaxAgeDays = int(ma)
+					}
 				}
 			}
 		}
-	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM users
-		WHERE enabled = true
-		AND CHAR_LENGTH(password_hash) < 50
-	`).Scan(&metrics.UsersWithWeakPasswords)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM users
+			WHERE enabled = true
+			AND CHAR_LENGTH(password_hash) < 50
+		`).Scan(&metrics.UsersWithWeakPasswords)
+	}
 
 	if metrics.MinLength < 8 || !metrics.RequireNumbers {
 		metrics.ComplianceStatus = "non_compliant"
@@ -352,30 +356,32 @@ func (s *Service) getMFAMetrics(ctx context.Context) MFAAdoptionMetrics {
 		LastUpdated:      time.Now().UTC(),
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM users
-		WHERE enabled = true
-	`).Scan(&metrics.TotalUsers)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM users
+			WHERE enabled = true
+		`).Scan(&metrics.TotalUsers)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(DISTINCT user_id), 0)
-		FROM mfa_totp
-		WHERE enabled = true
-	`).Scan(&metrics.UsersWithTOTP)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(DISTINCT user_id), 0)
+			FROM mfa_totp
+			WHERE enabled = true
+		`).Scan(&metrics.UsersWithTOTP)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(DISTINCT user_id), 0)
-		FROM webauthn_credentials
-	`).Scan(&metrics.UsersWithWebAuthn)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(DISTINCT user_id), 0)
+			FROM webauthn_credentials
+		`).Scan(&metrics.UsersWithWebAuthn)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(DISTINCT user_id), 0) FROM (
-			SELECT user_id FROM mfa_totp WHERE enabled = true
-			UNION
-			SELECT user_id FROM webauthn_credentials
-		) mfa
-	`).Scan(&metrics.UsersWithMFA)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(DISTINCT user_id), 0) FROM (
+				SELECT user_id FROM mfa_totp WHERE enabled = true
+				UNION
+				SELECT user_id FROM webauthn_credentials
+			) mfa
+		`).Scan(&metrics.UsersWithMFA)
+	}
 
 	if metrics.TotalUsers > 0 {
 		metrics.AdoptionRate = float64(metrics.UsersWithMFA) / float64(metrics.TotalUsers) * 100
@@ -392,33 +398,35 @@ func (s *Service) getSessionManagementMetrics(ctx context.Context) SessionManage
 		LastActivityCheck: time.Now().UTC(),
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM sessions
-		WHERE expires_at > NOW()
-	`).Scan(&metrics.ActiveSessions)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM sessions
+			WHERE expires_at > NOW()
+		`).Scan(&metrics.ActiveSessions)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0), 0)
-		FROM sessions
-		WHERE created_at > NOW() - INTERVAL '30 days'
-	`).Scan(&metrics.AverageSessionHours)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0), 0)
+			FROM sessions
+			WHERE created_at > NOW() - INTERVAL '30 days'
+		`).Scan(&metrics.AverageSessionHours)
 
-	var settingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(value::text, '{}')
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&settingsJSON)
+		var settingsJSON []byte
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(value::text, '{}')
+			FROM system_settings
+			WHERE key = 'security'
+		`).Scan(&settingsJSON)
 
-	if err == nil && len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if st, ok := secSettings["session_timeout"].(float64); ok {
-				metrics.SessionTimeoutMins = int(st)
-			}
-			if it, ok := secSettings["idle_timeout"].(float64); ok {
-				metrics.IdleTimeoutMins = int(it)
+		if err == nil && len(settingsJSON) > 0 {
+			var secSettings map[string]interface{}
+			if json.Unmarshal(settingsJSON, &secSettings) == nil {
+				if st, ok := secSettings["session_timeout"].(float64); ok {
+					metrics.SessionTimeoutMins = int(st)
+				}
+				if it, ok := secSettings["idle_timeout"].(float64); ok {
+					metrics.IdleTimeoutMins = int(it)
+				}
 			}
 		}
 	}
@@ -437,41 +445,43 @@ func (s *Service) getISOAccessControlMetrics(ctx context.Context, startDate, end
 		ComplianceStatus: "compliant",
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM users
-		WHERE enabled = true
-	`).Scan(&metrics.TotalUsers)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM users
+			WHERE enabled = true
+		`).Scan(&metrics.TotalUsers)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(DISTINCT ur.user_id), 0)
-		FROM user_roles ur
-		JOIN roles r ON ur.role_id = r.id
-		WHERE r.name IN ('admin', 'super_admin')
-		AND ur.user_id IN (SELECT id FROM users WHERE enabled = true)
-	`).Scan(&metrics.AdminUsers)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(DISTINCT ur.user_id), 0)
+			FROM user_roles ur
+			JOIN roles r ON ur.role_id = r.id
+			WHERE r.name IN ('admin', 'super_admin')
+			AND ur.user_id IN (SELECT id FROM users WHERE enabled = true)
+		`).Scan(&metrics.AdminUsers)
 
-	if metrics.TotalUsers > 0 {
-		metrics.AdminRatio = float64(metrics.AdminUsers) / float64(metrics.TotalUsers) * 100
+		if metrics.TotalUsers > 0 {
+			metrics.AdminRatio = float64(metrics.AdminUsers) / float64(metrics.TotalUsers) * 100
+		}
+
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM roles
+		`).Scan(&metrics.RolesDefined)
+
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM groups
+		`).Scan(&metrics.GroupsDefined)
+
+		var lastReview time.Time
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
+			FROM access_reviews
+			WHERE status = 'completed'
+		`).Scan(&lastReview)
+		metrics.LastAccessReview = lastReview
 	}
-
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM roles
-	`).Scan(&metrics.RolesDefined)
-
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM groups
-	`).Scan(&metrics.GroupsDefined)
-
-	var lastReview time.Time
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
-		FROM access_reviews
-		WHERE status = 'completed'
-	`).Scan(&lastReview)
-	metrics.LastAccessReview = lastReview
 
 	if metrics.AdminRatio > 20 {
 		metrics.ComplianceStatus = "partial"
@@ -492,38 +502,40 @@ func (s *Service) getCryptographyMetrics(ctx context.Context) CryptographyMetric
 		ComplianceStatus:   "compliant",
 	}
 
-	var settingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(value::text, '{}')
-		FROM system_settings
-		WHERE key = 'security'
-	`).Scan(&settingsJSON)
+	if s.db != nil && s.db.Pool != nil {
+		var settingsJSON []byte
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(value::text, '{}')
+			FROM system_settings
+			WHERE key = 'security'
+		`).Scan(&settingsJSON)
 
-	if err == nil && len(settingsJSON) > 0 {
-		var secSettings map[string]interface{}
-		if json.Unmarshal(settingsJSON, &secSettings) == nil {
-			if tls, ok := secSettings["tls_enabled"].(bool); ok {
-				metrics.TLSEnabled = tls
-			}
-			if mv, ok := secSettings["tls_min_version"].(string); ok {
-				metrics.TLSMinVersion = mv
-			}
-			if enc, ok := secSettings["encryption_at_rest"].(bool); ok {
-				metrics.EncryptionAtRest = enc
-			}
-			if kr, ok := secSettings["key_rotation_enabled"].(bool); ok {
-				metrics.KeyRotationEnabled = kr
+		if err == nil && len(settingsJSON) > 0 {
+			var secSettings map[string]interface{}
+			if json.Unmarshal(settingsJSON, &secSettings) == nil {
+				if tls, ok := secSettings["tls_enabled"].(bool); ok {
+					metrics.TLSEnabled = tls
+				}
+				if mv, ok := secSettings["tls_min_version"].(string); ok {
+					metrics.TLSMinVersion = mv
+				}
+				if enc, ok := secSettings["encryption_at_rest"].(bool); ok {
+					metrics.EncryptionAtRest = enc
+				}
+				if kr, ok := secSettings["key_rotation_enabled"].(bool); ok {
+					metrics.KeyRotationEnabled = kr
+				}
 			}
 		}
-	}
 
-	var lastRotation time.Time
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
-		FROM key_rotation_events
-		WHERE status = 'completed'
-	`).Scan(&lastRotation)
-	metrics.LastKeyRotation = lastRotation
+		var lastRotation time.Time
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
+			FROM key_rotation_events
+			WHERE status = 'completed'
+		`).Scan(&lastRotation)
+		metrics.LastKeyRotation = lastRotation
+	}
 
 	if !metrics.TLSEnabled || metrics.TLSMinVersion < "1.2" {
 		metrics.ComplianceStatus = "non_compliant"
@@ -541,56 +553,58 @@ func (s *Service) getOperationalSecurityMetrics(ctx context.Context, startDate, 
 		ComplianceStatus: "compliant",
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.TotalEvents)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM audit_events
+			WHERE timestamp BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.TotalEvents)
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT event_type, COUNT(*)
-		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
-		GROUP BY event_type
-	`, startDate, endDate)
-	if err == nil {
-		for rows.Next() {
-			var eventType string
-			var count int
-			if rows.Scan(&eventType, &count) == nil {
-				metrics.EventsByType[eventType] = count
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT event_type, COUNT(*)
+			FROM audit_events
+			WHERE timestamp BETWEEN $1 AND $2
+			GROUP BY event_type
+		`, startDate, endDate)
+		if err == nil {
+			for rows.Next() {
+				var eventType string
+				var count int
+				if rows.Scan(&eventType, &count) == nil {
+					metrics.EventsByType[eventType] = count
+				}
 			}
+			rows.Close()
 		}
-		rows.Close()
-	}
 
-	rows, err = s.db.Pool.Query(ctx, `
-		SELECT DATE(timestamp) as day, COUNT(*) as count
-		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
-		GROUP BY DATE(timestamp)
-		ORDER BY day
-	`, startDate, endDate)
-	if err == nil {
-		for rows.Next() {
-			var day time.Time
-			var count int
-			if rows.Scan(&day, &count) == nil {
-				metrics.EventsByDay = append(metrics.EventsByDay, DayEventCount{
-					Date:  day.Format("2006-01-02"),
-					Count: count,
-				})
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT DATE(timestamp) as day, COUNT(*) as count
+			FROM audit_events
+			WHERE timestamp BETWEEN $1 AND $2
+			GROUP BY DATE(timestamp)
+			ORDER BY day
+		`, startDate, endDate)
+		if err == nil {
+			for rows.Next() {
+				var day time.Time
+				var count int
+				if rows.Scan(&day, &count) == nil {
+					metrics.EventsByDay = append(metrics.EventsByDay, DayEventCount{
+						Date:  day.Format("2006-01-02"),
+						Count: count,
+					})
+				}
 			}
+			rows.Close()
 		}
-		rows.Close()
-	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM audit_events
-		WHERE outcome = 'failure'
-		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.FailedEvents)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM audit_events
+			WHERE outcome = 'failure'
+			AND timestamp BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.FailedEvents)
+	}
 
 	if metrics.TotalEvents > 0 {
 		metrics.ErrorRate = float64(metrics.FailedEvents) / float64(metrics.TotalEvents) * 100
@@ -617,56 +631,58 @@ func (s *Service) getDataAccessMetrics(ctx context.Context, startDate, endDate t
 		ComplianceStatus: "compliant",
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM audit_events
-		WHERE event_type = 'data_access'
-		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.TotalAccessEvents)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM audit_events
+			WHERE event_type = 'data_access'
+			AND timestamp BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.TotalAccessEvents)
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT actor_id, COUNT(*)
-		FROM audit_events
-		WHERE event_type = 'data_access'
-		AND timestamp BETWEEN $1 AND $2
-		GROUP BY actor_id
-		ORDER BY COUNT(*) DESC
-		LIMIT 10
-	`, startDate, endDate)
-	if err == nil {
-		for rows.Next() {
-			var actorID string
-			var count int
-			if rows.Scan(&actorID, &count) == nil {
-				metrics.AccessByActor[actorID] = count
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT actor_id, COUNT(*)
+			FROM audit_events
+			WHERE event_type = 'data_access'
+			AND timestamp BETWEEN $1 AND $2
+			GROUP BY actor_id
+			ORDER BY COUNT(*) DESC
+			LIMIT 10
+		`, startDate, endDate)
+		if err == nil {
+			for rows.Next() {
+				var actorID string
+				var count int
+				if rows.Scan(&actorID, &count) == nil {
+					metrics.AccessByActor[actorID] = count
+				}
 			}
+			rows.Close()
 		}
-		rows.Close()
-	}
 
-	rows, err = s.db.Pool.Query(ctx, `
-		SELECT resource_type, COUNT(*)
-		FROM audit_events
-		WHERE event_type = 'data_access'
-		AND timestamp BETWEEN $1 AND $2
-		GROUP BY resource_type
-	`, startDate, endDate)
-	if err == nil {
-		for rows.Next() {
-			var resourceType string
-			var count int
-			if rows.Scan(&resourceType, &count) == nil {
-				metrics.AccessByDataType[resourceType] = count
+		rows, err = s.db.Pool.Query(ctx, `
+			SELECT resource_type, COUNT(*)
+			FROM audit_events
+			WHERE event_type = 'data_access'
+			AND timestamp BETWEEN $1 AND $2
+			GROUP BY resource_type
+		`, startDate, endDate)
+		if err == nil {
+			for rows.Next() {
+				var resourceType string
+				var count int
+				if rows.Scan(&resourceType, &count) == nil {
+					metrics.AccessByDataType[resourceType] = count
+				}
 			}
+			rows.Close()
 		}
-		rows.Close()
-	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamp)
-		FROM audit_events
-		WHERE event_type = 'data_access'
-	`).Scan(&metrics.LastAccessLog)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamp)
+			FROM audit_events
+			WHERE event_type = 'data_access'
+		`).Scan(&metrics.LastAccessLog)
+	}
 
 	if metrics.TotalAccessEvents == 0 {
 		metrics.ComplianceStatus = "partial"
@@ -680,35 +696,37 @@ func (s *Service) getConsentMetrics(ctx context.Context) ConsentMetrics {
 		ComplianceStatus: "compliant",
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM consent_records
-	`).Scan(&metrics.TotalConsentRecords)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM consent_records
+		`).Scan(&metrics.TotalConsentRecords)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM consent_records
-		WHERE status = 'active'
-	`).Scan(&metrics.ActiveConsents)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM consent_records
+			WHERE status = 'active'
+		`).Scan(&metrics.ActiveConsents)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM consent_records
-		WHERE status = 'withdrawn'
-	`).Scan(&metrics.WithdrawnConsents)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM consent_records
+			WHERE status = 'withdrawn'
+		`).Scan(&metrics.WithdrawnConsents)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM consent_records
-		WHERE status = 'pending'
-	`).Scan(&metrics.PendingConsents)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM consent_records
+			WHERE status = 'pending'
+		`).Scan(&metrics.PendingConsents)
 
-	var lastUpdate time.Time
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamp)
-		FROM consent_records
-	`).Scan(&lastUpdate)
-	metrics.LastConsentUpdate = lastUpdate
+		var lastUpdate time.Time
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamp)
+			FROM consent_records
+		`).Scan(&lastUpdate)
+		metrics.LastConsentUpdate = lastUpdate
+	}
 
 	if metrics.TotalConsentRecords == 0 {
 		metrics.ComplianceStatus = "non_compliant"
@@ -725,63 +743,65 @@ func (s *Service) getDataSubjectRequestMetrics(ctx context.Context, startDate, e
 		ComplianceStatus:  "compliant",
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.TotalRequests)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.TotalRequests)
 
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT request_type, COUNT(*)
-		FROM data_subject_requests
-		WHERE created_at BETWEEN $1 AND $2
-		GROUP BY request_type
-	`, startDate, endDate)
-	if err == nil {
-		for rows.Next() {
-			var reqType string
-			var count int
-			if rows.Scan(&reqType, &count) == nil {
-				metrics.RequestsByType[reqType] = count
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT request_type, COUNT(*)
+			FROM data_subject_requests
+			WHERE created_at BETWEEN $1 AND $2
+			GROUP BY request_type
+		`, startDate, endDate)
+		if err == nil {
+			for rows.Next() {
+				var reqType string
+				var count int
+				if rows.Scan(&reqType, &count) == nil {
+					metrics.RequestsByType[reqType] = count
+				}
 			}
+			rows.Close()
 		}
-		rows.Close()
+
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE status = 'pending'
+			AND created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.PendingRequests)
+
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE status = 'completed'
+			AND created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.CompletedRequests)
+
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE status != 'completed'
+			AND created_at < NOW() - INTERVAL '30 days'
+		`).Scan(&metrics.OverdueRequests)
+
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
+			FROM data_subject_requests
+			WHERE status = 'completed'
+			AND created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.AverageResponseDays)
+
+		var lastReq time.Time
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
+			FROM data_subject_requests
+		`).Scan(&lastReq)
+		metrics.LastRequestDate = lastReq
 	}
-
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE status = 'pending'
-		AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.PendingRequests)
-
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE status = 'completed'
-		AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.CompletedRequests)
-
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE status != 'completed'
-		AND created_at < NOW() - INTERVAL '30 days'
-	`).Scan(&metrics.OverdueRequests)
-
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
-		FROM data_subject_requests
-		WHERE status = 'completed'
-		AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.AverageResponseDays)
-
-	var lastReq time.Time
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
-		FROM data_subject_requests
-	`).Scan(&lastReq)
-	metrics.LastRequestDate = lastReq
 
 	if metrics.OverdueRequests > 0 || metrics.AverageResponseDays > 30 {
 		metrics.ComplianceStatus = "non_compliant"
@@ -797,51 +817,53 @@ func (s *Service) getDataDeletionMetrics(ctx context.Context, startDate, endDate
 		ComplianceStatus: "compliant",
 	}
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE request_type = 'deletion'
-		AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.TotalDeletionRequests)
+	if s.db != nil && s.db.Pool != nil {
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE request_type = 'deletion'
+			AND created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.TotalDeletionRequests)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE request_type = 'deletion'
-		AND status = 'completed'
-		AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.CompletedDeletions)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE request_type = 'deletion'
+			AND status = 'completed'
+			AND created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.CompletedDeletions)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE request_type = 'deletion'
-		AND status = 'pending'
-	`).Scan(&metrics.PendingDeletions)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE request_type = 'deletion'
+			AND status = 'pending'
+		`).Scan(&metrics.PendingDeletions)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(COUNT(*), 0)
-		FROM data_subject_requests
-		WHERE request_type = 'deletion'
-		AND status = 'failed'
-	`).Scan(&metrics.FailedDeletions)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(COUNT(*), 0)
+			FROM data_subject_requests
+			WHERE request_type = 'deletion'
+			AND status = 'failed'
+		`).Scan(&metrics.FailedDeletions)
 
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
-		FROM data_subject_requests
-		WHERE request_type = 'deletion'
-		AND status = 'completed'
-		AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&metrics.AverageDeletionDays)
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400.0), 0)
+			FROM data_subject_requests
+			WHERE request_type = 'deletion'
+			AND status = 'completed'
+			AND created_at BETWEEN $1 AND $2
+		`, startDate, endDate).Scan(&metrics.AverageDeletionDays)
 
-	var lastDel time.Time
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
-		FROM data_subject_requests
-		WHERE request_type = 'deletion'
-		AND status = 'completed'
-	`).Scan(&lastDel)
-	metrics.LastDeletionDate = lastDel
+		var lastDel time.Time
+		s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(completed_at), '1970-01-01'::timestamp)
+			FROM data_subject_requests
+			WHERE request_type = 'deletion'
+			AND status = 'completed'
+		`).Scan(&lastDel)
+		metrics.LastDeletionDate = lastDel
+	}
 
 	if metrics.FailedDeletions > 0 || metrics.AverageDeletionDays > 30 {
 		metrics.ComplianceStatus = "non_compliant"

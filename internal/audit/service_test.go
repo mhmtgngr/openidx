@@ -13,15 +13,15 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// TestAuditEventSerialization verifies AuditEvent JSON marshaling
-func TestAuditEventSerialization(t *testing.T) {
-	event := &AuditEvent{
+// TestServiceAuditEventSerialization verifies ServiceAuditEvent JSON marshaling
+func TestServiceAuditEventSerialization(t *testing.T) {
+	event := &ServiceAuditEvent{
 		ID:         "evt-001",
 		Timestamp:  time.Now(),
 		EventType:  EventTypeAuthentication,
 		Category:   CategorySecurity,
 		Action:     "login",
-		Outcome:    OutcomeSuccess,
+		Outcome:    ServiceOutcomeSuccess,
 		ActorID:    "user-123",
 		ActorType:  "user",
 		ActorIP:    "192.168.1.1",
@@ -37,13 +37,13 @@ func TestAuditEventSerialization(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, data)
 
-	var decoded AuditEvent
+	var decoded ServiceAuditEvent
 	err = json.Unmarshal(data, &decoded)
 	assert.NoError(t, err)
 	assert.Equal(t, "evt-001", decoded.ID)
 	assert.Equal(t, EventTypeAuthentication, decoded.EventType)
 	assert.Equal(t, CategorySecurity, decoded.Category)
-	assert.Equal(t, OutcomeSuccess, decoded.Outcome)
+	assert.Equal(t, ServiceOutcomeSuccess, decoded.Outcome)
 	assert.Equal(t, "user-123", decoded.ActorID)
 	assert.Equal(t, "192.168.1.1", decoded.ActorIP)
 	assert.Equal(t, "password", decoded.Details["method"])
@@ -97,16 +97,16 @@ func TestEventCategories(t *testing.T) {
 
 // TestEventOutcomes verifies all outcome constants
 func TestEventOutcomes(t *testing.T) {
-	outcomes := []EventOutcome{
-		OutcomeSuccess,
-		OutcomeFailure,
-		OutcomePending,
+	outcomes := []ServiceEventOutcome{
+		ServiceOutcomeSuccess,
+		ServiceOutcomeFailure,
+		ServiceOutcomePending,
 	}
 
 	assert.Len(t, outcomes, 3)
-	assert.Equal(t, EventOutcome("success"), OutcomeSuccess)
-	assert.Equal(t, EventOutcome("failure"), OutcomeFailure)
-	assert.Equal(t, EventOutcome("pending"), OutcomePending)
+	assert.Equal(t, ServiceEventOutcome("success"), ServiceOutcomeSuccess)
+	assert.Equal(t, ServiceEventOutcome("failure"), ServiceOutcomeFailure)
+	assert.Equal(t, ServiceEventOutcome("pending"), ServiceOutcomePending)
 }
 
 // TestAuditQueryDefaults verifies default query values
@@ -133,7 +133,7 @@ func TestAuditQuerySerialization(t *testing.T) {
 		EventType: EventTypeAuthentication,
 		Category:  CategorySecurity,
 		ActorID:   "user-1",
-		Outcome:   OutcomeFailure,
+		Outcome:   ServiceOutcomeFailure,
 		Offset:    0,
 		Limit:     50,
 	}
@@ -146,7 +146,7 @@ func TestAuditQuerySerialization(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, EventTypeAuthentication, decoded.EventType)
 	assert.Equal(t, CategorySecurity, decoded.Category)
-	assert.Equal(t, OutcomeFailure, decoded.Outcome)
+	assert.Equal(t, ServiceOutcomeFailure, decoded.Outcome)
 	assert.Equal(t, 50, decoded.Limit)
 }
 
@@ -254,7 +254,7 @@ func TestReportSummaryCompleteness(t *testing.T) {
 
 // TestAuditEventDetailsMap verifies details field handles arbitrary JSON
 func TestAuditEventDetailsMap(t *testing.T) {
-	event := &AuditEvent{
+	event := &ServiceAuditEvent{
 		ID:        "evt-100",
 		EventType: EventTypeAuthentication,
 		Details: map[string]interface{}{
@@ -269,7 +269,7 @@ func TestAuditEventDetailsMap(t *testing.T) {
 	data, err := json.Marshal(event)
 	assert.NoError(t, err)
 
-	var decoded AuditEvent
+	var decoded ServiceAuditEvent
 	err = json.Unmarshal(data, &decoded)
 	assert.NoError(t, err)
 	assert.Equal(t, "Chrome", decoded.Details["browser"])

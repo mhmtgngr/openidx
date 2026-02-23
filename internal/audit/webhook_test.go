@@ -2,7 +2,6 @@
 package audit
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,7 +69,7 @@ func TestWebhookDelivery_ExponentialBackoff(t *testing.T) {
 				delay := tt.baseDelay * time.Duration(1<<uint(tt.retryCount-1))
 				assert.Equal(t, tt.expected, delay)
 			} else {
-				assert.Equal(t, tt.expected, 0)
+				assert.Equal(t, time.Duration(0), tt.expected)
 			}
 		})
 	}
@@ -85,7 +84,7 @@ func TestWebhookDelivery_MaxRetries(t *testing.T) {
 	streamer.webhookConfig.MaxRetries = 3
 	streamer.webhookConfig.RetryDelay = 10 * time.Millisecond
 
-	delivery := &WebhookDelivery{
+	_ = &WebhookDelivery{
 		Event: &ServiceAuditEvent{
 			ID:        "test-event",
 			Timestamp: time.Now().UTC(),

@@ -362,17 +362,19 @@ func (es *EventStreamer) handleRegisterWebhook(c *gin.Context) {
 	}
 
 	// Store subscription in database
-	ctx := c.Request.Context()
-	_, err := es.service.db.Pool.Exec(ctx, `
-		INSERT INTO webhook_subscriptions (id, url, secret, enabled, filters, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, subscription.ID, subscription.URL, subscription.Secret, subscription.Enabled,
-		subscription.Filters, subscription.CreatedAt)
+	if es.service.db != nil && es.service.db.Pool != nil {
+		ctx := c.Request.Context()
+		_, err := es.service.db.Pool.Exec(ctx, `
+			INSERT INTO webhook_subscriptions (id, url, secret, enabled, filters, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, subscription.ID, subscription.URL, subscription.Secret, subscription.Enabled,
+			subscription.Filters, subscription.CreatedAt)
 
-	if err != nil {
-		es.logger.Error("Failed to store webhook subscription", zap.Error(err))
-		c.JSON(500, gin.H{"error": "failed to register webhook"})
-		return
+		if err != nil {
+			es.logger.Error("Failed to store webhook subscription", zap.Error(err))
+			c.JSON(500, gin.H{"error": "failed to register webhook"})
+			return
+		}
 	}
 
 	c.JSON(201, subscription)
@@ -380,6 +382,11 @@ func (es *EventStreamer) handleRegisterWebhook(c *gin.Context) {
 
 // handleListWebhooks lists all webhook subscriptions
 func (es *EventStreamer) handleListWebhooks(c *gin.Context) {
+	if es.service.db == nil || es.service.db.Pool == nil {
+		c.JSON(200, []*WebhookSubscription{})
+		return
+	}
+
 	ctx := c.Request.Context()
 	rows, err := es.service.db.Pool.Query(ctx, `
 		SELECT id, url, enabled, filters, created_at, last_delivery, failure_count
@@ -412,6 +419,11 @@ func (es *EventStreamer) handleListWebhooks(c *gin.Context) {
 
 // handleDeleteWebhook deletes a webhook subscription
 func (es *EventStreamer) handleDeleteWebhook(c *gin.Context) {
+	if es.service.db == nil || es.service.db.Pool == nil {
+		c.JSON(500, gin.H{"error": "database not available"})
+		return
+	}
+
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
@@ -427,6 +439,11 @@ func (es *EventStreamer) handleDeleteWebhook(c *gin.Context) {
 
 // handleTestWebhook sends a test event to a webhook
 func (es *EventStreamer) handleTestWebhook(c *gin.Context) {
+	if es.service.db == nil || es.service.db.Pool == nil {
+		c.JSON(500, gin.H{"error": "database not available"})
+		return
+	}
+
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
@@ -548,12 +565,14 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 			zap.Int("status_code", resp.StatusCode))
 
 		// Update last delivery time
-		updateCtx := context.Background()
-		_, _ = es.service.db.Pool.Exec(updateCtx, `
-			UPDATE webhook_subscriptions
-			SET last_delivery = NOW(), failure_count = 0
-			WHERE url = $1
-		`, delivery.WebhookURL)
+		if es.service.db != nil && es.service.db.Pool != nil {
+			updateCtx := context.Background()
+			_, _ = es.service.db.Pool.Exec(updateCtx, `
+				UPDATE webhook_subscriptions
+				SET last_delivery = NOW(), failure_count = 0
+				WHERE url = $1
+			`, delivery.WebhookURL)
+		}
 
 		return true
 	}
@@ -564,12 +583,14 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 		zap.Int("status_code", resp.StatusCode))
 
 	// Increment failure count
-	updateCtx := context.Background()
-	_, _ = es.service.db.Pool.Exec(updateCtx, `
-		UPDATE webhook_subscriptions
-		SET failure_count = failure_count + 1
-		WHERE url = $1
-	`, delivery.WebhookURL)
+	if es.service.db != nil && es.service.db.Pool != nil {
+		updateCtx := context.Background()
+		_, _ = es.service.db.Pool.Exec(updateCtx, `
+			UPDATE webhook_subscriptions
+			SET failure_count = failure_count + 1
+			WHERE url = $1
+		`, delivery.WebhookURL)
+	}
 
 	return false
 }

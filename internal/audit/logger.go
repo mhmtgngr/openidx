@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -174,8 +175,8 @@ func (e *HashMismatchError) Error() string {
 
 // IsTampered returns true if this error indicates tampering
 func IsTampered(err error) bool {
-	_, ok := err.(*HashMismatchError)
-	return ok
+	var hashErr *HashMismatchError
+	return errors.As(err, &hashErr)
 }
 
 // WithActor sets the actor information
@@ -295,11 +296,7 @@ func (l *Logger) verifyEventChain(events []*AuditEvent) error {
 
 	// Verify each event's hash and chain linkage
 	for i, event := range events {
-		if err := event.VerifyHash(l.secret); err != nil {
-			return fmt.Errorf("event %d (%s) hash verification failed: %w", i, event.ID, err)
-		}
-
-		// Verify chain link to previous event
+		// Verify chain link to previous event first
 		if i > 0 {
 			prevEvent := events[i-1]
 			if event.PreviousHash != prevEvent.Hash {
@@ -310,6 +307,11 @@ func (l *Logger) verifyEventChain(events []*AuditEvent) error {
 					PrevEventID:      prevEvent.ID,
 				}
 			}
+		}
+
+		// Then verify the event's hash
+		if err := event.VerifyHash(l.secret); err != nil {
+			return fmt.Errorf("event %d (%s) hash verification failed: %w", i, event.ID, err)
 		}
 	}
 
@@ -331,8 +333,8 @@ func (e *ChainBreakError) Error() string {
 
 // IsChainBreak returns true if this error indicates a chain break
 func IsChainBreak(err error) bool {
-	_, ok := err.(*ChainBreakError)
-	return ok
+	var chainErr *ChainBreakError
+	return errors.As(err, &chainErr)
 }
 
 // ComputeChainKey computes the chain storage key for a given context
