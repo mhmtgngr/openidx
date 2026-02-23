@@ -41,8 +41,8 @@
       "_phase": "done"
     },
     "7": {
-      "audit-logging": "running",
-      "updated": "2026-02-23T07:32:40+00:00"
+      "audit-logging": "done",
+      "updated": "2026-02-23T07:52:56+00:00"
     }
   },
   "last_phase": "7",

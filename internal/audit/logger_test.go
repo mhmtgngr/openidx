@@ -13,7 +13,7 @@ func TestAuditLogger_LogEvent(t *testing.T) {
 	logger := NewAuditLogger(store)
 
 	ctx := context.Background()
-	event := AuditEvent{
+	event := AuditEventForTest{
 		EventType:    "authentication",
 		ActorID:      "user-123",
 		ActorType:    "user",
@@ -61,7 +61,7 @@ func TestAuditLogger_LogEventChain(t *testing.T) {
 
 	// Log multiple events
 	for i := 0; i < 5; i++ {
-		event := AuditEvent{
+		event := AuditEventForTest{
 			EventType:    "test",
 			ActorID:      "user-123",
 			ResourceID:   "resource-456",
@@ -88,7 +88,7 @@ func TestAuditLogger_VerifyChecksum(t *testing.T) {
 	logger := NewAuditLogger(store)
 
 	ctx := context.Background()
-	event := AuditEvent{
+	event := AuditEventForTest{
 		EventType:  "test",
 		ActorID:    "user-123",
 		Action:     "action",
@@ -121,7 +121,7 @@ func TestAuditLogger_GetEventByID(t *testing.T) {
 	logger := NewAuditLogger(store)
 
 	ctx := context.Background()
-	event := AuditEvent{
+	event := AuditEventForTest{
 		EventType:  "test",
 		ActorID:    "user-123",
 		Action:     "action",
@@ -160,7 +160,7 @@ func TestAuditLogger_GetEventsByTimeRange(t *testing.T) {
 
 	// Log events at different times
 	now := time.Now().UTC().Truncate(time.Second)
-	events := []AuditEvent{
+	events := []AuditEventForTest{
 		{EventType: "test", Action: "action1", Timestamp: now.Add(-2 * time.Hour)},
 		{EventType: "test", Action: "action2", Timestamp: now.Add(-1 * time.Hour)},
 		{EventType: "test", Action: "action3", Timestamp: now},
@@ -193,7 +193,7 @@ func TestAuditLogger_GetEventsByActor(t *testing.T) {
 
 	ctx := context.Background()
 
-	events := []AuditEvent{
+	events := []AuditEventForTest{
 		{EventType: "test", ActorID: "user-1", Action: "action1"},
 		{EventType: "test", ActorID: "user-2", Action: "action2"},
 		{EventType: "test", ActorID: "user-1", Action: "action3"},
@@ -221,7 +221,7 @@ func TestAuditLogger_GetEventsByResource(t *testing.T) {
 
 	ctx := context.Background()
 
-	events := []AuditEvent{
+	events := []AuditEventForTest{
 		{EventType: "test", ResourceID: "resource-1", Action: "action1"},
 		{EventType: "test", ResourceID: "resource-2", Action: "action2"},
 		{EventType: "test", ResourceID: "resource-1", Action: "action3"},
@@ -249,7 +249,7 @@ func TestAuditLogger_GetEventsByType(t *testing.T) {
 
 	ctx := context.Background()
 
-	events := []AuditEvent{
+	events := []AuditEventForTest{
 		{EventType: "authentication", Action: "login"},
 		{EventType: "authorization", Action: "check"},
 		{EventType: "authentication", Action: "logout"},
@@ -279,7 +279,7 @@ func TestAuditLogger_ChainTamperingDetection(t *testing.T) {
 
 	// Log 3 events
 	for i := 0; i < 3; i++ {
-		event := AuditEvent{
+		event := AuditEventForTest{
 			EventType: "test",
 			Action:    "action",
 			Metadata: map[string]interface{}{"index": i},
@@ -321,7 +321,7 @@ func TestAuditLogger_PreviousHashChain(t *testing.T) {
 
 	var previousHash string
 	for i := 0; i < 3; i++ {
-		event := AuditEvent{
+		event := AuditEventForTest{
 			EventType: "test",
 			Action:    "action",
 		}
@@ -373,7 +373,7 @@ func TestAuditLogger_CustomID(t *testing.T) {
 
 	ctx := context.Background()
 	customID := "custom-event-id-123"
-	event := AuditEvent{
+	event := AuditEventForTest{
 		ID:        customID,
 		EventType: "test",
 		Action:    "action",

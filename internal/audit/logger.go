@@ -262,8 +262,13 @@ func (l *Logger) WithChainKey(chainKey string) *Logger {
 	}
 }
 
-// prepareForStorage prepares an event for storage by computing its hash
-func (l *Logger) prepareForStorage(event *AuditEvent, previousHash string) error {
+// GetChainKey returns the current chain key
+func (l *Logger) GetChainKey() string {
+	return l.chainKey
+}
+
+// PrepareForStorage prepares an event for storage by computing its hash
+func (l *Logger) PrepareForStorage(event *AuditEvent, previousHash string) error {
 	event.PreviousHash = previousHash
 
 	// Compute the hash for this event
@@ -330,8 +335,8 @@ func IsChainBreak(err error) bool {
 	return ok
 }
 
-// computeChainKey computes the chain storage key for a given context
-func computeChainKey(tenantID, resourceType string) string {
+// ComputeChainKey computes the chain storage key for a given context
+func ComputeChainKey(tenantID, resourceType string) string {
 	if tenantID != "" {
 		return fmt.Sprintf("tenant:%s", tenantID)
 	}

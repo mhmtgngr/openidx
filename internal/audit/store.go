@@ -84,7 +84,7 @@ func (s *Store) Write(ctx context.Context, event *AuditEvent) error {
 	}
 
 	// Prepare event with hash chain
-	if err := s.logger.prepareForStorage(event, lastHash); err != nil {
+	if err := s.logger.PrepareForStorage(event, lastHash); err != nil {
 		return fmt.Errorf("failed to prepare event: %w", err)
 	}
 
@@ -155,7 +155,7 @@ func (s *Store) batchInsert(ctx context.Context, events []*AuditEvent) error {
 	// Use batch insert with prepared statement
 	// First ensure partition exists
 	for _, event := range events {
-		partitionName := getPartitionName(event.Timestamp)
+		partitionName := GetPartitionName(event.Timestamp)
 		if err := s.ensurePartition(ctx, tx, partitionName); err != nil {
 			return fmt.Errorf("failed to ensure partition: %w", err)
 		}
@@ -180,7 +180,7 @@ func (s *Store) batchInsert(ctx context.Context, events []*AuditEvent) error {
 			metadataJSON, _ = json.Marshal(event.Metadata)
 		}
 
-		targetPartition := getPartitionName(event.Timestamp)
+		targetPartition := GetPartitionName(event.Timestamp)
 		partitionStmt := fmt.Sprintf("INSERT INTO %s %s", targetPartition, stmt[13:])
 
 		_, err := tx.Exec(ctx, partitionStmt,
@@ -308,8 +308,8 @@ func (s *Store) ensurePartition(ctx context.Context, tx pgx.Tx, partitionName st
 	return nil
 }
 
-// getPartitionName returns the partition name for a given timestamp
-func getPartitionName(t time.Time) string {
+// GetPartitionName returns the partition name for a given timestamp
+func GetPartitionName(t time.Time) string {
 	return fmt.Sprintf("audit_events_%s", t.Format("2006_01"))
 }
 
@@ -582,7 +582,7 @@ func InitializeSchema(ctx context.Context, db *pgxpool.Pool) error {
 
 	// Create current month's partition
 	now := time.Now().UTC()
-	partitionName := getPartitionName(now)
+	partitionName := GetPartitionName(now)
 	startDate := fmt.Sprintf("%04d-%02d-01", now.Year(), now.Month())
 	var endDate string
 	if now.Month() == 12 {

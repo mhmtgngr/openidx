@@ -147,6 +147,9 @@ type Service struct {
 
 // NewService creates a new audit service
 func NewService(db *database.PostgresDB, es *database.ElasticsearchClient, cfg *config.Config, logger *zap.Logger) *Service {
+	if logger == nil {
+		panic("audit service logger cannot be nil")
+	}
 	return &Service{
 		db:     db,
 		es:     es,

@@ -468,9 +468,9 @@ func TestLogger_PrepareForStorage(t *testing.T) {
 
 	previousHash := "previous-hash-value"
 
-	err := logger.prepareForStorage(event, previousHash)
+	err := logger.PrepareForStorage(event, previousHash)
 	if err != nil {
-		t.Fatalf("prepareForStorage failed: %v", err)
+		t.Fatalf("PrepareForStorage failed: %v", err)
 	}
 
 	if event.PreviousHash != previousHash {
@@ -509,9 +509,9 @@ func TestGetPartitionName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
-			got := getPartitionName(tt.timestamp)
+			got := GetPartitionName(tt.timestamp)
 			if got != tt.expected {
-				t.Errorf("getPartitionName() = %s, want %s", got, tt.expected)
+				t.Errorf("GetPartitionName() = %s, want %s", got, tt.expected)
 			}
 		})
 	}
@@ -553,9 +553,9 @@ func TestComputeChainKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeChainKey(tt.tenantID, tt.resourceType)
+			got := ComputeChainKey(tt.tenantID, tt.resourceType)
 			if got != tt.expected {
-				t.Errorf("computeChainKey() = %v, want %v", got, tt.expected)
+				t.Errorf("ComputeChainKey() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
@@ -882,8 +882,8 @@ func TestLogger_WithChainKey(t *testing.T) {
 	logger := NewLogger("secret")
 	newLogger := logger.WithChainKey("custom-chain")
 
-	if newLogger.chainKey != "custom-chain" {
-		t.Errorf("chainKey = %s, want custom-chain", newLogger.chainKey)
+	if newLogger.GetChainKey() != "custom-chain" {
+		t.Errorf("chainKey = %s, want custom-chain", newLogger.GetChainKey())
 	}
 
 	if newLogger.secret != "secret" {
@@ -891,7 +891,7 @@ func TestLogger_WithChainKey(t *testing.T) {
 	}
 
 	// Original logger should be unchanged
-	if logger.chainKey != "default" {
+	if logger.GetChainKey() != "default" {
 		t.Error("original logger chainKey should not change")
 	}
 }
