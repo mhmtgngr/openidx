@@ -3,6 +3,8 @@ package governance
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -287,24 +289,6 @@ type mockCertResult struct {
 
 func (m *mockCertResult) RowsAffected() int64 {
 	return m.rowsAffected
-}
-
-func setBool(dest []interface{}, idx int, val bool) {
-	if idx >= len(dest) {
-		return
-	}
-	if p, ok := dest[idx].(*bool); ok {
-		*p = val
-	}
-}
-
-func setTimePtr(dest []interface{}, idx int, val *time.Time) {
-	if idx >= len(dest) {
-		return
-	}
-	if p, ok := dest[idx].(**time.Time); ok {
-		*p = val
-	}
 }
 
 func mustMarshalJSON(v interface{}) []byte {
@@ -800,4 +784,64 @@ func TestCampaignReviewer(t *testing.T) {
 			assert.NotEmpty(t, r.Type, "Reviewer type should not be empty")
 		}
 	})
+}
+
+// Helper functions for test mocks
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
+func setString(dest []interface{}, idx int, val string) {
+	if idx >= len(dest) {
+		return
+	}
+	if p, ok := dest[idx].(*string); ok {
+		*p = val
+	}
+}
+
+func setInt(dest []interface{}, idx int, val int) {
+	if idx >= len(dest) {
+		return
+	}
+	if p, ok := dest[idx].(*int); ok {
+		*p = val
+	}
+}
+
+func setBool(dest []interface{}, idx int, val bool) {
+	if idx >= len(dest) {
+		return
+	}
+	if p, ok := dest[idx].(*bool); ok {
+		*p = val
+	}
+}
+
+func setTimePtr(dest []interface{}, idx int, val *time.Time) {
+	if idx >= len(dest) {
+		return
+	}
+	if p, ok := dest[idx].(**time.Time); ok {
+		*p = val
+	}
+}
+
+func setTime(dest []interface{}, idx int, val time.Time) {
+	if idx >= len(dest) {
+		return
+	}
+	if p, ok := dest[idx].(*time.Time); ok {
+		*p = val
+	}
+}
+
+func setBytes(dest []interface{}, idx int, val []byte) {
+	if idx >= len(dest) {
+		return
+	}
+	if p, ok := dest[idx].(*[]byte); ok {
+		*p = val
+	}
 }
