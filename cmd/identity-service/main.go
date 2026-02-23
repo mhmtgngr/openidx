@@ -16,19 +16,22 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
-	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
+	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/identity"
+	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/notifications"
 	"github.com/openidx/openidx/internal/portal"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/server"
 	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/webhooks"
 )
@@ -63,8 +66,6 @@ func main() {
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
 	if err != nil {
 		log.Warn("Failed to initialize tracing", zap.Error(err))
-	} else {
-		defer shutdownTracer(context.Background())
 	}
 
 	// Initialize database connection
@@ -77,7 +78,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
-	defer db.Close()
 
 	// Initialize Redis connection
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
@@ -96,7 +96,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
 	}
-	defer redis.Close()
 
 	// Set Gin mode
 	if cfg.Environment == "production" {
@@ -118,17 +117,20 @@ func main() {
 			PerUser:      cfg.RateLimitPerUser,
 		}, log))
 	}
-	router.Use(middleware.PrometheusMetrics("identity-service"))
+	// Use new Prometheus metrics middleware
+	router.Use(metrics.Middleware("identity-service"))
 
 	// Metrics endpoint
-	router.GET("/metrics", middleware.MetricsHandler())
+	router.GET("/metrics", metrics.Handler())
+
+	// API versioning middleware
+	router.Use(api.StandardVersionMiddleware())
 
 	// Initialize directory service for LDAP sync
 	dirService := directory.NewService(db, log)
 	if err := dirService.Start(context.Background()); err != nil {
 		log.Error("Directory service failed to start", zap.Error(err))
 	}
-	defer dirService.Stop()
 
 	// Initialize email service
 	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
@@ -182,11 +184,10 @@ func main() {
 	}
 
 	// Start background workers
-	ctx, cancelWorkers := context.WithCancel(context.Background())
-	go emailService.ProcessQueue(ctx)
-	go webhookService.ProcessDeliveries(ctx)
-	go webhookService.ProcessRetries(ctx)
-	defer cancelWorkers()
+	bgCtx, cancelWorkers := context.WithCancel(context.Background())
+	go emailService.ProcessQueue(bgCtx)
+	go webhookService.ProcessDeliveries(bgCtx)
+	go webhookService.ProcessRetries(bgCtx)
 
 	// Initialize identity service
 	identityService := identity.NewService(db, redis, cfg, log)
@@ -198,10 +199,10 @@ func main() {
 	identityService.SetSMSProvider(smsService)
 
 	// Start SMS config watcher (polls DB every 30s for admin console changes)
-	go identityService.StartSMSConfigWatcher(ctx, 30*time.Second)
+	go identityService.StartSMSConfigWatcher(bgCtx, 30*time.Second)
 
 	// Start role expiration checker (cleans up expired time-bound role assignments)
-	identityService.StartRoleExpirationChecker(ctx)
+	identityService.StartRoleExpirationChecker(bgCtx)
 
 	// Initialize portal service
 	portalService := portal.NewService(db, log)
@@ -222,19 +223,19 @@ func main() {
 	notifications.RegisterRoutes(notifGroup, notifService)
 
 	// Initialize health service with database and Redis checks
-	healthService := health.NewHealthService(log)
+	healthService := newhealth.NewHealthService(log)
 	healthService.SetVersion(Version)
-	healthService.RegisterCheck(health.NewPostgresChecker(db))
-	healthService.RegisterCheck(health.NewRedisChecker(redis))
+	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
+	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
 
-	// Register standard health check endpoints (/health/live, /health/ready, /health)
-	healthService.RegisterStandardRoutes(router)
+	// Register standard health check endpoints (/health, /health/ready, /health/live)
+	healthService.RegisterStandardRoutes(router, "")
 
 	// Keep legacy /ready endpoint for backward compatibility
 	router.GET("/ready", healthService.ReadyHandler())
 
 	// Create HTTP server
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
@@ -242,28 +243,37 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Setup graceful shutdown manager with all components
+	shutdownables := []server.Shutdownable{
+		server.CloseDB(db),
+		server.CloseRedis(redis),
+		server.CancelContext(cancelWorkers),
+		server.NewShutdownFunc("directory", func(ctx context.Context) error {
+			dirService.Stop()
+			return nil
+		}),
+	}
+	if shutdownTracer != nil {
+		shutdownables = append(shutdownables, server.CloseTracer(shutdownTracer))
+	}
+
+	graceful := server.New(server.Config{
+		Server:         httpServer,
+		Logger:         log,
+		Shutdownables:  shutdownables,
+		ShutdownTimeout: 30 * time.Second,
+	})
+
 	// Start server in goroutine
 	go func() {
 		log.Info("Server listening", zap.Int("port", cfg.Port))
-		if err := tlsutil.ListenAndServe(server, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
+		if err := tlsutil.ListenAndServe(httpServer, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
 			log.Fatal("Failed to start server", zap.Error(err))
 		}
 	}()
 
-	// Wait for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	log.Info("Shutting down server...")
-
-	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.Error("Server forced to shutdown", zap.Error(err))
-	}
+	// Wait for shutdown signal
+	graceful.Start()
 
 	log.Info("Server exited")
 }

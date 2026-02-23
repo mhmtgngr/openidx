@@ -8,21 +8,21 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/common/config"
-	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/metrics"
+	"github.com/openidx/openidx/internal/server"
 )
 
 var (
@@ -75,16 +75,17 @@ func main() {
 	router.Use(middleware.CORS("http://localhost:3000", "http://localhost:5173"))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.PrometheusMetrics("gateway-service"))
+	router.Use(api.StandardVersionMiddleware())
 
 	// Metrics endpoint
-	router.GET("/metrics", middleware.MetricsHandler())
+	router.GET("/metrics", metrics.Handler())
 
 	// Initialize health service (no dependencies for gateway)
-	healthService := health.NewHealthService(log)
+	healthService := newhealth.NewHealthService(log)
 	healthService.SetVersion(Version)
 
 	// Register standard health check endpoints (/health/live, /health/ready, /health)
-	healthService.RegisterStandardRoutes(router)
+	healthService.RegisterStandardRoutes(router, "")
 
 	// Keep legacy /ready endpoint for backward compatibility
 	router.GET("/ready", healthService.ReadyHandler())
@@ -103,7 +104,7 @@ func main() {
 		setupProxy(router, svc, log)
 	}
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
@@ -111,27 +112,30 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Build shutdownables list (only tracer if available)
+	var shutdownables []server.Shutdownable
+	if shutdownTracer != nil {
+		shutdownables = append(shutdownables, server.CloseTracer(shutdownTracer))
+	}
+
+	// Create graceful manager
+	graceful := server.New(server.Config{
+		Server:         httpServer,
+		Logger:         log,
+		Shutdownables:  shutdownables,
+		ShutdownTimeout: 30 * time.Second,
+	})
+
+	// Start server in goroutine
 	go func() {
 		log.Info("Server listening", zap.Int("port", cfg.Port))
-		if err := tlsutil.ListenAndServe(server, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
+		if err := tlsutil.ListenAndServe(httpServer, cfg.TLS, log); err != nil && err != http.ErrServerClosed {
 			log.Fatal("Failed to start server", zap.Error(err))
 		}
 	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	log.Info("Shutting down server...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.Error("Server forced to shutdown", zap.Error(err))
-	}
-
-	log.Info("Server exited")
+	// Wait for shutdown signal
+	graceful.Start()
 }
 
 func setupProxy(router *gin.Engine, svc ServiceConfig, log *zap.Logger) {
