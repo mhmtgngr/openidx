@@ -9,11 +9,16 @@
     },
     "2": {
       "identity-crud": "done",
-      "updated": "2026-02-22T23:56:47+00:00",
+      "updated": "2026-02-23T00:35:35+00:00",
       "scim-provisioning": "done",
-      "directory-sync": "done"
+      "directory-sync": "done",
+      "_phase": "done"
+    },
+    "3": {
+      "oauth-core": "running",
+      "updated": "2026-02-23T00:35:36+00:00"
     }
   },
-  "last_phase": "2",
-  "last_step": "directory-sync"
+  "last_phase": "3",
+  "last_step": "oauth-core"
 }
