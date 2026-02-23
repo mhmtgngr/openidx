@@ -1,0 +1,617 @@
+```json
+{
+  "architecture_decisions": [
+    {
+      "decision": "Create unified API Gateway service in Go using Gin framework on port 8500",
+      "rationale": "Single entry point simplifies client configuration, enables centralized auth/rate-limiting, matches existing project patterns with Gin framework"
+    },
+    {
+      "decision": "Implement JWT validation middleware using golang-jwt/v5 with JWKS endpoint",
+      "rationale": "Reuses existing project dependencies, supports token verification without database calls, enables stateless authentication"
+    },
+    {
+      "decision": "Implement sliding window rate limiting using Redis with go-redis client",
+      "rationale": "Redis already in infrastructure, sliding window provides accurate rate limiting, enables distributed rate limiting across gateway instances"
+    },
+    {
+      "decision": "Build React admin dashboard using Vite, TypeScript, Tailwind CSS, Radix UI",
+      "rationale": "Aligns with CLAUDE.md tech stack, provides type safety and modern developer experience, Radix UI ensures accessibility"
+    },
+    {
+      "decision": "Use Zustand for state management with React Query for server state",
+      "rationale": "Lightweight alternative to Redux, separates client/server state patterns, React Query handles caching/refreshing automatically"
+    },
+    {
+      "decision": "Implement correlation ID middleware with propagation via headers",
+      "rationale": "Essential for distributed tracing across microservices, standard pattern for observability"
+    }
+  ],
+  "backend_tasks": [
+    {
+      "order": 1,
+      "file": "cmd/gateway/main.go",
+      "action": "create",
+      "purpose": "Gateway service entry point with Gin server initialization",
+      "key_functions": ["main", "NewGateway", "Start", "Shutdown"]
+    },
+    {
+      "order": 2,
+      "file": "internal/gateway/config.go",
+      "action": "create",
+      "purpose": "Gateway configuration using Viper for service routes and rate limiting",
+      "key_functions": ["Load", "GetServiceURL", "GetJWTConfig", "GetRateLimitConfig"]
+    },
+    {
+      "order": 3,
+      "file": "internal/gateway/service.go",
+      "action": "create",
+      "purpose": "Core gateway service with route registration and reverse proxy",
+      "key_functions": ["NewService", "RegisterRoutes", "ProxyRequest", "HealthCheck", "AggregateHealth"]
+    },
+    {
+      "order": 4,
+      "file": "internal/gateway/middleware/auth.go",
+      "action": "create",
+      "purpose": "JWT validation middleware with JWKS endpoint support",
+      "key_functions": ["JWTAuth", "ValidateToken", "GetJWKS", "ExtractToken", "SetUserContext"]
+    },
+    {
+      "order": 5,
+      "file": "internal/gateway/middleware/ratelimit.go",
+      "action": "create",
+      "purpose": "Sliding window rate limiting using Redis",
+      "key_functions": ["RateLimit", "CheckRateLimit", "RecordRequest", "GetRateLimitHeaders", "SlidingWindowCheck"]
+    },
+    {
+      "order": 6,
+      "file": "internal/gateway/middleware/correlation.go",
+      "action": "create",
+      "purpose": "Correlation ID generation and propagation middleware",
+      "key_functions": ["CorrelationID", "GenerateID", "GetOrGenerate", "InjectHeaders"]
+    },
+    {
+      "order": 7,
+      "file": "internal/gateway/middleware/logging.go",
+      "action": "create",
+      "purpose": "Structured JSON logging with Zap for all requests",
+      "key_functions": ["RequestLogger", "LogRequest", "LogResponse", "GetLogger"]
+    },
+    {
+      "order": 8,
+      "file": "internal/gateway/proxy/reverseproxy.go",
+      "action": "create",
+      "purpose": "Reverse proxy implementation for routing to backend services",
+      "key_functions": ["NewReverseProxy", "ServeHTTP", "ModifyRequest", "ModifyResponse", "ErrorHandler"]
+    },
+    {
+      "order": 9,
+      "file": "internal/gateway/routes/identity.go",
+      "action": "create",
+      "purpose": "Identity service routing (/api/v1/identity/* -> :8501)",
+      "key_functions": ["RegisterIdentityRoutes", "GetIdentityURL", "IdentityProxy"]
+    },
+    {
+      "order": 10,
+      "file": "internal/gateway/routes/oauth.go",
+      "action": "create",
+      "purpose": "OAuth service routing (/api/v1/oauth/* -> :8502)",
+      "key_functions": ["RegisterOAuthRoutes", "GetOAuthURL", "OAuthProxy"]
+    },
+    {
+      "order": 11,
+      "file": "internal/gateway/routes/governance.go",
+      "action": "create",
+      "purpose": "Governance service routing (/api/v1/governance/* -> :8503)",
+      "key_functions": ["RegisterGovernanceRoutes", "GetGovernanceURL", "GovernanceProxy"]
+    },
+    {
+      "order": 12,
+      "file": "internal/gateway/routes/audit.go",
+      "action": "create",
+      "purpose": "Audit service routing (/api/v1/audit/* -> :8504)",
+      "key_functions": ["RegisterAuditRoutes", "GetAuditURL", "AuditProxy"]
+    },
+    {
+      "order": 13,
+      "file": "internal/gateway/routes/admin.go",
+      "action": "create",
+      "purpose": "Admin API routing (/api/v1/admin/* -> :8505)",
+      "key_functions": ["RegisterAdminRoutes", "GetAdminURL", "AdminProxy"]
+    },
+    {
+      "order": 14,
+      "file": "internal/gateway/routes/risk.go",
+      "action": "create",
+      "purpose": "Risk service routing (/api/v1/risk/* -> :8506)",
+      "key_functions": ["RegisterRiskRoutes", "GetRiskURL", "RiskProxy"]
+    },
+    {
+      "order": 15,
+      "file": "internal/gateway/routes/health.go",
+      "action": "create",
+      "purpose": "Aggregated health check endpoint",
+      "key_functions": ["RegisterHealthRoutes", "HealthCheckHandler", "AggregateServiceHealth"]
+    },
+    {
+      "order": 16,
+      "file": "internal/gateway/routes/docs.go",
+      "action": "create",
+      "purpose": "Combined OpenAPI spec endpoint at /api/docs",
+      "key_functions": ["RegisterDocsRoutes", "CombineOpenAPISpecs", "DocsHandler"]
+    },
+    {
+      "order": 17,
+      "file": "internal/admin/auth_handler.go",
+      "action": "create",
+      "purpose": "Admin authentication handler with login/MFA support",
+      "key_functions": ["HandleLogin", "VerifyCredentials", "GenerateTokens", "HandleRefresh", "HandleLogout"]
+    },
+    {
+      "order": 18,
+      "file": "internal/admin/dashboard_handler.go",
+      "action": "create",
+      "purpose": "Dashboard stats aggregation handler",
+      "key_functions": ["GetDashboardStats", "GetUserCount", "GetActiveSessions", "GetFailedLogins", "GetRiskAlerts", "GetLoginActivity"]
+    },
+    {
+      "order": 19,
+      "file": "internal/admin/users_handler.go",
+      "action": "create",
+      "purpose": "User CRUD operations with pagination and search",
+      "key_functions": ["ListUsers", "GetUser", "CreateUser", "UpdateUser", "DeleteUser", "SuspendUser", "ActivateUser", "ResetPassword"]
+    },
+    {
+      "order": 20,
+      "file": "internal/admin/oauth_handler.go",
+      "action": "create",
+      "purpose": "OAuth application management",
+      "key_functions": ["ListOAuthApps", "GetOAuthApp", "CreateOAuthApp", "UpdateOAuthApp", "DeleteOAuthApp", "RotateSecret", "RevokeTokens"]
+    },
+    {
+      "order": 21,
+      "file": "internal/admin/audit_handler.go",
+      "action": "create",
+      "purpose": "Audit log querying and export",
+      "key_functions": ["QueryAuditLogs", "GetAuditEvent", "ExportAuditLogs", "GetAuditStatistics"]
+    },
+    {
+      "order": 22,
+      "file": "internal/admin/policies_handler.go",
+      "action": "create",
+      "purpose": "Policy management endpoints",
+      "key_functions": ["ListPolicies", "GetPolicy", "CreatePolicy", "UpdatePolicy", "DeletePolicy", "EvaluatePolicy", "TogglePolicy"]
+    },
+    {
+      "order": 23,
+      "file": "internal/admin/settings_handler.go",
+      "action": "create",
+      "purpose": "System settings management",
+      "key_functions": ["GetSettings", "UpdateSettings", "GetSecuritySettings", "UpdateSecuritySettings", "TestEmailConfig"]
+    },
+    {
+      "order": 24,
+      "file": "internal/admin/groups_handler.go",
+      "action": "create",
+      "purpose": "Group management for RBAC",
+      "key_functions": ["ListGroups", "GetGroup", "CreateGroup", "UpdateGroup", "DeleteGroup", "AddGroupMember", "RemoveGroupMember"]
+    }
+  ],
+  "frontend_tasks": [
+    {
+      "order": 1,
+      "file": "web/admin-console/vite.config.ts",
+      "action": "create",
+      "purpose": "Vite build configuration with proxy backend"
+    },
+    {
+      "order": 2,
+      "file": "web/admin-console/tsconfig.json",
+      "action": "create",
+      "purpose": "TypeScript configuration with strict mode"
+    },
+    {
+      "order": 3,
+      "file": "web/admin-console/tailwind.config.js",
+      "action": "create",
+      "purpose": "Tailwind CSS configuration"
+    },
+    {
+      "order": 4,
+      "file": "web/admin-console/src/main.tsx",
+      "action": "create",
+      "purpose": "React app entry point with strict mode"
+    },
+    {
+      "order": 5,
+      "file": "web/admin-console/src/App.tsx",
+      "action": "create",
+      "purpose": "Root app component with router and auth provider"
+    },
+    {
+      "order": 6,
+      "file": "web/admin-console/src/index.css",
+      "action": "create",
+      "purpose": "Global CSS with Tailwind directives"
+    },
+    {
+      "order": 7,
+      "file": "web/admin-console/src/lib/api.ts",
+      "action": "create",
+      "purpose": "API client with axios, interceptors for auth headers"
+    },
+    {
+      "order": 8,
+      "file": "web/admin-console/src/lib/query-client.ts",
+      "action": "create",
+      "purpose": "React Query client configuration"
+    },
+    {
+      "order": 9,
+      "file": "web/admin-console/src/lib/auth.ts",
+      "action": "create",
+      "purpose": "Auth utilities, token storage, refresh logic"
+    },
+    {
+      "order": 10,
+      "file": "web/admin-console/src/stores/auth.store.ts",
+      "action": "create",
+      "purpose": "Zustand auth store with user state and actions"
+    },
+    {
+      "order": 11,
+      "file": "web/admin-console/src/components/ui/button.tsx",
+      "action": "create",
+      "purpose": "Radix UI button component with Tailwind"
+    },
+    {
+      "order": 12,
+      "file": "web/admin-console/src/components/ui/input.tsx",
+      "action": "create",
+      "purpose": "Radix UI input component"
+    },
+    {
+      "order": 13,
+      "file": "web/admin-console/src/components/ui/card.tsx",
+      "action": "create",
+      "purpose": "Card component for dashboard widgets"
+    },
+    {
+      "order": 14,
+      "file": "web/admin-console/src/components/ui/table.tsx",
+      "action": "create",
+      "purpose": "Table component for data display"
+    },
+    {
+      "order": 15,
+      "file": "web/admin-console/src/components/ui/modal.tsx",
+      "action": "create",
+      "purpose": "Modal/dialog component for forms"
+    },
+    {
+      "order": 16,
+      "file": "web/admin-console/src/components/ui/drawer.tsx",
+      "action": "create",
+      "purpose": "Slide-out drawer for edit panels"
+    },
+    {
+      "order": 17,
+      "file": "web/admin-console/src/components/ui/loading.tsx",
+      "action": "create",
+      "purpose": "Loading skeleton and spinner components"
+    },
+    {
+      "order": 18,
+      "file": "web/admin-console/src/components/layout/sidebar.tsx",
+      "action": "create",
+      "purpose": "Collapsible sidebar navigation with icons"
+    },
+    {
+      "order": 19,
+      "file": "web/admin-console/src/components/layout/header.tsx",
+      "action": "create",
+      "purpose": "Top header with breadcrumbs and user menu"
+    },
+    {
+      "order": 20,
+      "file": "web/admin-console/src/components/layout/layout.tsx",
+      "action": "create",
+      "purpose": "Main layout wrapper with sidebar and header"
+    },
+    {
+      "order": 21,
+      "file": "web/admin-console/src/pages/login.tsx",
+      "action": "create",
+      "purpose": "Login page with email, password, MFA fields"
+    },
+    {
+      "order": 22,
+      "file": "web/admin-console/src/pages/dashboard.tsx",
+      "action": "create",
+      "purpose": "Dashboard with stats cards and activity charts"
+    },
+    {
+      "order": 23,
+      "file": "web/admin-console/src/pages/users.tsx",
+      "action": "create",
+      "purpose": "Users list page with search, sort, pagination"
+    },
+    {
+      "order": 24,
+      "file": "web/admin-console/src/pages/users/create-user-modal.tsx",
+      "action": "create",
+      "purpose": "Create user modal with form validation"
+    },
+    {
+      "order": 25,
+      "file": "web/admin-console/src/pages/users/edit-user-drawer.tsx",
+      "action": "create",
+      "purpose": "Edit user drawer with all user fields"
+    },
+    {
+      "order": 26,
+      "file": "web/admin-console/src/pages/groups.tsx",
+      "action": "create",
+      "purpose": "Groups management page with member management"
+    },
+    {
+      "order": 27,
+      "file": "web/admin-console/src/pages/oauth-apps.tsx",
+      "action": "create",
+      "purpose": "OAuth applications list and management"
+    },
+    {
+      "order": 28,
+      "file": "web/admin-console/src/pages/oauth-apps/oauth-app-form-modal.tsx",
+      "action": "create",
+      "purpose": "OAuth app create/edit modal"
+    },
+    {
+      "order": 29,
+      "file": "web/admin-console/src/pages/audit-logs.tsx",
+      "action": "create",
+      "purpose": "Audit log viewer with filters and export"
+    },
+    {
+      "order": 30,
+      "file": "web/admin-console/src/pages/policies.tsx",
+      "action": "create",
+      "purpose": "Policy management page with status toggles"
+    },
+    {
+      "order": 31,
+      "file": "web/admin-console/src/pages/settings.tsx",
+      "action": "create",
+      "purpose": "System settings page with tabs"
+    },
+    {
+      "order": 32,
+      "file": "web/admin-console/src/hooks/use-auth.ts",
+      "action": "create",
+      "purpose": "Custom auth hook with login/logout actions"
+    },
+    {
+      "order": 33,
+      "file": "web/admin-console/src/hooks/use-users.ts",
+      "action": "create",
+      "purpose": "Users API hook with mutations"
+    },
+    {
+      "order": 34,
+      "web/admin-console/src/hooks/use-dashboard.ts",
+      "action": "create",
+      "purpose": "Dashboard stats hook with auto-refresh"
+    },
+    {
+      "order": 35,
+      "file": "web/admin-console/src/types/user.ts",
+      "action": "create",
+      "purpose": "User type definitions"
+    },
+    {
+      "order": 36,
+      "file": "web/admin-console/src/types/oauth.ts",
+      "action": "create",
+      "purpose": "OAuth app type definitions"
+    },
+    {
+      "order": 37,
+      "file": "web/admin-console/src/types/audit.ts",
+      "action": "create",
+      "purpose": "Audit log type definitions"
+    }
+  ],
+  "database_migrations": [
+    {
+      "file": "migrations/001_create_gateway_rate_limits.up.sql",
+      "sql": "CREATE TABLE IF NOT EXISTS rate_limits (\n  id SERIAL PRIMARY KEY,\n  user_id VARCHAR(255) NOT NULL,\n  endpoint VARCHAR(500) NOT NULL,\n  window_start TIMESTAMP NOT NULL,\n  request_count INTEGER NOT NULL DEFAULT 1,\n  created_at TIMESTAMP DEFAULT NOW(),\n  updated_at TIMESTAMP DEFAULT NOW(),\n  UNIQUE(user_id, endpoint, window_start)\n); CREATE INDEX idx_rate_limits_user ON rate_limits(user_id, window_start);"
+    },
+    {
+      "file": "migrations/002_create_admin_sessions.up.sql",
+      "sql": "CREATE TABLE IF NOT EXISTS admin_sessions (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id VARCHAR(255) NOT NULL,\n  refresh_token VARCHAR(500) NOT NULL UNIQUE,\n  device_info JSONB,\n  ip_address INET,\n  user_agent TEXT,\n  created_at TIMESTAMP DEFAULT NOW(),\n  expires_at TIMESTAMP NOT NULL,\n  last_used_at TIMESTAMP DEFAULT NOW()\n); CREATE INDEX idx_admin_sessions_user ON admin_sessions(user_id); CREATE INDEX idx_admin_sessions_expires ON admin_sessions(expires_at);"
+    },
+    {
+      "file": "migrations/003_create_dashboard_stats_cache.up.sql",
+      "sql": "CREATE TABLE IF NOT EXISTS dashboard_stats_cache (\n  id SERIAL PRIMARY KEY,\n  stat_key VARCHAR(100) NOT NULL UNIQUE,\n  stat_value JSONB NOT NULL,\n  updated_at TIMESTAMP DEFAULT NOW()\n);"
+    }
+  ],
+  "api_contracts": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "request": {"email": "string", "password": "string", "mfa_code": "string", "remember_device": "boolean"},
+      "response": {"access_token": "string", "refresh_token": "string", "expires_in": "number", "user": {"id": "string", "name": "string", "email": "string", "role": "string"}},
+      "status_codes": [200, 400, 401, 429]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/refresh",
+      "request": {"refresh_token": "string"},
+      "response": {"access_token": "string", "expires_in": "number"},
+      "status_codes": [200, 401]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/stats",
+      "request": {},
+      "response": {"total_users": "number", "active_sessions": "number", "failed_logins_today": "number", "risk_alerts": "number", "login_activity": [{"date": "string", "count": "number"}]},
+      "status_codes": [200, 401]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users",
+      "request": {"page": "number", "per_page": "number", "search": "string", "sort_by": "string", "sort_order": "asc|desc"},
+      "response": {"users": [], "total": "number", "page": "number", "per_page": "number"},
+      "status_codes": [200, 401]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users",
+      "request": {"name": "string", "email": "string", "role": "string", "password": "string"},
+      "response": {"id": "string", "name": "string", "email": "string", "role": "string", "status": "string", "created_at": "string"},
+      "status_codes": [201, 400, 409]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/:id",
+      "request": {"name": "string", "email": "string", "role": "string"},
+      "response": {"id": "string", "name": "string", "email": "string", "role": "string", "updated_at": "string"},
+      "status_codes": [200, 400, 404]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/:id/suspend",
+      "request": {},
+      "response": {"id": "string", "status": "suspended"},
+      "status_codes": [200, 404]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/:id/activate",
+      "request": {},
+      "response": {"id": "string", "status": "active"},
+      "status_codes": [200, 404]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/:id/reset-password",
+      "request": {},
+      "response": {"message": "string"},
+      "status_codes": [200, 404]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/oauth-apps",
+      "request": {"page": "number", "per_page": "number"},
+      "response": {"apps": [], "total": "number"},
+      "status_codes": [200, 401]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/oauth-apps",
+      "request": {"name": "string", "redirect_uris": ["string"], "scopes": ["string"]},
+      "response": {"id": "string", "name": "string", "client_id": "string", "client_secret": "string", "redirect_uris": ["string"], "scopes": ["string"]},
+      "status_codes": [201, 400]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit-logs",
+      "request": {"page": "number", "per_page": "number", "event_type": "string", "user_id": "string", "from_date": "string", "to_date": "string"},
+      "response": {"events": [], "total": "number"},
+      "status_codes": [200, 401]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/policies",
+      "request": {},
+      "response": {"policies": []},
+      "status_codes": [200, 401]
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "request": {},
+      "response": {"status": "healthy", "services": {"identity": "string", "oauth": "string", "governance": "string", "audit": "string", "admin": "string", "risk": "string"}},
+      "status_codes": [200, 503]
+    }
+  ],
+  "test_plan": {
+    "unit_tests": [
+      {
+        "file": "internal/gateway/middleware/auth_test.go",
+        "cases": ["Valid JWT passes through", "Invalid JWT returns 401", "Expired JWT returns 401", "Missing JWT returns 401 for protected routes", "JWKS caching works correctly"]
+      },
+      {
+        "file": "internal/gateway/middleware/ratelimit_test.go",
+        "cases": ["Requests under limit pass", "Requests at limit pass", "Requests over limit return 429", "Rate limit headers are set", "Sliding window calculation accuracy"]
+      },
+      {
+        "file": "internal/gateway/middleware/correlation_test.go",
+        "cases": ["New correlation ID generated", "Existing correlation ID preserved", "Correlation ID added to context"]
+      },
+      {
+        "file": "internal/admin/auth_handler_test.go",
+        "cases": ["Valid credentials return tokens", "Invalid credentials return 401", "MFA required and validated", "Refresh token works", "Refresh token invalidation"]
+      },
+      {
+        "file": "internal/admin/users_handler_test.go",
+        "cases": ["List users paginated", "Search users by email", "Create user validates input", "Update user works", "Suspend user changes status"]
+      }
+    ],
+    "e2e_tests": [
+      {
+        "name": "Gateway routing e2e",
+        "steps": ["Start gateway service", "Start all downstream services", "Request /health returns aggregated status", "Request /api/v1/users routes to identity service", "Request /api/v1/policies routes to governance service", "Verify correlation ID propagated"]
+      },
+      {
+        "name": "Admin authentication flow",
+        "steps": ["Navigate to login page", "Enter valid credentials", "Submit login request", "Verify JWT stored in localStorage", "Verify redirect to dashboard", "Refresh page maintains session", "Logout clears tokens"]
+      },
+      {
+        "name": "Rate limiting e2e",
+        "steps": ["Configure rate limit to 5 requests per minute", "Make 5 successful requests", "6th request returns 429", "Wait for window to expire", "Request succeeds again"]
+      },
+      {
+        "name": "User management CRUD",
+        "steps": ["Login as admin", "Navigate to users page", "Click create user", "Fill form and submit", "Verify user appears in table", "Search for new user", "Edit user via drawer", "Suspend user", "Verify status changed"]
+      },
+      {
+        "name": "Dashboard stats refresh",
+        "steps": ["Login as admin", "Navigate to dashboard", "Verify stats cards load", "Wait 30 seconds", "Verify stats auto-refresh", "Verify chart renders with activity data"]
+      }
+    ]
+  },
+  "security_notes": [
+    "JWT secrets must be stored in environment variables, never hardcoded",
+    "Rate limiting must use user ID from JWT claims, not IP address (to prevent bypass via proxy rotation)",
+    "All admin endpoints must require admin role claim in JWT",
+    "Refresh tokens must be stored securely in httpOnly cookies or encrypted localStorage",
+    "MFA secrets must be hashed using bcrypt before storage",
+    "Audit logs must be immutable - append-only with no delete/update",
+    "CORS headers must be restricted to allowed admin console origins",
+    "All sensitive operations (user delete, policy changes) must require re-authentication",
+    "Implement content security policy headers to prevent XSS",
+    "Password reset links must expire within 1 hour and be single-use"
+  ],
+  "docker_changes": [
+    "Add Dockerfile for gateway service at deployments/docker/gateway/Dockerfile",
+    "Update docker-compose.yml to include gateway service on port 8500",
+    "Add admin-console Dockerfile for React frontend build with nginx",
+    "Update docker-compose.yml to serve admin console on port 3000",
+    "Add Redis service configuration if not present",
+    "Configure health checks for all services",
+    "Add volume mounts for logs and configs"
+  ],
+  "market_driven_features": [
+    "Risk-based conditional access UI (inspired by Entra ID) - visual policy editor with risk score thresholds",
+    "Identity protection dashboard (inspired by Entra ID) - risk alerts, compromised user detection, investigation workflow",
+    "7000+ app integration catalog display (inspired by Okta) - browse and configure pre-built SAML/OIDC integrations",
+    "Device posture assessment UI (inspired by Duo/iOA) - show device health status, OS versions, security agent status",
+    "Zero Trust verification dashboard - continuous trust score display, session risk monitoring",
+    "Simplified pricing calculator - show cost savings compared to Entra ID/Okta based on user count",
+    "Compliance report templates - SOC 2, ISO 27001, HIPAA ready reports (competitive differentiator)",
+    "Self-service user portal (inspired by Okta) - password reset, MFA management, app access",
+    "API-first developer experience - interactive API docs at /api/docs with Try It feature (inspired by Okta)",
+    "Dark mode support throughout admin console (modern UX expectation)"
+  ]
+}
+```

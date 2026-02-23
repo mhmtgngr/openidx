@@ -1,0 +1,9 @@
+{
+  "results": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"Zero Trust Access Platform Comparison 2025\",\n      \"content\": \"Comprehensive comparison of zero trust access platforms including Okta, Microsoft Entra ID, Duo Security, and Chinese domestic solutions like Tencent iOA, Qianxin, and Sangfor aTrust. Key findings: Tencent iOA ranked #1 with 18 DLP channels, EPP+EDR dual-engine, and pricing from \u00a559-419/year. Okta focuses on identity management with 6000+ app integrations. Microsoft Entra ID offers $46-93/user/month pricing with deep Microsoft ecosystem integration. Duo Security excels in MFA with free tier available.\",\n      \"url\": \"https://www.zhihu.com/question/512585361/answer/3508960587\"\n    },\n    {\n      \"title\": \"Okta vs Microsoft Entra ID vs Duo Security 2025 Comparison\",\n      \"content\": \"Detailed pricing and feature comparison for 2025. Microsoft Entra ID: $46-93/user/month with strong Microsoft 365 integration. Okta: ~$35k-50k+ annually for enterprise, excellent for multi-cloud envi",
+      "url": ""
+    }
+  ]
+}

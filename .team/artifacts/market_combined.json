@@ -1,0 +1,30 @@
+{
+  "competitors": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"Enterprise IAM Comparison: Okta vs Microsoft Entra vs Duo 2025\",\n      \"content\": \"Microsoft Entra ID pricing: Free included with Microsoft 365, P1 at $46/user/month, P2 at $70/user/month. Okta ranges from $6-25/user/month. Features comparison: Entra P2 offers identity governance, risk-based conditional access, Identity Protection. Okta provides cloud-native platform with 7000+ integrations. Duo specializes in MFA with device visibility. IAM market expected to reach $41.52B by 2030 at 12.6% CAGR.\",\n      \"url\": \"https://www.gartner.com/reviews/market/identity-and-access-management-iam\"\n    },\n    {\n      \"title\": \"Zero Trust Access Platforms (ZTAP) Market Overview 2025\",\n      \"content\": \"Chinese ZTNA market expected to exceed 30 billion RMB in 2025 with 15% growth rate. 71% of enterprises need cloud security, 51% replacing VPNs with ZTNA. Key vendors: Tencent Cloud iOA, Qi An Xin ZTNA, Sangfor. Global players include Palo Alto Networks wi",
+      "url": ""
+    }
+  ],
+  "features": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"Zero Trust Access Platform Comparison 2025\",\n      \"content\": \"Comprehensive comparison of zero trust access platforms including Okta, Microsoft Entra ID, Duo Security, and Chinese domestic solutions like Tencent iOA, Qianxin, and Sangfor aTrust. Key findings: Tencent iOA ranked #1 with 18 DLP channels, EPP+EDR dual-engine, and pricing from \u00a559-419/year. Okta focuses on identity management with 6000+ app integrations. Microsoft Entra ID offers $46-93/user/month pricing with deep Microsoft ecosystem integration. Duo Security excels in MFA with free tier available.\",\n      \"url\": \"https://www.zhihu.com/question/512585361/answer/3508960587\"\n    },\n    {\n      \"title\": \"Okta vs Microsoft Entra ID vs Duo Security 2025 Comparison\",\n      \"content\": \"Detailed pricing and feature comparison for 2025. Microsoft Entra ID: $46-93/user/month with strong Microsoft 365 integration. Okta: ~$35k-50k+ annually for enterprise, excellent for multi-cloud envi",
+      "url": ""
+    }
+  ],
+  "trends": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"Zero Trust Architecture and IAM Trends for 2025\",\n      \"content\": \"The Zero Trust IAM market is projected to exceed $200 billion by 2025 with 12-15% annual growth. Key trends include AI-driven adaptive authentication, cloud-native SASE adoption, and regulatory compliance pressures.\",\n      \"url\": \"https://www.gartner.com/en/information-technology/insights/zero-trust-security\"\n    },\n    {\n      \"title\": \"Emerging IAM Technologies 2025\",\n      \"content\": \"AI-powered autonomous threat detection, post-quantum cryptography, behavioral biometrics, and decentralized identity systems using blockchain are the emerging technologies for 2025.\",\n      \"url\": \"https://www.forrester.com/blogs/zero-trust-iam-2025-trends\"\n    },\n    {\n      \"title\": \"NIST Zero Trust Architecture SP 800-207\",\n      \"content\": \"NIST's framework defines Zero Trust core principles: never trust, always verify; least privilege access; and assume breach mindset. Updated guidan",
+      "url": ""
+    }
+  ],
+  "compliance": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"SOC 2 ISO 27001 GDPR Compliance Requirements 2025 - Identity Access Management\",\n      \"content\": \"Comprehensive overview of SOC2, ISO27001, and GDPR compliance requirements for IAM systems. SOC2 focuses on security, availability, processing integrity, confidentiality, and privacy. ISO 27001 provides broader ISMS framework with Annex A.9 access controls. GDPR emphasizes data subject rights, privacy by design, and data minimization. Key IAM controls include MFA, least privilege, access reviews, privileged access management, session management, and comprehensive audit logging.\",\n      \"url\": \"https://www.drummondcycle.com/resources/blog/soc-2-vs-iso-27001-vs-gdpr-compliance-requirements/\"\n    },\n    {\n      \"title\": \"2025 Identity Governance & Access Management Compliance Standards\",\n      \"content\": \"Overview of IAM compliance landscape for 2025. GDPR remains global benchmark with \u20ac1.2B in fines. 21 US states have privacy laws. HIPAA 2025 u",
+      "url": ""
+    }
+  ]
+}

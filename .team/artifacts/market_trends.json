@@ -1,0 +1,9 @@
+{
+  "results": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"Zero Trust Architecture and IAM Trends for 2025\",\n      \"content\": \"The Zero Trust IAM market is projected to exceed $200 billion by 2025 with 12-15% annual growth. Key trends include AI-driven adaptive authentication, cloud-native SASE adoption, and regulatory compliance pressures.\",\n      \"url\": \"https://www.gartner.com/en/information-technology/insights/zero-trust-security\"\n    },\n    {\n      \"title\": \"Emerging IAM Technologies 2025\",\n      \"content\": \"AI-powered autonomous threat detection, post-quantum cryptography, behavioral biometrics, and decentralized identity systems using blockchain are the emerging technologies for 2025.\",\n      \"url\": \"https://www.forrester.com/blogs/zero-trust-iam-2025-trends\"\n    },\n    {\n      \"title\": \"NIST Zero Trust Architecture SP 800-207\",\n      \"content\": \"NIST's framework defines Zero Trust core principles: never trust, always verify; least privilege access; and assume breach mindset. Updated guidan",
+      "url": ""
+    }
+  ]
+}
