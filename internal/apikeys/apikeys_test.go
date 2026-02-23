@@ -947,6 +947,21 @@ func TestScopeValidationEdgeCases(t *testing.T) {
 						isValid = false
 						break
 					}
+					// Check for leading/trailing whitespace
+					if len(scope) != len(strings.TrimSpace(scope)) {
+						isValid = false
+						break
+					}
+					// Check for control characters (including newlines)
+					for _, r := range scope {
+						if r < 32 && r != ' ' {
+							isValid = false
+							break
+						}
+					}
+					if !isValid {
+						break
+					}
 				}
 			}
 

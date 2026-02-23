@@ -548,8 +548,8 @@ func TestHaversineDistance(t *testing.T) {
 			lon1:     -74.0060,
 			lat2:     40.73,
 			lon2:     -73.99,
-			expected: 15,
-			tolerance: 5,
+			expected: 2,
+			tolerance: 1,
 		},
 	}
 

@@ -2,19 +2,21 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"net/http/httputil"
+	"net/url"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -24,9 +26,8 @@ func init() {
 func TestCreateGatewayConfig(t *testing.T) {
 	t.Run("Creates config with default values", func(t *testing.T) {
 		cfg := &config.Config{
-			OAuthJWKSURL:      "http://localhost:8080/jwks.json",
-			EnableRateLimit:   true,
-			GetCORSOrigins:    func() []string { return []string{"http://localhost:3000"} },
+			OAuthJWKSURL:    "http://localhost:8080/jwks.json",
+			EnableRateLimit: true,
 		}
 
 		gatewayCfg := createGatewayConfig(cfg, nil, nil, nil)
@@ -344,13 +345,3 @@ func BenchmarkGatewayRequest(b *testing.B) {
 		router.ServeHTTP(w, req)
 	}
 }
-
-// Required imports for compilation
-import (
-	"net/url"
-
-	"github.com/openidx/openidx/internal/gateway"
-	"github.com/openidx/openidx/internal/common/config"
-	"go.uber.org/zap"
-	"net/http/httputil"
-)

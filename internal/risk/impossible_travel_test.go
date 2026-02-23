@@ -383,7 +383,7 @@ func TestCalculateSpeed_InvalidInput(t *testing.T) {
 			name:        "very small time",
 			distance:    100,
 			timeDelta:   1 * time.Millisecond,
-			expectedKmh: 0,
+			expectedKmh: 360000000, // 100 km / 1ms = 360,000,000 km/h
 		},
 	}
 

@@ -193,7 +193,7 @@ func TestPasswordValidation(t *testing.T) {
 		},
 		{
 			name:      "missing digit",
-			password:  "NoDigits!",
+			password:  "NoDigitsHere!!",
 			wantErr:   true,
 			errContains: "digit",
 		},
@@ -207,7 +207,7 @@ func TestPasswordValidation(t *testing.T) {
 			name:      "contains forbidden word",
 			password:  "Password123!",
 			wantErr:   true,
-			errContains: "forbidden",
+			errContains: "password",
 		},
 	}
 
@@ -282,6 +282,10 @@ func TestSystemConfigValidation(t *testing.T) {
 		{
 			name: "session timeout too low",
 			config: SystemConfig{
+				PasswordPolicy: PasswordPolicyConfig{
+					MinLength:    12,
+					HistoryCount: 5,
+				},
 				SessionPolicy: SessionPolicyConfig{
 					TimeoutMinutes: 1,
 				},
@@ -292,16 +296,24 @@ func TestSystemConfigValidation(t *testing.T) {
 		{
 			name: "invalid MFA method",
 			config: SystemConfig{
+				PasswordPolicy: PasswordPolicyConfig{
+					MinLength:    12,
+					HistoryCount: 5,
+				},
 				MFAPolicy: MFAPolicyConfig{
 					AllowedMethods: []string{"invalid_method"},
 				},
 			},
 			wantErr: true,
-			errMsg:  "invalid MFA method",
+			errMsg:  "invalid mfa method",
 		},
 		{
 			name: "rate limit per IP too high",
 			config: SystemConfig{
+				PasswordPolicy: PasswordPolicyConfig{
+					MinLength:    12,
+					HistoryCount: 5,
+				},
 				RateLimit: RateLimitPolicyConfig{
 					PerIP: 20000,
 				},
