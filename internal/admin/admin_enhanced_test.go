@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -698,7 +697,7 @@ func TestStreamingCSVExport(t *testing.T) {
 		for _, row := range rows {
 			ch <- row
 		}
-	}
+	}()
 
 	// Consumer
 	var collected [][]string
@@ -718,8 +717,6 @@ func BenchmarkCSVParsing(b *testing.B) {
 john.doe,john@example.com,John,Doe,true
 jane.smith,jane@example.com,Jane,Smith,true
 bob.wilson,bob@example.com,Bob,Wilson,false`
-
-	reader := strings.NewReader(csvData)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

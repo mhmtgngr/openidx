@@ -153,7 +153,7 @@ func TestRecovery_StackTrace(t *testing.T) {
 }
 
 func TestRecovery_ReturnStackTrace(t *testing.T) {
-	observedZapCore, logs := observer.New(zapcore.InfoLevel)
+	observedZapCore, _ := observer.New(zapcore.InfoLevel)
 	logger := zap.New(observedZapCore)
 
 	cfg := DefaultRecoveryConfig(logger)
@@ -181,7 +181,7 @@ func TestRecovery_ReturnStackTrace(t *testing.T) {
 }
 
 func TestRecovery_JSONResponse(t *testing.T) {
-	observedZapCore, logs := observer.New(zapcore.InfoLevel)
+	observedZapCore, _ := observer.New(zapcore.InfoLevel)
 	logger := zap.New(observedZapCore)
 
 	router := gin.New()
@@ -210,7 +210,7 @@ func TestRecovery_JSONResponse(t *testing.T) {
 }
 
 func TestRecovery_NonJSONResponse(t *testing.T) {
-	observedZapCore, logs := observer.New(zapcore.InfoLevel)
+	observedZapCore, _ := observer.New(zapcore.InfoLevel)
 	logger := zap.New(observedZapCore)
 
 	router := gin.New()
@@ -292,7 +292,7 @@ func TestCapturePanic(t *testing.T) {
 }
 
 func TestRecovery_GeneratesCorrelationID(t *testing.T) {
-	observedZapCore, logs := observer.New(zapcore.InfoLevel)
+	observedZapCore, _ := observer.New(zapcore.InfoLevel)
 	logger := zap.New(observedZapCore)
 
 	router := gin.New()
@@ -316,7 +316,7 @@ func TestRecovery_GeneratesCorrelationID(t *testing.T) {
 }
 
 func TestRecoveryWithWriter(t *testing.T) {
-	observedZapCore, logs := observer.New(zapcore.InfoLevel)
+	observedZapCore, _ := observer.New(zapcore.InfoLevel)
 	logger := zap.New(observedZapCore)
 
 	router := gin.New()

@@ -5,7 +5,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"syscall"
 	"testing"
 	"time"
 
@@ -322,9 +321,7 @@ func TestGracefulShutdown_ServerShutdown(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	// Create a simple handler
-	handlerCalled := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlerCalled = true
 		w.Write([]byte("OK"))
 	})
 

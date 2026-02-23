@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -23,11 +23,11 @@ type mockJITDB struct {
 	queryError  bool
 }
 
-func (m *mockJITDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgxpool.Row {
+func (m *mockJITDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
 	return &mockRow{m: m, ctx: ctx, query: query, args: args}
 }
 
-func (m *mockJITDB) Query(ctx context.Context, query string, args ...interface{}) (pgxpool.Rows, error) {
+func (m *mockJITDB) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
 	if m.queryError {
 		return nil, assert.AnError
 	}
@@ -51,7 +51,7 @@ func (r *mockRow) Scan(dest ...interface{}) error {
 	query := r.query
 
 	// Check for active grant query
-	if contains(query, "SELECT COUNT(*)") && contains(query, "jit_grants") {
+	if containsJIT(query, "SELECT COUNT(*)") && containsJIT(query, "jit_grants") {
 		count := 0
 		for _, g := range r.m.grants {
 			if g.Status == "active" && g.ExpiresAt.After(time.Now()) {
@@ -73,7 +73,7 @@ func (r *mockRow) Scan(dest ...interface{}) error {
 	}
 
 	// Check for existing active grant
-	if contains(query, "SELECT id") && contains(query, "jit_grants") && contains(query, "status = 'active'") {
+	if containsJIT(query, "SELECT id") && containsJIT(query, "jit_grants") && containsJIT(query, "status = 'active'") {
 		for _, g := range r.m.grants {
 			if g.Status == "active" && g.ExpiresAt.After(time.Now()) {
 				if len(r.args) >= 2 {
@@ -94,7 +94,7 @@ func (r *mockRow) Scan(dest ...interface{}) error {
 	}
 
 	// Check for role lookup
-	if contains(query, "SELECT name FROM roles") {
+	if containsJIT(query, "SELECT name FROM roles") {
 		roleID := asString(r.args[0])
 		if name, ok := r.m.roles[roleID]; ok {
 			if len(dest) > 0 {
@@ -154,11 +154,11 @@ func (m *mockResult) RowsAffected() int64 {
 	return m.rowsAffected
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findInString(s, substr))
+func containsJIT(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findInStringJIT(s, substr))
 }
 
-func findInString(s, substr string) bool {
+func findInStringJIT(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {
 			return true

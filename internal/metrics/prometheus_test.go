@@ -118,7 +118,7 @@ func TestHandler(t *testing.T) {
 
 func TestRecordAuthAttempt(t *testing.T) {
 	// Reset metrics registry for clean test
-	reg := prometheus.NewRegistry()
+	_ = prometheus.NewRegistry()
 	// In a real test, we'd use a custom registry
 
 	// Record some auth attempts

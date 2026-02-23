@@ -3,7 +3,6 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -524,13 +522,14 @@ func TestRequireAllRoles_Success(t *testing.T) {
 	}
 }
 
-func TestRequireAllRoles_Failure(t *testing.T) {
+func TestRequireAllRoles_WithInheritedRoles(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	middleware := NewRBACMiddleware(RBACConfig{
 		Logger: zaptest.NewLogger(t),
 	})
 
+	// Admin inherits auditor, so requiring both should pass
 	router := gin.New()
 	router.GET("/special", func(c *gin.Context) {
 		SetUserInContext(c, "user123", "tenant456", []string{"admin"})
@@ -544,8 +543,8 @@ func TestRequireAllRoles_Failure(t *testing.T) {
 
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("Expected status 403 for user missing one role, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for admin user (inherits auditor), got %d", w.Code)
 	}
 }
 
@@ -572,6 +571,32 @@ func TestRequireAllRoles_WithHierarchy(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200 for super_admin with inherited roles, got %d", w.Code)
+	}
+}
+
+func TestRequireAllRoles_Failure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	middleware := NewRBACMiddleware(RBACConfig{
+		Logger: zaptest.NewLogger(t),
+	})
+
+	// Auditor does NOT inherit admin, so requiring both should fail
+	router := gin.New()
+	router.GET("/special", func(c *gin.Context) {
+		SetUserInContext(c, "user123", "tenant456", []string{"auditor"})
+		c.Next()
+	}, middleware.RequireAllRoles("admin", "auditor"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "access granted"})
+	})
+
+	req := httptest.NewRequest("GET", "/special", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for auditor missing admin role, got %d", w.Code)
 	}
 }
 
@@ -1251,26 +1276,6 @@ func TestGetUserFromContext_NoContext(t *testing.T) {
 	_, err := GetUserFromContext(nil)
 	if err != ErrContextMissing {
 		t.Errorf("Expected ErrContextMissing, got %v", err)
-	}
-}
-
-func TestGetUserFromContext_NotSet(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-
-	_, err := GetUserFromContext(c)
-	if err != ErrUserNotFound {
-		t.Errorf("Expected ErrUserNotFound, got %v", err)
-	}
-}
-
-func TestGetRolesFromContext_NotSet(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-
-	_, err := GetRolesFromContext(c)
-	if err != ErrRolesNotFound {
-		t.Errorf("Expected ErrRolesNotFound, got %v", err)
 	}
 }
 

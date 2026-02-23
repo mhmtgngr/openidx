@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -310,7 +309,7 @@ func TestLogging_GinErrors(t *testing.T) {
 	router := gin.New()
 	router.Use(Logging(logger))
 	router.GET("/test", func(c *gin.Context) {
-		_ = c.Error("something went wrong")
+		_ = c.Error(assert.AnError)
 		c.String(200, "OK")
 	})
 

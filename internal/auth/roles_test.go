@@ -239,11 +239,11 @@ func TestPermissionString(t *testing.T) {
 		perm     Permission
 		expected string
 	}{
-		{{"users", "read"}, "users:read"},
-		{{"tenants", "manage"}, "tenants:manage"},
-		{{"", ""}, ":"},
-		{{"resource", ""}, "resource:"},
-		{{"", "action"}, ":action"},
+		{Permission{Resource: "users", Action: "read"}, "users:read"},
+		{Permission{Resource: "tenants", Action: "manage"}, "tenants:manage"},
+		{Permission{Resource: "", Action: ""}, ":"},
+		{Permission{Resource: "resource", Action: ""}, "resource:"},
+		{Permission{Resource: "", Action: "action"}, ":action"},
 	}
 
 	for _, tt := range tests {
@@ -319,7 +319,7 @@ func TestRoleMethodsNilSafety(t *testing.T) {
 
 	// These should not panic on zero value
 	_ = zeroRole.Level()
-	_ = zeroRole.String()
+	_ = string(zeroRole) // Role is a type alias for string, not a struct with String() method
 	_ = zeroRole.Inherits(RoleAdmin)
 	_ = zeroRole.HasPermission("users", "read")
 	_ = zeroRole.IsHigherOrEqual(RoleUser)

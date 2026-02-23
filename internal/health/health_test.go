@@ -35,6 +35,10 @@ func (m *mockChecker) IsCritical() bool {
 	return m.critical
 }
 
+func (m *mockChecker) GetStatus() string {
+	return m.status
+}
+
 func TestHealthService_Check(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -131,7 +135,12 @@ func TestHealthService_Check(t *testing.T) {
 					t.Errorf("checker %q not found in components", checker.Name())
 					continue
 				}
-				if comp.Status != tt.checkers[0].status {
+				// Get expected status from mock checker via type assertion
+				expectedStatus := "unknown"
+				if mc, ok := checker.(*mockChecker); ok {
+					expectedStatus = mc.status
+				}
+				if comp.Status != expectedStatus {
 					// Just check that status was set
 				}
 			}
@@ -188,7 +197,7 @@ func TestHealthService_ReadyHandler(t *testing.T) {
 				hs.RegisterCheck(checker)
 			}
 
-			handler := hs.ReadyHandler()
+			_ = hs.ReadyHandler()
 			// We can't easily test the gin handler without a full gin setup,
 			// but we can verify the logic through the Check method
 			result := hs.Check(context.Background())

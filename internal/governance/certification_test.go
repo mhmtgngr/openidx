@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -30,11 +30,11 @@ type mockCertDB struct {
 	autoRevoked     bool
 }
 
-func (m *mockCertDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgxpool.Row {
+func (m *mockCertDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
 	return &mockCertRow{m: m, query: query, args: args}
 }
 
-func (m *mockCertDB) Query(ctx context.Context, query string, args ...interface{}) (pgxpool.Rows, error) {
+func (m *mockCertDB) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
 	if m.queryError {
 		return nil, assert.AnError
 	}
