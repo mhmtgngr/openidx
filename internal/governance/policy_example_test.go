@@ -10,8 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// ExamplePolicyEvaluator demonstrates basic usage of the PolicyEvaluator
-func ExamplePolicyEvaluator() {
+// examplePolicyEvaluator demonstrates basic usage of the PolicyEvaluator
+func examplePolicyEvaluator() {
 	// Create a new policy evaluator
 	config := PolicyEvaluatorConfig{
 		OPAURL:               "http://localhost:8181",
@@ -73,7 +73,7 @@ deny[msg] {
 }
 
 // ExampleGroupBasedAccess demonstrates group-based access control
-func ExampleGroupBasedAccess() {
+func exampleGroupBasedAccess() {
 	config := PolicyEvaluatorConfig{
 		Logger: zap.NewExample(),
 	}
@@ -119,7 +119,7 @@ allow {
 }
 
 // ExampleResourceOwnerAccess demonstrates resource owner-based access
-func ExampleResourceOwnerAccess() {
+func exampleResourceOwnerAccess() {
 	config := PolicyEvaluatorConfig{
 		Logger: zap.NewExample(),
 	}
@@ -170,7 +170,7 @@ deny[msg] {
 }
 
 // ExampleTimeBasedAccess demonstrates time-based access controls
-func ExampleTimeBasedAccess() {
+func exampleTimeBasedAccess() {
 	config := PolicyEvaluatorConfig{
 		Logger: zap.NewExample(),
 	}
@@ -220,7 +220,7 @@ warnings[msg] {
 }
 
 // ExamplePolicyReloading demonstrates hot-reloading policies
-func ExamplePolicyReloading() {
+func examplePolicyReloading() {
 	config := PolicyEvaluatorConfig{
 		PolicyDir:            "/etc/openidx/policies",
 		DefaultPolicyTimeout: 5 * time.Second,
@@ -255,7 +255,7 @@ func ExamplePolicyReloading() {
 }
 
 // ExampleMultiRoleEvaluation demonstrates evaluating policies with multiple roles
-func ExampleMultiRoleEvaluation() {
+func exampleMultiRoleEvaluation() {
 	config := PolicyEvaluatorConfig{
 		Logger: zap.NewExample(),
 	}
@@ -328,7 +328,7 @@ deny[msg] {
 }
 
 // ExampleContextRichEvaluation demonstrates evaluation with rich context
-func ExampleContextRichEvaluation() {
+func exampleContextRichEvaluation() {
 	config := PolicyEvaluatorConfig{
 		Logger: zap.NewExample(),
 	}
@@ -411,7 +411,7 @@ deny[msg] {
 }
 
 // ExampleDataClassification demonstrates data classification-based access
-func ExampleDataClassification() {
+func exampleDataClassification() {
 	config := PolicyEvaluatorConfig{
 		Logger: zap.NewExample(),
 	}

@@ -22,7 +22,7 @@ import (
 type compiledPolicy struct {
 	name      string
 	module    *ast.Module
-	compiled  *rego.Compiler
+	compiler  *ast.Compiler
 	policyRego string
 	createdAt time.Time
 }
@@ -89,7 +89,7 @@ type PolicyEvaluator struct {
 	policyCache  map[string]*compiledPolicy
 	cacheMutex   sync.RWMutex
 	store        storage.Store
-	compiler     *rego.Compiler
+	compiler     *ast.Compiler
 
 	// Metrics
 	evaluationDurationHist *metricHistogram
@@ -225,20 +225,13 @@ func (pe *PolicyEvaluator) EvaluatePolicy(ctx context.Context, policyName string
 		pe.cacheHitCounter.Inc()
 	}
 
-	// Prepare query
-	query := rego.Result{
-		Exprs: []ast.Expression{
-			ast.Call.Builder().Function(ast.Var("data")).Builtins(),
-		},
-	}
-
 	// Create rego query for the specific policy entry point
 	regoQuery := fmt.Sprintf("data.%s.allow", policyName)
 
 	// Build rego evaluation
 	r := rego.New(
 		rego.Query(regoQuery),
-		rego.Compiler(cachedPolicy.compiled),
+		rego.Compiler(cachedPolicy.compiler),
 		rego.Input(input),
 		rego.Store(pe.store),
 	)
@@ -267,7 +260,7 @@ func (pe *PolicyEvaluator) EvaluatePolicy(ctx context.Context, policyName string
 	denyQuery := fmt.Sprintf("data.%s.deny", policyName)
 	rDeny := rego.New(
 		rego.Query(denyQuery),
-		rego.Compiler(cachedPolicy.compiled),
+		rego.Compiler(cachedPolicy.compiler),
 		rego.Input(input),
 		rego.Store(pe.store),
 	)
@@ -288,7 +281,7 @@ func (pe *PolicyEvaluator) EvaluatePolicy(ctx context.Context, policyName string
 	warningQuery := fmt.Sprintf("data.%s.warnings", policyName)
 	rWarn := rego.New(
 		rego.Query(warningQuery),
-		rego.Compiler(cachedPolicy.compiled),
+		rego.Compiler(cachedPolicy.compiler),
 		rego.Input(input),
 		rego.Store(pe.store),
 	)
@@ -352,11 +345,12 @@ func (pe *PolicyEvaluator) LoadPolicyFromBytes(policyName string, regoContent []
 	compiler := ast.NewCompiler().WithEnablePrintStatements(true)
 
 	// Compile the module
-	if err := compiler.Compile(map[string]*ast.Module{policyName: module}); err != nil {
+	compiler.Compile(map[string]*ast.Module{policyName: module})
+	if compiler.Failed() {
 		if pe.policyErrorCounter != nil {
 			pe.policyErrorCounter.Inc(policyName, "compile_error")
 		}
-		return fmt.Errorf("compile policy: %w", err)
+		return fmt.Errorf("compile policy: %s", compiler.Errors)
 	}
 
 	// Store in cache
@@ -366,7 +360,7 @@ func (pe *PolicyEvaluator) LoadPolicyFromBytes(policyName string, regoContent []
 	pe.policyCache[policyName] = &compiledPolicy{
 		name:      policyName,
 		module:    module,
-		compiled:  compiler,
+		compiler:  compiler,
 		policyRego: string(regoContent),
 		createdAt: time.Now(),
 	}

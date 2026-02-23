@@ -1619,8 +1619,8 @@ func (s *Service) handleEvaluatePolicy(c *gin.Context) {
 
 // --- Certification Campaigns ---
 
-// CertificationCampaign represents a scheduled certification campaign
-type CertificationCampaign struct {
+// ScheduledCampaign represents a scheduled certification campaign
+type ScheduledCampaign struct {
 	ID               string     `json:"id"`
 	Name             string     `json:"name"`
 	Description      string     `json:"description"`
@@ -1673,7 +1673,7 @@ func computeNextRunAt(schedule string, from time.Time) *time.Time {
 }
 
 // CreateCampaign inserts a new certification campaign
-func (s *Service) CreateCampaign(ctx context.Context, campaign *CertificationCampaign) error {
+func (s *Service) CreateCampaign(ctx context.Context, campaign *ScheduledCampaign) error {
 	s.logger.Info("Creating certification campaign", zap.String("name", campaign.Name))
 
 	if campaign.ID == "" {
@@ -1701,7 +1701,7 @@ func (s *Service) CreateCampaign(ctx context.Context, campaign *CertificationCam
 }
 
 // ListCampaigns retrieves campaigns with pagination and optional status filter
-func (s *Service) ListCampaigns(ctx context.Context, offset, limit int, status string) ([]CertificationCampaign, int, error) {
+func (s *Service) ListCampaigns(ctx context.Context, offset, limit int, status string) ([]ScheduledCampaign, int, error) {
 	var total int
 	countQuery := "SELECT COUNT(*) FROM certification_campaigns"
 	countArgs := []interface{}{}
@@ -1741,9 +1741,9 @@ func (s *Service) ListCampaigns(ctx context.Context, offset, limit int, status s
 	}
 	defer rows.Close()
 
-	var campaigns []CertificationCampaign
+	var campaigns []ScheduledCampaign
 	for rows.Next() {
-		var c CertificationCampaign
+		var c ScheduledCampaign
 		if err := rows.Scan(
 			&c.ID, &c.Name, &c.Description, &c.Type, &c.Schedule, &c.ReviewerStrategy,
 			&c.ReviewerID, &c.ReviewerRole, &c.AutoRevoke, &c.GracePeriodDays, &c.DurationDays,
@@ -1758,8 +1758,8 @@ func (s *Service) ListCampaigns(ctx context.Context, offset, limit int, status s
 }
 
 // GetCampaign retrieves a single certification campaign by ID
-func (s *Service) GetCampaign(ctx context.Context, id string) (*CertificationCampaign, error) {
-	var c CertificationCampaign
+func (s *Service) GetCampaign(ctx context.Context, id string) (*ScheduledCampaign, error) {
+	var c ScheduledCampaign
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, type, schedule, reviewer_strategy,
 		       reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
@@ -1777,7 +1777,7 @@ func (s *Service) GetCampaign(ctx context.Context, id string) (*CertificationCam
 }
 
 // UpdateCampaign updates an existing certification campaign
-func (s *Service) UpdateCampaign(ctx context.Context, campaign *CertificationCampaign) error {
+func (s *Service) UpdateCampaign(ctx context.Context, campaign *ScheduledCampaign) error {
 	s.logger.Info("Updating certification campaign", zap.String("id", campaign.ID))
 
 	now := time.Now()
@@ -1965,7 +1965,7 @@ func (s *Service) handleListCampaigns(c *gin.Context) {
 }
 
 func (s *Service) handleCreateCampaign(c *gin.Context) {
-	var campaign CertificationCampaign
+	var campaign ScheduledCampaign
 	if err := c.ShouldBindJSON(&campaign); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -1996,7 +1996,7 @@ func (s *Service) handleGetCampaign(c *gin.Context) {
 }
 
 func (s *Service) handleUpdateCampaign(c *gin.Context) {
-	var campaign CertificationCampaign
+	var campaign ScheduledCampaign
 	if err := c.ShouldBindJSON(&campaign); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
