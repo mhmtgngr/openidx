@@ -16,9 +16,10 @@
     },
     "3": {
       "oauth-core": "done",
-      "updated": "2026-02-23T00:48:27+00:00"
+      "updated": "2026-02-23T00:54:51+00:00",
+      "oidc-discovery": "running"
     }
   },
   "last_phase": "3",
-  "last_step": "oauth-core"
+  "last_step": "oidc-discovery"
 }
