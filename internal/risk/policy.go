@@ -1,470 +1,705 @@
+// Package risk provides risk-based authentication policies
 package risk
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
-// RiskPolicy represents an adaptive MFA policy
+// Redis key prefixes for policy storage
+const (
+	policyKeyPrefix = "policy:tenant:"
+)
+
+// RiskLevel is defined in scorer.go to avoid duplication
+
+// AuthAction represents the authentication action to take
+type AuthAction string
+
+const (
+	AuthActionAllow            AuthAction = "allow"
+	AuthActionRequireMFA       AuthAction = "require_mfa"
+	AuthActionRequireStrongMFA AuthAction = "require_strong_mfa"
+	AuthActionRequireApproval  AuthAction = "require_approval"
+	AuthActionBlock            AuthAction = "block"
+	AuthActionBlockAndAlert    AuthAction = "block_and_alert"
+)
+
+// TenantPolicy represents per-tenant risk policy thresholds
+type TenantPolicy struct {
+	TenantID         string     `json:"tenant_id"`
+	LowThreshold     int        `json:"low_threshold"`      // Default: 30
+	MediumThreshold  int        `json:"medium_threshold"`   // Default: 50
+	HighThreshold    int        `json:"high_threshold"`     // Default: 70
+	CriticalThreshold int       `json:"critical_threshold"` // Default: 90
+	Enabled          bool       `json:"enabled"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// RiskPolicy represents a configurable risk policy (used by identity service)
 type RiskPolicy struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Enabled     bool            `json:"enabled"`
-	Priority    int             `json:"priority"`
-	Conditions  PolicyCondition `json:"conditions"`
-	Actions     PolicyAction    `json:"actions"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description"`
+	TenantID         string     `json:"tenant_id"`
+	LowThreshold     int        `json:"low_threshold"`
+	MediumThreshold  int        `json:"medium_threshold"`
+	HighThreshold    int        `json:"high_threshold"`
+	CriticalThreshold int       `json:"critical_threshold"`
+	Enabled          bool       `json:"enabled"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
-// PolicyCondition defines when a policy applies
-type PolicyCondition struct {
-	RiskScoreMin      *int     `json:"risk_score_min,omitempty"`
-	RiskScoreMax      *int     `json:"risk_score_max,omitempty"`
-	NewDevice         *bool    `json:"new_device,omitempty"`
-	NewLocation       *bool    `json:"new_location,omitempty"`
-	ImpossibleTravel  *bool    `json:"impossible_travel,omitempty"`
-	OffHours          *bool    `json:"off_hours,omitempty"`
-	FailedAttempts    *int     `json:"failed_attempts,omitempty"`
-	UntrustedDevice   *bool    `json:"untrusted_device,omitempty"`
-	Countries         []string `json:"countries,omitempty"`          // Block/allow specific countries
-	ExcludeCountries  []string `json:"exclude_countries,omitempty"`  // Exclude from policy
-	IPRanges          []string `json:"ip_ranges,omitempty"`          // CIDR ranges
-	UserGroups        []string `json:"user_groups,omitempty"`        // Apply to specific groups
-	Applications      []string `json:"applications,omitempty"`       // Apply to specific apps
-}
-
-// PolicyAction defines what happens when policy matches
-type PolicyAction struct {
-	RequireMFA      bool     `json:"require_mfa"`
-	MFAMethods      []string `json:"mfa_methods,omitempty"`      // ["push", "webauthn", "totp", "any"]
-	StepUp          bool     `json:"step_up,omitempty"`          // Require additional verification
-	Deny            bool     `json:"deny,omitempty"`             // Block access completely
-	NotifyUser      bool     `json:"notify_user,omitempty"`      // Send email/push notification
-	NotifyAdmin     bool     `json:"notify_admin,omitempty"`     // Alert security team
-	LogLevel        string   `json:"log_level,omitempty"`        // "info", "warning", "critical"
-	SessionDuration *int     `json:"session_duration,omitempty"` // Override session length (minutes)
-	RequireReason   bool     `json:"require_reason,omitempty"`   // User must provide access reason
-}
-
-// PolicyEvaluationResult contains the outcome of policy evaluation
-type PolicyEvaluationResult struct {
-	PolicyID        string       `json:"policy_id,omitempty"`
-	PolicyName      string       `json:"policy_name,omitempty"`
-	RiskScore       int          `json:"risk_score"`
-	RiskFactors     []string     `json:"risk_factors"`
-	Action          PolicyAction `json:"action"`
-	MatchedPolicies []string     `json:"matched_policies"`
-	Decision        string       `json:"decision"` // "allow", "mfa_required", "step_up", "deny"
-}
-
-// CreateRiskPolicyRequest is the request to create a risk policy
+// CreateRiskPolicyRequest represents a request to create or update a risk policy
 type CreateRiskPolicyRequest struct {
-	Name        string          `json:"name" binding:"required"`
-	Description string          `json:"description"`
-	Enabled     bool            `json:"enabled"`
-	Priority    int             `json:"priority"`
-	Conditions  PolicyCondition `json:"conditions" binding:"required"`
-	Actions     PolicyAction    `json:"actions" binding:"required"`
+	Name             string  `json:"name" binding:"required"`
+	Description      string  `json:"description"`
+	TenantID         string  `json:"tenant_id" binding:"required"`
+	LowThreshold     *int    `json:"low_threshold"`
+	MediumThreshold  *int    `json:"medium_threshold"`
+	HighThreshold    *int    `json:"high_threshold"`
+	CriticalThreshold *int   `json:"critical_threshold"`
+	Enabled          *bool   `json:"enabled"`
 }
 
-// CreateRiskPolicy creates a new risk policy
-func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	conditionsJSON, err := json.Marshal(req.Conditions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal conditions: %w", err)
-	}
-
-	actionsJSON, err := json.Marshal(req.Actions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal actions: %w", err)
-	}
-
-	var policy RiskPolicy
-	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO risk_policies (name, description, enabled, priority, conditions, actions)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, name, description, enabled, priority, conditions, actions, created_at, updated_at`,
-		req.Name, req.Description, req.Enabled, req.Priority, conditionsJSON, actionsJSON,
-	).Scan(&policy.ID, &policy.Name, &policy.Description, &policy.Enabled, &policy.Priority,
-		&conditionsJSON, &actionsJSON, &policy.CreatedAt, &policy.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create policy: %w", err)
-	}
-
-	json.Unmarshal(conditionsJSON, &policy.Conditions)
-	json.Unmarshal(actionsJSON, &policy.Actions)
-
-	s.logger.Info("Created risk policy",
-		zap.String("policy_id", policy.ID),
-		zap.String("name", policy.Name))
-
-	return &policy, nil
+// EvaluateLoginContext represents the context for evaluating login risk
+type EvaluateLoginContext struct {
+	UserID            string   `json:"user_id"`
+	IPAddress         string   `json:"ip_address"`
+	UserAgent         string   `json:"user_agent"`
+	DeviceFingerprint string   `json:"device_fingerprint"`
+	Location          string   `json:"location"`
+	Latitude          float64  `json:"latitude"`
+	Longitude         float64  `json:"longitude"`
+	Country           string   `json:"country"`
+	IsNewDevice       bool     `json:"is_new_device"`
+	IsDeviceTrusted   bool     `json:"is_device_trusted"`
+	FailedAttempts    int      `json:"failed_attempts"`
+	UserGroups        []string `json:"user_groups"`
 }
 
-// GetRiskPolicy retrieves a risk policy by ID
-func (s *Service) GetRiskPolicy(ctx context.Context, policyID string) (*RiskPolicy, error) {
-	var policy RiskPolicy
-	var conditionsJSON, actionsJSON []byte
-
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, name, description, enabled, priority, conditions, actions, created_at, updated_at
-		 FROM risk_policies WHERE id = $1`,
-		policyID,
-	).Scan(&policy.ID, &policy.Name, &policy.Description, &policy.Enabled, &policy.Priority,
-		&conditionsJSON, &actionsJSON, &policy.CreatedAt, &policy.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("policy not found: %w", err)
-	}
-
-	json.Unmarshal(conditionsJSON, &policy.Conditions)
-	json.Unmarshal(actionsJSON, &policy.Actions)
-
-	return &policy, nil
+// PolicyEvaluationResult represents the result of evaluating risk policies
+type PolicyEvaluationResult struct {
+	RiskScore       int        `json:"risk_score"`
+	RiskLevel       RiskLevel  `json:"risk_level"`
+	Action          AuthAction `json:"action"`
+	Reasons         []string   `json:"reasons"`
+	RequireMFA      bool       `json:"require_mfa"`
+	Allowed         bool       `json:"allowed"`
+	SessionDuration *int       `json:"session_duration_minutes,omitempty"`
 }
 
-// ListRiskPolicies returns all risk policies
-func (s *Service) ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]RiskPolicy, error) {
-	query := `SELECT id, name, description, enabled, priority, conditions, actions, created_at, updated_at
-			  FROM risk_policies`
-	if enabledOnly {
-		query += ` WHERE enabled = true`
-	}
-	query += ` ORDER BY priority ASC, created_at ASC`
+// EvaluateRequest represents a risk evaluation request
+type EvaluateRequest struct {
+	TenantID      string  `json:"tenant_id" binding:"required"`
+	UserID        string  `json:"user_id" binding:"required"`
+	IPAddress     string  `json:"ip_address"`
+	UserAgent     string  `json:"user_agent"`
+	DeviceFingerprint string `json:"device_fingerprint"`
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	LoginHour     int     `json:"login_hour"`
+	Resource      string  `json:"resource,omitempty"`
+}
 
-	rows, err := s.db.Pool.Query(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// EvaluateResponse represents the risk evaluation result
+type EvaluateResponse struct {
+	RequestID      string     `json:"request_id"`
+	RiskScore      int        `json:"risk_score"`
+	RiskLevel      RiskLevel  `json:"risk_level"`
+	Action         AuthAction `json:"action"`
+	Reasons        []string   `json:"reasons"`
+	Anomalies      []string   `json:"anomalies"`
+	SessionDuration *int      `json:"session_duration_minutes,omitempty"`
+	RequireMFA     bool       `json:"require_mfa"`
+	MFAMethods     []string   `json:"mfa_methods,omitempty"`
+	RequireApproval bool      `json:"require_approval"`
+	Allowed        bool       `json:"allowed"`
+	EvaluatedAt    time.Time  `json:"evaluated_at"`
+}
 
-	var policies []RiskPolicy
-	for rows.Next() {
-		var p RiskPolicy
-		var conditionsJSON, actionsJSON []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &p.Priority,
-			&conditionsJSON, &actionsJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
-			continue
+// PolicyConfig holds configuration for risk policies
+type PolicyConfig struct {
+	// Default thresholds (0-100)
+	DefaultLowThreshold      int
+	DefaultMediumThreshold   int
+	DefaultHighThreshold     int
+	DefaultCriticalThreshold int
+
+	// Session duration overrides based on risk (minutes)
+	LowRiskSessionDuration     int
+	MediumRiskSessionDuration  int
+	HighRiskSessionDuration    int
+	CriticalRiskSessionDuration int
+
+	// MFA requirements
+	DefaultMFAMethods []string
+	StrongMFAMethods  []string
+
+	// Evaluation cache TTL
+	CacheTTL time.Duration
+}
+
+// DefaultPolicyConfig returns default policy configuration
+func DefaultPolicyConfig() PolicyConfig {
+	return PolicyConfig{
+		DefaultLowThreshold:       30,
+		DefaultMediumThreshold:    50,
+		DefaultHighThreshold:      70,
+		DefaultCriticalThreshold:  90,
+		LowRiskSessionDuration:    480,      // 8 hours
+		MediumRiskSessionDuration: 240,     // 4 hours
+		HighRiskSessionDuration:   60,      // 1 hour
+		CriticalRiskSessionDuration: 15,    // 15 minutes
+		DefaultMFAMethods:         []string{"totp", "webauthn"},
+		StrongMFAMethods:          []string{"webauthn", "push"},
+		CacheTTL:                  5 * time.Minute,
+	}
+}
+
+// PolicyEngine evaluates risk against tenant policies
+type PolicyEngine struct {
+	db         *database.PostgresDB
+	redis      *database.RedisClient
+	config     PolicyConfig
+	httpClient *http.Client
+	logger     *zap.Logger
+	behavior   *BehaviorTracker
+}
+
+// NewPolicyEngine creates a new policy engine
+func NewPolicyEngine(db *database.PostgresDB, redis *database.RedisClient, config PolicyConfig, logger *zap.Logger) *PolicyEngine {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	if config.DefaultLowThreshold == 0 {
+		config = DefaultPolicyConfig()
+	}
+
+	return &PolicyEngine{
+		db:         db,
+		redis:      redis,
+		config:     config,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		logger:     logger.With(zap.String("component", "policy_engine")),
+		behavior:   NewBehaviorTracker(db, redis, DefaultBehaviorConfig(), logger),
+	}
+}
+
+// SetBehaviorTracker sets the behavior tracker
+func (p *PolicyEngine) SetBehaviorTracker(bt *BehaviorTracker) {
+	p.behavior = bt
+}
+
+// GetTenantPolicy retrieves a tenant's risk policy, returning defaults if not set
+func (p *PolicyEngine) GetTenantPolicy(ctx context.Context, tenantID string) (*TenantPolicy, error) {
+	// Try Redis cache first
+	cacheKey := fmt.Sprintf("%s%s", policyKeyPrefix, tenantID)
+	cached, err := p.redis.Client.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var policy TenantPolicy
+		if json.Unmarshal([]byte(cached), &policy) == nil {
+			return &policy, nil
 		}
-		json.Unmarshal(conditionsJSON, &p.Conditions)
-		json.Unmarshal(actionsJSON, &p.Actions)
-		policies = append(policies, p)
 	}
 
-	return policies, nil
-}
+	// Query database
+	var policy TenantPolicy
+	dbErr := p.db.Pool.QueryRow(ctx,
+		`SELECT tenant_id, low_threshold, medium_threshold, high_threshold, critical_threshold,
+		         enabled, created_at, updated_at
+		 FROM tenant_risk_policies
+		 WHERE tenant_id = $1`,
+		tenantID).Scan(&policy.TenantID, &policy.LowThreshold, &policy.MediumThreshold,
+		&policy.HighThreshold, &policy.CriticalThreshold, &policy.Enabled,
+		&policy.CreatedAt, &policy.UpdatedAt)
 
-// UpdateRiskPolicy updates an existing risk policy
-func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	conditionsJSON, err := json.Marshal(req.Conditions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal conditions: %w", err)
+	if dbErr != nil {
+		// Return default policy
+		policy = TenantPolicy{
+			TenantID:           tenantID,
+			LowThreshold:       p.config.DefaultLowThreshold,
+			MediumThreshold:    p.config.DefaultMediumThreshold,
+			HighThreshold:      p.config.DefaultHighThreshold,
+			CriticalThreshold:  p.config.DefaultCriticalThreshold,
+			Enabled:            true,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
 	}
 
-	actionsJSON, err := json.Marshal(req.Actions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal actions: %w", err)
-	}
-
-	var policy RiskPolicy
-	err = s.db.Pool.QueryRow(ctx,
-		`UPDATE risk_policies
-		 SET name = $2, description = $3, enabled = $4, priority = $5, conditions = $6, actions = $7, updated_at = NOW()
-		 WHERE id = $1
-		 RETURNING id, name, description, enabled, priority, conditions, actions, created_at, updated_at`,
-		policyID, req.Name, req.Description, req.Enabled, req.Priority, conditionsJSON, actionsJSON,
-	).Scan(&policy.ID, &policy.Name, &policy.Description, &policy.Enabled, &policy.Priority,
-		&conditionsJSON, &actionsJSON, &policy.CreatedAt, &policy.UpdatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update policy: %w", err)
-	}
-
-	json.Unmarshal(conditionsJSON, &policy.Conditions)
-	json.Unmarshal(actionsJSON, &policy.Actions)
+	// Cache the result
+	data, _ := json.Marshal(policy)
+	p.redis.Client.Set(ctx, cacheKey, data, p.config.CacheTTL)
 
 	return &policy, nil
 }
 
-// DeleteRiskPolicy deletes a risk policy
-func (s *Service) DeleteRiskPolicy(ctx context.Context, policyID string) error {
-	result, err := s.db.Pool.Exec(ctx, `DELETE FROM risk_policies WHERE id = $1`, policyID)
+// SetTenantPolicy creates or updates a tenant's risk policy
+func (p *PolicyEngine) SetTenantPolicy(ctx context.Context, policy *TenantPolicy) error {
+	now := time.Now()
+	policy.UpdatedAt = now
+
+	if policy.CreatedAt.IsZero() {
+		policy.CreatedAt = now
+	}
+
+	// Set defaults if not provided
+	if policy.LowThreshold == 0 {
+		policy.LowThreshold = p.config.DefaultLowThreshold
+	}
+	if policy.MediumThreshold == 0 {
+		policy.MediumThreshold = p.config.DefaultMediumThreshold
+	}
+	if policy.HighThreshold == 0 {
+		policy.HighThreshold = p.config.DefaultHighThreshold
+	}
+	if policy.CriticalThreshold == 0 {
+		policy.CriticalThreshold = p.config.DefaultCriticalThreshold
+	}
+
+	// Upsert into database
+	_, err := p.db.Pool.Exec(ctx,
+		`INSERT INTO tenant_risk_policies
+		 (tenant_id, low_threshold, medium_threshold, high_threshold, critical_threshold, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (tenant_id) DO UPDATE
+		 SET low_threshold = EXCLUDED.low_threshold,
+		     medium_threshold = EXCLUDED.medium_threshold,
+		     high_threshold = EXCLUDED.high_threshold,
+		     critical_threshold = EXCLUDED.critical_threshold,
+		     enabled = EXCLUDED.enabled,
+		     updated_at = EXCLUDED.updated_at`,
+		policy.TenantID, policy.LowThreshold, policy.MediumThreshold,
+		policy.HighThreshold, policy.CriticalThreshold, policy.Enabled,
+		policy.CreatedAt, policy.UpdatedAt)
+
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to set tenant policy: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("policy not found")
-	}
+
+	// Invalidate cache
+	cacheKey := fmt.Sprintf("%s%s", policyKeyPrefix, policy.TenantID)
+	p.redis.Client.Del(ctx, cacheKey)
+
+	p.logger.Info("Tenant risk policy updated",
+		zap.String("tenant_id", policy.TenantID),
+		zap.Int("low_threshold", policy.LowThreshold),
+		zap.Int("medium_threshold", policy.MediumThreshold),
+		zap.Int("high_threshold", policy.HighThreshold),
+		zap.Int("critical_threshold", policy.CriticalThreshold),
+	)
+
 	return nil
 }
 
-// ToggleRiskPolicy enables or disables a policy
-func (s *Service) ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`UPDATE risk_policies SET enabled = $2, updated_at = NOW() WHERE id = $1`,
-		policyID, enabled)
-	return err
-}
+// Evaluate performs risk evaluation based on the request
+func (p *PolicyEngine) Evaluate(ctx context.Context, req EvaluateRequest) (*EvaluateResponse, error) {
+	requestID := uuid.New().String()
+	startTime := time.Now()
 
-// EvaluateLoginContext holds all context for risk evaluation
-type EvaluateLoginContext struct {
-	UserID            string
-	IPAddress         string
-	UserAgent         string
-	DeviceFingerprint string
-	Location          string
-	Latitude          float64
-	Longitude         float64
-	Country           string
-	IsNewDevice       bool
-	IsDeviceTrusted   bool
-	FailedAttempts    int
-	UserGroups        []string
-	ApplicationID     string
-}
-
-// EvaluateRiskPolicies evaluates all policies against a login context
-func (s *Service) EvaluateRiskPolicies(ctx context.Context, loginCtx EvaluateLoginContext) (*PolicyEvaluationResult, error) {
-	// First, calculate the risk score
-	riskScore, riskFactors := s.CalculateRiskScore(ctx, loginCtx.UserID, loginCtx.IPAddress,
-		loginCtx.UserAgent, loginCtx.DeviceFingerprint, loginCtx.Location, loginCtx.Latitude, loginCtx.Longitude)
-
-	result := &PolicyEvaluationResult{
-		RiskScore:       riskScore,
-		RiskFactors:     riskFactors,
-		MatchedPolicies: []string{},
-		Decision:        "allow",
-		Action: PolicyAction{
-			RequireMFA: false,
-		},
-	}
-
-	// Get all enabled policies ordered by priority
-	policies, err := s.ListRiskPolicies(ctx, true)
+	// Get tenant policy
+	policy, err := p.GetTenantPolicy(ctx, req.TenantID)
 	if err != nil {
-		s.logger.Warn("Failed to load risk policies", zap.Error(err))
-		return result, nil
+		return nil, fmt.Errorf("failed to get tenant policy: %w", err)
 	}
 
-	// Check for impossible travel in factors
-	hasImpossibleTravel := false
-	hasNewDevice := false
-	hasNewLocation := false
-	hasOffHours := false
-	for _, factor := range riskFactors {
-		switch {
-		case factor == "impossible_travel":
-			hasImpossibleTravel = true
-		case factor == "new_device":
-			hasNewDevice = true
-		case factor == "unusual_location" || factor == "first_country_login":
-			hasNewLocation = true
-		case factor == "off_hours":
-			hasOffHours = true
+	if !policy.Enabled {
+		// Policy disabled - allow all
+		return &EvaluateResponse{
+			RequestID:   requestID,
+			RiskScore:   0,
+			RiskLevel:   RiskLevelLow,
+			Action:      AuthActionAllow,
+			Reasons:     []string{"policy_disabled"},
+			RequireMFA:  false,
+			Allowed:     true,
+			EvaluatedAt: startTime,
+		}, nil
+	}
+
+	response := &EvaluateResponse{
+		RequestID:   requestID,
+		EvaluatedAt: startTime,
+		Reasons:     []string{},
+		Anomalies:   []string{},
+	}
+
+	// Detect behavioral anomalies
+	anomalies, behaviorScore := p.behavior.DetectAnomalies(
+		ctx,
+		req.UserID,
+		req.IPAddress,
+		req.UserAgent,
+		req.Latitude,
+		req.Longitude,
+		time.Now(),
+	)
+
+	response.Anomalies = anomalies
+	baseScore := behaviorScore
+
+	// Additional risk factors
+	reasons := []string{}
+
+	// Check for known malicious IP
+	ipRisk := p.checkIPRisk(ctx, req.IPAddress)
+	baseScore += ipRisk.Score
+	if ipRisk.Score > 0 {
+		reasons = append(reasons, ipRisk.Reason...)
+	}
+
+	// Check device trust
+	if req.DeviceFingerprint != "" {
+		deviceRisk := p.checkDeviceRisk(ctx, req.UserID, req.DeviceFingerprint)
+		baseScore += deviceRisk
+		if deviceRisk > 0 {
+			reasons = append(reasons, fmt.Sprintf("untrusted_device:%d", deviceRisk))
 		}
 	}
 
-	// Evaluate each policy
-	for _, policy := range policies {
-		if s.policyMatches(policy.Conditions, riskScore, hasNewDevice, hasNewLocation,
-			hasImpossibleTravel, hasOffHours, loginCtx) {
-
-			result.MatchedPolicies = append(result.MatchedPolicies, policy.Name)
-
-			// Apply actions (most restrictive wins)
-			if policy.Actions.Deny {
-				result.Decision = "deny"
-				result.Action = policy.Actions
-				result.PolicyID = policy.ID
-				result.PolicyName = policy.Name
-				break // Deny is final
-			}
-
-			if policy.Actions.StepUp && result.Decision != "deny" {
-				result.Decision = "step_up"
-				result.Action = mergeActions(result.Action, policy.Actions)
-				result.PolicyID = policy.ID
-				result.PolicyName = policy.Name
-			} else if policy.Actions.RequireMFA && result.Decision == "allow" {
-				result.Decision = "mfa_required"
-				result.Action = mergeActions(result.Action, policy.Actions)
-				if result.PolicyID == "" {
-					result.PolicyID = policy.ID
-					result.PolicyName = policy.Name
-				}
-			}
-
-			// Accumulate notification flags
-			if policy.Actions.NotifyUser {
-				result.Action.NotifyUser = true
-			}
-			if policy.Actions.NotifyAdmin {
-				result.Action.NotifyAdmin = true
-			}
-		}
+	// Check for recent failed attempts
+	failedRisk := p.checkFailedAttempts(ctx, req.UserID, req.IPAddress)
+	baseScore += failedRisk
+	if failedRisk > 0 {
+		reasons = append(reasons, fmt.Sprintf("recent_failures:%d", failedRisk))
 	}
 
-	s.logger.Info("Risk evaluation completed",
-		zap.String("user_id", loginCtx.UserID),
-		zap.Int("risk_score", riskScore),
-		zap.Strings("factors", riskFactors),
-		zap.String("decision", result.Decision),
-		zap.Strings("matched_policies", result.MatchedPolicies))
+	// Calculate final risk score (cap at 100)
+	if baseScore > 100 {
+		baseScore = 100
+	}
+	response.RiskScore = baseScore
+	response.Reasons = reasons
 
-	return result, nil
+	// Determine risk level and action based on tenant thresholds
+	response.RiskLevel = p.determineRiskLevel(baseScore, policy)
+	response.Action = p.determineAction(baseScore, policy)
+
+	// Set additional response fields based on action
+	switch response.Action {
+	case AuthActionAllow:
+		response.Allowed = true
+		response.RequireMFA = false
+		duration := p.config.LowRiskSessionDuration
+		response.SessionDuration = &duration
+
+	case AuthActionRequireMFA:
+		response.Allowed = true
+		response.RequireMFA = true
+		response.MFAMethods = p.config.DefaultMFAMethods
+		duration := p.config.MediumRiskSessionDuration
+		response.SessionDuration = &duration
+
+	case AuthActionRequireStrongMFA:
+		response.Allowed = true
+		response.RequireMFA = true
+		response.MFAMethods = p.config.StrongMFAMethods
+		duration := p.config.HighRiskSessionDuration
+		response.SessionDuration = &duration
+
+	case AuthActionRequireApproval:
+		response.Allowed = false
+		response.RequireApproval = true
+		duration := p.config.HighRiskSessionDuration
+		response.SessionDuration = &duration
+
+	case AuthActionBlock:
+		response.Allowed = false
+		response.Reasons = append(response.Reasons, "risk_threshold_exceeded")
+
+	case AuthActionBlockAndAlert:
+		response.Allowed = false
+		response.Reasons = append(response.Reasons, "risk_threshold_exceeded_alert")
+		// Trigger alert
+		p.triggerHighRiskAlert(ctx, req, baseScore, anomalies)
+	}
+
+	// Log the evaluation
+	p.logger.Info("Risk evaluation completed",
+		zap.String("request_id", requestID),
+		zap.String("tenant_id", req.TenantID),
+		zap.String("user_id", req.UserID),
+		zap.Int("risk_score", baseScore),
+		zap.String("risk_level", string(response.RiskLevel)),
+		zap.String("action", string(response.Action)),
+		zap.Bool("allowed", response.Allowed),
+	)
+
+	return response, nil
 }
 
-// policyMatches checks if policy conditions match the login context
-func (s *Service) policyMatches(cond PolicyCondition, riskScore int, newDevice, newLocation, impossibleTravel, offHours bool, ctx EvaluateLoginContext) bool {
-	// Check risk score range
-	if cond.RiskScoreMin != nil && riskScore < *cond.RiskScoreMin {
-		return false
+// determineRiskLevel determines the risk level based on score and thresholds
+func (p *PolicyEngine) determineRiskLevel(score int, policy *TenantPolicy) RiskLevel {
+	switch {
+	case score < policy.LowThreshold:
+		return RiskLevelLow
+	case score < policy.MediumThreshold:
+		return RiskLevelMedium
+	case score < policy.HighThreshold:
+		return RiskLevelHigh
+	default:
+		return RiskLevelCritical
 	}
-	if cond.RiskScoreMax != nil && riskScore > *cond.RiskScoreMax {
-		return false
-	}
-
-	// Check boolean conditions
-	if cond.NewDevice != nil && *cond.NewDevice != newDevice {
-		return false
-	}
-	if cond.NewLocation != nil && *cond.NewLocation != newLocation {
-		return false
-	}
-	if cond.ImpossibleTravel != nil && *cond.ImpossibleTravel != impossibleTravel {
-		return false
-	}
-	if cond.OffHours != nil && *cond.OffHours != offHours {
-		return false
-	}
-	if cond.UntrustedDevice != nil && *cond.UntrustedDevice != !ctx.IsDeviceTrusted {
-		return false
-	}
-
-	// Check failed attempts threshold
-	if cond.FailedAttempts != nil && ctx.FailedAttempts < *cond.FailedAttempts {
-		return false
-	}
-
-	// Check country restrictions
-	if len(cond.Countries) > 0 {
-		found := false
-		for _, c := range cond.Countries {
-			if c == ctx.Country {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	// Check country exclusions
-	if len(cond.ExcludeCountries) > 0 {
-		for _, c := range cond.ExcludeCountries {
-			if c == ctx.Country {
-				return false
-			}
-		}
-	}
-
-	// Check user groups
-	if len(cond.UserGroups) > 0 {
-		found := false
-		for _, reqGroup := range cond.UserGroups {
-			for _, userGroup := range ctx.UserGroups {
-				if reqGroup == userGroup {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	// Check applications
-	if len(cond.Applications) > 0 && ctx.ApplicationID != "" {
-		found := false
-		for _, app := range cond.Applications {
-			if app == ctx.ApplicationID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
 }
 
-// mergeActions combines two action sets (most restrictive wins)
-func mergeActions(existing, new PolicyAction) PolicyAction {
-	result := existing
+// determineAction determines the auth action based on score and thresholds
+func (p *PolicyEngine) determineAction(score int, policy *TenantPolicy) AuthAction {
+	switch {
+	case score < policy.LowThreshold:
+		return AuthActionAllow
+	case score < policy.MediumThreshold:
+		return AuthActionRequireMFA
+	case score < policy.HighThreshold:
+		return AuthActionRequireStrongMFA
+	case score < policy.CriticalThreshold:
+		return AuthActionRequireApproval
+	default:
+		return AuthActionBlockAndAlert
+	}
+}
 
-	if new.RequireMFA {
-		result.RequireMFA = true
-	}
-	if new.StepUp {
-		result.StepUp = true
-	}
-	if new.NotifyUser {
-		result.NotifyUser = true
-	}
-	if new.NotifyAdmin {
-		result.NotifyAdmin = true
-	}
-	if new.RequireReason {
-		result.RequireReason = true
-	}
+// IPRiskResult represents IP risk assessment result
+type IPRiskResult struct {
+	Score  int      `json:"score"`
+	Reason []string `json:"reason"`
+}
 
-	// Merge MFA methods
-	if len(new.MFAMethods) > 0 {
-		methodSet := make(map[string]bool)
-		for _, m := range result.MFAMethods {
-			methodSet[m] = true
-		}
-		for _, m := range new.MFAMethods {
-			methodSet[m] = true
-		}
-		result.MFAMethods = nil
-		for m := range methodSet {
-			result.MFAMethods = append(result.MFAMethods, m)
-		}
+// checkIPRisk checks IP-based risk factors
+func (p *PolicyEngine) checkIPRisk(ctx context.Context, ip string) IPRiskResult {
+	result := IPRiskResult{}
+
+	if p.db == nil || p.db.Pool == nil {
+		// No database - no IP threat data available
+		return result
 	}
 
-	// Use shorter session duration if specified
-	if new.SessionDuration != nil {
-		if result.SessionDuration == nil || *new.SessionDuration < *result.SessionDuration {
-			result.SessionDuration = new.SessionDuration
-		}
+	// Check if IP is on blocklist
+	var blocked bool
+	err := p.db.Pool.QueryRow(ctx,
+		`SELECT blocked FROM ip_blocklist WHERE ip_address = $1 AND (permanent = true OR blocked_until > NOW())`,
+		ip).Scan(&blocked)
+
+	if err == nil && blocked {
+		result.Score = 100
+		result.Reason = append(result.Reason, "ip_blocklisted")
+		return result
 	}
 
-	// Use higher log level
-	if new.LogLevel == "critical" || (new.LogLevel == "warning" && result.LogLevel != "critical") {
-		result.LogLevel = new.LogLevel
+	// Check for known Tor exit node
+	var isTor bool
+	p.db.Pool.QueryRow(ctx,
+		`SELECT is_tor FROM ip_threat_list WHERE ip_address = $1 AND (permanent = true OR blocked_until > NOW())`,
+		ip).Scan(&isTor)
+
+	if isTor {
+		result.Score = 40
+		result.Reason = append(result.Reason, "tor_exit_node")
+	}
+
+	// Check for VPN
+	var isVPN bool
+	p.db.Pool.QueryRow(ctx,
+		`SELECT is_vpn FROM ip_threat_list WHERE ip_address = $1 AND (permanent = true OR blocked_until > NOW())`,
+		ip).Scan(&isVPN)
+
+	if isVPN {
+		result.Score += 20
+		result.Reason = append(result.Reason, "vpn_detected")
 	}
 
 	return result
 }
 
-// GetRecentFailedAttempts returns count of failed login attempts in the last hour
-func (s *Service) GetRecentFailedAttempts(ctx context.Context, userID string) int {
+// checkDeviceRisk checks device-based risk factors
+func (p *PolicyEngine) checkDeviceRisk(ctx context.Context, userID, fingerprint string) int {
+	if p.db == nil || p.db.Pool == nil {
+		// No database - assume unknown device risk
+		return 30
+	}
+
+	var trusted bool
+	err := p.db.Pool.QueryRow(ctx,
+		`SELECT trusted FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
+		userID, fingerprint).Scan(&trusted)
+
+	if err != nil {
+		// Device not found - new device risk
+		return 30
+	}
+
+	if !trusted {
+		return 15
+	}
+
+	return 0
+}
+
+// checkFailedAttempts checks for recent failed login attempts
+func (p *PolicyEngine) checkFailedAttempts(ctx context.Context, userID, ip string) int {
+	if p.db == nil || p.db.Pool == nil {
+		// No database - no failure data available
+		return 0
+	}
+
 	var count int
-	s.db.Pool.QueryRow(ctx,
+
+	// Check user-specific failures
+	err := p.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
 		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour'`,
 		userID).Scan(&count)
-	return count
+
+	if err == nil && count > 0 {
+		// 10 points per failure, max 50
+		score := count * 10
+		if score > 50 {
+			score = 50
+		}
+		return score
+	}
+
+	// Check IP-based failures
+	err = p.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM login_history
+		 WHERE ip_address = $1 AND success = false AND created_at > NOW() - INTERVAL '15 minutes'`,
+		ip).Scan(&count)
+
+	if err == nil && count > 5 {
+		return 30
+	}
+
+	return 0
+}
+
+// triggerHighRiskAlert creates a security alert for high-risk events
+func (p *PolicyEngine) triggerHighRiskAlert(ctx context.Context, req EvaluateRequest, score int, anomalies []string) {
+	alert := &SecurityAlert{
+		ID:        uuid.New().String(),
+		UserID:    &req.UserID,
+		AlertType: "high_risk_login_blocked",
+		Severity:  "critical",
+		Status:    "open",
+		Title:     "High Risk Login Blocked",
+		Description: fmt.Sprintf(
+			"Login attempt blocked due to high risk score (%d). User: %s, IP: %s",
+			score, req.UserID, req.IPAddress,
+		),
+		Details: map[string]interface{}{
+			"tenant_id":     req.TenantID,
+			"user_id":       req.UserID,
+			"ip_address":    req.IPAddress,
+			"user_agent":    req.UserAgent,
+			"risk_score":    score,
+			"anomalies":     anomalies,
+			"latitude":      req.Latitude,
+			"longitude":     req.Longitude,
+		},
+		SourceIP:           req.IPAddress,
+		RemediationActions: []string{"verify_identity", "require_mfa", "notify_admin"},
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	// Store in database (will be picked up by alert delivery system)
+	err := p.CreateSecurityAlert(ctx, alert)
+	if err != nil {
+		p.logger.Error("Failed to create security alert", zap.Error(err))
+	}
+}
+
+// CreateSecurityAlert creates a security alert in the database
+func (p *PolicyEngine) CreateSecurityAlert(ctx context.Context, alert *SecurityAlert) error {
+	detailsJSON, _ := json.Marshal(alert.Details)
+	remediationJSON, _ := json.Marshal(alert.RemediationActions)
+
+	_, err := p.db.Pool.Exec(ctx,
+		`INSERT INTO security_alerts
+		 (id, user_id, alert_type, severity, status, title, description, details, source_ip, remediation_actions, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		alert.ID, alert.UserID, alert.AlertType, alert.Severity, alert.Status,
+		alert.Title, alert.Description, detailsJSON, alert.SourceIP,
+		remediationJSON, alert.CreatedAt, alert.UpdatedAt)
+
+	return err
+}
+
+// GetRiskStatistics returns risk statistics for a tenant
+func (p *PolicyEngine) GetRiskStatistics(ctx context.Context, tenantID string, days int) (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+
+	// Get risk score distribution from login_history
+	rows, err := p.db.Pool.Query(ctx,
+		`SELECT
+				COUNT(*) FILTER (WHERE risk_score < 30) as low_count,
+				COUNT(*) FILTER (WHERE risk_score >= 30 AND risk_score < 50) as medium_count,
+				COUNT(*) FILTER (WHERE risk_score >= 50 AND risk_score < 70) as high_count,
+				COUNT(*) FILTER (WHERE risk_score >= 70) as critical_count,
+				AVG(risk_score) as avg_score,
+				MAX(risk_score) as max_score
+		 FROM login_history
+		 WHERE created_at > NOW() - ($1::int || ' days')::interval`)
+	if err == nil {
+		var lowCount, mediumCount, highCount, criticalCount int
+		var avgScore float64
+		var maxScore int
+
+		rows.Next()
+		rows.Scan(&lowCount, &mediumCount, &highCount, &criticalCount, &avgScore, &maxScore)
+		rows.Close()
+
+		stats["low_risk_count"] = lowCount
+		stats["medium_risk_count"] = mediumCount
+		stats["high_risk_count"] = highCount
+		stats["critical_risk_count"] = criticalCount
+		stats["average_score"] = avgScore
+		stats["max_score"] = maxScore
+	}
+
+	// Get blocked login count
+	var blockedCount int
+	p.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM login_history
+		 WHERE success = false AND created_at > NOW() - ($1::int || ' days')::interval`,
+		days).Scan(&blockedCount)
+	stats["blocked_count"] = blockedCount
+
+	// Get MFA required count
+	var mfaRequiredCount int
+	p.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM login_history
+		 WHERE risk_score >= 30 AND risk_score < 70 AND success = true
+		 AND created_at > NOW() - ($1::int || ' days')::interval`,
+		days).Scan(&mfaRequiredCount)
+	stats["mfa_required_count"] = mfaRequiredCount
+
+	return stats, nil
+}
+
+// DeleteTenantPolicy deletes a tenant's risk policy
+func (p *PolicyEngine) DeleteTenantPolicy(ctx context.Context, tenantID string) error {
+	_, err := p.db.Pool.Exec(ctx,
+		`DELETE FROM tenant_risk_policies WHERE tenant_id = $1`, tenantID)
+
+	if err != nil {
+		return fmt.Errorf("failed to delete tenant policy: %w", err)
+	}
+
+	// Invalidate cache
+	cacheKey := fmt.Sprintf("%s%s", policyKeyPrefix, tenantID)
+	p.redis.Client.Del(ctx, cacheKey)
+
+	p.logger.Info("Tenant risk policy deleted", zap.String("tenant_id", tenantID))
+
+	return nil
 }

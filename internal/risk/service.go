@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -140,6 +139,34 @@ func (s *Service) IsDeviceTrusted(ctx context.Context, userID, fingerprint strin
 		return false
 	}
 	return trusted
+}
+
+// GetDeviceTrustLevel returns the trust level for a device fingerprint
+func (s *Service) GetDeviceTrustLevel(ctx context.Context, userID, fingerprint string) TrustLevel {
+	var seenCount int
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(seen_count, 0) FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
+		userID, fingerprint).Scan(&seenCount)
+	if err != nil {
+		return TrustLevelUnknown
+	}
+
+	var trusted bool
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(trusted, false) FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
+		userID, fingerprint).Scan(&trusted)
+	if err == nil && trusted {
+		return TrustLevelTrusted
+	}
+
+	// Calculate trust level based on seen count
+	if seenCount >= 5 {
+		return TrustLevelTrusted
+	}
+	if seenCount >= 1 {
+		return TrustLevelKnown
+	}
+	return TrustLevelUnknown
 }
 
 // GetUserDevices returns all known devices for a user
@@ -516,21 +543,7 @@ func (s *Service) CompleteStepUpChallenge(ctx context.Context, challengeID, user
 	return nil
 }
 
-// haversineDistance calculates the distance between two geo points in km
-func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadius = 6371 // km
-
-	lat1Rad := lat1 * math.Pi / 180
-	lat2Rad := lat2 * math.Pi / 180
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
-
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-
-	return earthRadius * c
-}
+// haversineDistance is defined in behavior.go to avoid duplication
 
 // extractCountry extracts the country portion from a "City, Country" string
 func extractCountry(location string) string {
@@ -575,4 +588,108 @@ func parseDeviceName(userAgent string) string {
 	}
 
 	return browser + " on " + os
+}
+
+// GetRecentFailedAttempts returns the count of recent failed login attempts for a user
+func (s *Service) GetRecentFailedAttempts(ctx context.Context, userID string) int {
+	var count int
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM login_history
+		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour'`,
+		userID).Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+// ListRiskPolicies returns all risk policies (placeholder for compatibility)
+func (s *Service) ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]RiskPolicy, error) {
+	// This is a placeholder - policies are per-tenant in this implementation
+	return []RiskPolicy{}, nil
+}
+
+// GetRiskPolicy returns a specific risk policy (placeholder for compatibility)
+func (s *Service) GetRiskPolicy(ctx context.Context, policyID string) (*RiskPolicy, error) {
+	return nil, fmt.Errorf("policy not found")
+}
+
+// CreateRiskPolicy creates a new risk policy (placeholder for compatibility)
+func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+// UpdateRiskPolicy updates an existing risk policy (placeholder for compatibility)
+func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+// DeleteRiskPolicy deletes a risk policy (placeholder for compatibility)
+func (s *Service) DeleteRiskPolicy(ctx context.Context, policyID string) error {
+	return fmt.Errorf("not implemented")
+}
+
+// ToggleRiskPolicy enables or disables a risk policy (placeholder for compatibility)
+func (s *Service) ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error {
+	return fmt.Errorf("not implemented")
+}
+
+// EvaluateRiskPolicies evaluates risk for a given login context (placeholder for compatibility)
+func (s *Service) EvaluateRiskPolicies(ctx context.Context, loginCtx EvaluateLoginContext) (*PolicyEvaluationResult, error) {
+	// Calculate risk score using existing method
+	score, factors := s.CalculateRiskScore(ctx, loginCtx.UserID, loginCtx.IPAddress,
+		loginCtx.UserAgent, loginCtx.DeviceFingerprint, loginCtx.Location,
+		loginCtx.Latitude, loginCtx.Longitude)
+
+	// Determine risk level
+	var level RiskLevel
+	switch {
+	case score < 30:
+		level = RiskLevelLow
+	case score < 50:
+		level = RiskLevelMedium
+	case score < 70:
+		level = RiskLevelHigh
+	default:
+		level = RiskLevelCritical
+	}
+
+	// Determine action
+	var action AuthAction
+	var allowed bool
+	var requireMFA bool
+	var duration *int
+
+	switch {
+	case score < 30:
+		action = AuthActionAllow
+		allowed = true
+		d := 480
+		duration = &d
+	case score < 50:
+		action = AuthActionRequireMFA
+		allowed = true
+		requireMFA = true
+		d := 240
+		duration = &d
+	case score < 70:
+		action = AuthActionRequireStrongMFA
+		allowed = true
+		requireMFA = true
+		d := 60
+		duration = &d
+	default:
+		action = AuthActionBlock
+		allowed = false
+	}
+
+	return &PolicyEvaluationResult{
+		RiskScore:       score,
+		RiskLevel:       level,
+		Action:          action,
+		Reasons:         factors,
+		RequireMFA:      requireMFA,
+		Allowed:         allowed,
+		SessionDuration: duration,
+	}, nil
 }

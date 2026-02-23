@@ -30,10 +30,16 @@
     },
     "5": {
       "policy-engine": "done",
-      "updated": "2026-02-23T05:27:03+00:00",
-      "jit-access": "done"
+      "updated": "2026-02-23T05:53:38+00:00",
+      "jit-access": "done",
+      "_phase": "done"
+    },
+    "6": {
+      "risk-scoring": "done",
+      "updated": "2026-02-23T06:48:02+00:00",
+      "behavioral-analytics": "done"
     }
   },
-  "last_phase": "5",
-  "last_step": "jit-access"
+  "last_phase": "6",
+  "last_step": "behavioral-analytics"
 }
