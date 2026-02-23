@@ -23,12 +23,16 @@
     },
     "4": {
       "totp-recovery": "done",
-      "updated": "2026-02-23T04:09:19+00:00",
+      "updated": "2026-02-23T04:23:04+00:00",
       "_phase": "done",
       "webauthn-passkeys": "done",
       "adaptive-mfa": "done"
+    },
+    "5": {
+      "policy-engine": "running",
+      "updated": "2026-02-23T04:23:04+00:00"
     }
   },
-  "last_phase": "4",
-  "last_step": "adaptive-mfa"
+  "last_phase": "5",
+  "last_step": "policy-engine"
 }
