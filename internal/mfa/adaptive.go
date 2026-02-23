@@ -27,6 +27,17 @@ const (
 	loginPatternTTL  = 90 * 24 * time.Hour // 90 days
 )
 
+// AdaptiveRedisClient defines the Redis interface for adaptive MFA tracking
+type AdaptiveRedisClient interface {
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	TTL(ctx context.Context, key string) *redis.DurationCmd
+	Exists(ctx context.Context, keys ...string) *redis.IntCmd
+	Incr(ctx context.Context, key string) *redis.IntCmd
+	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
+}
+
 // AuthSignal represents the authentication signals used for risk evaluation
 type AuthSignal struct {
 	UserID          uuid.UUID `json:"user_id"`
@@ -115,13 +126,13 @@ func DefaultAdaptivePolicyConfig() *AdaptivePolicyConfig {
 // AdaptiveService provides risk-based MFA evaluation
 type AdaptiveService struct {
 	config     *AdaptivePolicyConfig
-	redis      RedisClient
+	redis      AdaptiveRedisClient
 	logger     *zap.Logger
 	blockedIPs map[string]bool // Set of blocked IP addresses
 }
 
 // NewAdaptiveService creates a new adaptive MFA service
-func NewAdaptiveService(logger *zap.Logger, redis RedisClient, config *AdaptivePolicyConfig) *AdaptiveService {
+func NewAdaptiveService(logger *zap.Logger, redis AdaptiveRedisClient, config *AdaptivePolicyConfig) *AdaptiveService {
 	if config == nil {
 		config = DefaultAdaptivePolicyConfig()
 	}

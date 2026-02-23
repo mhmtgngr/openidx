@@ -23,10 +23,10 @@
     },
     "4": {
       "totp-recovery": "done",
-      "updated": "2026-02-23T03:48:01+00:00",
+      "updated": "2026-02-23T04:09:19+00:00",
       "_phase": "done",
       "webauthn-passkeys": "done",
-      "adaptive-mfa": "running"
+      "adaptive-mfa": "done"
     }
   },
   "last_phase": "4",
