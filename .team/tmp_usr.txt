@@ -1,120 +1,144 @@
 REQUIREMENTS (enriched with market research):
 {
-  "project_name": "openidx-admin-dashboard-gateway",
-  "summary": "Build a unified API Gateway (port 8500) with JWT validation, rate limiting, and request routing, plus a complete React/TypeScript admin dashboard frontend with authentication, navigation, and full CRUD interfaces for users, OAuth apps, audit logs, policies, and settings.",
+  "project_name": "OpenIDX Production Deployment",
+  "summary": "Deploy complete OpenIDX Zero Trust Access Platform on server with openidx.tdv.org domain for client access",
   "user_stories": [
     {
       "id": "US-001",
       "as_a": "system administrator",
-      "i_want": "a unified API gateway that routes requests to all backend services",
-      "so_that": "I can manage a single entry point for all API calls with consistent authentication and rate limiting",
+      "i_want": "OpenIDX fully deployed and accessible via openidx.tdv.org",
+      "so_that": "clients can access the Zero Trust Access Platform",
       "priority": "critical",
       "acceptance_criteria": [
-        "Gateway listens on port 8500",
-        "Routes /api/v1/identity/* to service on :8501",
-        "Routes /api/v1/oauth/* to service on :8502",
-        "Routes /api/v1/governance/* to service on :8503",
-        "Routes /api/v1/audit/* to service on :8504",
-        "Routes /api/v1/admin/* to service on :8505",
-        "Routes /api/v1/risk/* to service on :8506",
-        "/health endpoint aggregates health from all downstream services",
-        "/api/docs serves combined OpenAPI specification"
+        "All services running and healthy",
+        "openidx.tdv.org domain resolves and serves admin console",
+        "SSL/TLS certificates configured",
+        "All API endpoints accessible"
       ]
     },
     {
       "id": "US-002",
-      "as_a": "security administrator",
-      "i_want": "JWT validation at the gateway level with rate limiting per user",
-      "so_that": "I can prevent abuse and ensure all requests are authenticated",
+      "as_a": "end user",
+      "i_want": "secure login via openidx.tdv.org",
+      "so_that": "I can access protected applications",
       "priority": "critical",
       "acceptance_criteria": [
-        "JWT validation middleware validates bearer tokens on all protected routes",
-        "Rate limiting: 100 requests per minute per user",
-        "Sliding window algorithm using Redis",
-        "Rate limit headers returned in response (X-RateLimit-Remaining, X-RateLimit-Reset)",
-        "429 Too Many Requests response when limit exceeded"
+        "OAuth/OIDC login flow works",
+        "User can authenticate with credentials",
+        "Session management works"
       ]
     },
     {
       "id": "US-003",
       "as_a": "administrator",
-      "i_want": "correlation IDs and structured logging on all requests",
-      "so_that": "I can trace requests across services and debug issues effectively",
-      "priority": "high",
+      "i_want": "access to admin console at openidx.tdv.org",
+      "so_that": "I can manage users, policies, and audit logs",
+      "priority": "critical",
       "acceptance_criteria": [
-        "Every request gets a unique correlation ID (X-Correlation-ID header)",
-        "Correlation ID propagated to all downstream services",
-        "Structured access logs include: timestamp, method, path, status, duration, correlation_id, user_id",
-        "Logs output in JSON format for parsing"
+        "Admin console loads",
+        "Dashboard displays statistics",
+        "User management functions work"
       ]
     },
     {
       "id": "US-004",
-      "as_a": "admin user",
-      "i_want": "a login page with email, password, and MFA support",
-      "so_that": "I can securely authenticate into the admin console",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "Login form with email and password fields",
-        "MFA code input field (6 digits)",
-        "Remember device checkbox",
-        "Form validation for email format and password requirements",
-        "Error messages displayed inline for failed login",
-        "On success, stores JWT access and refresh tokens",
-        "Redirects to dashboard on successful authentication"
-      ]
-    },
-    {
-      "id": "US-005",
-      "as_a": "admin user",
-      "i_want": "a responsive sidebar navigation",
-      "so_that": "I can easily navigate between different admin sections",
+      "as_a": "devops engineer",
+      "i_want": "automated deployment scripts",
+      "so_that": "deployment is repeatable and maintainable",
       "priority": "high",
       "acceptance_criteria": [
-        "Sidebar contains: Dashboard, Users, Groups, OAuth Apps, Audit Logs, Policies, Settings",
-        "Active route is highlighted",
-        "Sidebar is collapsible on mobile (hamburger menu)",
-        "Icons for each navigation item",
-        "Logout button at bottom of sidebar"
+        "Docker compose setup available",
+        "Kubernetes manifests ready",
+        "Environment configuration documented"
       ]
+    }
+  ],
+  "functional_requirements": [
+    {
+      "id": "FR-001",
+      "title": "Domain Configuration",
+      "description": "Configure openidx.tdv.org domain with DNS A record pointing to server IP",
+      "service": "infrastructure"
     },
     {
-      "id": "US-006",
-      "as_a": "admin user",
-      "i_want": "a dashboard with key metrics and activity charts",
-      "so_that": "I can quickly understand the system status and recent activity",
-      "priority": "high",
-      "acceptance_criteria": [
-        "Total users card with count",
-        "Active sessions count card",
-        "Failed logins today card",
-        "Risk alerts count card",
-        "Login activity line chart (last 7 days) using recharts",
-        "All cards show loading skeletons while fetching",
-        "Data refreshes every 30 seconds"
-      ]
+      "id": "FR-002",
+      "title": "SSL Certificate Setup",
+      "description": "Install SSL/TLS certificates for openidx.tdv.org using Let's Encrypt or custom certificates",
+      "service": "apisix"
     },
     {
-      "id": "US-007",
-      "as_a": "admin user",
-      "i_want": "a users page with sortable, searchable table",
-      "so_that": "I can find and manage user accounts efficiently",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "Table displays: name, email, status, last login, actions",
-        "Search by name or email",
-        "Sort by any column",
-        "Pagination (20 items per page)",
-        "Create user button opens modal with form",
-        "Edit user button opens slide-out drawer",
-        "Suspend/activate toggle on user row",
-        "Reset password action sends email to user",
-        "Empty state with illustration when no users exist"
-      ]
+      "id": "FR-003",
+      "title": "APISIX Gateway Routing",
+      "description": "Configure APISIX routes for openidx.tdv.org to forward to backend services",
+      "service": "apisix"
     },
     {
-      "id": "US-008",
-      "as_a": "
+      "id": "FR-004",
+      "title": "Admin Console Frontend",
+      "description": "Build and deploy React admin console accessible at openidx.tdv.org",
+      "service": "admin-console"
+    },
+    {
+      "id": "FR-005",
+      "title": "Identity Service",
+      "description": "Deploy identity service for user authentication and management",
+      "service": "identity-service"
+    },
+    {
+      "id": "FR-006",
+      "title": "OAuth Service",
+      "description": "Deploy OAuth/OIDC service for authentication flows",
+      "service": "oauth-service"
+    },
+    {
+      "id": "FR-007",
+      "title": "PostgreSQL Database",
+      "description": "Deploy and configure PostgreSQL with proper schemas",
+      "service": "database"
+    },
+    {
+      "id": "FR-008",
+      "title": "Redis Cache",
+      "description": "Deploy Redis for session storage and caching",
+      "service": "redis"
+    },
+    {
+      "id": "FR-009",
+      "title": "Elasticsearch",
+      "description": "Deploy Elasticsearch for audit log storage and search",
+      "service": "elasticsearch"
+    },
+    {
+      "id": "FR-M010",
+      "title": "Self-Service User Portal",
+      "description": "Password reset, profile management, security questions, MFA enrollment, and active sessions view",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Reduces helpdesk costs by 30-40%, standard across competitors"
+    },
+    {
+      "id": "FR-M011",
+      "title": "AI/ML Risk-Based Authentication",
+      "description": "Real-time risk scoring based on location, device, behavior patterns, and threat intelligence for step-up authentication",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Key differentiator for Microsoft and Okta, prevents account takeover"
+    },
+    {
+      "id": "FR-M012",
+      "title": "Passwordless Authentication",
+      "description": "Support for FIDO2/WebAuthn, passkeys, hardware keys (YubiKey), and biometric authentication",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Eliminates phishing attacks targeting passwords, becoming industry standard"
+    },
+    {
+      "id": "FR-M013",
+      "title": "Just-in-Time Privileged Access",
+      "description": "Temporary privilege elevation with approval workflows, automatic expiration, and audit trails",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Reduces standing privilege risk, competing with CyberArk
 
 MARKET ANALYSIS:
 {
@@ -122,74 +146,72 @@ MARKET ANALYSIS:
     {
       "name": "Microsoft Entra ID",
       "strengths": [
-        "Deep Microsoft 365 integration",
-        "Identity Governance included",
-        "Risk-based conditional access",
-        "Identity Protection",
+        "Seamless Microsoft 365 ecosystem integration",
+        "Bundled pricing with existing licenses",
+        "Enterprise-grade security",
         "Global infrastructure"
       ],
       "weaknesses": [
-        "High pricing ($46-93/user/month)",
+        "Limited customization for non-Microsoft environments",
         "Vendor lock-in",
-        "Complex licensing tiers",
-        "Limited multi-cloud support"
+        "Complex licensing tiers"
       ],
-      "pricing_model": "$46-93/user/month for P1/P2 tiers"
+      "pricing_model": "Bundled with M365 licenses ($6-$36/user/month)"
     },
     {
       "name": "Okta",
       "strengths": [
-        "7000+ app integrations",
-        "Cloud-native architecture",
-        "Strong API-first approach",
-        "Multi-cloud support",
-        "Mature ecosystem"
+        "7,000+ pre-built integrations",
+        "Superior cross-platform SSO",
+        "Strong MFA and adaptive authentication",
+        "Multi-cloud excellence"
       ],
       "weaknesses": [
-        "Enterprise pricing $35k-50k+ annually",
-        "Add-on costs for advanced features",
-        "Recent security incidents"
+        "High cost for enterprise features",
+        "Complex setup for large deployments"
       ],
-      "pricing_model": "$6-25/user/month standard, enterprise $35k-50k+ annually"
+      "pricing_model": "$2-$150/user/month depending on tier"
     },
     {
-      "name": "Duo Security",
+      "name": "Ping Identity",
       "strengths": [
-        "MFA specialization",
-        "Device visibility",
-        "Simple pricing",
-        "Free tier available",
-        "Strong security reputation"
+        "Hybrid deployment flexibility",
+        "Strong for complex environments",
+        "Comprehensive IAM suite"
       ],
       "weaknesses": [
-        "Limited IAM capabilities",
-        "Focused primarily on MFA",
-        "Less governance features"
+        "Steep learning curve",
+        "Higher total cost of ownership"
       ],
-      "pricing_model": "Freemium, ~$3-9/user/month"
+      "pricing_model": "Enterprise pricing, typically $10-$50/user/month"
     },
     {
-      "name": "Tencent Cloud iOA",
+      "name": "CyberArk",
       "strengths": [
-        "#1 in Chinese market",
-        "18 DLP channels",
-        "EPP+EDR dual-engine",
-        "Strong domestic compliance",
-        "\u00a559-419/year pricing"
+        "20+ years PAM expertise",
+        "Vault technology",
+        "Password management",
+        "Session recording"
       ],
       "weaknesses": [
-        "China-focused",
-        "Limited global presence",
-        "Language barriers",
-        "Geopolitical concerns"
+        "Focus on PAM vs full IAM",
+        "Higher cost",
+        "Complex deployment"
       ],
-      "pricing_model": "\u00a559-419/year ($8-58/year)"
+      "pricing_model": "Enterprise licensing, typically $50-$200/user/month"
     },
     {
-      "name": "Palo Alto Networks Prisma",
+      "name": "SailPoint",
       "strengths": [
-        "SASE integration",
-        "Advanced threat prevention
+        "Identity governance leader",
+        "Access review automation",
+        "Compliance reporting"
+      ],
+      "weaknesses": [
+        "Expensive for SMBs",
+        "Complex implementation"
+      ],
+      "pricing_model": "Enterprise pricing, typically $15-$7
 
 PROJECT CONTEXT (from CLAUDE.md):
 # CLAUDE.md - OpenIDX Development Guide
@@ -287,6 +309,7 @@ internal/admin/ai_recommendations.go
 internal/admin/analytics_enhanced.go
 internal/admin/attestation.go
 internal/admin/audit_archival.go
+internal/admin/auth_handler.go
 internal/admin/bulk_import_export.go
 internal/admin/bulk_operations.go
 internal/admin/config.go
@@ -299,6 +322,5 @@ internal/admin/error_catalog.go
 internal/admin/errors_helper.go
 internal/admin/federation.go
 internal/admin/handler.go
-internal/admin/ispm.go
 
 Design the complete solution. Include market-driven features where priority is critical/high. Be specific about file paths, function names, schemas, implementation order.

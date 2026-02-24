@@ -1,0 +1,660 @@
+# OpenIDX Production Docker Compose Configuration
+# Domain: openidx.tdv.org
+# This file extends the base docker-compose.yml with production-specific overrides
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.9'
+
+services:
+  #---------------------------------------------------------------------------
+  # Infrastructure Services - Production Overrides
+  #---------------------------------------------------------------------------
+
+  postgres:
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - see .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./init-guacamole.sh:/docker-entrypoint-initdb.d/00-init-guacamole.sh:ro
+      - ./init-guacamole.sql:/docker-entrypoint-initdb.d/guacamole-schema.sql:ro
+      - ${POSTGRES_BACKUP_PATH:-./backups/postgres}:/backups
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD required - see .env.production} --maxmemory 512mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  elasticsearch:
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  #---------------------------------------------------------------------------
+  # API Gateway - Production Configuration
+  #---------------------------------------------------------------------------
+
+  apisix:
+    restart: always
+    ports:
+      - "80:9080"
+      - "443:9443"
+      - "127.0.0.1:9188:9180"
+    environment:
+      - APISIX_STAND_ALONE=true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  etcd:
+    restart: always
+    volumes:
+      - etcd_data:/etcd-data
+    command:
+      - /usr/local/bin/etcd
+      - --data-dir=/etcd-data
+      - --name=etcd
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --snapshot-count=10000
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  #---------------------------------------------------------------------------
+  # OpenIDX Services - Production Overrides
+  #---------------------------------------------------------------------------
+
+  identity-service:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://openidx.tdv.org
+      - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
+      - SMTP_HOST=${SMTP_HOST:-smtp.mailgun.org}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:?SMTP_USER required}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD required}
+      - SMTP_FROM=${SMTP_FROM:-noreply@openidx.tdv.org}
+      - SMTP_USE_TLS=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OPENIDX_RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=identity-service
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+    ports:
+      - "127.0.0.1:8001:8001"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  governance-service:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://openidx.tdv.org
+      - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=governance-service
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+    ports:
+      - "127.0.0.1:8002:8002"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  provisioning-service:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - OAUTH_ISSUER=https://openidx.tdv.org
+      - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=provisioning-service
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - SCIM_BEARER_TOKEN=${SCIM_BEARER_TOKEN:?SCIM_BEARER_TOKEN required}
+    ports:
+      - "127.0.0.1:8003:8003"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  audit-service:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=audit-service
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+    ports:
+      - "127.0.0.1:8004:8004"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  admin-api:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - OPA_URL=http://opa:8281
+      - OAUTH_ISSUER=https://openidx.tdv.org
+      - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
+      - SMTP_HOST=${SMTP_HOST:-smtp.mailgun.org}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:?SMTP_USER required}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:?SMTP_PASSWORD required}
+      - SMTP_FROM=${SMTP_FROM:-noreply@openidx.tdv.org}
+      - SMTP_USE_TLS=true
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=admin-api
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+    ports:
+      - "127.0.0.1:8005:8005"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  oauth-service:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=oauth-service
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET required}
+      - OAUTH_ISSUER=https://openidx.tdv.org
+      - PORT=8006
+    ports:
+      - "127.0.0.1:8006:8006"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  access-service:
+    restart: always
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
+      - OAUTH_ISSUER=https://openidx.tdv.org
+      - OAUTH_JWKS_URL=https://openidx.tdv.org/.well-known/jwks.json
+      - GOVERNANCE_URL=http://governance-service:8002
+      - AUDIT_URL=http://audit-service:8004
+      - ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET:?ACCESS_SESSION_SECRET required}
+      - ACCESS_PROXY_DOMAIN=openidx.tdv.org
+      - ZITI_ENABLED=${ZITI_ENABLED:-true}
+      - ZITI_CTRL_URL=https://ziti-controller.openidx.tdv.org:1280
+      - ZITI_ADMIN_USER=${ZITI_ADMIN_USER:-admin}
+      - ZITI_ADMIN_PASSWORD=${ZITI_PWD:?ZITI_PWD required}
+      - ZITI_IDENTITY_DIR=/ziti
+      - GUACAMOLE_URL=http://guacamole:8080/guacamole
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required}
+      - CONTINUOUS_VERIFY_ENABLED=${CONTINUOUS_VERIFY_ENABLED:-true}
+      - CONTINUOUS_VERIFY_INTERVAL=${CONTINUOUS_VERIFY_INTERVAL:-30}
+      - BROWZER_ENABLED=${BROWZER_ENABLED:-true}
+      - BROWZER_CLIENT_ID=${BROWZER_CLIENT_ID:-browzer-client}
+      - BROWZER_TARGETS_PATH=/shared-config/config.json
+      - BROWZER_ROUTER_CONFIG_PATH=/shared-config/browzer-router.conf
+      - BROWZER_CERTS_PATH=/shared-certs
+      - APISIX_CONFIG_PATH=/apisix-conf/apisix.yaml
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OPENIDX_ENABLE_RATE_LIMIT=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
+      - OTEL_SERVICE_NAME=access-service
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+    ports:
+      - "127.0.0.1:8007:8007"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  #---------------------------------------------------------------------------
+  # Admin Console - Production Build
+  #---------------------------------------------------------------------------
+
+  admin-console:
+    restart: always
+    build:
+      context: ../../web/admin-console
+      dockerfile: ../../deployments/docker/Dockerfile.admin-console
+      network: host
+      args:
+        - VITE_API_URL=https://openidx.tdv.org
+        - VITE_OAUTH_URL=https://openidx.tdv.org
+        - VITE_OAUTH_CLIENT_ID=admin-console
+        - VITE_AUTH_PROVIDER=openidx
+    environment:
+      - VITE_API_URL=https://openidx.tdv.org
+      - VITE_OAUTH_URL=https://openidx.tdv.org
+      - VITE_OAUTH_CLIENT_ID=admin-console
+      - VITE_AUTH_PROVIDER=openidx
+    ports:
+      - "127.0.0.1:3000:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  #---------------------------------------------------------------------------
+  # Production SSL Termination with nginx and certbot
+  #---------------------------------------------------------------------------
+
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: openidx-nginx-proxy
+    restart: always
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - admin-console
+      - apisix
+    command: nginx -g 'daemon off;'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: openidx-certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    entrypoint: /bin/sh -c "/scripts/certbot-entrypoint.sh"
+    depends_on:
+      - nginx-proxy
+
+  #---------------------------------------------------------------------------
+  # Production Monitoring - OPA
+  #---------------------------------------------------------------------------
+
+  opa:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  #---------------------------------------------------------------------------
+  # Demo Apps - Optional (disabled in production by default)
+  #---------------------------------------------------------------------------
+
+  demo-app:
+    restart: "no"
+    profiles:
+      - demo
+
+  simple-web:
+    restart: "no"
+    profiles:
+      - demo
+
+  mailpit:
+    restart: "no"
+    profiles:
+      - demo
+
+  #---------------------------------------------------------------------------
+  # Production Backup Service
+  #---------------------------------------------------------------------------
+
+  backup-scheduler:
+    image: alpine:3.19
+    container_name: openidx-backup-scheduler
+    restart: always
+    volumes:
+      - ./scripts/backup.sh:/scripts/backup.sh:ro
+      - ${POSTGRES_BACKUP_PATH:-./backups/postgres}:/backups
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - postgres
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache dcron postgresql-client
+        echo "${BACKUP_SCHEDULE:-0 2 * * *} /scripts/backup.sh" | crontab -
+        crond -f -l 2
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=openidx
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      - POSTGRES_DB=openidx
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  #---------------------------------------------------------------------------
+  # Production Log Aggregation (Optional - enable with --profile logging)
+  #---------------------------------------------------------------------------
+
+  loki:
+    restart: "no"
+    profiles:
+      - logging
+
+  promtail:
+    restart: "no"
+    profiles:
+      - logging
+
+  prometheus:
+    restart: "no"
+    profiles:
+      - monitoring
+
+  grafana:
+    restart: "no"
+    profiles:
+      - monitoring
+
+  jaeger:
+    restart: "no"
+    profiles:
+      - monitoring
+
+  #---------------------------------------------------------------------------
+  # BrowZer and Ziti (Optional - enable with --profile ziti)
+  #---------------------------------------------------------------------------
+
+  browzer-cert-init:
+    restart: "no"
+    profiles:
+      - ziti
+
+  browzer-bootstrapper:
+    restart: "no"
+    profiles:
+      - ziti
+
+  browzer-router:
+    restart: "no"
+    profiles:
+      - ziti
+
+  ziti-controller:
+    restart: "no"
+    profiles:
+      - ziti
+
+  ziti-router-init:
+    restart: "no"
+    profiles:
+      - ziti
+
+  ziti-router:
+    restart: "no"
+    profiles:
+      - ziti
+
+  tls-proxy:
+    restart: "no"
+    profiles:
+      - ziti
+
+  guacd:
+    restart: "no"
+    profiles:
+      - ziti
+
+  guacamole:
+    restart: "no"
+    profiles:
+      - ziti
+
+  guacamole-zbr-proxy:
+    restart: "no"
+    profiles:
+      - ziti
+
+#---------------------------------------------------------------------------
+# Production Volumes
+#---------------------------------------------------------------------------
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-./data/postgres}
+
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_DATA_PATH:-./data/redis}
+
+  elasticsearch_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ELASTICSEARCH_DATA_PATH:-./data/elasticsearch}
+
+  etcd_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ETCD_DATA_PATH:-./data/etcd}
+
+  ziti_controller_data:
+    driver: local
+
+  ziti_controller_pki:
+    driver: local
+
+  ziti_router_data:
+    driver: local
+
+  ziti_router_shared:
+    driver: local
+
+  ziti_access_proxy:
+    driver: local
+
+  browzer_certs:
+    driver: local
+
+  browzer_config:
+    driver: local
+
+  apisix_config:
+    driver: local
+
+  certbot_certs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${CERTBOT_CERTS_PATH:-./data/certbot}
+
+  certbot_webroot:
+    driver: local
+
+#---------------------------------------------------------------------------
+# Production Networks
+#---------------------------------------------------------------------------
+
+networks:
+  openidx-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: openidx-prod
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"

@@ -1,457 +1,230 @@
 {
-  "project_name": "openidx-admin-dashboard-gateway",
-  "summary": "Build a unified API Gateway (port 8500) with JWT validation, rate limiting, and request routing, plus a complete React/TypeScript admin dashboard frontend with authentication, navigation, and full CRUD interfaces for users, OAuth apps, audit logs, policies, and settings.",
+  "project_name": "OpenIDX Production Deployment",
+  "summary": "Deploy complete OpenIDX Zero Trust Access Platform on server with openidx.tdv.org domain for client access",
   "user_stories": [
     {
       "id": "US-001",
       "as_a": "system administrator",
-      "i_want": "a unified API gateway that routes requests to all backend services",
-      "so_that": "I can manage a single entry point for all API calls with consistent authentication and rate limiting",
+      "i_want": "OpenIDX fully deployed and accessible via openidx.tdv.org",
+      "so_that": "clients can access the Zero Trust Access Platform",
       "priority": "critical",
       "acceptance_criteria": [
-        "Gateway listens on port 8500",
-        "Routes /api/v1/identity/* to service on :8501",
-        "Routes /api/v1/oauth/* to service on :8502",
-        "Routes /api/v1/governance/* to service on :8503",
-        "Routes /api/v1/audit/* to service on :8504",
-        "Routes /api/v1/admin/* to service on :8505",
-        "Routes /api/v1/risk/* to service on :8506",
-        "/health endpoint aggregates health from all downstream services",
-        "/api/docs serves combined OpenAPI specification"
+        "All services running and healthy",
+        "openidx.tdv.org domain resolves and serves admin console",
+        "SSL/TLS certificates configured",
+        "All API endpoints accessible"
       ]
     },
     {
       "id": "US-002",
-      "as_a": "security administrator",
-      "i_want": "JWT validation at the gateway level with rate limiting per user",
-      "so_that": "I can prevent abuse and ensure all requests are authenticated",
+      "as_a": "end user",
+      "i_want": "secure login via openidx.tdv.org",
+      "so_that": "I can access protected applications",
       "priority": "critical",
       "acceptance_criteria": [
-        "JWT validation middleware validates bearer tokens on all protected routes",
-        "Rate limiting: 100 requests per minute per user",
-        "Sliding window algorithm using Redis",
-        "Rate limit headers returned in response (X-RateLimit-Remaining, X-RateLimit-Reset)",
-        "429 Too Many Requests response when limit exceeded"
+        "OAuth/OIDC login flow works",
+        "User can authenticate with credentials",
+        "Session management works"
       ]
     },
     {
       "id": "US-003",
       "as_a": "administrator",
-      "i_want": "correlation IDs and structured logging on all requests",
-      "so_that": "I can trace requests across services and debug issues effectively",
-      "priority": "high",
+      "i_want": "access to admin console at openidx.tdv.org",
+      "so_that": "I can manage users, policies, and audit logs",
+      "priority": "critical",
       "acceptance_criteria": [
-        "Every request gets a unique correlation ID (X-Correlation-ID header)",
-        "Correlation ID propagated to all downstream services",
-        "Structured access logs include: timestamp, method, path, status, duration, correlation_id, user_id",
-        "Logs output in JSON format for parsing"
+        "Admin console loads",
+        "Dashboard displays statistics",
+        "User management functions work"
       ]
     },
     {
       "id": "US-004",
-      "as_a": "admin user",
-      "i_want": "a login page with email, password, and MFA support",
-      "so_that": "I can securely authenticate into the admin console",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "Login form with email and password fields",
-        "MFA code input field (6 digits)",
-        "Remember device checkbox",
-        "Form validation for email format and password requirements",
-        "Error messages displayed inline for failed login",
-        "On success, stores JWT access and refresh tokens",
-        "Redirects to dashboard on successful authentication"
-      ]
-    },
-    {
-      "id": "US-005",
-      "as_a": "admin user",
-      "i_want": "a responsive sidebar navigation",
-      "so_that": "I can easily navigate between different admin sections",
+      "as_a": "devops engineer",
+      "i_want": "automated deployment scripts",
+      "so_that": "deployment is repeatable and maintainable",
       "priority": "high",
       "acceptance_criteria": [
-        "Sidebar contains: Dashboard, Users, Groups, OAuth Apps, Audit Logs, Policies, Settings",
-        "Active route is highlighted",
-        "Sidebar is collapsible on mobile (hamburger menu)",
-        "Icons for each navigation item",
-        "Logout button at bottom of sidebar"
-      ]
-    },
-    {
-      "id": "US-006",
-      "as_a": "admin user",
-      "i_want": "a dashboard with key metrics and activity charts",
-      "so_that": "I can quickly understand the system status and recent activity",
-      "priority": "high",
-      "acceptance_criteria": [
-        "Total users card with count",
-        "Active sessions count card",
-        "Failed logins today card",
-        "Risk alerts count card",
-        "Login activity line chart (last 7 days) using recharts",
-        "All cards show loading skeletons while fetching",
-        "Data refreshes every 30 seconds"
-      ]
-    },
-    {
-      "id": "US-007",
-      "as_a": "admin user",
-      "i_want": "a users page with sortable, searchable table",
-      "so_that": "I can find and manage user accounts efficiently",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "Table displays: name, email, status, last login, actions",
-        "Search by name or email",
-        "Sort by any column",
-        "Pagination (20 items per page)",
-        "Create user button opens modal with form",
-        "Edit user button opens slide-out drawer",
-        "Suspend/activate toggle on user row",
-        "Reset password action sends email to user",
-        "Empty state with illustration when no users exist"
-      ]
-    },
-    {
-      "id": "US-008",
-      "as_a": "admin user",
-      "i_want": "to view and filter audit logs",
-      "so_that": "I can investigate security events and compliance issues",
-      "priority": "high",
-      "acceptance_criteria": [
-        "Table displays: timestamp, actor, action, target, outcome, IP address",
-        "Filters: action type, user, date range, outcome (success/failure)",
-        "Auto-refresh toggle (on/off with 30-second interval)",
-        "Export to CSV button",
-        "Pagination support",
-        "Loading skeletons during fetch"
-      ]
-    },
-    {
-      "id": "US-009",
-      "as_a": "admin user",
-      "i_want": "to manage OAuth applications",
-      "so_that": "I can configure which applications can integrate with OpenIDX",
-      "priority": "medium",
-      "acceptance_criteria": [
-        "List view shows: client name, client ID, redirect URIs, created date, actions",
-        "Create client button opens form for name and redirect URIs",
-        "On creation, show client_secret once with copy button",
-        "Delete client requires confirmation dialog",
-        "Empty state with illustration when no clients exist"
-      ]
-    },
-    {
-      "id": "US-010",
-      "as_a": "system administrator",
-      "i_want": "a settings page to configure security policies",
-      "so_that": "I can enforce organization security requirements",
-      "priority": "high",
-      "acceptance_criteria": [
-        "Password policy section: minimum length, complexity requirements, expiry days",
-        "Session timeout setting (in minutes)",
-        "MFA enforcement toggle (on/off)",
-        "Save button with loading state",
-        "Toast notification on successful save",
-        "Form validation for all inputs"
-      ]
-    },
-    {
-      "id": "US-011",
-      "as_a": "admin user",
-      "i_want": "automatic token refresh before expiry",
-      "so_that": "My session doesn't interrupt while I'm working",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "Auth context manages access and refresh tokens",
-        "Token refresh triggered 1 minute before expiry",
-        "On 401 response, attempt refresh once",
-        "If refresh fails, redirect to login page",
-        "Tokens stored securely (httpOnly cookie or secure storage)"
-      ]
-    },
-    {
-      "id": "US-012",
-      "as_a": "admin user",
-      "i_want": "consistent feedback with toasts and loading states",
-      "so_that": "I understand what's happening in the application",
-      "priority": "medium",
-      "acceptance_criteria": [
-        "Toast notifications for: login success/logout, user created/updated/deleted, settings saved, errors",
-        "Loading skeletons on all data fetches",
-        "Button loading states during form submission",
-        "Empty states with illustrations when no data exists"
+        "Docker compose setup available",
+        "Kubernetes manifests ready",
+        "Environment configuration documented"
       ]
     }
   ],
   "functional_requirements": [
     {
       "id": "FR-001",
-      "title": "API Gateway Service",
-      "description": "Create a Go-based API gateway service on port 8500 that handles routing, authentication, rate limiting, and logging for all backend services",
-      "service": "api-gateway"
+      "title": "Domain Configuration",
+      "description": "Configure openidx.tdv.org domain with DNS A record pointing to server IP",
+      "service": "infrastructure"
     },
     {
       "id": "FR-002",
-      "title": "JWT Validation Middleware",
-      "description": "Implement JWT validation middleware that verifies tokens against the JWKS endpoint, extracts user claims, and adds user context to requests",
-      "service": "api-gateway"
+      "title": "SSL Certificate Setup",
+      "description": "Install SSL/TLS certificates for openidx.tdv.org using Let's Encrypt or custom certificates",
+      "service": "apisix"
     },
     {
       "id": "FR-003",
-      "title": "Rate Limiting with Redis",
-      "description": "Implement sliding window rate limiting using Redis to track and enforce 100 requests per minute per user",
-      "service": "api-gateway"
+      "title": "APISIX Gateway Routing",
+      "description": "Configure APISIX routes for openidx.tdv.org to forward to backend services",
+      "service": "apisix"
     },
     {
       "id": "FR-004",
-      "title": "Correlation ID Middleware",
-      "description": "Generate and propagate correlation IDs through the request chain for distributed tracing",
-      "service": "api-gateway"
+      "title": "Admin Console Frontend",
+      "description": "Build and deploy React admin console accessible at openidx.tdv.org",
+      "service": "admin-console"
     },
     {
       "id": "FR-005",
-      "title": "Health Check Aggregation",
-      "description": "Aggregate health status from all downstream services (identity, oauth, governance, audit, admin, risk) into a single /health endpoint",
-      "service": "api-gateway"
+      "title": "Identity Service",
+      "description": "Deploy identity service for user authentication and management",
+      "service": "identity-service"
     },
     {
       "id": "FR-006",
-      "title": "OpenAPI Spec Aggregation",
-      "description": "Combine OpenAPI specs from all services into a unified spec served at /api/docs",
-      "service": "api-gateway"
+      "title": "OAuth Service",
+      "description": "Deploy OAuth/OIDC service for authentication flows",
+      "service": "oauth-service"
     },
     {
       "id": "FR-007",
-      "title": "Admin Frontend Application",
-      "description": "Create a React 18 + TypeScript + Vite application with Tailwind CSS and Radix UI components for the admin console",
-      "service": "admin-frontend"
+      "title": "PostgreSQL Database",
+      "description": "Deploy and configure PostgreSQL with proper schemas",
+      "service": "database"
     },
     {
       "id": "FR-008",
-      "title": "Authentication Flow",
-      "description": "Implement login page with email/password/MFA, token management, auto-refresh, and session persistence",
-      "service": "admin-frontend"
+      "title": "Redis Cache",
+      "description": "Deploy Redis for session storage and caching",
+      "service": "redis"
     },
     {
       "id": "FR-009",
-      "title": "Layout and Navigation",
-      "description": "Create responsive layout with sidebar navigation, header, and main content area with mobile collapsible menu",
-      "service": "admin-frontend"
+      "title": "Elasticsearch",
+      "description": "Deploy Elasticsearch for audit log storage and search",
+      "service": "elasticsearch"
     },
     {
-      "id": "FR-010",
-      "title": "Dashboard Page",
-      "description": "Implement dashboard with metric cards and 7-day login activity chart using recharts",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-011",
-      "title": "Users Management Page",
-      "description": "Implement users list with search, sort, pagination, create modal, edit drawer, and actions (suspend/activate, reset password)",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-012",
-      "title": "Audit Logs Page",
-      "description": "Implement audit logs viewer with filters (action, user, date range, outcome), auto-refresh, and CSV export",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-013",
-      "title": "OAuth Apps Management",
-      "description": "Implement OAuth client listing, creation form, secret display, and deletion with confirmation",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-014",
-      "title": "Settings Page",
-      "description": "Implement settings form for password policy, session timeout, and MFA enforcement with save functionality",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-015",
-      "title": "Toast Notification System",
-      "description": "Implement toast notifications for success/error messages with consistent styling and auto-dismiss",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-016",
-      "title": "API Integration Layer",
-      "description": "Create API client using React Query for data fetching with automatic loading states, error handling, and caching",
-      "service": "admin-frontend"
-    },
-    {
-      "id": "FR-M017",
+      "id": "FR-M010",
       "title": "Self-Service User Portal",
-      "description": "End-user portal for password reset, MFA management, security questions, and account recovery without admin intervention",
+      "description": "Password reset, profile management, security questions, MFA enrollment, and active sessions view",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Reduces helpdesk costs by 30%, table stakes for enterprise IAM"
+      "competitive_advantage": "Reduces helpdesk costs by 30-40%, standard across competitors"
     },
     {
-      "id": "FR-M018",
-      "title": "Admin Delegation & Scoped Permissions",
-      "description": "Role-based admin access with granular permissions (e.g., app admin, user admin, read-only auditor) to distribute administrative responsibilities",
+      "id": "FR-M011",
+      "title": "AI/ML Risk-Based Authentication",
+      "description": "Real-time risk scoring based on location, device, behavior patterns, and threat intelligence for step-up authentication",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Essential for large organizations, prevents admin bottleneck"
+      "competitive_advantage": "Key differentiator for Microsoft and Okta, prevents account takeover"
     },
     {
-      "id": "FR-M019",
-      "title": "Passwordless Authentication (Passkeys)",
-      "description": "Support for FIDO2/WebAuthn passkeys as primary authentication method without passwords",
+      "id": "FR-M012",
+      "title": "Passwordless Authentication",
+      "description": "Support for FIDO2/WebAuthn, passkeys, hardware keys (YubiKey), and biometric authentication",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Cutting-edge security feature, eliminates phishing risk of stolen passwords"
+      "competitive_advantage": "Eliminates phishing attacks targeting passwords, becoming industry standard"
     },
     {
-      "id": "FR-M020",
-      "title": "SAML 2.0 Service Provider",
-      "description": "Ability to act as SAML SP for federated access to other SAML IdPs (in addition to current IdP capability)",
+      "id": "FR-M013",
+      "title": "Just-in-Time Privileged Access",
+      "description": "Temporary privilege elevation with approval workflows, automatic expiration, and audit trails",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Enables complex federation scenarios and B2B partnerships"
+      "competitive_advantage": "Reduces standing privilege risk, competing with CyberArk/BeyondTrust"
     },
     {
-      "id": "FR-M021",
-      "title": "Webhooks & Events API",
-      "description": "Real-time event streaming to webhooks for integration with SIEM, ticketing systems, and custom workflows",
+      "id": "FR-M014",
+      "title": "Enhanced Compliance Automation",
+      "description": "Pre-built report templates for SOC2, ISO27001, GDPR, HIPAA with automated evidence collection",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Critical for enterprise integration and automation"
+      "competitive_advantage": "Reduces audit preparation time from weeks to days"
     },
     {
-      "id": "FR-M022",
-      "title": "SIEM Integration Out-of-Box",
-      "description": "Pre-built integrations for Splunk, Sentinel, QRadar, and Elastic Security with ready-to-use parsers",
+      "id": "FR-M015",
+      "title": "Access Review Campaign Automation",
+      "description": "Scheduled periodic access reviews, automated reminders, escalation workflows, and certification reports",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Reduces deployment time for security teams"
+      "competitive_advantage": "Core governance feature, reduces compliance burden"
     },
     {
-      "id": "FR-M023",
-      "title": "Access Request Portal",
-      "description": "Self-service portal for users to request access to apps/groups with approval workflows",
+      "id": "FR-M016",
+      "title": "Enhanced BrowZer Client",
+      "description": "Zero-trust browser with local policy enforcement, device posture checks, and isolation capabilities",
       "service": "identity",
       "source": "market_research",
-      "competitive_advantage": "Reduces admin burden, improves user productivity"
-    },
-    {
-      "id": "FR-M024",
-      "title": "Compliance Report Automation",
-      "description": "One-click generation of SOC2, ISO27001, and GDPR compliance reports with evidence",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Saves dozens of hours per audit"
+      "competitive_advantage": "Unique differentiator vs traditional IAM vendors"
     }
   ],
   "non_functional_requirements": [
     {
       "id": "NFR-001",
-      "category": "performance",
-      "requirement": "Gateway should add minimal latency to proxied requests",
-      "metric": "< 10ms additional latency (p95)"
+      "category": "security",
+      "requirement": "All communication over HTTPS only",
+      "metric": "TLS 1.2 or higher"
     },
     {
       "id": "NFR-002",
-      "category": "performance",
-      "requirement": "Frontend initial page load time",
-      "metric": "< 2 seconds on 3G connection"
+      "category": "availability",
+      "requirement": "Services auto-restart on failure",
+      "metric": "Docker restart policy always"
     },
     {
       "id": "NFR-003",
       "category": "performance",
-      "requirement": "Frontend time to interactive",
-      "metric": "< 3 seconds on standard hardware"
+      "requirement": "API response time",
+      "metric": "p95 < 500ms"
     },
     {
       "id": "NFR-004",
-      "category": "security",
-      "requirement": "JWT validation must reject expired, invalid, or tampered tokens",
-      "metric": "100% rejection of invalid tokens"
+      "category": "scalability",
+      "requirement": "Support concurrent users",
+      "metric": "1000+ concurrent sessions"
     },
     {
       "id": "NFR-005",
       "category": "security",
-      "requirement": "Rate limiting must enforce limits accurately",
-      "metric": "99.9% accuracy in distributed environment"
-    },
-    {
-      "id": "NFR-006",
-      "category": "security",
-      "requirement": "Tokens must be stored securely",
-      "metric": "httpOnly cookies or encrypted localStorage"
-    },
-    {
-      "id": "NFR-007",
-      "category": "scalability",
-      "requirement": "Gateway must handle concurrent connections",
-      "metric": "10,000 concurrent connections"
-    },
-    {
-      "id": "NFR-008",
-      "category": "reliability",
-      "requirement": "Gateway uptime",
-      "metric": "99.9% availability"
-    },
-    {
-      "id": "NFR-009",
-      "category": "usability",
-      "requirement": "Frontend must be accessible",
-      "metric": "WCAG 2.1 Level AA compliant"
-    },
-    {
-      "id": "NFR-010",
-      "category": "usability",
-      "requirement": "Responsive design",
-      "metric": "Works on desktop (1280px+), tablet (768px+), mobile (320px+)"
+      "requirement": "Database credentials secured",
+      "metric": "Environment variables, secrets management"
     }
   ],
   "api_endpoints": [
     {
-      "method": "POST",
-      "path": "/api/v1/auth/login",
-      "description": "Authenticate with email/password, returns access and refresh tokens",
+      "method": "GET",
+      "path": "/",
+      "description": "Admin console frontend",
       "roles": [
         "public"
       ]
     },
     {
       "method": "POST",
-      "path": "/api/v1/auth/refresh",
-      "description": "Refresh access token using refresh token",
+      "path": "/oauth/token",
+      "description": "OAuth token endpoint",
       "roles": [
         "public"
       ]
     },
     {
       "method": "GET",
-      "path": "/health",
-      "description": "Health check aggregating all service statuses",
+      "path": "/.well-known/openid-configuration",
+      "description": "OIDC discovery",
       "roles": [
         "public"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/admin/dashboard",
-      "description": "Get dashboard metrics (total users, active sessions, failed logins, risk alerts)",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/admin/dashboard/login-activity",
-      "description": "Get 7-day login activity data for chart",
-      "roles": [
-        "admin"
       ]
     },
     {
       "method": "GET",
       "path": "/api/v1/identity/users",
-      "description": "List users with pagination and search",
+      "description": "List users",
       "roles": [
         "admin"
       ]
@@ -459,47 +232,15 @@
     {
       "method": "POST",
       "path": "/api/v1/identity/users",
-      "description": "Create a new user",
+      "description": "Create user",
       "roles": [
         "admin"
       ]
     },
     {
       "method": "GET",
-      "path": "/api/v1/identity/users/:id",
-      "description": "Get user details",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/v1/identity/users/:id",
-      "description": "Update user details",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/identity/users/:id/suspend",
-      "description": "Suspend user account",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/identity/users/:id/activate",
-      "description": "Activate user account",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/identity/users/:id/reset-password",
-      "description": "Send password reset email to user",
+      "path": "/api/v1/dashboard",
+      "description": "Admin dashboard stats",
       "roles": [
         "admin"
       ]
@@ -507,251 +248,187 @@
     {
       "method": "GET",
       "path": "/api/v1/audit/events",
-      "description": "Query audit logs with filters",
+      "description": "Query audit logs",
       "roles": [
         "admin"
       ]
     },
     {
       "method": "GET",
-      "path": "/api/v1/audit/events/export",
-      "description": "Export audit logs as CSV",
+      "path": "/scim/v2/Users",
+      "description": "SCIM user list",
       "roles": [
         "admin"
       ]
     },
     {
       "method": "GET",
-      "path": "/api/v1/oauth/clients",
-      "description": "List OAuth client applications",
+      "path": "/api/v1/governance/reviews",
+      "description": "Access reviews",
       "roles": [
         "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/oauth/clients",
-      "description": "Create new OAuth client",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/v1/oauth/clients/:id",
-      "description": "Delete OAuth client",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/admin/settings",
-      "description": "Get system settings",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/api/v1/admin/settings",
-      "description": "Update system settings",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/governance/policies",
-      "description": "List access policies",
-      "roles": [
-        "admin"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/api/docs",
-      "description": "Combined OpenAPI specification",
-      "roles": [
-        "public"
       ]
     }
   ],
   "database_changes": [
     {
-      "table": "gateway_rate_limits",
+      "table": "users",
       "action": "create",
       "columns": [
-        "user_id VARCHAR(255) PRIMARY KEY",
-        "request_count INTEGER",
-        "window_start TIMESTAMP",
-        "window_end TIMESTAMP"
+        "id UUID PRIMARY KEY",
+        "email VARCHAR(255) UNIQUE",
+        "password_hash VARCHAR(255)",
+        "first_name VARCHAR(100)",
+        "last_name VARCHAR(100)",
+        "created_at TIMESTAMP",
+        "updated_at TIMESTAMP"
+      ]
+    },
+    {
+      "table": "oauth_clients",
+      "action": "create",
+      "columns": [
+        "id UUID PRIMARY KEY",
+        "client_id VARCHAR(255) UNIQUE",
+        "client_secret_hash VARCHAR(255)",
+        "redirect_uris TEXT",
+        "scopes TEXT"
       ]
     },
     {
       "table": "audit_events",
-      "action": "alter",
+      "action": "create",
       "columns": [
-        "correlation_id VARCHAR(255)",
-        " INDEX idx_correlation_id (correlation_id)"
+        "id UUID PRIMARY KEY",
+        "event_type VARCHAR(100)",
+        "actor_id UUID",
+        "resource_type VARCHAR(100)",
+        "resource_id UUID",
+        "action VARCHAR(50)",
+        "ip_address INET",
+        "timestamp TIMESTAMP"
+      ]
+    },
+    {
+      "table": "sessions",
+      "action": "create",
+      "columns": [
+        "id UUID PRIMARY KEY",
+        "user_id UUID",
+        "token_hash VARCHAR(255)",
+        "expires_at TIMESTAMP",
+        "created_at TIMESTAMP"
       ]
     }
   ],
   "affected_services": [
-    "api-gateway",
+    "apisix",
     "identity-service",
     "oauth-service",
+    "admin-console",
     "governance-service",
+    "provisioning-service",
     "audit-service",
-    "admin-api",
-    "admin-frontend"
+    "postgres",
+    "redis",
+    "elasticsearch"
   ],
   "risks": [
     {
-      "risk": "JWT validation failures due to clock skew between services",
-      "mitigation": "Implement clock skew tolerance (leeway) in JWT validation"
+      "risk": "Domain DNS not properly configured",
+      "mitigation": "Verify DNS A record points to correct server IP before deployment"
     },
     {
-      "risk": "Rate limiting may be inaccurate in distributed gateway deployments",
-      "mitigation": "Use Redis with atomic operations and consistent hashing"
+      "risk": "SSL certificate issuance fails",
+      "mitigation": "Pre-configure Let's Encrypt or have custom certificates ready"
     },
     {
-      "risk": "Frontend token refresh race conditions on concurrent API calls",
-      "mitigation": "Implement promise-based refresh queue to prevent duplicate refresh calls"
+      "risk": "Port conflicts with existing services",
+      "mitigation": "Scan available ports and configure non-conflicting ports in docker-compose"
     },
     {
-      "risk": "Downstream service health check failures could cascade",
-      "mitigation": "Implement circuit breaker pattern and graceful degradation"
+      "risk": "Database migration failures",
+      "mitigation": "Backup existing data, test migrations in staging first"
     },
     {
-      "risk": "Large audit log exports could timeout or consume excessive memory",
-      "mitigation": "Implement streaming CSV export and max row limit with async job queuing"
-    },
-    {
-      "risk": "XSS vulnerabilities in user-generated content display",
-      "mitigation": "Use React's automatic escaping and Radix UI's safe components"
+      "risk": "Service dependencies not ready",
+      "mitigation": "Implement health checks and proper startup ordering"
     }
   ],
   "implementation_phases": [
     {
       "phase": 1,
-      "name": "API Gateway Foundation",
+      "name": "Infrastructure Setup",
       "tasks": [
-        "Create gateway service structure and routing configuration",
-        "Implement reverse proxy for all service routes",
-        "Add correlation ID middleware",
-        "Add structured access logging",
-        "Implement health check aggregation endpoint",
-        "Add OpenAPI spec aggregation at /api/docs"
+        "Verify server access and requirements",
+        "Configure DNS A record for openidx.tdv.org",
+        "Install Docker and Docker Compose",
+        "Create environment configuration files"
       ]
     },
     {
       "phase": 2,
-      "name": "Gateway Security Layer",
+      "name": "Database and Cache",
       "tasks": [
-        "Implement JWT validation middleware with JWKS fetching",
-        "Add user context extraction from JWT claims",
-        "Implement Redis-based sliding window rate limiting",
-        "Add rate limit headers and 429 responses",
-        "Write tests for security middleware"
+        "Deploy PostgreSQL container",
+        "Deploy Redis container",
+        "Deploy Elasticsearch container",
+        "Run database migrations",
+        "Create initial admin user"
       ]
     },
     {
       "phase": 3,
-      "name": "Frontend Foundation",
+      "name": "Backend Services",
       "tasks": [
-        "Create React + Vite + TypeScript project",
-        "Set up Tailwind CSS and Radix UI components",
-        "Create base layout with responsive sidebar",
-        "Implement routing (React Router)",
-        "Set up React Query for API calls",
-        "Create toast notification system"
+        "Build Go service binaries",
+        "Deploy Identity Service",
+        "Deploy OAuth Service",
+        "Deploy Governance Service",
+        "Deploy Provisioning Service",
+        "Deploy Audit Service",
+        "Deploy Admin API"
       ]
     },
     {
       "phase": 4,
-      "name": "Authentication Implementation",
+      "name": "API Gateway",
       "tasks": [
-        "Create login page with email/password form",
-        "Add MFA input field",
-        "Implement auth context with token management",
-        "Add auto-refresh logic before token expiry",
-        "Add 401 redirect to login",
-        "Add logout functionality"
+        "Deploy APISIX gateway",
+        "Configure SSL/TLS certificates",
+        "Configure routes for all services",
+        "Set up OAuth plugin on APISIX"
       ]
     },
     {
       "phase": 5,
-      "name": "Dashboard Implementation",
+      "name": "Frontend Deployment",
       "tasks": [
-        "Create dashboard page layout",
-        "Implement metric cards (total users, active sessions, failed logins, risk alerts)",
-        "Add loading skeletons",
-        "Integrate recharts for login activity line chart",
-        "Add 30-second auto-refresh for dashboard data"
+        "Build React admin console",
+        "Configure environment variables for API endpoints",
+        "Deploy static files or serve via APISIX",
+        "Test admin console access"
       ]
     },
     {
       "phase": 6,
-      "name": "Users Management",
+      "name": "Testing and Validation",
       "tasks": [
-        "Create users table with columns",
-        "Implement search functionality",
-        "Implement column sorting",
-        "Add pagination",
-        "Create user modal (create)",
-        "Create user drawer (edit)",
-        "Add suspend/activate toggle",
-        "Add reset password action",
-        "Add empty state illustration"
+        "Test OAuth/OIDC flow",
+        "Test admin console login",
+        "Verify all API endpoints accessible",
+        "Run smoke tests",
+        "Check SSL certificate validity"
       ]
     },
     {
       "phase": 7,
-      "name": "Audit Logs Implementation",
+      "name": "Documentation",
       "tasks": [
-        "Create audit logs table",
-        "Implement filter dropdowns (action, user, date range, outcome)",
-        "Add auto-refresh toggle",
-        "Implement CSV export functionality",
-        "Add pagination",
-        "Add loading states"
-      ]
-    },
-    {
-      "phase": 8,
-      "name": "OAuth Apps Management",
-      "tasks": [
-        "Create OAuth clients list view",
-        "Implement create client form (name, redirect URIs)",
-        "Add client secret display (show once with copy)",
-        "Add delete confirmation dialog",
-        "Add empty state illustration"
-      ]
-    },
-    {
-      "phase": 9,
-      "name": "Settings Implementation",
-      "tasks": [
-        "Create settings page layout",
-        "Add password policy form fields",
-        "Add session timeout input",
-        "Add MFA enforcement toggle",
-        "Implement save with loading state",
-        "Add toast notifications for save success/failure"
-      ]
-    },
-    {
-      "phase": 10,
-      "name": "Integration and Polish",
-      "tasks": [
-        "Wire all frontend API calls to gateway endpoints",
-        "Add error boundary components",
-        "Implement responsive mobile sidebar",
-        "Add all loading skeletons",
-        "Add all empty states with illustrations",
-        "End-to-end testing of all user flows",
-        "Performance optimization and bundle analysis"
+        "Document deployment process",
+        "Create runbook for common operations",
+        "Document environment variables",
+        "Create backup and restore procedures"
       ]
     }
   ],
@@ -759,40 +436,34 @@
     "competitors_analyzed": [
       "Microsoft Entra ID",
       "Okta",
-      "Duo Security",
-      "Tencent Cloud iOA",
-      "Palo Alto Networks Prisma",
       "Ping Identity",
-      "ForgeRock/Okta",
-      "Keycloak"
+      "CyberArk",
+      "SailPoint",
+      "JumpCloud",
+      "Duo Security"
     ],
     "key_gaps": [
-      "No native mobile authenticator app (Duo-like push MFA)",
-      "Missing end-user self-service portal for password reset/MFA management",
-      "No SAML SP capability (can only act as IdP, not SP)",
-      "Missing passwordless authentication options",
-      "No managed SaaS offering (self-hosted only)"
+      "AI-powered behavioral analytics and anomaly detection",
+      "Passwordless authentication options (FIDO2, WebAuthn, biometrics)",
+      "Privileged Access Management (PAM) with credential vaulting",
+      "Self-service user portal for password reset and profile management",
+      "Advanced identity analytics and reporting dashboards"
     ],
     "trends": [
-      "AI-Driven Adaptive Authentication",
-      "Passwordless Authentication",
-      "Decentralized Identity (DID)",
-      "SASE (Secure Access Service Edge)",
-      "Post-Quantum Cryptography"
+      "AI/ML-powered identity security",
+      "Passwordless authentication",
+      "Decentralized Identity (DID/SSI)",
+      "Zero Trust Network Access (ZTNA) convergence",
+      "Continuous authentication"
     ],
     "unique_selling_points": [
-      "70-80% cost savings vs Okta and Microsoft Entra ID",
-      "True open-source with full transparency and self-hosting option",
-      "Modern microservices architecture with Go and React",
-      "Built-in policy engine (OPA) for flexible authorization",
-      "All core IAM features in one platform (no expensive add-ons needed)",
-      "No vendor lock-in - data and deployment under customer control",
-      "SCIM 2.0, LDAP, and Azure AD sync included",
-      "Multiple MFA methods including WebAuthn/FIDO2",
-      "Risk-based authentication and conditional access",
-      "Comprehensive audit logging with Elasticsearch",
-      "Hybrid deployment flexibility (on-prem, cloud, multi-cloud)",
-      "Docker and Kubernetes ready for modern DevOps"
+      "Open-source with 70-80% cost savings vs commercial competitors",
+      "Native BrowZer zero-trust client for local policy enforcement",
+      "Built-in OPA policy engine for flexible, code-based access control",
+      "Microservices architecture enabling selective deployment",
+      "No vendor lock-in with self-hosted deployment option",
+      "Modern tech stack (Go, React, TypeScript) vs legacy platforms",
+      "API-native design with APISIX gateway built-in"
     ]
   }
 }

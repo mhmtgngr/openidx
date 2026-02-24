@@ -1,0 +1,423 @@
+# Page snapshot
+
+```yaml
+- generic [active]:
+  - generic:
+    - generic:
+      - complementary:
+        - generic:
+          - generic:
+            - img
+            - generic: OpenIDX
+          - button:
+            - img
+        - navigation:
+          - generic:
+            - link:
+              - /url: /dashboard
+              - img
+              - generic: Dashboard
+            - link:
+              - /url: /profile
+              - img
+              - generic: My Profile
+            - link:
+              - /url: /app-launcher
+              - img
+              - generic: My Apps
+            - link:
+              - /url: /my-access
+              - img
+              - generic: My Access
+            - link:
+              - /url: /my-devices
+              - img
+              - generic: My Devices
+            - link:
+              - /url: /trusted-browsers
+              - img
+              - generic: Trusted Browsers
+            - link:
+              - /url: /access-requests
+              - img
+              - generic: Access Requests
+            - link:
+              - /url: /notification-center
+              - img
+              - generic: Notifications
+          - generic:
+            - generic: Identity
+            - link:
+              - /url: /users
+              - img
+              - generic: Users
+            - link:
+              - /url: /groups
+              - img
+              - generic: Groups
+            - link:
+              - /url: /roles
+              - img
+              - generic: Roles
+            - link:
+              - /url: /directories
+              - img
+              - generic: Directories
+            - link:
+              - /url: /service-accounts
+              - img
+              - generic: Service Accounts
+          - generic:
+            - generic: Applications
+            - link:
+              - /url: /applications
+              - img
+              - generic: Applications
+            - link:
+              - /url: /identity-providers
+              - img
+              - generic: Identity Providers
+            - link:
+              - /url: /provisioning-rules
+              - img
+              - generic: Provisioning Rules
+            - link:
+              - /url: /lifecycle-workflows
+              - img
+              - generic: Lifecycle Workflows
+            - link:
+              - /url: /social-providers
+              - img
+              - generic: Social Providers
+            - link:
+              - /url: /federation-config
+              - img
+              - generic: Federation
+          - generic:
+            - generic: Network & Access
+            - link:
+              - /url: /proxy-routes
+              - img
+              - generic: Proxy Routes
+            - link:
+              - /url: /ziti-network
+              - img
+              - generic: Ziti Network
+            - link:
+              - /url: /ziti-discovery
+              - img
+              - generic: Ziti Discovery
+            - link:
+              - /url: /browzer-management
+              - img
+              - generic: BrowZer
+            - link:
+              - /url: /app-publish
+              - img
+              - generic: App Publish
+            - link:
+              - /url: /certificates
+              - img
+              - generic: Certificates
+            - link:
+              - /url: /devices
+              - img
+              - generic: Devices
+          - generic:
+            - generic: Governance
+            - link:
+              - /url: /policies
+              - img
+              - generic: Policies
+            - link:
+              - /url: /approval-policies
+              - img
+              - generic: Approval Policies
+            - link:
+              - /url: /access-reviews
+              - img
+              - generic: Access Reviews
+            - link:
+              - /url: /certification-campaigns
+              - img
+              - generic: Cert Campaigns
+            - link:
+              - /url: /entitlements
+              - img
+              - generic: Entitlements
+            - link:
+              - /url: /abac-policies
+              - img
+              - generic: ABAC Policies
+            - link:
+              - /url: /sessions
+              - img
+              - generic: Sessions
+            - link:
+              - /url: /security-alerts
+              - img
+              - generic: Security Alerts
+            - link:
+              - /url: /privacy-dashboard
+              - img
+              - generic: Privacy Dashboard
+            - link:
+              - /url: /consent-management
+              - img
+              - generic: Consent Mgmt
+          - generic:
+            - generic: Security & MFA
+            - link:
+              - /url: /mfa-management
+              - img
+              - generic: MFA Management
+            - link:
+              - /url: /risk-policies
+              - img
+              - generic: Risk Policies
+            - link:
+              - /url: /login-anomalies
+              - img
+              - generic: Login Anomalies
+            - link:
+              - /url: /hardware-tokens
+              - img
+              - generic: Hardware Tokens
+            - link:
+              - /url: /device-trust-approval
+              - img
+              - generic: Device Trust Approval
+            - link:
+              - /url: /mfa-bypass-codes
+              - img
+              - generic: MFA Bypass Codes
+            - link:
+              - /url: /passwordless-settings
+              - img
+              - generic: Passwordless
+            - link:
+              - /url: /security-keys
+              - img
+              - generic: Security Keys
+            - link:
+              - /url: /push-devices
+              - img
+              - generic: Push Devices
+          - generic:
+            - generic: Audit & Reports
+            - link:
+              - /url: /audit-logs
+              - img
+              - generic: Audit Logs
+            - link:
+              - /url: /unified-audit
+              - img
+              - generic: Unified Audit
+            - link:
+              - /url: /admin-audit-log
+              - img
+              - generic: Admin Audit Log
+            - link:
+              - /url: /login-analytics
+              - img
+              - generic: Login Analytics
+            - link:
+              - /url: /auth-analytics
+              - img
+              - generic: Auth Analytics
+            - link:
+              - /url: /usage-analytics
+              - img
+              - generic: Usage Analytics
+            - link:
+              - /url: /risk-dashboard
+              - img
+              - generic: Risk Dashboard
+            - link:
+              - /url: /compliance-reports
+              - img
+              - generic: Compliance
+            - link:
+              - /url: /compliance-dashboard
+              - img
+              - generic: Compliance Posture
+            - link:
+              - /url: /reports
+              - img
+              - generic: Reports
+          - generic:
+            - generic: AI & Intelligence
+            - link:
+              - /url: /ai-agents
+              - img
+              - generic: AI Agents
+            - link:
+              - /url: /ispm
+              - img
+              - generic: Security Posture
+            - link:
+              - /url: /ai-recommendations
+              - img
+              - generic: Recommendations
+            - link:
+              - /url: /predictive-analytics
+              - img
+              - generic: Predictions
+          - generic:
+            - generic: Enterprise
+            - link:
+              - /url: /saml-service-providers
+              - img
+              - generic: SAML Providers
+            - link:
+              - /url: /bulk-operations
+              - img
+              - generic: Bulk Operations
+            - link:
+              - /url: /email-templates
+              - img
+              - generic: Email Templates
+            - link:
+              - /url: /lifecycle-policies
+              - img
+              - generic: Lifecycle Policies
+            - link:
+              - /url: /attestation-campaigns
+              - img
+              - generic: Attestation
+            - link:
+              - /url: /audit-archival
+              - img
+              - generic: Audit Archival
+          - generic:
+            - generic: Developer
+            - link:
+              - /url: /api-explorer
+              - img
+              - generic: API Explorer
+            - link:
+              - /url: /oauth-playground
+              - img
+              - generic: OAuth Playground
+            - link:
+              - /url: /developer-settings
+              - img
+              - generic: Developer Settings
+            - link:
+              - /url: /error-catalog
+              - img
+              - generic: Error Catalog
+          - generic:
+            - generic: System
+            - link:
+              - /url: /system-health
+              - img
+              - generic: System Health
+            - link:
+              - /url: /organizations
+              - img
+              - generic: Organizations
+            - link:
+              - /url: /delegations
+              - img
+              - generic: Delegations
+            - link:
+              - /url: /webhooks
+              - img
+              - generic: Webhooks
+            - link:
+              - /url: /api-docs
+              - img
+              - generic: API Docs
+            - link:
+              - /url: /settings
+              - img
+              - generic: Settings
+            - link:
+              - /url: /tenant-management
+              - img
+              - generic: Tenant Mgmt
+            - link:
+              - /url: /notification-admin
+              - img
+              - generic: Notification Mgmt
+        - generic:
+          - button:
+            - generic:
+              - generic: SA
+            - generic:
+              - paragraph: System Admin
+              - paragraph: admin@openidx.local
+      - generic:
+        - banner:
+          - button:
+            - img
+        - main:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - heading [level=1]: Ziti Network
+                  - paragraph: Manage your OpenZiti zero-trust network overlay
+              - generic:
+                - tablist:
+                  - tab:
+                    - img
+                    - text: Overview
+                  - tab [selected]:
+                    - img
+                    - text: Services
+                  - tab:
+                    - img
+                    - text: Identities
+                  - tab:
+                    - img
+                    - text: Security
+                  - tab:
+                    - img
+                    - text: Remote Access
+                - tabpanel:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - img
+                        - textbox:
+                          - /placeholder: Search services...
+                      - button:
+                        - img
+                        - text: Add Service
+                    - generic:
+                      - generic:
+                        - img
+                        - heading [level=3]: No Ziti services
+                        - paragraph: Register upstream services to route traffic through the Ziti overlay.
+    - list
+    - list
+  - dialog "Create Ziti Service" [ref=e2]:
+    - heading "Create Ziti Service" [level=2] [ref=e4]
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - text: Service Name
+        - textbox "internal-app" [ref=e7]: pw-browzer-1771875782875
+      - generic [ref=e8]:
+        - text: Description
+        - textbox "Optional description" [ref=e9]: BrowZer flow test
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - text: Host
+          - textbox "internal-app" [ref=e12]: simple-web
+        - generic [ref=e13]:
+          - text: Port
+          - spinbutton [ref=e14]: "8091"
+        - generic [ref=e15]:
+          - text: Protocol
+          - combobox [ref=e16]:
+            - option "TCP" [selected]
+            - option "UDP"
+      - generic [ref=e17]:
+        - button "Cancel" [ref=e18] [cursor=pointer]
+        - button "Create Service" [ref=e19] [cursor=pointer]
+    - button "Close" [ref=e20] [cursor=pointer]:
+      - img [ref=e21]
+      - generic [ref=e24]: Close
+```

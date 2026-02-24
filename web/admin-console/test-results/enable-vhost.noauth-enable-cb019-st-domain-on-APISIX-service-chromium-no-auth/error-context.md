@@ -1,0 +1,412 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e7]
+          - generic [ref=e9]: OpenIDX
+        - button [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+      - navigation [ref=e12]:
+        - generic [ref=e13]:
+          - link "Dashboard" [ref=e14] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e15]
+            - generic [ref=e20]: Dashboard
+          - link "My Profile" [ref=e21] [cursor=pointer]:
+            - /url: /profile
+            - img [ref=e22]
+            - generic [ref=e25]: My Profile
+          - link "My Apps" [ref=e26] [cursor=pointer]:
+            - /url: /app-launcher
+            - img [ref=e27]
+            - generic [ref=e32]: My Apps
+          - link "My Access" [ref=e33] [cursor=pointer]:
+            - /url: /my-access
+            - img [ref=e34]
+            - generic [ref=e37]: My Access
+          - link "My Devices" [ref=e38] [cursor=pointer]:
+            - /url: /my-devices
+            - img [ref=e39]
+            - generic [ref=e41]: My Devices
+          - link "Trusted Browsers" [ref=e42] [cursor=pointer]:
+            - /url: /trusted-browsers
+            - img [ref=e43]
+            - generic [ref=e45]: Trusted Browsers
+          - link "Access Requests" [ref=e46] [cursor=pointer]:
+            - /url: /access-requests
+            - img [ref=e47]
+            - generic [ref=e51]: Access Requests
+          - link "Notifications" [ref=e52] [cursor=pointer]:
+            - /url: /notification-center
+            - img [ref=e53]
+            - generic [ref=e56]: Notifications
+        - generic [ref=e57]:
+          - generic [ref=e58]: Identity
+          - link "Users" [ref=e59] [cursor=pointer]:
+            - /url: /users
+            - img [ref=e60]
+            - generic [ref=e65]: Users
+          - link "Groups" [ref=e66] [cursor=pointer]:
+            - /url: /groups
+            - img [ref=e67]
+            - generic [ref=e71]: Groups
+          - link "Roles" [ref=e72] [cursor=pointer]:
+            - /url: /roles
+            - img [ref=e73]
+            - generic [ref=e76]: Roles
+          - link "Directories" [ref=e77] [cursor=pointer]:
+            - /url: /directories
+            - img [ref=e78]
+            - generic [ref=e84]: Directories
+          - link "Service Accounts" [ref=e85] [cursor=pointer]:
+            - /url: /service-accounts
+            - img [ref=e86]
+            - generic [ref=e90]: Service Accounts
+        - generic [ref=e91]:
+          - generic [ref=e92]: Applications
+          - link "Applications" [ref=e93] [cursor=pointer]:
+            - /url: /applications
+            - img [ref=e94]
+            - generic [ref=e96]: Applications
+          - link "Identity Providers" [ref=e97] [cursor=pointer]:
+            - /url: /identity-providers
+            - img [ref=e98]
+            - generic [ref=e102]: Identity Providers
+          - link "Provisioning Rules" [ref=e103] [cursor=pointer]:
+            - /url: /provisioning-rules
+            - img [ref=e104]
+            - generic [ref=e108]: Provisioning Rules
+          - link "Lifecycle Workflows" [ref=e109] [cursor=pointer]:
+            - /url: /lifecycle-workflows
+            - img [ref=e110]
+            - generic [ref=e114]: Lifecycle Workflows
+          - link "Social Providers" [ref=e115] [cursor=pointer]:
+            - /url: /social-providers
+            - img [ref=e116]
+            - generic [ref=e119]: Social Providers
+          - link "Federation" [ref=e120] [cursor=pointer]:
+            - /url: /federation-config
+            - img [ref=e121]
+            - generic [ref=e124]: Federation
+        - generic [ref=e125]:
+          - generic [ref=e126]: Network & Access
+          - link "Proxy Routes" [ref=e127] [cursor=pointer]:
+            - /url: /proxy-routes
+            - img [ref=e128]
+            - generic [ref=e133]: Proxy Routes
+          - link "Ziti Network" [ref=e134] [cursor=pointer]:
+            - /url: /ziti-network
+            - img [ref=e135]
+            - generic [ref=e137]: Ziti Network
+          - link "Ziti Discovery" [ref=e138] [cursor=pointer]:
+            - /url: /ziti-discovery
+            - img [ref=e139]
+            - generic [ref=e142]: Ziti Discovery
+          - link "BrowZer" [ref=e143] [cursor=pointer]:
+            - /url: /browzer-management
+            - img [ref=e144]
+            - generic [ref=e147]: BrowZer
+          - link "App Publish" [ref=e148] [cursor=pointer]:
+            - /url: /app-publish
+            - img [ref=e149]
+            - generic [ref=e152]: App Publish
+          - link "Certificates" [ref=e153] [cursor=pointer]:
+            - /url: /certificates
+            - img [ref=e154]
+            - generic [ref=e159]: Certificates
+          - link "Devices" [ref=e160] [cursor=pointer]:
+            - /url: /devices
+            - img [ref=e161]
+            - generic [ref=e163]: Devices
+        - generic [ref=e164]:
+          - generic [ref=e165]: Governance
+          - link "Policies" [ref=e166] [cursor=pointer]:
+            - /url: /policies
+            - img [ref=e167]
+            - generic [ref=e171]: Policies
+          - link "Approval Policies" [ref=e172] [cursor=pointer]:
+            - /url: /approval-policies
+            - img [ref=e173]
+            - generic [ref=e176]: Approval Policies
+          - link "Access Reviews" [ref=e177] [cursor=pointer]:
+            - /url: /access-reviews
+            - img [ref=e178]
+            - generic [ref=e182]: Access Reviews
+          - link "Cert Campaigns" [ref=e183] [cursor=pointer]:
+            - /url: /certification-campaigns
+            - img [ref=e184]
+            - generic [ref=e188]: Cert Campaigns
+          - link "Entitlements" [ref=e189] [cursor=pointer]:
+            - /url: /entitlements
+            - img [ref=e190]
+            - generic [ref=e194]: Entitlements
+          - link "ABAC Policies" [ref=e195] [cursor=pointer]:
+            - /url: /abac-policies
+            - img [ref=e196]
+            - generic [ref=e198]: ABAC Policies
+          - link "Sessions" [ref=e199] [cursor=pointer]:
+            - /url: /sessions
+            - img [ref=e200]
+            - generic [ref=e202]: Sessions
+          - link "Security Alerts" [ref=e203] [cursor=pointer]:
+            - /url: /security-alerts
+            - img [ref=e204]
+            - generic [ref=e206]: Security Alerts
+          - link "Privacy Dashboard" [ref=e207] [cursor=pointer]:
+            - /url: /privacy-dashboard
+            - img [ref=e208]
+            - generic [ref=e210]: Privacy Dashboard
+          - link "Consent Mgmt" [ref=e211] [cursor=pointer]:
+            - /url: /consent-management
+            - img [ref=e212]
+            - generic [ref=e216]: Consent Mgmt
+        - generic [ref=e217]:
+          - generic [ref=e218]: Security & MFA
+          - link "MFA Management" [ref=e219] [cursor=pointer]:
+            - /url: /mfa-management
+            - img [ref=e220]
+            - generic [ref=e222]: MFA Management
+          - link "Risk Policies" [ref=e223] [cursor=pointer]:
+            - /url: /risk-policies
+            - img [ref=e224]
+            - generic [ref=e226]: Risk Policies
+          - link "Login Anomalies" [ref=e227] [cursor=pointer]:
+            - /url: /login-anomalies
+            - img [ref=e228]
+            - generic [ref=e230]: Login Anomalies
+          - link "Hardware Tokens" [ref=e231] [cursor=pointer]:
+            - /url: /hardware-tokens
+            - img [ref=e232]
+            - generic [ref=e235]: Hardware Tokens
+          - link "Device Trust Approval" [ref=e236] [cursor=pointer]:
+            - /url: /device-trust-approval
+            - img [ref=e237]
+            - generic [ref=e246]: Device Trust Approval
+          - link "MFA Bypass Codes" [ref=e247] [cursor=pointer]:
+            - /url: /mfa-bypass-codes
+            - img [ref=e248]
+            - generic [ref=e252]: MFA Bypass Codes
+          - link "Passwordless" [ref=e253] [cursor=pointer]:
+            - /url: /passwordless-settings
+            - img [ref=e254]
+            - generic [ref=e257]: Passwordless
+          - link "Security Keys" [ref=e258] [cursor=pointer]:
+            - /url: /security-keys
+            - img [ref=e259]
+            - generic [ref=e262]: Security Keys
+          - link "Push Devices" [ref=e263] [cursor=pointer]:
+            - /url: /push-devices
+            - img [ref=e264]
+            - generic [ref=e267]: Push Devices
+        - generic [ref=e268]:
+          - generic [ref=e269]: Audit & Reports
+          - link "Audit Logs" [ref=e270] [cursor=pointer]:
+            - /url: /audit-logs
+            - img [ref=e271]
+            - generic [ref=e274]: Audit Logs
+          - link "Unified Audit" [ref=e275] [cursor=pointer]:
+            - /url: /unified-audit
+            - img [ref=e276]
+            - generic [ref=e280]: Unified Audit
+          - link "Admin Audit Log" [ref=e281] [cursor=pointer]:
+            - /url: /admin-audit-log
+            - img [ref=e282]
+            - generic [ref=e285]: Admin Audit Log
+          - link "Login Analytics" [ref=e286] [cursor=pointer]:
+            - /url: /login-analytics
+            - img [ref=e287]
+            - generic [ref=e289]: Login Analytics
+          - link "Auth Analytics" [ref=e290] [cursor=pointer]:
+            - /url: /auth-analytics
+            - img [ref=e291]
+            - generic [ref=e294]: Auth Analytics
+          - link "Usage Analytics" [ref=e295] [cursor=pointer]:
+            - /url: /usage-analytics
+            - img [ref=e296]
+            - generic [ref=e299]: Usage Analytics
+          - link "Risk Dashboard" [ref=e300] [cursor=pointer]:
+            - /url: /risk-dashboard
+            - img [ref=e301]
+            - generic [ref=e303]: Risk Dashboard
+          - link "Compliance" [ref=e304] [cursor=pointer]:
+            - /url: /compliance-reports
+            - img [ref=e305]
+            - generic [ref=e308]: Compliance
+          - link "Compliance Posture" [ref=e309] [cursor=pointer]:
+            - /url: /compliance-dashboard
+            - img [ref=e310]
+            - generic [ref=e313]: Compliance Posture
+          - link "Reports" [ref=e314] [cursor=pointer]:
+            - /url: /reports
+            - img [ref=e315]
+            - generic [ref=e317]: Reports
+        - generic [ref=e318]:
+          - generic [ref=e319]: AI & Intelligence
+          - link "AI Agents" [ref=e320] [cursor=pointer]:
+            - /url: /ai-agents
+            - img [ref=e321]
+            - generic [ref=e324]: AI Agents
+          - link "Security Posture" [ref=e325] [cursor=pointer]:
+            - /url: /ispm
+            - img [ref=e326]
+            - generic [ref=e329]: Security Posture
+          - link "Recommendations" [ref=e330] [cursor=pointer]:
+            - /url: /ai-recommendations
+            - img [ref=e331]
+            - generic [ref=e333]: Recommendations
+          - link "Predictions" [ref=e334] [cursor=pointer]:
+            - /url: /predictive-analytics
+            - img [ref=e335]
+            - generic [ref=e338]: Predictions
+        - generic [ref=e339]:
+          - generic [ref=e340]: Enterprise
+          - link "SAML Providers" [ref=e341] [cursor=pointer]:
+            - /url: /saml-service-providers
+            - img [ref=e342]
+            - generic [ref=e351]: SAML Providers
+          - link "Bulk Operations" [ref=e352] [cursor=pointer]:
+            - /url: /bulk-operations
+            - img [ref=e353]
+            - generic [ref=e357]: Bulk Operations
+          - link "Email Templates" [ref=e358] [cursor=pointer]:
+            - /url: /email-templates
+            - img [ref=e359]
+            - generic [ref=e362]: Email Templates
+          - link "Lifecycle Policies" [ref=e363] [cursor=pointer]:
+            - /url: /lifecycle-policies
+            - img [ref=e364]
+            - generic [ref=e367]: Lifecycle Policies
+          - link "Attestation" [ref=e368] [cursor=pointer]:
+            - /url: /attestation-campaigns
+            - img [ref=e369]
+            - generic [ref=e374]: Attestation
+          - link "Audit Archival" [ref=e375] [cursor=pointer]:
+            - /url: /audit-archival
+            - img [ref=e376]
+            - generic [ref=e381]: Audit Archival
+        - generic [ref=e382]:
+          - generic [ref=e383]: Developer
+          - link "API Explorer" [ref=e384] [cursor=pointer]:
+            - /url: /api-explorer
+            - img [ref=e385]
+            - generic [ref=e389]: API Explorer
+          - link "OAuth Playground" [ref=e390] [cursor=pointer]:
+            - /url: /oauth-playground
+            - img [ref=e391]
+            - generic [ref=e393]: OAuth Playground
+          - link "Developer Settings" [ref=e394] [cursor=pointer]:
+            - /url: /developer-settings
+            - img [ref=e395]
+            - generic [ref=e398]: Developer Settings
+          - link "Error Catalog" [ref=e399] [cursor=pointer]:
+            - /url: /error-catalog
+            - img [ref=e400]
+            - generic [ref=e402]: Error Catalog
+        - generic [ref=e403]:
+          - generic [ref=e404]: System
+          - link "System Health" [ref=e405] [cursor=pointer]:
+            - /url: /system-health
+            - img [ref=e406]
+            - generic [ref=e409]: System Health
+          - link "Organizations" [ref=e410] [cursor=pointer]:
+            - /url: /organizations
+            - img [ref=e411]
+            - generic [ref=e415]: Organizations
+          - link "Delegations" [ref=e416] [cursor=pointer]:
+            - /url: /delegations
+            - img [ref=e417]
+            - generic [ref=e421]: Delegations
+          - link "Webhooks" [ref=e422] [cursor=pointer]:
+            - /url: /webhooks
+            - img [ref=e423]
+            - generic [ref=e426]: Webhooks
+          - link "API Docs" [ref=e427] [cursor=pointer]:
+            - /url: /api-docs
+            - img [ref=e428]
+            - generic [ref=e431]: API Docs
+          - link "Settings" [ref=e432] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e433]
+            - generic [ref=e436]: Settings
+          - link "Tenant Mgmt" [ref=e437] [cursor=pointer]:
+            - /url: /tenant-management
+            - img [ref=e438]
+            - generic [ref=e442]: Tenant Mgmt
+          - link "Notification Mgmt" [ref=e443] [cursor=pointer]:
+            - /url: /notification-admin
+            - img [ref=e444]
+            - generic [ref=e447]: Notification Mgmt
+      - button "SA System Admin admin@openidx.local" [ref=e449] [cursor=pointer]:
+        - generic [ref=e451]: SA
+        - generic [ref=e452]:
+          - paragraph [ref=e453]: System Admin
+          - paragraph [ref=e454]: admin@openidx.local
+    - generic [ref=e455]:
+      - banner [ref=e456]:
+        - button [ref=e457] [cursor=pointer]:
+          - img [ref=e458]
+      - main [ref=e461]:
+        - generic [ref=e463]:
+          - generic [ref=e465]:
+            - heading "Ziti Network" [level=1] [ref=e466]
+            - paragraph [ref=e467]: Manage your OpenZiti zero-trust network overlay
+          - generic [ref=e468]:
+            - tablist [ref=e469]:
+              - tab "Overview" [ref=e470] [cursor=pointer]:
+                - img [ref=e471]
+                - text: Overview
+              - tab "Services" [ref=e476] [cursor=pointer]:
+                - img [ref=e477]
+                - text: Services
+              - tab "Identities" [ref=e480] [cursor=pointer]:
+                - img [ref=e481]
+                - text: Identities
+              - tab "Security" [ref=e485] [cursor=pointer]:
+                - img [ref=e486]
+                - text: Security
+              - tab "Remote Access" [active] [selected] [ref=e488] [cursor=pointer]:
+                - img [ref=e489]
+                - text: Remote Access
+            - tabpanel "Remote Access" [ref=e491]:
+              - generic [ref=e492]:
+                - generic [ref=e494]:
+                  - generic [ref=e495]:
+                    - img [ref=e497]
+                    - generic [ref=e499]:
+                      - generic [ref=e500]:
+                        - heading "BrowZer" [level=3] [ref=e501]
+                        - generic [ref=e502]: Disabled
+                      - paragraph [ref=e503]: Browser-native zero-trust access via Ziti Service Worker
+                  - button "Enable" [ref=e505] [cursor=pointer]
+                - generic [ref=e506]:
+                  - heading "Connections" [level=3] [ref=e507]
+                  - generic [ref=e509]:
+                    - img [ref=e510]
+                    - heading "No remote access connections" [level=3] [ref=e512]
+                    - paragraph [ref=e513]: Create a proxy route with type SSH, RDP, or VNC to auto-provision Guacamole connections.
+                - generic [ref=e514]:
+                  - generic [ref=e515]:
+                    - generic [ref=e516]:
+                      - img [ref=e517]
+                      - heading "Temporary Access Links" [level=3] [ref=e521]
+                      - generic [ref=e522]: "0"
+                    - button "Create Temp Access" [ref=e523] [cursor=pointer]:
+                      - img [ref=e524]
+                      - text: Create Temp Access
+                  - paragraph [ref=e525]: Generate time-limited access URLs for support vendors or temporary access needs.
+                  - generic [ref=e527]:
+                    - img [ref=e528]
+                    - heading "No temporary access links" [level=3] [ref=e531]
+                    - paragraph [ref=e532]: Create a temporary access link to share with support vendors.
+                - button "How BrowZer Works" [ref=e533] [cursor=pointer]:
+                  - img [ref=e534]
+                  - text: How BrowZer Works
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications (F8)":
+    - list
+```

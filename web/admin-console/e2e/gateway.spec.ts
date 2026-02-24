@@ -205,6 +205,9 @@ test.describe('API Gateway - Rate Limiting Headers', () => {
   });
 
   test('Returns 429 when rate limit is exceeded', async ({ request }) => {
+    // Set timeout for this test
+    test.setTimeout(60000);
+
     // This test requires making many requests quickly
     // Skip if rate limiting is not enabled
     let rateLimited = false;
@@ -229,7 +232,7 @@ test.describe('API Gateway - Rate Limiting Headers', () => {
       // Rate limiting likely not enabled in test environment
       console.log('Rate limiting appears to be disabled');
     }
-  }).timeout(60000);
+  });
 });
 
 test.describe('API Gateway - API Documentation', () => {
