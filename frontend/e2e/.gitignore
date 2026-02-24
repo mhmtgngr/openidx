@@ -1,0 +1,7 @@
+# Playwright test outputs
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Authentication storage (should be in gitignore)
+.auth/user.json

@@ -61,7 +61,28 @@ export interface ProvisioningRule {
   updated_at: string
 }
 
-export const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+// Get API base URL based on environment
+const getAPIBaseURL = (): string => {
+  const envURL = import.meta.env.VITE_API_URL
+  if (envURL) {
+    return envURL
+  }
+
+  // In production, use the current origin
+  if (import.meta.env.PROD && window.location.origin !== 'http://localhost:3000') {
+    return window.location.origin
+  }
+
+  return 'http://localhost:8080'
+}
+
+export const baseURL = getAPIBaseURL()
+
+// Get OAuth URL based on environment
+// Export as function for use in auth.tsx
+export function getOAuthURL(): string {
+  return import.meta.env.VITE_OAUTH_URL || baseURL
+}
 
 const axiosInstance = axios.create({
   baseURL,

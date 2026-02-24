@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './lib/auth'
 import { Layout } from './components/layout'
+import { LandingPage } from './pages/landing'
 import { LoginPage } from './pages/login'
 import { DashboardPage } from './pages/dashboard'
 import { UsersPage } from './pages/users'
@@ -132,6 +133,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Routes>
+        <Route path="/landing" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
