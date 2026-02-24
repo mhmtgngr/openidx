@@ -488,8 +488,8 @@ func TestKeyRotationOverlapPeriod(t *testing.T) {
 	// Key lifetime should be 90 days
 	assert.Equal(t, 90*24*time.Hour, KeyLifetime)
 
-	// Key size should be 2048 bits
-	assert.Equal(t, 2048, KeySize)
+	// Key size should be 3072 bits (increased from 2048 for better security margin)
+	assert.Equal(t, 3072, KeySize)
 }
 
 func TestKeyManager_GetPublicKey(t *testing.T) {

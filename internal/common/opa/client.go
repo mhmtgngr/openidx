@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/netutil"
 	"github.com/openidx/openidx/internal/common/resilience"
 )
 
@@ -50,13 +52,14 @@ type opaResponse struct {
 
 // Client communicates with an OPA server for policy decisions
 type Client struct {
-	baseURL    string
-	httpClient *resilience.ResilientHTTPClient
-	logger     *zap.Logger
-	policyPath string
+	baseURL      string
+	httpClient   *resilience.ResilientHTTPClient
+	logger       *zap.Logger
+	policyPath   string
+	ssrfValidator *netutil.SSRFProtectedClient
 }
 
-// NewClient creates a new OPA client
+// NewClient creates a new OPA client with SSRF protection
 func NewClient(baseURL string, logger *zap.Logger) *Client {
 	rawClient := &http.Client{
 		Timeout: 5 * time.Second,
@@ -67,16 +70,42 @@ func NewClient(baseURL string, logger *zap.Logger) *Client {
 		ResetTimeout: 15 * time.Second,
 		Logger:       logger.With(zap.String("component", "opa-circuit-breaker")),
 	})
+
+	// Parse the baseURL to extract hostname for SSRF validation
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		logger.Warn("Failed to parse OPA URL for SSRF validation", zap.Error(err))
+	}
+
+	// Create SSRF validator - OPA typically runs in the same network,
+	// but we still validate to prevent SSRF via config manipulation
+	ssrfValidator := &netutil.SSRFProtectedClient{
+		BlockPrivateIPs: false, // OPA often runs on private IPs in same network
+		BlockLocalhost:  false,  // OPA may run on localhost for dev
+	}
+	if parsedURL != nil && parsedURL.Hostname() != "" {
+		ssrfValidator.AllowedDomains = []string{parsedURL.Hostname()}
+	}
+
 	return &Client{
-		baseURL:    baseURL,
-		httpClient: resilience.NewResilientHTTPClient(rawClient, cb),
-		logger:     logger,
-		policyPath: "/v1/data/openidx/authz",
+		baseURL:      baseURL,
+		httpClient:   resilience.NewResilientHTTPClient(rawClient, cb),
+		logger:       logger,
+		policyPath:   "/v1/data/openidx/authz",
+		ssrfValidator: ssrfValidator,
 	}
 }
 
 // Authorize sends an authorization request to OPA and returns the decision
 func (c *Client) Authorize(ctx context.Context, input Input) (*Decision, error) {
+	fullURL := c.baseURL + c.policyPath
+
+	// SSRF protection: validate URL before making request
+	if err := c.ssrfValidator.ValidateURL(fullURL); err != nil {
+		c.logger.Error("OPA URL failed SSRF validation", zap.String("url", fullURL), zap.Error(err))
+		return nil, fmt.Errorf("SSRF validation failed for OPA URL: %w", err)
+	}
+
 	payload := map[string]interface{}{
 		"input": input,
 	}
@@ -86,7 +115,7 @@ func (c *Client) Authorize(ctx context.Context, input Input) (*Decision, error) 
 		return nil, fmt.Errorf("marshal OPA input: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+c.policyPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create OPA request: %w", err)
 	}

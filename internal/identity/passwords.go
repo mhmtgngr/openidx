@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/openidx/openidx/internal/common/netutil"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -97,6 +99,7 @@ func (s *Service) SavePasswordHistory(ctx context.Context, userID, passwordHash 
 
 // CheckCompromisedPassword checks if a password has been exposed in known data breaches
 // using the HaveIBeenPwned k-anonymity API.
+// Uses SSRF protection to ensure requests only go to the legitimate HIBP API.
 func (s *Service) CheckCompromisedPassword(ctx context.Context, password string) (bool, int, error) {
 	h := sha1.New()
 	h.Write([]byte(password))
@@ -106,6 +109,12 @@ func (s *Service) CheckCompromisedPassword(ctx context.Context, password string)
 	suffix := fullHash[5:]
 
 	url := fmt.Sprintf("https://api.pwnedpasswords.com/range/%s", prefix)
+
+	// SSRF protection: validate URL before making request
+	if err := netutil.KnownPublicAPIs.HIBP.ValidateURL(url); err != nil {
+		return false, 0, fmt.Errorf("SSRF validation failed: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false, 0, fmt.Errorf("failed to create HIBP request: %w", err)

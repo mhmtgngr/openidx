@@ -50,6 +50,11 @@ func main() {
 		log.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
+	// Validate production security settings (blocking)
+	if err := config.ValidateProductionConfig(cfg, log); err != nil {
+		log.Fatal("Production security validation failed", zap.Error(err))
+	}
+
 	cfg.LogSecurityWarnings(log)
 
 	// Initialize tracing

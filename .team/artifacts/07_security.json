@@ -1,0 +1,123 @@
+{
+  "risk_level": "medium",
+  "security_score": 72,
+  "vulnerabilities": [
+    {
+      "id": "V-001",
+      "severity": "high",
+      "file": "internal/identity/passwords.go",
+      "description": "SHA1 used for HaveIBeenPwned password breach checking. While SHA1 is deprecated, this is for API compatibility with HIBP which requires SHA1. This is acceptable for this use case.",
+      "fix": "None needed - HIBP API requires SHA1 prefix. Hash is sent to external service, not used for password storage."
+    },
+    {
+      "id": "V-002",
+      "severity": "medium",
+      "file": "internal/oauth/keys.go",
+      "description": "RSA 2048-bit keys used for JWT signing. While secure, 3072-bit or RSA-4096 or Ed25519 would provide stronger security against future quantum threats.",
+      "fix": "Consider migrating to Ed25519 or RSA-3072 keys for new deployments."
+    },
+    {
+      "id": "V-003",
+      "severity": "medium",
+      "file": "internal/identity/handlers_otp.go",
+      "description": "OTP codes leaked in development mode via IsDevelopment() check. Development mode returns verification codes in API response.",
+      "fix": "Ensure production deployments never run with environment='development'. Add production guard check."
+    },
+    {
+      "id": "V-004",
+      "severity": "medium",
+      "file": "internal/common/config/config.go",
+      "description": "Default database_ssl_mode is 'disable', default TLS is disabled, default cors_allowed_origins is '*' wildcard.",
+      "fix": "ProductionWarnings() function exists but is not enforced. Make these blocking errors for production environment."
+    },
+    {
+      "id": "V-005",
+      "severity": "low",
+      "file": "internal/common/middleware/csrf.go",
+      "description": "CSRF protection disabled by default and only checks cookie-based auth, missing token-based CSRF protection.",
+      "fix": "Enable CSRF by default for production and implement double-submit cookie or CSRF token pattern."
+    },
+    {
+      "id": "V-006",
+      "severity": "low",
+      "file": "internal/admin/privacy.go",
+      "description": "Multiple SQL queries using fmt.Sprintf with user input (consentType, userID, status) - while parameterized placeholders are used, the query construction pattern is fragile.",
+      "fix": "Use a proper query builder library to prevent potential SQL injection from edge cases."
+    },
+    {
+      "id": "V-007",
+      "severity": "low",
+      "file": "internal/auth/password.go",
+      "description": "Random password generator's randomInt() function silently returns 0 on crypto/rand failure instead of erroring.",
+      "fix": "Return error from GenerateRandomPassword if rand.Read fails instead of using fallback."
+    },
+    {
+      "id": "V-008",
+      "severity": "high",
+      "file": "internal/common/config/config.go",
+      "description": "Default session secret 'change-me-in-production-32bytes!' is hardcoded and ProductionWarnings() is advisory only, not blocking.",
+      "fix": "Block server startup if secrets are not properly configured in production mode."
+    }
+  ],
+  "owasp_checks": [
+    {
+      "category": "A01:2021-Broken Access Control",
+      "status": "pass",
+      "detail": "JWT token validation with RS256, role-based middleware implemented, token revocation via Redis blacklist"
+    },
+    {
+      "category": "A02:2021-Cryptographic Failures",
+      "status": "pass",
+      "detail": "Argon2id for password hashing (64MB memory, 3 iterations), RSA-2048 for JWT signing, TLS support"
+    },
+    {
+      "category": "A03:2021-Injection",
+      "status": "pass",
+      "detail": "Prepared SQL statements with pgx using parameterized queries, no string concatenation in user input paths"
+    },
+    {
+      "category": "A04:2021-Insecure Design",
+      "status": "pass",
+      "detail": "Zero Trust architecture with OPA policy engine, access certification workflows, MFA support"
+    },
+    {
+      "category": "A05:2021-Security Misconfiguration",
+      "status": "fail",
+      "detail": "Development mode leaks OTP codes, default SSL mode is 'disable', wildcard CORS default"
+    },
+    {
+      "category": "A06:2021-Vulnerable and Outdated Components",
+      "status": "pass",
+      "detail": "Recent dependencies (jwt/v5, go-redis v9, pgx/v5), no known critical vulnerabilities in scan"
+    },
+    {
+      "category": "A07:2021-Identification and Authentication Failures",
+      "status": "pass",
+      "detail": "MFA with WebAuthn, TOTP, SMS, Email, password policy enforcement, session management"
+    },
+    {
+      "category": "A08:2021-Software and Data Integrity Failures",
+      "status": "pass",
+      "detail": "Tamper-evident audit logging with hash chains, JWKS for key rotation, signature verification"
+    },
+    {
+      "category": "A09:2021-Security Logging and Monitoring Failures",
+      "status": "pass",
+      "detail": "Comprehensive audit logging, Elasticsearch integration, compliance reports generation"
+    },
+    {
+      "category": "A10:2021-Server-Side Request Forgery (SSRF)",
+      "status": "partial",
+      "detail": "HaveIBeenPwned API calls (user-controlled), OPA policy evaluation - need SSRF validation"
+    }
+  ],
+  "verdict": "NEEDS_FIXES",
+  "critical_fixes": [
+    "1. Make ProductionWarnings() blocking for production deployment (A05)",
+    "2. Remove or guard IsDevelopment() OTP leak (A05)",
+    "3. Enable CSRF protection by default or enforce via production check (A05)",
+    "4. Fix randomInt() to return error instead of silent failure in password generator",
+    "5. Add SSRF validation for external API calls (HIBP, OPA)",
+    "6. Consider migrating to RSA-3072 or Ed25519 for JWT signing"
+  ]
+}
