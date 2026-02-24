@@ -1,15 +1,28 @@
 # Multi-stage production Dockerfile for OpenIDX Admin Console
-# Supports openidx.tdv.org domain deployment
+# Supports both build contexts: repo root (.) and web/admin-console
+#
+# Usage from repo root:
+#   docker build -t admin-console -f deployments/docker/Dockerfile.admin-console .
+#
+# Usage from web/admin-console:
+#   docker build -t admin-console -f ../deployments/docker/Dockerfile.admin-console .
+#
+# Or use docker-compose which automatically sets the correct context
 
 # ============================================
 # Stage 1: Dependencies
 # ============================================
 FROM node:20-alpine AS dependencies
 
+# Build argument to specify source directory
+# Defaults to web/admin-console for repo root context
+# Set to '.' when building from web/admin-console directory
+ARG SRC_DIR=web/admin-console
+
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files - path works for both contexts
+COPY ${SRC_DIR}/package*.json ./
 
 # Install dependencies
 RUN npm ci --only=production && \
@@ -20,14 +33,17 @@ RUN npm ci --only=production && \
 # ============================================
 FROM node:20-alpine AS builder
 
+# Re-declare ARG for this stage
+ARG SRC_DIR=web/admin-console
+
 WORKDIR /app
 
-# Copy package files and installed dependencies
-COPY package*.json ./
+# Copy package files and install dependencies
+COPY ${SRC_DIR}/package*.json ./
 RUN npm ci
 
 # Copy source code
-COPY . .
+COPY ${SRC_DIR}/ ./
 
 # Build arguments for production environment
 ARG VITE_API_URL=https://openidx.tdv.org
@@ -106,14 +122,17 @@ CMD ["nginx", "-g", "daemon off;"]
 # ============================================
 FROM node:20-alpine AS development
 
+# Re-declare ARG for this stage
+ARG SRC_DIR=web/admin-console
+
 WORKDIR /app
 
 # Install all dependencies (including dev)
-COPY package*.json ./
+COPY ${SRC_DIR}/package*.json ./
 RUN npm install
 
 # Copy source code
-COPY . .
+COPY ${SRC_DIR}/ ./
 
 # Expose Vite dev server port
 EXPOSE 3000

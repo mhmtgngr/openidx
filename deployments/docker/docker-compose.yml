@@ -1147,6 +1147,7 @@ services:
       dockerfile: ../../deployments/docker/Dockerfile.admin-console
       network: host
       args:
+        - SRC_DIR=.
         - VITE_API_URL=http://openidx.tdv.org:8088
         - VITE_OAUTH_URL=http://openidx.tdv.org:8006
         - VITE_OAUTH_CLIENT_ID=admin-console
