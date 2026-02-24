@@ -663,13 +663,17 @@ func TestValidateZitiToken(t *testing.T) {
 			token: "expired-token-abc123",
 			setupMock: func() *ZitiManager {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Handle the management API validate endpoint
 					if strings.Contains(r.URL.Path, "validate") {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusUnauthorized)
 						json.NewEncoder(w).Encode(map[string]interface{}{
 							"error": "token expired",
 						})
+						return
 					}
+					// Return 404 for any other path
+					w.WriteHeader(http.StatusNotFound)
 				}))
 				t.Cleanup(server.Close)
 
@@ -878,8 +882,30 @@ func TestHandleZitiCallback(t *testing.T) {
 			name:        "Invalid state - not found in storage",
 			queryParams: "code=test-code&state=invalid-state",
 			setupMock: func() *ZitiManager {
+				// Create a mock server that handles callback requests
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if strings.Contains(r.URL.Path, "callback") {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						json.NewEncoder(w).Encode(map[string]interface{}{
+							"error": "invalid or expired state",
+						})
+						return
+					}
+					w.WriteHeader(http.StatusNotFound)
+				}))
+				t.Cleanup(server.Close)
+
 				cfg := MockConfig(t)
-				return &ZitiManager{cfg: cfg, logger: MockLogger(t)}
+				cfg.ZitiCtrlURL = server.URL
+
+				return &ZitiManager{
+					mu:         sync.RWMutex{},
+					cfg:        cfg,
+					logger:     MockLogger(t),
+					mgmtToken:  "test-token",
+					mgmtClient: server.Client(),
+				}
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid or expired state",

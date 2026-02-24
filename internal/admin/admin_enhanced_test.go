@@ -300,6 +300,9 @@ func TestSystemConfigValidation(t *testing.T) {
 					MinLength:    12,
 					HistoryCount: 5,
 				},
+				SessionPolicy: SessionPolicyConfig{
+					TimeoutMinutes: 60,
+				},
 				MFAPolicy: MFAPolicyConfig{
 					AllowedMethods: []string{"invalid_method"},
 				},
@@ -313,6 +316,9 @@ func TestSystemConfigValidation(t *testing.T) {
 				PasswordPolicy: PasswordPolicyConfig{
 					MinLength:    12,
 					HistoryCount: 5,
+				},
+				SessionPolicy: SessionPolicyConfig{
+					TimeoutMinutes: 60,
 				},
 				RateLimit: RateLimitPolicyConfig{
 					PerIP: 20000,

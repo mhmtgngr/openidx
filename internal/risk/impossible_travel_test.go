@@ -172,9 +172,12 @@ func TestCheckImpossibleTravel(t *testing.T) {
 			}
 
 			// Determine if impossible
+			// Travel is considered impossible if speed > 900 km/h
+			// requiredTime = distance / 900 hours
 			isImpossible := false
 			if distance >= 100 && timeDelta > 0 {
-				requiredTime := time.Duration(distance/900) * time.Hour
+				requiredTimeHours := distance / 900.0
+				requiredTime := time.Duration(requiredTimeHours * float64(time.Hour))
 				isImpossible = timeDelta < requiredTime
 			}
 
