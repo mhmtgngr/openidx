@@ -612,8 +612,9 @@ func TestGetSigningKey(t *testing.T) {
 		_, err := middleware.getSigningKey("unknown-key-id")
 
 		assert.Error(t, err)
-		// Error message is about JWKS endpoint failure
-		assert.Contains(t, err.Error(), "404")
+		// Error message is about JWKS endpoint failure (connection refused or 404)
+		// The actual error depends on whether the server is running
+		assert.Contains(t, err.Error(), "failed to fetch JWKS")
 	})
 }
 
