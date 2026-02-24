@@ -3,10 +3,15 @@ import { test, expect } from '@playwright/test'
 /**
  * Production-specific E2E tests for openidx.tdv.org deployment
  * These tests verify the production environment configuration
+ *
+ * Run with:
+ *   PLAYWRIGHT_BASE_URL=https://openidx.tdv.org npm run test:e2e production
  */
 
+const PRODUCTION_DOMAIN = 'openidx.tdv.org'
 const isProduction = process.env.NODE_ENV === 'production' ||
-                     process.env.PLAYWRIGHT_BASE_URL?.includes('openidx.tdv.org')
+                     process.env.PLAYWRIGHT_BASE_URL?.includes('openidx.tdv.org') ||
+                     process.env.PLAYWRIGHT_BASE_URL?.includes(PRODUCTION_DOMAIN)
 
 test.describe('Production Environment Tests', () => {
   test('should use production domain', async ({ page }) => {
