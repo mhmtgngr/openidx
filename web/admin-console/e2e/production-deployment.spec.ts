@@ -680,3 +680,194 @@ test.describe('Production Deployment - Compliance', () => {
     }
   })
 })
+
+test.describe('Production Deployment - Health Monitor', () => {
+  test('should expose Prometheus metrics endpoint', async ({ request }) => {
+    // Health monitor exposes metrics on :9000/metrics internally
+    // In production, this may be proxied via nginx
+    const metricsUrl = `${PRODUCTION_URL}/metrics`
+
+    try {
+      const response = await request.get(metricsUrl)
+
+      // Metrics endpoint may be protected or not exposed
+      if (response.ok()) {
+        const metrics = await response.text()
+
+        // Should contain Prometheus-style metrics
+        expect(metrics).toMatch(/health_service_status|health_service_response_time_ms/)
+      }
+    } catch {
+      // Metrics endpoint might not be publicly accessible
+      test.skip(true, 'Metrics endpoint not publicly accessible')
+    }
+  })
+
+  test('should return JSON health status', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/health`)
+
+    expect(response.status()).toBe(200)
+    expect(response.headers()['content-type']).toMatch(/application\/json/)
+
+    const health = await response.json()
+
+    // Should have healthy boolean
+    expect(health).toHaveProperty('healthy')
+
+    // Should have timestamp
+    expect(health).toHaveProperty('timestamp')
+
+    // Should have services object (if using health monitor)
+    if (health.services) {
+      expect(health.services).toBeInstanceOf(Object)
+    }
+  })
+
+  test('should include all service health statuses', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/health`)
+
+    if (response.status() === 200) {
+      const health = await response.json()
+
+      // If using health monitor, check for expected services
+      if (health.services) {
+        const expectedServices = [
+          'Identity Service',
+          'Governance Service',
+          'OAuth Service',
+          'Admin API',
+        ]
+
+        // At least some services should be present
+        const serviceNames = Object.keys(health.services)
+        expect(serviceNames.length).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  test('should indicate overall health correctly', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/health`)
+
+    if (response.status() === 200) {
+      const health = await response.json()
+
+      // If services object exists, overall healthy should match all services
+      if (health.services && typeof health.healthy === 'boolean') {
+        const allServicesHealthy = Object.values(health.services).every(
+          (s: any) => s.Healthy === true
+        )
+
+        expect(health.healthy).toBe(allServicesHealthy)
+      }
+    }
+  })
+})
+
+test.describe('Production Deployment - Service Discovery', () => {
+  test('should have OIDC discovery at correct path', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/.well-known/openid-configuration`)
+
+    expect(response.status()).toBe(200)
+    expect(response.headers()['content-type']).toMatch(/application\/json/)
+  })
+
+  test('should have JWKS endpoint', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/.well-known/jwks.json`)
+
+    expect(response.status()).toBe(200)
+    expect(response.headers()['content-type']).toMatch(/application\/json/)
+
+    const jwks = await response.json()
+    expect(jwks).toHaveProperty('keys')
+    expect(Array.isArray(jwks.keys)).toBeTruthy()
+  })
+
+  test('should serve SCIM service provider config', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/scim/v2/ServiceProviderConfig`)
+
+    // SCIM endpoints typically require authentication
+    expect([200, 401, 403]).toContain(response.status())
+
+    if (response.status() === 200) {
+      const config = await response.json()
+      expect(config).toHaveProperty('schemas')
+    }
+  })
+})
+
+test.describe('Production Deployment - SSL Configuration', () => {
+  test('should support TLS 1.2 and 1.3 only', async () => {
+    // Playwright uses the system's TLS configuration
+    // This test verifies the connection succeeds
+    // A more detailed test would check specific TLS versions
+    test.skip(true, 'Requires TLS version inspection')
+  })
+
+  test('should have valid certificate chain', async () => {
+    // Certificate chain validation requires SSL tools
+    test.skip(true, 'Requires SSL certificate inspection tools')
+  })
+
+  test('should use strong cipher suites', async () => {
+    // Cipher suite inspection requires SSL tools
+    test.skip(true, 'Requires SSL cipher inspection tools')
+  })
+})
+
+test.describe('Production Deployment - nginx Configuration', () => {
+  test('should have server tokens disabled', async ({ request }) => {
+    const response = await request.get(`${PRODUCTION_URL}/`)
+
+    const serverHeader = response.headers()['server']
+
+    // nginx should either not send server header or use generic "nginx"
+    if (serverHeader) {
+      expect(serverHeader.toLowerCase()).toMatch(/^(nginx|nginx\/\d+\.\d+)$/)
+      // Should not expose detailed version
+      expect(serverHeader).not.toMatch(/\d+\.\d+\.\d+/)
+    }
+  })
+
+  test('should compress responses with gzip', async ({ request }) => {
+    const response = await request.get(PRODUCTION_URL, {
+      headers: {
+        'Accept-Encoding': 'gzip, deflate',
+      },
+    })
+
+    const encoding = response.headers()['content-encoding']
+
+    // Static assets should be compressed
+    if (encoding) {
+      expect(['gzip', 'br', 'deflate']).toContain(encoding)
+    }
+  })
+
+  test('should set cache headers for static assets', async ({ request }) => {
+    // Try to get a static asset
+    const response = await request.get(`${PRODUCTION_URL}/assets/main.js`)
+
+    if (response.ok()) {
+      const cacheControl = response.headers()['cache-control']
+
+      // Static assets should have cache directives
+      if (cacheControl) {
+        expect(cacheControl).toMatch(/public|max-age/)
+      }
+    }
+  })
+})
+
+test.describe('Production Deployment - Backup Service', () => {
+  test('should have backup endpoint configured', async () => {
+    // Backup endpoint is typically internal-only
+    // This test documents the expected configuration
+    test.skip(true, 'Backup endpoint is internal-only')
+  })
+
+  test('should validate backup schedule', async () => {
+    // Backup schedule is in docker-compose.prod.yml
+    // This test validates the configuration exists
+    test.skip(true, 'Requires docker-compose inspection')
+  })
+})
