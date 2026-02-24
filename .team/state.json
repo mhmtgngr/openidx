@@ -22,7 +22,9 @@
     },
     "testing": {
       "status": "running",
-      "_updated": "2026-02-24T11:36:38.677234"
+      "_updated": "2026-02-24T12:07:22.857182",
+      "write_tests": "done",
+      "unit_tests": "passed"
     }
   },
   "project": "The admin-console frontend exists at web/admin-console/ but diagnosis shows 0 .tsx files, indicating the React build is incomplete or stub. Need to: 1) Verify web/admin-console/package.json exists with Vite/React dependencies, 2) Create core UI components using Radix UI primitives (Button, Card, Dialog, etc.), 3) Set up src/pages/ for dashboard, users, access-reviews, policies, audit, 4) Configure Vite build to output static assets, 5) Add API client using React Query for backend calls to identity (8001), governance (8002), provisioning (8003), audit (8004), admin-api (8005). Ensure frontend builds via 'npm run build' and produces dist/ assets.",
