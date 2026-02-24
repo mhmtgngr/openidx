@@ -190,7 +190,10 @@ func TestSessionService_Create_MaxSessions(t *testing.T) {
 			assert.Equal(t, tt.expectedSessions, len(sessionIDs))
 
 			// Cleanup: delete all sessions for this user after each subtest
-			_ = ss.DeleteByUser(ctx, userID)
+			// We ignore ErrSessionNotFound since it's acceptable for cleanup
+			if err := ss.DeleteByUser(ctx, userID); err != nil && err != ErrSessionNotFound {
+				t.Fatalf("cleanup failed: %v", err)
+			}
 		})
 	}
 }
