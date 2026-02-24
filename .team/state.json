@@ -22,9 +22,10 @@
     },
     "testing": {
       "status": "running",
-      "_updated": "2026-02-24T21:22:02.766612",
+      "_updated": "2026-02-24T22:18:59.220004",
       "write_tests": "done",
-      "unit_tests": "passed"
+      "unit_tests": "passed",
+      "e2e": "skipped"
     }
   },
   "project": "The TestSessionService_DeleteByUser test at internal/auth/session_test.go:374 is failing. The test expects an error containing 'session not found' when deleting sessions for a non-existent user, but the method returns nil instead. Review the DeleteByUser method implementation and ensure it properly handles the case where a user has no sessions or doesn't exist. The method should return a domain error rather than nil when no sessions are found for deletion.",
