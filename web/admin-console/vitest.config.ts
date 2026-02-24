@@ -15,15 +15,12 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: true,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
-    pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    pool: 'threads',
     // Fix for jsdom ES module issues with certain packages
     deps: {
       interopDefault: true,
     },
+    // Use tsconfig paths for resolution
+    tsconfig: './tsconfig.json',
   },
 })
