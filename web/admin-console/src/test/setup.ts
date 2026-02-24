@@ -82,10 +82,10 @@ if (!Element.prototype.getAnimations) {
 
 // Mock pointer events for Radix UI
 if (!window.PointerEvent) {
-  ;(window as any).PointerEvent = class MouseEvent extends MouseEvent {
+  ;(window as any).PointerEvent = class PointerEvent extends MouseEvent {
     constructor(
-      public type: string,
-      public init: MouseEventInit & { pointerId?: number; pointerType?: string }
+      type: string,
+      init: MouseEventInit & { pointerId?: number; pointerType?: string }
     ) {
       super(type, init)
     }

@@ -2,28 +2,27 @@ import { vi } from 'vitest'
 
 // Mock the stores - use the @/ path alias to match component imports
 vi.mock('@/lib/store', () => ({
-  useAppStore: vi.fn(() => ({
-    sidebarOpen: true,
-    toggleSidebar: vi.fn(),
-  })),
-  useAuthStore: vi.fn(() => ({
-    user: { name: 'Test User', email: 'test@example.com', role: 'Admin' },
-    logout: vi.fn(),
-  })),
+  useAppStore: vi.fn(),
+  useAuthStore: vi.fn(),
 }))
 
-// Export helper functions for tests
+// Export helper functions for tests - import the mocked modules
+import { useAppStore, useAuthStore } from '@/lib/store'
+
+// Type the mocked stores properly - cast through unknown to bypass strict typing
+type MockedFunction = ReturnType<typeof vi.fn>
+
 export function mockUseAppStore(returnValue: any) {
-  const { useAppStore } = vi.mocked('@/lib/store')
-  useAppStore.mockReturnValue(returnValue)
+  (useAppStore as unknown as MockedFunction).mockReturnValue(returnValue)
 }
 
 export function mockUseAuthStore(returnValue: any) {
-  const { useAuthStore } = vi.mocked('@/lib/store')
-  useAuthStore.mockReturnValue(returnValue)
+  (useAuthStore as unknown as MockedFunction).mockReturnValue(returnValue)
 }
 
 export function getMockedStores() {
-  const { useAppStore, useAuthStore } = vi.mocked('@/lib/store')
-  return { useAppStore, useAuthStore }
+  return {
+    useAppStore: useAppStore as unknown as MockedFunction,
+    useAuthStore: useAuthStore as unknown as MockedFunction,
+  }
 }
