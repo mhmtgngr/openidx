@@ -2,59 +2,61 @@
   "phases": [
     {
       "order": 1,
-      "name": "Complete Frontend Build Setup",
+      "name": "Fix SessionService.DeleteByUser Test",
       "priority": "critical",
-      "category": "fix",
-      "description": "The admin-console frontend exists at web/admin-console/ but diagnosis shows 0 .tsx files, indicating the React build is incomplete or stub. Need to: 1) Verify web/admin-console/package.json exists with Vite/React dependencies, 2) Create core UI components using Radix UI primitives (Button, Card, Dialog, etc.), 3) Set up src/pages/ for dashboard, users, access-reviews, policies, audit, 4) Configure Vite build to output static assets, 5) Add API client using React Query for backend calls to identity (8001), governance (8002), provisioning (8003), audit (8004), admin-api (8005). Ensure frontend builds via 'npm run build' and produces dist/ assets.",
+      "category": "test",
+      "description": "The TestSessionService_DeleteByUser test at internal/auth/session_test.go:374 is failing. The test expects an error containing 'session not found' when deleting sessions for a non-existent user, but the method returns nil instead. Review the DeleteByUser method implementation and ensure it properly handles the case where a user has no sessions or doesn't exist. The method should return a domain error rather than nil when no sessions are found for deletion.",
       "success_criteria": [
-        "web/admin-console/src has 10+ .tsx files",
-        "npm run build completes without errors",
-        "dist/ directory contains built assets"
+        "TestSessionService_DeleteByUser passes",
+        "go test ./internal/auth/... passes all tests",
+        "DeleteByUser returns appropriate error for non-existent users"
       ],
-      "estimated_minutes": 120,
-      "skip_phases": []
+      "estimated_minutes": 45
     },
     {
       "order": 2,
-      "name": "Implement OAuth/OIDC Service",
+      "name": "Fix WebAuthN Middleware TODOs",
       "priority": "high",
-      "category": "feature",
-      "description": "Architecture mentions 'Native OpenIDX OAuth Service' but cmd/ lacks an oauth-service entry point. Need to: 1) Create cmd/oauth-service/main.go with Gin server on port 8006, 2) Implement OAuth 2.0 authorization code flow and PKCE in internal/oauth/, 3) Add JWKS endpoint at /.well-known/jwks.json for JWT verification, 4) Store tokens/refresh tokens in PostgreSQL, 5) Integrate with Redis for session caching, 6) Implement token introspection endpoint for API gateway, 7) Add client registration for admin console. Add unit tests in internal/oauth/*_test.go.",
+      "category": "security",
+      "description": "Two critical security TODOs exist in internal/mfa/webauthn_handler.go at lines 515 and 525. Line 515 notes 'Implement proper authentication middleware' and line 525 notes 'Implement proper CSRF protection'. These are security-critical endpoints for WebAuthN credential management. Implement JWT-based authentication middleware using the existing internal/auth/middleware package and add CSRF token validation using double-submit cookie pattern or same-site cookies with strict flags.",
       "success_criteria": [
-        "cmd/oauth-service/main.go exists and compiles",
-        "GET /.well-known/jwks.json returns valid JWKS",
-        "POST /oauth/token returns JWT access tokens"
+        "WebAuthN handlers use proper authentication middleware",
+        "CSRF protection implemented on state-changing endpoints",
+        "TODO comments removed from webauthn_handler.go lines 515 and 525"
       ],
-      "estimated_minutes": 150,
-      "skip_phases": []
+      "estimated_minutes": 90
     },
     {
       "order": 3,
-      "name": "Clear Remaining TODOs",
+      "name": "Complete SMS Provider Test Coverage",
       "priority": "medium",
-      "category": "fix",
-      "description": "Eight TODOs remain in codebase that need resolution: 1) internal/oauth/oidc_test.go:312 - Set up mock Redis for token caching tests, 2) internal/audit/stream.go:80 - Implement proper origin checking for SSE connections (validate against ALLOWED_ORIGINS env var), 3) internal/mfa/webauthn_handler.go:515 - Implement proper authentication middleware for WebAuthn endpoints, 4) internal/mfa/webauthn_handler.go:525 - Add CSRF protection tokens to WebAuthn forms. The SMS providers (providers_tr.go) comments are implementation notes, not actionable TODOs.",
+      "category": "test",
+      "description": "The TODO at internal/oauth/oidc_test.go:312 indicates need for mock Redis setup. The SMS provider code in internal/sms/providers_tr.go has Turkish phone number normalization logic that could benefit from tests. Set up a mock Redis using miniredis or testcontainers for the OIDC tests, and add comprehensive unit tests for the normalizePhoneTR function covering the three normalization paths: 90XXXXXXXXXX format preservation, 0XXXXXXXXXX to 90XXXXXXXXXX conversion, and 5XXXXXXXXX to 905XXXXXXXXX conversion.",
       "success_criteria": [
-        "grep -r TODO internal/ returns no results",
-        "All tests pass including new mock Redis tests"
+        "OIDC tests have working mock Redis setup",
+        "TODO comment removed from oidc_test.go:312",
+        "Unit tests added for normalizePhoneTR covering all formats",
+        "go test ./internal/oauth/... and ./internal/sms/... pass"
       ],
-      "estimated_minutes": 60,
-      "skip_phases": []
+      "estimated_minutes": 75
     }
   ],
   "project_health": {
     "score": 72,
     "critical_issues": [
-      "Frontend has 0 TSX files - React app not implemented",
-      "OAuth service missing - no authentication flow",
-      "8 TODOs remain in core files"
+      "Failing test in session service (TestSessionService_DeleteByUser)",
+      "Missing authentication middleware on WebAuthN endpoints",
+      "Missing CSRF protection on WebAuthN endpoints",
+      "Mock Redis not configured for OIDC tests"
     ],
     "strengths": [
-      "330 Go files with solid backend structure",
-      "All tests passing (28/28)",
-      "12 Dockerfiles show container-ready architecture",
-      "Docker Compose and Helm configs present"
+      "Build passes successfully",
+      "337 Go files with substantial codebase",
+      "97 test files indicating good test coverage intent",
+      "Docker support with 12 Dockerfiles",
+      "Frontend exists with React 18 + TypeScript",
+      "Recent team script improvements for reliability"
     ]
   },
-  "rationale": "Phase 1 addresses the frontend gap - a Zero Trust platform needs a functional admin UI. Phase 2 builds the OAuth service which is the foundation for all authentication flows mentioned in architecture. Phase 3 clears technical debt. This ordering follows STRICT RULES: build/structure first (frontend is 'broken' as incomplete), then core features (OAuth), then cleanup (TODOs). No completed rounds are repeated."
+  "rationale": "Phase 1 addresses the failing test as the highest priority - tests must pass before any feature work. Phase 2 tackles the security TODOs in WebAuthN handlers, as missing authentication and CSRF protection are security vulnerabilities that must be addressed before production use. Phase 3 completes the test infrastructure (mock Redis) and adds missing test coverage for SMS phone normalization, ensuring reliability of critical communication features. This ordering follows the rules: compilation is already passing, so fix tests first, then address security issues, then complete test infrastructure."
 }

@@ -1,121 +1,85 @@
-```json
 {
   "architecture_decisions": [
-    {"decision": "Vite as build tool for fast HMR and optimized production builds", "rationale": "Faster than webpack for React projects, provides native ESM support, and better DX with instant server start"},
-    {"decision": "Radix UI primitives as component foundation", "rationale": "Unstyled, accessible components that follow WAI-ARIA patterns - more flexible than full component libraries while maintaining a11y"},
-    {"decision": "Zustand for state management", "rationale": "Lightweight alternative to Redux with less boilerplate, TypeScript-friendly, and supports middleware for persistence"},
-    {"decision": "React Query (TanStack Query) for server state", "rationale": "Handles caching, refetching, and loading states automatically; separates server state from client state"},
-    {"decision": "PKCE OAuth flow without SDK", "rationale": "Security best practice for SPA, avoids SDK bloat, full control over token storage and refresh logic"},
-    {"decision": "Centralized API client with axios interceptors", "rationale": "Consistent error handling, automatic token injection, request/response logging for debugging"},
-    {"decision": "File-based routing with layout components", "rationale": "Similar to Next.js patterns but without framework dependency; clear component hierarchy"},
-    {"decision": "Theme system with CSS variables", "rationale": "Enables dark mode support and consistent design tokens across all Radix UI components"}
+    {
+      "decision": "Modify DeleteByUser to return ErrSessionNotFound when sessionIDs slice is empty",
+      "rationale": "The current implementation returns nil when deleting sessions for a user with no sessions, which is ambiguous. Returning a proper domain error allows callers to distinguish between successful deletion of existing sessions vs. no sessions found. This aligns with the existing error handling pattern where Get returns ErrSessionNotFound for non-existent sessions."
+    },
+    {
+      "decision": "Preserve existing test cleanup behavior using error checking",
+      "rationale": "Test cleanup code in TestSessionService_Create_MaxSessions calls DeleteByUser without checking the error. We will continue to allow this pattern by only returning an error when sessions list is empty, not when sessions were successfully deleted. The cleanup code will be updated to explicitly handle the error."
+    },
+    {
+      "decision": "Add explicit test case for non-existent user deletion",
+      "rationale": "Currently no test validates DeleteByUser behavior for users with no sessions. Adding this test case ensures the new error return behavior is properly validated and prevents regression."
+    }
   ],
   "backend_tasks": [
-    {"order": 1, "file": "internal/admin/middleware/cors.go", "action": "modify", "purpose": "Add CORS middleware allowing frontend origin (http://localhost:5173 in dev)", "key_functions": ["CORSMiddleware", "Config"]},
-    {"order": 2, "file": "internal/admin/handlers/dashboard.go", "action": "modify", "purpose": "Add dashboard stats endpoint for metrics", "key_functions": ["GetDashboardStats", "HandleGetDashboard"]},
-    {"order": 3, "file": "internal/admin/handlers/settings.go", "action": "create", "purpose": "Settings CRUD endpoints for system configuration", "key_functions": ["GetSettings", "UpdateSettings", "ValidateSettings"]},
-    {"order": 4, "file": "cmd/admin-api/main.go", "action": "modify", "purpose": "Register new admin routes and CORS middleware", "key_functions": ["registerRoutes", "setupMiddleware"]}
+    {
+      "order": 1,
+      "file": "internal/auth/session.go",
+      "action": "modify",
+      "purpose": "Update DeleteByUser method to return ErrSessionNotFound when sessionIDs slice is empty",
+      "key_functions": [
+        "DeleteByUser"
+      ],
+      "line_number": 251,
+      "change": "Add check after ListByUser call: if len(sessionIDs) == 0 { return ErrSessionNotFound }. Update docstring to reflect this behavior."
+    },
+    {
+      "order": 2,
+      "file": "internal/auth/session_test.go",
+      "action": "modify",
+      "purpose": "Update TestSessionService_Create_MaxSessions cleanup to handle error",
+      "key_functions": [
+        "TestSessionService_Create_MaxSessions"
+      ],
+      "line_number": 193,
+      "change": "Change ss.DeleteByUser(ctx, userID) to _ = ss.DeleteByUser(ctx, userID) to explicitly ignore the error in cleanup code"
+    },
+    {
+      "order": 3,
+      "file": "internal/auth/session_test.go",
+      "action": "modify",
+      "purpose": "Add new test case for deleting sessions of non-existent user",
+      "key_functions": [
+        "TestSessionService_DeleteByUser"
+      ],
+      "line_number": 346,
+      "change": "Add subtest that verifies DeleteByUser returns ErrSessionNotFound when called with a userID that has no sessions"
+    },
+    {
+      "order": 4,
+      "file": "internal/auth/session.go",
+      "action": "modify",
+      "purpose": "Update DeleteByUser docstring to document the new error return behavior",
+      "key_functions": [
+        "DeleteByUser"
+      ],
+      "line_number": 251,
+      "change": "Update comment from 'DeleteByUser removes all sessions for a user' to 'DeleteByUser removes all sessions for a user. Returns ErrSessionNotFound if the user has no sessions.'"
+    }
   ],
-  "frontend_tasks": [
-    {"order": 1, "file": "web/admin-console/package.json", "action": "create", "purpose": "Initialize Vite React TypeScript project with dependencies"},
-    {"order": 2, "file": "web/admin-console/vite.config.ts", "action": "create", "purpose": "Configure Vite with path aliases, proxy to backend services"},
-    {"order": 3, "file": "web/admin-console/tsconfig.json", "action": "create", "purpose": "TypeScript configuration with strict mode and path aliases"},
-    {"order": 4, "file": "web/admin-console/tailwind.config.js", "action": "create", "purpose": "Tailwind config with design tokens and dark mode"},
-    {"order": 5, "file": "web/admin-console/src/main.tsx", "action": "create", "purpose": "Application entry point with providers"},
-    {"order": 6, "file": "web/admin-console/src/App.tsx", "action": "create", "purpose": "Root app component with routing layout"},
-    {"order": 7, "file": "web/admin-console/src/index.css", "action": "create", "purpose": "Global styles and CSS variables for theming"},
-    {"order": 8, "file": "web/admin-console/src/lib/api/client.ts", "action": "create", "purpose": "Axios client with interceptors for auth and error handling"},
-    {"order": 9, "file": "web/admin-console/src/lib/api/identity.ts", "action": "create", "purpose": "Identity service API functions (users, sessions)"},
-    {"order": 10, "file": "web/admin-console/src/lib/api/governance.ts", "action": "create", "purpose": "Governance service API functions (reviews, policies)"},
-    {"order": 11, "file": "web/admin-console/src/lib/api/audit.ts", "action": "create", "purpose": "Audit service API functions (logs, reports)"},
-    {"order": 12, "file": "web/admin-console/src/lib/api/provisioning.ts", "action": "create", "purpose": "SCIM provisioning API functions"},
-    {"order": 13, "file": "web/admin-console/src/lib/api/admin.ts", "action": "create", "purpose": "Admin API functions (dashboard, settings)"},
-    {"order": 14, "file": "web/admin-console/src/stores/authStore.ts", "action": "create", "purpose": "Zustand store for authentication state and actions"},
-    {"order": 15, "file": "web/admin-console/src/stores/uiStore.ts", "action": "create", "purpose": "Zustand store for UI state (sidebar, theme, notifications)"},
-    {"order": 16, "file": "web/admin-console/src/hooks/useAuth.ts", "action": "create", "purpose": "Auth hook with PKCE flow and token refresh"},
-    {"order": 17, "file": "web/admin-console/src/hooks/usePagination.ts", "action": "create", "purpose": "Pagination hook for list views"},
-    {"order": 18, "file": "web/admin-console/src/types/identity.ts", "action": "create", "purpose": "TypeScript types for identity entities"},
-    {"order": 19, "file": "web/admin-console/src/types/governance.ts", "action": "create", "purpose": "TypeScript types for governance entities"},
-    {"order": 20, "file": "web/admin-console/src/types/audit.ts", "action": "create", "purpose": "TypeScript types for audit entities"},
-    {"order": 21, "file": "web/admin-console/src/types/common.ts", "action": "create", "purpose": "Shared types (pagination, error, etc.)"},
-    {"order": 22, "file": "web/admin-console/src/components/ui/button.tsx", "action": "create", "purpose": "Radix UI button primitive with Tailwind styles"},
-    {"order": 23, "file": "web/admin-console/src/components/ui/card.tsx", "action": "create", "purpose": "Radix UI card primitive component"},
-    {"order": 24, "file": "web/admin-console/src/components/ui/dialog.tsx", "action": "create", "purpose": "Radix UI dialog (modal) component"},
-    {"order": 25, "file": "web/admin-console/src/components/ui/table.tsx", "action": "create", "purpose": "Radix UI table component with styling"},
-    {"order": 26, "file": "web/admin-console/src/components/ui/dropdown-menu.tsx", "action": "create", "purpose": "Radix UI dropdown menu component"},
-    {"order": 27, "file": "web/admin-console/src/components/ui/toast.tsx", "action": "create", "purpose": "Toast notification component"},
-    {"order": 28, "file": "web/admin-console/src/components/ui/input.tsx", "action": "create", "purpose": "Styled input and form controls"},
-    {"order": 29, "file": "web/admin-console/src/components/layout/Sidebar.tsx", "action": "create", "purpose": "Navigation sidebar with collapsible mobile menu"},
-    {"order": 30, "file": "web/admin-console/src/components/layout/Header.tsx", "action": "create", "purpose": "Top header with user menu and notifications"},
-    {"order": 31, "file": "web/admin-console/src/components/layout/Layout.tsx", "action": "create", "purpose": "Main layout wrapper combining sidebar and header"},
-    {"order": 32, "file": "web/admin-console/src/pages/Dashboard.tsx", "action": "create", "purpose": "Dashboard page with metrics cards (US-001)"},
-    {"order": 33, "file": "web/admin-console/src/pages/Users.tsx", "action": "create", "purpose": "User list and management page (US-002)"},
-    {"order": 34, "file": "web/admin-console/src/pages/Reviews.tsx", "action": "create", "purpose": "Access review management page (US-003)"},
-    {"order": 35, "file": "web/admin-console/src/pages/Policies.tsx", "action": "create", "purpose": "Governance policy management page (US-004)"},
-    {"order": 36, "file": "web/admin-console/src/pages/Audit.tsx", "action": "create", "purpose": "Audit log query and export page (US-005)"},
-    {"order": 37, "file": "web/admin-console/src/pages/Provisioning.tsx", "action": "create", "purpose": "SCIM provisioning management page (US-006)"},
-    {"order": 38, "file": "web/admin-console/src/pages/Settings.tsx", "action": "create", "purpose": "System settings configuration page (US-010)"},
-    {"order": 39, "file": "web/admin-console/src/pages/Login.tsx", "action": "create", "purpose": "OAuth login page with PKCE flow (US-008)"},
-    {"order": 40, "file": "web/admin-console/src/components/dashboard/StatCard.tsx", "action": "create", "purpose": "Reusable stat card component for dashboard metrics"},
-    {"order": 41, "file": "web/admin-console/src/components/users/UserDialog.tsx", "action": "create", "purpose": "User create/edit dialog form"},
-    {"order": 42, "web/admin-console/src/components/reviews/ReviewItem.tsx", "action": "create", "purpose": "Individual review item with approve/deny actions"},
-    {"order": 43, "file": "web/admin-console/src/components/audit/LogTable.tsx", "action": "create", "purpose": "Audit log table with filtering"},
-    {"order": 44, "file": "web/admin-console/src/routes.tsx", "action": "create", "purpose": "Route configuration with lazy-loaded pages"}
-  ],
+  "frontend_tasks": [],
   "database_migrations": [],
-  "api_contracts": [
-    {"method": "GET", "path": "/api/v1/dashboard", "request": null, "response": {"total_users": "number", "active_sessions": "number", "pending_reviews": "number", "recent_events": "array"}, "status_codes": [200, 401, 500]},
-    {"method": "GET", "path": "/api/v1/settings", "request": null, "response": {"password_policy": "object", "session_timeout": "number", "branding": "object"}, "status_codes": [200, 401]},
-    {"method": "PUT", "path": "/api/v1/settings", "request": {"password_policy": "object", "session_timeout": "number"}, "response": {"success": "boolean"}, "status_codes": [200, 400, 401]}
-  ],
+  "api_contracts": [],
   "test_plan": {
     "unit_tests": [
-      {"file": "web/admin-console/src/hooks/useAuth.test.ts", "cases": ["PKCE flow generates correct code challenge", "Token refresh refreshes before expiry", "Logout clears all tokens"]},
-      {"file": "web/admin-console/src/stores/authStore.test.ts", "cases": ["Login stores tokens", "Logout clears state", "Token refresh persists session"]},
-      {"file": "web/admin-console/src/lib/api/client.test.ts", "cases": ["Interceptor adds auth header", "401 triggers token refresh", "Error response handled correctly"]},
-      {"file": "web/admin-console/src/components/dashboard/StatCard.test.tsx", "cases": ["Renders label and value", "Shows loading skeleton", "Formats numbers correctly"]}
+      {
+        "file": "internal/auth/session_test.go",
+        "cases": [
+          "TestSessionService_DeleteByUser_NonExistentUser - verifies ErrSessionNotFound is returned when user has no sessions",
+          "TestSessionService_DeleteByUser_EmptyUserID - verifies appropriate error for empty user ID",
+          "TestSessionService_DeleteByUser_Success - verifies nil is returned when sessions are successfully deleted"
+        ]
+      }
     ],
-    "e2e_tests": [
-      {"name": "Authentication flow", "steps": ["Visit /login", "Click login button", "Redirect to OAuth provider", "Complete auth flow", "Redirect to dashboard", "Verify user is authenticated"]},
-      {"name": "User management", "steps": ["Navigate to users page", "Click create user", "Fill form and submit", "Verify user appears in list", "Edit user details", "Delete user"]},
-      {"name": "Access review approval", "steps": ["Navigate to reviews page", "Filter by pending status", "Approve review item", "Verify status change", "Bulk approve multiple items"]}
-    ]
+    "e2e_tests": []
   },
   "security_notes": [
-    "Use httpOnly cookies for token storage when possible, fallback to sessionStorage with XSS protection",
-    "Implement CSRF protection for all state-changing operations",
-    "Sanitize all user inputs to prevent XSS attacks",
-    "Use React Query's built-in request deduplication to prevent race conditions",
-    "Implement rate limiting on API calls via axios interceptor",
-    "Log out users on token refresh failure to prevent stale auth",
-    "Use content security policy meta tags in index.html",
-    "Validate all API responses against TypeScript schemas",
-    "Implement proper error boundary components to prevent info leakage",
-    "Use PKCE with SHA-256 for OAuth security"
+    "No security implications - this is an internal service method error handling improvement",
+    "The change does not expose additional information about user existence",
+    "ErrSessionNotFound is already a defined error in the auth package and is used elsewhere"
   ],
-  "docker_changes": [
-    "Add nginx-based container for serving static frontend assets in production",
-    "Update docker-compose.yml to include admin-console service with build context",
-    "Configure environment variables for API endpoints and OAuth URLs",
-    "Add healthcheck endpoint for frontend container"
-  ],
-  "market_driven_features": [
-    "Advanced MFA configuration settings (competitor: Entra ID strength)",
-    "Hybrid identity sync status indicators (competitor: Entra ID/Ping strength)",
-    "Extensive application integration catalog view (competitor: Okta strength)",
-    "API-first approach with embedded OpenAPI docs and try-it-out (competitor: Okta strength)",
-    "Certification management dashboard (competitor: SailPoint strength)",
-    "Compliance reporting templates generator (competitor: SailPoint strength)",
-    "Self-service user portal foundation (market gap: self-service reduces admin burden)",
-    "Advanced conditional access policy builder UI (competitor: Entra ID strength)",
-    "Real-time session monitoring with termination controls (security enhancement)",
-    "Dark mode support throughout (modern UX expectation)",
-    "Keyboard shortcuts for power users (usability enhancement)",
-    "Mobile-responsive design (tablets/mobile support for admins on-the-go)",
-    "Cost optimization dashboard showing savings vs commercial alternatives (business value)",
-    "Multi-language support foundation (i18n ready for global deployments)",
-    "Audit log export with configurable retention policies (compliance requirement)",
-    "Bulk user import/export functionality (operational efficiency)"
-  ]
+  "docker_changes": [],
+  "market_driven_features": []
 }
-```

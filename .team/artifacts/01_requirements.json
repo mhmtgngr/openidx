@@ -1,1 +1,227 @@
-{"project_name":"Admin Console Frontend","summary":"Build a complete React 18+ TypeScript admin console frontend at web/admin-console/ using Vite, Radix UI primitives, Tailwind CSS, Zustand for state management, and React Query for API integration with backend services (identity, governance, provisioning, audit, admin-api).","user_stories":[{"id":"US-001","as_a":"system administrator","i_want":"a dashboard showing key platform metrics","so_that":"I can quickly assess system health and user activity","priority":"high","acceptance_criteria":["Dashboard displays total users, active sessions, pending access reviews, and recent audit events","Metrics refresh automatically every 30 seconds","Cards use Radix UI Card component with loading states"]},{"id":"US-002","as_a":"administrator","i_want":"to view and manage user accounts","so_that":"I can administer identity lifecycle","priority":"critical","acceptance_criteria":["List view displays users with pagination (25 per page)","Search by email or username","Create, edit, delete user actions available","Uses Radix UI Dialog for modals, Table for listings"]},{"id":"US-003","as_a":"governance officer","i_want":"to review and decide on access requests","so_that":"I can enforce access policies","priority":"high","acceptance_criteria":["View pending access reviews in list view","Approve/deny individual items or bulk actions","Filter by status, requester, date range","Uses Radix UI DropdownMenu for actions"]},{"id":"US-004","as_a":"security administrator","i_want":"to manage governance policies","so_that":"I can control access rules","priority":"high","acceptance_criteria":["CRUD operations on policies","Policy editor with rule builder","Activate/deactivate policies","Validation before save"]},{"id":"US-005","as_a":"compliance auditor","i_want":"to query and export audit logs","so_that":"I can meet regulatory requirements","priority":"high","acceptance_criteria":["Advanced query builder with filters (date, user, action, resource)","Export to CSV/JSON","Real-time log streaming option","Retention policy display"]},{"id":"US-006","as_a":"IT administrator","i_want":"to manage SCIM provisioning","so_that":"I can integrate with external identity providers","priority":"medium","acceptance_criteria":["View SCIM users and groups","Sync status indicators","Manual sync trigger","Integration configuration panel"]},{"id":"US-007","as_a":"developer","i_want":"API documentation embedded","so_that":"I can quickly reference endpoints","priority":"low","acceptance_criteria":["OpenAPI spec rendered in-app","Searchable endpoint list","Try-it-out functionality for GET requests"]},{"id":"US-008","as_a":"administrator","i_want":"OAuth authentication using PKCE","so_that":"my sessions are secure","priority":"critical","acceptance_criteria":["Login redirects to OAuth service at port 8006","Token stored securely in httpOnly cookie or sessionStorage","Auto-refresh token before expiry","Logout clears tokens and redirects"]},{"id":"US-009","as_a":"administrator","i_want":"responsive navigation","so_that":"I can use the console on any device","priority":"medium","acceptance_criteria":["Sidebar navigation collapses on mobile","Top bar with user menu and notifications","Breadcrumb navigation","Keyboard shortcuts for common actions"]},{"id":"US-010","as_a":"administrator","i_want":"settings page for system configuration","so_that":"I can customize platform behavior","priority":"medium","acceptance_criteria":["Edit system settings (password policy, session timeout)","Settings persisted via admin-api","Validation on save","Confirmation dialogs for destructive changes"]}],"functional_requirements":[{"id":"FR-001","title":"React Application Structure","description":"Initialize Vite + React 18 + TypeScript project with proper directory structure: src/components/ui/, src/pages/, src/hooks/, src/stores/, src/lib/api/, src/types/","service":"admin-console"},{"id":"FR-002","title":"Radix UI Component Library","description":"Install and configure Radix UI primitives: Button, Card, Dialog, DropdownMenu, Form, Input, Label, Select, Table, Tabs, Toast, NavigationMenu, ScrollArea, Separator, Switch. Create shadcn/ui style wrapper components","service":"admin-console"},{"id":"FR-003","title":"Tailwind CSS Configuration","description":"Configure Tailwind CSS with custom design tokens matching OpenIDX brand colors. Enable dark mode support. Set up CSS variables for theming","service":"admin-console"},{"id":"FR-004","title":"API Client with React Query","description":"Create api client using fetch/axios with React Query (TanStack Query). Implement queryClient with proper caching, retry logic, and error handling. Create typed API functions for each backend service","service":"admin-console"},{"id":"FR-005","title":"State Management with Zustand","description":"Set up Zustand stores for: auth state (user, token, isAuthenticated), UI state (sidebar open, theme), notifications store. Implement persist middleware for auth","service":"admin-console"},{"id":"FR-006","title":"OAuth PKCE Authentication","description":"Implement OAuth 2.0 PKCE flow. Generate code_verifier and code_challenge. Redirect to /oauth/authorize at port 8006. Exchange code for token. Handle token refresh and logout","service":"admin-console"},{"id":"FR-007","title":"Protected Route Component","description":"Create ProtectedRoute wrapper that checks auth state and redirects to login if unauthenticated. Support role-based access control (admin, auditor, operator)","service":"admin-console"},{"id":"FR-008","title":"Dashboard Page","description":"Implement dashboard at src/pages/dashboard.tsx with StatCard components. Fetch metrics from admin-api /api/v1/dashboard. Display charts using recharts or similar","service":"admin-console"},{"id":"FR-009","title":"Users Management Page","description":"Implement users page at src/pages/users.tsx with DataTable component. Integrate with identity-service /api/v1/identity/users. Support pagination, search, filters, and CRUD operations","service":"admin-console"},{"id":"FR-010","title":"Access Reviews Page","description":"Implement access-reviews page at src/pages/access-reviews.tsx. Integrate with governance-service /api/v1/governance/reviews. Display review details and approve/deny actions","service":"admin-console"},{"id":"FR-011","title":"Policies Management Page","description":"Implement policies page at src/pages/policies.tsx. Integrate with governance-service /api/v1/governance/policies. Policy editor with JSON validation","service":"admin-console"},{"id":"FR-012","title":"Audit Logs Page","description":"Implement audit page at src/pages/audit.tsx. Integrate with audit-service /api/v1/audit/events. Query builder with multiple filters. Export functionality","service":"admin-console"},{"id":"FR-013","title":"Provisioning SCIM Page","description":"Implement provisioning page at src/pages/provisioning.tsx. Integrate with provisioning-service /scim/v2/Users and /scim/v2/Groups. Display sync status","service":"admin-console"},{"id":"FR-014","title":"Settings Page","description":"Implement settings page at src/pages/settings.tsx. Integrate with admin-api /api/v1/settings. Form-based settings editor with validation","service":"admin-console"},{"id":"FR-015","title":"Toast Notification System","description":"Implement toast notifications using Radix UI Toast or sonner. Display success/error messages for all CRUD operations. Auto-dismiss after 5 seconds","service":"admin-console"},{"id":"FR-016","title":"Vite Build Configuration","description":"Configure vite.config.ts for production builds. Set base path if needed. Configure build output to dist/. Optimize for production with minification and tree-shaking","service":"admin-console"},{"id":"FR-017","title":"TypeScript Configuration","description":"Configure tsconfig.json with strict mode enabled. Set path aliases (@/ for src). Enable incremental compilation","service":"admin-console"},{"id":"FR-018","title":"Error Boundary","description":"Implement React Error Boundary component to catch and display errors gracefully. Log errors to console and optionally to audit service","service":"admin-console"},{"id":"FR-019","title":"Loading States","description":"Implement skeleton loaders using Radix UI Skeleton or custom components for all async operations. Show loading spinners for buttons during form submission","service":"admin-console"},{"id":"FR-020","title":"Form Validation","description":"Implement form validation using react-hook-form with Zod schemas. Display validation errors inline. Show field-level error messages","service":"admin-console"}],"non_functional_requirements":[{"id":"NFR-001","category":"performance","requirement":"Initial page load must be under 2 seconds on 3G connection","metric":"<2s First Contentful Paint, <5s Time to Interactive"},{"id":"NFR-002","category":"performance","requirement":"Build bundle size must be optimized for production","metric":"<500KB total gzipped, code splitting by route"},{"id":"NFR-003","category":"security","requirement":"All API calls must include JWT bearer token","metric":"100% of authenticated requests include Authorization header"},{"id":"NFR-004","category":"security","requirement":"No sensitive data in localStorage","metric":"Tokens stored in memory or httpOnly cookies only"},{"id":"NFR-005","category":"security","requirement":"CSP headers configured for production","metric":"Strict CSP policy, no unsafe-inline"},{"id":"NFR-006","category":"accessibility","requirement":"WCAG 2.1 AA compliance","metric":"All Radix UI components support keyboard navigation and ARIA labels"},{"id":"NFR-007","category":"usability","requirement":"Responsive design for mobile and desktop","metric":"Works on 320px-2560px widths, mobile-first CSS"},{"id":"NFR-008","category":"scalability","requirement":"Support 1000+ concurrent users","metric":"<100ms API response time for dashboard, efficient caching strategy"},{"id":"NFR-009","category":"maintainability","requirement":"TypeScript strict mode with 100% type coverage","metric":"Zero any types, all components typed"},{"id":"NFR-010","category":"reliability","requirement":"Graceful degradation on API failures","metric":"User-friendly error messages, retry mechanism for failed requests"}],"api_endpoints":[{"method":"GET","path":"/api/v1/dashboard","description":"Fetch dashboard statistics (user count, active sessions, pending reviews, recent events)","roles":["admin","operator"]},{"method":"GET","path":"/api/v1/identity/users","description":"List users with pagination and search","roles":["admin","operator"]},{"method":"POST","path":"/api/v1/identity/users","description":"Create new user account","roles":["admin"]},{"method":"PUT","path":"/api/v1/identity/users/:id","description":"Update user account","roles":["admin"]},{"method":"DELETE","path":"/api/v1/identity/users/:id","description":"Delete user account","roles":["admin"]},{"method":"GET","path":"/api/v1/identity/users/:id/sessions","description":"Get user active sessions","roles":["admin","operator"]},{"method":"GET","path":"/api/v1/governance/reviews","description":"List access reviews with filters","roles":["admin","auditor"]},{"method":"POST","path":"/api/v1/governance/reviews/:id/items/:itemId/decision","description":"Submit decision on access review item","roles":["admin","auditor"]},{"method":"GET","path":"/api/v1/governance/policies","description":"List governance policies","roles":["admin","auditor"]},{"method":"POST","path":"/api/v1/governance/policies","description":"Create new policy","roles":["admin"]},{"method":"PUT","path":"/api/v1/governance/policies/:id","description":"Update policy","roles":["admin"]},{"method":"DELETE","path":"/api/v1/governance/policies/:id","description":"Delete policy","roles":["admin"]},{"method":"GET","path":"/api/v1/audit/events","description":"Query audit logs with filters","roles":["admin","auditor"]},{"method":"POST","path":"/api/v1/audit/reports","description":"Generate compliance report","roles":["admin","auditor"]},{"method":"GET","path":"/api/v1/audit/statistics","description":"Get audit statistics","roles":["admin","auditor"]},{"method":"GET","path":"/scim/v2/Users","description":"List SCIM users","roles":["admin","operator"]},{"method":"GET","path":"/scim/v2/Groups","description":"List SCIM groups","roles":["admin","operator"]},{"method":"GET","path":"/api/v1/settings","description":"Get system settings","roles":["admin"]},{"method":"PUT","path":"/api/v1/settings","description":"Update system settings","roles":["admin"]},{"method":"POST","path":"/oauth/authorize","description":"OAuth authorize endpoint (PKCE flow)","roles":["*"]},{"method":"POST","path":"/oauth/token","description":"OAuth token exchange","roles":["*"]},{"method":"POST","path":"/oauth/logout","description":"OAuth logout","roles":["*"]}],"database_changes":[],"affected_services":["admin-console"],"risks":[{"risk":"Radix UI components require proper theming setup, may cause styling inconsistencies","mitigation":"Create theme provider with CSS variables, test dark mode early"},{"risk":"OAuth PKCE implementation complexity may delay authentication","mitigation":"Use proven library like react-oauth2-pkce or implement standard flow with comprehensive testing"},{"risk":"API integration with 5 different services may cause inconsistent error handling","mitigation":"Create standardized API client with unified error handling and retry logic"},{"risk":"TypeScript strict mode may expose many type errors initially","mitigation":"Enable strict mode from start, create type definitions for all API responses"},{"risk":"Build configuration may not work across different environments","mitigation":"Use environment variables for configuration, test build in CI/CD pipeline"},{"risk":"State management complexity as app grows","mitigation":"Start with Zustand for simple cases, use React Query cache for server state, avoid over-abstraction"},{"risk":"Performance degradation with large datasets in tables","mitigation":"Implement virtual scrolling for large lists, use pagination, limit query results"},{"risk":"CORS issues when calling backend APIs during development","mitigation":"Configure Vite proxy to forward API requests during development"},{"risk":"Accessibility may be overlooked with custom components","mitigation":"Use Radix UI primitives which are accessible by default, test with keyboard navigation"},{"risk":"Token refresh logic may cause session race conditions","mitigation":"Implement proper token refresh interceptor, handle concurrent requests during refresh"}],"implementation_phases":[{"phase":1,"name":"Project Setup and Core Infrastructure","tasks":["Verify web/admin-console/package.json exists or create with Vite, React 18, TypeScript, Tailwind CSS dependencies","Configure vite.config.ts with build settings and dev server proxy","Configure tsconfig.json with strict mode and path aliases","Install Radix UI primitives (Button, Card, Dialog, etc.)","Configure Tailwind CSS with custom theme and dark mode","Create directory structure: src/components/ui/, src/pages/, src/hooks/, src/stores/, src/lib/api/, src/types/","Set up ESLint and Prettier configuration","Create base App component with routing using react-router-dom"]},{"phase":2,"name":"Authentication and State Management","tasks":["Implement Zustand store for auth state (user, token, isAuthenticated)","Implement OAuth PKCE flow with code_verifier and code_challenge generation","Create login page with redirect to OAuth service at port 8006","Create callback handler to exchange code for token","Implement ProtectedRoute component for authenticated pages","Implement token refresh logic","Create logout functionality","Create UI state store (sidebar, theme) and notifications store"]},{"phase":3,"name":"API Client and Core Components","tasks":["Create API client using fetch with React Query setup","Configure QueryClient with caching, retry, and error handling","Create type definitions for all API responses","Create API functions for each backend service (identity, governance, provisioning, audit, admin)","Create base UI components: Button, Card, Dialog, DropdownMenu, Form, Input, Label, Select, Table, Tabs, Toast","Create Layout component with sidebar navigation and top bar","Create Error Boundary component","Create loading skeleton components"]},{"phase":4,"name":"Dashboard and Users Pages","tasks":["Implement Dashboard page at src/pages/dashboard.tsx","Create StatCard component for metrics","Fetch and display dashboard statistics from admin-api","Implement Users page at src/pages/users.tsx","Create DataTable component with pagination","Implement user list with search and filters","Create user creation form with validation","Implement user edit and delete functionality","Add confirmation dialogs for destructive actions"]},{"phase":5,"name":"Governance and Audit Pages","tasks":["Implement Access Reviews page at src/pages/access-reviews.tsx","Display pending reviews with details","Implement approve/deny actions for review items","Implement bulk decision functionality","Implement Policies page at src/pages/policies.tsx","Create policy editor with JSON validation","Implement policy CRUD operations","Implement Audit Logs page at src/pages/audit.tsx","Create query builder with filters","Implement export to CSV/JSON functionality"]},{"phase":6,"name":"Provisioning and Settings Pages","tasks":["Implement Provisioning page at src/pages/provisioning.tsx","Display SCIM users and groups","Show sync status indicators","Implement manual sync trigger","Implement Settings page at src/pages/settings.tsx","Create settings form with validation","Implement settings save functionality","Add confirmation for destructive settings changes"]},{"phase":7,"name":"Build and Deployment","tasks":["Configure Vite production build settings","Implement code splitting by route","Optimize bundle size and analyze dependencies","Test npm run build produces dist/ directory","Configure base path for deployment","Create Dockerfile for admin-console if needed","Update Makefile with build-web target","Test production build locally","Set up CI/CD pipeline for frontend deployment"]},{"phase":8,"name":"Testing and Polish","tasks ["Write unit tests for components using Vitest","Write integration tests for API client","Implement E2E tests using Playwright or Cypress","Test all user flows end-to-end","Test responsive design on mobile and desktop","Test accessibility with keyboard navigation","Test dark mode theming","Performance audit using Lighthouse","Fix identified bugs and issues","Document component library and patterns"]}]}
+{
+  "project_name": "Session DeleteByUser Error Handling",
+  "summary": "Fix the DeleteByUser method in the session service to return a proper domain error when attempting to delete sessions for a non-existent user or a user with no sessions, instead of returning nil.",
+  "user_stories": [
+    {
+      "id": "US-001",
+      "as_a": "system administrator",
+      "i_want": "to receive a clear error message when attempting to delete sessions for a non-existent user",
+      "so_that": "I can distinguish between successful deletions and cases where no sessions existed",
+      "priority": "high",
+      "acceptance_criteria": [
+        "DeleteByUser returns ErrSessionNotFound when user has no sessions in Redis",
+        "DeleteByUser returns ErrSessionNotFound when user_sessions key does not exist",
+        "Existing test TestSessionService_DeleteByUser passes with new behavior",
+        "Error message contains 'session not found' for clear identification"
+      ]
+    },
+    {
+      "id": "US-002",
+      "as_a": "developer",
+      "i_want": "consistent error handling across all session deletion methods",
+      "so_that": "the API behavior is predictable and easy to consume",
+      "priority": "medium",
+      "acceptance_criteria": [
+        "Delete method returns ErrSessionNotFound for non-existent sessions",
+        "DeleteByUser method returns ErrSessionNotFound for users with no sessions",
+        "Both methods follow the same error propagation pattern"
+      ]
+    }
+  ],
+  "functional_requirements": [
+    {
+      "id": "FR-001",
+      "title": "DeleteByUser should return error for no sessions",
+      "description": "The DeleteByUser method must check if any sessions exist for the user before attempting deletion. If ListByUser returns an empty slice, the method should return ErrSessionNotFound instead of nil.",
+      "service": "identity-service"
+    },
+    {
+      "id": "FR-002",
+      "title": "Add test case for non-existent user deletion",
+      "description": "Add a test case to TestSessionService_DeleteByUser that verifies DeleteByUser returns an error when called with a user ID that has no sessions or does not exist.",
+      "service": "identity-service"
+    },
+    {
+      "id": "FR-003",
+      "title": "Preserve existing successful deletion behavior",
+      "description": "When DeleteByUser successfully deletes one or more sessions, it should continue to return nil as it does currently.",
+      "service": "identity-service"
+    },
+    {
+      "id": "FR-M004",
+      "title": "AI-Based Anomaly Detection",
+      "description": "Implement ML models for user behavior analytics to detect anomalous access patterns, impossible travel, and credential stuffing attacks",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Matches market leaders; prevents account takeover"
+    },
+    {
+      "id": "FR-M005",
+      "title": "Passwordless Authentication",
+      "description": "Add FIDO2/WebAuthn support with hardware security keys and platform authenticators",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Eliminates password-related breaches; meets 2025 security expectations"
+    },
+    {
+      "id": "FR-M006",
+      "title": "Privileged Access Management (PAM)",
+      "description": "Implement just-in-time elevation, session recording for privileged accounts, and approval workflows for admin access",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Critical for enterprise compliance; high-value feature"
+    },
+    {
+      "id": "FR-M007",
+      "title": "Device Trust Assessment",
+      "description": "Evaluate device posture (OS version, patches, disk encryption) before granting access; integrate with endpoint detection",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Completes zero trust verification beyond identity"
+    },
+    {
+      "id": "FR-M008",
+      "title": "Just-in-Time Access",
+      "description": "Allow temporary access grants with auto-expiration for contractors and emergency access scenarios",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Reduces standing privileges; audit-friendly"
+    },
+    {
+      "id": "FR-M009",
+      "title": "Machine Identity Management",
+      "description": "Support service accounts, API keys, and certificate lifecycle management for non-human identities",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Addresses emerging 2025 trend; underserved market"
+    },
+    {
+      "id": "FR-M010",
+      "title": "Enhanced Audit Reports",
+      "description": "Pre-built compliance reports for SOC 2, ISO 27001:2022, and GDPR with configurable templates",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Accelerates customer compliance audits"
+    },
+    {
+      "id": "FR-M011",
+      "title": "Risk-Based Adaptive Authentication",
+      "description": "Dynamic MFA requirements based on risk score from location, device, behavior patterns",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Balances security and user experience"
+    }
+  ],
+  "non_functional_requirements": [
+    {
+      "id": "NFR-001",
+      "category": "performance",
+      "requirement": "Error check should not add significant overhead",
+      "metric": "Additional latency < 1ms for DeleteByUser operation"
+    },
+    {
+      "id": "NFR-002",
+      "category": "security",
+      "requirement": "Error messages should not leak sensitive user information",
+      "metric": "Error contains only generic 'session not found' message, no user IDs"
+    },
+    {
+      "id": "NFR-003",
+      "category": "maintainability",
+      "requirement": "Code should follow existing error handling patterns in the codebase",
+      "metric": "Consistent use of existing ErrSessionNotFound error variable"
+    }
+  ],
+  "api_endpoints": [
+    {
+      "method": "DELETE",
+      "path": "/api/v1/identity/sessions/user/:userID",
+      "description": "Delete all sessions for a specific user - returns 404 when user has no active sessions",
+      "roles": [
+        "admin",
+        "operator"
+      ]
+    }
+  ],
+  "database_changes": [
+    {
+      "table": "sessions",
+      "action": "none",
+      "columns": []
+    }
+  ],
+  "affected_services": [
+    "identity-service"
+  ],
+  "risks": [
+    {
+      "risk": "Breaking change for callers that expect nil on empty deletion",
+      "mitigation": "Review all callers of DeleteByUser to ensure they handle the error appropriately. This is an internal service method so impact is limited."
+    },
+    {
+      "risk": "Test cleanup code may fail with new error",
+      "mitigation": "The test cleanup code in TestSessionService_Create_MaxSessions and other tests should be updated to ignore ErrSessionNotFound"
+    }
+  ],
+  "implementation_phases": [
+    {
+      "phase": 1,
+      "name": "Code Analysis",
+      "tasks": [
+        "Review current DeleteByUser implementation in internal/auth/session.go",
+        "Identify all callers of DeleteByUser method",
+        "Review existing error handling patterns in session service"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Implementation",
+      "tasks": [
+        "Modify DeleteByUser to check if sessionIDs slice is empty and return ErrSessionNotFound",
+        "Add test case for deleting sessions of non-existent user",
+        "Update any test cleanup code that calls DeleteByUser"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Testing",
+      "tasks": [
+        "Run unit tests for session service",
+        "Run integration tests for identity service",
+        "Verify no regressions in existing functionality"
+      ]
+    }
+  ],
+  "market_context": {
+    "competitors_analyzed": [
+      "Microsoft Entra ID",
+      "Okta",
+      "\u817e\u8baf\u4e91 IOA",
+      "\u6df1\u4fe1\u670d aTrust",
+      "\u5947\u5b89\u4fe1"
+    ],
+    "key_gaps": [
+      "AI/ML-based anomaly detection and user behavior analytics",
+      "Passwordless authentication methods (FIDO2, WebAuthn, biometric)",
+      "Privileged Access Management (PAM) for admin accounts",
+      "Just-in-Time (JIT) access provisioning with auto-expiration",
+      "Advanced threat intelligence feeds integration"
+    ],
+    "trends": [
+      "AI-Driven IAM",
+      "Passwordless Authentication",
+      "Zero Trust Architecture (ZTA) Mainstream Adoption",
+      "B2B Identity Management Focus",
+      "Machine/Non-Human Identities"
+    ],
+    "unique_selling_points": [
+      "70-80% cost savings compared to commercial solutions",
+      "Open-source with no vendor lock-in",
+      "Modern cloud-native architecture (Go, React, Kubernetes)",
+      "Built-in OPA policy engine for flexible authorization",
+      "Self-hosted option for data sovereignty requirements",
+      "Modular microservices architecture allows selective deployment",
+      "API-first design enables easy integration"
+    ]
+  }
+}

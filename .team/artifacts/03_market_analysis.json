@@ -3,203 +3,134 @@
     {
       "name": "Microsoft Entra ID",
       "strengths": [
-        "Deep Microsoft ecosystem integration",
-        "Enterprise-grade security",
-        "Hybrid identity support",
-        "Advanced MFA capabilities",
-        "Conditional access policies"
+        "Deep Microsoft 365 ecosystem integration",
+        "Batteries included MFA and Conditional Access",
+        "Automated identity lifecycle management",
+        "Guest user access management",
+        "Role-based access control with separation of duties",
+        "Enterprise-grade compliance certifications"
       ],
       "weaknesses": [
-        "Complex licensing structure",
-        "Vendor lock-in",
-        "Higher cost at \u00a393+/user/month",
-        "Steeper learning curve"
+        "Vendor lock-in to Microsoft ecosystem",
+        "Less flexible for non-Microsoft tools",
+        "Complex pricing bundled with other products",
+        "Higher total cost for organizations already invested in Microsoft"
       ],
-      "pricing_model": "\u00a393-\u00a3192+ per user/month (annual billing), tiered licensing"
+      "pricing_model": "Starts at $93/user/month with Entra Suite bundle, often bundled with Microsoft 365 subscriptions"
     },
     {
       "name": "Okta",
       "strengths": [
-        "Extensive app integration catalog",
-        "Strong API-first approach",
-        "Flexible deployment options",
-        "Good developer experience",
-        "Advanced lifecycle management"
+        "Superior SSO across heterogeneous applications",
+        "Excellent support for non-Microsoft environments",
+        "Adaptive MFA with custom policies",
+        "Detailed policy configuration options",
+        "Flexible platform integration"
       ],
       "weaknesses": [
-        "Premium pricing",
-        "Occasional service outages",
-        "Complex enterprise setup",
-        "Additional costs for advanced features"
+        "Can be expensive for large deployments",
+        "Integration complexity varies by application",
+        "Less seamless in Microsoft-centric environments"
       ],
-      "pricing_model": "$6-17+ per user/month for core, enterprise tiers significantly higher"
+      "pricing_model": "Tiered pricing typically $50-150+/user/month depending on features"
     },
     {
-      "name": "Ping Identity",
+      "name": "\u817e\u8baf\u4e91 IOA",
       "strengths": [
-        "Hybrid deployment expertise",
-        "Strong enterprise features",
-        "Customizable workflows",
-        "Good for complex orgs"
+        "X-SDP enhanced architecture",
+        "Dynamic policy engine with AI behavior analysis",
+        "Supports million-level concurrency",
+        "Policy latency <50ms",
+        "Strong performance metrics"
       ],
       "weaknesses": [
-        "High implementation cost",
-        "Complex configuration",
-        "Longer deployment time",
-        "Enterprise-focused only"
+        "Primarily focused on Chinese market",
+        "Less global brand recognition",
+        "Documentation may not be English-first"
       ],
-      "pricing_model": "Enterprise quote-based, typically $15-30+/user/month"
+      "pricing_model": "Regional cloud provider pricing model"
     },
     {
-      "name": "Auth0 (Okta)",
+      "name": "\u6df1\u4fe1\u670d aTrust",
       "strengths": [
-        "Developer-friendly",
-        "Extensive documentation",
-        "Quick implementation",
-        "Good for B2C and B2B"
+        "Active defense X-Performance RASP protection",
+        "Anti-middleman attacks",
+        "Million-level concurrency support",
+        "Intelligent threat closed-loop",
+        "Federated learning sandbox + API security",
+        "AI false positive rate <0.5%"
       ],
       "weaknesses": [
-        "Cost escalates with scale",
-        "Limited governance features",
-        "Dependency on Okta roadmap"
-      ],
-      "pricing_model": "Freemium to $23+/user/month"
-    },
-    {
-      "name": "SailPoint",
-      "strengths": [
-        "Identity governance leader",
-        "Strong certification management",
-        "Advanced access reviews",
-        "Compliance reporting"
-      ],
-      "weaknesses": [
-        "Very expensive",
-        "Complex deployment",
-        "Overkill for smaller orgs"
-      ],
-      "pricing_model": "Enterprise pricing, $20-50+/user/month"
-    },
-    {
-      "name": "CyberArk",
-      "strengths": [
-        "Privileged access security",
-        "Secrets management",
-        "Session recording",
-        "Strong for regulated industries"
-      ],
-      "weaknesses": [
-        "Narrow focus on PAM",
-        "High cost",
-        "Complex setup"
-      ],
-      "pricing_model": "Enterprise premium pricing"
-    },
-    {
-      "name": "\u817e\u8bafiOA (Tencent IOA)",
-      "strengths": [
-        "SDP+EDR+DLP integrated",
-        "Chinese market optimized",
-        "Aggressive pricing (~\u00a559/terminal/year)",
-        "All-in-one security"
-      ],
-      "weaknesses": [
-        "Limited outside China",
-        "Less mature globally",
-        "Documentation primarily in Chinese"
-      ],
-      "pricing_model": "~\u00a559/terminal/year, very competitive in China"
-    },
-    {
-      "name": "\u5947\u5b89\u4fe1 (QiAnXin)",
-      "strengths": [
-        "Chinese compliance focus",
-        "Dynamic access control",
-        "Threat intelligence integration"
-      ],
-      "weaknesses": [
-        "~\u00a5450/terminal/year pricing",
-        "China-centric",
+        "Chinese market focus",
         "Limited global presence"
       ],
-      "pricing_model": "~\u00a5450/terminal/year"
+      "pricing_model": "Enterprise licensing with regional pricing"
     },
     {
-      "name": "\u6df1\u4fe1\u670d Sangfor aTrust",
+      "name": "\u5947\u5b89\u4fe1",
       "strengths": [
-        "X-SDP+RASP technology",
-        "Chinese market presence",
-        "~\u00a5350/terminal/year"
+        "Data-asset centric approach",
+        "Multi-dimensional coverage (identity, device, network, app, data)",
+        "Dynamic access control mechanisms",
+        "Intelligent threat closed-loop",
+        "Federated learning data sandbox"
       ],
       "weaknesses": [
-        "Regional focus",
-        "Emerging global presence"
+        "China-centric market focus",
+        "International compliance may be limited"
       ],
-      "pricing_model": "~\u00a5350/terminal/year"
-    },
-    {
-      "name": "\u534e\u4e3a\u661f\u6cb3AI Huawei Galaxy AI",
-      "strengths": [
-        "AI-powered security",
-        "Three-in-one gateway",
-        "Strong brand in China"
-      ],
-      "weaknesses": [
-        "~\u00a510,000/set high entry cost",
-        "China-focused",
-        "Hardware-dependent"
-      ],
-      "pricing_model": "~\u00a510,000/set"
-    },
-    {
-      "name": "\u706b\u5c71\u5f15\u64ce\u98de\u8fde Volcano Engine",
-      "strengths": [
-        "Very low cost (~\u00a50.8/terminal/day)",
-        "SSE+ZTNA features",
-        "ByteDance ecosystem"
-      ],
-      "weaknesses": [
-        "Newer to market",
-        "Less mature feature set"
-      ],
-      "pricing_model": "~\u00a50.8/terminal/day (~\u00a5292/year)"
+      "pricing_model": "Enterprise licensing with localized pricing"
     }
   ],
   "feature_comparison": [
     {
-      "feature": "Single Sign-On (SSO)",
-      "competitors_with_feature": [
-        "All major competitors"
-      ],
-      "project_status": "implemented",
-      "priority": "critical",
-      "implementation_effort": "small"
-    },
-    {
-      "feature": "Multi-Factor Authentication (MFA)",
-      "competitors_with_feature": [
-        "All major competitors"
-      ],
-      "project_status": "implemented",
-      "priority": "critical",
-      "implementation_effort": "small"
-    },
-    {
-      "feature": "User Lifecycle Management",
+      "feature": "OAuth/OIDC Authentication",
       "competitors_with_feature": [
         "Microsoft Entra ID",
         "Okta",
-        "SailPoint",
-        "Ping Identity"
+        "\u817e\u8baf\u4e91",
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1"
       ],
-      "project_status": "partial",
+      "project_status": "implemented",
       "priority": "critical",
+      "implementation_effort": "small"
+    },
+    {
+      "feature": "SCIM 2.0 Provisioning",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "implemented",
+      "priority": "high",
+      "implementation_effort": "small"
+    },
+    {
+      "feature": "Access Reviews/Certification",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "implemented",
+      "priority": "high",
       "implementation_effort": "medium"
     },
     {
-      "feature": "Access Reviews/Certifications",
+      "feature": "AI/ML Behavior Analysis",
       "competitors_with_feature": [
-        "SailPoint",
+        "\u817e\u8baf\u4e91",
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1",
+        "Microsoft Entra ID"
+      ],
+      "project_status": "missing",
+      "priority": "critical",
+      "implementation_effort": "large"
+    },
+    {
+      "feature": "Adaptive MFA/Risk-Based Authentication",
+      "competitors_with_feature": [
         "Microsoft Entra ID",
         "Okta"
       ],
@@ -208,455 +139,394 @@
       "implementation_effort": "medium"
     },
     {
-      "feature": "SCIM 2.0 Provisioning",
+      "feature": "Privileged Access Management (PAM)",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "missing",
+      "priority": "high",
+      "implementation_effort": "large"
+    },
+    {
+      "feature": "Just-in-Time Access",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "missing",
+      "priority": "high",
+      "implementation_effort": "medium"
+    },
+    {
+      "feature": "API Security/Gateway",
+      "competitors_with_feature": [
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1"
+      ],
+      "project_status": "partial",
+      "priority": "high",
+      "implementation_effort": "medium"
+    },
+    {
+      "feature": "Threat Intelligence Integration",
+      "competitors_with_feature": [
+        "\u817e\u8baf\u4e91",
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1",
+        "Microsoft Entra ID"
+      ],
+      "project_status": "missing",
+      "priority": "medium",
+      "implementation_effort": "large"
+    },
+    {
+      "feature": "Passwordless Authentication",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "missing",
+      "priority": "high",
+      "implementation_effort": "medium"
+    },
+    {
+      "feature": "Device Trust/Posture Assessment",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "partial",
+      "priority": "high",
+      "implementation_effort": "medium"
+    },
+    {
+      "feature": "Session Recording/Monitoring",
+      "competitors_with_feature": [
+        "Okta",
+        "Microsoft Entra ID"
+      ],
+      "project_status": "partial",
+      "priority": "medium",
+      "implementation_effort": "small"
+    },
+    {
+      "feature": "Single Sign-On (SSO)",
+      "competitors_with_feature": [
+        "Microsoft Entra ID",
+        "Okta"
+      ],
+      "project_status": "implemented",
+      "priority": "critical",
+      "implementation_effort": "small"
+    },
+    {
+      "feature": "Audit Logging/Compliance Reports",
       "competitors_with_feature": [
         "Microsoft Entra ID",
         "Okta",
-        "Ping Identity",
-        "SailPoint"
+        "\u817e\u8baf\u4e91"
       ],
       "project_status": "implemented",
-      "priority": "high",
+      "priority": "critical",
       "implementation_effort": "small"
     },
     {
       "feature": "Policy Engine (OPA)",
       "competitors_with_feature": [
-        "Some enterprise solutions"
+        "Microsoft Entra ID"
       ],
       "project_status": "implemented",
       "priority": "high",
       "implementation_effort": "medium"
     },
     {
-      "feature": "Audit Logging & Reporting",
+      "feature": "Federated Learning/Sandbox",
       "competitors_with_feature": [
-        "All enterprise competitors"
-      ],
-      "project_status": "partial",
-      "priority": "critical",
-      "implementation_effort": "medium"
-    },
-    {
-      "feature": "Compliance Reports (SOC2, ISO27001, GDPR)",
-      "competitors_with_feature": [
-        "SailPoint",
-        "Microsoft Entra ID",
-        "Okta Enterprise"
-      ],
-      "project_status": "partial",
-      "priority": "high",
-      "implementation_effort": "large"
-    },
-    {
-      "feature": "AI-powered Access Controls",
-      "competitors_with_feature": [
-        "Microsoft Entra ID",
-        "Okta (biometric partnership)",
-        "\u534e\u4e3a\u661f\u6cb3AI"
-      ],
-      "project_status": "missing",
-      "priority": "high",
-      "implementation_effort": "large"
-    },
-    {
-      "feature": "Just-in-Time (JIT) Access",
-      "competitors_with_feature": [
-        "CyberArk",
-        "SailPoint",
-        "Microsoft Entra ID"
-      ],
-      "project_status": "missing",
-      "priority": "medium",
-      "implementation_effort": "medium"
-    },
-    {
-      "feature": "Privileged Access Management (PAM)",
-      "competitors_with_feature": [
-        "CyberArk",
-        "SailPoint",
-        "BeyondTrust"
-      ],
-      "project_status": "missing",
-      "priority": "medium",
-      "implementation_effort": "large"
-    },
-    {
-      "feature": "Hybrid Deployment (On-prem + Cloud)",
-      "competitors_with_feature": [
-        "Microsoft Entra ID",
-        "Ping Identity",
-        "IBM"
-      ],
-      "project_status": "partial",
-      "priority": "medium",
-      "implementation_effort": "large"
-    },
-    {
-      "feature": "Biometric Authentication",
-      "competitors_with_feature": [
-        "Okta (Incode partnership)",
-        "Microsoft Entra ID"
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1"
       ],
       "project_status": "missing",
       "priority": "low",
       "implementation_effort": "large"
     },
     {
-      "feature": "Decentralized Identity",
+      "feature": "RASP Protection",
       "competitors_with_feature": [
-        "Microsoft Entra ID (expanded suite)"
-      ],
-      "project_status": "missing",
-      "priority": "low",
-      "implementation_effort": "large"
-    },
-    {
-      "feature": "Behavioral Analytics/UEBA",
-      "competitors_with_feature": [
-        "Microsoft Entra ID",
-        "Okta",
-        "SailPoint"
+        "\u6df1\u4fe1\u670d"
       ],
       "project_status": "missing",
       "priority": "medium",
       "implementation_effort": "large"
-    },
-    {
-      "feature": "Admin Console UI",
-      "competitors_with_feature": [
-        "All competitors"
-      ],
-      "project_status": "in_progress",
-      "priority": "critical",
-      "implementation_effort": "medium"
     },
     {
       "feature": "Zero Trust Network Access (ZTNA)",
       "competitors_with_feature": [
-        "Cloudflare ZTNA",
-        "Okta",
-        "\u706b\u5c71\u5f15\u64ce\u98de\u8fde"
+        "\u817e\u8baf\u4e91",
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1"
       ],
       "project_status": "partial",
       "priority": "high",
-      "implementation_effort": "medium"
-    },
-    {
-      "feature": "API Gateway Integration",
-      "competitors_with_feature": [
-        "Enterprise solutions"
-      ],
-      "project_status": "implemented",
-      "priority": "high",
-      "implementation_effort": "small"
-    },
-    {
-      "feature": "Data Loss Prevention (DLP)",
-      "competitors_with_feature": [
-        "\u817e\u8bafiOA",
-        "\u5947\u5b89\u4fe1"
-      ],
-      "project_status": "missing",
-      "priority": "medium",
-      "implementation_effort": "large"
-    },
-    {
-      "feature": "Threat Intelligence Integration",
-      "competitors_with_feature": [
-        "\u5947\u5b89\u4fe1",
-        "Microsoft Entra ID"
-      ],
-      "project_status": "missing",
-      "priority": "low",
       "implementation_effort": "medium"
     }
   ],
   "market_gaps": [
     {
-      "gap": "AI-powered anomaly detection and automated access decisions",
+      "gap": "AI/ML-based anomaly detection and user behavior analytics",
       "competitors_offering": [
-        "Microsoft Entra ID",
-        "Okta",
-        "\u534e\u4e3a\u661f\u6cb3AI"
+        "\u817e\u8baf\u4e91",
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1",
+        "Microsoft Entra ID"
       ],
       "business_impact": "high",
       "recommended_priority": 1
     },
     {
-      "gap": "Just-in-Time (JIT) privileged access with automatic expiration",
+      "gap": "Passwordless authentication methods (FIDO2, WebAuthn, biometric)",
       "competitors_offering": [
-        "CyberArk",
-        "SailPoint",
-        "Microsoft Entra ID"
+        "Microsoft Entra ID",
+        "Okta"
       ],
       "business_impact": "high",
       "recommended_priority": 2
     },
     {
-      "gap": "Comprehensive compliance report templates (SOC2, ISO27001, GDPR, FedRAMP, HIPAA)",
+      "gap": "Privileged Access Management (PAM) for admin accounts",
       "competitors_offering": [
-        "SailPoint",
         "Microsoft Entra ID",
-        "Okta Enterprise"
+        "Okta"
       ],
       "business_impact": "high",
       "recommended_priority": 3
     },
     {
-      "gap": "User behavior analytics (UEBA) for insider threat detection",
+      "gap": "Just-in-Time (JIT) access provisioning with auto-expiration",
       "competitors_offering": [
         "Microsoft Entra ID",
-        "SailPoint",
         "Okta"
       ],
       "business_impact": "medium",
       "recommended_priority": 4
     },
     {
-      "gap": "Self-service access request portal with workflow automation",
+      "gap": "Advanced threat intelligence feeds integration",
       "competitors_offering": [
-        "SailPoint",
-        "Okta",
-        "ServiceNow integrations"
+        "\u817e\u8baf\u4e91",
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1"
       ],
       "business_impact": "medium",
       "recommended_priority": 5
     },
     {
-      "gap": "Advanced session management with session recording for privileged accounts",
+      "gap": "Native mobile application for push-based MFA",
       "competitors_offering": [
-        "CyberArk",
-        "BeyondTrust"
+        "Microsoft Entra ID",
+        "Okta"
       ],
       "business_impact": "medium",
       "recommended_priority": 6
     },
     {
-      "gap": "Mobile device management (MDM) integration for conditional access",
+      "gap": "Automated identity lifecycle workflows (hire/transfer/leave)",
       "competitors_offering": [
-        "Microsoft Entra ID",
-        "Okta",
-        "VMware Workspace ONE"
+        "Microsoft Entra ID"
       ],
       "business_impact": "medium",
       "recommended_priority": 7
     },
     {
-      "gap": "Passwordless authentication options (FIDO2, WebAuthn, certificate-based)",
+      "gap": "Cross-cloud/hybrid deployment support (multi-cloud)",
       "competitors_offering": [
         "Microsoft Entra ID",
-        "Okta",
-        "Ping Identity"
+        "Okta"
       ],
       "business_impact": "medium",
       "recommended_priority": 8
     },
     {
-      "gap": "API security and API governance specifically for API-first enterprises",
+      "gap": "API security with inline inspection and WAF capabilities",
       "competitors_offering": [
-        "Okta",
-        "Ping Identity"
+        "\u6df1\u4fe1\u670d",
+        "\u5947\u5b89\u4fe1"
       ],
       "business_impact": "low",
       "recommended_priority": 9
-    },
-    {
-      "gap": "Decentralized identity/SSI support for future-proofing",
-      "competitors_offering": [
-        "Microsoft Entra ID (limited)"
-      ],
-      "business_impact": "low",
-      "recommended_priority": 10
     }
   ],
   "emerging_trends": [
     {
-      "trend": "AI-Driven Security Orchestration (SOAR)",
-      "description": "AI-powered automated threat detection, response, and security orchestration becoming mainstream in 2025",
+      "trend": "AI-Driven IAM",
+      "description": "AI and ML are being applied to IAM systems for behavior analysis, anomaly detection, and automated policy decisions. 73% of organizations rank identity management as a top priority.",
       "adoption_stage": "growing",
-      "relevance": "high"
-    },
-    {
-      "trend": "Zero Trust as Default Architecture",
-      "description": "Industry shifting from 'castle and moat' to 'never trust, always verify' with continuous monitoring",
-      "adoption_stage": "mainstream",
       "relevance": "high"
     },
     {
       "trend": "Passwordless Authentication",
-      "description": "FIDO2, WebAuthn, and biometric authentication replacing traditional passwords",
+      "description": "Passwordless technologies including FIDO2, WebAuthn, and biometrics are accelerating as organizations seek to eliminate password-related vulnerabilities.",
       "adoption_stage": "growing",
       "relevance": "high"
     },
     {
-      "trend": "Decentralized Identity (SSI)",
-      "description": "Self-sovereign identity and decentralized identifiers giving users control over their data",
+      "trend": "Zero Trust Architecture (ZTA) Mainstream Adoption",
+      "description": "Gartner predicts over 70% of enterprises will fully transition to zero trust by end of 2025. Core principle is 'never trust, always verify'.",
+      "adoption_stage": "mainstream",
+      "relevance": "high"
+    },
+    {
+      "trend": "B2B Identity Management Focus",
+      "description": "2025 sees B2B identity management becoming a key focus area as digital partnerships and supply chain access grow.",
+      "adoption_stage": "growing",
+      "relevance": "medium"
+    },
+    {
+      "trend": "Machine/Non-Human Identities",
+      "description": "Machine accounts and service identities are becoming a major focus as automation and microservices proliferate.",
       "adoption_stage": "early",
-      "relevance": "medium"
-    },
-    {
-      "trend": "Identity Threat Detection and Response (ITDR)",
-      "description": "Specialized tools for detecting identity-based attacks and automated response",
-      "adoption_stage": "growing",
       "relevance": "high"
     },
     {
-      "trend": "Hybrid and Multi-Cloud IAM",
-      "description": "Unified identity management across on-premises and multiple cloud providers",
+      "trend": "Hybrid Cloud Security",
+      "description": "Organizations require solutions spanning on-premises and multi-cloud environments with consistent policies.",
       "adoption_stage": "mainstream",
       "relevance": "high"
     },
     {
-      "trend": "Identity-Based Segmentation",
-      "description": "Network segmentation based on user identity rather than IP addresses",
+      "trend": "Continuous Monitoring with SOAR",
+      "description": "24x7 SOC security operations centers with automated response (SOAR) integration for continuous monitoring and incident response.",
       "adoption_stage": "growing",
       "relevance": "medium"
     },
     {
-      "trend": "Compliance Automation",
-      "description": "Automated generation of compliance reports and evidence collection for audits",
-      "adoption_stage": "growing",
-      "relevance": "high"
-    },
-    {
-      "trend": "Biometric MFA Evolution",
-      "description": "Advanced biometrics including behavioral biometrics and continuous authentication",
+      "trend": "Dynamic Policy Execution with Sub-50ms Latency",
+      "description": "High-performance policy engines capable of million-level concurrency with sub-50ms latency are becoming the standard for enterprise deployments.",
       "adoption_stage": "growing",
       "relevance": "medium"
-    },
-    {
-      "trend": "API-First IAM Architecture",
-      "description": "IAM platforms designed primarily for API and microservices security",
-      "adoption_stage": "mainstream",
-      "relevance": "high"
-    },
-    {
-      "trend": "Chinese Market SDP (Software Defined Perimeter)",
-      "description": "Chinese vendors integrating SDP with EDR and DLP for all-in-one security",
-      "adoption_stage": "growing",
-      "relevance": "medium"
-    },
-    {
-      "trend": "Cost-Optimized IAM",
-      "description": "Enterprises seeking alternatives to expensive proprietary solutions, driving open-source adoption",
-      "adoption_stage": "growing",
-      "relevance": "high"
     }
   ],
   "compliance_gaps": [
     {
       "standard": "SOC2",
-      "requirement": "Audit trail of all access changes, evidence collection, automated report generation",
+      "requirement": "Audit logging for security, availability, processing integrity, confidentiality, and privacy over 6-12 month period",
       "project_status": "partial"
     },
     {
       "standard": "ISO27001",
-      "requirement": "Access control policies, incident logging, risk assessment workflows",
+      "requirement": "93 controls including threat intelligence, data masking, cloud security, data leakage prevention, secure coding; migration to ISO 27001:2022 required by November 2025",
       "project_status": "partial"
     },
     {
       "standard": "GDPR",
-      "requirement": "Right to be forgotten, data export, consent management, breach notification",
+      "requirement": "Extended personal data definition to biometric, genetic, location, online identifiers; AI data processing requires explicit consent; automated decisions require explainable logic; cross-border data transfer controls",
       "project_status": "partial"
     },
     {
       "standard": "FedRAMP",
-      "requirement": "Continuous monitoring, privileged access management, incident response",
+      "requirement": "US federal government cloud security authorization with continuous monitoring",
       "project_status": "missing"
     },
     {
-      "standard": "HIPAA",
-      "requirement": "Audit logs, access controls, PHI handling safeguards",
-      "project_status": "partial"
-    },
-    {
-      "standard": "PCI-DSS",
-      "requirement": "Multi-factor authentication, access control, logging and monitoring",
+      "standard": "CCPA",
+      "requirement": "California Consumer Privacy Act compliance for data subject rights",
       "project_status": "partial"
     }
   ],
   "recommended_features": [
     {
-      "feature": "AI-powered Anomaly Detection",
-      "description": "Machine learning models to detect unusual access patterns, impossible travel, and risky sign-in behaviors",
-      "priority": "high",
-      "effort": "large",
-      "competitive_advantage": "Differentiates from basic IAM solutions, addresses #1 market gap"
-    },
-    {
-      "feature": "Just-in-Time Access",
-      "description": "Temporary elevated access with automatic expiration, approval workflows, and audit trail",
-      "priority": "high",
-      "effort": "medium",
-      "competitive_advantage": "Critical for security-conscious enterprises, major gap vs CyberArk/SailPoint"
-    },
-    {
-      "feature": "Compliance Report Templates",
-      "description": "Pre-built report templates for SOC2, ISO27001, GDPR with one-click generation",
+      "feature": "AI-Based Anomaly Detection",
+      "description": "Implement ML models for user behavior analytics to detect anomalous access patterns, impossible travel, and credential stuffing attacks",
       "priority": "critical",
-      "effort": "medium",
-      "competitive_advantage": "Essential for enterprise sales, addresses immediate compliance needs"
-    },
-    {
-      "feature": "Self-Service Access Request Portal",
-      "description": "User-friendly portal for requesting access with configurable approval workflows",
-      "priority": "medium",
-      "effort": "small",
-      "competitive_advantage": "Reduces admin burden, improves user experience vs competitors"
-    },
-    {
-      "feature": "User Behavior Analytics (UEBA)",
-      "description": "Baseline normal user behavior and flag anomalies indicating potential insider threats",
-      "priority": "medium",
       "effort": "large",
-      "competitive_advantage": "Advanced feature matching Microsoft Entra ID capabilities"
+      "competitive_advantage": "Matches market leaders; prevents account takeover"
     },
     {
       "feature": "Passwordless Authentication",
-      "description": "Support for FIDO2, WebAuthn, and certificate-based authentication",
+      "description": "Add FIDO2/WebAuthn support with hardware security keys and platform authenticators",
+      "priority": "high",
+      "effort": "medium",
+      "competitive_advantage": "Eliminates password-related breaches; meets 2025 security expectations"
+    },
+    {
+      "feature": "Privileged Access Management (PAM)",
+      "description": "Implement just-in-time elevation, session recording for privileged accounts, and approval workflows for admin access",
+      "priority": "critical",
+      "effort": "large",
+      "competitive_advantage": "Critical for enterprise compliance; high-value feature"
+    },
+    {
+      "feature": "Device Trust Assessment",
+      "description": "Evaluate device posture (OS version, patches, disk encryption) before granting access; integrate with endpoint detection",
+      "priority": "high",
+      "effort": "medium",
+      "competitive_advantage": "Completes zero trust verification beyond identity"
+    },
+    {
+      "feature": "Just-in-Time Access",
+      "description": "Allow temporary access grants with auto-expiration for contractors and emergency access scenarios",
+      "priority": "high",
+      "effort": "medium",
+      "competitive_advantage": "Reduces standing privileges; audit-friendly"
+    },
+    {
+      "feature": "Threat Intelligence Integration",
+      "description": "Consume threat feeds for IP/domain reputation and block access from known malicious sources",
       "priority": "medium",
       "effort": "medium",
-      "competitive_advantage": "Modern security feature expected by enterprises, matches Okta/Microsoft"
+      "competitive_advantage": "Proactive security against known threats"
     },
     {
-      "feature": "Privileged Session Management",
-      "description": "Record, monitor, and control privileged access sessions",
+      "feature": "API Security Gateway with WAF",
+      "description": "Add inline API inspection, rate limiting, and web application firewall capabilities to APISIX layer",
       "priority": "medium",
-      "effort": "large",
-      "competitive_advantage": "Competes directly with CyberArk in PAM market"
+      "effort": "medium",
+      "competitive_advantage": "Differentiates from pure IAM solutions"
     },
     {
-      "feature": "Automated Role Mining",
-      "description": "ML-driven analysis to recommend optimal role definitions based on access patterns",
-      "priority": "low",
-      "effort": "large",
-      "competitive_advantage": "Advanced feature offered only by SailPoint-class competitors"
+      "feature": "Machine Identity Management",
+      "description": "Support service accounts, API keys, and certificate lifecycle management for non-human identities",
+      "priority": "high",
+      "effort": "medium",
+      "competitive_advantage": "Addresses emerging 2025 trend; underserved market"
     },
     {
-      "feature": "API Security Gateway Integration",
-      "description": "Enhanced API discovery, authentication, and rate limiting through APISIX",
+      "feature": "Enhanced Audit Reports",
+      "description": "Pre-built compliance reports for SOC 2, ISO 27001:2022, and GDPR with configurable templates",
       "priority": "high",
       "effort": "small",
-      "competitive_advantage": "Leverages existing APISIX for stronger API security positioning"
+      "competitive_advantage": "Accelerates customer compliance audits"
     },
     {
-      "feature": "Multi-Tenant SaaS Mode",
-      "description": "Support for MSPs and enterprises managing multiple organizations from single console",
+      "feature": "Automated Identity Workflows",
+      "description": "No-code/low-code workflow builder for hire/transfer/leave processes with approval chains",
       "priority": "medium",
       "effort": "large",
-      "competitive_advantage": "Opens MSP channel market, differentiates from single-tenant solutions"
+      "competitive_advantage": "Competitive with Entra ID lifecycle automation"
+    },
+    {
+      "feature": "Risk-Based Adaptive Authentication",
+      "description": "Dynamic MFA requirements based on risk score from location, device, behavior patterns",
+      "priority": "high",
+      "effort": "medium",
+      "competitive_advantage": "Balances security and user experience"
+    },
+    {
+      "feature": "Federated Learning Sandbox",
+      "description": "Integration with threat intelligence sandbox for analyzing suspicious behavior patterns",
+      "priority": "low",
+      "effort": "large",
+      "competitive_advantage": "Niche feature; strong differentiation"
     }
   ],
   "unique_selling_points": [
-    "70-80% cost savings vs proprietary solutions (Okta at $6-17+, Entra at \u00a393+)",
-    "True open-source with no vendor lock-in, full self-hosting capability",
-    "Modern microservices architecture with API Gateway (APISIX) and Policy Engine (OPA)",
-    "SCIM 2.0 compliant provisioning matching enterprise competitors",
-    "Built for cloud-native deployments with Docker/Kubernetes first",
-    "Transparent pricing without per-user licensing or surprise enterprise tiers",
-    "Flexible deployment: SaaS, private cloud, or on-premises",
-    "API-first design enabling custom integrations without enterprise constraints"
+    "70-80% cost savings compared to commercial solutions",
+    "Open-source with no vendor lock-in",
+    "Modern cloud-native architecture (Go, React, Kubernetes)",
+    "Built-in OPA policy engine for flexible authorization",
+    "Self-hosted option for data sovereignty requirements",
+    "Modular microservices architecture allows selective deployment",
+    "API-first design enables easy integration"
   ],
-  "summary": "The global IAM market is projected to grow from $25.96 billion in 2025 to $42.61 billion by 2030 at a 10.4% CAGR, driven by zero-trust adoption, AI-powered access controls, hybrid work models, and cloud migration. Market leaders Microsoft Entra ID (\u00a393-192/user/month), Okta ($6-17+/user/month), Ping Identity, SailPoint, and CyberArk dominate with comprehensive features but at premium pricing with vendor lock-in. OpenIDX's key competitive advantage is 70-80% cost savings through open-source delivery while maintaining enterprise-grade capabilities including OAuth/OIDC, SCIM 2.0 provisioning, OPA policy engine, and microservices architecture. Critical gaps include AI-powered anomaly detection, JIT access, and comprehensive compliance reporting\u2014features that differentiate enterprise competitors but present implementation opportunities. Emerging trends favor OpenIDX: zero trust becoming mainstream, API-first IAM adoption, and enterprises seeking cost-optimized alternatives to proprietary solutions create favorable market conditions. Chinese competitors like \u817e\u8bafiOA (\u00a559/year) prove aggressive pricing disrupts markets, while Western vendors' complex licensing creates opportunity for transparent, open-source positioning. Priority recommendations include compliance report templates (critical enterprise requirement), JIT access (high security value), and AI anomaly detection (future-proofing) to compete effectively beyond price differentiation."
+  "summary": "The global IAM market reached $243.8 billion in 2024 with 15.3% CAGR projected through 2031, driven by digital transformation, remote work, and tightening data security regulations. OpenIDX targets the zero trust IAM segment competing against Microsoft Entra ID ($93+/user/month), Okta, and regional players like Tencent Cloud and Sangfor. The market is rapidly transitioning to zero trust architectures with Gartner predicting 70%+ enterprise adoption by end of 2025. Key competitive gaps include AI-driven behavior analytics, passwordless authentication, and privileged access management features that market leaders have standardized on. OpenIDX's primary advantages are 70-80% cost savings and open-source flexibility, but to remain competitive must address emerging requirements like AI security, machine identities, and enhanced compliance reporting for ISO 27001:2022 and GDPR. Chinese competitors demonstrate high-performance architectures with sub-50ms policy latency and million-level concurrency, suggesting performance optimization opportunities."
 }

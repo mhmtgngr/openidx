@@ -248,7 +248,7 @@ func (ss *SessionService) Delete(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// DeleteByUser removes all sessions for a user
+// DeleteByUser removes all sessions for a user. Returns ErrSessionNotFound if the user has no sessions.
 func (ss *SessionService) DeleteByUser(ctx context.Context, userID string) error {
 	if ss.redis == nil {
 		return errors.New("redis client not configured")
@@ -258,6 +258,11 @@ func (ss *SessionService) DeleteByUser(ctx context.Context, userID string) error
 	sessionIDs, err := ss.ListByUser(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("list user sessions: %w", err)
+	}
+
+	// Return error if user has no sessions
+	if len(sessionIDs) == 0 {
+		return ErrSessionNotFound
 	}
 
 	// Delete each session
