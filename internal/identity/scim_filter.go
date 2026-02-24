@@ -485,31 +485,31 @@ func (b *sqlFilterBuilder) buildComparison(expr *FilterExpression) (string, erro
 	case OpEqual:
 		if b.isArrayField(expr.Field) {
 			// For JSON array fields, use JSON contains
-			b.addArg(expr.Value)
-			return fmt.Sprintf("%s::jsonb ? $%d", column, b.paramIndex), nil
+			placeholder, _ := b.addArg(expr.Value)
+			return fmt.Sprintf("%s::jsonb ? %s", column, placeholder), nil
 		}
-		b.addArg(expr.Value)
-		return fmt.Sprintf("%s = $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value)
+		return fmt.Sprintf("%s = %s", column, placeholder), nil
 
 	case OpNotEqual:
 		if b.isArrayField(expr.Field) {
-			b.addArg(expr.Value)
-			return fmt.Sprintf("NOT (%s::jsonb ? $%d)", column, b.paramIndex), nil
+			placeholder, _ := b.addArg(expr.Value)
+			return fmt.Sprintf("NOT (%s::jsonb ? %s)", column, placeholder), nil
 		}
-		b.addArg(expr.Value)
-		return fmt.Sprintf("%s != $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value)
+		return fmt.Sprintf("%s != %s", column, placeholder), nil
 
 	case OpContains:
-		b.addArg("%" + expr.Value + "%")
-		return fmt.Sprintf("%s ILIKE $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg("%" + expr.Value + "%")
+		return fmt.Sprintf("%s ILIKE %s", column, placeholder), nil
 
 	case OpStartsWith:
-		b.addArg(expr.Value + "%")
-		return fmt.Sprintf("%s ILIKE $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value + "%")
+		return fmt.Sprintf("%s ILIKE %s", column, placeholder), nil
 
 	case OpEndsWith:
-		b.addArg("%" + expr.Value)
-		return fmt.Sprintf("%s ILIKE $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg("%" + expr.Value)
+		return fmt.Sprintf("%s ILIKE %s", column, placeholder), nil
 
 	case OpPresent:
 		// Check if field has a value (not null and not empty for arrays)
@@ -521,35 +521,35 @@ func (b *sqlFilterBuilder) buildComparison(expr *FilterExpression) (string, erro
 	case OpGreaterThan:
 		// Try to parse as number, otherwise string comparison
 		if num, err := strconv.ParseFloat(expr.Value, 64); err == nil {
-			b.addArg(num)
-			return fmt.Sprintf("%s > $%d", column, b.paramIndex), nil
+			placeholder, _ := b.addArg(num)
+			return fmt.Sprintf("%s > %s", column, placeholder), nil
 		}
-		b.addArg(expr.Value)
-		return fmt.Sprintf("%s > $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value)
+		return fmt.Sprintf("%s > %s", column, placeholder), nil
 
 	case OpGreaterEq:
 		if num, err := strconv.ParseFloat(expr.Value, 64); err == nil {
-			b.addArg(num)
-			return fmt.Sprintf("%s >= $%d", column, b.paramIndex), nil
+			placeholder, _ := b.addArg(num)
+			return fmt.Sprintf("%s >= %s", column, placeholder), nil
 		}
-		b.addArg(expr.Value)
-		return fmt.Sprintf("%s >= $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value)
+		return fmt.Sprintf("%s >= %s", column, placeholder), nil
 
 	case OpLessThan:
 		if num, err := strconv.ParseFloat(expr.Value, 64); err == nil {
-			b.addArg(num)
-			return fmt.Sprintf("%s < $%d", column, b.paramIndex), nil
+			placeholder, _ := b.addArg(num)
+			return fmt.Sprintf("%s < %s", column, placeholder), nil
 		}
-		b.addArg(expr.Value)
-		return fmt.Sprintf("%s < $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value)
+		return fmt.Sprintf("%s < %s", column, placeholder), nil
 
 	case OpLessEq:
 		if num, err := strconv.ParseFloat(expr.Value, 64); err == nil {
-			b.addArg(num)
-			return fmt.Sprintf("%s <= $%d", column, b.paramIndex), nil
+			placeholder, _ := b.addArg(num)
+			return fmt.Sprintf("%s <= %s", column, placeholder), nil
 		}
-		b.addArg(expr.Value)
-		return fmt.Sprintf("%s <= $%d", column, b.paramIndex), nil
+		placeholder, _ := b.addArg(expr.Value)
+		return fmt.Sprintf("%s <= %s", column, placeholder), nil
 
 	default:
 		return "", fmt.Errorf("unsupported operator: %s", expr.Operator)

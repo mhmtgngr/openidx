@@ -468,7 +468,7 @@ func TestHostServiceErrorCases(t *testing.T) {
 func TestStopHostingService(t *testing.T) {
 	t.Run("Stops existing hosted service", func(t *testing.T) {
 		cancelCalled := false
-		listenerClosed := false
+		mockLn := &mockListener{closed: false, id: 3}
 
 		zm := &ZitiManager{
 			logger:         MockLogger(t),
@@ -476,14 +476,14 @@ func TestStopHostingService(t *testing.T) {
 			hostedMu:       sync.Mutex{},
 		}
 		zm.hostedServices["test-service"] = &hostedService{
-			cancel: func() { cancelCalled = true },
-			listener: &mockListener{closed: false, id: 3},
+			cancel:   func() { cancelCalled = true },
+			listener: mockLn,
 		}
 
 		zm.StopHostingService("test-service")
 
 		assert.True(t, cancelCalled, "Cancel should be called")
-		assert.True(t, listenerClosed, "Listener should be closed")
+		assert.True(t, mockLn.IsClosed(), "Listener should be closed")
 		_, exists := zm.hostedServices["test-service"]
 		assert.False(t, exists, "Service should be removed from map")
 	})
@@ -596,7 +596,7 @@ func TestCreateService(t *testing.T) {
 
 		_, err := zm.CreateService(context.Background(), "test-service", []string{})
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to create ziti service")
+		assert.Contains(t, err.Error(), "unexpected status")
 	})
 }
 

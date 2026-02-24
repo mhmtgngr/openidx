@@ -459,6 +459,11 @@ func (zm *ZitiManager) resolveCallerFromSessions(serviceName string) string {
 
 // parseHostPort extracts host and port from a URL string
 func parseHostPort(rawURL string) (string, int) {
+	// Handle empty string
+	if rawURL == "" {
+		return "", 0
+	}
+
 	// Handle URLs like http://host:port/path
 	if !strings.Contains(rawURL, "://") {
 		rawURL = "http://" + rawURL
@@ -470,6 +475,10 @@ func parseHostPort(rawURL string) (string, int) {
 	}
 
 	host := parsed.Hostname()
+	if host == "" {
+		return "", 0
+	}
+
 	portStr := parsed.Port()
 	if portStr == "" {
 		switch parsed.Scheme {
@@ -1495,13 +1504,17 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 	}
 
 	// Store in database
-	id := uuid.New().String()
-	_, err = zm.db.Pool.Exec(ctx, `
-		INSERT INTO ziti_services (id, ziti_id, name, protocol, host, port, enabled)
-		VALUES ($1, $2, $3, 'tcp', $4, $5, true)
-	`, id, zitiID, name, host, port)
-	if err != nil {
-		zm.logger.Warn("Failed to save service to DB", zap.Error(err))
+	if zm.db != nil && zm.db.Pool != nil {
+		id := uuid.New().String()
+		_, err = zm.db.Pool.Exec(ctx, `
+			INSERT INTO ziti_services (id, ziti_id, name, protocol, host, port, enabled)
+			VALUES ($1, $2, $3, 'tcp', $4, $5, true)
+		`, id, zitiID, name, host, port)
+		if err != nil {
+			zm.logger.Warn("Failed to save service to DB", zap.Error(err))
+		}
+	} else {
+		zm.logger.Warn("Database not available, skipping service storage")
 	}
 
 	return &ZitiServiceInfo{

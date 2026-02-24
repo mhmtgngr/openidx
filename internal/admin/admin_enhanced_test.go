@@ -302,6 +302,7 @@ func TestSystemConfigValidation(t *testing.T) {
 				},
 				SessionPolicy: SessionPolicyConfig{
 					TimeoutMinutes: 60,
+					MaxConcurrent:  5,
 				},
 				MFAPolicy: MFAPolicyConfig{
 					AllowedMethods: []string{"invalid_method"},
@@ -319,6 +320,7 @@ func TestSystemConfigValidation(t *testing.T) {
 				},
 				SessionPolicy: SessionPolicyConfig{
 					TimeoutMinutes: 60,
+					MaxConcurrent:  5,
 				},
 				RateLimit: RateLimitPolicyConfig{
 					PerIP: 20000,
