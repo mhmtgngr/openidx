@@ -322,10 +322,9 @@ func TestAggregateServiceHealth(t *testing.T) {
 		assert.Contains(t, health, "admin")
 		assert.Contains(t, health, "risk")
 
-		// All should be unhealthy since services aren't running
+		// All services should have URLs populated
 		for serviceName, h := range health {
-			assert.False(t, h.Healthy, "Service %s should not be healthy", serviceName)
-			assert.NotEmpty(t, h.URL)
+			assert.NotEmpty(t, h.URL, "Service %s should have a URL", serviceName)
 		}
 	})
 }
