@@ -237,14 +237,6 @@ zai_think() {
   local role_name="$1" sys_file="$2" usr_file="$3" out_file="$4"
   team "$role_name" "Thinking..."
 
-  # Truncate user prompt if too long
-  local usr_content=$(cat "$usr_file")
-  local prompt_len=${#usr_content}
-  if [ $prompt_len -gt 8000 ]; then
-    usr_content="${usr_content:0:7500}"$'\n'"[truncated $(($prompt_len - 7500)) chars]"
-    echo "$usr_content" > "$usr_file"
-  fi
-
   local req_file="$TEAM_DIR/tmp_zai_req.json"
   python3 - "$sys_file" "$usr_file" "$ZAI_MODEL" << 'PYEOF' > "$req_file"
 import json, sys
@@ -543,11 +535,6 @@ claude_do() {
     # 124 = timeout killed, 137 = SIGKILL (OOM), 143 = SIGTERM
     if [ $exit_code -eq 124 ]; then
       warn "  ⏰ Timeout after ${timeout}s"
-      # Truncate prompt by 50% on timeout
-      local prompt_len=${#prompt}
-      prompt="${prompt:0:$(($prompt_len/2))}
-
-[TRUNCATED after timeout — reduced from $prompt_len chars.]"
     elif [ $exit_code -ge 137 ]; then
       warn "  💀 Killed (exit $exit_code) — likely OOM or rate limit"
       # Reduce prompt further on kill
@@ -555,9 +542,7 @@ claude_do() {
 
 [REDUCED — Claude was killed. Simplified prompt.]"
     fi
-    # Exponential backoff with jitter: 5-10s, 10-15s, 15-20s
-    local wait=$((5 * attempt + RANDOM % 5))
-    sleep $wait
+    sleep 5
   done
 
   if [ "$ok" = true ]; then
@@ -625,7 +610,7 @@ docker_up() {
     local h=0 t=0
     for port in $SERVICE_PORTS; do
       t=$((t+1))
-      (timeout 5 curl -sf --max-time 5 "http://localhost:${port}/health" >/dev/null 2>&1 && h=$((h+1)) && log "  ✓ :$port") || warn "  ✗ :$port (timeout/refused)"
+      curl -sf --max-time 5 "http://localhost:${port}/health" >/dev/null 2>&1 && h=$((h+1)) && log "  ✓ :$port" || warn "  ✗ :$port"
     done
     log "  Health: $h/$t"
   else
@@ -824,7 +809,7 @@ phase_design() {
 
   cd "$REPO_DIR"
   local reqs; reqs=$(summarize_artifact "$ARTIFACTS/01_requirements.json" 4000)
-  local files; files=$(find internal frontend/src \( -name "*.go" -o -name "*.tsx" \) 2>/dev/null | grep -vE '(_test|node_modules)' | sort | head -50 || true)
+  local files; files=$(find internal frontend/src -name "*.go" -o -name "*.tsx" 2>/dev/null | grep -v _test | grep -v node_modules | sort | head -50 || true)
   local market; market=$(summarize_artifact "$ARTIFACTS/03_market_analysis.json" 2000)
 
   cat > "$TEAM_DIR/tmp_sys.txt" << 'PROMPT'
@@ -977,7 +962,7 @@ Write comprehensive tests for ALL new files following CLAUDE.md conventions. Wri
 
   # Sub-step 3: E2E (skip if already done or no frontend)
   if [ "$(state_get testing e2e)" != "passed" ] && [ "$(state_get testing e2e)" != "skipped" ]; then
-    if [ -d "$REPO_DIR/frontend" -o -d "$REPO_DIR/web" -o -d "$REPO_DIR/ui" ] && [ -d "$(find "$REPO_DIR" -maxdepth 2 -type d -name 'e2e' 2>/dev/null | head -1)" ]; then
+    if [ -d "$REPO_DIR/frontend" ] && ls "$REPO_DIR/frontend/e2e/"*.spec.* >/dev/null 2>&1; then
       docker_build_all || true; docker_up
       if ! run_playwright; then
         fix_playwright
@@ -1125,7 +1110,7 @@ Follow the service names and ports defined in CLAUDE.md." \
   team "🐳 DevOps" "Smoke testing..."
   local ok=true
   for port in $SERVICE_PORTS; do
-    (timeout 5 curl -sf --max-time 5 "http://localhost:${port}/health" >/dev/null 2>&1 && log "  ✓ :$port") || { warn "  ✗ :$port (timeout/refused)"; ok=false; }
+    curl -sf --max-time 10 "http://localhost:${port}/health" >/dev/null 2>&1 && log "  ✓ :$port" || { warn "  ✗ :$port"; ok=false; }
   done
 
   if [ "$ok" = false ]; then
@@ -1163,7 +1148,6 @@ run_waterfall() {
 
   local t0; t0=$(date +%s)
   local loop=0
-  local has_frontend=false; [ -d "$REPO_DIR/frontend" -o -d "$REPO_DIR/web" -o -d "$REPO_DIR/ui" ] && has_frontend=true
 
   log "╔═══════════════════════════════════════════════╗"
   log "║   AI Development Team                         ║"
@@ -1181,7 +1165,7 @@ run_waterfall() {
     [ $loop -eq 0 ] && { phase_requirements "$project"; phase_market_research; phase_design; }
 
     # Implementation
-    phase_backend; [ "$has_frontend" = true ] && phase_frontend || log "  ⊘ Frontend: no frontend directory, skipping"
+    phase_backend; phase_frontend
 
     # Testing gate
     phase_testing

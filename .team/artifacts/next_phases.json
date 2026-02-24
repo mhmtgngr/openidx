@@ -1,0 +1,60 @@
+{
+  "phases": [
+    {
+      "order": 1,
+      "name": "Complete Frontend Build Setup",
+      "priority": "critical",
+      "category": "fix",
+      "description": "The admin-console frontend exists at web/admin-console/ but diagnosis shows 0 .tsx files, indicating the React build is incomplete or stub. Need to: 1) Verify web/admin-console/package.json exists with Vite/React dependencies, 2) Create core UI components using Radix UI primitives (Button, Card, Dialog, etc.), 3) Set up src/pages/ for dashboard, users, access-reviews, policies, audit, 4) Configure Vite build to output static assets, 5) Add API client using React Query for backend calls to identity (8001), governance (8002), provisioning (8003), audit (8004), admin-api (8005). Ensure frontend builds via 'npm run build' and produces dist/ assets.",
+      "success_criteria": [
+        "web/admin-console/src has 10+ .tsx files",
+        "npm run build completes without errors",
+        "dist/ directory contains built assets"
+      ],
+      "estimated_minutes": 120,
+      "skip_phases": []
+    },
+    {
+      "order": 2,
+      "name": "Implement OAuth/OIDC Service",
+      "priority": "high",
+      "category": "feature",
+      "description": "Architecture mentions 'Native OpenIDX OAuth Service' but cmd/ lacks an oauth-service entry point. Need to: 1) Create cmd/oauth-service/main.go with Gin server on port 8006, 2) Implement OAuth 2.0 authorization code flow and PKCE in internal/oauth/, 3) Add JWKS endpoint at /.well-known/jwks.json for JWT verification, 4) Store tokens/refresh tokens in PostgreSQL, 5) Integrate with Redis for session caching, 6) Implement token introspection endpoint for API gateway, 7) Add client registration for admin console. Add unit tests in internal/oauth/*_test.go.",
+      "success_criteria": [
+        "cmd/oauth-service/main.go exists and compiles",
+        "GET /.well-known/jwks.json returns valid JWKS",
+        "POST /oauth/token returns JWT access tokens"
+      ],
+      "estimated_minutes": 150,
+      "skip_phases": []
+    },
+    {
+      "order": 3,
+      "name": "Clear Remaining TODOs",
+      "priority": "medium",
+      "category": "fix",
+      "description": "Eight TODOs remain in codebase that need resolution: 1) internal/oauth/oidc_test.go:312 - Set up mock Redis for token caching tests, 2) internal/audit/stream.go:80 - Implement proper origin checking for SSE connections (validate against ALLOWED_ORIGINS env var), 3) internal/mfa/webauthn_handler.go:515 - Implement proper authentication middleware for WebAuthn endpoints, 4) internal/mfa/webauthn_handler.go:525 - Add CSRF protection tokens to WebAuthn forms. The SMS providers (providers_tr.go) comments are implementation notes, not actionable TODOs.",
+      "success_criteria": [
+        "grep -r TODO internal/ returns no results",
+        "All tests pass including new mock Redis tests"
+      ],
+      "estimated_minutes": 60,
+      "skip_phases": []
+    }
+  ],
+  "project_health": {
+    "score": 72,
+    "critical_issues": [
+      "Frontend has 0 TSX files - React app not implemented",
+      "OAuth service missing - no authentication flow",
+      "8 TODOs remain in core files"
+    ],
+    "strengths": [
+      "330 Go files with solid backend structure",
+      "All tests passing (28/28)",
+      "12 Dockerfiles show container-ready architecture",
+      "Docker Compose and Helm configs present"
+    ]
+  },
+  "rationale": "Phase 1 addresses the frontend gap - a Zero Trust platform needs a functional admin UI. Phase 2 builds the OAuth service which is the foundation for all authentication flows mentioned in architecture. Phase 3 clears technical debt. This ordering follows STRICT RULES: build/structure first (frontend is 'broken' as incomplete), then core features (OAuth), then cleanup (TODOs). No completed rounds are repeated."
+}

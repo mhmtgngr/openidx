@@ -1,217 +1,85 @@
 REQUIREMENTS (enriched with market research):
-{
-  "project_name": "OpenIDX Production Deployment",
-  "summary": "Deploy complete OpenIDX Zero Trust Access Platform on server with openidx.tdv.org domain for client access",
-  "user_stories": [
-    {
-      "id": "US-001",
-      "as_a": "system administrator",
-      "i_want": "OpenIDX fully deployed and accessible via openidx.tdv.org",
-      "so_that": "clients can access the Zero Trust Access Platform",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "All services running and healthy",
-        "openidx.tdv.org domain resolves and serves admin console",
-        "SSL/TLS certificates configured",
-        "All API endpoints accessible"
-      ]
-    },
-    {
-      "id": "US-002",
-      "as_a": "end user",
-      "i_want": "secure login via openidx.tdv.org",
-      "so_that": "I can access protected applications",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "OAuth/OIDC login flow works",
-        "User can authenticate with credentials",
-        "Session management works"
-      ]
-    },
-    {
-      "id": "US-003",
-      "as_a": "administrator",
-      "i_want": "access to admin console at openidx.tdv.org",
-      "so_that": "I can manage users, policies, and audit logs",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "Admin console loads",
-        "Dashboard displays statistics",
-        "User management functions work"
-      ]
-    },
-    {
-      "id": "US-004",
-      "as_a": "devops engineer",
-      "i_want": "automated deployment scripts",
-      "so_that": "deployment is repeatable and maintainable",
-      "priority": "high",
-      "acceptance_criteria": [
-        "Docker compose setup available",
-        "Kubernetes manifests ready",
-        "Environment configuration documented"
-      ]
-    }
-  ],
-  "functional_requirements": [
-    {
-      "id": "FR-001",
-      "title": "Domain Configuration",
-      "description": "Configure openidx.tdv.org domain with DNS A record pointing to server IP",
-      "service": "infrastructure"
-    },
-    {
-      "id": "FR-002",
-      "title": "SSL Certificate Setup",
-      "description": "Install SSL/TLS certificates for openidx.tdv.org using Let's Encrypt or custom certificates",
-      "service": "apisix"
-    },
-    {
-      "id": "FR-003",
-      "title": "APISIX Gateway Routing",
-      "description": "Configure APISIX routes for openidx.tdv.org to forward to backend services",
-      "service": "apisix"
-    },
-    {
-      "id": "FR-004",
-      "title": "Admin Console Frontend",
-      "description": "Build and deploy React admin console accessible at openidx.tdv.org",
-      "service": "admin-console"
-    },
-    {
-      "id": "FR-005",
-      "title": "Identity Service",
-      "description": "Deploy identity service for user authentication and management",
-      "service": "identity-service"
-    },
-    {
-      "id": "FR-006",
-      "title": "OAuth Service",
-      "description": "Deploy OAuth/OIDC service for authentication flows",
-      "service": "oauth-service"
-    },
-    {
-      "id": "FR-007",
-      "title": "PostgreSQL Database",
-      "description": "Deploy and configure PostgreSQL with proper schemas",
-      "service": "database"
-    },
-    {
-      "id": "FR-008",
-      "title": "Redis Cache",
-      "description": "Deploy Redis for session storage and caching",
-      "service": "redis"
-    },
-    {
-      "id": "FR-009",
-      "title": "Elasticsearch",
-      "description": "Deploy Elasticsearch for audit log storage and search",
-      "service": "elasticsearch"
-    },
-    {
-      "id": "FR-M010",
-      "title": "Self-Service User Portal",
-      "description": "Password reset, profile management, security questions, MFA enrollment, and active sessions view",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Reduces helpdesk costs by 30-40%, standard across competitors"
-    },
-    {
-      "id": "FR-M011",
-      "title": "AI/ML Risk-Based Authentication",
-      "description": "Real-time risk scoring based on location, device, behavior patterns, and threat intelligence for step-up authentication",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Key differentiator for Microsoft and Okta, prevents account takeover"
-    },
-    {
-      "id": "FR-M012",
-      "title": "Passwordless Authentication",
-      "description": "Support for FIDO2/WebAuthn, passkeys, hardware keys (YubiKey), and biometric authentication",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Eliminates phishing attacks targeting passwords, becoming industry standard"
-    },
-    {
-      "id": "FR-M013",
-      "title": "Just-in-Time Privileged Access",
-      "description": "Temporary privilege elevation with approval workflows, automatic expiration, and audit trails",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Reduces standing privilege risk, competing with CyberArk
+{"project_name":"Admin Console Frontend","summary":"Build a complete React 18+ TypeScript admin console frontend at web/admin-console/ using Vite, Radix UI primitives, Tailwind CSS, Zustand for state management, and React Query for API integration with backend services (identity, governance, provisioning, audit, admin-api).","user_stories":[{"id":"US-001","as_a":"system administrator","i_want":"a dashboard showing key platform metrics","so_that":"I can quickly assess system health and user activity","priority":"high","acceptance_criteria":["Dashboard displays total users, active sessions, pending access reviews, and recent audit events","Metrics refresh automatically every 30 seconds","Cards use Radix UI Card component with loading states"]},{"id":"US-002","as_a":"administrator","i_want":"to view and manage user accounts","so_that":"I can administer identity lifecycle","priority":"critical","acceptance_criteria":["List view displays users with pagination (25 per page)","Search by email or username","Create, edit, delete user actions available","Uses Radix UI Dialog for modals, Table for listings"]},{"id":"US-003","as_a":"governance officer","i_want":"to review and decide on access requests","so_that":"I can enforce access policies","priority":"high","acceptance_criteria":["View pending access reviews in list view","Approve/deny individual items or bulk actions","Filter by status, requester, date range","Uses Radix UI DropdownMenu for actions"]},{"id":"US-004","as_a":"security administrator","i_want":"to manage governance policies","so_that":"I can control access rules","priority":"high","acceptance_criteria":["CRUD operations on policies","Policy editor with rule builder","Activate/deactivate policies","Validation before save"]},{"id":"US-005","as_a":"compliance auditor","i_want":"to query and export audit logs","so_that":"I can meet regulatory requirements","priority":"high","acceptance_criteria":["Advanced query builder with filters (date, user, action, resource)","Export to CSV/JSON","Real-time log streaming option","Retention policy display"]},{"id":"US-006","as_a":"IT administrator","i_want":"to manage SCIM provisioning","so_that":"I can integrate with external identity providers","priority":"medium","acceptance_criteria":["View SCIM users and groups","Sync status indicators","Manual sync trigger","Integration configuration panel"]},{"id":"US-007","as_a":"developer","i_want":"API documentation embedded","so_that":"I can quickly reference endpoints","priority":"low","acceptance_criteria":["OpenAPI spec rendered in-app","Searchable endpoint list","Try-it-out functionality for GET requests"]},{"id":"US-008","as_a":"administrator","i_want":"OAuth authentication using PKCE","so_that":"my sessions are secure","priority":"critical","acceptance_criteria":["Login redirects to OAuth service at port 8006","Token stored securely in httpOnly cookie or sessionStorage","Auto-refresh token before expiry","Logout clears tokens and redirects"]},{"id":"US-009","as_a":"administrator","i_want":"responsive navigation","so_that":"I can use the console on any device","priority":"medium","acceptance_criteria":["Sidebar navigation collapses on mobile","Top bar with user menu and notifications","Breadcrumb navigation","Keyboard shortcuts for common actions"]},{"id":"US-010","as_a":"administrator","i_want":"settings page for system configuration","so_that":"I can customize platform behavior","priority":"medium","acceptance_criteria":["Edit system settings (password policy, session timeout)","Settings persisted via admin-api","Validation on save","Confirmation dialogs for destructive changes"]}],"functional_requirements":[{"id":"FR-001","title":"React Application Structure","description":"Initialize Vite + React 18 + TypeScript project with proper directory structure: src/components/ui/, src/pages/, src/hooks/, src/stores/, src/lib/api/, src/types/","service":"admin-console"},{"id":"FR-002","title":"Radix UI Component Library","description":"Install 
 
 MARKET ANALYSIS:
 {
-  "competitor_summary": [
-    {
-      "name": "Microsoft Entra ID",
-      "strengths": [
-        "Seamless Microsoft 365 ecosystem integration",
-        "Bundled pricing with existing licenses",
-        "Enterprise-grade security",
-        "Global infrastructure"
-      ],
-      "weaknesses": [
-        "Limited customization for non-Microsoft environments",
-        "Vendor lock-in",
-        "Complex licensing tiers"
-      ],
-      "pricing_model": "Bundled with M365 licenses ($6-$36/user/month)"
-    },
-    {
-      "name": "Okta",
-      "strengths": [
-        "7,000+ pre-built integrations",
-        "Superior cross-platform SSO",
-        "Strong MFA and adaptive authentication",
-        "Multi-cloud excellence"
-      ],
-      "weaknesses": [
-        "High cost for enterprise features",
-        "Complex setup for large deployments"
-      ],
-      "pricing_model": "$2-$150/user/month depending on tier"
-    },
-    {
-      "name": "Ping Identity",
-      "strengths": [
-        "Hybrid deployment flexibility",
-        "Strong for complex environments",
-        "Comprehensive IAM suite"
-      ],
-      "weaknesses": [
-        "Steep learning curve",
-        "Higher total cost of ownership"
-      ],
-      "pricing_model": "Enterprise pricing, typically $10-$50/user/month"
-    },
-    {
-      "name": "CyberArk",
-      "strengths": [
-        "20+ years PAM expertise",
-        "Vault technology",
-        "Password management",
-        "Session recording"
-      ],
-      "weaknesses": [
-        "Focus on PAM vs full IAM",
-        "Higher cost",
-        "Complex deployment"
-      ],
-      "pricing_model": "Enterprise licensing, typically $50-$200/user/month"
-    },
-    {
-      "name": "SailPoint",
-      "strengths": [
-        "Identity governance leader",
-        "Access review automation",
-        "Compliance reporting"
-      ],
-      "weaknesses": [
-        "Expensive for SMBs",
-        "Complex implementation"
-      ],
-      "pricing_model": "Enterprise pricing, typically $15-$7
+ "competitor_summary": [
+  {
+   "name": "Microsoft Entra ID",
+   "strengths": [
+    "Deep Microsoft ecosystem integration",
+    "Enterprise-grade security",
+    "Hybrid identity support",
+    "Advanced MFA capabilities",
+    "Conditional access policies"
+   ],
+   "weaknesses": [
+    "Complex licensing structure",
+    "Vendor lock-in",
+    "Higher cost at \u00a393+/user/month",
+    "Steeper learning curve"
+   ],
+   "pricing_model": "\u00a393-\u00a3192+ per user/month (annual billing), tiered licensing"
+  },
+  {
+   "name": "Okta",
+   "strengths": [
+    "Extensive app integration catalog",
+    "Strong API-first approach",
+    "Flexible deployment options",
+    "Good developer experience",
+    "Advanced lifecycle management"
+   ],
+   "weaknesses": [
+    "Premium pricing",
+    "Occasional service outages",
+    "Complex enterprise setup",
+    "Additional costs for advanced features"
+   ],
+   "pricing_model": "$6-17+ per user/month for core, enterprise tiers significantly higher"
+  },
+  {
+   "name": "Ping Identity",
+   "strengths": [
+    "Hybrid deployment expertise",
+    "Strong enterprise features",
+    "Customizable workflows",
+    "Good for complex orgs"
+   ],
+   "weaknesses": [
+    "High implementation cost",
+    "Complex configuration",
+    "Longer deployment time",
+    "Enterprise-focused only"
+   ],
+   "pricing_model": "Enterprise quote-based, typically $15-30+/user/month"
+  },
+  {
+   "name": "Auth0 (Okta)",
+   "strengths": [
+    "Developer-friendly",
+    "Extensive documentation",
+    "Quick implementation",
+    "Good for B2C and B2B"
+   ],
+   "weaknesses": [
+    "Cost escalates with scale",
+    "Limited governance features",
+    "Dependency on Okta roadmap"
+   ],
+   "pricing_model": "Freemium to $23+/user/month"
+  },
+  {
+   "name": "SailPoint",
+   "strengths": [
+    "Identity governance leader",
+    "Strong certification management",
+    "Advanced access reviews",
+    "Compliance reporting"
+   ],
+   "weaknesses": [
+    "Very expensive",
+    "Complex deployment"
 
 PROJECT CONTEXT (from CLAUDE.md):
 # CLAUDE.md - OpenIDX Development Guide
@@ -250,77 +118,5 @@ OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that provides enterp
 ## Tech Stack
 
 ### Backend (Go 1.22+)
-- **Framework**: Gin (HTTP router)
-- **Database**: PostgreSQL with pgx driver
-- **Cache**: Redis with go-redis
-- **Logging**: Zap
-- **Config**: Viper
-- **JWT**: golang-jwt/v5
-
-### Frontend (React 18+)
-- **Framework**: React with TypeScript
-- **Build**: Vite
-- **Styling**: Tailwind CSS
-- **State**: Zustand + React Query
-- **UI**: Radix UI primitives
-- **Auth**: OpenIDX OAuth (PKCE)
-
-### Infrastructure
-- **OAuth/OIDC**: Native OpenIDX OAuth Service
-- **API Gateway**: Apache APISIX
-- **Policy Engine**: Open Policy Agent (OPA)
-- **Container**: Docker + Kub
-
-EXISTING FILES:
-internal/access/app_publish.go
-internal/access/browzer_config.go
-internal/access/browzer_targets.go
-internal/access/context_evaluator.go
-internal/access/continuous_verify.go
-internal/access/device_health.go
-internal/access/feature_handlers.go
-internal/access/feature_manager.go
-internal/access/guacamole.go
-internal/access/health_handlers.go
-internal/access/multi_idp.go
-internal/access/platform_certs.go
-internal/access/policy_dsl.go
-internal/access/posture.go
-internal/access/service.go
-internal/access/temp_access.go
-internal/access/unified_audit.go
-internal/access/ziti_auth_handlers.go
-internal/access/ziti_browzer.go
-internal/access/ziti_browzer_handlers.go
-internal/access/ziti_config_handlers.go
-internal/access/ziti_discovery.go
-internal/access/ziti_fabric.go
-internal/access/ziti_fabric_handlers.go
-internal/access/ziti.go
-internal/access/ziti_handlers.go
-internal/access/ziti_hardening.go
-internal/access/ziti_session_handlers.go
-internal/access/ziti_sync_handlers.go
-internal/access/ziti_terminator_handlers.go
-internal/access/ziti_user_sync.go
-internal/admin/admin_audit.go
-internal/admin/ai_agents.go
-internal/admin/ai_recommendations.go
-internal/admin/analytics_enhanced.go
-internal/admin/attestation.go
-internal/admin/audit_archival.go
-internal/admin/auth_handler.go
-internal/admin/bulk_import_export.go
-internal/admin/bulk_operations.go
-internal/admin/config.go
-internal/admin/dashboard_enhanced.go
-internal/admin/dashboard.go
-internal/admin/deprovisioning.go
-internal/admin/developer.go
-internal/admin/email_templates.go
-internal/admin/error_catalog.go
-internal/admin/errors_helper.go
-internal/admin/federation.go
-internal/admin/handler.go
-
-Design the complete solution. Include market-driven features where priority is critical/high. Be specific about file paths, function names, schemas, implementation order.
+-
+[truncated 2404 chars]

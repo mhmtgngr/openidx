@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/admin"
+	adminhandlers "github.com/openidx/openidx/internal/admin/handlers"
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/common/config"
@@ -212,6 +213,9 @@ func main() {
 		admin.RegisterRoutes(v1, adminService)
 		organization.RegisterRoutes(v1, orgService)
 		notifications.RegisterRoutes(v1, notifService)
+
+		// Register admin console handlers (dashboard, settings)
+		adminhandlers.RegisterAllRoutes(v1, db.Pool, log)
 	}
 
 	// Create HTTP server
