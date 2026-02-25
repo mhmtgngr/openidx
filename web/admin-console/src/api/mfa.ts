@@ -1,5 +1,5 @@
 // MFA API client with proper error handling for authentication failures
-import { api, baseURL } from '../lib/api'
+import { api } from '../lib/api'
 import axios from 'axios'
 
 // Types
@@ -37,12 +37,12 @@ export interface WebAuthnRegisterBeginResponse {
       timeout?: number
       excludeCredentials?: Array<{ id: string; type: string }>
       authenticatorSelection?: {
-        authenticatorAttachment?: string
+        authenticatorAttachment?: AuthenticatorAttachment
         requireResidentKey?: boolean
-        residentKey?: string
-        userVerification?: string
+        residentKey?: ResidentKeyRequirement
+        userVerification?: UserVerificationRequirement
       }
-      attestation?: string
+      attestation?: AttestationConveyancePreference
     }
   }
 }

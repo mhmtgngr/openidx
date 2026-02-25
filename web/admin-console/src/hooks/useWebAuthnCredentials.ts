@@ -1,6 +1,6 @@
 // React Query hook for WebAuthn credential management with automatic error handling
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { mfaApi, WebAuthnCredential } from '../api/mfa'
+import { mfaApi } from '../api/mfa'
 import {
   decodeCredentialCreationOptions,
   serializeAttestationResponse,
