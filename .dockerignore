@@ -85,7 +85,8 @@ web/admin-console/node_modules/
 web/admin-console/test-results/
 web/admin-console/playwright-report/
 web/admin-console/e2e/
-web/
+# Keep web/admin-console for Docker builds, exclude other web dirs if needed
+# web/
 frontend/
 __azurite_db_blob__.json
 __azurite_db_blob_extent__.json
