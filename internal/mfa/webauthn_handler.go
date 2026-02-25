@@ -10,6 +10,8 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/auth"
 )
 
 // WebAuthnHandlers provides HTTP handlers for WebAuthn operations
@@ -32,19 +34,30 @@ func NewWebAuthnHandlers(
 	}
 }
 
-// RegisterRoutes registers WebAuthn routes
+// RegisterRoutes registers public WebAuthn routes (no authentication required)
+// These endpoints are used during registration and login flows
 func (h *WebAuthnHandlers) RegisterRoutes(router gin.IRouter) {
 	webauthn := router.Group("/mfa/webauthn")
 	{
-		// Registration endpoints
+		// Registration endpoints (public - used during user registration)
 		webauthn.POST("/register/begin", h.HandleRegisterBegin)
 		webauthn.POST("/register/finish", h.HandleRegisterFinish)
 
-		// Login/authentication endpoints
+		// Login/authentication endpoints (public - used during authentication)
 		webauthn.POST("/login/begin", h.HandleLoginBegin)
 		webauthn.POST("/login/finish", h.HandleLoginFinish)
+	}
+}
 
-		// Credential management endpoints
+// RegisterProtectedRoutes registers authenticated WebAuthn credential management routes
+// These endpoints require JWT authentication and are protected by RBAC middleware
+func (h *WebAuthnHandlers) RegisterProtectedRoutes(router gin.IRouter, authMiddleware gin.HandlerFunc) {
+	webauthn := router.Group("/mfa/webauthn")
+	{
+		// Apply authentication middleware to all credential management endpoints
+		webauthn.Use(authMiddleware)
+
+		// Credential management endpoints (authenticated)
 		webauthn.GET("/credentials", h.HandleListCredentials)
 		webauthn.DELETE("/credentials/:id", h.HandleDeleteCredential)
 		webauthn.PUT("/credentials/:id/name", h.HandleRenameCredential)
@@ -329,22 +342,34 @@ func (h *WebAuthnHandlers) HandleLoginFinish(c *gin.Context) {
 	})
 }
 
-// HandleListCredentials lists all WebAuthn credentials for a user
-// GET /mfa/webauthn/credentials?user_id=xxx
+// HandleListCredentials lists all WebAuthn credentials for the authenticated user
+// GET /mfa/webauthn/credentials
+// Requires JWT authentication - user_id is extracted from the JWT token
 func (h *WebAuthnHandlers) HandleListCredentials(c *gin.Context) {
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "user_id is required"})
+	// Extract user ID from JWT context (set by RBAC middleware)
+	userIDStr, err := auth.GetUserFromContext(c)
+	if err != nil {
+		h.logger.Warn("Failed to get user from context",
+			zap.Error(err),
+		)
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Error:   "authentication_required",
+			Message: "Valid JWT token required",
+		})
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid user_id"})
+		h.logger.Error("Invalid user ID in JWT",
+			zap.String("user_id", userIDStr),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid user_id in token"})
 		return
 	}
 
-	// Get credentials
+	// Get credentials for the authenticated user only
 	credentials, err := h.store.ListCredentials(c.Request.Context(), userID)
 	if err != nil {
 		h.logger.Error("Failed to list credentials",
@@ -382,7 +407,8 @@ func (h *WebAuthnHandlers) HandleListCredentials(c *gin.Context) {
 }
 
 // HandleDeleteCredential deletes a WebAuthn credential
-// DELETE /mfa/webauthn/credentials/:id?user_id=xxx
+// DELETE /mfa/webauthn/credentials/:id
+// Requires JWT authentication - verifies the authenticated user owns the credential
 func (h *WebAuthnHandlers) HandleDeleteCredential(c *gin.Context) {
 	// Parse credential ID from path
 	credentialID := c.Param("id")
@@ -391,20 +417,57 @@ func (h *WebAuthnHandlers) HandleDeleteCredential(c *gin.Context) {
 		return
 	}
 
-	// Parse user ID from query
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "user_id is required"})
+	// Extract authenticated user ID from JWT context
+	userIDStr, err := auth.GetUserFromContext(c)
+	if err != nil {
+		h.logger.Warn("Failed to get user from context",
+			zap.Error(err),
+		)
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Error:   "authentication_required",
+			Message: "Valid JWT token required",
+		})
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid user_id"})
+		h.logger.Error("Invalid user ID in JWT",
+			zap.String("user_id", userIDStr),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid user_id in token"})
 		return
 	}
 
-	// Delete credential
+	// Verify ownership before deletion - get the credential first
+	cred, err := h.store.GetCredentialByID(c.Request.Context(), credentialID)
+	if err != nil {
+		h.logger.Error("Failed to get credential for ownership check",
+			zap.String("credential_id", credentialID),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error: "credential_not_found",
+		})
+		return
+	}
+
+	// Verify the authenticated user owns this credential
+	if cred.UserID != userID {
+		h.logger.Warn("Attempted deletion of credential owned by another user",
+			zap.String("authenticated_user_id", userID.String()),
+			zap.String("credential_owner_id", cred.UserID.String()),
+			zap.String("credential_id", credentialID),
+		)
+		c.JSON(http.StatusForbidden, ErrorResponse{
+			Error:   "access_denied",
+			Message: "You do not have permission to delete this credential",
+		})
+		return
+	}
+
+	// Delete credential with ownership verified
 	err = h.store.DeleteCredentialByCredentialID(c.Request.Context(), credentialID, userID)
 	if err != nil {
 		h.logger.Error("Failed to delete credential",
@@ -430,7 +493,8 @@ func (h *WebAuthnHandlers) HandleDeleteCredential(c *gin.Context) {
 }
 
 // HandleRenameCredential renames a WebAuthn credential
-// PUT /mfa/webauthn/credentials/:id/name?user_id=xxx
+// PUT /mfa/webauthn/credentials/:id/name
+// Requires JWT authentication - verifies the authenticated user owns the credential
 func (h *WebAuthnHandlers) HandleRenameCredential(c *gin.Context) {
 	// Parse credential ID from path
 	credentialID := c.Param("id")
@@ -439,16 +503,26 @@ func (h *WebAuthnHandlers) HandleRenameCredential(c *gin.Context) {
 		return
 	}
 
-	// Parse user ID from query
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "user_id is required"})
+	// Extract authenticated user ID from JWT context
+	userIDStr, err := auth.GetUserFromContext(c)
+	if err != nil {
+		h.logger.Warn("Failed to get user from context",
+			zap.Error(err),
+		)
+		c.JSON(http.StatusUnauthorized, ErrorResponse{
+			Error:   "authentication_required",
+			Message: "Valid JWT token required",
+		})
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid user_id"})
+		h.logger.Error("Invalid user ID in JWT",
+			zap.String("user_id", userIDStr),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid user_id in token"})
 		return
 	}
 
@@ -458,11 +532,10 @@ func (h *WebAuthnHandlers) HandleRenameCredential(c *gin.Context) {
 		return
 	}
 
-	// Get the credential
+	// Get the credential for ownership verification
 	cred, err := h.store.GetCredentialByID(c.Request.Context(), credentialID)
 	if err != nil {
 		h.logger.Error("Failed to get credential",
-			zap.String("user_id", userID.String()),
 			zap.String("credential_id", credentialID),
 			zap.Error(err),
 		)
@@ -472,10 +545,16 @@ func (h *WebAuthnHandlers) HandleRenameCredential(c *gin.Context) {
 		return
 	}
 
-	// Verify ownership
+	// Verify ownership - check if the authenticated user owns this credential
 	if cred.UserID != userID {
+		h.logger.Warn("Attempted rename of credential owned by another user",
+			zap.String("authenticated_user_id", userID.String()),
+			zap.String("credential_owner_id", cred.UserID.String()),
+			zap.String("credential_id", credentialID),
+		)
 		c.JSON(http.StatusForbidden, ErrorResponse{
-			Error: "credential_belongs_to_different_user",
+			Error:   "access_denied",
+			Message: "You do not have permission to modify this credential",
 		})
 		return
 	}
@@ -495,9 +574,15 @@ func (h *WebAuthnHandlers) HandleRenameCredential(c *gin.Context) {
 		return
 	}
 
+	h.logger.Info("WebAuthn credential renamed",
+		zap.String("user_id", userID.String()),
+		zap.String("credential_id", credentialID),
+		zap.String("new_name", req.FriendlyName),
+	)
+
 	c.JSON(http.StatusOK, gin.H{
-		"success":      true,
-		"message":      "Credential renamed successfully",
+		"success":       true,
+		"message":       "Credential renamed successfully",
 		"friendly_name": req.FriendlyName,
 	})
 }
@@ -508,22 +593,12 @@ func parseJSONFromBytes(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
 
-// Middleware for user authentication (placeholder)
-// In a real implementation, this would verify the user's session or JWT token
-func AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO: Implement proper authentication middleware
-		// For now, just continue to the next handler
-		c.Next()
+// GetUserIDFromContext is a helper that extracts user ID from context
+// This is a convenience wrapper around auth.GetUserFromContext
+func GetUserIDFromContext(c *gin.Context) (uuid.UUID, error) {
+	userIDStr, err := auth.GetUserFromContext(c)
+	if err != nil {
+		return uuid.Nil, err
 	}
-}
-
-// Middleware for CSRF protection (placeholder)
-// WebAuthn requires CSRF protection since it's a same-origin protocol
-func CSRFMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO: Implement proper CSRF protection
-		// For now, just continue to the next handler
-		c.Next()
-	}
+	return uuid.Parse(userIDStr)
 }
