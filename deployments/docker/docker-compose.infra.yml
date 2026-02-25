@@ -110,7 +110,8 @@ services:
       - "8443:9443"
       - "9188:9180"
     depends_on:
-      - etcd
+      etcd:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9080'"]
       interval: 10s
@@ -127,9 +128,14 @@ services:
       - --data-dir=/etcd-data
       - --name=etcd
       - --listen-client-urls=http://0.0.0.0:2379
-      - --advertise-client-urls=http://etcd:2379
+      - --advertise-client-urls=http://openidx-etcd:2379
     volumes:
       - etcd_data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - openidx-network
 
