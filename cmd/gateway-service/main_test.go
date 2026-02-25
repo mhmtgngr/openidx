@@ -121,9 +121,8 @@ func TestZapLoggerWrapper(t *testing.T) {
 	})
 
 	t.Run("Wraps all log methods", func(t *testing.T) {
-		// Create a real zap logger for testing
-		zapLogger, err := zap.NewDevelopment()
-		require.NoError(t, err)
+		// Use a nop logger to avoid stack traces in test output
+		zapLogger := zap.NewNop()
 		logger := &zapLoggerWrapper{logger: zapLogger}
 		assert.NotPanics(t, func() {
 			logger.Debug("test")
@@ -134,8 +133,7 @@ func TestZapLoggerWrapper(t *testing.T) {
 	})
 
 	t.Run("Handles zap fields correctly", func(t *testing.T) {
-		zapLogger, err := zap.NewDevelopment()
-		require.NoError(t, err)
+		zapLogger := zap.NewNop()
 		logger := &zapLoggerWrapper{logger: zapLogger}
 		assert.NotPanics(t, func() {
 			logger.Info("test", zap.String("key", "value"))

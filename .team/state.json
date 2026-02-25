@@ -22,7 +22,8 @@
     },
     "testing": {
       "status": "running",
-      "_updated": "2026-02-25T05:36:54.311826"
+      "_updated": "2026-02-25T05:51:36.469961",
+      "write_tests": "done"
     }
   },
   "project": "The TODO at internal/oauth/oidc_test.go:312 indicates need for mock Redis setup. The SMS provider code in internal/sms/providers_tr.go has Turkish phone number normalization logic that could benefit from tests. Set up a mock Redis using miniredis or testcontainers for the OIDC tests, and add comprehensive unit tests for the normalizePhoneTR function covering the three normalization paths: 90XXXXXXXXXX format preservation, 0XXXXXXXXXX to 90XXXXXXXXXX conversion, and 5XXXXXXXXX to 905XXXXXXXXX conversion.",
