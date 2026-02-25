@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useAppStore } from '@/lib/store'
-import { cn } from '@/lib/utils/cn'
+import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
   Users,
