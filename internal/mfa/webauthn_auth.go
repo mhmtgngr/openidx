@@ -15,6 +15,7 @@ type WebAuthnAuth struct {
 	handlers      *WebAuthnHandlers
 	rbac          *auth.RBACMiddleware
 	tokenService  *auth.TokenService
+	tokenValidator auth.TokenValidator
 	logger        *zap.Logger
 	csrfMiddleware gin.HandlerFunc
 }
@@ -23,7 +24,8 @@ type WebAuthnAuth struct {
 // Parameters:
 //   - handlers: The WebAuthnHandlers containing the HTTP handlers
 //   - rbac: The RBACMiddleware for JWT authentication
-//   - tokenService: The TokenService for token validation
+//   - tokenService: The TokenService for token validation (optional, can be nil if using tokenValidator)
+//   - tokenValidator: The TokenValidator for token validation (optional, uses TokenService if nil)
 //   - logger: Logger for security events
 //   - csrfMiddleware: Optional CSRF middleware (can be nil for API-only clients)
 func NewWebAuthnAuth(
@@ -36,11 +38,38 @@ func NewWebAuthnAuth(
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	var validator auth.TokenValidator
+	if tokenService != nil {
+		validator = auth.NewTokenServiceValidator(tokenService)
+	}
 	return &WebAuthnAuth{
-		handlers:      handlers,
-		rbac:          rbac,
-		tokenService:  tokenService,
-		logger:        logger,
+		handlers:       handlers,
+		rbac:           rbac,
+		tokenService:   tokenService,
+		tokenValidator: validator,
+		logger:         logger,
+		csrfMiddleware: csrfMiddleware,
+	}
+}
+
+// NewWebAuthnAuthWithValidator creates a new WebAuthnAuth wrapper with a custom TokenValidator
+// This is useful for testing or when using a non-standard token validation implementation
+func NewWebAuthnAuthWithValidator(
+	handlers *WebAuthnHandlers,
+	rbac *auth.RBACMiddleware,
+	validator auth.TokenValidator,
+	logger *zap.Logger,
+	csrfMiddleware gin.HandlerFunc,
+) *WebAuthnAuth {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &WebAuthnAuth{
+		handlers:       handlers,
+		rbac:           rbac,
+		tokenService:   nil,
+		tokenValidator: validator,
+		logger:         logger,
 		csrfMiddleware: csrfMiddleware,
 	}
 }
