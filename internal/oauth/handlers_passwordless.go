@@ -19,21 +19,20 @@ import (
 	"go.uber.org/zap"
 )
 
-// validSessionIDPattern validates session tokens to prevent Redis key injection
-// Only allows hexadecimal characters (0-9, a-f) and hyphens for UUIDs
-var validSessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_\.]{8,128}$`)
-
-// maxSessionLength prevents excessively long session strings
-const maxSessionLength = 128
+// validUUIDPattern validates UUID format only (RFC 4122)
+// Pattern matches: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx where x is hexadecimal digit
+// This prevents Redis key injection by strictly limiting to UUID format
+var validUUIDPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 // isValidSessionID validates session token format to prevent Redis key injection attacks
+// RESTRICTED TO UUID FORMAT ONLY for JWT session IDs to prevent injection attacks
 func isValidSessionID(sessionID string) bool {
-	if len(sessionID) == 0 || len(sessionID) > maxSessionLength {
+	// Strict UUID format validation (36 characters with hyphens in specific positions)
+	// This prevents path traversal and injection attacks while allowing legitimate UUIDs
+	if len(sessionID) != 36 {
 		return false
 	}
-	// Check for valid characters only (alphanumeric, hyphen, underscore, dot)
-	// This prevents Redis injection via special characters like newlines, spaces, etc.
-	return validSessionIDPattern.MatchString(sessionID)
+	return validUUIDPattern.MatchString(sessionID)
 }
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.

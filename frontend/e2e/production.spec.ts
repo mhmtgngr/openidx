@@ -9,7 +9,9 @@ test.describe('Production Environment Tests', () => {
   const isProduction = process.env.NODE_ENV === 'production' ||
                        process.env.PLAYWRIGHT_BASE_URL?.includes('openidx.tdv.org')
 
-  test.skipIf(!isProduction)('should use production domain', async ({ page }) => {
+  test('should use production domain', async ({ page }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
+
     await page.goto('/')
 
     // Verify we're on the production domain
@@ -17,7 +19,8 @@ test.describe('Production Environment Tests', () => {
     expect(url.hostname).toBe('openidx.tdv.org')
   })
 
-  test.skipIf(!isProduction)('should have valid SSL certificate', async ({ request }) => {
+  test('should have valid SSL certificate', async ({ request }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://openidx.tdv.org'
 
     const response = await request.get(baseURL)
@@ -28,7 +31,8 @@ test.describe('Production Environment Tests', () => {
     expect(url.protocol).toBe('https:')
   })
 
-  test.skipIf(!isProduction)('should set production API URLs', async ({ page }) => {
+  test('should set production API URLs', async ({ page }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
     await page.goto('/')
 
     // Check that API calls go to the correct domain
@@ -45,7 +49,8 @@ test.describe('Production Environment Tests', () => {
     await page.goto('/dashboard')
   })
 
-  test.skipIf(!isProduction)('should include production analytics', async ({ page }) => {
+  test('should include production analytics', async ({ page }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
     await page.goto('/')
 
     // Check for analytics scripts (if implemented)
@@ -64,7 +69,8 @@ test.describe('Production Environment Tests', () => {
     // This test is for future implementation
   })
 
-  test.skipIf(!isProduction)('should have proper security headers', async ({ request }) => {
+  test('should have proper security headers', async ({ request }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
     const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://openidx.tdv.org'
     const response = await request.get(baseURL)
 
@@ -76,7 +82,8 @@ test.describe('Production Environment Tests', () => {
     expect(headers['strict-transport-security']).toBeDefined()
   })
 
-  test.skipIf(!isProduction)('should serve optimized assets', async ({ page }) => {
+  test('should serve optimized assets', async ({ page }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
     await page.goto('/')
 
     // Check for minified JavaScript
@@ -93,7 +100,8 @@ test.describe('Production Environment Tests', () => {
     // May not be true depending on build config
   })
 
-  test.skipIf(!isProduction)('should have proper favicon and manifest', async ({ page }) => {
+  test('should have proper favicon and manifest', async ({ page }) => {
+    test.skip(!isProduction, 'Skipping - not in production environment')
     await page.goto('/')
 
     // Check for favicon

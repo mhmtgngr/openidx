@@ -72,7 +72,7 @@ func setupHandlerTest(t *testing.T) (*database.PostgresDB, *ZTPolicyHandler, fun
 
 	logger := zaptest.NewLogger(t)
 	store := NewZTPolicyStore(db, logger)
-	handler := NewZTPolicyHandler(store, logger)
+	handler := NewZTPolicyHandler(store, logger, nil) // nil Redis client for tests
 
 	// Reload evaluator to initialize
 	if err := handler.RefreshEvaluator(ctx); err != nil {

@@ -192,11 +192,26 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// rateLimitEntry tracks rate limit state per client
+type rateLimitEntry struct {
+	count     int64
+	resetTime time.Time
+}
+
+// rateLimitStore tracks in-memory rate limits
+var rateLimitStore = struct {
+	sync.RWMutex
+	entries map[string]*rateLimitEntry
+}{
+	entries: make(map[string]*rateLimitEntry),
+}
 
 // ZTPolicyHandler handles HTTP requests for policy management
 type ZTPolicyHandler struct {
@@ -228,21 +243,6 @@ func (h *ZTPolicyHandler) RegisterRoutes(r gin.IRouter) {
 		policies.PUT("/:id", h.UpdatePolicy)
 		policies.DELETE("/:id", h.DeletePolicy)
 		policies.PATCH("/:id/enable", h.SetPolicyEnabled)
-		policies.POST("/evaluate", h.EvaluatePolicies)
-		policies.GET("/:id/versions", h.GetPolicyHistory)
-		policies.GET("/:id/versions/:version", h.GetPolicyVersion)
-	}
-}
-
-// CreatePolicyRequest represents the request to create a policy
-type CreatePolicyRequest struct {
-	Name        string         `json:"name" binding:"required"`
-	Description string         `json:"description"`
-	Effect      PolicyEffect   `json:"effect" binding:"required,oneof=allow deny"`
-	Conditions  ConditionGroup `json:"conditions" binding:"required"`
-	Priority    int            `json:"priority"`
-	TenantID    string         `json:"tenant_id"`
-	Metadata    json.RawMessage `json:"metadata"`
 --- internal/governance/zt_policy_test.go ---
 // Package governance provides tests for Zero Trust policy evaluation
 package governance
@@ -620,6 +620,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -628,6 +629,23 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"go.uber.org/zap"
 )
+
+// validSessionIDPattern validates session tokens to prevent Redis key injection
+// Only allows hexadecimal characters (0-9, a-f) and hyphens for UUIDs
+var validSessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_\.]{8,128}$`)
+
+// maxSessionLength prevents excessively long session strings
+const maxSessionLength = 128
+
+// isValidSessionID validates session token format to prevent Redis key injection attacks
+func isValidSessionID(sessionID string) bool {
+	if len(sessionID) == 0 || len(sessionID) > maxSessionLength {
+		return false
+	}
+	// Check for valid characters only (alphanumeric, hyphen, underscore, dot)
+	// This prevents Redis injection via special characters like newlines, spaces, etc.
+	return validSessionIDPattern.MatchString(sessionID)
+}
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.
 // POST /oauth/mfa-send-otp
@@ -639,23 +657,6 @@ func (s *Service) handleMFASendOTP(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid request body"})
-		return
-	}
-
-	if req.MFASession == "" {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "mfa_session is required"})
-		return
-	}
-
-	if req.Method != "sms" && req.Method != "email" {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "method must be 'sms' or 'email'"})
-		return
-	}
-
-	// Retrieve MFA session from Redis
-	mfaDataJSON, err := s.redis.Client.Get(c.Request.Context(), "mfa_session:"+req.MFASession).Result()
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid or expired MFA session"})
 		return
 	}
 --- internal/auth/middleware_test.go ---
@@ -859,8 +860,8 @@ func (s *Service) handleEnrollSMS(c *gin.Context) {
 		"message":      "Verification code sent to your phone",
 	}
 
-	// Include code only if debug mode is explicitly enabled (never in production)
-	if s.cfg.DebugOTPsEnabled() {
+	// CRITICAL: NEVER expose OTP codes in production
+	// OTP codes must NEVER be included in API responses in production environments
 --- internal/identity/handler.go ---
 // Package identity provides HTTP handlers for identity CRUD operations
 package identity
@@ -918,12 +919,35 @@ package identity
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// validDomainPattern validates email domains to prevent SQL injection
+// Only allows alphanumeric, hyphens, and dots in domain names
+var validDomainPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+
+// maxDomainLength prevents excessively long domain strings
+const maxDomainLength = 253
+
+// isValidDomain performs strict validation of email domain format
+// to prevent SQL injection and ensure RFC-compliant domain names
+func isValidDomain(domain string) bool {
+	// Check length limit (RFC 1035)
+	if len(domain) == 0 || len(domain) > maxDomainLength {
+		return false
+	}
+	// Must contain at least one dot for proper domain structure
+	if !strings.Contains(domain, ".") {
+		return false
+	}
+	// Check against strict pattern (no SQL injection characters)
+	return validDomainPattern.MatchString(domain)
+}
 
 // handleFederationDiscover is a PUBLIC endpoint that returns the IdP to redirect to based on email domain.
 func (s *Service) handleFederationDiscover(c *gin.Context) {
@@ -940,29 +964,6 @@ func (s *Service) handleFederationDiscover(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid email format"})
 		return
 	}
-	domain := strings.ToLower(parts[1])
-
-	var providerID, providerName, issuerURL string
-	var autoRedirect bool
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT fr.provider_id, ip.name, ip.issuer_url, fr.auto_redirect
-		 FROM federation_rules fr
-		 JOIN identity_providers ip ON fr.provider_id = ip.id
-		 WHERE fr.email_domain = $1 AND fr.enabled = true
-		 ORDER BY fr.priority LIMIT 1`, domain).Scan(&providerID, &providerName, &issuerURL, &autoRedirect)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"found": false, "message": "No federation rule for this domain"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"found":         true,
-		"provider_id":   providerID,
-		"provider_name": providerName,
-		"issuer_url":    issuerURL,
-		"auto_redirect": autoRedirect,
-	})
-}
 --- internal/identity/handlers_mfa.go ---
 // Package identity - MFA HTTP handlers
 package identity
@@ -977,18 +978,12 @@ import (
 // WebAuthn Handlers
 
 func (s *Service) handleBeginWebAuthnRegistration(c *gin.Context) {
-	// Get user ID from context (assumed to be set by auth middleware)
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		// For development, allow userID in request body
-		var req struct {
-			UserID string `json:"user_id"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-			return
-		}
-		userID = req.UserID
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	options, err := s.BeginWebAuthnRegistration(c.Request.Context(), userID)
@@ -1001,17 +996,23 @@ func (s *Service) handleBeginWebAuthnRegistration(c *gin.Context) {
 }
 
 func (s *Service) handleFinishWebAuthnRegistration(c *gin.Context) {
-	// Get user ID from context
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		// For development, allow userID in request
-		userID = c.Query("user_id")
-	}
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
-	// Parse credential name from query or header
+	// Parse credential name from query or header (these are metadata, not identifiers)
+	credentialName := c.Query("name")
+	if credentialName == "" {
+		credentialName = c.GetHeader("X-Credential-Name")
+	}
+
+	// Parse WebAuthn response
+	parsedResponse, err := protocol.ParseCredentialCreationResponseBody(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid WebAuthn response: " + err.Error()})
+		return
 Check: SQL injection, XSS, CSRF, insecure JWT, weak crypto, missing auth, IDOR, data exposure. Be thorough.

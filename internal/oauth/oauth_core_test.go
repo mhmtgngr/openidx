@@ -2,8 +2,6 @@
 package oauth
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http/httptest"
@@ -15,22 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
 )
-
-// testLogger creates a test logger
-func testLogger() *zap.Logger {
-	return zap.NewNop()
-}
-
-// generateTestRSAKey creates a test RSA key pair
-func generateTestRSAKey(t *testing.T) *rsa.PrivateKey {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	return key
-}
 
 // testEnvironment creates a test environment with in-memory Redis
 type testEnvironment struct {

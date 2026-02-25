@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -612,9 +613,13 @@ func TestGetSigningKey(t *testing.T) {
 		_, err := middleware.getSigningKey("unknown-key-id")
 
 		assert.Error(t, err)
-		// Error message is about JWKS endpoint failure (connection refused or 404)
+		// Error message is about JWKS endpoint failure (connection refused or status code)
 		// The actual error depends on whether the server is running
-		assert.Contains(t, err.Error(), "failed to fetch JWKS")
+		errMsg := err.Error()
+		assert.True(t,
+			strings.Contains(errMsg, "failed to fetch JWKS") ||
+			strings.Contains(errMsg, "JWKS endpoint returned status"),
+			"expected error to contain JWKS failure message, got: %s", errMsg)
 	})
 }
 

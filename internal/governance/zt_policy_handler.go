@@ -11,16 +11,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
-// rateLimitEntry tracks rate limit state per client
+// rateLimitEntry tracks rate limit state per client (for non-Redis fallback)
 type rateLimitEntry struct {
 	count     int64
 	resetTime time.Time
 }
 
-// rateLimitStore tracks in-memory rate limits
+// rateLimitStore tracks in-memory rate limits (fallback only, not recommended for production)
 var rateLimitStore = struct {
 	sync.RWMutex
 	entries map[string]*rateLimitEntry
@@ -28,22 +29,97 @@ var rateLimitStore = struct {
 	entries: make(map[string]*rateLimitEntry),
 }
 
+// RedisRateLimiter provides distributed rate limiting using Redis with TTL
+type RedisRateLimiter struct {
+	redis      *redis.Client
+	logger     *zap.Logger
+	keyPrefix  string
+}
+
+// NewRedisRateLimiter creates a new Redis-based rate limiter
+func NewRedisRateLimiter(redisClient *redis.Client, logger *zap.Logger) *RedisRateLimiter {
+	return &RedisRateLimiter{
+		redis:     redisClient,
+		logger:    logger.With(zap.String("component", "rate_limiter")),
+		keyPrefix: "ratelimit:",
+	}
+}
+
+// CheckRateLimit implements token bucket algorithm with Redis
+// Returns (allowed: bool, remaining: int, error: error)
+func (rl *RedisRateLimiter) CheckRateLimit(ctx context.Context, key string, maxRequests int, window time.Duration) (bool, int, error) {
+	redisKey := rl.keyPrefix + key
+
+	// Use Lua script for atomic increment and expiry
+	// This implements a sliding window counter with automatic cleanup via TTL
+	luaScript := `
+		local current = redis.call("GET", KEYS[1])
+		if current == false then
+			current = 0
+		else
+			current = tonumber(current)
+		end
+
+		if current < tonumber(ARGV[1]) then
+			redis.call("INCR", KEYS[1])
+			redis.call("EXPIRE", KEYS[1], ARGV[2])
+			return {1, tonumber(ARGV[1]) - current - 1}
+		else
+			return {0, 0}
+		end
+	`
+
+	result, err := rl.redis.Eval(ctx, luaScript, []string{redisKey}, maxRequests, int(window.Seconds())).Result()
+	if err != nil {
+		rl.logger.Warn("Redis rate limit check failed, allowing request", zap.Error(err))
+		return true, maxRequests - 1, nil // Fail open for Redis errors
+	}
+
+	// Parse result: [allowed, remaining]
+	resultArr, ok := result.([]interface{})
+	if !ok || len(resultArr) < 2 {
+		rl.logger.Warn("Invalid Redis response, allowing request")
+		return true, maxRequests - 1, nil
+	}
+
+	allowed := resultArr[0].(int64) == 1
+	remaining := int(resultArr[1].(int64))
+
+	return allowed, remaining, nil
+}
+
+// Reset clears the rate limit for a specific key
+func (rl *RedisRateLimiter) Reset(ctx context.Context, key string) error {
+	redisKey := rl.keyPrefix + key
+	return rl.redis.Del(ctx, redisKey).Err()
+}
+
 // ZTPolicyHandler handles HTTP requests for policy management
 type ZTPolicyHandler struct {
-	store     *ZTPolicyStore
-	eval      *ZTPolicyEvaluator
-	logger    *zap.Logger
+	store        *ZTPolicyStore
+	eval         *ZTPolicyEvaluator
+	logger       *zap.Logger
+	rateLimiter  *RedisRateLimiter
+	redisClient  *redis.Client
 }
 
 // NewZTPolicyHandler creates a new policy handler
-func NewZTPolicyHandler(store *ZTPolicyStore, logger *zap.Logger) *ZTPolicyHandler {
+func NewZTPolicyHandler(store *ZTPolicyStore, logger *zap.Logger, redisClient *redis.Client) *ZTPolicyHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+
+	var rateLimiter *RedisRateLimiter
+	if redisClient != nil {
+		rateLimiter = NewRedisRateLimiter(redisClient, logger)
+	}
+
 	return &ZTPolicyHandler{
-		store:  store,
-		eval:   NewZTPolicyEvaluator(),
-		logger: logger.With(zap.String("handler", "zt_policy")),
+		store:       store,
+		eval:        NewZTPolicyEvaluator(),
+		logger:      logger.With(zap.String("handler", "zt_policy")),
+		rateLimiter: rateLimiter,
+		redisClient: redisClient,
 	}
 }
 
@@ -341,43 +417,65 @@ func (h *ZTPolicyHandler) SetPolicyEnabled(c *gin.Context) {
 // EvaluatePolicies handles POST /api/v1/policies/evaluate
 // CRITICAL: Rate limiting is applied to prevent DoS attacks on policy evaluation
 func (h *ZTPolicyHandler) EvaluatePolicies(c *gin.Context) {
-	// Apply a basic per-IP rate limit for policy evaluation
-	// This prevents DoS while allowing legitimate high-volume evaluation
-	clientIP := c.ClientIP()
+	// Apply per-IP rate limit using Redis with automatic cleanup via TTL
 	const maxRequestsPerMinute = 100
 	const windowDuration = time.Minute
 
-	now := time.Now()
+	clientIP := c.ClientIP()
 	rateLimitKey := fmt.Sprintf("policy_eval:%s", clientIP)
 
-	// Check rate limit
-	rateLimitStore.RLock()
-	entry, exists := rateLimitStore.entries[rateLimitKey]
-	rateLimitStore.RUnlock()
+	// Use Redis-based rate limiting if available, otherwise fall back to in-memory
+	if h.rateLimiter != nil {
+		allowed, remaining, _ := h.rateLimiter.CheckRateLimit(c.Request.Context(), rateLimitKey, maxRequestsPerMinute, windowDuration)
 
-	if !exists || now.After(entry.resetTime) {
-		// Create new entry or expired entry
-		rateLimitStore.Lock()
-		rateLimitStore.entries[rateLimitKey] = &rateLimitEntry{
-			count:     1,
-			resetTime: now.Add(windowDuration),
-		}
-		rateLimitStore.Unlock()
-	} else {
-		// Increment counter
-		rateLimitStore.Lock()
-		entry.count++
-		count := entry.count
-		rateLimitStore.Unlock()
-
-		if count > maxRequestsPerMinute {
+		if !allowed {
 			h.logger.Warn("Policy evaluation rate limit exceeded",
 				zap.String("client_ip", clientIP),
-				zap.Int64("count", count))
+				zap.Int("max_requests", maxRequestsPerMinute))
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "rate limit exceeded, please retry later",
+				"error":            "rate limit exceeded, please retry later",
+				"retry_after":      int(windowDuration.Seconds()),
+				"rate_limit_scope": "per_ip",
 			})
 			return
+		}
+
+		// Add rate limit info headers
+		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequestsPerMinute))
+		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", time.Now().Add(windowDuration).Unix()))
+	} else {
+		// Fallback to in-memory rate limiting (not recommended for production)
+		now := time.Now()
+
+		rateLimitStore.RLock()
+		entry, exists := rateLimitStore.entries[rateLimitKey]
+		rateLimitStore.RUnlock()
+
+		if !exists || now.After(entry.resetTime) {
+			// Create new entry or expired entry
+			rateLimitStore.Lock()
+			rateLimitStore.entries[rateLimitKey] = &rateLimitEntry{
+				count:     1,
+				resetTime: now.Add(windowDuration),
+			}
+			rateLimitStore.Unlock()
+		} else {
+			// Increment counter
+			rateLimitStore.Lock()
+			entry.count++
+			count := entry.count
+			rateLimitStore.Unlock()
+
+			if count > maxRequestsPerMinute {
+				h.logger.Warn("Policy evaluation rate limit exceeded (in-memory)",
+					zap.String("client_ip", clientIP),
+					zap.Int64("count", count))
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": "rate limit exceeded, please retry later",
+				})
+				return
+			}
 		}
 	}
 
@@ -636,6 +734,11 @@ func (h *ZTPolicyHandler) validateCondition(cond Condition) error {
 
 	if cond.Field == "" {
 		return fmt.Errorf("field is required")
+	}
+
+	// SECURITY: Validate field name against allowlist
+	if !isFieldAllowed(cond.Field) {
+		return fmt.Errorf("field '%s' is not in the allowed fields list", cond.Field)
 	}
 
 	return nil
