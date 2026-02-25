@@ -22,26 +22,39 @@ type WebAuthnAuth struct {
 
 // NewWebAuthnAuth creates a new WebAuthnAuth wrapper
 // Parameters:
-//   - handlers: The WebAuthnHandlers containing the HTTP handlers
-//   - rbac: The RBACMiddleware for JWT authentication
+//   - handlers: The WebAuthnHandlers containing the HTTP handlers (required)
+//   - rbac: The RBACMiddleware for JWT authentication (required)
 //   - tokenService: The TokenService for token validation (optional, can be nil if using tokenValidator)
 //   - tokenValidator: The TokenValidator for token validation (optional, uses TokenService if nil)
-//   - logger: Logger for security events
+//   - logger: Logger for security events (optional, defaults to nop logger)
 //   - csrfMiddleware: Optional CSRF middleware (can be nil for API-only clients)
+//
+// Returns an error if required parameters (handlers, rbac) are nil
 func NewWebAuthnAuth(
 	handlers *WebAuthnHandlers,
 	rbac *auth.RBACMiddleware,
 	tokenService *auth.TokenService,
 	logger *zap.Logger,
 	csrfMiddleware gin.HandlerFunc,
-) *WebAuthnAuth {
+) (*WebAuthnAuth, error) {
+	// Validate required parameters
+	if handlers == nil {
+		return nil, &ValidationError{Field: "handlers", Message: "WebAuthnHandlers is required"}
+	}
+	if rbac == nil {
+		return nil, &ValidationError{Field: "rbac", Message: "RBACMiddleware is required"}
+	}
+
+	// Default logger to nop if not provided
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+
 	var validator auth.TokenValidator
 	if tokenService != nil {
 		validator = auth.NewTokenServiceValidator(tokenService)
 	}
+
 	return &WebAuthnAuth{
 		handlers:       handlers,
 		rbac:           rbac,
@@ -49,21 +62,58 @@ func NewWebAuthnAuth(
 		tokenValidator: validator,
 		logger:         logger,
 		csrfMiddleware: csrfMiddleware,
+	}, nil
+}
+
+// MustNewWebAuthnAuth creates a new WebAuthnAuth wrapper and panics on error
+// This is a convenience function for initialization where failure is fatal
+func MustNewWebAuthnAuth(
+	handlers *WebAuthnHandlers,
+	rbac *auth.RBACMiddleware,
+	tokenService *auth.TokenService,
+	logger *zap.Logger,
+	csrfMiddleware gin.HandlerFunc,
+) *WebAuthnAuth {
+	auth, err := NewWebAuthnAuth(handlers, rbac, tokenService, logger, csrfMiddleware)
+	if err != nil {
+		panic(err)
 	}
+	return auth
 }
 
 // NewWebAuthnAuthWithValidator creates a new WebAuthnAuth wrapper with a custom TokenValidator
 // This is useful for testing or when using a non-standard token validation implementation
+// Parameters:
+//   - handlers: The WebAuthnHandlers containing the HTTP handlers (required)
+//   - rbac: The RBACMiddleware for JWT authentication (required)
+//   - validator: The TokenValidator for token validation (required)
+//   - logger: Logger for security events (optional, defaults to nop logger)
+//   - csrfMiddleware: Optional CSRF middleware (can be nil for API-only clients)
+//
+// Returns an error if required parameters (handlers, rbac, validator) are nil
 func NewWebAuthnAuthWithValidator(
 	handlers *WebAuthnHandlers,
 	rbac *auth.RBACMiddleware,
 	validator auth.TokenValidator,
 	logger *zap.Logger,
 	csrfMiddleware gin.HandlerFunc,
-) *WebAuthnAuth {
+) (*WebAuthnAuth, error) {
+	// Validate required parameters
+	if handlers == nil {
+		return nil, &ValidationError{Field: "handlers", Message: "WebAuthnHandlers is required"}
+	}
+	if rbac == nil {
+		return nil, &ValidationError{Field: "rbac", Message: "RBACMiddleware is required"}
+	}
+	if validator == nil {
+		return nil, &ValidationError{Field: "validator", Message: "TokenValidator is required"}
+	}
+
+	// Default logger to nop if not provided
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+
 	return &WebAuthnAuth{
 		handlers:       handlers,
 		rbac:           rbac,
@@ -71,7 +121,33 @@ func NewWebAuthnAuthWithValidator(
 		tokenValidator: validator,
 		logger:         logger,
 		csrfMiddleware: csrfMiddleware,
+	}, nil
+}
+
+// MustNewWebAuthnAuthWithValidator creates a new WebAuthnAuth wrapper and panics on error
+// This is a convenience function for initialization in tests where failure is fatal
+func MustNewWebAuthnAuthWithValidator(
+	handlers *WebAuthnHandlers,
+	rbac *auth.RBACMiddleware,
+	validator auth.TokenValidator,
+	logger *zap.Logger,
+	csrfMiddleware gin.HandlerFunc,
+) *WebAuthnAuth {
+	auth, err := NewWebAuthnAuthWithValidator(handlers, rbac, validator, logger, csrfMiddleware)
+	if err != nil {
+		panic(err)
 	}
+	return auth
+}
+
+// ValidationError represents a validation error for constructor parameters
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e *ValidationError) Error() string {
+	return e.Field + ": " + e.Message
 }
 
 // RegisterAllRoutes registers both public and protected WebAuthn routes

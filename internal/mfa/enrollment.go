@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/auth"
 )
 
 // EnrollmentService combines TOTP and recovery services for enrollment operations
@@ -503,23 +505,48 @@ func (h *Handlers) HandleRecoveryVerify(c *gin.Context) {
 	})
 }
 
-// HandleRecoveryStatus returns the status of recovery codes for a user
+// RegisterProtectedRoutes registers authenticated MFA enrollment routes
+// These endpoints require JWT authentication
+func (h *Handlers) RegisterProtectedRoutes(router gin.IRouter, authMiddleware gin.HandlerFunc) {
+	mfa := router.Group("/mfa")
+	mfa.Use(authMiddleware)
+	{
+		// Protected endpoint: recovery status requires authentication
+		mfa.GET("/recovery/status", h.HandleRecoveryStatus)
+	}
+}
+
+// HandleRecoveryStatus returns the status of recovery codes for the authenticated user
 // GET /mfa/recovery/status
+// Requires JWT authentication - user_id is extracted from the JWT token
 func (h *Handlers) HandleRecoveryStatus(c *gin.Context) {
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+	// SECURITY: Extract user ID from JWT context (set by auth middleware)
+	// Do NOT use query parameters as they allow privilege escalation
+	userIDStr, err := auth.GetUserFromContext(c)
+	if err != nil {
+		h.logger.Error("Failed to get user from context",
+			zap.Error(err),
+		)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		h.logger.Error("Invalid user ID in JWT context",
+			zap.String("user_id", userIDStr),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID in token"})
 		return
 	}
 
 	remaining, err := h.service.recovery.GetRemainingCount(c.Request.Context(), userID)
 	if err != nil {
+		h.logger.Error("Failed to get recovery code status",
+			zap.String("user_id", userID.String()),
+			zap.Error(err),
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get status"})
 		return
 	}

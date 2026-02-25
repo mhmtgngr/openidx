@@ -1,5 +1,4 @@
-REQUIREMENTS (enriched with market research):
-{
+REQUIREMENTS: {
  "project_name": "WebAuthn Security Hardening",
  "summary": "Implement proper JWT-based authentication middleware and CSRF protection for WebAuthn credential management endpoints in internal/mfa/webauthn_handler.go to address critical security vulnerabilities at lines 515 and 525.",
  "functional_requirements": [
@@ -63,147 +62,430 @@ REQUIREMENTS (enriched with market research):
     "Add integration tests for protected endpoints",
     "Add security tests for CSRF bypass attempts",
     "Document API authentication requirements",
-    "Update OpenAPI specification with security schemas"
-   ]
-  }
- ]
+    "Update OpenAPI specification with 
+CHANGES:  frontend/package-lock.json                         |   16 +-
+ frontend/package.json                              |    3 +-
+ internal/common/middleware/csrf.go                 |   79 +-
+ internal/mfa/webauthn_auth.go                      |  217 ++++
+ internal/mfa/webauthn_auth_test.go                 |  670 +++++++++++
+ internal/mfa/webauthn_handler.go                   |  169 ++-
+ internal/mfa/webauthn_handler_auth_test.go         |  855 ++++++++++++++
+ migrations/016_webauthn_security_tables.down.sql   |   19 +
+ migrations/016_webauthn_security_tables.up.sql     |  187 +++
+ web/admin-console/e2e/webauthn-auth.spec.ts        |  743 ++++++++++++
+ web/admin-console/src/api/mfa.ts                   |  244 ++++
+ .../src/hooks/useWebAuthnCredentials.ts            |  193 +++
+ web/admin-console/src/lib/webauthn.ts              |    2 +-
+ .../src/pages/mfa/WebAuthnCredentials.tsx          |  384 ++++++
+ 36 files changed, 5236 insertions(+), 1683 deletions(-)
+FILES: internal/common/middleware/csrf.go
+internal/mfa/webauthn_auth.go
+internal/mfa/webauthn_auth_test.go
+internal/mfa/webauthn_handler.go
+internal/mfa/webauthn_handler_auth_test.go
+CODE: 
+--- internal/common/middleware/csrf.go ---
+package middleware
+
+import (
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+// CSRFConfig configures the CSRF protection middleware
+type CSRFConfig struct {
+	// Enabled controls whether CSRF protection is active
+	Enabled bool
+	// TrustedDomain is the domain from which requests are allowed (e.g., "example.com")
+	TrustedDomain string
+	// SessionCookieNames is a list of cookie names that indicate a session-based request
+	// If any of these cookies are present, CSRF protection is enforced
+	SessionCookieNames []string
 }
 
-MARKET ANALYSIS:
-Now I have gathered comprehensive information about the OpenIDX project and its competitors. Let me compile the market analysis into the requested JSON format.
+// CSRFProtection validates the Origin/Referer headers on state-changing requests
+// that include cookie-based session credentials. This prevents cross-site request
+// forgery attacks on the access proxy's cookie-authenticated endpoints.
+//
+// Requests with only Bearer token authentication (no cookies) are not affected,
+// as Bearer tokens are inherently CSRF-safe.
+func CSRFProtection(cfg CSRFConfig, logger *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !cfg.Enabled {
+			c.Next()
+			return
+		}
 
-{
-  "competitor_summary": [
-    {
-      "name": "Microsoft Entra ID",
-      "strengths": ["Deep Microsoft 365 ecosystem integration", "AI-driven threat detection with Identity Protection", "Risk-based conditional access policies", "Enterprise SSO with 500+ app connectors", "Entra Connect for AD/LDAP synchronization", "PIM for privileged access management", " bundled pricing with M365 licenses"],
-      "weaknesses": ["Vendor lock-in to Microsoft ecosystem", "Complex pricing tiers", "Less flexible in non-Microsoft environments", "Higher TCO for organizations without M365"],
-      "pricing_model": "Bundled with Microsoft 365 (P2: $12/user/month) or standalone pricing"
-    },
-    {
-      "name": "Okta",
-      "strengths": ["7000+ pre-built application integrations", "Best-in-class SSO capabilities", "Advanced Adaptive MFA with ThreatInsight", "Identity Fabric for complex ecosystems", "Strong support for hybrid environments", "Okta Verify for push-based MFA", "Lifecycle Workflows automation"],
-      "weaknesses": ["Per-feature pricing can become expensive", "Complex setup for advanced features", "Premium support costs extra"],
-      "pricing_model": "Per-feature/per-user pricing ($2-$15+ per user/month depending on features)"
-    },
-    {
-      "name": "Duo Security",
-      "strengths": ["Specialized in MFA with Duo Push", "Device health checking and posture assessment", "Trusted Access with risk-based authentication", "Simple deployment model", "Strong mobile device management"],
-      "weaknesses": ["Limited full IAM suite compared to Entra/Okta", "Focused primarily on authentication not full IGA", "Fewer enterprise governance features"],
-      "pricing_model": "$3-$9 per user/month for MFA, additional for PAM features"
-    },
-    {
-      "name": "SailPoint",
-      "strengths": ["Best-in-class Identity Governan
+		// Only check state-changing methods
+		method := c.Request.Method
+		if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+			c.Next()
+			return
+		}
 
-PROJECT CONTEXT (from CLAUDE.md):
-# CLAUDE.md - OpenIDX Development Guide
+		// Determine which cookie names to check for session-based auth
+		sessionCookieNames := cfg.SessionCookieNames
+		if len(sessionCookieNames) == 0 {
+			// Default to the standard proxy session cookie
+			sessionCookieNames = []string{"_openidx_proxy_session"}
+		}
 
-## Project Overview
+		// Only enforce when a session cookie is present (browser-based requests)
+		hasSessionCookie := false
+		for _, cookieName := range sessionCookieNames {
+			if _, err := c.Request.Cookie(cookieName); err == nil {
+				hasSessionCookie = true
+				break
+			}
+		}
 
-OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that provides enterprise-grade Identity and Access Management. It competes with commercial solutions like Microsoft Entra ID, Okta, and Duo while offering 70-80% cost savings.
+		// Skip CSRF if:
+		// 1. No session cookie present (API client using Bearer auth only)
+		// 2. Bearer token is present (but also check for session cookie)
+		if !hasSessionCookie {
+			// No session cookie — this is a non-browser API client using Bearer auth
+			c.Next()
+			return
+		}
 
-## Architecture
+		// If both session cookie AND Bearer token are present, we still need CSRF protection
+		// because the session cookie could be used for CSRF attacks
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     API Gateway (APISIX)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-    ┌───────────────────────────┼───────────────────────┐
-    │                           │                       │
-┌───▼───┐  ┌───────▼───────┐  ┌───▼───┐  ┌───────▼─────┐
-│Identity│  │  Governance  │  │Provis-│  │    Audit   │
-│Service │  │   Service    │  │ioning │  │   Service  │
-└────────┘  └──────────────┘  └───────┘  └────────────┘
-    │               │              │             │
-    └───────────────┼──────────────┴─────────────┘
-                    │
-         ┌──────────▼──────────┐
-         │  Policy Engine (OPA)│
-         └─────────────────────┘
-                    │
-    ┌───────────────┼───────────────┐
-    │               │               │
-┌───▼───┐     ┌─────▼─────┐   ┌─────▼─────┐
-│Postgres│    │   Redis   │   │Elasticsearch│
-└────────┘    └───────────┘   └────────────┘
-```
+		// Validate Origin header first (preferred)
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			if isAllowedOrigin(origin, cfg.TrustedDomain) {
+				c.Next()
+				return
+			}
+			logger.Warn("CSRF: Origin header rejected",
+				zap.String("origin", origin),
+				zap.String("trusted_domain", cfg.TrustedDomain))
+--- internal/mfa/webauthn_auth.go ---
+// Package mfa provides WebAuthn/FIDO2 authentication wrapper for OpenIDX
+package mfa
 
-## Tech Stack
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
 
-### Backend (Go 1.22+)
-- **Framework**: Gin (HTTP router)
-- **Database**: PostgreSQL with pgx driver
-- **Cache**: Redis with go-redis
-- **Logging**: Zap
-- **Config**: Viper
-- **JWT**: golang-jwt/v5
+	"github.com/openidx/openidx/internal/auth"
+)
 
-### Frontend (React 18+)
-- **Framework**: React with TypeScript
-- **Build**: Vite
-- **Styling**: Tailwind CSS
-- **State**: Zustand + React Query
-- **UI**: Radix UI primitives
-- **Auth**: OpenIDX OAuth (PKCE)
+// WebAuthnAuth wraps WebAuthnHandlers with authentication and CSRF middleware
+// It provides a secure way to register both public and protected WebAuthn routes
+type WebAuthnAuth struct {
+	handlers      *WebAuthnHandlers
+	rbac          *auth.RBACMiddleware
+	tokenService  *auth.TokenService
+	tokenValidator auth.TokenValidator
+	logger        *zap.Logger
+	csrfMiddleware gin.HandlerFunc
+}
 
-### Infrastructure
-- **OAuth/OIDC**: Native OpenIDX OAuth Service
-- **API Gateway**: Apache APISIX
-- **Policy Engine**: Open Policy Agent (OPA)
-- **Container**: Docker + Kub
+// NewWebAuthnAuth creates a new WebAuthnAuth wrapper
+// Parameters:
+//   - handlers: The WebAuthnHandlers containing the HTTP handlers
+//   - rbac: The RBACMiddleware for JWT authentication
+//   - tokenService: The TokenService for token validation (optional, can be nil if using tokenValidator)
+//   - tokenValidator: The TokenValidator for token validation (optional, uses TokenService if nil)
+//   - logger: Logger for security events
+//   - csrfMiddleware: Optional CSRF middleware (can be nil for API-only clients)
+func NewWebAuthnAuth(
+	handlers *WebAuthnHandlers,
+	rbac *auth.RBACMiddleware,
+	tokenService *auth.TokenService,
+	logger *zap.Logger,
+	csrfMiddleware gin.HandlerFunc,
+) *WebAuthnAuth {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	var validator auth.TokenValidator
+	if tokenService != nil {
+		validator = auth.NewTokenServiceValidator(tokenService)
+	}
+	return &WebAuthnAuth{
+		handlers:       handlers,
+		rbac:           rbac,
+		tokenService:   tokenService,
+		tokenValidator: validator,
+		logger:         logger,
+		csrfMiddleware: csrfMiddleware,
+	}
+}
 
-EXISTING FILES:
-internal/access/app_publish.go
-internal/access/browzer_config.go
-internal/access/browzer_targets.go
-internal/access/context_evaluator.go
-internal/access/continuous_verify.go
-internal/access/device_health.go
-internal/access/feature_handlers.go
-internal/access/feature_manager.go
-internal/access/guacamole.go
-internal/access/health_handlers.go
-internal/access/multi_idp.go
-internal/access/platform_certs.go
-internal/access/policy_dsl.go
-internal/access/posture.go
-internal/access/service.go
-internal/access/temp_access.go
-internal/access/unified_audit.go
-internal/access/ziti_auth_handlers.go
-internal/access/ziti_browzer.go
-internal/access/ziti_browzer_handlers.go
-internal/access/ziti_config_handlers.go
-internal/access/ziti_discovery.go
-internal/access/ziti_fabric.go
-internal/access/ziti_fabric_handlers.go
-internal/access/ziti.go
-internal/access/ziti_handlers.go
-internal/access/ziti_hardening.go
-internal/access/ziti_session_handlers.go
-internal/access/ziti_sync_handlers.go
-internal/access/ziti_terminator_handlers.go
-internal/access/ziti_user_sync.go
-internal/admin/admin_audit.go
-internal/admin/ai_agents.go
-internal/admin/ai_recommendations.go
-internal/admin/analytics_enhanced.go
-internal/admin/attestation.go
-internal/admin/audit_archival.go
-internal/admin/auth_handler.go
-internal/admin/bulk_import_export.go
-internal/admin/bulk_operations.go
-internal/admin/config.go
-internal/admin/dashboard_enhanced.go
-internal/admin/dashboard.go
-internal/admin/deprovisioning.go
-internal/admin/developer.go
-internal/admin/email_templates.go
-internal/admin/error_catalog.go
-internal/admin/errors_helper.go
-internal/admin/federation.go
-internal/admin/handler.go
+// NewWebAuthnAuthWithValidator creates a new WebAuthnAuth wrapper with a custom TokenValidator
+// This is useful for testing or when using a non-standard token validation implementation
+func NewWebAuthnAuthWithValidator(
+	handlers *WebAuthnHandlers,
+	rbac *auth.RBACMiddleware,
+	validator auth.TokenValidator,
+	logger *zap.Logger,
+	csrfMiddleware gin.HandlerFunc,
+) *WebAuthnAuth {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &WebAuthnAuth{
+		handlers:       handlers,
+		rbac:           rbac,
+		tokenService:   nil,
+		tokenValidator: validator,
+		logger:         logger,
+		csrfMiddleware: csrfMiddleware,
+	}
+}
 
-Design the complete solution. Include market-driven features where priority is critical/high. Be specific about file paths, function names, schemas, implementation order.
+// RegisterAllRoutes registers both public and protected WebAuthn routes
+// Public routes: registration and login flows (no authentication required)
+// Protected routes: credential management (JWT authentication required)
+func (wa *WebAuthnAuth) RegisterAllRoutes(router gin.IRouter) {
+--- internal/mfa/webauthn_auth_test.go ---
+// Package mfa provides unit tests for WebAuthn authentication wrapper
+package mfa
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/auth"
+)
+
+// mockTokenService is a mock implementation of TokenService for testing
+type mockTokenService struct {
+	validToken   bool
+	expiredToken bool
+	userID       string
+	tenantID     string
+	roles        []string
+	shouldFail   bool
+}
+
+func (m *mockTokenService) ValidateAccessToken(ctx context.Context, tokenString string) (*auth.Claims, error) {
+	if m.shouldFail {
+		return nil, auth.ErrTokenInvalid
+	}
+	if m.expiredToken {
+		return nil, auth.ErrTokenExpired
+	}
+	if !m.validToken {
+		return nil, auth.ErrTokenInvalid
+	}
+
+	return &auth.Claims{
+		Subject:   m.userID,
+		TenantID:  m.tenantID,
+		Roles:     m.roles,
+		TokenType: "access",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}, nil
+}
+
+// TestNewWebAuthnAuth tests the constructor
+func TestNewWebAuthnAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zap.NewNop()
+	store := NewInMemoryWebAuthnStore(logger)
+	config := DefaultWebAuthnConfig("localhost", []string{"http://localhost:8080"})
+	service, err := NewWebAuthnService(config, store, logger)
+	require.NoError(t, err)
+
+	handlers := NewWebAuthnHandlers(service, store, logger)
+	rbac := auth.NewRBACMiddleware(auth.RBACConfig{
+		Logger: logger,
+	})
+	tokenService := &mockTokenService{
+		validToken: true,
+		userID:     "user123",
+	}
+
+	t.Run("valid creation with all parameters", func(t *testing.T) {
+		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+
+		assert.NotNil(t, wa)
+		assert.Equal(t, handlers, wa.handlers)
+		assert.Equal(t, rbac, wa.rbac)
+		assert.NotNil(t, wa.tokenValidator)
+		assert.Nil(t, wa.csrfMiddleware)
+--- internal/mfa/webauthn_handler.go ---
+// Package mfa provides WebAuthn/FIDO2 HTTP handlers for OpenIDX
+package mfa
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/auth"
+)
+
+// WebAuthnHandlers provides HTTP handlers for WebAuthn operations
+type WebAuthnHandlers struct {
+	service *WebAuthnService
+	store   WebAuthnStore
+	logger  *zap.Logger
+}
+
+// NewWebAuthnHandlers creates new WebAuthn HTTP handlers
+func NewWebAuthnHandlers(
+	service *WebAuthnService,
+	store WebAuthnStore,
+	logger *zap.Logger,
+) *WebAuthnHandlers {
+	return &WebAuthnHandlers{
+		service: service,
+		store:   store,
+		logger:  logger,
+	}
+}
+
+// RegisterRoutes registers public WebAuthn routes (no authentication required)
+// These endpoints are used during registration and login flows
+func (h *WebAuthnHandlers) RegisterRoutes(router gin.IRouter) {
+	webauthn := router.Group("/mfa/webauthn")
+	{
+		// Registration endpoints (public - used during user registration)
+		webauthn.POST("/register/begin", h.HandleRegisterBegin)
+		webauthn.POST("/register/finish", h.HandleRegisterFinish)
+
+		// Login/authentication endpoints (public - used during authentication)
+		webauthn.POST("/login/begin", h.HandleLoginBegin)
+		webauthn.POST("/login/finish", h.HandleLoginFinish)
+	}
+}
+
+// RegisterProtectedRoutes registers authenticated WebAuthn credential management routes
+// These endpoints require JWT authentication and are protected by RBAC middleware
+func (h *WebAuthnHandlers) RegisterProtectedRoutes(router gin.IRouter, authMiddleware gin.HandlerFunc) {
+	webauthn := router.Group("/mfa/webauthn")
+	{
+		// Apply authentication middleware to all credential management endpoints
+		webauthn.Use(authMiddleware)
+
+		// Credential management endpoints (authenticated)
+		webauthn.GET("/credentials", h.HandleListCredentials)
+		webauthn.DELETE("/credentials/:id", h.HandleDeleteCredential)
+		webauthn.PUT("/credentials/:id/name", h.HandleRenameCredential)
+	}
+}
+
+// RegisterBeginRequest is the request for beginning registration
+type RegisterBeginRequest struct {
+	UserID      uuid.UUID `json:"user_id" binding:"required"`
+	Username    string    `json:"username" binding:"required"`
+	DisplayName string    `json:"display_name"`
+	FriendlyName string   `json:"friendly_name"` // Optional name for the credential
+}
+
+// RegisterFinishRequest is the request for finishing registration
+type RegisterFinishRequest struct {
+	UserID   uuid.UUID `json:"user_id" binding:"required"`
+	Response string    `json:"response" binding:"required"` // JSON string of CredentialCreationResponse
+}
+--- internal/mfa/webauthn_handler_auth_test.go ---
+// Package mfa provides unit tests for WebAuthn handler authentication scenarios
+package mfa
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/auth"
+)
+
+// mockValidatorForHandlers is a mock token validator for handler tests
+type mockValidatorForHandlers struct {
+	validToken   bool
+	expiredToken bool
+	invalidToken bool
+	userID       string
+	tenantID     string
+	roles        []string
+}
+
+func (m *mockValidatorForHandlers) ValidateAccessToken(ctx context.Context, tokenString string) (*auth.Claims, error) {
+	if m.invalidToken {
+		return nil, auth.ErrTokenInvalid
+	}
+	if m.expiredToken {
+		return nil, auth.ErrTokenExpired
+	}
+	if !m.validToken {
+		return nil, auth.ErrTokenInvalid
+	}
+
+	return &auth.Claims{
+		Subject:   m.userID,
+		TenantID:  m.tenantID,
+		Roles:     m.roles,
+		TokenType: "access",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}, nil
+}
+
+// setupAuthenticatedRouter creates a router with authenticated WebAuthn routes
+func setupAuthenticatedRouter(t *testing.T, validator auth.TokenValidator) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+
+	logger := zap.NewNop()
+	store := NewInMemoryWebAuthnStore(logger)
+	config := DefaultWebAuthnConfig("localhost", []string{"http://localhost:8080"})
+	service, err := NewWebAuthnService(config, store, logger)
+	require.NoError(t, err)
+
+	handlers := NewWebAuthnHandlers(service, store, logger)
+
+	rbac := auth.NewRBACMiddleware(auth.RBACConfig{
+		TokenValidator: validator,
+		Logger:         logger,
+	})
+
+	router := gin.New()
+	handlers.RegisterProtectedRoutes(router, rbac.Authenticate())
+
+	return router
+}
+
+// TestHandleListCredentials_AuthenticationScenarios tests various authentication scenarios
+func TestHandleListCredentials_AuthenticationScenarios(t *testing.T) {
+Review: error handling, validation, auth checks, HTTP codes, test coverage, API consistency.

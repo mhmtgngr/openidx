@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/auth"
+	"github.com/openidx/openidx/internal/common/middleware"
 )
 
 // mockValidatorForHandlers is a mock token validator for handler tests
@@ -647,6 +648,386 @@ func TestCSRFProtection_Scenarios(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	})
+
+	t.Run("Bearer-only requests bypass CSRF check", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		logger := zap.NewNop()
+		store := NewInMemoryWebAuthnStore(logger)
+		config := DefaultWebAuthnConfig("localhost", []string{"http://localhost:8080"})
+		service, err := NewWebAuthnService(config, store, logger)
+		require.NoError(t, err)
+
+		handlers := NewWebAuthnHandlers(service, store, logger)
+
+		userID := uuid.New()
+		cred := &WebAuthnCredential{
+			ID:           uuid.New(),
+			CredentialID: "bearer-csrf-cred",
+			PublicKey:    []byte("test-public-key"),
+			UserID:       userID,
+			UserHandle:   userID[:],
+			SignCount:    0,
+			Transports:   []string{"internal"},
+			FriendlyName: "Bearer CSRF Test",
+			CreatedAt:    time.Now(),
+		}
+		err = store.CreateCredential(context.Background(), cred)
+		require.NoError(t, err)
+
+		validator := &mockValidatorForHandlers{
+			validToken: true,
+			userID:     userID.String(),
+			tenantID:   "tenant1",
+		}
+		rbac := auth.NewRBACMiddleware(auth.RBACConfig{
+			TokenValidator: validator,
+			Logger:         logger,
+		})
+
+		// Create CSRF middleware with session cookie checking
+		csrfConfig := middleware.CSRFConfig{
+			Enabled:           true,
+			TrustedDomain:     "localhost",
+			SessionCookieNames: []string{"_openidx_mfa_session"},
+		}
+		csrfMiddleware := middleware.CSRFProtection(csrfConfig, logger)
+
+		// Chain CSRF and auth middleware
+		router := gin.New()
+
+		// Apply CSRF then auth
+		router.Use(func(c *gin.Context) {
+			// Only apply CSRF to state-changing methods
+			if c.Request.Method == "DELETE" || c.Request.Method == "PUT" || c.Request.Method == "POST" {
+				csrfMiddleware(c)
+				if c.IsAborted() {
+					return
+				}
+			}
+			c.Next()
+		})
+
+		handlers.RegisterProtectedRoutes(router, rbac.Authenticate())
+
+		t.Run("Bearer token request with valid Origin header succeeds", func(t *testing.T) {
+			body := `{"friendly_name": "Updated Name"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/bearer-csrf-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Origin", "http://localhost:8080")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should succeed because:
+			// 1. No session cookie present (Bearer-only request)
+			// 2. Origin header is valid
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			var resp map[string]interface{}
+			err = json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.True(t, resp["success"].(bool))
+		})
+
+		t.Run("Bearer token request with valid Referer header succeeds", func(t *testing.T) {
+			// Create another credential for this test
+			cred2 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "referer-test-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "Referer Test",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred2)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "Updated Via Referer"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/referer-test-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Referer", "http://localhost:8080/test")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should succeed because:
+			// 1. No session cookie present (Bearer-only request)
+			// 2. Referer header is valid (fallback when Origin is missing)
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+
+		t.Run("Bearer token request without Origin or Referer succeeds when no session cookie", func(t *testing.T) {
+			// This test verifies that Bearer-only requests (no session cookie)
+			// are allowed even without Origin/Referer headers
+			// This is intentional: API clients using Bearer tokens don't always send Origin/Referer
+			cred3 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "no-origin-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "No Origin Test",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred3)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "API Client Works"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/no-origin-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			// No Origin or Referer header - typical for API clients
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should succeed because no session cookie means this is an API client
+			// API clients using Bearer tokens are inherently CSRF-safe
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			var resp map[string]interface{}
+			err = json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.True(t, resp["success"].(bool))
+		})
+
+		t.Run("Bearer token request with invalid Origin is blocked when session cookie present", func(t *testing.T) {
+			cred4 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "invalid-origin-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "Invalid Origin Test",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred4)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "Attack Attempt"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/invalid-origin-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Origin", "http://evil.com")
+			// Add session cookie - this triggers CSRF protection
+			req.AddCookie(&http.Cookie{Name: "_openidx_mfa_session", Value: "session123"})
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should be blocked because Origin is from untrusted domain AND session cookie is present
+			assert.Equal(t, http.StatusForbidden, w.Code)
+		})
+
+		t.Run("Bearer token request with invalid Referer is blocked when session cookie present", func(t *testing.T) {
+			cred5 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "invalid-referer-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "Invalid Referer Test",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred5)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "Attack Via Referer"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/invalid-referer-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Referer", "http://evil.com/attack")
+			// Add session cookie - this triggers CSRF protection
+			req.AddCookie(&http.Cookie{Name: "_openidx_mfa_session", Value: "session123"})
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should be blocked because Referer is from untrusted domain AND session cookie is present
+			assert.Equal(t, http.StatusForbidden, w.Code)
+		})
+
+		t.Run("Bearer token with valid Origin and session cookie succeeds", func(t *testing.T) {
+			cred6 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "valid-origin-session-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "Valid Origin With Session",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred6)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "Legitimate Browser Request"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/valid-origin-session-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Origin", "http://localhost:8080")
+			// Add session cookie - CSRF validation should pass with valid Origin
+			req.AddCookie(&http.Cookie{Name: "_openidx_mfa_session", Value: "session123"})
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should succeed because Origin is valid even with session cookie
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			var resp map[string]interface{}
+			err = json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.True(t, resp["success"].(bool))
+		})
+
+		t.Run("Bearer token with valid Referer and session cookie succeeds", func(t *testing.T) {
+			cred7 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "valid-referer-session-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "Valid Referer With Session",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred7)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "Legitimate Browser Request With Referer"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/valid-referer-session-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Referer", "http://localhost:8080/page")
+			// Add session cookie - CSRF validation should pass with valid Referer (fallback)
+			req.AddCookie(&http.Cookie{Name: "_openidx_mfa_session", Value: "session123"})
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should succeed because Referer is valid even with session cookie
+			assert.Equal(t, http.StatusOK, w.Code)
+
+			var resp map[string]interface{}
+			err = json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.True(t, resp["success"].(bool))
+		})
+	})
+
+	t.Run("Session cookie requests require valid Origin/Referer", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		logger := zap.NewNop()
+		store := NewInMemoryWebAuthnStore(logger)
+		config := DefaultWebAuthnConfig("localhost", []string{"http://localhost:8080"})
+		service, err := NewWebAuthnService(config, store, logger)
+		require.NoError(t, err)
+
+		handlers := NewWebAuthnHandlers(service, store, logger)
+
+		userID := uuid.New()
+		cred := &WebAuthnCredential{
+			ID:           uuid.New(),
+			CredentialID: "session-csrf-cred",
+			PublicKey:    []byte("test-public-key"),
+			UserID:       userID,
+			UserHandle:   userID[:],
+			SignCount:    0,
+			Transports:   []string{"internal"},
+			FriendlyName: "Session CSRF Test",
+			CreatedAt:    time.Now(),
+		}
+		err = store.CreateCredential(context.Background(), cred)
+		require.NoError(t, err)
+
+		validator := &mockValidatorForHandlers{
+			validToken: true,
+			userID:     userID.String(),
+			tenantID:   "tenant1",
+		}
+		rbac := auth.NewRBACMiddleware(auth.RBACConfig{
+			TokenValidator: validator,
+			Logger:         logger,
+		})
+
+		csrfConfig := middleware.CSRFConfig{
+			Enabled:           true,
+			TrustedDomain:     "localhost",
+			SessionCookieNames: []string{"_openidx_mfa_session"},
+		}
+		csrfMiddleware := middleware.CSRFProtection(csrfConfig, logger)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			if c.Request.Method == "DELETE" || c.Request.Method == "PUT" || c.Request.Method == "POST" {
+				csrfMiddleware(c)
+				if c.IsAborted() {
+					return
+				}
+			}
+			c.Next()
+		})
+		handlers.RegisterProtectedRoutes(router, rbac.Authenticate())
+
+		t.Run("Request with session cookie and valid Origin succeeds", func(t *testing.T) {
+			body := `{"friendly_name": "Session Updated"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/session-csrf-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Origin", "http://localhost:8080")
+			// Add session cookie
+			req.AddCookie(&http.Cookie{Name: "_openidx_mfa_session", Value: "session123"})
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should succeed because session cookie AND valid Origin
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+
+		t.Run("Request with session cookie but no Origin/Referer is blocked", func(t *testing.T) {
+			cred2 := &WebAuthnCredential{
+				ID:           uuid.New(),
+				CredentialID: "session-no-origin-cred",
+				PublicKey:    []byte("test-public-key"),
+				UserID:       userID,
+				UserHandle:   userID[:],
+				SignCount:    0,
+				Transports:   []string{"internal"},
+				FriendlyName: "Session No Origin",
+				CreatedAt:    time.Now(),
+			}
+			err = store.CreateCredential(context.Background(), cred2)
+			require.NoError(t, err)
+
+			body := `{"friendly_name": "CSRF Attack"}`
+			req := httptest.NewRequest("PUT", "/mfa/webauthn/credentials/session-no-origin-cred/name", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer valid-token")
+			// No Origin or Referer header - potential CSRF attack
+			req.AddCookie(&http.Cookie{Name: "_openidx_mfa_session", Value: "session123"})
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			// Should be blocked because session cookie present but no Origin/Referer
+			assert.Equal(t, http.StatusForbidden, w.Code)
 		})
 	})
 }

@@ -71,7 +71,8 @@ func TestNewWebAuthnAuth(t *testing.T) {
 	}
 
 	t.Run("valid creation with all parameters", func(t *testing.T) {
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		wa, err := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		require.NoError(t, err)
 
 		assert.NotNil(t, wa)
 		assert.Equal(t, handlers, wa.handlers)
@@ -82,17 +83,61 @@ func TestNewWebAuthnAuth(t *testing.T) {
 
 	t.Run("valid creation with CSRF middleware", func(t *testing.T) {
 		csrfMiddleware := func(c *gin.Context) {}
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, csrfMiddleware)
+		wa, err := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, csrfMiddleware)
+		require.NoError(t, err)
 
 		assert.NotNil(t, wa)
 		assert.NotNil(t, wa.csrfMiddleware)
 	})
 
+	t.Run("MustNewWebAuthnAuthWithValidator panics on nil handlers", func(t *testing.T) {
+		assert.Panics(t, func() {
+			MustNewWebAuthnAuthWithValidator(nil, rbac, tokenService, logger, nil)
+		})
+	})
+
+	t.Run("MustNewWebAuthnAuthWithValidator panics on nil rbac", func(t *testing.T) {
+		assert.Panics(t, func() {
+			MustNewWebAuthnAuthWithValidator(handlers, nil, tokenService, logger, nil)
+		})
+	})
+
+	t.Run("MustNewWebAuthnAuthWithValidator panics on nil validator", func(t *testing.T) {
+		assert.Panics(t, func() {
+			MustNewWebAuthnAuthWithValidator(handlers, rbac, nil, logger, nil)
+		})
+	})
+
 	t.Run("creation with nil logger", func(t *testing.T) {
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, nil, nil)
+		wa, err := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, nil, nil)
+		require.NoError(t, err)
 
 		assert.NotNil(t, wa)
 		assert.NotNil(t, wa.logger) // Should create nop logger
+	})
+
+	t.Run("returns error when handlers is nil", func(t *testing.T) {
+		wa, err := NewWebAuthnAuthWithValidator(nil, rbac, tokenService, logger, nil)
+
+		assert.Error(t, err)
+		assert.Nil(t, wa)
+		assert.Contains(t, err.Error(), "handlers")
+	})
+
+	t.Run("returns error when rbac is nil", func(t *testing.T) {
+		wa, err := NewWebAuthnAuthWithValidator(handlers, nil, tokenService, logger, nil)
+
+		assert.Error(t, err)
+		assert.Nil(t, wa)
+		assert.Contains(t, err.Error(), "rbac")
+	})
+
+	t.Run("returns error when validator is nil", func(t *testing.T) {
+		wa, err := NewWebAuthnAuthWithValidator(handlers, rbac, nil, logger, nil)
+
+		assert.Error(t, err)
+		assert.Nil(t, wa)
+		assert.Contains(t, err.Error(), "validator")
 	})
 }
 
@@ -116,7 +161,7 @@ func TestWebAuthnAuth_RegisterAllRoutes(t *testing.T) {
 		Logger:         logger,
 	})
 
-	wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+	wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 	router := gin.New()
 	wa.RegisterAllRoutes(router)
@@ -176,7 +221,8 @@ func TestWebAuthnAuth_GetHandlers(t *testing.T) {
 	handlers := NewWebAuthnHandlers(service, store, logger)
 	rbac := auth.NewRBACMiddleware(auth.RBACConfig{Logger: logger})
 
-	wa := NewWebAuthnAuthWithValidator(handlers, rbac, nil, logger, nil)
+	mockValidator := &mockTokenService{validToken: true, userID: "test"}
+	wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, mockValidator, logger, nil)
 
 	t.Run("returns the underlying handlers", func(t *testing.T) {
 		result := wa.GetHandlers()
@@ -199,7 +245,8 @@ func TestWebAuthnAuth_VerifyCredentialOwnership(t *testing.T) {
 	handlers := NewWebAuthnHandlers(service, store, logger)
 	rbac := auth.NewRBACMiddleware(auth.RBACConfig{Logger: logger})
 
-	wa := NewWebAuthnAuthWithValidator(handlers, rbac, nil, logger, nil)
+	mockValidator := &mockTokenService{validToken: true, userID: "test"}
+	wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, mockValidator, logger, nil)
 
 	userID := uuid.New()
 	otherUserID := uuid.New()
@@ -302,7 +349,7 @@ func TestWebAuthnAuth_RequireAuthentication(t *testing.T) {
 		Logger:         logger,
 	})
 
-	wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+	wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 	t.Run("RequireAuthentication returns middleware", func(t *testing.T) {
 		middleware := wa.RequireAuthentication()
@@ -347,7 +394,7 @@ func TestWebAuthnAuth_RegisterRoutesWithCSRF(t *testing.T) {
 		Logger:         logger,
 	})
 
-	wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+	wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 	t.Run("register routes with CSRF enabled", func(t *testing.T) {
 		router := gin.New()
@@ -464,7 +511,7 @@ func TestWebAuthnAuth_Integration(t *testing.T) {
 			Logger:         logger,
 		})
 
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 		router := gin.New()
 		wa.RegisterAllRoutes(router)
@@ -490,7 +537,7 @@ func TestWebAuthnAuth_Integration(t *testing.T) {
 			Logger:         logger,
 		})
 
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 		router := gin.New()
 		wa.RegisterAllRoutes(router)
@@ -515,7 +562,7 @@ func TestWebAuthnAuth_Integration(t *testing.T) {
 			Logger:         logger,
 		})
 
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 		router := gin.New()
 		wa.RegisterAllRoutes(router)
@@ -586,7 +633,7 @@ func TestWebAuthnAuth_MultipleUsers(t *testing.T) {
 			Logger:         logger,
 		})
 
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 		router := gin.New()
 		wa.RegisterAllRoutes(router)
@@ -614,7 +661,7 @@ func TestWebAuthnAuth_MultipleUsers(t *testing.T) {
 			Logger:         logger,
 		})
 
-		wa := NewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
+		wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, tokenService, logger, nil)
 
 		router := gin.New()
 		wa.RegisterAllRoutes(router)
@@ -642,7 +689,8 @@ func Benchmark_WebAuthnAuth_VerifyOwnership(b *testing.B) {
 	handlers := NewWebAuthnHandlers(service, store, logger)
 	rbac := auth.NewRBACMiddleware(auth.RBACConfig{Logger: logger})
 
-	wa := NewWebAuthnAuthWithValidator(handlers, rbac, nil, logger, nil)
+	mockValidator := &mockTokenService{validToken: true, userID: "test"}
+	wa := MustNewWebAuthnAuthWithValidator(handlers, rbac, mockValidator, logger, nil)
 
 	userID := uuid.New()
 	cred := &WebAuthnCredential{
