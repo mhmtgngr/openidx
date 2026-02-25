@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"testing"
 	"time"
 
@@ -20,6 +21,19 @@ import (
 	"github.com/openidx/openidx/internal/common/testutil"
 	"github.com/openidx/openidx/internal/identity"
 )
+
+// mockIdentityService is a minimal mock for testing
+type mockIdentityService struct {
+	users map[string]*identity.User
+}
+
+func (m *mockIdentityService) GetUser(ctx context.Context, id string) (*identity.User, error) {
+	user, ok := m.users[id]
+	if !ok {
+		return nil, errors.New("user not found")
+	}
+	return user, nil
+}
 
 // TestOIDCContext provides a complete test context for OIDC tests
 type TestOIDCContext struct {

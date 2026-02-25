@@ -99,7 +99,8 @@ func (m *MockRedis) ClearAll() error {
 		return fmt.Errorf("mock redis not running")
 	}
 
-	return m.mini.FlushAll()
+	m.mini.FlushAll()
+	return nil
 }
 
 // ClearData removes all keys matching a pattern
@@ -172,7 +173,8 @@ func (m *MockRedis) GetString(key string) (string, bool) {
 		return "", false
 	}
 
-	return m.mini.Get(key)
+	val, err := m.mini.Get(key)
+	return val, err == nil
 }
 
 // Keys returns all keys matching a pattern
@@ -184,13 +186,13 @@ func (m *MockRedis) Keys(pattern string) ([]string, error) {
 		return nil, fmt.Errorf("mock redis not running")
 	}
 
-	return m.mini.Keys(pattern), nil
+	return m.mini.Keys(), nil
 }
 
 // RedisClient returns a mock RedisClient compatible with database.RedisClient
 type RedisClient struct {
 	client *redis.Client
-	mini   *miniredis.Miniredus
+	mini   *miniredis.Miniredis
 }
 
 // NewRedisClient creates a mock RedisClient wrapper

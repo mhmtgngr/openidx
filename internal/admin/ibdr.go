@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // BreachType represents the type of identity breach detected
@@ -42,11 +44,11 @@ const (
 type BreachSeverity string
 
 const (
-	SeverityInfo     BreachSeverity = "info"
-	SeverityLow      BreachSeverity = "low"
-	SeverityMedium   BreachSeverity = "medium"
-	SeverityHigh     BreachSeverity = "high"
-	SeverityCritical BreachSeverity = "critical"
+	BreachSeverityInfo     BreachSeverity = "info"
+	BreachSeverityLow      BreachSeverity = "low"
+	BreachSeverityMedium   BreachSeverity = "medium"
+	BreachSeverityHigh     BreachSeverity = "high"
+	BreachSeverityCritical BreachSeverity = "critical"
 )
 
 // BreachStatus represents the status of breach handling
@@ -238,13 +240,13 @@ func (s *ibdrService) TriggerIncidentResponse(ctx context.Context, incidentID, a
 	actions := []string{}
 
 	switch incident.Severity {
-	case SeverityCritical:
+	case BreachSeverityCritical:
 		// Full quarantine
 		actions = s.executeFullQuarantine(ctx, &incident, actorID)
-	case SeverityHigh:
+	case BreachSeverityHigh:
 		// Partial quarantine
 		actions = s.executePartialQuarantine(ctx, &incident, actorID)
-	case SeverityMedium:
+	case BreachSeverityMedium:
 		// Monitoring and session revocation
 		actions = []string{"revoke_sessions", "enable_monitoring"}
 		s.revokeUserSessions(ctx, incident.AffectedUserIDs)
@@ -373,7 +375,7 @@ func (s *ibdrService) collectIndicators(ctx context.Context, userID, ipAddress, 
 
 func (s *ibdrService) analyzeIndicators(ctx context.Context, indicators []BreachIndicator) (BreachType, BreachSeverity, float64) {
 	if len(indicators) == 0 {
-		return "", SeverityInfo, 0
+		return "", BreachSeverityInfo, 0
 	}
 
 	// Calculate aggregate confidence
@@ -399,22 +401,22 @@ func (s *ibdrService) analyzeIndicators(ctx context.Context, indicators []Breach
 
 	if hasGeoIndicator {
 		breachType = BreachImpossibleTravel
-		severity = SeverityHigh
+		severity = BreachSeverityHigh
 	} else if hasIPIndicator {
 		breachType = BreachCredentialStuffing
-		severity = SeverityMedium
+		severity = BreachSeverityMedium
 	} else {
 		breachType = BreachAnomalousAccess
-		severity = SeverityLow
+		severity = BreachSeverityLow
 	}
 
 	// Adjust severity based on confidence
 	if maxConfidence > 0.8 {
 		switch severity {
-		case SeverityMedium:
-			severity = SeverityHigh
-		case SeverityLow:
-			severity = SeverityMedium
+		case BreachSeverityMedium:
+			severity = BreachSeverityHigh
+		case BreachSeverityLow:
+			severity = BreachSeverityMedium
 		}
 	}
 

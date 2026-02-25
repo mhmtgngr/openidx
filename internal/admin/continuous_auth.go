@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // AuthContext represents the current authentication context of a session

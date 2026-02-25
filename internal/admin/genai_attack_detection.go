@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // GenAIAttackType represents the type of GenAI attack detected
@@ -140,7 +142,6 @@ func (s *genaiAttackDetectionService) DetectPromptInjection(ctx context.Context,
 		RiskScore:      0,
 	}
 
-	promptLower := strings.ToLower(req.Prompt)
 	riskScore := 0.0
 
 	// Known prompt injection patterns
@@ -186,12 +187,12 @@ func (s *genaiAttackDetectionService) DetectPromptInjection(ctx context.Context,
 
 	// Check for jailbreak patterns
 	jailbreakPatterns := []string{
-		"(?i)(do|say|tell)\s+(anything|whatever\s+i\s+want)",
-		"(?i)no\s+(limits|restrictions|rules)",
-		"(?i)(unrestricted|uncensored|unfiltered)",
-		"(?i)(bypass|override)\s+(safety|security|filters)",
-		"(?i)(hypothetical|theoretical)\s+scenario",
-		"(?i)role[- ]?play\s+(as|where)",
+		`(?i)(do|say|tell)\s+(anything|whatever\s+i\s+want)`,
+		`(?i)no\s+(limits|restrictions|rules)`,
+		`(?i)(unrestricted|uncensored|unfiltered)`,
+		`(?i)(bypass|override)\s+(safety|security|filters)`,
+		`(?i)(hypothetical|theoretical)\s+scenario`,
+		`(?i)role[- ]?play\s+(as|where)`,
 	}
 
 	for _, pattern := range jailbreakPatterns {
@@ -206,10 +207,10 @@ func (s *genaiAttackDetectionService) DetectPromptInjection(ctx context.Context,
 
 	// Check for data exfiltration patterns
 	exfilPatterns := []string{
-		"(?i)(dump|export|extract|leak)\s+(all\s+)?(data|database|records|users)",
-		"(?i)(send|transmit|forward)\s+(everything|all\s+data)\\s+to",
-		"(?i)base64\\s*(encode|decode)\\s+(everything|all)",
-		"(?i)(hidden|internal|secret)\s+(prompt|instruction|system)",
+		`(?i)(dump|export|extract|leak)\s+(all\s+)?(data|database|records|users)`,
+		`(?i)(send|transmit|forward)\s+(everything|all\s+data)\s+to`,
+		`(?i)base64\s*(encode|decode)\s+(everything|all)`,
+		`(?i)(hidden|internal|secret)\s+(prompt|instruction|system)`,
 	}
 
 	for _, pattern := range exfilPatterns {
@@ -224,7 +225,7 @@ func (s *genaiAttackDetectionService) DetectPromptInjection(ctx context.Context,
 
 	// Calculate final confidence and risk score
 	if result.AttackDetected {
-		result.Confidence = min(riskScore, 1.0)
+		result.Confidence = minFloat(riskScore, 1.0)
 		result.RiskScore = riskScore * 100
 
 		// Add suggested actions based on severity
@@ -318,7 +319,7 @@ func (s *genaiAttackDetectionService) DetectDataExfiltration(ctx context.Context
 	}
 
 	if result.AttackDetected {
-		result.Confidence = min(riskScore, 1.0)
+		result.Confidence = minFloat(riskScore, 1.0)
 		result.RiskScore = riskScore * 100
 		result.SuggestedActions = []string{
 			"redact_response",
@@ -490,7 +491,14 @@ func compareSeverity(a, b GenAIAttackSeverity) int {
 	return order[a] - order[b]
 }
 
-func min(a, b float64) float64 {
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
@@ -510,7 +518,7 @@ func extractKeywords(prompt string) []string {
 			keywords = append(keywords, word)
 		}
 	}
-	return keywords[:min(len(keywords), 5)]
+	return keywords[:minInt(len(keywords), 5)]
 }
 
 func uniqueStrings(strs []string) []string {
@@ -554,7 +562,7 @@ func calculatePatternRiskScore(pattern *GenAIRequestPattern) float64 {
 		}
 	}
 
-	return min(score, 1.0) * 100
+	return minFloat(score, 1.0) * 100
 }
 
 // Handlers

@@ -13,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // PolicyRecommendationType represents the type of policy recommendation

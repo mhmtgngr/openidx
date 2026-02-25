@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
 )
 
 // PasswordlessMethod represents available passwordless authentication methods
@@ -208,7 +209,6 @@ func (s *passwordlessAuthService) VerifyPasswordlessChallenge(ctx context.Contex
 
 	// Verify based on method
 	var verified bool
-	var err error
 
 	switch chal.Method {
 	case MethodMagicLink:
@@ -277,8 +277,8 @@ func (s *passwordlessAuthService) RegisterPasskey(ctx context.Context, userID, n
 		AttestationType: credential.AttestationType,
 		AAGUID:          base64.RawURLEncoding.EncodeToString(credential.Authenticator.AAGUID),
 		SignCount:       credential.Authenticator.SignCount,
-		BackupEligible:  credential.Authenticator.BackupEligible,
-		BackupState:     credential.Authenticator.BackupState,
+		BackupEligible:  false, // Not available in current webauthn library version
+		BackupState:     false, // Not available in current webauthn library version
 		Name:            name,
 		DeviceType:      deviceType,
 		CreatedAt:       time.Now(),

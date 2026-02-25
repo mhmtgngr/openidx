@@ -83,6 +83,7 @@ type IdentityService interface {
 type OIDCProvider struct {
 	service          *Service
 	identityService  IdentityService
+	store            *Store
 	logger           *zap.Logger
 	issuer           string
 }
@@ -95,6 +96,11 @@ func NewOIDCProvider(service *Service, identitySvc IdentityService, logger *zap.
 		logger:          logger.With(zap.String("component", "oidc")),
 		issuer:          issuer,
 	}
+}
+
+// SetStore sets the store for the OIDC provider
+func (p *OIDCProvider) SetStore(store *Store) {
+	p.store = store
 }
 
 // GenerateIDToken creates an OpenID Connect ID token (JWT) with proper claims
@@ -571,5 +577,8 @@ func (p *OIDCProvider) GetTestSubject(userID string) string {
 
 // ValidateAuthCode is a test helper that validates an auth code
 func (p *OIDCProvider) ValidateAuthCode(ctx context.Context, code string) (*StoredAuthorizationCode, error) {
-	return p.service.store.GetAuthorizationCode(ctx, code)
+	if p.store == nil {
+		return nil, errors.New("store not configured")
+	}
+	return p.store.GetAuthorizationCode(ctx, code)
 }

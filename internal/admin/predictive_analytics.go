@@ -458,7 +458,7 @@ func detectFloatTrend(hist []DailyFloat) string {
 	}
 	recentSum := 0.0
 	earlierSum := 0.0
-	cnt := min(7, len(hist)/2)
+	cnt := minInt(7, len(hist)/2)
 	for i := len(hist) - cnt; i < len(hist); i++ {
 		recentSum += hist[i].Value
 	}
@@ -538,13 +538,6 @@ func sumLastN(hist []DailyMetric, n int) int {
 		sum += hist[i].Value
 	}
 	return sum
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func safeDiv(a, b float64) float64 {
