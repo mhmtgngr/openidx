@@ -5,9 +5,11 @@ package admin
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -483,22 +485,50 @@ func (s *passwordlessAuthService) verifyMagicLink(ctx context.Context, chal *Pas
 
 func (s *passwordlessAuthService) verifySMSOTP(ctx context.Context, chal *PasswordlessChallenge, code string) (bool, error) {
 	// Validate OTP
-	var valid bool
+	var storedCode string
+	var expiresAt time.Time
+	var used bool
 	var attempts int
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT code = $1 AND expires_at > NOW() AND NOT used, attempts
-		FROM sms_otps WHERE user_id = $2 ORDER BY created_at DESC LIMIT 1
-	`, code, chal.UserID).Scan(&valid, &attempts)
+		SELECT code, expires_at, used, attempts
+		FROM sms_otps WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1
+	`, chal.UserID).Scan(&storedCode, &expiresAt, &used, &attempts)
 	if err != nil {
+		// Add random delay to prevent timing attacks on error path
+		s.addRandomTimingDelay()
 		return false, nil
 	}
 
+	// Check if expired or already used
+	isExpired := time.Now().After(expiresAt)
+	isUsed := used
+
+	// Constant-time comparison to prevent timing attacks
+	// Use subtle.ConstantTimeCompare which compares in constant time
+	codesMatch := len(storedCode) == len(code) && subtle.ConstantTimeCompare([]byte(storedCode), []byte(code)) == 1
+
+	valid := codesMatch && !isExpired && !isUsed
+
+	// Increment attempts if invalid
 	if !valid {
-		// Increment attempts
-		if attempts >= 3 {
-			// Mark as failed
+		newAttempts := attempts + 1
+		_, _ = s.db.Pool.Exec(ctx, `UPDATE sms_otps SET attempts = $1 WHERE user_id = $2`, newAttempts, chal.UserID)
+
+		// Exponential backoff for failed attempts to prevent brute force
+		// Delay increases exponentially with each failed attempt
+		backoffDelay := time.Duration(math.Pow(2, float64(attempts))) * 100 * time.Millisecond
+		if backoffDelay > 5*time.Second {
+			backoffDelay = 5 * time.Second // Cap at 5 seconds
+		}
+		time.Sleep(backoffDelay)
+
+		// Mark as failed after max attempts
+		if newAttempts >= s.config.MaxAttempts {
 			_, _ = s.db.Pool.Exec(ctx, `UPDATE sms_otps SET used = true WHERE user_id = $1`, chal.UserID)
 		}
+
+		// Add additional random jitter to prevent timing correlation
+		s.addRandomTimingDelay()
 		return false, nil
 	}
 
@@ -508,7 +538,19 @@ func (s *passwordlessAuthService) verifySMSOTP(ctx context.Context, chal *Passwo
 		UPDATE sms_otps SET used = true, used_at = $1 WHERE user_id = $2 AND used = false
 	`, now, chal.UserID)
 
+	// Add random jitter to success path timing as well
+	s.addRandomTimingDelay()
+
 	return true, nil
+}
+
+// addRandomTimingDelay adds a random delay (0-100ms) to prevent timing correlation attacks
+func (s *passwordlessAuthService) addRandomTimingDelay() {
+	// Generate random delay between 0-100ms
+	randomBytes := make([]byte, 1)
+	rand.Read(randomBytes)
+	delayMs := int(randomBytes[0]) % 100
+	time.Sleep(time.Duration(delayMs) * time.Millisecond)
 }
 
 func (s *passwordlessAuthService) verifyWebAuthn(ctx context.Context, chal *PasswordlessChallenge, response string, ipAddr string) (bool, error) {

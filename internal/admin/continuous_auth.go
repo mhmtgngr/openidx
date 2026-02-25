@@ -136,8 +136,12 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	risk.ActionRequired = s.determineActionRequired(risk.RiskLevel)
 	risk.RecommendedAuth = s.getRecommendedAuth(risk.RiskLevel)
 
-	// Calculate delta
+	// Calculate delta - ensure non-negative and clamp to valid range
 	risk.RiskDelta = risk.OverallRisk - previousRisk
+	// Prevent negative riskDelta values and clamp to 0-100 range
+	risk.RiskDelta = math.Max(0, math.Min(100, risk.RiskDelta))
+	// Also clamp overall risk to 0-100 range
+	risk.OverallRisk = math.Max(0, math.Min(100, risk.OverallRisk))
 
 	// Store risk calculation
 	_, _ = s.db.Pool.Exec(ctx, `

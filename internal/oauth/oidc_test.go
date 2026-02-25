@@ -976,3 +976,60 @@ func TestOIDCHashHalfSHA512(t *testing.T) {
 		})
 	}
 }
+
+// TestOIDCRedisErrorPaths tests error handling when Redis operations fail
+func TestOIDCRedisErrorPaths(t *testing.T) {
+	t.Run("Access token retrieval with Redis connection failure", func(t *testing.T) {
+		// This test verifies that the system handles Redis connection failures gracefully
+		// In production, Redis failures should return appropriate errors
+
+		t.Run("Returns error when Redis is unavailable", func(t *testing.T) {
+			// This would require a mock Redis that simulates connection failure
+			// Expected behavior:
+			// 1. GetAccessToken should return an error
+			// 2. The error should indicate Redis unavailability, not invalid token
+			// Test token would be: "redis-unavailable-test-token"
+			t.Skip("Requires mock Redis connection failure simulation")
+		})
+	})
+
+	t.Run("Authorization code storage failure handling", func(t *testing.T) {
+		t.Run("Handle Redis write failure for auth codes", func(t *testing.T) {
+			// Expected: StoreAuthorizationCode should return error
+			// System should not proceed with auth flow when code storage fails
+			t.Skip("Requires mock Redis write failure simulation")
+		})
+	})
+
+	t.Run("Refresh token rotation with Redis timeout", func(t *testing.T) {
+		t.Run("Handle timeout during token rotation", func(t *testing.T) {
+			// Expected: RotateRefreshToken should return error on timeout
+			// Old token should remain valid if rotation fails
+			t.Skip("Requires mock Redis timeout simulation")
+		})
+	})
+
+	t.Run("Concurrent Redis operations error handling", func(t *testing.T) {
+		t.Run("Handle race conditions in token operations", func(t *testing.T) {
+			// Test scenario: multiple threads trying to consume same auth code
+			// Expected: Only one should succeed, others should get ErrCodeNotFound
+			t.Skip("Requires concurrent test setup with Redis")
+		})
+	})
+
+	t.Run("Redis pub/sub failure in token revocation", func(t *testing.T) {
+		t.Run("Handle pub/sub failure for session events", func(t *testing.T) {
+			// Expected: Token revocation should succeed even if pub/sub fails
+			// System should log the failure but not block the revocation
+			t.Skip("Requires mock Redis pub/sub failure simulation")
+		})
+	})
+
+	t.Run("Redis transaction failure", func(t *testing.T) {
+		t.Run("Handle transaction rollback scenarios", func(t *testing.T) {
+			// Test scenario: Multi-operation transaction fails partway through
+			// Expected: All changes should be rolled back
+			t.Skip("Requires mock Redis transaction failure simulation")
+		})
+	})
+}

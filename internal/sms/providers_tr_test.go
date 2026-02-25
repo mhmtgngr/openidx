@@ -237,6 +237,98 @@ func TestNormalizePhoneTRInternationalFormats(t *testing.T) {
 	}
 }
 
+// TestNormalizePhoneTRPlus90EdgeCases tests additional +90 international format edge cases
+func TestNormalizePhoneTRPlus90EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "+90 format with mobile 532 operator code",
+			input:    "+905321234567",
+			expected: "905321234567",
+		},
+		{
+			name:     "+90 format with mobile 542 operator code",
+			input:    "+905421234567",
+			expected: "905421234567",
+		},
+		{
+			name:     "+90 format with mobile 552 operator code",
+			input:    "+905521234567",
+			expected: "905521234567",
+		},
+		{
+			name:     "+90 format with Istanbul landline 212",
+			input:    "+902121234567",
+			expected: "902121234567",
+		},
+		{
+			name:     "+90 format with Ankara landline 312",
+			input:    "+903121234567",
+			expected: "903121234567",
+		},
+		{
+			name:     "+90 format with Izmir landline 232",
+			input:    "+902321234567",
+			expected: "902321234567",
+		},
+		{
+			name:     "+90 with parentheses around area code",
+			input:    "+90(212)3456789",
+			expected: "902123456789",
+		},
+		{
+			name:     "+90 with dots as separators",
+			input:    "+90.532.123.45.67",
+			expected: "905321234567",
+		},
+		{
+			name:     "+90 with spaces and parentheses",
+			input:    "+90 (532) 123 45 67",
+			expected: "905321234567",
+		},
+		{
+			name:     "+90 with all digit groups separated",
+			input:    "+90 532 123 45 67",
+			expected: "905321234567",
+		},
+		{
+			name:     "+90 with no separators (12 digits)",
+			input:    "+905321234567",
+			expected: "905321234567",
+		},
+		{
+			name:     "+90 Turkish mobile all major operators",
+			input:    "+905321234567",
+			expected: "905321234567",
+		},
+		{
+			name:     "+90 landline Istanbul area code",
+			input:    "+902124455678",
+			expected: "902124455678",
+		},
+		{
+			name:     "+90 landline Ankara area code",
+			input:    "+903121234567",
+			expected: "903121234567",
+		},
+		{
+			name:     "+90 landline Izmir area code",
+			input:    "+902324567890",
+			expected: "902324567890",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizePhoneTR(tt.input)
+			assert.Equal(t, tt.expected, result, "normalizePhoneTR(%q) = %q, want %q", tt.input, result, tt.expected)
+		})
+	}
+}
+
 // TestNormalizePhoneTRPreservesInput tests that certain patterns are preserved
 func TestNormalizePhoneTRPreservesInput(t *testing.T) {
 	tests := []struct {

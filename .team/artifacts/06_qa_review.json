@@ -1,54 +1,84 @@
 {
-  "overall_score": 78,
+  "overall_score": 72,
   "verdict": "NEEDS_FIXES",
   "code_issues": [
     {
       "severity": "critical",
-      "file": "internal/mfa/webauthn_handler.go",
-      "issue": "HandleListCredentials still accepts user_id from query parameter allowing potential unauthorized access",
-      "fix": "Remove user_id query parameter and always use JWT subject"
+      "file": "internal/admin/ai_policy_recommendations.go",
+      "issue": "Missing authorization checks on policy recommendation endpoints",
+      "fix": "Add middleware for admin role verification on all recommendation endpoints"
+    },
+    {
+      "severity": "critical",
+      "file": "internal/admin/genai_attack_detection.go",
+      "issue": "No rate limiting on attack detection endpoints - vulnerable to DoS",
+      "fix": "Add rate limiting middleware to /api/v1/admin/genai/analyze and /api/v1/admin/genai/rules"
+    },
+    {
+      "severity": "critical",
+      "file": "internal/admin/ibdr.go",
+      "issue": "Missing input validation on breach incident creation",
+      "fix": "Add validation for required fields (type, severity, affected_users) before creating incidents"
+    },
+    {
+      "severity": "critical",
+      "file": "internal/admin/continuous_auth.go",
+      "issue": "SessionRisk calculation allows negative riskDelta values without bounds checking",
+      "fix": "Add math.Max(0, riskDelta) to prevent negative values and clamp to 0-100 range"
     },
     {
       "severity": "major",
-      "file": "internal/mfa/webauthn_handler.go",
-      "issue": "HandleListCredentials ownership verification only logs warning instead of returning error",
-      "fix": "Return 403 Forbidden when credential ownership mismatch occurs"
+      "file": "internal/oauth/oidc_test.go",
+      "issue": "Test file has 568 lines added but missing tests for error paths in Redis operations",
+      "fix": "Add test cases for Redis connection failures and timeout scenarios"
     },
     {
       "severity": "major",
-      "file": "internal/common/middleware/csrf.go",
-      "issue": "CSRF middleware missing Referer header validation as fallback when Origin is missing",
-      "fix": "Add Referer header validation for older browsers"
+      "file": "internal/sms/providers_tr_test.go",
+      "issue": "340 lines added but no tests for international format normalization (+90)",
+      "fix": "Add tests for +90XXXXXXXXXX format input"
+    },
+    {
+      "severity": "major",
+      "file": "internal/admin/passwordless_auth.go",
+      "issue": "TOTP code generation uses fixed time window - vulnerable to timing attacks",
+      "fix": "Add random jitter and implement exponential backoff for failed attempts"
+    },
+    {
+      "severity": "major",
+      "file": "web/admin-console/src/App.tsx",
+      "issue": "212 lines added - client-side routing exposes admin URLs without auth guards",
+      "fix": "Add protectedRoute wrapper component checking auth state before rendering admin pages"
     },
     {
       "severity": "minor",
-      "file": "internal/mfa/webauthn_auth.go",
-      "issue": "NewWebAuthnAuthWithValidator does not validate required parameters",
-      "fix": "Add nil checks for handlers, rbac, and logger"
+      "file": "internal/admin/predictive_analytics.go",
+      "issue": "ML model predictions lack confidence threshold validation",
+      "fix": "Add minimum confidence threshold (0.6) before returning predictions"
     },
     {
       "severity": "minor",
-      "file": "internal/mfa/webauthn_auth.go",
-      "issue": "RegisterProtectedRoutes does not validate that authMiddleware is provided",
-      "fix": "Add validation to prevent registering protected routes without auth middleware"
-    },
-    {
-      "severity": "minor",
-      "file": "internal/mfa/webauthn_handler_auth_test.go",
-      "issue": "Missing test case for CSRF bypass scenario",
-      "fix": "Add test verifying Bearer-only requests bypass CSRF check"
+      "file": "web/admin-console/src/lib/store.ts",
+      "issue": "Zustand store persists sensitive tokens in localStorage",
+      "fix": "Use sessionStorage for auth tokens with auto-clear on tab close"
     }
   ],
   "missing_items": [
-    "Integration tests for full auth flow with CSRF",
-    "E2E tests for WebAuthn credential management with JWT auth",
-    "OpenAPI spec updates documenting new auth requirements",
-    "Migration file implementation detail unclear - 016_webauthn_security_tables.up.sql not provided",
-    "Documentation of CSRF bypass behavior for API clients"
+    "Redis mock infrastructure tests for connection failure scenarios",
+    "Integration tests for OIDC flow with mock Redis",
+    "Phone normalization tests for edge cases (null bytes, unicode, spaces)",
+    "GenAI attack detection tests for prompt injection patterns",
+    "IBDR workflow integration tests",
+    "Continuous auth risk calculation tests",
+    "API documentation for new admin endpoints",
+    "Migration rollback verification scripts"
   ],
   "blocking_issues": [
-    "HandleListCredentials query parameter bypass allows privilege escalation",
-    "Ownership verification only logs instead of blocking access"
+    "FR-001 (Mock Redis Setup): Partial implementation - miniredis chosen but no tests verify Redis pub/sub or transaction mocking",
+    "FR-002 (Phone Normalization): Missing +90 international format tests",
+    "FR-M005 (GenAI Attack): No tests for jailbreak detection patterns",
+    "FR-M007 (Passwordless): TOTP vulnerability not addressed",
+    "FR-M009 (IBDR): No integration tests for breach response workflows"
   ],
-  "fix_instructions": "1. Remove user_id query parameter from HandleListCredentials and always use c.GetString(\"user_id\") from JWT\n2. Change ownership check in HandleListCredentials from warning to return 403 error\n3. Add Referer header validation fallback in CSRFProtection\n4. Add nil parameter validation to NewWebAuthnAuth constructors\n5. Add CSRF bypass test case to webauthn_handler_auth_test.go\n6. Verify migration file exists and is correct\n7. Add integration tests covering the full authenticated flow"
+  "fix_instructions": "1. Add authorization middleware to all admin endpoints in internal/admin/*.go\n2. Implement rate limiting on genai attack detection endpoints\n3. Add input validation to IBDR incident creation\n4. Fix continuous auth risk calculation bounds\n5. Add missing phone normalization test cases\n6. Add Redis error path tests to oidc_test.go\n7. Implement proper auth guards in React App.tsx\n8. Move auth tokens from localStorage to sessionStorage\n9. Add TOTP timing attack mitigations\n10. Add integration tests for IBDR workflows"
 }

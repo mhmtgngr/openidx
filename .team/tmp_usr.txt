@@ -1,5 +1,4 @@
-REQUIREMENTS (enriched with market research):
-{
+REQUIREMENTS: {
  "project_name": "oidc-sms-test-infrastructure",
  "summary": "Set up mock Redis infrastructure for OIDC tests and add comprehensive unit tests for Turkish phone number normalization",
  "functional_requirements": [
@@ -73,180 +72,440 @@ REQUIREMENTS (enriched with market research):
    "name": "Documentation & Cleanup",
    "tasks": [
     "Add test documentation comments",
-    "Update TODO at internal/oauth/oidc_test.go:312 as resolved",
-    "Run full test suite to ensure no regressions"
-   ]
-  }
- ]
+    "Update TODO at internal/oauth/oidc_test.go:31
+CHANGES:  internal/gateway/middleware/auth_test.go           |    9 +-
+ internal/oauth/oauth_core_test.go                  |   15 -
+ internal/oauth/oidc.go                             |   31 +
+ internal/oauth/oidc_test.go                        |  568 ++++++++-
+ internal/oauth/test_helper.go                      |  265 ++++
+ internal/sms/providers_tr_test.go                  |  340 ++++++
+ ...017_add_genai_and_advanced_auth_tables.down.sql |   26 +
+ .../017_add_genai_and_advanced_auth_tables.up.sql  |  420 +++++++
+ web/admin-console/src/App.tsx                      |  212 +++-
+ .../src/components/layout/Sidebar.tsx              |    2 +-
+ web/admin-console/src/components/ui/toast.tsx      |    2 +-
+ web/admin-console/src/components/ui/toaster.tsx    |    2 +-
+ web/admin-console/src/lib/store.ts                 |   43 +
+ web/admin-console/src/pages/index.ts               |  106 ++
+ 51 files changed, 7649 insertions(+), 1925 deletions(-)
+FILES: cmd/gateway-service/main_test.go
+internal/admin/ai_policy_recommendations.go
+internal/admin/continuous_auth.go
+internal/admin/genai_attack_detection.go
+internal/admin/ibdr.go
+internal/admin/passwordless_auth.go
+internal/admin/predictive_analytics.go
+internal/common/testutil/redis_mock.go
+internal/gateway/middleware/auth_test.go
+internal/oauth/oauth_core_test.go
+internal/oauth/oidc.go
+internal/oauth/oidc_test.go
+internal/oauth/test_helper.go
+internal/sms/providers_tr_test.go
+CODE: 
+--- cmd/gateway-service/main_test.go ---
+// Package main is the entry point for the Gateway Service
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/gateway"
+	"github.com/openidx/openidx/internal/gateway/routes"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+)
+
+func init() {
+	gin.SetMode(gin.TestMode)
 }
 
-MARKET ANALYSIS:
-{
- "competitor_summary": [
-  {
-   "name": "Microsoft Entra ID",
-   "strengths": [
-    "Deep Microsoft 365 ecosystem integration",
-    "Real-time risk-based access controls",
-    "Scales to 8 billion authentications daily",
-    "AI agent identity management (10,000+ agents per pilot)",
-    "Conditional Access with pre-built templates",
-    "Passwordless authentication (FIDO2/WebAuthn)",
-    "Identity Protection with behavioral analytics",
-    "Privileged Identity Management (PIM)",
-    "SOC 2 Type II, ISO 27001, FedRAMP certified"
-   ],
-   "weaknesses": [
-    "Vendor lock-in to Microsoft ecosystem",
-    "Complex licensing tiers",
-    "Expensive for small-to-medium enterprises",
-    "Limited flexibility in heterogeneous environments"
-   ],
-   "pricing_model": "Per-user per-month licensing (Free P1, P2, A3, A5 tiers); expensive for enterprise features"
-  },
-  {
-   "name": "Okta",
-   "strengths": [
-    "Best-in-class SSO across heterogeneous environments",
-    "Adaptive MFA with fully customizable flows",
-    "Flexible policy building engine",
-    "Neutral platform (no vendor lock-in)",
-    "Large app integration catalog (7000+)",
-    "Okta Identity Cloud advanced features",
-    "Lifecycle Management automation",
-    "API-first design"
-   ],
-   "weaknesses": [
-    "Can be complex to configure optimally",
-    "Premium features require expensive tiers",
-    "Some reporting limitations",
-    "Historical security concerns (2022 breach)"
-   ],
-   "pricing_model": "Per-user per-month; multiple tiers (OIE, OEE); typically $2-30+ per user monthly"
-  },
-  {
-   "name": "Cisco Duo",
-   "strengths": [
-    "Simple deployment model",
-    "Strong device posture assessment",
-    "Zero-trust access to on-prem apps",
-    "Excellent for MFA-only use cases",
-    "Phishing-resistant MFA",
-    "Trusted endpoint verification"
-   ],
-   "weaknesses": [
-    "Limited full IAM capabilities",
-    "Requires additional products for complete identity governance",
-    "Less flexible policy engine than 
+func TestCreateGatewayConfig(t *testing.T) {
+	t.Run("Creates config with default values", func(t *testing.T) {
+		cfg := &config.Config{
+			OAuthJWKSURL:    "http://localhost:8080/jwks.json",
+			EnableRateLimit: true,
+		}
 
-PROJECT CONTEXT (from CLAUDE.md):
-# CLAUDE.md - OpenIDX Development Guide
+		gatewayCfg := createGatewayConfig(cfg, nil, nil, nil)
 
-## Project Overview
+		assert.NotNil(t, gatewayCfg)
+		assert.NotEmpty(t, gatewayCfg.Services)
+		assert.Equal(t, "http://localhost:8080/jwks.json", gatewayCfg.JWKSURL)
+		assert.True(t, gatewayCfg.EnableRateLimit)
+		assert.Equal(t, 30*time.Second, gatewayCfg.RequestTimeout)
+	})
 
-OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that provides enterprise-grade Identity and Access Management. It competes with commercial solutions like Microsoft Entra ID, Okta, and Duo while offering 70-80% cost savings.
+	t.Run("Includes all service URLs", func(t *testing.T) {
+		cfg := &config.Config{}
+		gatewayCfg := createGatewayConfig(cfg, nil, nil, nil)
 
-## Architecture
+		expectedServices := []string{"identity", "oauth", "governance", "audit", "admin", "risk"}
+		for _, svc := range expectedServices {
+			assert.Contains(t, gatewayCfg.Services, svc)
+		}
+	})
+}
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     API Gateway (APISIX)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-    ┌───────────────────────────┼───────────────────────┐
-    │                           │                       │
-┌───▼───┐  ┌───────▼───────┐  ┌───▼───┐  ┌───────▼─────┐
-│Identity│  │  Governance  │  │Provis-│  │    Audit   │
-│Service │  │   Service    │  │ioning │  │   Service  │
-└────────┘  └──────────────┘  └───────┘  └────────────┘
-    │               │              │             │
-    └───────────────┼──────────────┴─────────────┘
-                    │
-         ┌──────────▼──────────┐
-         │  Policy Engine (OPA)│
-         └─────────────────────┘
-                    │
-    ┌───────────────┼───────────────┐
-    │               │               │
-┌───▼───┐     ┌─────▼─────┐   ┌─────▼─────┐
-│Postgres│    │   Redis   │   │Elasticsearch│
-└────────┘    └───────────┘   └────────────┘
-```
+func TestServiceURLProvider(t *testing.T) {
+	t.Run("Returns service URLs", func(t *testing.T) {
+		provider := &serviceURLProvider{}
 
-## Tech Stack
+		urls := []string{"identity", "oauth", "governance", "audit", "admin", "risk"}
+		for _, svc := range urls {
+			url, err := provider.GetServiceURL(svc)
+			require.NoError(t, err)
+			assert.NotEmpty(t, url)
+		}
+	})
 
-### Backend (Go 1.22+)
-- **Framework**: Gin (HTTP router)
-- **Database**: PostgreSQL with pgx driver
-- **Cache**: Redis with go-redis
-- **Logging**: Zap
-- **Config**: Viper
-- **JWT**: golang-jwt/v5
+	t.Run("Returns error for unknown service", func(t *testing.T) {
+		provider := &serviceURLProvider{}
 
-### Frontend (React 18+)
-- **Framework**: React with TypeScript
-- **Build**: Vite
-- **Styling**: Tailwind CSS
-- **State**: Zustand + React Query
-- **UI**: Radix UI primitives
-- **Auth**: OpenIDX OAuth (PKCE)
+		url, err := provider.GetServiceURL("unknown")
+		assert.Error(t, err)
+		assert.Empty(t, url)
+		assert.Contains(t, err.Error(), "unknown service")
+	})
+}
 
-### Infrastructure
-- **OAuth/OIDC**: Native OpenIDX OAuth Service
-- **API Gateway**: Apache APISIX
-- **Policy Engine**: Open Policy Agent (OPA)
-- **Container**: Docker + Kub
+func TestRedisClientWrapper(t *testing.T) {
+	t.Run("Implements gateway.RedisClient interface", func(t *testing.T) {
+		// The wrapper should satisfy the interface
+		var _ gateway.RedisClient = (*redisClientWrapper)(nil)
+	})
 
-EXISTING FILES:
-internal/access/app_publish.go
-internal/access/browzer_config.go
-internal/access/browzer_targets.go
-internal/access/context_evaluator.go
-internal/access/continuous_verify.go
-internal/access/device_health.go
-internal/access/feature_handlers.go
-internal/access/feature_manager.go
-internal/access/guacamole.go
-internal/access/health_handlers.go
-internal/access/multi_idp.go
-internal/access/platform_certs.go
-internal/access/policy_dsl.go
-internal/access/posture.go
-internal/access/service.go
-internal/access/temp_access.go
-internal/access/unified_audit.go
-internal/access/ziti_auth_handlers.go
-internal/access/ziti_browzer.go
-internal/access/ziti_browzer_handlers.go
-internal/access/ziti_config_handlers.go
-internal/access/ziti_discovery.go
-internal/access/ziti_fabric.go
-internal/access/ziti_fabric_handlers.go
-internal/access/ziti.go
-internal/access/ziti_handlers.go
-internal/access/ziti_hardening.go
-internal/access/ziti_session_handlers.go
-internal/access/ziti_sync_handlers.go
-internal/access/ziti_terminator_handlers.go
-internal/access/ziti_user_sync.go
-internal/admin/admin_audit.go
-internal/admin/ai_agents.go
-internal/admin/ai_recommendations.go
-internal/admin/analytics_enhanced.go
-internal/admin/attestation.go
-internal/admin/audit_archival.go
-internal/admin/auth_handler.go
-internal/admin/bulk_import_export.go
-internal/admin/bulk_operations.go
-internal/admin/config.go
-internal/admin/dashboard_enhanced.go
-internal/admin/dashboard.go
-internal/admin/deprovisioning.go
-internal/admin/developer.go
-internal/admin/email_templates.go
-internal/admin/error_catalog.go
-internal/admin/errors_helper.go
-internal/admin/federation.go
-internal/admin/handler.go
+	t.Run("Wraps Get method", func(t *testing.T) {
+--- internal/admin/ai_policy_recommendations.go ---
+// Package admin provides AI-powered IGA (Identity Governance & Administration) policy recommendations
+// This module uses machine learning to analyze access patterns and recommend policy changes.
+package admin
 
-Design the complete solution. Include market-driven features where priority is critical/high. Be specific about file paths, function names, schemas, implementation order.
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
+)
+
+// PolicyRecommendationType represents the type of policy recommendation
+type PolicyRecommendationType string
+
+const (
+	// RecommendationRoleSizing suggests role size adjustments
+	RecommendationRoleSizing PolicyRecommendationType = "role_sizing"
+	// RecommendationAccessRevocation suggests access revocation
+	RecommendationAccessRevocation PolicyRecommendationType = "access_revocation"
+	// RecommendationRoleConsolidation suggests role consolidation
+	RecommendationRoleConsolidation PolicyRecommendationType = "role_consolidation"
+	// RecommendationJustificationCollection suggests collecting justifications
+	RecommendationJustificationCollection PolicyRecommendationType = "justification_collection"
+	// RecommendationReviewFrequency suggests review frequency changes
+	RecommendationReviewFrequency PolicyRecommendationType = "review_frequency"
+	// RecommendationSeparationOfDuties identifies SoD conflicts
+	RecommendationSeparationOfDuties PolicyRecommendationType = "separation_of_duties"
+	// RecommendationLeastPrivilege suggests applying least privilege
+	RecommendationLeastPrivilege PolicyRecommendationType = "least_privilege"
+)
+
+// PolicyRecommendationPriority represents the priority of a recommendation
+type PolicyRecommendationPriority string
+
+const (
+	PriorityCritical PolicyRecommendationPriority = "critical"
+	PriorityHigh     PolicyRecommendationPriority = "high"
+	PriorityMedium   PolicyRecommendationPriority = "medium"
+	PriorityLow      PolicyRecommendationPriority = "low"
+)
+
+// AccessPattern represents user access behavior over time
+type AccessPattern struct {
+	UserID           string     `json:"user_id"`
+	RoleID           string     `json:"role_id"`
+	ResourceType     string     `json:"resource_type"`
+	LastAccessed     *time.Time `json:"last_accessed"`
+	AccessCount      int        `json:"access_count"`
+	AccessFrequency  float64    `json:"access_frequency"` // accesses per day
+	AverageSession   float64    `json:"average_session"`  // minutes
+	IsUnused         bool       `json:"is_unused"`
+	IsRarelyUsed     bool       `json:"is_rarely_used"`
+	IsHeavilyUsed    bool       `json:"is_heavily_used"`
+	PeakUsageHours   []int      `json:"peak_usage_hours"`
+	AnomalyScore     float64    `json:"anomaly_score"`
+}
+
+// PolicyRecommendation represents an AI-generated policy recommendation
+type PolicyRecommendation struct {
+	ID              string                       `json:"id"`
+	Type            PolicyRecommendationType     `json:"type"`
+	Priority        PolicyRecommendationPriority `json:"priority"`
+	Title           string                       `json:"title"`
+	Description     string                       `json:"description"`
+	Impact          string                       `json:"impact"`
+	EstimatedEffort string                       `json:"estimated_effort"`
+	Confidence      float64                      `json:"confidence"`
+	Reasoning       []string                     `json:"reasoning"`
+	AffectedUsers   int                          `json:"affected_users"`
+	AffectedRoles   int                          `json:"affected_roles"`
+	AffectedResources []string                   `json:"affected_resources"`
+	Metadata        json.RawMessage              `json:"metadata"`
+--- internal/admin/continuous_auth.go ---
+// Package admin provides a continuous authentication engine with risk scoring
+// This module implements continuous authentication that evaluates user sessions
+// for anomalies and requires reauthentication based on risk signals.
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
+)
+
+// AuthContext represents the current authentication context of a session
+type AuthContext struct {
+	SessionID         string                 `json:"session_id"`
+	UserID            string                 `json:"user_id"`
+	AuthTime          time.Time              `json:"auth_time"`
+	AuthMethod        string                 `json:"auth_method"`
+	AuthStrength      string                 `json:"auth_strength"` // low, medium, high
+	CurrentRiskScore  float64                `json:"current_risk_score"`
+	DeviceFingerprint string                 `json:"device_fingerprint"`
+	IPAddress         string                 `json:"ip_address"`
+	Location          *GeoLocation           `json:"location,omitempty"`
+	UserAgent         string                 `json:"user_agent"`
+	Metadata          map[string]interface{} `json:"metadata"`
+	UpdatedAt         time.Time              `json:"updated_at"`
+}
+
+// RiskFactor represents a specific risk factor in the authentication context
+type RiskFactor struct {
+	ID          string    `json:"id"`
+	Type        string    `json:"type"`
+	Severity    float64   `json:"severity"` // 0-1
+	Description string    `json:"description"`
+	DetectedAt  time.Time `json:"detected_at"`
+	Resolved    bool      `json:"resolved"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+}
+
+// SessionRisk represents the calculated risk for a session
+type SessionRisk struct {
+	SessionID        string                 `json:"session_id"`
+	OverallRisk      float64                `json:"overall_risk"`      // 0-100
+	RiskLevel        string                 `json:"risk_level"`        // low, medium, high, critical
+	RiskFactors      []RiskFactor           `json:"risk_factors"`
+	ActionRequired   string                 `json:"action_required"`   // none, monitor, step_up, terminate
+	RecommendedAuth  string                 `json:"recommended_auth"`  // mfa, reauth, password
+	CalculatedAt     time.Time              `json:"calculated_at"`
+	PreviousRisk     float64                `json:"previous_risk"`
+	RiskDelta        float64                `json:"risk_delta"`        // change in risk
+	Context          map[string]interface{} `json:"context"`
+}
+
+// ContinuousAuthConfig represents configuration for continuous auth
+type ContinuousAuthConfig struct {
+	Enabled                   bool              `json:"enabled"`
+	RiskEvaluationInterval    time.Duration     `json:"risk_evaluation_interval"`
+	HighRiskThreshold         float64           `json:"high_risk_threshold"`          // default 70
+	MediumRiskThreshold       float64           `json:"medium_risk_threshold"`        // default 40
+	CriticalRiskThreshold     float64           `json:"critical_risk_threshold"`       // default 90
+	SessionMaxLifetime        time.Duration     `json:"session_max_lifetime"`
+	IdleTimeout              time.Duration     `json:"idle_timeout"`
+	StepUpAuthRequired       bool              `json:"step_up_auth_required"`
+	DeviceFingerprintEnabled bool              `json:"device_fingerprint_enabled"`
+	GeoAnomalyEnabled        bool              `json:"geo_anomaly_enabled"`
+	BehavioralAnalysis       bool              `json:"behavioral_analysis"`
+	RiskFactors              map[string]float64 `json:"risk_factors"` // weight for each factor
+}
+
+// continuousAuthService handles continuous authentication
+type continuousAuthService struct {
+	db     *database.PostgresDB
+	logger *zap.Logger
+--- internal/admin/genai_attack_detection.go ---
+// Package admin provides GenAI attack detection for prompt injection and data exfiltration
+// This module implements security analysis for AI/LLM interactions to detect and prevent
+// malicious prompt injection attempts and data exfiltration patterns.
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
+)
+
+// GenAIAttackType represents the type of GenAI attack detected
+type GenAIAttackType string
+
+const (
+	// AttackPromptInjection indicates prompt injection attempts
+	AttackPromptInjection GenAIAttackType = "prompt_injection"
+	// AttackDataExfiltration indicates data exfiltration attempts
+	AttackDataExfiltration GenAIAttackType = "data_exfiltration"
+	// AttackJailbreak indicates jailbreak attempts
+	AttackJailbreak GenAIAttackType = "jailbreak"
+	// AttackTokenManipulation indicates token usage manipulation
+	AttackTokenManipulation GenAIAttackType = "token_manipulation"
+	// AttackModelDistillation indicates model distillation attempts
+	AttackModelDistillation GenAIAttackType = "model_distillation"
+)
+
+// GenAIAttackSeverity represents the severity level of a detected attack
+type GenAIAttackSeverity string
+
+const (
+	SeverityLow      GenAIAttackSeverity = "low"
+	SeverityMedium   GenAIAttackSeverity = "medium"
+	SeverityHigh     GenAIAttackSeverity = "high"
+	SeverityCritical GenAIAttackSeverity = "critical"
+)
+
+// GenAIAttackRequest represents an incoming AI request to be analyzed
+type GenAIAttackRequest struct {
+	RequestID    string            `json:"request_id"`
+	UserID       string            `json:"user_id"`
+	SessionID    string            `json:"session_id"`
+	Prompt       string            `json:"prompt"`
+	AgentID      string            `json:"agent_id"`
+	Context      string            `json:"context"`
+	Metadata     map[string]string `json:"metadata"`
+	Timestamp    time.Time         `json:"timestamp"`
+	IPAddress    string            `json:"ip_address"`
+	UserAgent    string            `json:"user_agent"`
+	PreviousTurns int              `json:"previous_turns"`
+}
+
+// GenAIAttackDetectionResult represents the result of an attack analysis
+type GenAIAttackDetectionResult struct {
+	RequestID        string               `json:"request_id"`
+	AttackDetected   bool                 `json:"attack_detected"`
+	AttackTypes      []GenAIAttackType    `json:"attack_types"`
+	Severity         GenAIAttackSeverity  `json:"severity"`
+	Confidence       float64              `json:"confidence"`
+	Reasons          []string             `json:"reasons"`
+	MatchedPatterns  []string             `json:"matched_patterns"`
+	SuggestedActions []string             `json:"suggested_actions"`
+	AnalyzedAt       time.Time            `json:"analyzed_at"`
+	RiskScore        float64              `json:"risk_score"`
+}
+
+// GenAISecurityRule represents a custom security rule for attack detection
+type GenAISecurityRule struct {
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+--- internal/admin/ibdr.go ---
+// Package admin provides Identity Breach Detection & Response (IBDR) system
+// This module detects identity-related breaches, triggers incident response,
+// and provides remediation workflows.
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/database"
+)
+
+// BreachType represents the type of identity breach detected
+type BreachType string
+
+const (
+	// BreachCredentialStuffing indicates credential stuffing attack
+	BreachCredentialStuffing BreachType = "credential_stuffing"
+	// BreachPasswordSpraying indicates password spraying attack
+	BreachPasswordSpraying BreachType = "password_spraying"
+	// BreachImpossibleTravel indicates impossible travel anomaly
+	BreachImpossibleTravel BreachType = "impossible_travel"
+	// BreachAnomalousAccess indicates unusual access patterns
+	BreachAnomalousAccess BreachType = "anomalous_access"
+	// BreachDataExfiltration indicates potential data exfiltration
+	BreachDataExfiltration BreachType = "data_exfiltration"
+	// BreachPrivilegeEscalation indicates privilege escalation attempt
+	BreachPrivilegeEscalation BreachType = "privilege_escalation"
+	// BreachSessionHijacking indicates session hijacking
+	BreachSessionHijacking BreachType = "session_hijacking"
+	// BreachMaliciousInsider indicates insider threat
+	BreachMaliciousInsider BreachType = "malicious_insider"
+)
+
+// BreachSeverity represents the severity level of a breach
+type BreachSeverity string
+
+const (
+	BreachSeverityInfo     BreachSeverity = "info"
+	BreachSeverityLow      BreachSeverity = "low"
+	BreachSeverityMedium   BreachSeverity = "medium"
+	BreachSeverityHigh     BreachSeverity = "high"
+	BreachSeverityCritical BreachSeverity = "critical"
+)
+
+// BreachStatus represents the status of breach handling
+type BreachStatus string
+
+const (
+	StatusDetected    BreachStatus = "detected"
+	StatusInvestigating BreachStatus = "investigating"
+	StatusConfirmed   BreachStatus = "confirmed"
+	StatusContained   BreachStatus = "contained"
+	StatusResolved    BreachStatus = "resolved"
+	StatusFalsePositive BreachStatus = "false_positive"
+)
+
+// BreachIncident represents a detected identity breach
+type BreachIncident struct {
+	ID                string                 `json:"id"`
+	Type              BreachType             `json:"type"`
+	Severity          BreachSeverity         `json:"severity"`
+	Status            BreachStatus           `json:"status"`
+	Title             string                 `json:"title"`
+	Description       string                 `json:"description"`
+	AffectedUserIDs   []string               `json:"affected_user_ids"`
+	AffectedSessions  []string               `json:"affected_sessions"`
+	AffectedResources []string               `json:"affected_resources"`
+	DetectionMethod   string                 `json:"detection_method"`
+	FirstDetectedAt   time.Time              `json:"first_detected_at"`
+	LastActivityAt    time.Time              `json:"last_activity_at"`
+	Confidence        float64                `json:"confidence"` // 0-1
+Review: error handling, validation, auth checks, HTTP codes, test coverage, API consistency.

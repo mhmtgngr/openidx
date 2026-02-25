@@ -89,6 +89,35 @@ import {
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/lib/auth'
 
+// ProtectedRoute wrapper component that checks authentication before rendering
+// This prevents admin URLs from being accessible without proper authentication
+interface ProtectedRouteProps {
+  children: React.ReactNode
+}
+
+function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const { isAuthenticated, isLoading } = useAuth()
+
+  // Show loading state while checking authentication
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-600 border-t-transparent mx-auto" />
+          <p className="mt-4 text-gray-600">Verifying authentication...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Redirect to login if not authenticated
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
 function App() {
   const { theme } = useAppStore()
   const { isAuthenticated, isLoading } = useAuth()
@@ -124,8 +153,15 @@ function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/magic-link-verify" element={<MagicLinkVerify />} />
 
-      {/* Protected routes */}
-      <Route path="/" element={isAuthenticated ? <Layout /> : <Navigate to="/login" replace />}>
+      {/* Protected routes with auth guard */}
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
 
@@ -138,14 +174,14 @@ function App() {
         <Route path="access-requests" element={<AccessRequests />} />
         <Route path="notification-center" element={<NotificationCenter />} />
 
-        {/* Identity Management */}
+        {/* Identity Management - Admin Protected */}
         <Route path="users" element={<Users />} />
         <Route path="groups" element={<Groups />} />
         <Route path="roles" element={<Roles />} />
         <Route path="directories" element={<Directories />} />
         <Route path="service-accounts" element={<ServiceAccounts />} />
 
-        {/* Applications */}
+        {/* Applications - Admin Protected */}
         <Route path="applications" element={<Applications />} />
         <Route path="identity-providers" element={<IdentityProviders />} />
         <Route path="provisioning-rules" element={<ProvisioningRules />} />
@@ -153,7 +189,7 @@ function App() {
         <Route path="social-providers" element={<SocialProviders />} />
         <Route path="federation-config" element={<FederationConfig />} />
 
-        {/* Network & Access */}
+        {/* Network & Access - Admin Protected */}
         <Route path="proxy-routes" element={<ProxyRoutes />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="ziti-discovery" element={<ZitiDiscovery />} />
@@ -162,7 +198,7 @@ function App() {
         <Route path="certificates" element={<Certificates />} />
         <Route path="devices" element={<Devices />} />
 
-        {/* Governance */}
+        {/* Governance - Admin Protected */}
         <Route path="policies" element={<Policies />} />
         <Route path="approval-policies" element={<ApprovalPolicies />} />
         <Route path="access-reviews" element={<AccessReviews />} />
@@ -174,7 +210,7 @@ function App() {
         <Route path="privacy-dashboard" element={<PrivacyDashboard />} />
         <Route path="consent-management" element={<ConsentManagement />} />
 
-        {/* Security & MFA */}
+        {/* Security & MFA - Admin Protected */}
         <Route path="mfa-management" element={<MFAManagement />} />
         <Route path="risk-policies" element={<RiskPolicies />} />
         <Route path="login-anomalies" element={<LoginAnomalies />} />
@@ -185,7 +221,7 @@ function App() {
         <Route path="security-keys" element={<SecurityKeys />} />
         <Route path="push-devices" element={<PushDevices />} />
 
-        {/* Audit & Reports */}
+        {/* Audit & Reports - Admin Protected */}
         <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="unified-audit" element={<UnifiedAudit />} />
         <Route path="admin-audit-log" element={<AdminAuditLog />} />
@@ -197,13 +233,13 @@ function App() {
         <Route path="compliance-dashboard" element={<ComplianceDashboard />} />
         <Route path="reports" element={<Reports />} />
 
-        {/* AI & Intelligence */}
+        {/* AI & Intelligence - Admin Protected */}
         <Route path="ai-agents" element={<AIAgents />} />
         <Route path="ispm" element={<ISPMDashboard />} />
         <Route path="ai-recommendations" element={<AIRecommendations />} />
         <Route path="predictive-analytics" element={<PredictiveAnalytics />} />
 
-        {/* Enterprise */}
+        {/* Enterprise - Admin Protected */}
         <Route path="saml-service-providers" element={<SAMLServiceProviders />} />
         <Route path="bulk-operations" element={<BulkOperations />} />
         <Route path="email-templates" element={<EmailTemplates />} />
@@ -211,14 +247,14 @@ function App() {
         <Route path="attestation-campaigns" element={<AttestationCampaigns />} />
         <Route path="audit-archival" element={<AuditArchival />} />
 
-        {/* Developer */}
+        {/* Developer - Admin Protected */}
         <Route path="api-explorer" element={<APIExplorer />} />
         <Route path="oauth-playground" element={<OAuthPlayground />} />
         <Route path="developer-settings" element={<DeveloperSettings />} />
         <Route path="error-catalog" element={<ErrorCatalog />} />
         <Route path="api-docs" element={<APIDocs />} />
 
-        {/* System */}
+        {/* System - Admin Protected */}
         <Route path="system-health" element={<SystemHealth />} />
         <Route path="organizations" element={<Organizations />} />
         <Route path="delegations" element={<Delegations />} />

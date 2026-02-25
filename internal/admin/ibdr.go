@@ -540,6 +540,48 @@ func determineQuarantineAction(actions []string) string {
 	return "none"
 }
 
+// validateBreachIncidentRequest validates a breach incident creation request
+func validateBreachIncidentRequest(incidentType string, severity string, affectedUsers []string) error {
+	// Validate breach type
+	validTypes := map[BreachType]bool{
+		BreachCredentialStuffing:  true,
+		BreachPasswordSpraying:    true,
+		BreachImpossibleTravel:    true,
+		BreachAnomalousAccess:     true,
+		BreachDataExfiltration:    true,
+		BreachPrivilegeEscalation: true,
+		BreachSessionHijacking:    true,
+		BreachMaliciousInsider:    true,
+	}
+	if !validTypes[BreachType(incidentType)] {
+		return fmt.Errorf("invalid breach_type: %s", incidentType)
+	}
+
+	// Validate severity
+	validSeverities := map[BreachSeverity]bool{
+		BreachSeverityInfo:     true,
+		BreachSeverityLow:      true,
+		BreachSeverityMedium:   true,
+		BreachSeverityHigh:     true,
+		BreachSeverityCritical: true,
+	}
+	if !validSeverities[BreachSeverity(severity)] {
+		return fmt.Errorf("invalid severity: %s", severity)
+	}
+
+	// Validate affected users
+	if len(affectedUsers) == 0 {
+		return fmt.Errorf("at least one affected_user_id is required")
+	}
+	for _, userID := range affectedUsers {
+		if len(userID) < 3 {
+			return fmt.Errorf("invalid user_id format: %s", userID)
+		}
+	}
+
+	return nil
+}
+
 // Handlers
 
 func (s *Service) handleIBDRDetectBreach(c *gin.Context) {
@@ -554,6 +596,35 @@ func (s *Service) handleIBDRDetectBreach(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Validate required fields
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	// Validate user_id format (UUID or similar)
+	if len(req.UserID) < 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id format"})
+		return
+	}
+
+	// Validate IP address format if provided
+	if req.IPAddress != "" {
+		// Basic IP validation - should contain at least 3 dots for IPv4 or be IPv6 format
+		// In production, use a proper IP validation library
+		ipParts := 0
+		for _, char := range req.IPAddress {
+			if char == '.' {
+				ipParts++
+			}
+		}
+		// Allow IPv4 (dots), IPv6 (colons), or localhost
+		if ipParts > 0 && ipParts != 3 && req.IPAddress != "localhost" && !strings.Contains(req.IPAddress, ":") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ip_address format"})
+			return
+		}
 	}
 
 	config := &IBDRConfig{

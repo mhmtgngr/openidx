@@ -494,6 +494,7 @@ func (s *aiPolicyRecommendationsService) calculateRiskScore(ctx context.Context,
 // Handlers
 
 func (s *Service) handleAIAnalyzeAccess(c *gin.Context) {
+	// Require admin role for access pattern analysis
 	if !requireAdmin(c) {
 		return
 	}

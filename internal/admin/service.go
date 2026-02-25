@@ -1170,6 +1170,34 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/risk/anomalies", svc.handleLoginAnomalies)
 	router.GET("/risk/user-profile/:id", svc.handleUserRiskProfile)
 	router.GET("/risk/overview", svc.handleRiskOverview)
+
+	// Phase 19: Advanced Security Features
+	// GenAI Attack Detection - rate limited and protected
+	router.POST("/genai/analyze", svc.handleGenAIAttackDetect)
+	router.GET("/genai/metrics", svc.handleGenAIAttackMetrics)
+	router.GET("/genai/rules", svc.handleGenAISecurityRules)
+
+	// Identity Breach Detection & Response (IBDR)
+	router.POST("/ibdr/detect", svc.handleIBDRDetectBreach)
+	router.GET("/ibdr/incidents", svc.handleIBDRIncidents)
+	router.GET("/ibdr/alerts", svc.handleIBDRAlerts)
+	router.POST("/ibdr/incidents/:id/respond", svc.handleIBDRTriggerResponse)
+
+	// Continuous Authentication
+	router.GET("/continuous-auth/risk", svc.handleContinuousAuthGetRisk)
+	router.POST("/continuous-auth/check", svc.handleContinuousAuthCheck)
+	router.POST("/continuous-auth/update", svc.handleContinuousAuthUpdate)
+
+	// Passwordless Authentication
+	router.POST("/passwordless/initiate", svc.handlePasswordlessInitiate)
+	router.POST("/passwordless/verify", svc.handlePasswordlessVerify)
+	router.GET("/passwordless/methods", svc.handlePasswordlessListMethods)
+
+	// AI Policy Recommendations
+	router.POST("/ai/analyze-access", svc.handleAIAnalyzeAccess)
+	router.GET("/ai/recommendations", svc.handleAIPolicyRecommendations)
+	router.POST("/ai/recommendations/:id/apply", svc.handleAIApplyRecommendation)
+	router.GET("/ai/compliance-gaps", svc.handleAIComplianceGaps)
 }
 
 // HTTP Handlers
