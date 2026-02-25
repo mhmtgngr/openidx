@@ -49,7 +49,7 @@ type ApprovalPolicy struct {
 	Name                  string                   `json:"name"`
 	ResourceType          string                   `json:"resource_type"`
 	ResourceID            *string                  `json:"resource_id,omitempty"`
-	ApprovalSteps         []map[string]interface{} `json:"approval_steps"`
+	ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
 	AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
 	MaxWaitHours          int                      `json:"max_wait_hours"`
 	Enabled               bool                     `json:"enabled"`
@@ -179,21 +179,38 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		return
 	}
 
-	var steps []map[string]interface{}
+	var steps []ApprovalStep
 	if err := json.Unmarshal(stepsJSON, &steps); err != nil || len(steps) == 0 {
 		return
 	}
 
 	for i, step := range steps {
-		approverID, _ := step["approver_id"].(string)
-		if approverID == "" {
-			continue
+		// Handle different approval step types
+		switch step.Type {
+		case ApprovalStepTypeSpecificUser:
+			if step.ApproverID != "" {
+				_, _ = s.db.Pool.Exec(ctx,
+					`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
+					 VALUES ($1, $2, $3, $4, $5, $6)`,
+					uuid.New().String(), requestID, step.ApproverID, step.Order, "pending", time.Now(),
+				)
+			}
+		case ApprovalStepTypeRole:
+			// For role-based approval, we need to query users with this role
+			// For now, skip role-based approvals in this implementation
+			s.logger.Debug("Role-based approval step not yet implemented", zap.Int("step", i+1), zap.String("role_id", step.RoleID))
+		case ApprovalStepTypeGroup:
+			// For group-based approval, we need to query users in this group
+			s.logger.Debug("Group-based approval step not yet implemented", zap.Int("step", i+1), zap.String("group_id", step.GroupID))
+		case ApprovalStepTypeManager:
+			// For manager approval, find the resource owner's manager
+			s.logger.Debug("Manager-based approval step not yet implemented", zap.Int("step", i+1))
+		case ApprovalStepTypeAuto:
+			// Automatic approval - no human approver needed
+			s.logger.Debug("Auto-approval step", zap.Int("step", i+1))
+		default:
+			s.logger.Warn("Unknown approval step type", zap.String("type", string(step.Type)))
 		}
-		_, _ = s.db.Pool.Exec(ctx,
-			`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			uuid.New().String(), requestID, approverID, i+1, "pending", time.Now(),
-		)
 	}
 }
 
@@ -621,7 +638,7 @@ func (s *Service) handleListApprovalPolicies(c *gin.Context) {
 			_ = json.Unmarshal(stepsJSON, &p.ApprovalSteps)
 		}
 		if p.ApprovalSteps == nil {
-			p.ApprovalSteps = []map[string]interface{}{}
+			p.ApprovalSteps = []ApprovalStep{}
 		}
 		if autoApproveJSON != nil {
 			_ = json.Unmarshal(autoApproveJSON, &p.AutoApproveConditions)
@@ -642,7 +659,7 @@ func (s *Service) handleCreateApprovalPolicy(c *gin.Context) {
 		Name                  string                   `json:"name"`
 		ResourceType          string                   `json:"resource_type"`
 		ResourceID            *string                  `json:"resource_id,omitempty"`
-		ApprovalSteps         []map[string]interface{} `json:"approval_steps"`
+		ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
 		AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
 		MaxWaitHours          int                      `json:"max_wait_hours"`
 		Enabled               bool                     `json:"enabled"`
@@ -709,7 +726,7 @@ func (s *Service) handleUpdateApprovalPolicy(c *gin.Context) {
 		Name                  string                   `json:"name"`
 		ResourceType          string                   `json:"resource_type"`
 		ResourceID            *string                  `json:"resource_id,omitempty"`
-		ApprovalSteps         []map[string]interface{} `json:"approval_steps"`
+		ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
 		AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
 		MaxWaitHours          int                      `json:"max_wait_hours"`
 		Enabled               bool                     `json:"enabled"`

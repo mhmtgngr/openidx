@@ -11,6 +11,86 @@ import (
 	"github.com/google/uuid"
 )
 
+// allowedFields is the allowlist of valid field names that can be used in policy conditions
+// This prevents injection attacks via arbitrary field access
+var allowedFields = map[string]bool{
+	// Subject/User fields
+	"subject.id":          true,
+	"subject.type":        true,
+	"subject.authenticated": true,
+	"subject.roles":       true,
+	"subject.groups":      true,
+	"subject.attributes":  true,
+	"user.id":             true,
+	"user.type":           true,
+	"user.authenticated":  true,
+	"user.roles":          true,
+	"user.groups":         true,
+	"user.attributes":     true,
+
+	// Resource fields
+	"resource.id":         true,
+	"resource.type":       true,
+	"resource.name":       true,
+	"resource.owner":      true,
+	"resource.path":       true,
+	"resource.tags":       true,
+	"resource.attributes": true,
+
+	// Context fields
+	"context.ip":          true,
+	"context.ip_address":  true,
+	"context.user_agent":  true,
+	"context.time":        true,
+	"context.environment": true,
+	"context.device_id":   true,
+	"context.session_id":  true,
+	"context.request_id":  true,
+	"context.location":    true,
+	"context.attributes":  true,
+
+	// Action field
+	"action":              true,
+}
+
+// allowedAttributePrefixes defines allowed prefixes for dynamic attribute access
+// These are safe because they only access pre-defined map keys, not arbitrary paths
+var allowedAttributePrefixes = []string{
+	"subject.attributes.",
+	"user.attributes.",
+	"resource.attributes.",
+	"context.attributes.",
+}
+
+// isFieldAllowed checks if a field name is in the allowlist or is a safe attribute access
+func isFieldAllowed(field string) bool {
+	// Check exact match first
+	if allowedFields[field] {
+		return true
+	}
+
+	// Check for safe attribute access patterns
+	for _, prefix := range allowedAttributePrefixes {
+		if strings.HasPrefix(field, prefix) {
+			// Ensure there's something after the prefix
+			rest := strings.TrimPrefix(field, prefix)
+			if len(rest) > 0 {
+				// Validate attribute key contains only safe characters
+				// Only allow alphanumeric, underscore, hyphen, and dot for nested keys
+				for _, r := range rest {
+					if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+						r == '_' || r == '-' || r == '.') {
+						return false
+					}
+				}
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // ZTPolicy represents a Zero Trust access policy with versioning support
 type ZTPolicy struct {
 	ID          string          `json:"id"`
@@ -328,6 +408,12 @@ func (e *ZTPolicyEvaluator) evaluateConditions(group ConditionGroup, input ZTPol
 
 // evaluateCondition evaluates a single condition
 func (e *ZTPolicyEvaluator) evaluateCondition(condition Condition, input ZTPolicyInput) bool {
+	// SECURITY: Validate field name against allowlist to prevent injection attacks
+	if !isFieldAllowed(condition.Field) {
+		// Reject invalid fields rather than evaluating them
+		return false
+	}
+
 	fieldValue := e.getFieldValue(condition.Field, input)
 	if fieldValue == nil {
 		return false

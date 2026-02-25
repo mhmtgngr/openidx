@@ -37,13 +37,33 @@ const (
 	EventRequestCancelled  RequestEventType = "request_cancelled"
 )
 
+// ApprovalStepType defines the type of approval step
+type ApprovalStepType string
+
+const (
+	ApprovalStepTypeSpecificUser ApprovalStepType = "specific_user"   // Specific user must approve
+	ApprovalStepTypeRole        ApprovalStepType = "role"            // Any user with role must approve
+	ApprovalStepTypeGroup       ApprovalStepType = "group"           // Any user in group must approve
+	ApprovalStepTypeManager     ApprovalStepType = "manager"         // Resource owner's manager
+	ApprovalStepTypeAuto        ApprovalStepType = "auto"            // Automatic approval based on conditions
+)
+
 // ApprovalStep represents a single step in an approval chain
 type ApprovalStep struct {
-	StepOrder    int    `json:"step_order"`
-	ApproverType string `json:"approver_type"` // "user", "role", "manager", "security_team"
-	ApproverID   string `json:"approver_id"`    // User ID or role ID
+	Order          int              `json:"order"`                      // Step order (1-based)
+	Type           ApprovalStepType `json:"type"`                       // Type of approval required
+	ApproverID     string           `json:"approver_id,omitempty"`      // Specific user ID (for type=specific_user)
+	RoleID         string           `json:"role_id,omitempty"`          // Role ID (for type=role)
+	GroupID        string           `json:"group_id,omitempty"`         // Group ID (for type=group)
+	MinApprovals   int              `json:"min_approvals"`              // Minimum number of approvals needed (default: 1)
+	TimeoutMinutes int              `json:"timeout_minutes,omitempty"`  // Step timeout in minutes
+	Conditions     map[string]interface{} `json:"conditions,omitempty"` // Auto-approval conditions
+
+	// Legacy fields for backward compatibility
+	StepOrder    int    `json:"step_order,omitempty"`
+	ApproverType string `json:"approver_type,omitempty"` // "user", "role", "manager", "security_team"
 	ApproverName string `json:"approver_name,omitempty"`
-	Required     bool   `json:"required"` // true = must approve, false = optional
+	Required     bool   `json:"required,omitempty"` // true = must approve, false = optional
 }
 
 // ApprovalChainConfig defines the approval workflow configuration

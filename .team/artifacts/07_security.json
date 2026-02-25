@@ -1,135 +1,122 @@
 {
-  "risk_level": "high",
-  "security_score": 42,
+  "risk_level": "medium",
+  "security_score": 72,
   "vulnerabilities": [
     {
       "id": "V-001",
-      "severity": "critical",
+      "severity": "high",
       "file": "internal/oauth/handlers_passwordless.go",
-      "description": "SQL injection via Redis key concatenation without validation",
-      "fix": "Validate and sanitize mfa_session input before using in Redis key lookup"
+      "description": "Session validation regex allows dots and underscores which could be exploited for path traversal in Redis keys. While better than no validation, the pattern `[a-zA-Z0-9\\-_\\.]` is still permissive.",
+      "fix": "Restrict to UUID format only: `^[a-f0-9\\-]{36}$` for JWT session IDs, or use a allowlist approach."
     },
     {
       "id": "V-002",
       "severity": "high",
       "file": "internal/governance/zt_policy_handler.go",
-      "description": "No rate limiting on policy evaluation endpoint - allows DoS",
-      "fix": "Add rate limiting middleware to POST /api/v1/policies/evaluate"
+      "description": "In-memory rate limiting store is vulnerable to race conditions and DoS. The `rateLimitStore` uses global state which can be exhausted. No cleanup mechanism for expired entries.",
+      "fix": "Use Redis with TTL for rate limiting, implement token bucket algorithm, add periodic cleanup goroutine."
     },
     {
       "id": "V-003",
-      "severity": "high",
-      "file": "internal/identity/handlers_federation.go",
-      "description": "SQL injection via email domain concatenation in QueryRow",
-      "fix": "Use parameterized queries with proper domain whitelist validation"
+      "severity": "medium",
+      "file": "internal/governance/zt_policy.go",
+      "description": "Condition Field accepts arbitrary strings via `Field string` - no validation against allowlist of valid fields (user.role, resource.type, etc.) enables potential injection into policy evaluation.",
+      "fix": "Define allowlist of valid field names and validate before policy creation."
     },
     {
       "id": "V-004",
-      "severity": "high",
-      "file": "internal/identity/handlers_mfa.go",
-      "description": "User ID from query/header without proper validation - IDOR vulnerability",
-      "fix": "Require authenticated context user ID only, reject query/header overrides"
+      "severity": "medium",
+      "file": "internal/identity/handlers_federation.go",
+      "description": "Domain validation regex allows multiple consecutive dots and could accept malformed domains that pass validation but cause downstream issues.",
+      "fix": "Use stricter validation: `^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$` ensuring no consecutive dots."
     },
     {
       "id": "V-005",
-      "severity": "high",
-      "file": "internal/identity/handlers_otp.go",
-      "description": "Debug mode exposes OTP codes in production - enables account takeover",
-      "fix": "Remove OTP code exposure entirely or require production flag check"
+      "severity": "medium",
+      "file": "internal/auth/middleware.go",
+      "description": "No evidence of token binding checks (e.g., comparing token `jti` or `sub` against request context) enabling potential token replay across sessions.",
+      "fix": "Add token fingerprinting using client IP hash or session ID binding in claims."
     },
     {
       "id": "V-006",
       "severity": "medium",
-      "file": "internal/governance/zt_policy.go",
-      "description": "Regex conditions in policies without input sanitization - ReDoS vulnerability",
-      "fix": "Pre-compile and validate regex patterns before storage, limit complexity"
+      "file": "internal/audit/handler.go",
+      "description": "Audit log integrity verification endpoint exists but no evidence of cryptographic signing (HMAC, digital signatures) for tamper evidence.",
+      "fix": "Implement append-only cryptographic chain with hash chaining (each entry hashes previous entry's hash)."
     },
     {
       "id": "V-007",
-      "severity": "medium",
-      "file": "internal/auth/middleware.go",
-      "description": "Missing JWT algorithm verification - algorithm confusion attack possible",
-      "fix": "Explicitly verify alg header equals RS256/ES256 only"
+      "severity": "low",
+      "file": "internal/identity/handlers_otp.go",
+      "description": "OTP code is conditionally exposed in response (comment warns but code path may exist in dev mode).",
+      "fix": "Ensure OTP codes are never logged or returned in any environment."
     },
     {
       "id": "V-008",
       "severity": "medium",
       "file": "internal/governance/workflows.go",
-      "description": "ApprovalPolicy stores arbitrary JSON without schema validation - injection risk",
-      "fix": "Define strict schema for ApprovalPolicy, validate all JSON fields"
-    },
-    {
-      "id": "V-009",
-      "severity": "medium",
-      "file": "internal/audit/handler.go",
-      "description": "No audit logging for audit queries - allows reconnaissance without detection",
-      "fix": "Log all audit access with requester context"
-    },
-    {
-      "id": "V-010",
-      "severity": "low",
-      "file": "internal/governance/policy.go",
-      "description": "OPA policies loaded without signature verification - supply chain risk",
-      "fix": "Implement policy signing and verification before loading"
+      "description": "ApprovalPolicy uses `[]map[string]interface{}` for ApprovalSteps - untyped structure vulnerable to injection and schema drift.",
+      "fix": "Define structured ApprovalStep type with explicit fields and validation."
     }
   ],
   "owasp_checks": [
     {
-      "category": "A01:2021-Broken Access Control",
+      "category": "A01:2021 \u2013 Broken Access Control",
       "status": "fail",
-      "detail": "IDOR in handlers_mfa.go allows user_id from query parameter"
+      "detail": "IDOR risk in MFA handlers - user_id from context not verified against token claims. Rate limiter vulnerable to bypass."
     },
     {
-      "category": "A02:2021-Cryptographic Failures",
-      "status": "fail",
-      "detail": "Debug OTP exposure in handlers_otp.go"
-    },
-    {
-      "category": "A03:2021-Injection",
-      "status": "fail",
-      "detail": "SQL injection risk in handlers_federation.go via email domain"
-    },
-    {
-      "category": "A04:2021-Insecure Design",
-      "status": "fail",
-      "detail": "No rate limiting on policy evaluation enables DoS"
-    },
-    {
-      "category": "A05:2021-Security Misconfiguration",
-      "status": "fail",
-      "detail": "Debug mode may leak OTPs in production"
-    },
-    {
-      "category": "A06:2021-Vulnerable and Outdated Components",
+      "category": "A02:2021 \u2013 Cryptographic Failures",
       "status": "pass",
-      "detail": "No outdated dependencies detected in reviewed code"
+      "detail": "JWT validation appears correct, no hardcoded secrets visible."
     },
     {
-      "category": "A07:2021-Identification and Authentication Failures",
+      "category": "A03:2021 \u2013 Injection",
       "status": "fail",
-      "detail": "JWT algorithm validation missing in middleware"
+      "detail": "SQL injection risk via domain validation bypass. No input sanitization on policy field names."
     },
     {
-      "category": "A08:2021-Software and Data Integrity Failures",
+      "category": "A04:2021 \u2013 Insecure Design",
       "status": "fail",
-      "detail": "OPA policies loaded without verification"
+      "detail": "In-memory rate limiting is not production-ready. No circuit breakers visible."
     },
     {
-      "category": "A09:2021-Security Logging and Monitoring Failures",
-      "status": "fail",
-      "detail": "Audit queries not logged themselves"
-    },
-    {
-      "category": "A10:2021-Server-Side Request Forgery",
+      "category": "A05:2021 \u2013 Security Misconfiguration",
       "status": "pass",
-      "detail": "No SSRF patterns found in reviewed code"
+      "detail": "Proper use of zap logging, testcontainers for tests."
+    },
+    {
+      "category": "A06:2021 \u2013 Vulnerable Components",
+      "status": "pass",
+      "detail": "Using up-to-date dependencies (gin v1.10+, pgx v5)."
+    },
+    {
+      "category": "A07:2021 \u2013 Identification and Authentication Failures",
+      "status": "fail",
+      "detail": "No evidence of failed login throttling. Session validation regex permissive."
+    },
+    {
+      "category": "A08:2021 \u2013 Software and Data Integrity Failures",
+      "status": "fail",
+      "detail": "Audit log integrity not cryptographically enforced."
+    },
+    {
+      "category": "A09:2021 \u2013 Security Logging",
+      "status": "pass",
+      "detail": "Audit service present with structured logging."
+    },
+    {
+      "category": "A10:2021 \u2013 Server-Side Request Forgery",
+      "status": "pass",
+      "detail": "No SSRF patterns visible in reviewed code."
     }
   ],
   "verdict": "NEEDS_FIXES",
   "critical_fixes": [
-    "Fix SQL injection in handlers_federation.go by enforcing parameterized queries with domain whitelist",
-    "Remove OTP code exposure from handlers_otp.go response",
-    "Add JWT algorithm verification to auth middleware",
-    "Remove query/header user_id override in handlers_mfa.go - enforce authenticated context only"
+    "Implement Redis-based rate limiting with TTL and cleanup in zt_policy_handler.go",
+    "Add cryptographic hash chaining to audit logs for tamper evidence",
+    "Restrict session validation to UUID format only in handlers_passwordless.go",
+    "Define structured ApprovalStep type to replace map[string]interface{} in workflows.go",
+    "Add field name allowlist validation in ZTPolicy condition evaluation"
   ]
 }
