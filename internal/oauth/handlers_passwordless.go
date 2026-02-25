@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +18,23 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"go.uber.org/zap"
 )
+
+// validSessionIDPattern validates session tokens to prevent Redis key injection
+// Only allows hexadecimal characters (0-9, a-f) and hyphens for UUIDs
+var validSessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_\.]{8,128}$`)
+
+// maxSessionLength prevents excessively long session strings
+const maxSessionLength = 128
+
+// isValidSessionID validates session token format to prevent Redis key injection attacks
+func isValidSessionID(sessionID string) bool {
+	if len(sessionID) == 0 || len(sessionID) > maxSessionLength {
+		return false
+	}
+	// Check for valid characters only (alphanumeric, hyphen, underscore, dot)
+	// This prevents Redis injection via special characters like newlines, spaces, etc.
+	return validSessionIDPattern.MatchString(sessionID)
+}
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.
 // POST /oauth/mfa-send-otp
@@ -33,6 +51,13 @@ func (s *Service) handleMFASendOTP(c *gin.Context) {
 
 	if req.MFASession == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "mfa_session is required"})
+		return
+	}
+
+	// CRITICAL: Validate mfa_session format to prevent Redis key injection
+	if !isValidSessionID(req.MFASession) {
+		s.logger.Warn("Invalid mfa_session format detected", zap.String("session", req.MFASession))
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid mfa_session format"})
 		return
 	}
 
@@ -102,6 +127,13 @@ func (s *Service) handlePasskeyBegin(c *gin.Context) {
 		return
 	}
 
+	// CRITICAL: Validate login_session format to prevent Redis key injection
+	if !isValidSessionID(req.LoginSession) {
+		s.logger.Warn("Invalid login_session format detected", zap.String("session", req.LoginSession))
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid login_session format"})
+		return
+	}
+
 	ctx := c.Request.Context()
 
 	// Validate login_session exists in Redis
@@ -145,6 +177,13 @@ func (s *Service) handlePasskeyFinish(c *gin.Context) {
 
 	if req.LoginSession == "" || len(req.Credential) == 0 {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "login_session and credential are required"})
+		return
+	}
+
+	// CRITICAL: Validate login_session format to prevent Redis key injection
+	if !isValidSessionID(req.LoginSession) {
+		s.logger.Warn("Invalid login_session format in passkey finish")
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid login_session format"})
 		return
 	}
 
@@ -268,8 +307,10 @@ func (s *Service) handleOAuthMagicLink(c *gin.Context) {
 		return
 	}
 
-	// In debug mode only (when explicitly enabled), log the full verify URL for testing
-	if s.config.DebugOTPsEnabled() && magicLink.Token != "" {
+	// CRITICAL: NEVER log magic link tokens in production
+	// Magic link tokens must NEVER be logged in production environments
+	// This check enforces production safety regardless of config flag
+	if s.config.DebugOTPsEnabled() && s.config.IsDevelopment() && magicLink.Token != "" {
 		verifyURL := s.issuer + "/oauth/magic-link-verify?token=" + url.QueryEscape(magicLink.Token) + "&login_session=" + url.QueryEscape(req.LoginSession)
 		s.logger.Info("DEBUG: Magic link verify URL", zap.String("url", verifyURL))
 	}
@@ -289,6 +330,13 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 	loginSession := c.Query("login_session")
 
 	if token == "" || loginSession == "" {
+		c.Redirect(302, "/login?error=invalid_magic_link")
+		return
+	}
+
+	// CRITICAL: Validate login_session format to prevent Redis key injection
+	if !isValidSessionID(loginSession) {
+		s.logger.Warn("Invalid login_session format in magic link verify")
 		c.Redirect(302, "/login?error=invalid_magic_link")
 		return
 	}
@@ -393,6 +441,13 @@ func (s *Service) handleQRLoginCreate(c *gin.Context) {
 		return
 	}
 
+	// CRITICAL: Validate login_session format to prevent Redis key injection
+	if !isValidSessionID(req.LoginSession) {
+		s.logger.Warn("Invalid login_session format detected", zap.String("session", req.LoginSession))
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid login_session format"})
+		return
+	}
+
 	ctx := c.Request.Context()
 
 	// Validate login_session exists
@@ -437,6 +492,18 @@ func (s *Service) handleQRLoginPoll(c *gin.Context) {
 
 	if sessionToken == "" || loginSession == "" {
 		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "session_token and login_session are required"})
+		return
+	}
+
+	// CRITICAL: Validate session_token and login_session format to prevent Redis key injection
+	if !isValidSessionID(sessionToken) {
+		s.logger.Warn("Invalid session_token format in QR login poll")
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid session_token format"})
+		return
+	}
+	if !isValidSessionID(loginSession) {
+		s.logger.Warn("Invalid login_session format in QR login poll")
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid login_session format"})
 		return
 	}
 

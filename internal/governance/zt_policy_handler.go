@@ -7,11 +7,26 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// rateLimitEntry tracks rate limit state per client
+type rateLimitEntry struct {
+	count     int64
+	resetTime time.Time
+}
+
+// rateLimitStore tracks in-memory rate limits
+var rateLimitStore = struct {
+	sync.RWMutex
+	entries map[string]*rateLimitEntry
+}{
+	entries: make(map[string]*rateLimitEntry),
+}
 
 // ZTPolicyHandler handles HTTP requests for policy management
 type ZTPolicyHandler struct {
@@ -324,7 +339,48 @@ func (h *ZTPolicyHandler) SetPolicyEnabled(c *gin.Context) {
 }
 
 // EvaluatePolicies handles POST /api/v1/policies/evaluate
+// CRITICAL: Rate limiting is applied to prevent DoS attacks on policy evaluation
 func (h *ZTPolicyHandler) EvaluatePolicies(c *gin.Context) {
+	// Apply a basic per-IP rate limit for policy evaluation
+	// This prevents DoS while allowing legitimate high-volume evaluation
+	clientIP := c.ClientIP()
+	const maxRequestsPerMinute = 100
+	const windowDuration = time.Minute
+
+	now := time.Now()
+	rateLimitKey := fmt.Sprintf("policy_eval:%s", clientIP)
+
+	// Check rate limit
+	rateLimitStore.RLock()
+	entry, exists := rateLimitStore.entries[rateLimitKey]
+	rateLimitStore.RUnlock()
+
+	if !exists || now.After(entry.resetTime) {
+		// Create new entry or expired entry
+		rateLimitStore.Lock()
+		rateLimitStore.entries[rateLimitKey] = &rateLimitEntry{
+			count:     1,
+			resetTime: now.Add(windowDuration),
+		}
+		rateLimitStore.Unlock()
+	} else {
+		// Increment counter
+		rateLimitStore.Lock()
+		entry.count++
+		count := entry.count
+		rateLimitStore.Unlock()
+
+		if count > maxRequestsPerMinute {
+			h.logger.Warn("Policy evaluation rate limit exceeded",
+				zap.String("client_ip", clientIP),
+				zap.Int64("count", count))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "rate limit exceeded, please retry later",
+			})
+			return
+		}
+	}
+
 	var req EvaluateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

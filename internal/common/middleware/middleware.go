@@ -302,9 +302,21 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 
 		// Parse the token with key function that fetches from JWKS
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// Verify signing method is RSA
+			// CRITICAL: Explicitly verify algorithm to prevent "none" algorithm attacks
+			// Reject tokens without explicit algorithm header
+			alg, ok := token.Header["alg"].(string)
+			if !ok || alg == "" {
+				return nil, fmt.Errorf("token missing alg header or alg is not a string")
+			}
+
+			// Only allow RS256 algorithm - reject "none", HS256, or any other algorithm
+			if alg != "RS256" {
+				return nil, fmt.Errorf("unexpected signing algorithm: %s (only RS256 is allowed)", alg)
+			}
+
+			// Double-check the method type matches our expectation
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				return nil, fmt.Errorf("token method is not RSA despite alg header")
 			}
 
 			// Get the key ID from token header
@@ -404,8 +416,17 @@ func SoftAuth(jwksURL string) gin.HandlerFunc {
 		}
 
 		token, err := jwt.Parse(parts[1], func(token *jwt.Token) (interface{}, error) {
+			// CRITICAL: Explicitly verify algorithm to prevent "none" algorithm attacks
+			alg, ok := token.Header["alg"].(string)
+			if !ok || alg == "" {
+				return nil, fmt.Errorf("token missing alg header")
+			}
+			// Only allow RS256 algorithm
+			if alg != "RS256" {
+				return nil, fmt.Errorf("unexpected signing algorithm: %s (only RS256 is allowed)", alg)
+			}
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				return nil, fmt.Errorf("token method is not RSA despite alg header")
 			}
 			kid, _ := token.Header["kid"].(string)
 			if kid != "" {
@@ -695,9 +716,18 @@ func Timeout(timeout time.Duration) gin.HandlerFunc {
 // FetchJWKS fetches a JWKS from the given URL and returns the appropriate signing key for the token.
 // This is used for verifying ID tokens from external identity providers.
 func FetchJWKS(jwksURL string, token *jwt.Token) (interface{}, error) {
+	// CRITICAL: Explicitly verify algorithm to prevent "none" algorithm attacks
+	alg, ok := token.Header["alg"].(string)
+	if !ok || alg == "" {
+		return nil, fmt.Errorf("token missing alg header")
+	}
+	// Only allow RS256 algorithm
+	if alg != "RS256" {
+		return nil, fmt.Errorf("unexpected signing algorithm: %s (only RS256 is allowed)", alg)
+	}
 	// Verify signing method is RSA
 	if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		return nil, fmt.Errorf("token method is not RSA despite alg header")
 	}
 
 	kid, _ := token.Header["kid"].(string)

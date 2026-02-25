@@ -11,18 +11,12 @@ import (
 // WebAuthn Handlers
 
 func (s *Service) handleBeginWebAuthnRegistration(c *gin.Context) {
-	// Get user ID from context (assumed to be set by auth middleware)
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		// For development, allow userID in request body
-		var req struct {
-			UserID string `json:"user_id"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-			return
-		}
-		userID = req.UserID
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	options, err := s.BeginWebAuthnRegistration(c.Request.Context(), userID)
@@ -35,19 +29,15 @@ func (s *Service) handleBeginWebAuthnRegistration(c *gin.Context) {
 }
 
 func (s *Service) handleFinishWebAuthnRegistration(c *gin.Context) {
-	// Get user ID from context
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		// For development, allow userID in request
-		userID = c.Query("user_id")
-	}
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
-	// Parse credential name from query or header
+	// Parse credential name from query or header (these are metadata, not identifiers)
 	credentialName := c.Query("name")
 	if credentialName == "" {
 		credentialName = c.GetHeader("X-Credential-Name")
@@ -133,13 +123,11 @@ func (s *Service) handleFinishWebAuthnAuthentication(c *gin.Context) {
 }
 
 func (s *Service) handleGetWebAuthnCredentials(c *gin.Context) {
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = c.Query("user_id")
-	}
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
@@ -153,17 +141,15 @@ func (s *Service) handleGetWebAuthnCredentials(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteWebAuthnCredential(c *gin.Context) {
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = c.Query("user_id")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	credentialID := c.Param("credential_id")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	if credentialID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "credential_id is required"})
@@ -181,13 +167,11 @@ func (s *Service) handleDeleteWebAuthnCredential(c *gin.Context) {
 // Push MFA Handlers
 
 func (s *Service) handleRegisterPushDevice(c *gin.Context) {
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = c.Query("user_id")
-	}
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
@@ -210,13 +194,11 @@ func (s *Service) handleRegisterPushDevice(c *gin.Context) {
 }
 
 func (s *Service) handleGetPushDevices(c *gin.Context) {
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = c.Query("user_id")
-	}
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
@@ -230,17 +212,15 @@ func (s *Service) handleGetPushDevices(c *gin.Context) {
 }
 
 func (s *Service) handleDeletePushDevice(c *gin.Context) {
+	// CRITICAL: Only get user ID from authenticated context
+	// NEVER allow user_id from query/header/request body to prevent IDOR attacks
 	userID := c.GetString("user_id")
 	if userID == "" {
-		userID = c.Query("user_id")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
 	}
 
 	deviceID := c.Param("device_id")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	if deviceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "device_id is required"})
