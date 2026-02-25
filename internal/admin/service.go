@@ -854,13 +854,8 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 
 // RegisterRoutes registers admin service routes
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
-	// Dashboard
-	router.GET("/dashboard", svc.handleGetDashboard)
-	router.GET("/dashboard/stats", svc.handleGetDashboardStats)
-	
-	// Settings
-	router.GET("/settings", svc.handleGetSettings)
-	router.PUT("/settings", svc.handleUpdateSettings)
+	// Dashboard and Settings are now handled by internal/admin/handlers package
+	// to avoid route registration conflicts
 
 	// SMS Settings (separate from main settings due to credential sensitivity)
 	router.GET("/settings/sms", svc.handleGetSMSSettings)
