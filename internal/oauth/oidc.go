@@ -256,6 +256,7 @@ func (p *OIDCProvider) GenerateIDToken(ctx context.Context, req *IDTokenRequest)
 
 // generateSubject generates a subject identifier for the user
 // Supports both public and pairwise subject types per OIDC §8
+// Exported for testing purposes
 func (p *OIDCProvider) generateSubject(userID string) string {
 	// For now, use public subject type (same user ID for all clients)
 	// In production, you'd want to support pairwise subject type for privacy
@@ -547,7 +548,28 @@ func (p *OIDCProvider) HandleUserInfo(c *gin.Context) {
 }
 
 // hashHalfSHA512 computes the first half of a SHA-512 hash (for RS512)
+// Exported for testing purposes
 func hashHalfSHA512(data string) string {
 	h := sha512.Sum512([]byte(data))
 	return base64.RawURLEncoding.EncodeToString(h[:len(h)/2])
+}
+
+// Constants for testability - used in test helper setup
+const (
+	// Default auth code TTL for tests
+	TestAuthCodeTTL = 10 * time.Minute
+	// Default access token TTL for tests
+	TestAccessTokenTTL = time.Hour
+	// Default refresh token TTL for tests
+	TestRefreshTokenTTL = 30 * 24 * time.Hour
+)
+
+// GetTestSubject is a test helper that returns the subject for a user ID
+func (p *OIDCProvider) GetTestSubject(userID string) string {
+	return p.generateSubject(userID)
+}
+
+// ValidateAuthCode is a test helper that validates an auth code
+func (p *OIDCProvider) ValidateAuthCode(ctx context.Context, code string) (*StoredAuthorizationCode, error) {
+	return p.service.store.GetAuthorizationCode(ctx, code)
 }

@@ -1,248 +1,207 @@
 {
-  "project_name": "WebAuthn Security Hardening",
-  "summary": "Implement proper JWT-based authentication middleware and CSRF protection for WebAuthn credential management endpoints in internal/mfa/webauthn_handler.go to address critical security vulnerabilities at lines 515 and 525.",
+  "project_name": "oidc-sms-test-infrastructure",
+  "summary": "Set up mock Redis infrastructure for OIDC tests and add comprehensive unit tests for Turkish phone number normalization",
   "user_stories": [
     {
       "id": "US-001",
-      "as_a": "security administrator",
-      "i_want": "all WebAuthn endpoints protected by JWT authentication middleware",
-      "so_that": "unauthenticated actors cannot register, list, modify, or delete WebAuthn credentials",
-      "priority": "critical",
+      "as_a": "developer",
+      "i_want": "mock Redis setup using miniredis or testcontainers for OIDC tests",
+      "so_that": "OIDC tests can run without external Redis dependencies",
+      "priority": "high",
       "acceptance_criteria": [
-        "All POST/PUT/DELETE WebAuthn endpoints require valid JWT access token",
-        "JWT is extracted from Authorization Bearer header",
-        "Token validation uses existing internal/auth/middleware RBACMiddleware",
-        "User ID from JWT claims matches requested user_id parameter",
-        "Expired or invalid tokens return 401 Unauthorized"
+        "OIDC tests at internal/oauth/oidc_test.go:312 use mock Redis",
+        "Tests can run in isolation without Docker or external services",
+        "Mock Redis supports all required operations (GET, SET, DEL, EXPIRE)",
+        "Test setup/teardown properly cleans Redis state between tests"
       ]
     },
     {
       "id": "US-002",
-      "as_a": "security administrator",
-      "i_want": "CSRF protection on all state-changing WebAuthn endpoints",
-      "so_that": "cross-site request forgery attacks cannot be executed against WebAuthn credential management",
-      "priority": "critical",
-      "acceptance_criteria": [
-        "CSRF middleware applied to POST/PUT/DELETE endpoints",
-        "Origin/Referer headers validated against trusted domain",
-        "Double-submit cookie pattern with signed CSRF tokens",
-        "SameSite cookies set to Strict mode",
-        "GET requests exempted from CSRF checks"
-      ]
-    },
-    {
-      "id": "US-003",
-      "as_a": "user",
-      "i_want": "manage my own WebAuthn credentials securely",
-      "so_that": "I can register, rename, and delete my security keys without risk of unauthorized access",
+      "as_a": "QA engineer",
+      "i_want": "comprehensive unit tests for Turkish phone number normalization",
+      "so_that": "SMS provider logic for Turkish numbers is verified and regression-proof",
       "priority": "high",
       "acceptance_criteria": [
-        "Can only access credentials belonging to authenticated user",
-        "Ownership verification enforced before credential operations",
-        "Audit logging for all credential modifications",
-        "Clear error messages for permission denied scenarios"
+        "Tests cover 90XXXXXXXXXX format preservation",
+        "Tests cover 0XXXXXXXXXX to 90XXXXXXXXXX conversion",
+        "Tests cover 5XXXXXXXXX to 905XXXXXXXXX conversion",
+        "Edge cases covered: null input, empty string, invalid lengths",
+        "Tests achieve >80% code coverage for normalizePhoneTR function"
       ]
     }
   ],
   "functional_requirements": [
     {
       "id": "FR-001",
-      "title": "JWT Authentication Middleware Integration",
-      "description": "Replace placeholder AuthMiddleware() at line 515 with proper JWT authentication using internal/auth/middleware RBACMiddleware. The middleware must validate JWT tokens from Authorization Bearer header, extract user claims from the token, and set user context for downstream handlers.",
-      "service": "mfa-service"
+      "title": "Mock Redis Setup for OIDC Tests",
+      "description": "Implement mock Redis using miniredis (preferred for speed) or testcontainers-go (for realism) to enable OIDC tests to run without external Redis. Setup must handle connection initialization, key-value operations, TTL management, and cleanup between test cases.",
+      "service": "identity-service"
     },
     {
       "id": "FR-002",
-      "title": "CSRF Protection Implementation",
-      "description": "Replace placeholder CSRFMiddleware() at line 525 with robust CSRF protection using double-submit cookie pattern or Origin/Referer header validation. Must integrate with existing internal/common/middleware/csrf.go CSRFProtection middleware.",
-      "service": "mfa-service"
+      "title": "Turkish Phone Normalization Unit Tests",
+      "description": "Create comprehensive test suite for normalizePhoneTR function in internal/sms/providers_tr.go covering all three normalization paths: 90XXXXXXXXXX preservation, 0XXXXXXXXXX to 90XXXXXXXXXX conversion, and 5XXXXXXXXX to 905XXXXXXXXX conversion. Include edge cases for invalid inputs.",
+      "service": "identity-service"
     },
     {
       "id": "FR-003",
-      "title": "User Ownership Verification",
-      "description": "Enhance credential management handlers (HandleListCredentials, HandleDeleteCredential, HandleRenameCredential) to verify the authenticated user from JWT context owns the requested user_id parameter. Prevent cross-user credential access.",
-      "service": "mfa-service"
+      "title": "Test Helper Functions",
+      "description": "Create reusable test helper functions for setting up mock Redis client, seeding test data, and performing assertions on phone number normalization results.",
+      "service": "identity-service"
     },
     {
-      "id": "FR-004",
-      "title": "WebAuthn Endpoint Protection Configuration",
-      "description": "Apply authentication and CSRF middleware chains to WebAuthn route group in RegisterRoutes method. Configure middleware order: CSRF -> JWT authentication -> handler.",
-      "service": "mfa-service"
+      "id": "FR-M004",
+      "title": "AI Agent Identity Management",
+      "description": "First-to-market open-source solution for managing non-human identities at scale - agent credentials, rotation policies, and behavioral anomaly detection for AI agents",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "OpenIDX could be the first open-source platform to address the emerging AI agent identity crisis, differentiating from closed-source competitors"
+    },
+    {
+      "id": "FR-M005",
+      "title": "GenAI Attack Detection",
+      "description": "Real-time detection of deepfake authentication attempts, prompt injection attacks, and AI-generated phishing",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Addressing the #1 emerging security threat for 2025 before commercial competitors"
+    },
+    {
+      "id": "FR-M006",
+      "title": "Automated IGA with AI Policy Recommendations",
+      "description": "ML-powered access review recommendations, automatic least-privilege policy suggestions, and role mining",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Reduces admin workload by 80% compared to manual IGA tools like SailPoint"
+    },
+    {
+      "id": "FR-M007",
+      "title": "Full Passwordless Architecture",
+      "description": "Remove password fallback entirely; FIDO2/WebAuthn, biometrics, and device-bound credentials only",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "True passwordless eliminates the #1 attack vector (password theft), matching Microsoft Entra ID's premium offering"
+    },
+    {
+      "id": "FR-M008",
+      "title": "Continuous Authentication Engine",
+      "description": "Real-time behavioral monitoring during sessions, not just at login",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Proactive session hijacking prevention vs reactive commercial solutions"
+    },
+    {
+      "id": "FR-M009",
+      "title": "Identity Breach Detection & Response (IBDR)",
+      "description": "UEBA-based detection of credential compromise with automated response actions",
+      "service": "identity",
+      "source": "market_research",
+      "competitive_advantage": "Bridges IAM and SOC workflows currently requiring separate tools"
     }
   ],
   "non_functional_requirements": [
     {
       "id": "NFR-001",
-      "category": "security",
-      "requirement": "All state-changing WebAuthn endpoints must require valid JWT authentication",
-      "metric": "100% of POST/PUT/DELETE endpoints protected"
+      "category": "performance",
+      "requirement": "Unit tests with mock Redis must complete in under 5 seconds total",
+      "metric": "< 5s for full test suite execution"
     },
     {
       "id": "NFR-002",
-      "category": "security",
-      "requirement": "CSRF tokens must be cryptographically signed with per-request uniqueness",
-      "metric": "CSRF token entropy >= 128 bits"
+      "category": "maintainability",
+      "requirement": "Test code must be well-documented and isolated",
+      "metric": "100% test isolation, no shared state between tests"
     },
     {
       "id": "NFR-003",
-      "category": "performance",
-      "requirement": "Authentication middleware validation latency must be minimal",
-      "metric": "P95 latency < 10ms for JWT validation"
-    },
-    {
-      "id": "NFR-004",
-      "category": "security",
-      "requirement": "Session cookies must have security flags set",
-      "metric": "SameSite=Strict, Secure, HttpOnly flags set"
-    },
-    {
-      "id": "NFR-005",
-      "category": "security",
-      "requirement": "Failed authentication attempts must be rate-limited",
-      "metric": "Max 10 failed attempts per minute per IP"
+      "category": "quality",
+      "requirement": "Code coverage for normalizePhoneTR function",
+      "metric": ">80% branch coverage"
     }
   ],
-  "api_endpoints": [
-    {
-      "method": "POST",
-      "path": "/mfa/webauthn/register/begin",
-      "description": "Initiate WebAuthn credential registration",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/mfa/webauthn/register/finish",
-      "description": "Complete WebAuthn credential registration",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/mfa/webauthn/login/begin",
-      "description": "Initiate WebAuthn authentication",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/mfa/webauthn/login/finish",
-      "description": "Complete WebAuthn authentication",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    },
-    {
-      "method": "GET",
-      "path": "/mfa/webauthn/credentials",
-      "description": "List user's WebAuthn credentials",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    },
-    {
-      "method": "DELETE",
-      "path": "/mfa/webauthn/credentials/:id",
-      "description": "Delete a WebAuthn credential",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    },
-    {
-      "method": "PUT",
-      "path": "/mfa/webauthn/credentials/:id/name",
-      "description": "Rename a WebAuthn credential",
-      "roles": [
-        "user",
-        "admin"
-      ]
-    }
-  ],
-  "database_changes": [
-    {
-      "table": "webauthn_credentials",
-      "action": "alter",
-      "columns": [
-        "user_id uuid NOT NULL (add CHECK constraint for ownership verification)"
-      ]
-    }
-  ],
+  "api_endpoints": [],
+  "database_changes": [],
   "affected_services": [
-    "identity-service",
-    "mfa-service"
+    "identity-service"
   ],
   "risks": [
     {
-      "risk": "Breaking existing WebAuthn integrations that do not pass JWT tokens",
-      "mitigation": "Provide migration guide and deprecation period. Add feature flag for gradual rollout."
+      "risk": "miniredis may not support all Redis features used by OIDC code",
+      "mitigation": "Audit Redis commands used in OIDC implementation first; use testcontainers if advanced features (transactions, pub/sub) are required"
     },
     {
-      "risk": "CSRF protection may block legitimate cross-origin requests from admin console",
-      "mitigation": "Configure trusted domain whitelist. Add preflight CORS handling for allowed origins."
+      "risk": "Test isolation issues if Redis state is not properly cleaned",
+      "mitigation": "Implement defer cleanup in test setup, use unique key prefixes per test"
     },
     {
-      "risk": "JWT validation performance impact on high-volume authentication flows",
-      "mitigation": "Implement JWT claims caching in Redis. Use connection pooling for Redis."
-    },
-    {
-      "risk": "Session cookie handling complexity across multiple domains",
-      "mitigation": "Use SameSite=None; Secure for cross-domain scenarios. Document cookie requirements clearly."
-    },
-    {
-      "risk": "User ID parameter mismatch allowing privilege escalation",
-      "mitigation": "Strict comparison of JWT subject with requested user_id. Audit log all mismatches."
+      "risk": "Turkish phone normalization tests may not cover all edge cases",
+      "mitigation": "Include parameterized tests with table-driven approach for comprehensive coverage"
     }
   ],
   "implementation_phases": [
     {
       "phase": 1,
-      "name": "Authentication Middleware Integration",
+      "name": "Redis Mock Setup",
       "tasks": [
-        "Add internal/auth/middleware dependency to mfa package",
-        "Create constructor accepting RBACMiddleware and TokenService",
-        "Replace AuthMiddleware() with proper JWT validation",
-        "Add unit tests for authentication scenarios"
+        "Audit internal/oauth/oidc_test.go:312 for Redis usage patterns",
+        "Choose miniredis vs testcontainers based on Redis feature requirements",
+        "Implement mock Redis setup in test helper",
+        "Update OIDC tests to use mock Redis",
+        "Verify tests pass without external Redis"
       ]
     },
     {
       "phase": 2,
-      "name": "CSRF Protection Implementation",
+      "name": "Phone Normalization Tests",
       "tasks": [
-        "Integrate internal/common/middleware/csrf.go CSRFProtection",
-        "Add CSRF token generation endpoint",
-        "Implement double-submit cookie validation",
-        "Add SameSite cookie configuration",
-        "Add CSRF bypass for authenticated API clients (Bearer-only)"
+        "Read internal/sms/providers_tr.go to understand normalizePhoneTR",
+        "Create test file internal/sms/providers_tr_test.go",
+        "Implement table-driven tests for 90XXXXXXXXXX preservation",
+        "Implement tests for 0XXXXXXXXXX to 90XXXXXXXXXX conversion",
+        "Implement tests for 5XXXXXXXXX to 905XXXXXXXXX conversion",
+        "Add edge case tests (empty, invalid length, non-numeric)",
+        "Verify >80% coverage"
       ]
     },
     {
       "phase": 3,
-      "name": "User Ownership Verification",
+      "name": "Documentation & Cleanup",
       "tasks": [
-        "Update HandleListCredentials to validate JWT subject",
-        "Update HandleDeleteCredential with ownership checks",
-        "Update HandleRenameCredential with ownership checks",
-        "Remove user_id query parameter reliance (use from JWT)"
-      ]
-    },
-    {
-      "phase": 4,
-      "name": "Testing and Documentation",
-      "tasks": [
-        "Add integration tests for protected endpoints",
-        "Add security tests for CSRF bypass attempts",
-        "Document API authentication requirements",
-        "Update OpenAPI specification with security schemas"
+        "Add test documentation comments",
+        "Update TODO at internal/oauth/oidc_test.go:312 as resolved",
+        "Run full test suite to ensure no regressions"
       ]
     }
-  ]
+  ],
+  "market_context": {
+    "competitors_analyzed": [
+      "Microsoft Entra ID",
+      "Okta",
+      "Cisco Duo",
+      "Ping Identity"
+    ],
+    "key_gaps": [
+      "AI Agent Identity Management - managing identities for autonomous AI agents at scale (10,000+ agents per enterprise)",
+      "Proximity-Based Authentication replacing hardware tokens for agent authentication",
+      "GenAI Threat Detection - detecting and preventing generative AI-based attacks and deepfakes",
+      "Fully Automated IGA with AI-driven access request workflows",
+      "Passwordless-First Architecture with biometric-only authentication"
+    ],
+    "trends": [
+      "AI-Driven Security Operations",
+      "Zero Trust Network Access (ZTNA) replacing VPNs",
+      "Continuous Authentication over One-Time Authentication",
+      "Human-Centric Security Focus",
+      "Passwordless Authentication (FIDO2/WebAuthn)"
+    ],
+    "unique_selling_points": [
+      "70-80% cost savings vs commercial alternatives (Microsoft Entra ID, Okta, Duo)",
+      "Open-source with no vendor lock-in - full data sovereignty",
+      "Modular microservices architecture allows selective deployment",
+      "Native OPA policy engine integration for flexible zero-trust policies",
+      "SCIM 2.0 provisioning for automated user lifecycle management",
+      "Built-in ZTNA capabilities eliminating need for separate VPN solutions",
+      "Self-hosted option for air-gapped and regulated environments",
+      "Apache APISIX gateway for high-performance traffic management"
+    ]
+  }
 }
