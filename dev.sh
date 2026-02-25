@@ -71,7 +71,7 @@ ZAI_SEARCH_URL="${ZAI_SEARCH_ENDPOINT:-https://api.z.ai/api/paas/v4/web_search}"
 MAX_LOOPS=3
 MAX_PHASE_RETRIES=2
 MAX_CRASHES=5
-DOCKER_TIMEOUT=30
+DOCKER_TIMEOUT=60
 
 # Master dev.sh — the SINGLE source of truth for self-improvement
 MASTER_DEV_SH="${MASTER_DEV_SH:-$HOME/dev.sh}"
@@ -614,7 +614,7 @@ claude_do() {
 
 docker_build_all() {
   cd "$REPO_DIR"
-  local ok=true total=0 built=0 failed=0 max_failures=3
+  local ok=true total=0 built=0 failed=0 max_failures=5
   for df in deployments/docker/Dockerfile.*; do [ -f "$df" ] && total=$((total+1)); done
   [ "$total" -eq 0 ] && { warn "No Dockerfiles found"; return 0; }
 
@@ -632,7 +632,7 @@ docker_build_all() {
     local t0; t0=$(date +%s)
     log "  🐳 Building ($idx/$total): $svc"
     local build_rc=0
-    timeout 300 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tee -a "$PHASE_LOGS/docker_build.log" | tail -5 || build_rc=$?
+    timeout 600 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tee -a "$PHASE_LOGS/docker_build.log" | tail -5 || build_rc=$?
     local elapsed=$(( $(date +%s) - t0 ))
     if [ $build_rc -eq 0 ]; then
       log "  ✓ Built: $svc (${elapsed}s)"; built=$((built+1))
@@ -646,7 +646,7 @@ $(tail -15 "$PHASE_LOGS/docker_build.log" 2>/dev/null)
 
 Fix the Dockerfile or source code. Rebuild should pass." \
         "$PHASE_LOGS/docker_fix_${svc}.log" 600
-      timeout 300 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tail -5 || { ok=false; failed=$((failed+1)); }
+      timeout 600 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tail -5 || { ok=false; failed=$((failed+1)); }
     fi
   done
   log "  Docker: $built/$total built, $failed failed"
@@ -1536,12 +1536,18 @@ RESPOND WITH ONLY JSON:
 }"
 
   local claude_rc=0
-  run_claude 300 "$TEAM_PLAN_FILE" "$_prompt" || claude_rc=$?
+  run_claude 600 "$TEAM_PLAN_FILE" "$_prompt" || claude_rc=$?
 
   if [ "$claude_rc" -eq 124 ] || [ ! -s "$TEAM_PLAN_FILE" ]; then
-    swarn "  ⚠ Planning timed out or empty"
-    echo '{"steps":[],"process_health":{"score":0}}' > "$TEAM_PLAN_FILE"
-    return 0
+    swarn "  ⚠ Planning timed out — retrying with shorter prompt"
+    local short_prompt="Analyze dev.sh and plan $num_steps improvements. Focus on: crash fixes, pipe safety, prompt optimization.
+DEV.SH ANALYSIS: $analysis
+RESPOND WITH ONLY JSON: {\"steps\":[{\"order\":1,\"name\":\"name\",\"category\":\"crash_fix\",\"priority\":\"high\",\"target_function\":\"func\",\"description\":\"change\",\"verification\":\"bash -n dev.sh\",\"risk\":\"low\"}]}"
+    run_claude 600 "$TEAM_PLAN_FILE" "$short_prompt" || {
+      swarn "  ⚠ Retry also timed out"
+      echo '{"steps":[],"process_health":{"score":0}}' > "$TEAM_PLAN_FILE"
+      return 0
+    }
   fi
 
   python3 - "$TEAM_PLAN_FILE" << 'PYEOF'
@@ -1627,7 +1633,7 @@ RULES:
 - Verify: $step_verify
 - If the change is already applied, say 'ALREADY_DONE' and make no changes"
 
-    run_claude 300 "$PHASE_LOGS/dev_step_$((i+1)).log" "$_prompt"
+    run_claude 600 "$PHASE_LOGS/dev_step_$((i+1)).log" "$_prompt"
 
     if bash -n "$SELF_SCRIPT" 2>/dev/null; then
       slog "  ✓ Step $((i+1)) applied: $step_name"
@@ -1837,12 +1843,43 @@ RESPOND WITH ONLY JSON:
 }"
 
   local claude_rc=0
-  run_claude 300 "$PLAN_FILE" "$_prompt" || claude_rc=$?
+  run_claude 600 "$PLAN_FILE" "$_prompt" || claude_rc=$?
 
   if [ "$claude_rc" -eq 124 ] || [ ! -s "$PLAN_FILE" ]; then
-    swarn "  ⚠ Planning timed out"
-    echo '{"phases":[],"rationale":"Planning timed out"}' > "$PLAN_FILE"
-    return 0
+    swarn "  ⚠ Planning timed out — retrying with shorter prompt"
+    local short_prompt="Plan $num improvement phases for this project. Diagnosis: $diagnosis
+RULES: Fix build first, then tests, then features. RESPOND WITH ONLY JSON:
+{\"phases\":[{\"order\":1,\"name\":\"name\",\"priority\":\"critical\",\"category\":\"fix\",\"description\":\"task\",\"success_criteria\":[\"criteria\"],\"estimated_minutes\":90}]}"
+    run_claude 600 "$PLAN_FILE" "$short_prompt" || {
+      swarn "  ⚠ Retry also timed out — generating fallback plan from diagnosis"
+      # Auto-generate a plan from diagnosis data
+      python3 - "$ARTIFACTS/diagnosis.json" "$PLAN_FILE" "$num" << 'PYEOF'
+import json, sys, os
+num = int(sys.argv[3])
+phases = []
+diag = json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
+proj = diag.get("project", {})
+order = 1
+if proj.get("build") == "no" and order <= num:
+    phases.append({"order": order, "name": "Fix build errors", "priority": "critical", "category": "fix",
+        "description": "Fix all Go compilation errors. Run go build ./... and fix every error.", "success_criteria": ["go build ./... passes"], "estimated_minutes": 60})
+    order += 1
+if proj.get("tests") == "fail" and order <= num:
+    phases.append({"order": order, "name": "Fix failing tests", "priority": "critical", "category": "fix",
+        "description": "Fix all failing Go test packages. Run go test ./... and fix every failure.", "success_criteria": ["go test ./... passes"], "estimated_minutes": 90})
+    order += 1
+if int(proj.get("todo_count", 0)) > 10 and order <= num:
+    phases.append({"order": order, "name": "Resolve TODOs", "priority": "medium", "category": "fix",
+        "description": "Resolve TODO/FIXME items in the codebase. Implement stubs and complete partial code.", "success_criteria": ["TODO count reduced by 50%"], "estimated_minutes": 90})
+    order += 1
+while order <= num:
+    phases.append({"order": order, "name": "Improve test coverage", "priority": "medium", "category": "test",
+        "description": "Add missing unit tests for untested files. Target 80% coverage.", "success_criteria": ["New tests pass"], "estimated_minutes": 60})
+    order += 1
+json.dump({"phases": phases, "rationale": "Auto-generated from diagnosis (planning timed out)"}, open(sys.argv[2], "w"), indent=2)
+PYEOF
+      [ ! -s "$PLAN_FILE" ] && echo '{"phases":[],"rationale":"Planning failed"}' > "$PLAN_FILE"
+    }
   fi
 
   python3 - "$PLAN_FILE" << 'PYEOF'
@@ -2266,7 +2303,7 @@ smart_improve() {
   slog "╔═══════════════════════════════════════════════════════════╗"
   slog "║  🧠 SMART IMPROVE — Project-Focused Self-Improvement       ║"
   slog "╠═══════════════════════════════════════════════════════════╣"
-  slog "║  1. SCAN → 2. ADAPT → 3. RUN → 4. RESCAN → 5. PR?       ║"
+  slog "║  1. SCAN → 2. DIAGNOSE → 3. PLAN → 4. EXECUTE → 5. PR?   ║"
   slog "╚═══════════════════════════════════════════════════════════╝"
 
   scan_project_completion
@@ -2277,7 +2314,40 @@ smart_improve() {
   # Plan and execute focused improvement
   diagnose_project
   plan_improvements 3
-  execute_planned_phases
+
+  # Check if plan has phases
+  local phase_count
+  phase_count=$(python3 -c "import json; print(len(json.load(open('$PLAN_FILE')).get('phases',[])))" 2>/dev/null || echo "0")
+
+  if [ "$phase_count" -gt 0 ]; then
+    execute_planned_phases
+  else
+    swarn "  ⚠ No phases planned — running direct fixes from diagnosis"
+
+    cd "$REPO_DIR"
+    local diag; diag=$(cat "$ARTIFACTS/diagnosis.json" 2>/dev/null || echo "{}")
+    local build_status; build_status=$(python3 -c "import json; print(json.loads('''$diag''').get('project',{}).get('build','yes'))" 2>/dev/null || echo "yes")
+    local test_status; test_status=$(python3 -c "import json; print(json.loads('''$diag''').get('project',{}).get('tests','pass'))" 2>/dev/null || echo "pass")
+
+    if [ "$build_status" = "no" ]; then
+      slog "  🔧 Direct fix: build errors"
+      claude_do "⚙️  Backend" "Read CLAUDE.md. Fix ALL Go compilation errors. Run 'go build ./...' repeatedly until clean." "$PHASE_LOGS/smart_build_fix.log" 1200
+    fi
+
+    if [ "$test_status" = "fail" ]; then
+      slog "  🔧 Direct fix: test failures"
+      local failures; failures=$(go test ./... -count=1 -timeout 120s 2>&1 | grep -A 3 "FAIL\|Error\|panic" | head -60 || true)
+      claude_do "🧪 Tester" "Read CLAUDE.md. Fix ALL failing Go tests. Failures:
+
+$failures
+
+Run 'go test ./...' and fix every failure until all pass." "$PHASE_LOGS/smart_test_fix.log" 1800
+      # Verify
+      run_go_tests || { fix_go_tests; run_go_tests || true; }
+    fi
+
+    cd "$REPO_DIR"; git add -A && git commit -m "[smart-improve] direct fixes" 2>/dev/null || true
+  fi
 
   # Re-scan
   scan_project_completion
@@ -2550,13 +2620,16 @@ case "$CMD" in
   smart-improve|smart|focus)
     PR_THRESHOLD="${2:-50}"
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-50}" </dev/null > /dev/null 2>&1 &
+      PR_THRESHOLD="${2:-50}" _DEV_FG=1 setsid bash "$0" smart-improve "${2:-50}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  🧠 Smart Improve started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       echo "  📊 ./dev.sh status"
       exit 0
     fi
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    slog "🧠 Smart Improve started (PID: $$, threshold: $PR_THRESHOLD%)"
     smart_improve
     ;;
 
@@ -2568,12 +2641,14 @@ case "$CMD" in
   # ── Dual-track ──
   improve|next)
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      AUTO_PHASES="${2:-3}" _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-3}" "${3:-3}" </dev/null > /dev/null 2>&1 &
+      AUTO_PHASES="${2:-3}" _DEV_FG=1 setsid bash "$0" improve "${2:-3}" "${3:-3}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  🚀 Full improvement started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       exit 0
     fi
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     AUTO_PHASES="${2:-3}"
     run_full_improvement "$AUTO_PHASES" "${3:-3}"
     ;;
@@ -2581,21 +2656,25 @@ case "$CMD" in
   # ── Track A ──
   improve-dev|fix-dev)
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-3}" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" improve-dev "${2:-3}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  🔧 Dev.sh improvement started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       exit 0
     fi
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     run_dev_improvement "${2:-3}"
     ;;
   analyze-dev)    analyze_dev ;;
   plan-dev)       analyze_dev; plan_dev_improvements "${2:-3}" ;;
   execute-dev)
     if [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" --fg "$CMD" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" execute-dev </dev/null > /dev/null 2>&1 &
       disown; echo "  🚀 Executing (detached)"; echo "  📺 tail -f $SUP_LOG"; exit 0
     fi
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     execute_dev_improvements
     ;;
   verify-dev)     verify_dev ;;
@@ -2604,21 +2683,25 @@ case "$CMD" in
   # ── Track B ──
   improve-project|project)
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-3}" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" improve-project "${2:-3}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  📦 Project improvement started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       exit 0
     fi
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     run_project_improvement "${2:-3}"
     ;;
   diagnose|diag)  diagnose_project ;;
   plan-project)   AUTO_PHASES="${2:-3}"; diagnose_project; plan_improvements "$AUTO_PHASES" ;;
   execute|run)
     if [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" --fg "$CMD" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" execute </dev/null > /dev/null 2>&1 &
       disown; echo "  🚀 Executing (detached)"; exit 0
     fi
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     execute_planned_phases
     ;;
   verify|check)   verify_results ;;
