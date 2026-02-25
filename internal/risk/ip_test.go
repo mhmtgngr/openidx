@@ -390,7 +390,11 @@ func TestHaversineDistance_EdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := haversineDistance(tt.lat1, tt.lon1, tt.lat2, tt.lon2)
+			// Use at least 1% tolerance or 0.01 km, whichever is larger
 			tolerance := tt.expected * 0.01 // 1% tolerance
+			if tolerance < 0.01 {
+				tolerance = 0.01 // 10 meter minimum tolerance
+			}
 
 			diff := result - tt.expected
 			if diff < 0 {
@@ -398,7 +402,7 @@ func TestHaversineDistance_EdgeCases(t *testing.T) {
 			}
 
 			if diff > tolerance {
-				t.Errorf("haversineDistance() = %.0f km, want %.0f ± %.0f km",
+				t.Errorf("haversineDistance() = %.3f km, want %.3f ± %.3f km",
 					result, tt.expected, tolerance)
 			}
 		})

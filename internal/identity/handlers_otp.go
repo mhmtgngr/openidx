@@ -46,8 +46,8 @@ func (s *Service) handleEnrollSMS(c *gin.Context) {
 		"message":      "Verification code sent to your phone",
 	}
 
-	// Include code in development mode only
-	if s.cfg.IsDevelopment() {
+	// Include code only if debug mode is explicitly enabled (never in production)
+	if s.cfg.DebugOTPsEnabled() {
 		response["code"] = code
 	}
 
@@ -195,8 +195,8 @@ func (s *Service) handleEnrollEmailOTP(c *gin.Context) {
 		"message":       "Verification code sent to your email",
 	}
 
-	// Include code in development mode only
-	if s.cfg.IsDevelopment() {
+	// Include code only if debug mode is explicitly enabled (never in production)
+	if s.cfg.DebugOTPsEnabled() {
 		response["code"] = code
 	}
 

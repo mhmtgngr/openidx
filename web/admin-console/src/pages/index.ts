@@ -1,0 +1,6 @@
+export { DashboardPage as Dashboard } from './dashboard'
+export { UsersPage as Users } from './users'
+export { AccessReviewsPage as AccessReviews } from './access-reviews'
+export { PoliciesPage as Policies } from './policies'
+export { AuditLogsPage as AuditLogs } from './audit-logs'
+export { SettingsPage as Settings } from './settings'

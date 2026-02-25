@@ -663,7 +663,7 @@ func TestApplySCIMPatchToUser_Remove(t *testing.T) {
 		Ops: []SCIMPatchOp{
 			{
 				Op:    "remove",
-				Path:  stringPtr("groups"),
+				Path:  stringPtr("groups[group1]"), // Use bracket syntax to remove specific value
 				Value: "group1",
 			},
 		},
@@ -759,7 +759,7 @@ func TestApplySCIMPatchToGroup_RemoveMember(t *testing.T) {
 		Ops: []SCIMPatchOp{
 			{
 				Op:    "remove",
-				Path:  stringPtr("members"),
+				Path:  stringPtr("members[user1]"), // Use bracket syntax to remove specific member
 				Value: "user1",
 			},
 		},

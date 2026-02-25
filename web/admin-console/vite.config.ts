@@ -1,37 +1,48 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import fs from 'fs'
 
+// https://vite.dev/config/
 export default defineConfig({
-  plugins: [
-    react(),
-    {
-      name: 'copy-openapi-specs',
-      buildStart() {
-        const src = path.resolve(__dirname, '../../api/openapi')
-        const dest = path.resolve(__dirname, 'public/api-specs')
-        if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true })
-        if (fs.existsSync(src)) {
-          for (const file of fs.readdirSync(src)) {
-            if (file.endsWith('.yaml')) {
-              fs.copyFileSync(path.join(src, file), path.join(dest, file))
-            }
-          }
-        }
-      },
-    },
-  ],
+  plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      '@': path.resolve(__dirname, './src'),
     },
   },
   server: {
-    port: 3000,
+    port: 5173,
     proxy: {
-      '/api/': {
-        target: 'http://localhost:8080',
+      '/api/v1/identity': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+      },
+      '/api/v1/governance': {
+        target: 'http://localhost:8002',
+        changeOrigin: true,
+      },
+      '/api/v1/provisioning': {
+        target: 'http://localhost:8003',
+        changeOrigin: true,
+      },
+      '/api/v1/audit': {
+        target: 'http://localhost:8004',
+        changeOrigin: true,
+      },
+      '/api/v1/dashboard': {
+        target: 'http://localhost:8005',
+        changeOrigin: true,
+      },
+      '/api/v1/settings': {
+        target: 'http://localhost:8005',
+        changeOrigin: true,
+      },
+      '/api/v1/applications': {
+        target: 'http://localhost:8005',
+        changeOrigin: true,
+      },
+      '/scim/v2': {
+        target: 'http://localhost:8003',
         changeOrigin: true,
       },
     },

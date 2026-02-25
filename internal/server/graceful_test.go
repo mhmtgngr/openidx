@@ -114,11 +114,26 @@ func TestGracefulShutdown_MultipleComponents(t *testing.T) {
 		ShutdownTimeout: 5 * time.Second,
 	})
 
+	// Start the shutdown handler in a goroutine
+	done := make(chan struct{})
+	go func() {
+		gs.Start()
+		close(done)
+	}()
+
+	// Give time for Start() to begin listening
+	time.Sleep(10 * time.Millisecond)
+
 	// Trigger shutdown
 	gs.Shutdown()
 
-	// Give time for shutdown to complete
-	time.Sleep(100 * time.Millisecond)
+	// Wait for shutdown to complete
+	select {
+	case <-done:
+		// Shutdown completed
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not complete in time")
+	}
 
 	// All components should have been called
 	assert.Contains(t, callOrder, "component1")
@@ -394,8 +409,26 @@ func TestGracefulShutdown_ComponentOrder(t *testing.T) {
 		ShutdownTimeout: 5 * time.Second,
 	})
 
+	// Start the shutdown handler in a goroutine
+	done := make(chan struct{})
+	go func() {
+		gs.Start()
+		close(done)
+	}()
+
+	// Give time for Start() to begin listening
+	time.Sleep(10 * time.Millisecond)
+
+	// Trigger shutdown
 	gs.Shutdown()
-	time.Sleep(100 * time.Millisecond)
+
+	// Wait for shutdown to complete
+	select {
+	case <-done:
+		// Shutdown completed
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not complete in time")
+	}
 
 	// Components should be shut down concurrently, so order may vary
 	// But all should be called

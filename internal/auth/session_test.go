@@ -190,7 +190,10 @@ func TestSessionService_Create_MaxSessions(t *testing.T) {
 			assert.Equal(t, tt.expectedSessions, len(sessionIDs))
 
 			// Cleanup: delete all sessions for this user after each subtest
-			ss.DeleteByUser(ctx, userID)
+			// We ignore ErrSessionNotFound since it's acceptable for cleanup
+			if err := ss.DeleteByUser(ctx, userID); err != nil && err != ErrSessionNotFound {
+				t.Fatalf("cleanup failed: %v", err)
+			}
 		})
 	}
 }
@@ -382,6 +385,39 @@ func TestSessionService_DeleteByUser(t *testing.T) {
 	ids, err := ss.ListByUser(ctx, userID)
 	require.NoError(t, err)
 	assert.Empty(t, ids)
+
+	// Test deleting sessions for a non-existent user
+	t.Run("NonExistentUser", func(t *testing.T) {
+		nonExistentUserID := "user_does_not_exist"
+
+		// Verify user has no sessions initially
+		sessionIDs, err := ss.ListByUser(ctx, nonExistentUserID)
+		require.NoError(t, err)
+		assert.Empty(t, sessionIDs)
+
+		// Attempting to delete sessions should return ErrSessionNotFound
+		err = ss.DeleteByUser(ctx, nonExistentUserID)
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+	})
+
+	// Test deleting sessions after all have already been manually deleted
+	t.Run("AlreadyDeletedUser", func(t *testing.T) {
+		userID := "user_already_deleted"
+
+		// Create sessions
+		for i := 0; i < 2; i++ {
+			_, err := ss.Create(ctx, userID, "tenant456", "192.168.1.1", "Mozilla", nil)
+			require.NoError(t, err)
+		}
+
+		// Delete all sessions
+		err := ss.DeleteByUser(ctx, userID)
+		require.NoError(t, err)
+
+		// Attempting to delete again should return ErrSessionNotFound
+		err = ss.DeleteByUser(ctx, userID)
+		assert.ErrorIs(t, err, ErrSessionNotFound)
+	})
 }
 
 func TestSessionService_ListByUser(t *testing.T) {

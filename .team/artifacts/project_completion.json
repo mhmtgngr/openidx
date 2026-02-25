@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-02-24T20:50:29.694793",
+  "completion_pct": 95,
+  "pr_ready": true,
+  "dimension_scores": {
+    "backend_files": 100,
+    "frontend_files": 100,
+    "tests": 100,
+    "endpoints": 100,
+    "migrations": 100,
+    "build": 100,
+    "tests_pass": 50,
+    "docker": 100
+  },
+  "counts": {
+    "backend_files": "252/0",
+    "frontend_files": "0/0",
+    "tests": "149/0",
+    "endpoints": "1028/0",
+    "migrations": "19/0",
+    "todos": 80,
+    "build": true,
+    "tests_pass": false
+  },
+  "gaps": [
+    {
+      "type": "tests",
+      "priority": "critical",
+      "item": "2 failing packages",
+      "description": "Fix 2 failing test packages"
+    },
+    {
+      "type": "todos",
+      "priority": "medium",
+      "item": "80 TODOs",
+      "description": "Resolve 80 TODO/FIXME items"
+    }
+  ]
+}

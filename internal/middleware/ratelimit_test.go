@@ -111,10 +111,13 @@ func TestSlidingWindowRateLimit_UserBased(t *testing.T) {
 	cfg.PerUser = true
 
 	router := gin.New()
+	// Add middleware to simulate auth middleware setting user_id BEFORE rate limiting
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", "user-123")
+		c.Next()
+	})
 	router.Use(SlidingWindowRateLimit(client, cfg))
 	router.GET("/test", func(c *gin.Context) {
-		// Simulate authenticated user
-		c.Set("user_id", "user-123")
 		c.String(200, "OK")
 	})
 
@@ -144,7 +147,7 @@ func TestSlidingWindowRateLimit_SlidingWindow(t *testing.T) {
 
 	cfg := DefaultRateLimitConfig()
 	cfg.IPRequestsPerMin = 3
-	cfg.Window = 500 * time.Millisecond
+	cfg.Window = 2 * time.Second // Use at least 1 second since time.Now().Unix() is second granularity
 
 	router := gin.New()
 	router.Use(SlidingWindowRateLimit(client, cfg))
@@ -169,8 +172,8 @@ func TestSlidingWindowRateLimit_SlidingWindow(t *testing.T) {
 		router.ServeHTTP(w, req)
 		assert.Equal(t, 429, w.Code)
 
-		// Fast-forward time past the window
-		s.FastForward(600 * time.Millisecond)
+		// Wait for the window to expire (use real time since rate limiter uses time.Now())
+		time.Sleep(2 * time.Second)
 
 		// Should be allowed again
 		w2 := httptest.NewRecorder()

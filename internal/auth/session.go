@@ -226,29 +226,36 @@ func (ss *SessionService) Delete(ctx context.Context, sessionID string) error {
 		return errors.New("redis client not configured")
 	}
 
-	// Get session to find userID for cleanup
-	session, err := ss.Get(ctx, sessionID)
-	if err != nil && err != ErrSessionExpired {
-		return err
+	// Get session data directly without triggering the async LastSeen update
+	// This prevents a race condition where the async update recreates the session after deletion
+	sessionKey := ss.sessionKey(sessionID)
+	data, err := ss.redis.Get(ctx, sessionKey).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("get session: %w", err)
+	}
+
+	var session Session
+	if err := json.Unmarshal(data, &session); err != nil {
+		return ErrInvalidSessionData
 	}
 
 	// Delete session data
-	sessionKey := ss.sessionKey(sessionID)
 	if err := ss.redis.Del(ctx, sessionKey).Err(); err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
 
 	// Remove from user's session set
-	if session != nil {
-		userSessionsKey := ss.userSessionsKey(session.UserID)
-		ss.redis.SRem(ctx, userSessionsKey, sessionID)
-	}
+	userSessionsKey := ss.userSessionsKey(session.UserID)
+	ss.redis.SRem(ctx, userSessionsKey, sessionID)
 
 	ss.logger.Debug("deleted session", zap.String("session_id", sessionID))
 	return nil
 }
 
-// DeleteByUser removes all sessions for a user
+// DeleteByUser removes all sessions for a user. Returns ErrSessionNotFound if the user has no sessions.
 func (ss *SessionService) DeleteByUser(ctx context.Context, userID string) error {
 	if ss.redis == nil {
 		return errors.New("redis client not configured")
@@ -258,6 +265,11 @@ func (ss *SessionService) DeleteByUser(ctx context.Context, userID string) error
 	sessionIDs, err := ss.ListByUser(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("list user sessions: %w", err)
+	}
+
+	// Return error if user has no sessions
+	if len(sessionIDs) == 0 {
+		return ErrSessionNotFound
 	}
 
 	// Delete each session

@@ -109,6 +109,11 @@ type Config struct {
 	CSRFEnabled       bool   `mapstructure:"csrf_enabled"`
 	CSRFTrustedDomain string `mapstructure:"csrf_trusted_domain"`
 
+	// DebugOTPInResponse controls whether OTP codes are included in API responses.
+	// NEVER enable this in production as it exposes verification codes in logs/browser.
+	// Default: false (auto-enabled only in development mode with explicit opt-in)
+	DebugOTPInResponse bool `mapstructure:"debug_otp_in_response"`
+
 	// TLS configuration for inter-service communication
 	TLS TLSConfig `mapstructure:"tls"`
 
@@ -382,6 +387,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("csrf_enabled", false)
 	v.SetDefault("csrf_trusted_domain", "")
 
+	// Debug OTP defaults (NEVER enable in production)
+	v.SetDefault("debug_otp_in_response", false)
+
 	// TLS defaults (disabled by default for backward compatibility)
 	v.SetDefault("tls.enabled", false)
 	v.SetDefault("tls.cert_file", "")
@@ -495,6 +503,7 @@ func bindEnvVars(v *viper.Viper) {
 		"redis_sentinel_password":    "REDIS_SENTINEL_PASSWORD",
 		"csrf_enabled":             "CSRF_ENABLED",
 		"csrf_trusted_domain":      "CSRF_TRUSTED_DOMAIN",
+		"debug_otp_in_response":    "DEBUG_OTP_IN_RESPONSE",
 		"tls.enabled":              "TLS_ENABLED",
 		"tls.cert_file":            "TLS_CERT_FILE",
 		"tls.key_file":             "TLS_KEY_FILE",
@@ -606,3 +615,83 @@ func (c *Config) ProductionWarnings() []string {
 	}
 	return warnings
 }
+
+// ValidateProduction performs critical security validation for production deployments.
+// Returns an error if any critical security misconfigurations are detected that MUST
+// be fixed before production deployment. This is called automatically at service startup
+// in production mode and will block server startup if validation fails.
+func (c *Config) ValidateProduction() error {
+	if !c.IsProduction() {
+		return nil
+	}
+
+	var criticalIssues []string
+
+	// Critical: Insecure session secrets can lead to session hijacking
+	if c.AccessSessionSecret == "" || strings.Contains(c.AccessSessionSecret, "change-me") {
+		criticalIssues = append(criticalIssues,
+			"access_session_secret must be set to a secure random value (at least 32 bytes)")
+	}
+
+	// Critical: JWT signing key must be secure
+	if c.JWTSecret == "" || strings.Contains(strings.ToLower(c.JWTSecret), "change") {
+		criticalIssues = append(criticalIssues,
+			"jwt_secret must be set to a secure random value (at least 32 bytes)")
+	}
+
+	// Critical: Encryption key for sensitive data
+	if c.EncryptionKey == "" || strings.Contains(strings.ToLower(c.EncryptionKey), "change") {
+		criticalIssues = append(criticalIssues,
+			"encryption_key must be set to a secure random value (at least 32 bytes)")
+	}
+
+	// Critical: Wildcard CORS in production allows any origin
+	if c.CORSAllowedOrigins == "*" {
+		criticalIssues = append(criticalIssues,
+			"cors_allowed_origins cannot be wildcard '*' in production; specify allowed origins")
+	}
+
+	// Critical: CSRF protection must be enabled in production
+	if !c.CSRFEnabled {
+		criticalIssues = append(criticalIssues,
+			"csrf_enabled must be true in production to prevent CSRF attacks")
+	}
+
+	// Critical: Database connections must use TLS in production
+	if c.DatabaseSSLMode == "" || c.DatabaseSSLMode == "disable" {
+		criticalIssues = append(criticalIssues,
+			"database_ssl_mode must be 'require', 'verify-ca', or 'verify-full' in production (not 'disable')")
+	}
+
+	// Critical: Redis connections must use TLS in production
+	if !c.RedisTLSEnabled {
+		criticalIssues = append(criticalIssues,
+			"redis_tls_enabled must be true in production")
+	}
+
+	// Critical: Inter-service TLS must be enabled in production
+	if !c.TLS.Enabled {
+		criticalIssues = append(criticalIssues,
+			"tls.enabled must be true in production for inter-service encryption")
+	}
+
+	// Critical: OTP debug mode must NEVER be enabled in production
+	if c.DebugOTPInResponse {
+		criticalIssues = append(criticalIssues,
+			"debug_otp_in_response must be false in production; OTP codes must never be exposed in API responses")
+	}
+
+	if len(criticalIssues) > 0 {
+		return fmt.Errorf("production security validation failed:\n  - %s",
+			strings.Join(criticalIssues, "\n  - "))
+	}
+
+	return nil
+}
+
+// DebugOTPsEnabled returns true only if explicitly enabled via config.
+// This replaces the unsafe IsDevelopment() check for OTP exposure.
+func (c *Config) DebugOTPsEnabled() bool {
+	return c.DebugOTPInResponse
+}
+

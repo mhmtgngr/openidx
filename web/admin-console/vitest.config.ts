@@ -11,9 +11,16 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: 'jsdom',
+    environment: 'happy-dom',
     setupFiles: ['./src/test/setup.ts'],
     css: true,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    pool: 'threads',
+    // Fix for jsdom ES module issues with certain packages
+    deps: {
+      interopDefault: true,
+    },
+    // Use tsconfig paths for resolution
+    tsconfig: './tsconfig.json',
   },
 })

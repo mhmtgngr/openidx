@@ -109,7 +109,7 @@ services:
       apisix-config-init:
         condition: service_completed_successfully
       etcd:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9080'"]
       interval: 10s
@@ -130,6 +130,11 @@ services:
       - --advertise-client-urls=http://etcd:2379
     volumes:
       - etcd_data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://localhost:2379"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - openidx-network
 
@@ -1147,6 +1152,7 @@ services:
       dockerfile: ../../deployments/docker/Dockerfile.admin-console
       network: host
       args:
+        - SRC_DIR=.
         - VITE_API_URL=http://openidx.tdv.org:8088
         - VITE_OAUTH_URL=http://openidx.tdv.org:8006
         - VITE_OAUTH_CLIENT_ID=admin-console

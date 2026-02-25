@@ -54,7 +54,8 @@ var (
 
 // Authentication and security metrics
 var (
-	authAttemptsTotal = promauto.NewCounterVec(
+	// AuthAttemptsTotal is exported for use by middleware package
+	AuthAttemptsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "openidx",
 			Name:      "auth_attempts_total",
@@ -63,7 +64,8 @@ var (
 		[]string{"method", "outcome"}, // method: password, mfa, sso, oauth; outcome: success, failure, rate_limited
 	)
 
-	activeSessionsGauge = promauto.NewGaugeVec(
+	// ActiveSessionsGauge tracks active user sessions.
+	ActiveSessionsGauge = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "openidx",
 			Name:      "active_sessions",
@@ -72,7 +74,8 @@ var (
 		[]string{"service"},
 	)
 
-	tokenOperationsTotal = promauto.NewCounterVec(
+	// TokenOperationsTotal records token operations.
+	TokenOperationsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "openidx",
 			Name:      "token_operations_total",
@@ -188,7 +191,7 @@ func Handler() gin.HandlerFunc {
 
 // RecordAuthAttempt records an authentication attempt
 func RecordAuthAttempt(method, outcome string) {
-	authAttemptsTotal.WithLabelValues(method, outcome).Inc()
+	AuthAttemptsTotal.WithLabelValues(method, outcome).Inc()
 }
 
 // RecordMFAVerification records an MFA verification attempt
@@ -208,7 +211,7 @@ func RecordRiskScore(service, decision string, score float64) {
 
 // RecordTokenOperation records a token operation
 func RecordTokenOperation(operation, outcome string) {
-	tokenOperationsTotal.WithLabelValues(operation, outcome).Inc()
+	TokenOperationsTotal.WithLabelValues(operation, outcome).Inc()
 }
 
 // RecordDBQuery records a database query duration
@@ -228,15 +231,15 @@ func RecordCacheOperation(service, operation, outcome string) {
 
 // IncActiveSessions increments the active sessions counter
 func IncActiveSessions(service string) {
-	activeSessionsGauge.WithLabelValues(service).Inc()
+	ActiveSessionsGauge.WithLabelValues(service).Inc()
 }
 
 // DecActiveSessions decrements the active sessions counter
 func DecActiveSessions(service string) {
-	activeSessionsGauge.WithLabelValues(service).Dec()
+	ActiveSessionsGauge.WithLabelValues(service).Dec()
 }
 
 // SetActiveSessions sets the absolute number of active sessions
 func SetActiveSessions(service string, count float64) {
-	activeSessionsGauge.WithLabelValues(service).Set(count)
+	ActiveSessionsGauge.WithLabelValues(service).Set(count)
 }

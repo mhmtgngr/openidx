@@ -28,7 +28,7 @@ deployment:
         schema: admin
   etcd:
     host:
-      - "http://etcd:2379"
+      - "http://openidx-etcd:2379"
     prefix: "/apisix"
 
 plugin_attr:

@@ -13,18 +13,18 @@ describe('Button', () => {
     const user = userEvent.setup()
     let clicked = false
     render(<Button onClick={() => { clicked = true }}>Click</Button>)
-    await user.click(screen.getByRole('button'))
+    await user.click(screen.getByRole('button', { name: 'Click' }))
     expect(clicked).toBe(true)
   })
 
   it('renders disabled state', () => {
     render(<Button disabled>Disabled</Button>)
-    expect(screen.getByRole('button')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Disabled' })).toBeDisabled()
   })
 
   it('renders different variants', () => {
     const { rerender } = render(<Button variant="default">Default</Button>)
-    const btn = screen.getByRole('button')
+    const btn = screen.getByRole('button', { name: 'Default' })
     expect(btn).toBeInTheDocument()
 
     rerender(<Button variant="outline">Outline</Button>)
@@ -36,7 +36,7 @@ describe('Button', () => {
 
   it('renders different sizes', () => {
     const { rerender } = render(<Button size="default">Default</Button>)
-    expect(screen.getByRole('button')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Default' })).toBeInTheDocument()
 
     rerender(<Button size="sm">Small</Button>)
     expect(screen.getByRole('button', { name: 'Small' })).toBeInTheDocument()

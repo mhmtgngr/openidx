@@ -268,10 +268,10 @@ func (s *Service) handleOAuthMagicLink(c *gin.Context) {
 		return
 	}
 
-	// In development mode, log the full verify URL for testing convenience
-	if s.config.IsDevelopment() && magicLink.Token != "" {
+	// In debug mode only (when explicitly enabled), log the full verify URL for testing
+	if s.config.DebugOTPsEnabled() && magicLink.Token != "" {
 		verifyURL := s.issuer + "/oauth/magic-link-verify?token=" + url.QueryEscape(magicLink.Token) + "&login_session=" + url.QueryEscape(req.LoginSession)
-		s.logger.Info("DEV: Magic link verify URL", zap.String("url", verifyURL))
+		s.logger.Info("DEBUG: Magic link verify URL", zap.String("url", verifyURL))
 	}
 
 	go s.logAuditEvent(context.Background(), "authentication", "security", "magic_link_sent", "success",

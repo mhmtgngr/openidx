@@ -1,50 +1,32 @@
-import { test as setup, expect } from '@playwright/test';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { test as setup, expect } from '@playwright/test'
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const authFile = 'e2e/.auth/user.json'
 
-const authFile = path.join(__dirname, '.auth/user.json');
+setup('authenticate as admin', async ({ page, context }) => {
+  // Navigate to login page
+  await page.goto('/login')
 
-/**
- * Authentication setup for Playwright tests
- * This creates a reusable authenticated state that other tests can use
- */
-setup('authenticate', async ({ page }) => {
-  // For testing, we'll mock the authentication by setting localStorage directly
-  // In a real scenario, you would navigate to login and perform actual login
+  // Fill in login credentials (for test environment)
+  // These should be configured via environment variables in CI/CD
+  const username = process.env.TEST_ADMIN_USERNAME || 'admin'
+  const password = process.env.TEST_ADMIN_PASSWORD || 'admin123'
 
-  await page.goto('/login');
+  // Wait for login form to be ready
+  await page.waitForSelector('input[id="username"]', { timeout: 5000 })
 
-  // Wait for the page to load
-  await expect(page.getByRole('heading', { name: 'OpenIDX' })).toBeVisible({ timeout: 10000 });
+  // Fill login form
+  await page.fill('input[id="username"]', username)
+  await page.fill('input[id="password"]', password)
 
-  // Create a mock JWT token for testing (expires in 1 hour)
-  const mockPayload = {
-    sub: 'test-user-id',
-    email: 'admin@openidx.local',
-    name: 'Test Admin',
-    preferred_username: 'admin',
-    roles: ['admin', 'user'],
-    exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
-    iat: Math.floor(Date.now() / 1000),
-  };
+  // Submit login
+  await page.click('button[type="submit"]')
 
-  // Base64 encode the payload (simplified JWT for testing)
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = btoa(JSON.stringify(mockPayload));
-  const mockToken = `${header}.${payload}.mock-signature`;
+  // Wait for successful authentication - redirect to dashboard
+  await page.waitForURL(/\/dashboard/, { timeout: 15000 })
 
-  // Set the token in localStorage
-  await page.evaluate((token) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('refresh_token', 'mock-refresh-token');
-  }, mockToken);
+  // Wait for dashboard to load
+  await expect(page.locator('h1')).toContainText('Dashboard')
 
-  // Navigate to dashboard to verify auth works
-  await page.goto('/dashboard');
-
-  // Save the storage state
-  await page.context().storageState({ path: authFile });
-});
+  // Save authentication state
+  await context.storageState({ path: authFile })
+})

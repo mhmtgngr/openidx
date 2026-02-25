@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/admin"
+	adminhandlers "github.com/openidx/openidx/internal/admin/handlers"
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/common/config"
@@ -70,6 +71,11 @@ func main() {
 	cfg, err := config.Load("admin-api")
 	if err != nil {
 		log.Fatal("Failed to load configuration", zap.Error(err))
+	}
+
+	// Validate production security settings (blocking)
+	if err := config.ValidateProductionConfig(cfg, log); err != nil {
+		log.Fatal("Production security validation failed", zap.Error(err))
 	}
 
 	cfg.LogSecurityWarnings(log)
@@ -212,6 +218,9 @@ func main() {
 		admin.RegisterRoutes(v1, adminService)
 		organization.RegisterRoutes(v1, orgService)
 		notifications.RegisterRoutes(v1, notifService)
+
+		// Register admin console handlers (dashboard, settings)
+		adminhandlers.RegisterAllRoutes(v1, db.Pool, log)
 	}
 
 	// Create HTTP server

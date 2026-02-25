@@ -40,7 +40,9 @@ const (
 	KeyRotationOverlap = 24 * time.Hour
 
 	// KeySize is the RSA key size in bits
-	KeySize = 2048
+	// 3072 bits provides security margin through 2030 (NIST recommendations)
+	// For new installations, consider using Ed25519 (more efficient, equally secure)
+	KeySize = 3072
 
 	// KeyLifetime is the recommended lifetime of a signing key
 	KeyLifetime = 90 * 24 * time.Hour // 90 days
@@ -199,8 +201,13 @@ func (km *KeyManager) loadKeysFromDatabase(ctx context.Context) error {
 }
 
 // generateAndStoreInitialKey generates and stores the initial signing key
+// Note: Currently uses RSA-3072 for backward compatibility.
+// TODO: Add Ed25519 support as a more modern alternative (faster, smaller signatures, same security).
+// Migration path: Support both RSA and Ed25519 in parallel, with Ed25519 as default for new keys.
 func (km *KeyManager) generateAndStoreInitialKey(ctx context.Context) error {
-	km.logger.Info("Generating initial RSA signing key")
+	km.logger.Info("Generating initial RSA signing key",
+		zap.Int("key_size_bits", KeySize),
+		zap.String("algorithm", "RS256"))
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, KeySize)
 	if err != nil {

@@ -1,0 +1,19 @@
+{
+  "project": {
+    "go_files": 337,
+    "test_files": 97,
+    "tsx_files": 0,
+    "todo_count": 8,
+    "build": "yes",
+    "tests": "fail",
+    "test_count": 33,
+    "test_passed": 29,
+    "dockerfiles": 12,
+    "compose": "yes",
+    "frontend": "yes"
+  },
+  "compile_errors": "",
+  "test_failures": "--- FAIL: TestSessionService_DeleteByUser (0.01s)\n    session_test.go:374: \n        \tError Trace:\t/home/cmit/openidx/internal/auth/session_test.go:374\n        \tError:      \tExpected error with \"session not found\" in chain but got nil.\n        \tTest:       \tTestSessionService_DeleteByUser\nFAIL\nFAIL\tgithub.com/openidx/openidx/internal/auth\t14.029s\n?   \tgithub.com/openidx/openidx/internal/common/config\t[no test files]\n?   \tgithub.com/openidx/openidx/internal/common/container\t[no test files]\n--\nFAIL",
+  "ts_errors": "",
+  "todos": "/home/cmit/openidx/internal/oauth/oidc_test.go:312:\t// TODO: Need to set up mock redis for this test\n/home/cmit/openidx/internal/audit/stream.go:80:\t\treturn true // TODO: Configure proper origin checking\n/home/cmit/openidx/internal/sms/providers_tr.go:948:// normalizePhoneTR normalizes a phone number to Turkish format (905XXXXXXXXX)\n/home/cmit/openidx/internal/sms/providers_tr.go:961:\t\t// Already in 90XXXXXXXXXX format\n/home/cmit/openidx/internal/sms/providers_tr.go:964:\t\t// 0XXXXXXXXXX -> 90XXXXXXXXXX\n/home/cmit/openidx/internal/sms/providers_tr.go:967:\t\t// 5XXXXXXXXX -> 905XXXXXXXXX\n/home/cmit/openidx/internal/mfa/webauthn_handler.go:515:\t\t// TODO: Implement proper authentication middleware\n/home/cmit/openidx/internal/mfa/webauthn_handler.go:525:\t\t// TODO: Implement proper CSRF protection"
+}

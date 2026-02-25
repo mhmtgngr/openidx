@@ -13,7 +13,7 @@ import { api, UserProfile, MFASetupResponse, MFAEnableResponse } from '../lib/ap
 import { LoadingSpinner } from '../components/ui/loading-spinner'
 import { Checkbox } from '../components/ui/checkbox'
 import { Shield, User, Key, Smartphone, Mail, Monitor, Phone, Globe, Trash2, Check, Plus, Copy, KeyRound, AppWindow, AlertTriangle } from 'lucide-react'
-import QRCode from 'qrcode.react'
+import { QRCodeSVG } from 'qrcode.react'
 import { useAuth } from '../lib/auth'
 
 interface MFAMethod {
@@ -589,7 +589,7 @@ export function UserProfilePage() {
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div className="flex justify-center bg-white p-8 rounded-lg border">
-                      <QRCode
+                      <QRCodeSVG
                         value={mfaSetup.qrCodeUrl}
                         size={320}
                         level="H"

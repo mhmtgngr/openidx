@@ -1,0 +1,9 @@
+{
+  "results": [
+    {
+      "title": "Claude search",
+      "content": "```json\n{\n  \"results\": [\n    {\n      \"title\": \"Microsoft Entra ID Governance\",\n      \"content\": \"Microsoft Entra ID governance provides automated identity lifecycle management, access reviews, and entitlement management. Features include automated onboarding/offboarding, role-based access control with separation of duties, guest user access management, and integration with Microsoft 365 ecosystem. Pricing starts at \u00a593/user/month with Entra Suite bundle.\",\n      \"url\": \"https://www.microsoft.com/zh-cn/security/business/solutions/identity-governance\"\n    },\n    {\n      \"title\": \"Okta vs Microsoft Entra ID: Access Management Comparison\",\n      \"content\": \"Comparison analysis between Okta and Entra ID: Okta excels in heterogeneous environments with superior SSO across different apps/platforms and detailed policy configuration. Entra ID shines in Microsoft 365 ecosystems with 'batteries included' MFA and Conditional Access. Okta offers more flexibility for non-Microsoft tools while Entra I",
+      "url": ""
+    }
+  ]
+}

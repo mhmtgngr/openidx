@@ -1,0 +1,85 @@
+{
+  "architecture_decisions": [
+    {
+      "decision": "Modify DeleteByUser to return ErrSessionNotFound when sessionIDs slice is empty",
+      "rationale": "The current implementation returns nil when deleting sessions for a user with no sessions, which is ambiguous. Returning a proper domain error allows callers to distinguish between successful deletion of existing sessions vs. no sessions found. This aligns with the existing error handling pattern where Get returns ErrSessionNotFound for non-existent sessions."
+    },
+    {
+      "decision": "Preserve existing test cleanup behavior using error checking",
+      "rationale": "Test cleanup code in TestSessionService_Create_MaxSessions calls DeleteByUser without checking the error. We will continue to allow this pattern by only returning an error when sessions list is empty, not when sessions were successfully deleted. The cleanup code will be updated to explicitly handle the error."
+    },
+    {
+      "decision": "Add explicit test case for non-existent user deletion",
+      "rationale": "Currently no test validates DeleteByUser behavior for users with no sessions. Adding this test case ensures the new error return behavior is properly validated and prevents regression."
+    }
+  ],
+  "backend_tasks": [
+    {
+      "order": 1,
+      "file": "internal/auth/session.go",
+      "action": "modify",
+      "purpose": "Update DeleteByUser method to return ErrSessionNotFound when sessionIDs slice is empty",
+      "key_functions": [
+        "DeleteByUser"
+      ],
+      "line_number": 251,
+      "change": "Add check after ListByUser call: if len(sessionIDs) == 0 { return ErrSessionNotFound }. Update docstring to reflect this behavior."
+    },
+    {
+      "order": 2,
+      "file": "internal/auth/session_test.go",
+      "action": "modify",
+      "purpose": "Update TestSessionService_Create_MaxSessions cleanup to handle error",
+      "key_functions": [
+        "TestSessionService_Create_MaxSessions"
+      ],
+      "line_number": 193,
+      "change": "Change ss.DeleteByUser(ctx, userID) to _ = ss.DeleteByUser(ctx, userID) to explicitly ignore the error in cleanup code"
+    },
+    {
+      "order": 3,
+      "file": "internal/auth/session_test.go",
+      "action": "modify",
+      "purpose": "Add new test case for deleting sessions of non-existent user",
+      "key_functions": [
+        "TestSessionService_DeleteByUser"
+      ],
+      "line_number": 346,
+      "change": "Add subtest that verifies DeleteByUser returns ErrSessionNotFound when called with a userID that has no sessions"
+    },
+    {
+      "order": 4,
+      "file": "internal/auth/session.go",
+      "action": "modify",
+      "purpose": "Update DeleteByUser docstring to document the new error return behavior",
+      "key_functions": [
+        "DeleteByUser"
+      ],
+      "line_number": 251,
+      "change": "Update comment from 'DeleteByUser removes all sessions for a user' to 'DeleteByUser removes all sessions for a user. Returns ErrSessionNotFound if the user has no sessions.'"
+    }
+  ],
+  "frontend_tasks": [],
+  "database_migrations": [],
+  "api_contracts": [],
+  "test_plan": {
+    "unit_tests": [
+      {
+        "file": "internal/auth/session_test.go",
+        "cases": [
+          "TestSessionService_DeleteByUser_NonExistentUser - verifies ErrSessionNotFound is returned when user has no sessions",
+          "TestSessionService_DeleteByUser_EmptyUserID - verifies appropriate error for empty user ID",
+          "TestSessionService_DeleteByUser_Success - verifies nil is returned when sessions are successfully deleted"
+        ]
+      }
+    ],
+    "e2e_tests": []
+  },
+  "security_notes": [
+    "No security implications - this is an internal service method error handling improvement",
+    "The change does not expose additional information about user existence",
+    "ErrSessionNotFound is already a defined error in the auth package and is used elsewhere"
+  ],
+  "docker_changes": [],
+  "market_driven_features": []
+}

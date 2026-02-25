@@ -341,26 +341,49 @@ func (ps *PasswordService) GenerateRandomPassword(length int) (string, error) {
 
 	// Ensure at least one of each required character type
 	if ps.policy.RequireLowercase {
-		password[0] = lowerChars[randomInt(len(lowerChars))]
+		idx, err := randomInt(len(lowerChars))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random lowercase character: %w", err)
+		}
+		password[0] = lowerChars[idx]
 	}
 	if ps.policy.RequireUppercase && len(password) > 1 {
-		password[1] = upperChars[randomInt(len(upperChars))]
+		idx, err := randomInt(len(upperChars))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random uppercase character: %w", err)
+		}
+		password[1] = upperChars[idx]
 	}
 	if ps.policy.RequireDigit && len(password) > 2 {
-		password[2] = digitChars[randomInt(len(digitChars))]
+		idx, err := randomInt(len(digitChars))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random digit character: %w", err)
+		}
+		password[2] = digitChars[idx]
 	}
 	if ps.policy.RequireSpecialChar && len(password) > 3 {
-		password[3] = specialChars[randomInt(len(specialChars))]
+		idx, err := randomInt(len(specialChars))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random special character: %w", err)
+		}
+		password[3] = specialChars[idx]
 	}
 
 	// Fill the rest with random characters from all sets
 	for i := 4; i < length; i++ {
-		password[i] = allChars[randomInt(len(allChars))]
+		idx, err := randomInt(len(allChars))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random character: %w", err)
+		}
+		password[i] = allChars[idx]
 	}
 
-	// Shuffle the password
+	// Shuffle the password using Fisher-Yates shuffle
 	for i := len(password) - 1; i > 0; i-- {
-		j := randomInt(i + 1)
+		j, err := randomInt(i + 1)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate shuffle index: %w", err)
+		}
 		password[i], password[j] = password[j], password[i]
 	}
 
@@ -368,18 +391,20 @@ func (ps *PasswordService) GenerateRandomPassword(length int) (string, error) {
 }
 
 // randomInt generates a cryptographically secure random integer in [0, max)
-func randomInt(max int) int {
+func randomInt(max int) (int, error) {
+	if max <= 0 {
+		return 0, fmt.Errorf("invalid max value: %d", max)
+	}
 	b := make([]byte, 4)
 	_, err := rand.Read(b)
 	if err != nil {
-		// Fallback to a simpler method (not ideal, but better than panic)
-		return 0
+		return 0, fmt.Errorf("crypto/rand.Read failed: %w", err)
 	}
 	num := int(b[0]) | int(b[1])<<8 | int(b[2])<<16 | int(b[3])<<24
 	if num < 0 {
 		num = -num
 	}
-	return num % max
+	return num % max, nil
 }
 
 // MigrateBcryptHash migrates a bcrypt hash to Argon2id

@@ -432,7 +432,7 @@ func (f *DeviceFingerprinter) checkForSuspiciousFingerprint(ctx context.Context,
 func (f *DeviceFingerprinter) generateDeviceName(userAgent string) string {
 	ua := strings.ToLower(userAgent)
 
-	// Detect OS
+	// Detect OS (order matters - check iPhone/iPad before "mac os x" since iOS UAs contain "like Mac OS X")
 	var os string
 	switch {
 	case strings.Contains(ua, "windows nt 10.0") || strings.Contains(ua, "windows 10"):
@@ -441,12 +441,12 @@ func (f *DeviceFingerprinter) generateDeviceName(userAgent string) string {
 		os = "Windows 11"
 	case strings.Contains(ua, "windows"):
 		os = "Windows"
-	case strings.Contains(ua, "mac os x") || strings.Contains(ua, "macos"):
-		os = "macOS"
 	case strings.Contains(ua, "iphone"):
 		os = "iPhone"
 	case strings.Contains(ua, "ipad"):
 		os = "iPad"
+	case strings.Contains(ua, "mac os x") || strings.Contains(ua, "macos"):
+		os = "macOS"
 	case strings.Contains(ua, "android"):
 		os = "Android"
 	case strings.Contains(ua, "linux"):
