@@ -43,8 +43,10 @@ type TestOIDCContext struct {
 	Store            *Store
 	MiniRedis        *miniredis.Miniredis
 	RedisClient      *redis.Client
+	RedisWrapper     *database.RedisClient
 	IdentityService  *mockIdentityService
 	Logger           *zap.Logger
+	TestKey          *rsa.PrivateKey
 	Cleanup          func()
 }
 
@@ -72,10 +74,6 @@ func NewTestOIDCContext(t *testing.T) *TestOIDCContext {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	// Create mock database (use a minimal implementation)
-	// For now, we'll create a minimal DB that just supports the queries we need
-	db := &database.PostgresDB{} // Will be mocked in tests
-
 	// Create test config
 	cfg := &config.Config{
 		OAuthIssuer: "https://test.openidx.org",
@@ -102,19 +100,25 @@ func NewTestOIDCContext(t *testing.T) *TestOIDCContext {
 		},
 	}
 
-	// Create OAuth service
-	svc, err := NewService(db, redisWrapper, cfg, logger, &identity.Service{})
-	require.NoError(t, err)
-
-	// Replace the generated key with our test key
-	svc.privateKey = key
-	svc.publicKey = &key.PublicKey
+	// Create a minimal OAuth service without database dependencies
+	// We create a service struct directly and set only the fields we need for testing
+	svc := &Service{
+		privateKey: key,
+		publicKey:  &key.PublicKey,
+		issuer:     cfg.OAuthIssuer,
+		redis:      redisWrapper,
+		config:     cfg,
+		logger:     logger,
+	}
 
 	// Create OIDC provider
 	provider := NewOIDCProvider(svc, idSvc, logger, cfg.OAuthIssuer)
 
 	// Create store
 	store := NewStore(redisWrapper, logger)
+
+	// Set the store on the provider
+	provider.SetStore(store)
 
 	// Create cleanup function
 	cleanup := func() {
@@ -129,8 +133,10 @@ func NewTestOIDCContext(t *testing.T) *TestOIDCContext {
 		Store:           store,
 		MiniRedis:       mini,
 		RedisClient:     redisClient,
+		RedisWrapper:    redisWrapper,
 		IdentityService: idSvc,
 		Logger:          logger,
+		TestKey:         key,
 		Cleanup:         cleanup,
 	}
 }
