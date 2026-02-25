@@ -254,9 +254,30 @@ func TestEnrollmentFlow_RecoveryCodes(t *testing.T) {
 		assert.NotEmpty(t, resp.Warning)
 	})
 
-	// Check recovery code status
+	// Check recovery code status - now requires authentication
 	t.Run("RecoveryCodeStatus", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/mfa/recovery/status?user_id="+userID.String(), nil)
+		// Setup mock auth middleware that sets user_id in context
+		router := gin.New()
+
+		// Create auth middleware that sets user_id from token
+		mockAuthMiddleware := func(c *gin.Context) {
+			// Extract user_id from Authorization header for test purposes
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+				c.Abort()
+				return
+			}
+			// For testing, the token is the userID itself
+			token := authHeader[7:] // Remove "Bearer " prefix
+			c.Set("user_id", token)
+			c.Next()
+		}
+
+		handlers.RegisterProtectedRoutes(router, mockAuthMiddleware)
+
+		req := httptest.NewRequest("GET", "/mfa/recovery/status", nil)
+		req.Header.Set("Authorization", "Bearer "+userID.String())
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -269,6 +290,23 @@ func TestEnrollmentFlow_RecoveryCodes(t *testing.T) {
 
 		assert.True(t, resp.Enabled)
 		assert.Equal(t, RecoveryCodeCount, resp.Remaining)
+	})
+
+	t.Run("RecoveryCodeStatusWithoutAuth", func(t *testing.T) {
+		// Setup protected routes
+		router := gin.New()
+		handlers.RegisterProtectedRoutes(router, func(c *gin.Context) {
+			// No-op auth middleware that doesn't set user_id
+			c.Next()
+		})
+
+		req := httptest.NewRequest("GET", "/mfa/recovery/status", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		// Should fail because no user_id in context
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 }
 

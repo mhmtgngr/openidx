@@ -1,8 +1,54 @@
 {
-  "overall_score": 95,
-  "verdict": "APPROVE",
-  "code_issues": [],
-  "missing_items": [],
-  "blocking_issues": [],
-  "fix_instructions": ""
+  "overall_score": 78,
+  "verdict": "NEEDS_FIXES",
+  "code_issues": [
+    {
+      "severity": "critical",
+      "file": "internal/mfa/webauthn_handler.go",
+      "issue": "HandleListCredentials still accepts user_id from query parameter allowing potential unauthorized access",
+      "fix": "Remove user_id query parameter and always use JWT subject"
+    },
+    {
+      "severity": "major",
+      "file": "internal/mfa/webauthn_handler.go",
+      "issue": "HandleListCredentials ownership verification only logs warning instead of returning error",
+      "fix": "Return 403 Forbidden when credential ownership mismatch occurs"
+    },
+    {
+      "severity": "major",
+      "file": "internal/common/middleware/csrf.go",
+      "issue": "CSRF middleware missing Referer header validation as fallback when Origin is missing",
+      "fix": "Add Referer header validation for older browsers"
+    },
+    {
+      "severity": "minor",
+      "file": "internal/mfa/webauthn_auth.go",
+      "issue": "NewWebAuthnAuthWithValidator does not validate required parameters",
+      "fix": "Add nil checks for handlers, rbac, and logger"
+    },
+    {
+      "severity": "minor",
+      "file": "internal/mfa/webauthn_auth.go",
+      "issue": "RegisterProtectedRoutes does not validate that authMiddleware is provided",
+      "fix": "Add validation to prevent registering protected routes without auth middleware"
+    },
+    {
+      "severity": "minor",
+      "file": "internal/mfa/webauthn_handler_auth_test.go",
+      "issue": "Missing test case for CSRF bypass scenario",
+      "fix": "Add test verifying Bearer-only requests bypass CSRF check"
+    }
+  ],
+  "missing_items": [
+    "Integration tests for full auth flow with CSRF",
+    "E2E tests for WebAuthn credential management with JWT auth",
+    "OpenAPI spec updates documenting new auth requirements",
+    "Migration file implementation detail unclear - 016_webauthn_security_tables.up.sql not provided",
+    "Documentation of CSRF bypass behavior for API clients"
+  ],
+  "blocking_issues": [
+    "HandleListCredentials query parameter bypass allows privilege escalation",
+    "Ownership verification only logs instead of blocking access"
+  ],
+  "fix_instructions": "1. Remove user_id query parameter from HandleListCredentials and always use c.GetString(\"user_id\") from JWT\n2. Change ownership check in HandleListCredentials from warning to return 403 error\n3. Add Referer header validation fallback in CSRFProtection\n4. Add nil parameter validation to NewWebAuthnAuth constructors\n5. Add CSRF bypass test case to webauthn_handler_auth_test.go\n6. Verify migration file exists and is correct\n7. Add integration tests covering the full authenticated flow"
 }

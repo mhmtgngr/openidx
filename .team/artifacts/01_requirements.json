@@ -1,227 +1,248 @@
 {
-  "project_name": "Session DeleteByUser Error Handling",
-  "summary": "Fix the DeleteByUser method in the session service to return a proper domain error when attempting to delete sessions for a non-existent user or a user with no sessions, instead of returning nil.",
+  "project_name": "WebAuthn Security Hardening",
+  "summary": "Implement proper JWT-based authentication middleware and CSRF protection for WebAuthn credential management endpoints in internal/mfa/webauthn_handler.go to address critical security vulnerabilities at lines 515 and 525.",
   "user_stories": [
     {
       "id": "US-001",
-      "as_a": "system administrator",
-      "i_want": "to receive a clear error message when attempting to delete sessions for a non-existent user",
-      "so_that": "I can distinguish between successful deletions and cases where no sessions existed",
-      "priority": "high",
+      "as_a": "security administrator",
+      "i_want": "all WebAuthn endpoints protected by JWT authentication middleware",
+      "so_that": "unauthenticated actors cannot register, list, modify, or delete WebAuthn credentials",
+      "priority": "critical",
       "acceptance_criteria": [
-        "DeleteByUser returns ErrSessionNotFound when user has no sessions in Redis",
-        "DeleteByUser returns ErrSessionNotFound when user_sessions key does not exist",
-        "Existing test TestSessionService_DeleteByUser passes with new behavior",
-        "Error message contains 'session not found' for clear identification"
+        "All POST/PUT/DELETE WebAuthn endpoints require valid JWT access token",
+        "JWT is extracted from Authorization Bearer header",
+        "Token validation uses existing internal/auth/middleware RBACMiddleware",
+        "User ID from JWT claims matches requested user_id parameter",
+        "Expired or invalid tokens return 401 Unauthorized"
       ]
     },
     {
       "id": "US-002",
-      "as_a": "developer",
-      "i_want": "consistent error handling across all session deletion methods",
-      "so_that": "the API behavior is predictable and easy to consume",
-      "priority": "medium",
+      "as_a": "security administrator",
+      "i_want": "CSRF protection on all state-changing WebAuthn endpoints",
+      "so_that": "cross-site request forgery attacks cannot be executed against WebAuthn credential management",
+      "priority": "critical",
       "acceptance_criteria": [
-        "Delete method returns ErrSessionNotFound for non-existent sessions",
-        "DeleteByUser method returns ErrSessionNotFound for users with no sessions",
-        "Both methods follow the same error propagation pattern"
+        "CSRF middleware applied to POST/PUT/DELETE endpoints",
+        "Origin/Referer headers validated against trusted domain",
+        "Double-submit cookie pattern with signed CSRF tokens",
+        "SameSite cookies set to Strict mode",
+        "GET requests exempted from CSRF checks"
+      ]
+    },
+    {
+      "id": "US-003",
+      "as_a": "user",
+      "i_want": "manage my own WebAuthn credentials securely",
+      "so_that": "I can register, rename, and delete my security keys without risk of unauthorized access",
+      "priority": "high",
+      "acceptance_criteria": [
+        "Can only access credentials belonging to authenticated user",
+        "Ownership verification enforced before credential operations",
+        "Audit logging for all credential modifications",
+        "Clear error messages for permission denied scenarios"
       ]
     }
   ],
   "functional_requirements": [
     {
       "id": "FR-001",
-      "title": "DeleteByUser should return error for no sessions",
-      "description": "The DeleteByUser method must check if any sessions exist for the user before attempting deletion. If ListByUser returns an empty slice, the method should return ErrSessionNotFound instead of nil.",
-      "service": "identity-service"
+      "title": "JWT Authentication Middleware Integration",
+      "description": "Replace placeholder AuthMiddleware() at line 515 with proper JWT authentication using internal/auth/middleware RBACMiddleware. The middleware must validate JWT tokens from Authorization Bearer header, extract user claims from the token, and set user context for downstream handlers.",
+      "service": "mfa-service"
     },
     {
       "id": "FR-002",
-      "title": "Add test case for non-existent user deletion",
-      "description": "Add a test case to TestSessionService_DeleteByUser that verifies DeleteByUser returns an error when called with a user ID that has no sessions or does not exist.",
-      "service": "identity-service"
+      "title": "CSRF Protection Implementation",
+      "description": "Replace placeholder CSRFMiddleware() at line 525 with robust CSRF protection using double-submit cookie pattern or Origin/Referer header validation. Must integrate with existing internal/common/middleware/csrf.go CSRFProtection middleware.",
+      "service": "mfa-service"
     },
     {
       "id": "FR-003",
-      "title": "Preserve existing successful deletion behavior",
-      "description": "When DeleteByUser successfully deletes one or more sessions, it should continue to return nil as it does currently.",
-      "service": "identity-service"
+      "title": "User Ownership Verification",
+      "description": "Enhance credential management handlers (HandleListCredentials, HandleDeleteCredential, HandleRenameCredential) to verify the authenticated user from JWT context owns the requested user_id parameter. Prevent cross-user credential access.",
+      "service": "mfa-service"
     },
     {
-      "id": "FR-M004",
-      "title": "AI-Based Anomaly Detection",
-      "description": "Implement ML models for user behavior analytics to detect anomalous access patterns, impossible travel, and credential stuffing attacks",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Matches market leaders; prevents account takeover"
-    },
-    {
-      "id": "FR-M005",
-      "title": "Passwordless Authentication",
-      "description": "Add FIDO2/WebAuthn support with hardware security keys and platform authenticators",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Eliminates password-related breaches; meets 2025 security expectations"
-    },
-    {
-      "id": "FR-M006",
-      "title": "Privileged Access Management (PAM)",
-      "description": "Implement just-in-time elevation, session recording for privileged accounts, and approval workflows for admin access",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Critical for enterprise compliance; high-value feature"
-    },
-    {
-      "id": "FR-M007",
-      "title": "Device Trust Assessment",
-      "description": "Evaluate device posture (OS version, patches, disk encryption) before granting access; integrate with endpoint detection",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Completes zero trust verification beyond identity"
-    },
-    {
-      "id": "FR-M008",
-      "title": "Just-in-Time Access",
-      "description": "Allow temporary access grants with auto-expiration for contractors and emergency access scenarios",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Reduces standing privileges; audit-friendly"
-    },
-    {
-      "id": "FR-M009",
-      "title": "Machine Identity Management",
-      "description": "Support service accounts, API keys, and certificate lifecycle management for non-human identities",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Addresses emerging 2025 trend; underserved market"
-    },
-    {
-      "id": "FR-M010",
-      "title": "Enhanced Audit Reports",
-      "description": "Pre-built compliance reports for SOC 2, ISO 27001:2022, and GDPR with configurable templates",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Accelerates customer compliance audits"
-    },
-    {
-      "id": "FR-M011",
-      "title": "Risk-Based Adaptive Authentication",
-      "description": "Dynamic MFA requirements based on risk score from location, device, behavior patterns",
-      "service": "identity",
-      "source": "market_research",
-      "competitive_advantage": "Balances security and user experience"
+      "id": "FR-004",
+      "title": "WebAuthn Endpoint Protection Configuration",
+      "description": "Apply authentication and CSRF middleware chains to WebAuthn route group in RegisterRoutes method. Configure middleware order: CSRF -> JWT authentication -> handler.",
+      "service": "mfa-service"
     }
   ],
   "non_functional_requirements": [
     {
       "id": "NFR-001",
-      "category": "performance",
-      "requirement": "Error check should not add significant overhead",
-      "metric": "Additional latency < 1ms for DeleteByUser operation"
+      "category": "security",
+      "requirement": "All state-changing WebAuthn endpoints must require valid JWT authentication",
+      "metric": "100% of POST/PUT/DELETE endpoints protected"
     },
     {
       "id": "NFR-002",
       "category": "security",
-      "requirement": "Error messages should not leak sensitive user information",
-      "metric": "Error contains only generic 'session not found' message, no user IDs"
+      "requirement": "CSRF tokens must be cryptographically signed with per-request uniqueness",
+      "metric": "CSRF token entropy >= 128 bits"
     },
     {
       "id": "NFR-003",
-      "category": "maintainability",
-      "requirement": "Code should follow existing error handling patterns in the codebase",
-      "metric": "Consistent use of existing ErrSessionNotFound error variable"
+      "category": "performance",
+      "requirement": "Authentication middleware validation latency must be minimal",
+      "metric": "P95 latency < 10ms for JWT validation"
+    },
+    {
+      "id": "NFR-004",
+      "category": "security",
+      "requirement": "Session cookies must have security flags set",
+      "metric": "SameSite=Strict, Secure, HttpOnly flags set"
+    },
+    {
+      "id": "NFR-005",
+      "category": "security",
+      "requirement": "Failed authentication attempts must be rate-limited",
+      "metric": "Max 10 failed attempts per minute per IP"
     }
   ],
   "api_endpoints": [
     {
-      "method": "DELETE",
-      "path": "/api/v1/identity/sessions/user/:userID",
-      "description": "Delete all sessions for a specific user - returns 404 when user has no active sessions",
+      "method": "POST",
+      "path": "/mfa/webauthn/register/begin",
+      "description": "Initiate WebAuthn credential registration",
       "roles": [
-        "admin",
-        "operator"
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/mfa/webauthn/register/finish",
+      "description": "Complete WebAuthn credential registration",
+      "roles": [
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/mfa/webauthn/login/begin",
+      "description": "Initiate WebAuthn authentication",
+      "roles": [
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/mfa/webauthn/login/finish",
+      "description": "Complete WebAuthn authentication",
+      "roles": [
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/mfa/webauthn/credentials",
+      "description": "List user's WebAuthn credentials",
+      "roles": [
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/mfa/webauthn/credentials/:id",
+      "description": "Delete a WebAuthn credential",
+      "roles": [
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/mfa/webauthn/credentials/:id/name",
+      "description": "Rename a WebAuthn credential",
+      "roles": [
+        "user",
+        "admin"
       ]
     }
   ],
   "database_changes": [
     {
-      "table": "sessions",
-      "action": "none",
-      "columns": []
+      "table": "webauthn_credentials",
+      "action": "alter",
+      "columns": [
+        "user_id uuid NOT NULL (add CHECK constraint for ownership verification)"
+      ]
     }
   ],
   "affected_services": [
-    "identity-service"
+    "identity-service",
+    "mfa-service"
   ],
   "risks": [
     {
-      "risk": "Breaking change for callers that expect nil on empty deletion",
-      "mitigation": "Review all callers of DeleteByUser to ensure they handle the error appropriately. This is an internal service method so impact is limited."
+      "risk": "Breaking existing WebAuthn integrations that do not pass JWT tokens",
+      "mitigation": "Provide migration guide and deprecation period. Add feature flag for gradual rollout."
     },
     {
-      "risk": "Test cleanup code may fail with new error",
-      "mitigation": "The test cleanup code in TestSessionService_Create_MaxSessions and other tests should be updated to ignore ErrSessionNotFound"
+      "risk": "CSRF protection may block legitimate cross-origin requests from admin console",
+      "mitigation": "Configure trusted domain whitelist. Add preflight CORS handling for allowed origins."
+    },
+    {
+      "risk": "JWT validation performance impact on high-volume authentication flows",
+      "mitigation": "Implement JWT claims caching in Redis. Use connection pooling for Redis."
+    },
+    {
+      "risk": "Session cookie handling complexity across multiple domains",
+      "mitigation": "Use SameSite=None; Secure for cross-domain scenarios. Document cookie requirements clearly."
+    },
+    {
+      "risk": "User ID parameter mismatch allowing privilege escalation",
+      "mitigation": "Strict comparison of JWT subject with requested user_id. Audit log all mismatches."
     }
   ],
   "implementation_phases": [
     {
       "phase": 1,
-      "name": "Code Analysis",
+      "name": "Authentication Middleware Integration",
       "tasks": [
-        "Review current DeleteByUser implementation in internal/auth/session.go",
-        "Identify all callers of DeleteByUser method",
-        "Review existing error handling patterns in session service"
+        "Add internal/auth/middleware dependency to mfa package",
+        "Create constructor accepting RBACMiddleware and TokenService",
+        "Replace AuthMiddleware() with proper JWT validation",
+        "Add unit tests for authentication scenarios"
       ]
     },
     {
       "phase": 2,
-      "name": "Implementation",
+      "name": "CSRF Protection Implementation",
       "tasks": [
-        "Modify DeleteByUser to check if sessionIDs slice is empty and return ErrSessionNotFound",
-        "Add test case for deleting sessions of non-existent user",
-        "Update any test cleanup code that calls DeleteByUser"
+        "Integrate internal/common/middleware/csrf.go CSRFProtection",
+        "Add CSRF token generation endpoint",
+        "Implement double-submit cookie validation",
+        "Add SameSite cookie configuration",
+        "Add CSRF bypass for authenticated API clients (Bearer-only)"
       ]
     },
     {
       "phase": 3,
-      "name": "Testing",
+      "name": "User Ownership Verification",
       "tasks": [
-        "Run unit tests for session service",
-        "Run integration tests for identity service",
-        "Verify no regressions in existing functionality"
+        "Update HandleListCredentials to validate JWT subject",
+        "Update HandleDeleteCredential with ownership checks",
+        "Update HandleRenameCredential with ownership checks",
+        "Remove user_id query parameter reliance (use from JWT)"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Testing and Documentation",
+      "tasks": [
+        "Add integration tests for protected endpoints",
+        "Add security tests for CSRF bypass attempts",
+        "Document API authentication requirements",
+        "Update OpenAPI specification with security schemas"
       ]
     }
-  ],
-  "market_context": {
-    "competitors_analyzed": [
-      "Microsoft Entra ID",
-      "Okta",
-      "\u817e\u8baf\u4e91 IOA",
-      "\u6df1\u4fe1\u670d aTrust",
-      "\u5947\u5b89\u4fe1"
-    ],
-    "key_gaps": [
-      "AI/ML-based anomaly detection and user behavior analytics",
-      "Passwordless authentication methods (FIDO2, WebAuthn, biometric)",
-      "Privileged Access Management (PAM) for admin accounts",
-      "Just-in-Time (JIT) access provisioning with auto-expiration",
-      "Advanced threat intelligence feeds integration"
-    ],
-    "trends": [
-      "AI-Driven IAM",
-      "Passwordless Authentication",
-      "Zero Trust Architecture (ZTA) Mainstream Adoption",
-      "B2B Identity Management Focus",
-      "Machine/Non-Human Identities"
-    ],
-    "unique_selling_points": [
-      "70-80% cost savings compared to commercial solutions",
-      "Open-source with no vendor lock-in",
-      "Modern cloud-native architecture (Go, React, Kubernetes)",
-      "Built-in OPA policy engine for flexible authorization",
-      "Self-hosted option for data sovereignty requirements",
-      "Modular microservices architecture allows selective deployment",
-      "API-first design enables easy integration"
-    ]
-  }
+  ]
 }

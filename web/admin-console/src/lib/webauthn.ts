@@ -70,7 +70,7 @@ export function decodeCredentialCreationOptions(
       type: cred.type as PublicKeyCredentialType,
       transports: cred.transports as AuthenticatorTransport[] | undefined,
     })),
-    authenticatorSelection: options.authenticatorSelection,
+    authenticatorSelection: options.authenticatorSelection as AuthenticatorSelectionCriteria | undefined,
     attestation: options.attestation as AttestationConveyancePreference | undefined,
   }
 }

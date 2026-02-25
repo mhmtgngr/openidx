@@ -156,6 +156,7 @@ docker-build:
 			-f deployments/docker/Dockerfile.$$service .; \
 	done
 	$(DOCKER) build -t $(DOCKER_REGISTRY)/admin-console:$(VERSION) \
+		--build-arg SRC_DIR=. \
 		-f deployments/docker/Dockerfile.admin-console ./web/admin-console
 
 docker-push:

@@ -134,9 +134,21 @@ func (m *JWTAuthMiddleware) extractToken(c *gin.Context) (string, error) {
 // validateToken parses and validates the JWT token
 func (m *JWTAuthMiddleware) validateToken(tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Verify signing method
+		// CRITICAL: Explicitly verify algorithm to prevent "none" algorithm attacks
+		// Reject tokens without explicit algorithm header
+		alg, ok := token.Header["alg"].(string)
+		if !ok || alg == "" {
+			return nil, fmt.Errorf("token missing alg header or alg is not a string")
+		}
+
+		// Only allow RS256 algorithm - reject "none", HS256, or any other algorithm
+		if alg != "RS256" {
+			return nil, fmt.Errorf("unexpected signing algorithm: %s (only RS256 is allowed)", alg)
+		}
+
+		// Double-check the method type matches our expectation
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			return nil, fmt.Errorf("token method is not RSA despite alg header")
 		}
 
 		// Get key ID from header

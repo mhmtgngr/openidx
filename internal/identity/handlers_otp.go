@@ -46,8 +46,10 @@ func (s *Service) handleEnrollSMS(c *gin.Context) {
 		"message":      "Verification code sent to your phone",
 	}
 
-	// Include code only if debug mode is explicitly enabled (never in production)
-	if s.cfg.DebugOTPsEnabled() {
+	// CRITICAL: NEVER expose OTP codes in production
+	// OTP codes must NEVER be included in API responses in production environments
+	// This check enforces production safety regardless of config flag
+	if s.cfg.DebugOTPsEnabled() && s.cfg.IsDevelopment() {
 		response["code"] = code
 	}
 
@@ -195,8 +197,10 @@ func (s *Service) handleEnrollEmailOTP(c *gin.Context) {
 		"message":       "Verification code sent to your email",
 	}
 
-	// Include code only if debug mode is explicitly enabled (never in production)
-	if s.cfg.DebugOTPsEnabled() {
+	// CRITICAL: NEVER expose OTP codes in production
+	// OTP codes must NEVER be included in API responses in production environments
+	// This check enforces production safety regardless of config flag
+	if s.cfg.DebugOTPsEnabled() && s.cfg.IsDevelopment() {
 		response["code"] = code
 	}
 

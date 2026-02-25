@@ -6,12 +6,12 @@ RUN echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
 
 WORKDIR /app
 
-COPY . .
-
-RUN go mod tidy
+COPY go.mod go.sum ./
 RUN go mod download
 
-RUN GOMAXPROCS=1 GOMEMLIMIT=1GiB CGO_ENABLED=0 GOOS=linux go build \
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s" \
     -o /app/demo-app ./cmd/demo-app
 

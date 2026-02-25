@@ -3,12 +3,35 @@ package identity
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// validDomainPattern validates email domains to prevent SQL injection
+// Only allows alphanumeric, hyphens, and dots in domain names
+var validDomainPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+
+// maxDomainLength prevents excessively long domain strings
+const maxDomainLength = 253
+
+// isValidDomain performs strict validation of email domain format
+// to prevent SQL injection and ensure RFC-compliant domain names
+func isValidDomain(domain string) bool {
+	// Check length limit (RFC 1035)
+	if len(domain) == 0 || len(domain) > maxDomainLength {
+		return false
+	}
+	// Must contain at least one dot for proper domain structure
+	if !strings.Contains(domain, ".") {
+		return false
+	}
+	// Check against strict pattern (no SQL injection characters)
+	return validDomainPattern.MatchString(domain)
+}
 
 // handleFederationDiscover is a PUBLIC endpoint that returns the IdP to redirect to based on email domain.
 func (s *Service) handleFederationDiscover(c *gin.Context) {
@@ -25,7 +48,14 @@ func (s *Service) handleFederationDiscover(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid email format"})
 		return
 	}
-	domain := strings.ToLower(parts[1])
+	domain := strings.ToLower(strings.TrimSpace(parts[1]))
+
+	// CRITICAL: Validate domain before database query to prevent SQL injection
+	if !isValidDomain(domain) {
+		s.logger.Warn("Invalid domain format in federation discover", zap.String("domain", domain))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid email domain format"})
+		return
+	}
 
 	var providerID, providerName, issuerURL string
 	var autoRedirect bool

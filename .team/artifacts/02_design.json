@@ -1,85 +1,375 @@
 {
   "architecture_decisions": [
     {
-      "decision": "Modify DeleteByUser to return ErrSessionNotFound when sessionIDs slice is empty",
-      "rationale": "The current implementation returns nil when deleting sessions for a user with no sessions, which is ambiguous. Returning a proper domain error allows callers to distinguish between successful deletion of existing sessions vs. no sessions found. This aligns with the existing error handling pattern where Get returns ErrSessionNotFound for non-existent sessions."
+      "decision": "Use existing internal/auth RBACMiddleware for JWT authentication",
+      "rationale": "The project already has a robust JWT validation system with RBACMiddleware.Authenticate() that validates tokens, extracts claims, and sets user context. Reusing this avoids duplication and leverages existing TokenService with Redis-based revocation support."
     },
     {
-      "decision": "Preserve existing test cleanup behavior using error checking",
-      "rationale": "Test cleanup code in TestSessionService_Create_MaxSessions calls DeleteByUser without checking the error. We will continue to allow this pattern by only returning an error when sessions list is empty, not when sessions were successfully deleted. The cleanup code will be updated to explicitly handle the error."
+      "decision": "Extend existing CSRFProtection middleware for WebAuthn endpoints",
+      "rationale": "internal/common/middleware/csrf.go already implements Origin/Referer header validation with Bearer token bypass. This matches WebAuthn's CSRF protection requirements while supporting API clients using only bearer tokens."
     },
     {
-      "decision": "Add explicit test case for non-existent user deletion",
-      "rationale": "Currently no test validates DeleteByUser behavior for users with no sessions. Adding this test case ensures the new error return behavior is properly validated and prevents regression."
+      "decision": "Add ownership verification using JWT subject claim",
+      "rationale": "WebAuthn credential management endpoints must ensure users can only access their own credentials. The JWT subject (user_id) claim provides the canonical user identifier, eliminating the need for insecure query parameter-based user identification."
+    },
+    {
+      "decision": "Create WebAuthnAuth struct embedding handlers with middleware dependencies",
+      "rationale": "A new WebAuthnAuth struct will wrap WebAuthnHandlers with required middleware (RBACMiddleware, TokenService). This composition allows the same handlers to work with or without authentication while maintaining clean separation of concerns."
+    },
+    {
+      "decision": "Implement SameSite=Strict cookie configuration for session-based CSRF",
+      "rationale": "SameSite=Strict prevents CSRF attacks on cookie-based sessions by ensuring cookies are only sent with same-site requests. This is defense-in-depth alongside Origin header validation."
     }
   ],
   "backend_tasks": [
     {
       "order": 1,
-      "file": "internal/auth/session.go",
+      "file": "internal/mfa/webauthn_handler.go",
       "action": "modify",
-      "purpose": "Update DeleteByUser method to return ErrSessionNotFound when sessionIDs slice is empty",
+      "purpose": "Remove placeholder AuthMiddleware() and CSRFMiddleware() functions (lines 511-529). These will be replaced by proper middleware from internal/auth and internal/common/middleware.",
       "key_functions": [
-        "DeleteByUser"
-      ],
-      "line_number": 251,
-      "change": "Add check after ListByUser call: if len(sessionIDs) == 0 { return ErrSessionNotFound }. Update docstring to reflect this behavior."
+        "RemovePlaceholderMiddleware"
+      ]
     },
     {
       "order": 2,
-      "file": "internal/auth/session_test.go",
+      "file": "internal/mfa/webauthn_handler.go",
       "action": "modify",
-      "purpose": "Update TestSessionService_Create_MaxSessions cleanup to handle error",
+      "purpose": "Update RegisterRoutes() to accept optional authentication middleware. Split routes into public (registration/login flows) and protected (credential management). Add WebAuthnAuth struct.",
       "key_functions": [
-        "TestSessionService_Create_MaxSessions"
-      ],
-      "line_number": 193,
-      "change": "Change ss.DeleteByUser(ctx, userID) to _ = ss.DeleteByUser(ctx, userID) to explicitly ignore the error in cleanup code"
+        "RegisterRoutes",
+        "WebAuthnAuth",
+        "RegisterPublicRoutes",
+        "RegisterProtectedRoutes"
+      ]
     },
     {
       "order": 3,
-      "file": "internal/auth/session_test.go",
+      "file": "internal/mfa/webauthn_handler.go",
       "action": "modify",
-      "purpose": "Add new test case for deleting sessions of non-existent user",
+      "purpose": "Update HandleListCredentials to extract user_id from JWT context instead of query parameter. Use auth.GetUserFromContext() to get authenticated user ID.",
       "key_functions": [
-        "TestSessionService_DeleteByUser"
-      ],
-      "line_number": 346,
-      "change": "Add subtest that verifies DeleteByUser returns ErrSessionNotFound when called with a userID that has no sessions"
+        "HandleListCredentials"
+      ]
     },
     {
       "order": 4,
-      "file": "internal/auth/session.go",
+      "file": "internal/mfa/webauthn_handler.go",
       "action": "modify",
-      "purpose": "Update DeleteByUser docstring to document the new error return behavior",
+      "purpose": "Update HandleDeleteCredential to verify JWT subject matches credential ownership. Add ownership verification before deletion.",
       "key_functions": [
-        "DeleteByUser"
-      ],
-      "line_number": 251,
-      "change": "Update comment from 'DeleteByUser removes all sessions for a user' to 'DeleteByUser removes all sessions for a user. Returns ErrSessionNotFound if the user has no sessions.'"
+        "HandleDeleteCredential"
+      ]
+    },
+    {
+      "order": 5,
+      "file": "internal/mfa/webauthn_handler.go",
+      "action": "modify",
+      "purpose": "Update HandleRenameCredential to verify JWT subject matches credential ownership before allowing rename operation.",
+      "key_functions": [
+        "HandleRenameCredential"
+      ]
+    },
+    {
+      "order": 6,
+      "file": "internal/mfa/webauthn_handler.go",
+      "action": "create",
+      "purpose": "Add NewWebAuthnAuth() constructor that accepts RBACMiddleware and TokenService. Creates configured WebAuthnAuth struct with authenticated handlers.",
+      "key_functions": [
+        "NewWebAuthnAuth"
+      ]
+    },
+    {
+      "order": 7,
+      "file": "internal/mfa/webauthn_handler.go",
+      "action": "modify",
+      "purpose": "Add RegisterProtectedRoutes() method on WebAuthnAuth that applies authentication and CSRF middleware to credential management endpoints.",
+      "key_functions": [
+        "RegisterProtectedRoutes"
+      ]
+    },
+    {
+      "order": 8,
+      "file": "internal/mfa/webauthn_auth.go",
+      "action": "create",
+      "purpose": "Create new file for WebAuthn authentication wrapper. Contains WebAuthnAuth struct with embedded WebAuthnHandlers, RBACMiddleware, TokenService, and logger. Implements authenticated route registration.",
+      "key_functions": [
+        "WebAuthnAuth",
+        "NewWebAuthnAuth",
+        "RegisterRoutes"
+      ]
+    },
+    {
+      "order": 9,
+      "file": "internal/common/middleware/csrf.go",
+      "action": "modify",
+      "purpose": "Enhance CSRFProtection to support configurable cookie name for MFA service sessions. Add SameSite cookie configuration helper function.",
+      "key_functions": [
+        "CSRFConfig",
+        "CSRFProtection",
+        "ConfigureSameSiteCookies"
+      ]
+    },
+    {
+      "order": 10,
+      "file": "internal/mfa/webauthn_handler_auth_test.go",
+      "action": "create",
+      "purpose": "Add unit tests for authentication scenarios: valid JWT token, expired token, missing token, ownership verification failures, CSRF bypass attempts.",
+      "key_functions": [
+        "TestAuthenticatedHandleListCredentials",
+        "TestOwnershipVerification",
+        "TestCSRFProtection"
+      ]
     }
   ],
-  "frontend_tasks": [],
-  "database_migrations": [],
-  "api_contracts": [],
+  "frontend_tasks": [
+    {
+      "order": 1,
+      "file": "web/admin-console/src/pages/mfa/WebAuthnCredentials.tsx",
+      "action": "modify",
+      "purpose": "Remove user_id query parameter from API calls. The API now extracts user_id from JWT token. Update list, delete, and rename credential calls.",
+      "key_functions": [
+        "listCredentials",
+        "deleteCredential",
+        "renameCredential"
+      ]
+    },
+    {
+      "order": 2,
+      "file": "web/admin-console/src/api/mfa.ts",
+      "action": "modify",
+      "purpose": "Update WebAuthn API client to not include user_id in query parameters for credential management endpoints. Add error handling for 403 Forbidden responses.",
+      "key_functions": [
+        "WebAuthnAPI",
+        "CredentialsListParams"
+      ]
+    },
+    {
+      "order": 3,
+      "file": "web/admin-console/src/hooks/useWebAuthnCredentials.ts",
+      "action": "create",
+      "purpose": "Create React Query hook for WebAuthn credential management with automatic error handling for authentication failures.",
+      "key_functions": [
+        "useWebAuthnCredentials",
+        "useDeleteWebAuthnCredential",
+        "useRenameWebAuthnCredential"
+      ]
+    }
+  ],
+  "database_migrations": [
+    {
+      "file": "migrations/016_webauthn_security_columns.up.sql",
+      "sql": "-- Add security tracking columns for WebAuthn credentials\\nALTER TABLE webauthn_credentials ADD COLUMN IF NOT EXISTS created_by_ip VARCHAR(45);\\nALTER TABLE webauthn_credentials ADD COLUMN IF NOT EXISTS created_by_user_agent TEXT;\\nALTER TABLE webauthn_credentials ADD COLUMN IF NOT EXISTS last_authn_at TIMESTAMP WITH TIME ZONE;\\n\\n-- Index for ownership verification queries\\nCREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user_id ON webauthn_credentials(user_id);\\n\\n-- Add audit trigger for credential operations\\nCREATE TABLE IF NOT EXISTS webauthn_credential_audit (\\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\\n    credential_id UUID NOT NULL REFERENCES webauthn_credentials(id) ON DELETE CASCADE,\\n    user_id UUID NOT NULL REFERENCES users(id),\\n    action VARCHAR(50) NOT NULL, -- created, deleted, renamed, used\\n    performed_by UUID REFERENCES users(id),\\n    ip_address VARCHAR(45),\\n    user_agent TEXT,\\n    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()\\n);\\n\\nCREATE INDEX idx_webauthn_audit_credential ON webauthn_credential_audit(credential_id);\\nCREATE INDEX idx_webauthn_audit_user ON webauthn_credential_audit(user_id);"
+    }
+  ],
+  "api_contracts": [
+    {
+      "method": "GET",
+      "path": "/api/v1/mfa/webauthn/credentials",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <JWT_TOKEN>"
+        }
+      },
+      "response": {
+        "credentials": "[CredentialInfo]",
+        "count": "integer"
+      },
+      "status_codes": [
+        200,
+        401,
+        403
+      ],
+      "security_schemes": [
+        "BearerAuth"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/mfa/webauthn/credentials/:id",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <JWT_TOKEN>",
+          "X-CSRF-Token": "<csrf_token>"
+        }
+      },
+      "response": {
+        "success": "boolean",
+        "message": "string"
+      },
+      "status_codes": [
+        200,
+        401,
+        403,
+        404
+      ],
+      "security_schemes": [
+        "BearerAuth",
+        "CSRF"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/mfa/webauthn/credentials/:id/name",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <JWT_TOKEN>",
+          "X-CSRF-Token": "<csrf_token>"
+        },
+        "body": {
+          "friendly_name": "string"
+        }
+      },
+      "response": {
+        "success": "boolean",
+        "message": "string",
+        "friendly_name": "string"
+      },
+      "status_codes": [
+        200,
+        400,
+        401,
+        403,
+        404
+      ],
+      "security_schemes": [
+        "BearerAuth",
+        "CSRF"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mfa/webauthn/register/begin",
+      "request": {
+        "body": {
+          "user_id": "uuid",
+          "username": "string",
+          "display_name": "string",
+          "friendly_name": "string"
+        }
+      },
+      "response": {
+        "options": "CredentialCreationOptions",
+        "status": "string",
+        "message": "string"
+      },
+      "status_codes": [
+        200,
+        400,
+        500
+      ],
+      "security_schemes": [],
+      "description": "Public endpoint for registration flow - authentication happens during credential attestation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/mfa/webauthn/csrf-token",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer <JWT_TOKEN>"
+        }
+      },
+      "response": {
+        "csrf_token": "string",
+        "expires_at": "timestamp"
+      },
+      "status_codes": [
+        200,
+        401
+      ],
+      "security_schemes": [
+        "BearerAuth"
+      ],
+      "description": "New endpoint for fetching CSRF tokens for authenticated sessions"
+    }
+  ],
   "test_plan": {
     "unit_tests": [
       {
-        "file": "internal/auth/session_test.go",
+        "file": "internal/mfa/webauthn_handler_auth_test.go",
         "cases": [
-          "TestSessionService_DeleteByUser_NonExistentUser - verifies ErrSessionNotFound is returned when user has no sessions",
-          "TestSessionService_DeleteByUser_EmptyUserID - verifies appropriate error for empty user ID",
-          "TestSessionService_DeleteByUser_Success - verifies nil is returned when sessions are successfully deleted"
+          "TestHandleListCredentials_ValidJWT_ReturnsUserCredentials",
+          "TestHandleListCredentials_NoToken_Returns401",
+          "TestHandleListCredentials_ExpiredToken_Returns401",
+          "TestHandleDeleteCredential_OwnerMatch_CredentialDeleted",
+          "TestHandleDeleteCredential_OwnerMismatch_Returns403",
+          "TestHandleRenameCredential_OwnerMatch_NameUpdated",
+          "TestHandleRenameCredential_OwnerMismatch_Returns403",
+          "TestCSRFMiddleware_ValidOrigin_RequestAllowed",
+          "TestCSRFMiddleware_InvalidOrigin_RequestBlocked",
+          "TestCSRFMiddleware_BearerOnly_BypassesCSRFCheck"
+        ]
+      },
+      {
+        "file": "internal/common/middleware/csrf_test.go",
+        "cases": [
+          "TestCSRFProtection_GetRequest_Allowed",
+          "TestCSRFProtection_CookieWithValidOrigin_Allowed",
+          "TestCSRFProtection_CookieWithInvalidOrigin_Blocked",
+          "TestCSRFProtection_BearerOnly_BypassesValidation",
+          "TestCSRFProtection_NoOriginWithCookie_Blocked"
         ]
       }
     ],
-    "e2e_tests": []
+    "e2e_tests": [
+      {
+        "name": "WebAuthnCredentialManagement_AuthenticatedFlow",
+        "steps": [
+          "User logs in and receives JWT access token",
+          "User requests WebAuthn credentials list with Authorization header",
+          "Verify only user's own credentials are returned",
+          "User deletes a credential with valid CSRF token",
+          "Verify credential is deleted",
+          "Attempt to delete another user's credential",
+          "Verify 403 Forbidden response",
+          "Attempt access with expired token",
+          "Verify 401 Unauthorized response"
+        ]
+      },
+      {
+        "name": "WebAuthn_CSRFProtection_BrowserFlow",
+        "steps": [
+          "User establishes cookie-based session",
+          "User attempts credential deletion with valid Origin header",
+          "Verify request succeeds",
+          "Attacker attempts credential deletion from different origin",
+          "Verify 403 Forbidden response",
+          "API client makes request with Bearer token (no cookie)",
+          "Verify request succeeds (CSRF bypass for API clients)"
+        ]
+      },
+      {
+        "name": "WebAuthn_OwnershipVerification_EdgeCases",
+        "steps": [
+          "User A attempts to list User B's credentials via query parameter manipulation",
+          "Verify only User A's credentials returned (user_id from JWT)",
+          "User A attempts to rename User B's credential",
+          "Verify 403 Forbidden response",
+          "Admin with elevated permissions attempts cross-user operation",
+          "Verify operation succeeds based on role-based access"
+        ]
+      }
+    ]
   },
   "security_notes": [
-    "No security implications - this is an internal service method error handling improvement",
-    "The change does not expose additional information about user existence",
-    "ErrSessionNotFound is already a defined error in the auth package and is used elsewhere"
+    "Critical: Lines 515 and 525 in webauthn_handler.go contain placeholder middleware that pass all requests without validation. This is a critical security vulnerability.",
+    "The user_id query parameter in HandleListCredentials, HandleDeleteCredential allows any user to manipulate the parameter and access/modify other users' credentials.",
+    "CSRF vulnerability exists because the placeholder CSRFMiddleware() does nothing. WebAuthn endpoints require CSRF protection for browser-based requests.",
+    "JWT authentication must be applied to credential management endpoints (list, delete, rename) but NOT to registration/login flows which use the user_id from the request body.",
+    "SameSite=Strict cookie configuration should be applied to all session cookies to prevent CSRF attacks.",
+    "API clients using only Bearer tokens should bypass CSRF checks (already implemented in existing CSRFProtection middleware).",
+    "Credential ownership verification must happen at the handler level using JWT subject, not at the database level alone (defense in depth)."
   ],
-  "docker_changes": [],
-  "market_driven_features": []
+  "docker_changes": [
+    "Add JWT_PUBLIC_KEY and JWT_PRIVATE_KEY environment variables to mfa-service Docker configuration if running as separate service",
+    "Add CSRF_TRUSTED_DOMAIN environment variable for configuring allowed origins for CSRF protection",
+    "Update docker-compose.yml to ensure mfa handlers can access auth middleware dependencies"
+  ],
+  "market_driven_features": [
+    "FIDO2/WebAuthn passwordless authentication - Critical priority feature competing with Microsoft Entra ID Passkeys and Okta FastPass",
+    "Hardware token support (YubiKey) - Matches Duo Security's hardware token capabilities for high-security environments",
+    "Biometric authentication preferences - Aligns with Okta's Adaptive MFA with ThreatInsight for risk-based authentication",
+    "Device trust approval workflow - Competes with Microsoft Entra ID's Conditional Access policies for device compliance",
+    "Audit logging for credential operations - Meets SOC 2 and ISO 27001 compliance requirements like SailPoint's identity governance"
+  ]
 }

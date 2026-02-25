@@ -15,6 +15,9 @@ type CSRFConfig struct {
 	Enabled bool
 	// TrustedDomain is the domain from which requests are allowed (e.g., "example.com")
 	TrustedDomain string
+	// SessionCookieNames is a list of cookie names that indicate a session-based request
+	// If any of these cookies are present, CSRF protection is enforced
+	SessionCookieNames []string
 }
 
 // CSRFProtection validates the Origin/Referer headers on state-changing requests
@@ -37,13 +40,33 @@ func CSRFProtection(cfg CSRFConfig, logger *zap.Logger) gin.HandlerFunc {
 			return
 		}
 
+		// Determine which cookie names to check for session-based auth
+		sessionCookieNames := cfg.SessionCookieNames
+		if len(sessionCookieNames) == 0 {
+			// Default to the standard proxy session cookie
+			sessionCookieNames = []string{"_openidx_proxy_session"}
+		}
+
 		// Only enforce when a session cookie is present (browser-based requests)
-		_, err := c.Request.Cookie("_openidx_proxy_session")
-		if err != nil {
+		hasSessionCookie := false
+		for _, cookieName := range sessionCookieNames {
+			if _, err := c.Request.Cookie(cookieName); err == nil {
+				hasSessionCookie = true
+				break
+			}
+		}
+
+		// Skip CSRF if:
+		// 1. No session cookie present (API client using Bearer auth only)
+		// 2. Bearer token is present (but also check for session cookie)
+		if !hasSessionCookie {
 			// No session cookie — this is a non-browser API client using Bearer auth
 			c.Next()
 			return
 		}
+
+		// If both session cookie AND Bearer token are present, we still need CSRF protection
+		// because the session cookie could be used for CSRF attacks
 
 		// Validate Origin header first (preferred)
 		origin := c.GetHeader("Origin")
@@ -116,4 +139,56 @@ func matchesDomain(host, domain string) bool {
 	host = strings.ToLower(host)
 	domain = strings.ToLower(domain)
 	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+// CookieConfig provides secure cookie configuration for session management
+type CookieConfig struct {
+	Name     string
+	Path     string
+	Domain   string
+	MaxAge   int
+	Secure   bool
+	HttpOnly bool
+	SameSite http.SameSite
+}
+
+// DefaultCSRFCookieConfig returns a secure cookie configuration for CSRF tokens
+// configured for MFA service sessions with SameSite=Strict
+func DefaultCSRFCookieConfig() CookieConfig {
+	return CookieConfig{
+		Name:     "_openidx_mfa_csrf",
+		Path:     "/",
+		MaxAge:   3600, // 1 hour
+		Secure:   true, // Use HTTPS in production
+		HttpOnly: false, // CSRF token needs to be accessible by JavaScript
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
+// SameSiteFromString converts a string to http.SameSite
+// Supported values: "default", "none", "lax", "strict"
+func SameSiteFromString(sameSite string) http.SameSite {
+	switch strings.ToLower(sameSite) {
+	case "none":
+		return http.SameSiteNoneMode
+	case "lax":
+		return http.SameSiteLaxMode
+	case "strict":
+		return http.SameSiteStrictMode
+	default:
+		return http.SameSiteDefaultMode
+	}
+}
+
+// MFACSRFConfig returns CSRF configuration specifically for the MFA service
+// It includes the MFA session cookie in the list of cookies to check
+func MFACSRFConfig(trustedDomain string) CSRFConfig {
+	return CSRFConfig{
+		Enabled: true,
+		TrustedDomain: trustedDomain,
+		SessionCookieNames: []string{
+			"_openidx_mfa_session",
+			"_openidx_proxy_session",
+		},
+	}
 }
