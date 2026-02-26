@@ -222,7 +222,10 @@ detect_service_ports() {
   [ -f "$REPO_DIR/docker-compose.yml" ] && compose="$REPO_DIR/docker-compose.yml"
   [ -f "$REPO_DIR/deployments/docker/docker-compose.yml" ] && compose="$REPO_DIR/deployments/docker/docker-compose.yml"
   if [ -n "$compose" ] && [ -f "$compose" ]; then
-    SERVICE_PORTS=$(grep -oP '"\K\d{4,5}(?=:\d)' "$compose" 2>/dev/null | sort -u | tr '\n' ' ' || true)
+    # Get published ports, exclude infra (postgres=5432, redis=6379, frontend-dev=3000/3001)
+    SERVICE_PORTS=$(grep -oP '"\K\d{4,5}(?=:\d)' "$compose" 2>/dev/null | \
+      grep -v "^5432$\|^6379$\|^3000$\|^3001$\|^27017$\|^9090$\|^2379$" | \
+      sort -u | tr '\n' ' ' || true)
   fi
   if [ -z "$SERVICE_PORTS" ]; then
     SERVICE_PORTS="8500 8501 8502 8503 8504 8505 8506"
@@ -578,21 +581,27 @@ claude_do() {
     attempt=$((attempt + 1))
     [ $attempt -gt 1 ] && warn "  ↻ Attempt $attempt/3"
 
-    if timeout "$timeout" claude -p --model "$CLAUDE_MODEL" --dangerously-skip-permissions \
-      "$prompt" 2>&1 | tee "$log_file"; then
-      ok=true; break
-    fi
+    # Write to file directly (avoids pipefail + tee false failures)
+    exit_code=0
+    timeout "$timeout" claude -p --model "$CLAUDE_MODEL" --dangerously-skip-permissions \
+      "$prompt" > "$log_file" 2>&1 || exit_code=$?
 
-    exit_code=$?
-    if [ $exit_code -eq 124 ]; then
+    # Show last few lines for monitoring
+    [ -f "$log_file" ] && tail -3 "$log_file" >> "$LIVE_LOG" 2>/dev/null || true
+
+    if [ $exit_code -eq 0 ]; then
+      ok=true; break
+    elif [ $exit_code -eq 124 ]; then
       warn "  ⏰ Timeout after ${timeout}s"
     elif [ $exit_code -ge 137 ]; then
       warn "  💀 Killed (exit $exit_code) — likely OOM or rate limit"
       prompt="${prompt:0:6000}
 
 [REDUCED — Claude was killed. Simplified prompt.]"
+    else
+      warn "  ⚠ Claude exited $exit_code"
     fi
-    sleep 5
+    sleep $((attempt * 5))
   done
 
   if [ "$ok" = true ]; then
@@ -1803,7 +1812,10 @@ plan_improvements() {
   local history; history=$(cat "$PHASE_HISTORY" 2>/dev/null || echo "{}")
 
   cd "$REPO_DIR"
-  local _prompt="You are a Senior Technical Project Manager. Analyze this project and plan the next $num phases.
+  local _prompt="You are a Senior Technical Project Manager. Plan $num TARGETED improvements.
+
+IMPORTANT: Each task will be executed by a SINGLE Claude Code call — NOT a full waterfall.
+Write descriptions as direct instructions for a developer, NOT as project phases.
 
 PROJECT (CLAUDE.md):
 $project_context
@@ -1815,15 +1827,15 @@ COMPLETED ROUNDS:
 $history
 
 RULES — STRICT ORDERING:
-1. CRITICAL FIRST: If build broken → Phase 1 MUST fix compilation
-2. TESTS NEXT: If tests fail → fix tests
+1. CRITICAL FIRST: If build broken → fix compilation errors
+2. TESTS NEXT: If tests fail → fix failing tests
 3. THEN TYPESCRIPT errors
-4. THEN TODOS
-5. THEN FEATURES
-6. THEN HARDENING
-7. THEN DEVOPS
-8. DO NOT repeat completed rounds
-9. Each description: 50-150 words, specific
+4. THEN missing files from design (create them)
+5. THEN TODOS (implement stubs)
+6. THEN hardening (error handling, validation)
+7. DO NOT repeat completed rounds
+8. Each description: 50-150 words, SPECIFIC file paths and function names
+9. Each task must be completable in ONE Claude Code session
 
 RESPOND WITH ONLY JSON:
 {
@@ -1833,13 +1845,13 @@ RESPOND WITH ONLY JSON:
       \"name\": \"Short name\",
       \"priority\": \"critical|high|medium\",
       \"category\": \"fix|feature|test|security|performance|devops\",
-      \"description\": \"Detailed task description for the AI team.\",
+      \"description\": \"Direct instructions: Fix X in file Y. The error is Z. Run 'go test ./...' to verify.\",
       \"success_criteria\": [\"go build ./... passes\"],
-      \"estimated_minutes\": 90
+      \"estimated_minutes\": 30
     }
   ],
   \"project_health\": {\"score\": 75, \"critical_issues\": [\"issue\"], \"strengths\": [\"strength\"]},
-  \"rationale\": \"Why these phases in this order\"
+  \"rationale\": \"Why these tasks in this order\"
 }"
 
   local claude_rc=0
@@ -1923,10 +1935,15 @@ execute_planned_phases() {
   total=$(python3 -c "import json; print(len(json.load(open('$PLAN_FILE')).get('phases',[])))" 2>/dev/null || echo "0")
   [ "$total" -eq 0 ] && { serr "No phases in plan."; return 1; }
 
+  cd "$REPO_DIR"
+  BRANCH=$(state_get _meta branch 2>/dev/null || true)
+  [ -n "$BRANCH" ] && git checkout "$BRANCH" 2>/dev/null || true
+
   local i=0
   while [ "$i" -lt "$total" ]; do
     local phase_data; phase_data=$(python3 -c "import json; print(json.load(open('$PLAN_FILE'))['phases'][$i]['description'])" 2>/dev/null || echo "")
     local phase_name; phase_name=$(python3 -c "import json; print(json.load(open('$PLAN_FILE'))['phases'][$i].get('name','Phase $((i+1))'))" 2>/dev/null || echo "Phase $((i+1))")
+    local phase_cat; phase_cat=$(python3 -c "import json; print(json.load(open('$PLAN_FILE'))['phases'][$i].get('category','fix'))" 2>/dev/null || echo "fix")
 
     if [ -z "$phase_data" ]; then
       swarn "Empty phase $((i+1)) — skipping"
@@ -1936,28 +1953,55 @@ execute_planned_phases() {
 
     slog "╔═══════════════════════════════════════╗"
     slog "║  ROUND $((i+1))/$total: $phase_name"
+    slog "║  Category: $phase_cat"
     slog "╚═══════════════════════════════════════╝"
 
-    # Reset state and run waterfall in-process
-    python3 - "$STATE_FILE" "$phase_data" << 'PYEOF'
-import json, sys
-d = {"phases": {}, "project": sys.argv[2], "branch": ""}
-json.dump(d, open(sys.argv[1], "w"), indent=2)
-PYEOF
+    # Pick the right role and timeout based on category
+    local role="⚙️  Backend" timeout=1800
+    case "$phase_cat" in
+      fix|feature)    role="⚙️  Backend"; timeout=1800 ;;
+      test)           role="🧪 Tester"; timeout=1200 ;;
+      security)       role="🔒 Security"; timeout=900 ;;
+      performance)    role="⚙️  Backend"; timeout=1200 ;;
+      devops)         role="🐳 DevOps"; timeout=1200 ;;
+    esac
 
-    rm -f "$STUCK_HEAL_FILE"
+    local project_context; project_context=$(read_project_context | head -c 2000)
 
-    # Run waterfall directly — no subprocess
-    if run_waterfall "$phase_data" 2>&1; then
+    if claude_do "$role" "Read CLAUDE.md first. You are working on this project.
+
+PROJECT CONTEXT:
+$project_context
+
+YOUR TASK:
+$phase_data
+
+RULES:
+- Make the changes described above
+- Run tests after changes: go test ./... or npx tsc --noEmit
+- Fix any errors your changes introduce
+- Commit when done" \
+      "$PHASE_LOGS/improve_round_$((i+1)).log" "$timeout"; then
       slog "✅ Round $((i+1)) complete: $phase_name"
-      record_completed_round "$phase_name: $phase_data" "project" "done"
+      record_completed_round "$phase_name: ${phase_data:0:100}" "project" "done"
     else
       serr "💥 Round $((i+1)) failed: $phase_name"
       record_completed_round "FAILED: $phase_name" "project" "failed"
     fi
 
-    i=$((i+1)); sleep 5
+    # Quick build check between rounds
+    cd "$REPO_DIR"
+    if ! go build ./... 2>/dev/null; then
+      swarn "  Build broken after round $((i+1)) — fixing"
+      claude_do "⚙️  Backend" "Read CLAUDE.md. go build ./... is failing. Fix ALL compilation errors." \
+        "$PHASE_LOGS/improve_buildfix_$((i+1)).log" 600 || true
+    fi
+
+    i=$((i+1)); sleep 3
   done
+
+  # Final commit
+  cd "$REPO_DIR"; git add -A && git commit -m "[improve] executed $total rounds" 2>/dev/null || true
 
   slog "╔═══════════════════════════════════════╗"
   slog "║  🎉 ALL $total ROUNDS COMPLETE          ║"

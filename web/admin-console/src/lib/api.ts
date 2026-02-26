@@ -73,7 +73,7 @@ const getAPIBaseURL = (): string => {
     return window.location.origin
   }
 
-  return 'http://localhost:8080'
+  return 'http://localhost:8005'
 }
 
 export const baseURL = getAPIBaseURL()

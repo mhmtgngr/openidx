@@ -1,62 +1,58 @@
+```json
 {
   "phases": [
     {
       "order": 1,
-      "name": "Fix SessionService.DeleteByUser Test",
+      "name": "Audit Stream Origin Validation",
       "priority": "critical",
-      "category": "test",
-      "description": "The TestSessionService_DeleteByUser test at internal/auth/session_test.go:374 is failing. The test expects an error containing 'session not found' when deleting sessions for a non-existent user, but the method returns nil instead. Review the DeleteByUser method implementation and ensure it properly handles the case where a user has no sessions or doesn't exist. The method should return a domain error rather than nil when no sessions are found for deletion.",
+      "category": "security",
+      "description": "Fix insecure CORS in audit SSE endpoint at internal/audit/stream.go:80. The `checkOrigin` function currently returns `true` for all origins, allowing any website to connect to the audit event stream. Implement proper origin validation: parse the Origin header, check against a whitelist of allowed frontends from environment variable `AUDIT_STREAM_ALLOWED_ORIGINS` (comma-separated list), return false for untrusted origins. Add tests for valid/invalid origins.",
       "success_criteria": [
-        "TestSessionService_DeleteByUser passes",
-        "go test ./internal/auth/... passes all tests",
-        "DeleteByUser returns appropriate error for non-existent users"
+        "Unit tests pass with origin validation",
+        "CORS rejection verified for unknown origins"
       ],
       "estimated_minutes": 45
     },
     {
       "order": 2,
-      "name": "Fix WebAuthN Middleware TODOs",
+      "name": "SMS Rate Limiting",
       "priority": "high",
       "category": "security",
-      "description": "Two critical security TODOs exist in internal/mfa/webauthn_handler.go at lines 515 and 525. Line 515 notes 'Implement proper authentication middleware' and line 525 notes 'Implement proper CSRF protection'. These are security-critical endpoints for WebAuthN credential management. Implement JWT-based authentication middleware using the existing internal/auth/middleware package and add CSRF token validation using double-submit cookie pattern or same-site cookies with strict flags.",
+      "description": "Add rate limiting to SMS sending to prevent abuse. In internal/sms/service.go, implement a Redis-backed rate limiter using the existing Redis client. Add `SendSMS` method to check `phone_number` key in Redis with prefix `sms:rate:`. Limit: max 5 SMS per phone per hour, max 10 per day. Return error 429 when limit exceeded. Add environment variables `SMS_RATE_LIMIT_HOUR=5` and `SMS_RATE_LIMIT_DAY=10` for configurability. Add unit tests with mock Redis.",
       "success_criteria": [
-        "WebAuthN handlers use proper authentication middleware",
-        "CSRF protection implemented on state-changing endpoints",
-        "TODO comments removed from webauthn_handler.go lines 515 and 525"
+        "Rate limiter rejects excess SMS",
+        "Tests cover hourly/daily limits",
+        "Redis INCR/EXPIRE commands used correctly"
       ],
-      "estimated_minutes": 90
+      "estimated_minutes": 60
     },
     {
       "order": 3,
-      "name": "Complete SMS Provider Test Coverage",
+      "name": "Ed25519 Key Support",
       "priority": "medium",
-      "category": "test",
-      "description": "The TODO at internal/oauth/oidc_test.go:312 indicates need for mock Redis setup. The SMS provider code in internal/sms/providers_tr.go has Turkish phone number normalization logic that could benefit from tests. Set up a mock Redis using miniredis or testcontainers for the OIDC tests, and add comprehensive unit tests for the normalizePhoneTR function covering the three normalization paths: 90XXXXXXXXXX format preservation, 0XXXXXXXXXX to 90XXXXXXXXXX conversion, and 5XXXXXXXXX to 905XXXXXXXXX conversion.",
+      "category": "feature",
+      "description": "Implement Ed25519 signing algorithm at internal/oauth/keys.go:205. Currently only RSA and ECDSA are supported in `GenerateKeyPair` and `Sign` methods. Add `Ed25519` case to the `Algorithm` enum switch statements. Use `crypto/ed25519` package: `ed25519.GenerateKey` for key generation, `ed25519.Sign` for signing. Update JWKS JSON marshaling to include `crv: \"Ed25519"` and `x`/`y` base64url-encoded fields. Add tests verifying Ed25519 JWT generation and validation.",
       "success_criteria": [
-        "OIDC tests have working mock Redis setup",
-        "TODO comment removed from oidc_test.go:312",
-        "Unit tests added for normalizePhoneTR covering all formats",
-        "go test ./internal/oauth/... and ./internal/sms/... pass"
+        "Ed25519 keys generate and sign correctly",
+        "JWKS endpoint returns Ed25519 keys",
+        "JWTs with Ed25519 signatures validate"
       ],
-      "estimated_minutes": 75
+      "estimated_minutes": 50
     }
   ],
   "project_health": {
-    "score": 72,
+    "score": 82,
     "critical_issues": [
-      "Failing test in session service (TestSessionService_DeleteByUser)",
-      "Missing authentication middleware on WebAuthN endpoints",
-      "Missing CSRF protection on WebAuthN endpoints",
-      "Mock Redis not configured for OIDC tests"
+      "Audit SSE endpoint allows any origin (CORS bypass)",
+      "SMS sending lacks rate limiting (abuse vulnerability)"
     ],
     "strengths": [
-      "Build passes successfully",
-      "337 Go files with substantial codebase",
-      "97 test files indicating good test coverage intent",
-      "Docker support with 12 Dockerfiles",
-      "Frontend exists with React 18 + TypeScript",
-      "Recent team script improvements for reliability"
+      "All 31 tests passing",
+      "Build compiles successfully",
+      "Good test coverage (100 test files)",
+      "WebAuthN middleware now has proper auth"
     ]
   },
-  "rationale": "Phase 1 addresses the failing test as the highest priority - tests must pass before any feature work. Phase 2 tackles the security TODOs in WebAuthN handlers, as missing authentication and CSRF protection are security vulnerabilities that must be addressed before production use. Phase 3 completes the test infrastructure (mock Redis) and adds missing test coverage for SMS phone normalization, ensuring reliability of critical communication features. This ordering follows the rules: compilation is already passing, so fix tests first, then address security issues, then complete test infrastructure."
+  "rationale": "Ordered by security risk exposure. Audit stream origin bypass is a critical XSS/data leak vulnerability allowing malicious sites to stream admin events. SMS rate limiting prevents expensive abuse/spam. Ed25519 is a performance/crypto upgrade but not blocking security. Build and tests are healthy, so focus shifts to hardening."
 }
+```
