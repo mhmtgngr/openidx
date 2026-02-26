@@ -8,7 +8,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/elastic/go-elasticsearch/v8 v8.19.1
 	github.com/gin-gonic/gin v1.11.0
-	github.com/go-ldap/ldap/v3 v3.4.8
+	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/go-webauthn/webauthn v0.10.2
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
@@ -70,7 +70,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.5 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
