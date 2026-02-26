@@ -43,7 +43,7 @@
     "react-router-dom": "^7.1.1",
     "recharts": "^3.7.0",
     "swagger-ui-react": "^5.31.2",
-    "tailwind-merge": "^2.6.0",
+    "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
     "zustand": "^5.0.2"
   },
