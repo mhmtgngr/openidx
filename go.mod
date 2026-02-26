@@ -16,7 +16,7 @@ require (
 	github.com/jackc/pgx/v5 v5.5.3
 	github.com/open-policy-agent/opa v0.69.0
 	github.com/openziti/sdk-golang v1.3.1
-	github.com/pquerna/otp v1.4.0
+	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.20.4
 	github.com/redis/go-redis/v9 v9.4.0
 	github.com/spf13/viper v1.18.2
