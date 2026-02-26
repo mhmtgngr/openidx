@@ -53,7 +53,7 @@ jobs:
             type=sha
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: deployments/docker/Dockerfile.${{ matrix.service }}
@@ -90,7 +90,7 @@ jobs:
             type=sha
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: web/admin-console
           file: deployments/docker/Dockerfile.admin-console
