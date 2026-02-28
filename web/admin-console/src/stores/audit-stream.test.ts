@@ -1,8 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useAuditStreamStore } from './audit-stream'
 
-// Mock WebSocket
+// Mock window.location before importing the store
+const mockLocation = {
+  origin: 'https://example.com',
+  href: 'https://example.com/',
+  protocol: 'https:',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  hash: '',
+}
+
+Object.defineProperty(window, 'location', {
+  value: mockLocation,
+  writable: true,
+})
+
+// Track WebSocket instances for testing
+let mockWebSocketInstances: any[] = []
+
+// Create a proper MockWebSocket class
 class MockWebSocket {
   static CONNECTING = 0
   static OPEN = 1
@@ -20,6 +39,9 @@ class MockWebSocket {
   constructor(url: string, protocols?: string[]) {
     this.url = url
     this.protocols = protocols
+
+    // Track this instance
+    mockWebSocketInstances.push(this)
 
     // Simulate async connection
     setTimeout(() => {
@@ -62,28 +84,17 @@ class MockWebSocket {
   }
 }
 
-// Mock global WebSocket
+// Use vi.stubGlobal to mock WebSocket
 vi.stubGlobal('WebSocket', MockWebSocket)
 
-// Mock window.location
-const mockLocation = {
-  origin: 'https://example.com',
-  href: 'https://example.com/',
-  protocol: 'https:',
-  hostname: 'example.com',
-  port: '',
-  pathname: '/',
-  search: '',
-  hash: '',
-}
-
-Object.defineProperty(window, 'location', {
-  value: mockLocation,
-  writable: true,
-})
+// Import store AFTER WebSocket is mocked
+import { useAuditStreamStore } from './audit-stream'
 
 describe('Audit Stream Store', () => {
   beforeEach(() => {
+    // Clear WebSocket instances
+    mockWebSocketInstances = []
+
     // Reset store state before each test
     const { result } = renderHook(() => useAuditStreamStore())
     act(() => {
@@ -97,6 +108,15 @@ describe('Audit Stream Store', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    // Clean up WebSocket instances
+    mockWebSocketInstances.forEach(ws => {
+      try {
+        ws.close()
+      } catch {
+        // Ignore
+      }
+    })
+    mockWebSocketInstances = []
   })
 
   describe('Initial State', () => {
@@ -149,10 +169,10 @@ describe('Audit Stream Store', () => {
       expect(result.current.isConnected).toBe(false)
     })
 
-    it('should not connect if already connected', () => {
+    it('should not connect if already connected', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
-      const wsSpy = vi.spyOn(global, 'WebSocket')
+      const initialCount = mockWebSocketInstances.length
 
       act(() => {
         result.current.connect('wss://example.com/audit/stream')
@@ -160,16 +180,22 @@ describe('Audit Stream Store', () => {
 
       act(() => {
         result.current.connect('wss://example.com/audit/stream')
+      })
+
+      // Wait for async connection
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
       })
 
       // Should only create one WebSocket instance
-      expect(wsSpy).toHaveBeenCalledTimes(1)
+      // (Note: The connection is rejected because it's already connecting/connected)
+      expect(mockWebSocketInstances.length).toBe(initialCount + 1)
     })
 
-    it('should not connect if already connecting', () => {
+    it('should not connect if already connecting', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
-      const wsSpy = vi.spyOn(global, 'WebSocket')
+      const initialCount = mockWebSocketInstances.length
 
       act(() => {
         result.current.connect('wss://example.com/audit/stream')
@@ -180,8 +206,13 @@ describe('Audit Stream Store', () => {
         result.current.connect('wss://example.com/audit/stream')
       })
 
+      // Wait for async connection
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      })
+
       // Should only create one WebSocket instance
-      expect(wsSpy).toHaveBeenCalledTimes(1)
+      expect(mockWebSocketInstances.length).toBe(initialCount + 1)
     })
   })
 
@@ -206,7 +237,7 @@ describe('Audit Stream Store', () => {
       })
     })
 
-    it('should allow connection when origin is in allowed list', () => {
+    it('should allow connection when origin is in allowed list', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
       act(() => {
@@ -219,9 +250,16 @@ describe('Audit Stream Store', () => {
 
       // Should proceed to connecting
       expect(result.current.connectionState).toBe('connecting')
+
+      // Wait for connection
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      })
+
+      expect(result.current.connectionState).toBe('connected')
     })
 
-    it('should allow connection when allowed origins is empty', () => {
+    it('should allow connection when allowed origins is empty', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
       act(() => {
@@ -234,6 +272,13 @@ describe('Audit Stream Store', () => {
 
       // Should proceed to connecting (no validation)
       expect(result.current.connectionState).toBe('connecting')
+
+      // Wait for connection
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      })
+
+      expect(result.current.connectionState).toBe('connected')
     })
   })
 
@@ -249,21 +294,24 @@ describe('Audit Stream Store', () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
         // Get the WebSocket instance and simulate a message
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.simulateMessage({
-            type: 'audit_event',
-            event: {
-              id: 'evt-123',
-              timestamp: '2025-02-28T12:00:00Z',
-              actor_id: 'user-123',
-              actor_type: 'user',
-              action: 'user.login',
-              resource_type: 'session',
-              resource_id: 'sess-456',
-              outcome: 'success',
-            },
-          })
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onmessage) {
+          // Send JSON string like real WebSocket
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'audit_event',
+              event: {
+                id: 'evt-123',
+                timestamp: '2025-02-28T12:00:00Z',
+                actor_id: 'user-123',
+                actor_type: 'user',
+                action: 'user.login',
+                resource_type: 'session',
+                resource_id: 'sess-456',
+                outcome: 'success',
+              },
+            })
+          }))
         }
       })
 
@@ -290,23 +338,25 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onmessage) {
           // Add more events than maxEvents
           for (let i = 0; i < 10; i++) {
-            ws.simulateMessage({
-              type: 'audit_event',
-              event: {
-                id: `evt-${i}`,
-                timestamp: '2025-02-28T12:00:00Z',
-                actor_id: 'user-123',
-                actor_type: 'user',
-                action: 'test.action',
-                resource_type: 'test',
-                resource_id: `test-${i}`,
-                outcome: 'success',
-              },
-            })
+            ws.onmessage(new MessageEvent('message', {
+              data: JSON.stringify({
+                type: 'audit_event',
+                event: {
+                  id: `evt-${i}`,
+                  timestamp: '2025-02-28T12:00:00Z',
+                  actor_id: 'user-123',
+                  actor_type: 'user',
+                  action: 'test.action',
+                  resource_type: 'test',
+                  resource_id: `test-${i}`,
+                  outcome: 'success',
+                },
+              })
+            }))
           }
         }
       })
@@ -325,12 +375,16 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.simulateMessage({
-            type: 'config',
-            allowedOrigins: ['https://example.com', 'https://app.example.com'],
-          })
+        // Get the WebSocket instance and send a config message
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onmessage) {
+          // Send JSON string like real WebSocket
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'config',
+              allowedOrigins: ['https://example.com', 'https://app.example.com'],
+            })
+          }))
         }
       })
 
@@ -350,13 +404,17 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.simulateMessage({
-            type: 'error',
-            code: 'AUTH_FAILED',
-            message: 'Authentication failed',
-          })
+        // Get the WebSocket instance and send an error message
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onmessage) {
+          // Send JSON string like real WebSocket
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'error',
+              code: 'AUTH_FAILED',
+              message: 'Authentication failed',
+            })
+          }))
         }
       })
 
@@ -379,9 +437,9 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.simulateError()
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onerror) {
+          ws.onerror(new Event('error'))
         }
       })
 
@@ -402,9 +460,9 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.close(1008, 'Policy violation')
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onclose) {
+          ws.onclose(new CloseEvent('close', { code: 1008, reason: 'Policy violation', wasClean: true }))
         }
       })
 
@@ -425,10 +483,10 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          // This should not throw
-          ws.simulateMessage('plain text message')
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onmessage) {
+          // This should not throw - plain text message
+          ws.onmessage(new MessageEvent('message', { data: 'plain text message' }))
         }
       })
 
@@ -541,31 +599,45 @@ describe('Audit Stream Store', () => {
   })
 
   describe('Token Authentication', () => {
-    it('should include token as subprotocol', () => {
+    it('should include token as subprotocol', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
-      const wsSpy = vi.spyOn(global, 'WebSocket')
+      const initialCount = mockWebSocketInstances.length
 
       act(() => {
         result.current.connect('wss://example.com/audit/stream', 'test-token-123')
       })
 
-      expect(wsSpy).toHaveBeenCalledWith(
-        'wss://example.com/audit/stream',
-        ['access_token_test-token-123']
-      )
+      // Wait for connection
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      })
+
+      // Check that WebSocket was created with the token protocol
+      expect(mockWebSocketInstances.length).toBe(initialCount + 1)
+      const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+      expect(ws.protocols).toEqual(['access_token_test-token-123'])
     })
 
-    it('should connect without token when not provided', () => {
+    it('should connect without token when not provided', async () => {
       const { result } = renderHook(() => useAuditStreamStore())
 
-      const wsSpy = vi.spyOn(global, 'WebSocket')
+      const initialCount = mockWebSocketInstances.length
 
       act(() => {
         result.current.connect('wss://example.com/audit/stream')
       })
 
-      expect(wsSpy).toHaveBeenCalledWith('wss://example.com/audit/stream', [])
+      // Wait for connection
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      })
+
+      // Check that WebSocket was created without protocols
+      expect(mockWebSocketInstances.length).toBe(initialCount + 1)
+      const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+      // When no token, protocols array is empty
+      expect(ws.protocols).toEqual([])
     })
   })
 
@@ -580,9 +652,9 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.close(1006)
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onclose) {
+          ws.onclose(new CloseEvent('close', { code: 1006, reason: '', wasClean: false }))
         }
       })
 
@@ -601,9 +673,9 @@ describe('Audit Stream Store', () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
 
-        const ws = (result.current as unknown as { _ws: MockWebSocket })._ws as MockWebSocket
-        if (ws) {
-          ws.close(1000, 'Normal closure')
+        const ws = mockWebSocketInstances[mockWebSocketInstances.length - 1]
+        if (ws && ws.onclose) {
+          ws.onclose(new CloseEvent('close', { code: 1000, reason: 'Normal closure', wasClean: true }))
         }
       })
 

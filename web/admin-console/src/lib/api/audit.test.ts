@@ -1,15 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import axios from 'axios'
 import { auditApi } from './audit'
 import { ApiError } from './client'
 
-// Mock axios
-vi.mock('axios', () => ({
-  default: {
+// Mock the apiClient
+vi.mock('./client', () => ({
+  apiClient: {
     get: vi.fn(),
     post: vi.fn(),
   },
+  ApiError: class extends Error {
+    code: string
+    status?: number
+    details?: unknown
+    constructor(message: string, code: string, status?: number) {
+      super(message)
+      this.name = 'ApiError'
+      this.code = code
+      this.status = status
+    }
+  },
 }))
+
+import { apiClient } from './client'
 
 describe('Audit API', () => {
   beforeEach(() => {
@@ -38,7 +50,7 @@ describe('Audit API', () => {
         },
       }
 
-      vi.mocked(axios.get).mockResolvedValue(mockResponse)
+      vi.mocked(apiClient.get).mockResolvedValue(mockResponse)
 
       const params = {
         actor_id: 'user-123',
@@ -47,7 +59,7 @@ describe('Audit API', () => {
 
       const result = await auditApi.queryEvents(params)
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/events', {
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/events', {
         params,
       })
       expect(result).toEqual(mockResponse.data)
@@ -60,7 +72,7 @@ describe('Audit API', () => {
         status: 401,
       }
 
-      vi.mocked(axios.get).mockRejectedValue(mockError)
+      vi.mocked(apiClient.get).mockRejectedValue(mockError)
 
       await expect(
         auditApi.queryEvents({})
@@ -86,11 +98,11 @@ describe('Audit API', () => {
         },
       }
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockEvent })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: mockEvent })
 
       const result = await auditApi.getEvent('evt-123')
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/events/evt-123')
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/events/evt-123')
       expect(result).toEqual(mockEvent)
     })
 
@@ -101,7 +113,7 @@ describe('Audit API', () => {
         status: 404,
       }
 
-      vi.mocked(axios.get).mockRejectedValue(mockError)
+      vi.mocked(apiClient.get).mockRejectedValue(mockError)
 
       await expect(
         auditApi.getEvent('non-existent')
@@ -129,11 +141,11 @@ describe('Audit API', () => {
         ],
       }
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockStats })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: mockStats })
 
       const result = await auditApi.getStatistics()
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/statistics')
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/statistics')
       expect(result).toEqual(mockStats)
     })
   })
@@ -149,7 +161,7 @@ describe('Audit API', () => {
         created_at: '2025-02-28T12:00:00Z',
       }
 
-      vi.mocked(axios.post).mockResolvedValue({ data: mockReport })
+      vi.mocked(apiClient.post).mockResolvedValue({ data: mockReport })
 
       const params = {
         type: 'SOX',
@@ -159,7 +171,7 @@ describe('Audit API', () => {
 
       const result = await auditApi.createReport(params)
 
-      expect(axios.post).toHaveBeenCalledWith('/api/v1/audit/reports', params)
+      expect(apiClient.post).toHaveBeenCalledWith('/api/v1/audit/reports', params)
       expect(result).toEqual(mockReport)
     })
   })
@@ -185,11 +197,11 @@ describe('Audit API', () => {
         },
       ]
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockReports })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: mockReports })
 
       const result = await auditApi.getReports()
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/reports')
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/reports')
       expect(result).toEqual(mockReports)
     })
   })
@@ -208,11 +220,11 @@ describe('Audit API', () => {
         event_count: 12345,
       }
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockReport })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: mockReport })
 
       const result = await auditApi.getReport('report-123')
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/reports/report-123')
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/reports/report-123')
       expect(result).toEqual(mockReport)
     })
   })
@@ -221,7 +233,7 @@ describe('Audit API', () => {
     it('should export events as CSV', async () => {
       const mockBlob = new Blob(['csv,data'], { type: 'text/csv' })
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockBlob })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: mockBlob })
 
       const params = {
         format: 'csv' as const,
@@ -230,7 +242,7 @@ describe('Audit API', () => {
 
       const result = await auditApi.exportEvents(params)
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/events/export', {
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/events/export', {
         params,
         responseType: 'blob',
       })
@@ -242,7 +254,7 @@ describe('Audit API', () => {
         type: 'application/json',
       })
 
-      vi.mocked(axios.get).mockResolvedValue({ data: mockBlob })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: mockBlob })
 
       const params = {
         format: 'json' as const,
@@ -251,7 +263,7 @@ describe('Audit API', () => {
 
       const result = await auditApi.exportEvents(params)
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/events/export', {
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/events/export', {
         params,
         responseType: 'blob',
       })
@@ -266,7 +278,7 @@ describe('Audit API', () => {
         message: 'Network request failed',
       }
 
-      vi.mocked(axios.get).mockRejectedValue(mockError)
+      vi.mocked(apiClient.get).mockRejectedValue(mockError)
 
       await expect(
         auditApi.queryEvents({})
@@ -280,7 +292,7 @@ describe('Audit API', () => {
         status: 429,
       }
 
-      vi.mocked(axios.get).mockRejectedValue(mockError)
+      vi.mocked(apiClient.get).mockRejectedValue(mockError)
 
       await expect(
         auditApi.queryEvents({})
@@ -294,7 +306,7 @@ describe('Audit API', () => {
         status: 500,
       }
 
-      vi.mocked(axios.get).mockRejectedValue(mockError)
+      vi.mocked(apiClient.get).mockRejectedValue(mockError)
 
       await expect(
         auditApi.queryEvents({})
@@ -304,7 +316,7 @@ describe('Audit API', () => {
 
   describe('Query Parameters', () => {
     it('should pass query parameters correctly', async () => {
-      vi.mocked(axios.get).mockResolvedValue({ data: { data: [], total: 0 } })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: [], total: 0 } })
 
       const params = {
         actor_id: 'user-123',
@@ -316,17 +328,17 @@ describe('Audit API', () => {
 
       await auditApi.queryEvents(params)
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/events', {
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/events', {
         params,
       })
     })
 
     it('should handle empty query parameters', async () => {
-      vi.mocked(axios.get).mockResolvedValue({ data: { data: [], total: 0 } })
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { data: [], total: 0 } })
 
       await auditApi.queryEvents({})
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/audit/events', {
+      expect(apiClient.get).toHaveBeenCalledWith('/api/v1/audit/events', {
         params: {},
       })
     })
