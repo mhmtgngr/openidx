@@ -1,5 +1,4 @@
-REQUIREMENTS (enriched with market research):
-{
+REQUIREMENTS: {
  "project_name": "WebSocket Origin Validation for Audit Event Stream",
  "summary": "Fix security vulnerability in audit service WebSocket streamer by implementing proper Origin header validation. The current implementation allows any origin to connect, exposing the platform to cross-site WebSocket hijacking (CSWSH) attacks where malicious sites can establish connections to the audit stream and potentially intercept sensitive audit events.",
  "functional_requirements": [
@@ -77,217 +76,443 @@ REQUIREMENTS (enriched with market research):
     "Add default value for development (localhost origins)",
     "Add environment variable binding for OPENIDX_AUDIT_ALLOWED_ORIGINS",
     "Add GetAuditAllowedOrigins() helper method returning []string",
-    "Add production validation in ValidateProduction() method"
-   ]
-  },
-  {
-   "phase": 2,
-   "name": "Origin Validation Logic",
-   "tasks": [
-    "Create validateOrigin function in stream.go",
-    "Implement URL parsing and normalization for origins",
-    "Add exact match comparison with allowed origins list",
-    "Add logging for validation failures (origin, IP, timestamp)",
-    "Add logging for successful connections with approved origin"
-   ]
-  },
-  {
-   "phase": 3,
-   "name": "WebSocket Upgrader Integration",
-   "tasks": [
-    "Modify EventStreamer to accept config.Config",
-    "Create dynamic upgrader with configured origins in NewEventStreamer",
-    "Replace static upgrader variable with instance-specific upgrader",
-    "Pass allowed origins to CheckOrigin closure"
-   ]
-  },
-  {
-   "phase": 4,
-   "name": "Testing and Documentation",
-   "tasks": [
-    "Add unit tests for origin validation with various formats",
-    "Add unit tests for production validation",
-    "Add integration test for WebSocket connection rejection",
-    "Update environment variable documentation",
-    "Add security advisory note about required configuration"
-   ]
-  }
- ]
+    "Add pr
+CHANGES:  web/admin-console/e2e/api.spec.ts                  |    4 +-
+ .../e2e/audit-stream-origin-validation.spec.ts     |  836 ++++++++++
+ web/admin-console/e2e/audit-stream.spec.ts         |  453 ++++++
+ .../e2e/audit-websocket-security.spec.ts           |  535 +++++++
+ web/admin-console/e2e/mfa.spec.ts                  |    2 +-
+ .../e2e/production-deployment.spec.ts              |    2 +-
+ .../src/components/audit/AuditStream.tsx           |  296 ++++
+ web/admin-console/src/components/audit/index.ts    |    1 +
+ web/admin-console/src/lib/api.ts                   |   56 +-
+ web/admin-console/src/lib/api/audit.test.ts        |  346 ++++
+ .../src/pages/audit/AuditDashboard.tsx             |  471 ++++++
+ web/admin-console/src/pages/audit/index.ts         |    1 +
+ web/admin-console/src/stores/audit-stream.test.ts  |  686 ++++++++
+ web/admin-console/src/stores/audit-stream.ts       |  236 +++
+ 92 files changed, 20473 insertions(+), 1713 deletions(-)
+FILES: cmd/admin-api/main.go
+cmd/audit-service/main.go
+internal/admin/admin_audit.go
+internal/admin/middleware/cors.go
+internal/admin/middleware/websocket.go
+internal/admin/middleware/websocket_test.go
+internal/audit/config.go
+internal/audit/config_test.go
+internal/audit/middleware/logger.go
+internal/audit/middleware/logger_test.go
+internal/audit/middleware/origin_validator.go
+internal/audit/middleware/origin_validator_test.go
+internal/audit/stream.go
+internal/audit/stream_test.go
+internal/audit/webhook_test.go
+internal/audit/websocket.go
+internal/audit/websocket_test.go
+internal/common/config/config.go
+CODE: 
+--- cmd/admin-api/main.go ---
+// Package main is the entry point for the Admin API
+// Admin API provides the REST API for the Admin Console
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/admin"
+	adminhandlers "github.com/openidx/openidx/internal/admin/handlers"
+	"github.com/openidx/openidx/internal/api"
+	"github.com/openidx/openidx/internal/apikeys"
+	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logger"
+	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/opa"
+	newhealth "github.com/openidx/openidx/internal/health"
+	"github.com/openidx/openidx/internal/common/tlsutil"
+	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/directory"
+	"github.com/openidx/openidx/internal/email"
+	"github.com/openidx/openidx/internal/metrics"
+	"github.com/openidx/openidx/internal/notifications"
+	"github.com/openidx/openidx/internal/organization"
+	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/server"
+	"github.com/openidx/openidx/internal/webhooks"
+)
+
+var (
+	Version    = "dev"
+	BuildTime  = "unknown"
+	CommitHash = "unknown"
+)
+
+// @title OpenIDX Admin API
+// @version 1.0
+// @description Admin API for OpenIDX Identity Platform
+// @termsOfService https://openidx.io/terms
+
+// @contact.name API Support
+// @contact.url https://openidx.io/support
+// @contact.email support@openidx.io
+
+// @license.name Apache 2.0
+// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
+
+// @host localhost:8005
+// @BasePath /api/v1
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+func main() {
+	log := logger.New()
+	defer log.Sync()
+
+	log.Info("Starting Admin API",
+		zap.String("version", Version),
+		zap.String("build_time", BuildTime),
+		zap.String("commit", CommitHash),
+	)
+
+	cfg, err := config.Load("admin-api")
+	if err != nil {
+		log.Fatal("Failed to load configuration", zap.Error(err))
+	}
+
+	// Validate production security settings (blocking)
+	if err := config.ValidateProductionConfig(cfg, log); err != nil {
+		log.Fatal("Production security validation failed", zap.Error(err))
+	}
+--- cmd/audit-service/main.go ---
+// Package main is the entry point for the Audit Service
+// Audit Service handles logging, compliance reporting, and SIEM integration
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/api"
+	"github.com/openidx/openidx/internal/audit"
+	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/logger"
+	"github.com/openidx/openidx/internal/common/middleware"
+	newhealth "github.com/openidx/openidx/internal/health"
+	"github.com/openidx/openidx/internal/common/tlsutil"
+	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/metrics"
+	"github.com/openidx/openidx/internal/server"
+)
+
+var (
+	Version    = "dev"
+	BuildTime  = "unknown"
+	CommitHash = "unknown"
+)
+
+func main() {
+	log := logger.New()
+	defer log.Sync()
+
+	log.Info("Starting Audit Service",
+		zap.String("version", Version),
+		zap.String("build_time", BuildTime),
+		zap.String("commit", CommitHash),
+	)
+
+	cfg, err := config.Load("audit-service")
+	if err != nil {
+		log.Fatal("Failed to load configuration", zap.Error(err))
+	}
+
+	// Validate production security settings (blocking)
+	if err := config.ValidateProductionConfig(cfg, log); err != nil {
+		log.Fatal("Production security validation failed", zap.Error(err))
+	}
+
+	cfg.LogSecurityWarnings(log)
+
+	// Initialize tracing
+	tracingCfg := tracing.ConfigFromEnv("audit-service", cfg.Environment)
+	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
+	if err != nil {
+		log.Warn("Failed to initialize tracing", zap.Error(err))
+	} else {
+		defer shutdownTracer(context.Background())
+	}
+
+	db, err := database.NewPostgres(cfg.DatabaseURL, database.PostgresTLSConfig{
+		SSLMode:     cfg.DatabaseSSLMode,
+		SSLRootCert: cfg.DatabaseSSLRootCert,
+		SSLCert:     cfg.DatabaseSSLCert,
+		SSLKey:      cfg.DatabaseSSLKey,
+	})
+	if err != nil {
+		log.Fatal("Failed to connect to database", zap.Error(err))
+	}
+	defer db.Close()
+
+	// Initialize Redis connection (used for distributed rate limiting)
+	redis, err := database.NewRedisFromConfig(database.RedisConfig{
+		URL:                cfg.RedisURL,
+		SentinelEnabled:    cfg.RedisSentinelEnabled,
+--- internal/admin/admin_audit.go ---
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// AdminAuditEntry represents a single admin action audit log entry
+type AdminAuditEntry struct {
+	ID          string                 `json:"id"`
+	ActorID     string                 `json:"actor_id"`
+	ActorEmail  string                 `json:"actor_email"`
+	Action      string                 `json:"action"`
+	TargetType  string                 `json:"target_type"`
+	TargetID    string                 `json:"target_id,omitempty"`
+	TargetName  string                 `json:"target_name,omitempty"`
+	BeforeState map[string]interface{} `json:"before_state,omitempty"`
+	AfterState  map[string]interface{} `json:"after_state,omitempty"`
+	IPAddress   string                 `json:"ip_address,omitempty"`
+	UserAgent   string                 `json:"user_agent,omitempty"`
+	RequestID   string                 `json:"request_id,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
 }
 
-MARKET ANALYSIS:
-{
- "competitor_summary": [
-  {
-   "name": "Microsoft Entra ID",
-   "strengths": [
-    "Deep Microsoft ecosystem integration",
-    "Conditional Access with real-time risk-based controls",
-    "Identity Protection with anomaly detection",
-    "Privileged Identity Management (PIM)",
-    "Passwordless authentication (FIDO2/WHfB)",
-    "Bundled cost savings for Microsoft 365 customers",
-    "Easy deployment with templates"
-   ],
-   "weaknesses": [
-    "Complex heterogeneous environment support",
-    "Less flexible policy customization",
-    "Vendor lock-in concerns",
-    "Higher costs for non-Microsoft shops"
-   ],
-   "pricing_model": "Bundled with Microsoft 365 licenses or standalone Premium P1 ($6/user/month) and P2 ($12/user/month)"
-  },
-  {
-   "name": "Okta",
-   "strengths": [
-    "7000+ pre-built SaaS integrations",
-    "Excellent heterogeneous environment support",
-    "Flexible policy controls",
-    "Lifecycle automation with Workflows",
-    "Strong API-first approach",
-    "Advanced MFA methods",
-    "SSO federation excellence"
-   ],
-   "weaknesses": [
-    "Higher cost at enterprise scale",
-    "Configuration complexity",
-    "Separate modules cost extra",
-    "Learning curve for advanced features"
-   ],
-   "pricing_model": "Tiered: Core (free), Enterprise ($15-25/user/month), Advanced (custom pricing for IGA features)"
-  },
-  {
-   "name": "SailPoint",
-   "strengths": [
-    "Identity governance leadership",
-    "Joiner/Mover/Leaver automation",
-    "Advanced role modeling and mining",
-    "Access request/certification workflows",
-    "Compliance and audit readiness",
-    "AI-powered identity analytics"
-   ],
-   "weaknesses": [
-    "Very high cost",
-    "Complex implementation",
-    "Requires specialized expertise",
-    "Limited IAM capabilities (IGA-focused)"
-   ],
-   "pricing_model": "Enterprise pricing starting at $30-50+ user/month plus implementation costs"
-  },
-  {
-   "name": "Duo Security (Cisco)",
-   "strengths": [
-    "Strong MFA focus",
-    "Device trust
+// RecordAdminAction inserts an admin audit log entry into the admin_audit_log table
+func (s *Service) RecordAdminAction(
+	ctx context.Context,
+	actorID, actorEmail, action, targetType, targetID, targetName,
+	ipAddress, userAgent, requestID string,
+	before, after interface{},
+) error {
+	id := uuid.New().String()
 
-PROJECT CONTEXT (from CLAUDE.md):
-# CLAUDE.md - OpenIDX Development Guide
+	var beforeJSON, afterJSON []byte
+	var err error
 
-## Project Overview
+	if before != nil {
+		beforeJSON, err = json.Marshal(before)
+		if err != nil {
+			s.logger.Warn("Failed to marshal before_state for admin audit",
+				zap.Error(err),
+				zap.String("action", action),
+			)
+			beforeJSON = nil
+		}
+	}
 
-OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that provides enterprise-grade Identity and Access Management. It competes with commercial solutions like Microsoft Entra ID, Okta, and Duo while offering 70-80% cost savings.
+	if after != nil {
+		afterJSON, err = json.Marshal(after)
+		if err != nil {
+			s.logger.Warn("Failed to marshal after_state for admin audit",
+				zap.Error(err),
+				zap.String("action", action),
+			)
+			afterJSON = nil
+		}
+	}
 
-## Architecture
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO admin_audit_log (
+			id, actor_id, actor_email, action, target_type, target_id, target_name,
+			before_state, after_state, ip_address, user_agent, request_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, id, actorID, actorEmail, action, targetType, targetID, targetName,
+		beforeJSON, afterJSON, ipAddress, userAgent, requestID, time.Now())
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     API Gateway (APISIX)                        │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-    ┌───────────────────────────┼───────────────────────┐
-    │                           │                       │
-┌───▼───┐  ┌───────▼───────┐  ┌───▼───┐  ┌───────▼─────┐
-│Identity│  │  Governance  │  │Provis-│  │    Audit   │
-│Service │  │   Service    │  │ioning │  │   Service  │
-└────────┘  └──────────────┘  └───────┘  └────────────┘
-    │               │              │             │
-    └───────────────┼──────────────┴─────────────┘
-                    │
-         ┌──────────▼──────────┐
-         │  Policy Engine (OPA)│
-         └─────────────────────┘
-                    │
-    ┌───────────────┼───────────────┐
-    │               │               │
-┌───▼───┐     ┌─────▼─────┐   ┌─────▼─────┐
-│Postgres│    │   Redis   │   │Elasticsearch│
-└────────┘    └───────────┘   └────────────┘
-```
+	if err != nil {
+		s.logger.Error("Failed to record admin audit action",
+			zap.String("action", action),
+			zap.String("actor_id", actorID),
+			zap.String("target_type", targetType),
+			zap.String("target_id", targetID),
+--- internal/admin/middleware/cors.go ---
+// Package middleware provides CORS middleware for admin console frontend
+package middleware
 
-## Tech Stack
+import (
+	"fmt"
+	"net/http"
+	"strings"
 
-### Backend (Go 1.22+)
-- **Framework**: Gin (HTTP router)
-- **Database**: PostgreSQL with pgx driver
-- **Cache**: Redis with go-redis
-- **Logging**: Zap
-- **Config**: Viper
-- **JWT**: golang-jwt/v5
+	"github.com/gin-gonic/gin"
+)
 
-### Frontend (React 18+)
-- **Framework**: React with TypeScript
-- **Build**: Vite
-- **Styling**: Tailwind CSS
-- **State**: Zustand + React Query
-- **UI**: Radix UI primitives
-- **Auth**: OpenIDX OAuth (PKCE)
+// Config holds CORS configuration
+type Config struct {
+	AllowedOrigins   []string
+	AllowedMethods   []string
+	AllowedHeaders   []string
+	ExposedHeaders   []string
+	AllowCredentials bool
+	MaxAge           int
+}
 
-### Infrastructure
-- **OAuth/OIDC**: Native OpenIDX OAuth Service
-- **API Gateway**: Apache APISIX
-- **Policy Engine**: Open Policy Agent (OPA)
-- **Container**: Docker + Kub
+// DefaultConfig returns default CORS configuration for development
+func DefaultConfig() *Config {
+	return &Config{
+		AllowedOrigins: []string{
+			"http://localhost:5173",
+			"http://localhost:3000",
+			"http://127.0.0.1:5173",
+			"http://127.0.0.1:3000",
+			"http://192.168.31.76:5173",
+			"http://192.168.31.76:3000",
+		},
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodOptions,
+		},
+		AllowedHeaders: []string{
+			"Origin",
+			"Content-Type",
+			"Authorization",
+			"X-Request-ID",
+			"Accept",
+			"X-Tenant-ID",
+		},
+		ExposedHeaders: []string{
+			"X-Request-ID",
+			"X-Total-Count",
+			"Content-Range",
+		},
+		AllowCredentials: true,
+		MaxAge:           86400, // 24 hours
+	}
+}
 
-EXISTING FILES:
-internal/access/app_publish.go
-internal/access/browzer_config.go
-internal/access/browzer_targets.go
-internal/access/context_evaluator.go
-internal/access/continuous_verify.go
-internal/access/device_health.go
-internal/access/feature_handlers.go
-internal/access/feature_manager.go
-internal/access/guacamole.go
-internal/access/health_handlers.go
-internal/access/multi_idp.go
-internal/access/platform_certs.go
-internal/access/policy_dsl.go
-internal/access/posture.go
-internal/access/service.go
-internal/access/temp_access.go
-internal/access/unified_audit.go
-internal/access/ziti_auth_handlers.go
-internal/access/ziti_browzer.go
-internal/access/ziti_browzer_handlers.go
-internal/access/ziti_config_handlers.go
-internal/access/ziti_discovery.go
-internal/access/ziti_fabric.go
-internal/access/ziti_fabric_handlers.go
-internal/access/ziti.go
-internal/access/ziti_handlers.go
-internal/access/ziti_hardening.go
-internal/access/ziti_session_handlers.go
-internal/access/ziti_sync_handlers.go
-internal/access/ziti_terminator_handlers.go
-internal/access/ziti_user_sync.go
-internal/admin/admin_audit.go
-internal/admin/ai_agents.go
-internal/admin/ai_policy_recommendations.go
-internal/admin/ai_recommendations.go
-internal/admin/analytics_enhanced.go
-internal/admin/attestation.go
-internal/admin/audit_archival.go
-internal/admin/auth_handler.go
-internal/admin/bulk_import_export.go
-internal/admin/bulk_operations.go
-internal/admin/config.go
-internal/admin/continuous_auth.go
-internal/admin/dashboard_enhanced.go
-internal/admin/dashboard.go
-internal/admin/deprovisioning.go
-internal/admin/developer.go
-internal/admin/email_templates.go
-internal/admin/error_catalog.go
-internal/admin/errors_helper.go
+// ProductionConfig returns CORS configuration for production
+func ProductionConfig(allowedOrigins []string) *Config {
+	return &Config{
+		AllowedOrigins:   allowedOrigins,
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
+		AllowedHeaders:   []string{"Origin", "Content-Type", "Authorization", "X-Request-ID"},
+		ExposedHeaders:   []string{"X-Request-ID", "X-Total-Count"},
+		AllowCredentials: true,
+		MaxAge:           86400,
+	}
+}
 
-Design the complete solution. Include market-driven features where priority is critical/high. Be specific about file paths, function names, schemas, implementation order.
+// CORSMiddleware returns a Gin middleware for handling CORS
+func CORSMiddleware(cfg *Config) gin.HandlerFunc {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+
+	// Normalize methods to uppercase
+	normalizedMethods := make([]string, len(cfg.AllowedMethods))
+	for i, m := range cfg.AllowedMethods {
+		normalizedMethods[i] = strings.ToUpper(m)
+--- internal/admin/middleware/websocket.go ---
+// Package middleware provides WebSocket origin validation middleware for admin API
+package middleware
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+// WebSocketOriginConfig holds WebSocket origin validation configuration
+type WebSocketOriginConfig struct {
+	AllowedOrigins []string
+	EnableLogging  bool
+}
+
+// WebSocketOriginValidator provides origin validation for admin API WebSocket endpoints
+type WebSocketOriginValidator struct {
+	logger *zap.Logger
+	config *WebSocketOriginConfig
+}
+
+// NewWebSocketOriginValidator creates a new WebSocket origin validator for admin API
+func NewWebSocketOriginValidator(logger *zap.Logger, config *WebSocketOriginConfig) *WebSocketOriginValidator {
+	if config == nil {
+		config = &WebSocketOriginConfig{
+			AllowedOrigins: []string{}, // Same-origin only by default
+			EnableLogging:  true,
+		}
+	}
+	return &WebSocketOriginValidator{
+		logger: logger.Named("admin-websocket-validator"),
+		config: config,
+	}
+}
+
+// CheckOrigin validates the Origin header for WebSocket connections
+func (wv *WebSocketOriginValidator) CheckOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+
+	// Allow non-browser requests (no Origin header)
+	if origin == "" {
+		if wv.config.EnableLogging {
+			wv.logger.Debug("Admin WebSocket allowed (no Origin header)",
+				zap.String("remote_addr", r.RemoteAddr))
+		}
+		return true
+	}
+
+	// Normalize origin
+	normalized := strings.ToLower(strings.TrimSpace(origin))
+
+	// Check against allowed origins
+	for _, allowed := range wv.config.AllowedOrigins {
+		allowed = strings.ToLower(strings.TrimSpace(allowed))
+
+		// Wildcard allows all (use with caution)
+		if allowed == "*" {
+			if wv.config.EnableLogging {
+				wv.logger.Warn("Admin WebSocket wildcard origin allowed",
+					zap.String("origin", origin),
+					zap.String("remote_addr", r.RemoteAddr))
+			}
+			return true
+		}
+
+		// Exact match
+		if normalized == allowed {
+			if wv.config.EnableLogging {
+				wv.logger.Info("Admin WebSocket connection allowed",
+					zap.String("origin", origin),
+					zap.String("remote_addr", r.RemoteAddr))
+			}
+			return true
+		}
+
+		// Wildcard subdomain
+		if strings.HasPrefix(allowed, "*.") {
+			domain := strings.TrimPrefix(allowed, "*.")
+Review: error handling, validation, auth checks, HTTP codes, test coverage, API consistency.
