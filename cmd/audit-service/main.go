@@ -143,8 +143,23 @@ func main() {
 			log.Warn("Failed to initialize ES index, search may not work", zap.Error(err))
 		}
 	}
+
+	// Initialize EventStreamer with WebSocket origin validation
+	streamConfig := audit.StreamConfigFromAppConfig(cfg)
+	eventStreamer := audit.NewEventStreamerWithConfig(log, auditService, streamConfig)
+
+	// Register standard audit routes
 	audit.RegisterRoutes(router, auditService)
 	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService)
+
+	// Register WebSocket streaming routes with origin validation
+	eventStreamer.RegisterRoutes(router.Group("/api/v1/audit"))
+
+	// Log the WebSocket origin configuration
+	log.Info("Audit WebSocket streamer initialized",
+		zap.Int("allowed_origins_count", len(streamConfig.AllowedOrigins)),
+		zap.Bool("security_logging_enabled", streamConfig.EnableSecurityLogging),
+		zap.Int("max_message_size", streamConfig.MaxMessageSize))
 
 	// Initialize health service with database check
 	healthService := newhealth.NewHealthService(log)

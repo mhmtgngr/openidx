@@ -1,0 +1,187 @@
+# Audit Service Configuration
+#
+# This file contains the configuration for the OpenIDX Audit Service.
+# The audit service handles tamper-evident logging, compliance reporting,
+# and real-time event streaming via WebSocket.
+
+# Service identification
+service_name: audit-service
+environment: ${APP_ENV:development}
+port: ${PORT:8004}
+log_level: ${LOG_LEVEL:info}
+
+# Database configuration
+database_url: ${DATABASE_URL:postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable}
+
+# Redis configuration (for distributed rate limiting)
+redis_url: ${REDIS_URL:redis://:redis_secret@localhost:6379}
+redis_sentinel_enabled: ${REDIS_SENTINEL_ENABLED:false}
+redis_sentinel_master_name: ${REDIS_SENTINEL_MASTER_NAME:mymaster}
+redis_sentinel_addresses: ${REDIS_SENTINEL_ADDRESSES:""}
+redis_sentinel_password: ${REDIS_SENTINEL_PASSWORD:""}
+
+# Elasticsearch configuration (optional, for full-text search)
+elasticsearch_url: ${ELASTICSEARCH_URL:http://localhost:9200}
+elasticsearch_username: ${ELASTICSEARCH_USERNAME:""}
+elasticsearch_password: ${ELASTICSEARCH_PASSWORD:""}
+elasticsearch_tls: ${ELASTICSEARCH_TLS:false}
+elasticsearch_ca_cert: ${ELASTICSEARCH_CA_CERT:""}
+
+# OPA (Open Policy Agent) configuration
+opa_url: ${OPA_URL:http://localhost:8281}
+enable_opa_authz: ${ENABLE_OPA_AUTHZ:false}
+
+# OAuth/OIDC settings
+oauth_issuer: ${OAUTH_ISSUER:http://localhost:8006}
+oauth_jwks_url: ${OAUTH_JWKS_URL:http://localhost:8006/.well-known/jwks.json}
+
+# Security settings
+jwt_secret: ${JWT_SECRET:dev-secret-change-in-production}
+encryption_key: ${ENCRYPTION_KEY:dev-encryption-key-32bytes}
+cors_allowed_origins: ${CORS_ALLOWED_ORIGINS:*}
+
+# Feature flags
+enable_mfa: ${ENABLE_MFA:true}
+enable_audit_logging: ${ENABLE_AUDIT_LOGGING:true}
+enable_rate_limit: ${ENABLE_RATE_LIMIT:true}
+
+# Rate limiting
+rate_limit_requests: ${RATE_LIMIT_REQUESTS:100}
+rate_limit_window: ${RATE_LIMIT_WINDOW:60}
+rate_limit_auth_requests: ${RATE_LIMIT_AUTH_REQUESTS:20}
+rate_limit_auth_window: ${RATE_LIMIT_AUTH_WINDOW:60}
+rate_limit_per_user: ${RATE_LIMIT_PER_USER:false}
+
+# SMTP configuration (for email notifications)
+smtp_host: ${SMTP_HOST:""}
+smtp_port: ${SMTP_PORT:587}
+smtp_username: ${SMTP_USERNAME:""}
+smtp_password: ${SMTP_PASSWORD:""}
+smtp_from: ${SMTP_FROM:""}
+
+# Access Proxy settings
+governance_url: ${GOVERNANCE_URL:http://localhost:8002}
+audit_url: ${AUDIT_URL:http://localhost:8004}
+access_session_secret: ${ACCESS_SESSION_SECRET:change-me-in-production-32bytes!}
+access_proxy_domain: ${ACCESS_PROXY_DOMAIN:localhost}
+
+# Ziti configuration
+ziti_enabled: ${ZITI_ENABLED:false}
+ziti_ctrl_url: ${ZITI_CTRL_URL:https://ziti-controller:1280}
+ziti_admin_user: ${ZITI_ADMIN_USER:admin}
+ziti_admin_password: ${ZITI_ADMIN_PASSWORD:openidx_ziti_admin}
+ziti_identity_dir: ${ZITI_IDENTITY_DIR:/ziti}
+ziti_insecure_skip_verify: ${ZITI_INSECURE_SKIP_VERIFY:false}
+
+# Continuous verification
+continuous_verify_enabled: ${CONTINUOUS_VERIFY_ENABLED:false}
+continuous_verify_interval: ${CONTINUOUS_VERIFY_INTERVAL:30}
+
+# GeoIP service
+geoip_service_url: ${GEOIP_SERVICE_URL:""}
+
+# Guacamole integration
+guacamole_url: ${GUACAMOLE_URL:""}
+guacamole_admin_user: ${GUACAMOLE_ADMIN_USER:guacadmin}
+guacamole_admin_password: ${GUACAMOLE_ADMIN_PASSWORD:guacadmin}
+
+# BrowZer configuration
+browzer_enabled: ${BROWZER_ENABLED:false}
+browzer_client_id: ${BROWZER_CLIENT_ID:browzer-client}
+browzer_targets_path: ${BROWZER_TARGETS_PATH:/ziti/targets.yml}
+browzer_router_config_path: ${BROWZER_ROUTER_CONFIG_PATH:/ziti/router-config.yml}
+browzer_certs_path: ${BROWZER_CERTS_PATH:/ziti/certs}
+apisix_config_path: ${APISIX_CONFIG_PATH:/apisix/config.yaml}
+
+# WebAuthn configuration
+webauthn:
+  rp_id: ${WEBAUTHN_RP_ID:localhost}
+  rp_origins: ${WEBAUTHN_RP_ORIGINS:"http://localhost:3000,http://localhost:8080"}
+  timeout: ${WEBAUTHN_TIMEOUT:60}
+
+# Push MFA configuration
+push_mfa:
+  enabled: ${PUSH_MFA_ENABLED:true}
+  fcm_server_key: ${FCM_SERVER_KEY:""}
+  apns_key_id: ${APNS_KEY_ID:""}
+  apns_team_id: ${APNS_TEAM_ID:""}
+  apns_key_path: ${APNS_KEY_PATH:""}
+  apns_bundle_id: ${APNS_BUNDLE_ID:""}
+  challenge_timeout: ${PUSH_MFA_CHALLENGE_TIMEOUT:60}
+  auto_approve: ${PUSH_MFA_AUTO_APPROVE:false}
+
+# SMS MFA configuration
+sms:
+  enabled: ${SMS_ENABLED:false}
+  provider: ${SMS_PROVIDER:mock}
+  twilio_sid: ${TWILIO_ACCOUNT_SID:""}
+  twilio_token: ${TWILIO_AUTH_TOKEN:""}
+  twilio_from: ${TWILIO_FROM_NUMBER:""}
+  aws_region: ${AWS_REGION:""}
+  aws_access_key: ${AWS_ACCESS_KEY_ID:""}
+  aws_secret_key: ${AWS_SECRET_ACCESS_KEY:""}
+  webhook_url: ${SMS_WEBHOOK_URL:""}
+  webhook_api_key: ${SMS_WEBHOOK_API_KEY:""}
+  message_prefix: ${SMS_MESSAGE_PREFIX:OpenIDX}
+  otp_length: ${SMS_OTP_LENGTH:6}
+  otp_expiry: ${SMS_OTP_EXPIRY:300}
+  max_attempts: ${SMS_MAX_ATTEMPTS:3}
+
+# Adaptive MFA configuration
+adaptive_mfa:
+  enabled: ${ADAPTIVE_MFA_ENABLED:true}
+  new_device_risk_score: ${ADAPTIVE_MFA_NEW_DEVICE_RISK_SCORE:30}
+  new_location_risk_score: ${ADAPTIVE_MFA_NEW_LOCATION_RISK_SCORE:20}
+  impossible_travel_risk_score: ${ADAPTIVE_MFA_IMPOSSIBLE_TRAVEL_RISK_SCORE:50}
+  blocked_ip_risk_score: ${ADAPTIVE_MFA_BLOCKED_IP_RISK_SCORE:40}
+  failed_login_risk_score: ${ADAPTIVE_MFA_FAILED_LOGIN_RISK_SCORE:10}
+  trusted_browser_days: ${ADAPTIVE_MFA_TRUSTED_BROWSER_DAYS:30}
+  low_risk_threshold: ${ADAPTIVE_MFA_LOW_RISK_THRESHOLD:30}
+  medium_risk_threshold: ${ADAPTIVE_MFA_MEDIUM_RISK_THRESHOLD:50}
+  high_risk_threshold: ${ADAPTIVE_MFA_HIGH_RISK_THRESHOLD:70}
+
+# ============================================================================
+# Audit Stream WebSocket Configuration
+# ============================================================================
+# IMPORTANT: Controls which origins can connect to the real-time audit event stream.
+# This prevents Cross-Site WebSocket Hijacking (CSWSH) attacks.
+#
+# Development defaults allow localhost origins for convenience.
+# Production MUST specify explicit origins.
+#
+# Examples:
+#   - Single origin: "https://admin.example.com"
+#   - Multiple origins: "https://admin.example.com,https://audit.example.com"
+#   - Wildcard subdomain: "https://*.example.com"
+#   - Wildcard all (NEVER in production): "*"
+#   - Same-origin only (empty): ""
+#
+# Environment variable: AUDIT_STREAM_ALLOWED_ORIGINS or OPENIDX_AUDIT_STREAM_ALLOWED_ORIGINS
+audit_stream_allowed_origins: ${AUDIT_STREAM_ALLOWED_ORIGINS:"http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"}
+
+# CSRF protection
+csrf_enabled: ${CSRF_ENABLED:false}
+csrf_trusted_domain: ${CSRF_TRUSTED_DOMAIN:""}
+
+# Debug settings (NEVER enable in production)
+debug_otp_in_response: ${DEBUG_OTP_IN_RESPONSE:false}
+
+# TLS configuration for inter-service communication
+tls:
+  enabled: ${TLS_ENABLED:false}
+  cert_file: ${TLS_CERT_FILE:""}
+  key_file: ${TLS_KEY_FILE:""}
+  ca_file: ${TLS_CA_FILE:""}
+
+# Database TLS configuration
+database_ssl_mode: ${DATABASE_SSL_MODE:disable}
+database_ssl_root_cert: ${DATABASE_SSL_ROOT_CERT:""}
+database_ssl_cert: ${DATABASE_SSL_CERT:""}
+database_ssl_key: ${DATABASE_SSL_KEY:""}
+
+# Redis TLS configuration
+redis_tls_enabled: ${REDIS_TLS_ENABLED:false}
+redis_tls_ca_cert: ${REDIS_TLS_CA_CERT:""}
+redis_tls_cert: ${REDIS_TLS_CERT:""}
+redis_tls_key: ${REDIS_TLS_KEY:""}
+redis_tls_skip_verify: ${REDIS_TLS_SKIP_VERIFY:false}

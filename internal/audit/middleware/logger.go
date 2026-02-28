@@ -107,8 +107,6 @@ func ExtractRealIP(r *http.Request) string {
 
 // SecurityLoggingMiddleware creates Gin middleware for WebSocket security logging
 func SecurityLoggingMiddleware(logger *zap.Logger) gin.HandlerFunc {
-	securityLogger := NewWebSocketSecurityLogger(logger)
-
 	return func(c *gin.Context) {
 		// Only log WebSocket upgrade requests
 		if !isWebSocketUpgrade(c.Request) {
