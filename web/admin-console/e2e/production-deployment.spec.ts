@@ -264,7 +264,7 @@ test.describe('Production Deployment - Admin Console', () => {
   })
 
   test('should cache static assets', async ({ page }) => {
-    const assetResponses: Record<string, string> = []
+    const assetResponses: Record<string, string> = {}
 
     page.on('response', (response) => {
       const url = new URL(response.url())

@@ -110,7 +110,7 @@ test.describe('Trusted Browser', () => {
     // For now, verify the trust browser prompt exists in the component
 
     await page.goto('/login')
-    await expect(page.locator('text=Trust,Remember,device')).or(page.locator('input[id="username"]')).toBeVisible()
+    await expect(page.locator('text=Trust,Remember,device').or(page.locator('input[id="username"]'))).toBeVisible()
   })
 
   test('should skip MFA for trusted browser', async ({ page, context }) => {
