@@ -22,9 +22,10 @@
     },
     "testing": {
       "status": "running",
-      "_updated": "2026-02-28T18:36:21.994756",
+      "_updated": "2026-02-28T19:19:04.323991",
       "write_tests": "done",
-      "unit_tests": "passed"
+      "unit_tests": "passed",
+      "e2e": "failed"
     }
   },
   "project": "Fix the security TODO at internal/audit/stream.go:80. The audit event WebSocket streamer currently returns true for all origin checks, allowing any origin to connect. Implement proper origin validation by parsing the Origin header from WebSocket handshake requests and validating against a configurable whitelist of allowed origins. Add configuration AUDIT_ALLOWED_ORIGINS to support comma-separated domain list. Default to localhost in development, require explicit configuration for production. This prevents cross-site WebSocket hijacking attacks.",
