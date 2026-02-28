@@ -1,7 +1,11 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('API Explorer', () => {
-  test('should display API explorer page', async ({ page }) => {
+  test('should display API explorer page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/api-explorer')
 
     if (page.url().includes('/login')) {
@@ -14,7 +18,11 @@ test.describe('API Explorer', () => {
 })
 
 test.describe('OAuth Playground', () => {
-  test('should display OAuth playground page', async ({ page }) => {
+  test('should display OAuth playground page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/oauth-playground')
 
     if (page.url().includes('/login')) {
@@ -27,7 +35,11 @@ test.describe('OAuth Playground', () => {
 })
 
 test.describe('Developer Settings', () => {
-  test('should display developer settings page', async ({ page }) => {
+  test('should display developer settings page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/developer-settings')
 
     if (page.url().includes('/login')) {
@@ -40,7 +52,11 @@ test.describe('Developer Settings', () => {
 })
 
 test.describe('Error Catalog', () => {
-  test('should display error catalog page', async ({ page }) => {
+  test('should display error catalog page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/error-catalog')
 
     if (page.url().includes('/login')) {
@@ -53,7 +69,11 @@ test.describe('Error Catalog', () => {
 })
 
 test.describe('API Docs', () => {
-  test('should display API documentation page', async ({ page }) => {
+  test('should display API documentation page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/api-docs')
 
     if (page.url().includes('/login')) {

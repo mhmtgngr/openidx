@@ -41,7 +41,7 @@ export default defineConfig({
 
   // Start the dev server before running tests
   webServer: {
-    command: 'cd ../web/admin-console && npm run dev',
+    command: 'cd ../../web/admin-console && npm run dev',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

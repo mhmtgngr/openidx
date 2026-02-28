@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Access Reviews', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/access-reviews')
   })
 

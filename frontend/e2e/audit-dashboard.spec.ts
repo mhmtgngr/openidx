@@ -8,7 +8,12 @@ import { test, expect } from '@playwright/test'
  */
 
 test.describe('Audit Dashboard - Authenticated', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     // If redirected to login, skip all tests
@@ -93,7 +98,12 @@ test.describe('Audit Dashboard - Authenticated', () => {
 })
 
 test.describe('Audit Stream Connection States', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -173,7 +183,11 @@ test.describe('Audit Stream Connection States', () => {
 })
 
 test.describe('Audit Stream - Origin Validation', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -221,7 +235,11 @@ test.describe('Audit Stream - Origin Validation', () => {
 })
 
 test.describe('Audit Stream - Analytics', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -277,7 +295,11 @@ test.describe('Audit Stream - Analytics', () => {
 })
 
 test.describe('Audit Stream - Error Handling', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -309,7 +331,11 @@ test.describe('Audit Stream - Error Handling', () => {
 })
 
 test.describe('Audit Stream Component', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -346,7 +372,11 @@ test.describe('Audit Stream Component', () => {
 })
 
 test.describe('Audit Dashboard - Responsive Design', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -390,7 +420,11 @@ test.describe('Audit Dashboard - Responsive Design', () => {
 })
 
 test.describe('Audit Dashboard - Accessibility', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {
@@ -431,7 +465,11 @@ test.describe('Audit Dashboard - Accessibility', () => {
 })
 
 test.describe('Audit Dashboard - Security Features', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/audit/dashboard')
 
     if (page.url().includes('/login')) {

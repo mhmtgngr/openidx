@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('SAML Service Providers', () => {
-  test('should display SAML service providers page', async ({ page }) => {
+  test('should display SAML service providers page', async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/saml-service-providers')
 
     if (page.url().includes('/login')) {
@@ -14,7 +19,11 @@ test.describe('SAML Service Providers', () => {
 })
 
 test.describe('Bulk Operations', () => {
-  test('should display bulk operations page', async ({ page }) => {
+  test('should display bulk operations page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/bulk-operations')
 
     if (page.url().includes('/login')) {

@@ -1,7 +1,12 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Authentication Flow', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/login')
   })
 
@@ -84,13 +89,22 @@ test.describe('Authentication Flow', () => {
 })
 
 test.describe('Session Management', () => {
-  test('should maintain session across page reloads', async ({ page }) => {
+  test('should maintain session across page reloads', async ({ page, context }) => {
     // This test requires authenticated state - simplified for now
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/login')
     await expect(page.locator('input[id="username"]')).toBeVisible()
   })
 
-  test('should redirect to login for protected routes', async ({ page }) => {
+  test('should redirect to login for protected routes', async ({ page, context }) => {
+    // Clear storage first
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     // Try to access dashboard without authentication
     await page.goto('/dashboard')
 
@@ -98,7 +112,12 @@ test.describe('Session Management', () => {
     await expect(page).toHaveURL(/\/login/)
   })
 
-  test('should redirect to login for admin routes', async ({ page }) => {
+  test('should redirect to login for admin routes', async ({ page, context }) => {
+    // Clear storage first
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     // Try to access users page without authentication
     await page.goto('/users')
 
