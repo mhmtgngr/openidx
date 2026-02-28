@@ -288,6 +288,7 @@ services:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
+      - OPENIDX_AUDIT_STREAM_ALLOWED_ORIGINS=${AUDIT_STREAM_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}
       - TRACING_ENABLED=${TRACING_ENABLED:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
       - OTEL_SERVICE_NAME=audit-service
