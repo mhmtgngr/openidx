@@ -8,6 +8,7 @@ test.describe('SAML Service Providers', () => {
       sessionStorage.clear()
     })
     await page.goto('/saml-service-providers')
+    await page.waitForURL({ url: /\/saml-service-providers|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -25,6 +26,7 @@ test.describe('Bulk Operations', () => {
       sessionStorage.clear()
     })
     await page.goto('/bulk-operations')
+    await page.waitForURL({ url: /\/bulk-operations|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -38,6 +40,7 @@ test.describe('Bulk Operations', () => {
 test.describe('Email Templates', () => {
   test('should display email templates page', async ({ page }) => {
     await page.goto('/email-templates')
+    await page.waitForURL({ url: /\/email-templates|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -51,6 +54,7 @@ test.describe('Email Templates', () => {
 test.describe('Lifecycle Policies', () => {
   test('should display lifecycle policies page', async ({ page }) => {
     await page.goto('/lifecycle-policies')
+    await page.waitForURL({ url: /\/lifecycle-policies|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -64,6 +68,7 @@ test.describe('Lifecycle Policies', () => {
 test.describe('Attestation Campaigns', () => {
   test('should display attestation campaigns page', async ({ page }) => {
     await page.goto('/attestation-campaigns')
+    await page.waitForURL({ url: /\/attestation-campaigns|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()

@@ -12,7 +12,8 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1, // Use single worker to avoid resource contention
+  timeout: 60000, // Increase test timeout to 60 seconds
   reporter: [
     ['html', { outputFolder: '../../web/admin-console/playwright-report-frontend' }],
     ['list'],
@@ -22,6 +23,8 @@ export default defineConfig({
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    actionTimeout: 15000, // Increase action timeout
+    navigationTimeout: 30000, // Increase navigation timeout
   },
 
   projects: [

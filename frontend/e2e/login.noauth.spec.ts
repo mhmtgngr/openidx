@@ -107,6 +107,8 @@ test.describe('Session Management', () => {
     })
     // Try to access dashboard without authentication
     await page.goto('/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/dashboard|\/login/, timeout: 10000 })
 
     // Should redirect to login
     await expect(page).toHaveURL(/\/login/)
@@ -120,6 +122,8 @@ test.describe('Session Management', () => {
     })
     // Try to access users page without authentication
     await page.goto('/users')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/users|\/login/, timeout: 10000 })
 
     // Should redirect to login
     await expect(page).toHaveURL(/\/login/)

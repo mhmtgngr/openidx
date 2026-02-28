@@ -8,6 +8,8 @@ test.describe('Access Reviews', () => {
       sessionStorage.clear()
     })
     await page.goto('/access-reviews')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/access-reviews|\/login/, timeout: 10000 })
   })
 
   test('should display access reviews page', async ({ page }) => {
@@ -36,6 +38,7 @@ test.describe('Access Reviews', () => {
 test.describe('Policies Management', () => {
   test('should display policies page', async ({ page }) => {
     await page.goto('/policies')
+    await page.waitForURL({ url: /\/policies|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -47,6 +50,7 @@ test.describe('Policies Management', () => {
 
   test('should have create policy button', async ({ page }) => {
     await page.goto('/policies')
+    await page.waitForURL({ url: /\/policies|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -63,6 +67,7 @@ test.describe('Policies Management', () => {
 test.describe('Approval Policies', () => {
   test('should display approval policies page', async ({ page }) => {
     await page.goto('/approval-policies')
+    await page.waitForURL({ url: /\/approval-policies|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -76,6 +81,7 @@ test.describe('Approval Policies', () => {
 test.describe('Certification Campaigns', () => {
   test('should display certification campaigns', async ({ page }) => {
     await page.goto('/certification-campaigns')
+    await page.waitForURL({ url: /\/certification-campaigns|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -89,6 +95,7 @@ test.describe('Certification Campaigns', () => {
 test.describe('Entitlements', () => {
   test('should display entitlements page', async ({ page }) => {
     await page.goto('/entitlements')
+    await page.waitForURL({ url: /\/entitlements|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -102,6 +109,7 @@ test.describe('Entitlements', () => {
 test.describe('ABAC Policies', () => {
   test('should display ABAC policies page', async ({ page }) => {
     await page.goto('/abac-policies')
+    await page.waitForURL({ url: /\/abac-policies|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()

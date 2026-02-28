@@ -8,6 +8,9 @@ test.describe('API Explorer', () => {
     })
     await page.goto('/api-explorer')
 
+    // Wait for either redirect to login or page to load
+    await page.waitForURL({ url: /\/login|\/api-explorer/, timeout: 10000 })
+
     if (page.url().includes('/login')) {
       test.skip()
       return
@@ -24,6 +27,9 @@ test.describe('OAuth Playground', () => {
       sessionStorage.clear()
     })
     await page.goto('/oauth-playground')
+
+    // Wait for either redirect to login or page to load
+    await page.waitForURL({ url: /\/login|\/oauth-playground/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -42,6 +48,9 @@ test.describe('Developer Settings', () => {
     })
     await page.goto('/developer-settings')
 
+    // Wait for either redirect to login or page to load
+    await page.waitForURL({ url: /\/login|\/developer-settings/, timeout: 10000 })
+
     if (page.url().includes('/login')) {
       test.skip()
       return
@@ -59,6 +68,9 @@ test.describe('Error Catalog', () => {
     })
     await page.goto('/error-catalog')
 
+    // Wait for either redirect to login or page to load
+    await page.waitForURL({ url: /\/login|\/error-catalog/, timeout: 10000 })
+
     if (page.url().includes('/login')) {
       test.skip()
       return
@@ -75,6 +87,9 @@ test.describe('API Docs', () => {
       sessionStorage.clear()
     })
     await page.goto('/api-docs')
+
+    // Wait for either redirect to login or page to load
+    await page.waitForURL({ url: /\/login|\/api-docs/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()

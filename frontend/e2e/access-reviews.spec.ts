@@ -15,6 +15,8 @@ test.describe('Access Reviews - Authenticated', () => {
     })
     // Navigate to access reviews page
     await page.goto('/reviews')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/reviews|\/login/, timeout: 10000 })
 
     // If redirected to login, skip all tests
     if (page.url().includes('/login')) {
@@ -155,6 +157,7 @@ test.describe('Access Reviews - Pagination', () => {
       sessionStorage.clear()
     })
     await page.goto('/reviews')
+    await page.waitForURL({ url: /\/reviews|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -186,6 +189,7 @@ test.describe('Access Reviews - Status Badges', () => {
       sessionStorage.clear()
     })
     await page.goto('/reviews')
+    await page.waitForURL({ url: /\/reviews|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()

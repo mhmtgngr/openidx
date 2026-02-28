@@ -15,6 +15,8 @@ test.describe('Audit Dashboard - Authenticated', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     // If redirected to login, skip all tests
     if (page.url().includes('/login')) {
@@ -105,6 +107,8 @@ test.describe('Audit Stream Connection States', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -189,6 +193,8 @@ test.describe('Audit Stream - Origin Validation', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -241,6 +247,8 @@ test.describe('Audit Stream - Analytics', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -301,6 +309,8 @@ test.describe('Audit Stream - Error Handling', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -337,6 +347,8 @@ test.describe('Audit Stream Component', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -378,6 +390,8 @@ test.describe('Audit Dashboard - Responsive Design', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -426,6 +440,8 @@ test.describe('Audit Dashboard - Accessibility', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -471,6 +487,8 @@ test.describe('Audit Dashboard - Security Features', () => {
       sessionStorage.clear()
     })
     await page.goto('/audit/dashboard')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/audit\/dashboard|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
