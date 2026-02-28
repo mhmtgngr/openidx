@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { subscribeWithSelector } from 'zustand/middleware'
 
 export interface AuditEvent {
   id: string
@@ -39,6 +38,9 @@ interface AuditStreamState {
   events: AuditEvent[]
   maxEvents: number
 
+  // WebSocket instance (non-serializable)
+  _ws: WebSocket | null
+
   // Actions
   connect: (url: string, token?: string) => void
   disconnect: () => void
@@ -50,8 +52,7 @@ interface AuditStreamState {
   clearError: () => void
 }
 
-export const useAuditStreamStore = create<AuditStreamState>()(
-  subscribeWithSelector((set, get) => ({
+export const useAuditStreamStore = create<AuditStreamState>((set, get) => ({
     // Initial state
     connectionState: 'disconnected',
     connectionError: null,
@@ -60,6 +61,7 @@ export const useAuditStreamStore = create<AuditStreamState>()(
     currentOrigin: typeof window !== 'undefined' ? window.location.origin : '',
     events: [],
     maxEvents: 500, // Keep last 500 events in memory
+    _ws: null,
 
     // Actions
     connect: (url: string, token?: string) => {
@@ -71,9 +73,6 @@ export const useAuditStreamStore = create<AuditStreamState>()(
       set({ connectionState: 'connecting', connectionError: null })
 
       try {
-        const wsUrl = new URL(url)
-        const isSecure = wsUrl.protocol === 'wss:'
-
         // Validate origin before connecting
         const currentOrigin = state.currentOrigin
         const allowedOrigins = state.allowedOrigins
@@ -99,7 +98,8 @@ export const useAuditStreamStore = create<AuditStreamState>()(
           protocols.push(`access_token_${token}`)
         }
 
-        const ws = new WebSocket(wsUrl, protocols)
+        // Create WebSocket connection
+        const ws = new WebSocket(url, protocols)
 
         ws.onopen = () => {
           set({ connectionState: 'connected', isConnected: true })
@@ -173,8 +173,8 @@ export const useAuditStreamStore = create<AuditStreamState>()(
           }
         }
 
-        // Store WebSocket instance for cleanup (not in state to avoid serialization issues)
-        ;(get() as unknown as { _ws: WebSocket | null })._ws = ws
+        // Store WebSocket instance for cleanup
+        set({ _ws: ws })
       } catch (error) {
         set({
           connectionState: 'error',
@@ -187,12 +187,12 @@ export const useAuditStreamStore = create<AuditStreamState>()(
     },
 
     disconnect: () => {
-      const ws = (get() as unknown as { _ws: WebSocket | null })._ws
+      const ws = get()._ws
       if (ws) {
         ws.close(1000, 'User disconnected')
-        ;(get() as unknown as { _ws: null })._ws = null
       }
       set({
+        _ws: null,
         connectionState: 'disconnected',
         isConnected: false,
         connectionError: null,
@@ -227,5 +227,5 @@ export const useAuditStreamStore = create<AuditStreamState>()(
     clearError: () => {
       set({ connectionError: null })
     },
-  }))
+  })
 )

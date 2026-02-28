@@ -3,7 +3,8 @@ import { useAuditStreamStore, type ConnectionState } from '../../stores/audit-st
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
-import { AlertCircle, CheckCircle, LoadingSpinner, Plug, PlugX, RefreshCw, Shield, XCircle } from 'lucide-react'
+import { LoadingSpinner } from '../ui/loading-spinner'
+import { AlertCircle, CheckCircle, Plug, Unplug, RefreshCw, Shield, XCircle } from 'lucide-react'
 
 interface AuditStreamProps {
   /** WebSocket URL for the audit stream endpoint */
@@ -29,7 +30,7 @@ const CONNECTION_STATUS_CONFIG: Record<
   disconnected: {
     label: 'Disconnected',
     color: 'secondary',
-    icon: <PlugX className="h-4 w-4" />,
+    icon: <Unplug className="h-4 w-4" />,
     description: 'Not connected to audit stream',
   },
   connecting: {
@@ -240,7 +241,7 @@ export function AuditStream({
               onClick={handleDisconnect}
               className="w-full sm:w-auto"
             >
-              <PlugX className="mr-2 h-4 w-4" />
+              <Unplug className="mr-2 h-4 w-4" />
               Disconnect
             </Button>
           )}
