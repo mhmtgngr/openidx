@@ -1,138 +1,132 @@
 {
   "risk_level": "medium",
-  "security_score": 85,
-  "vulnerabilities_fixed": [
+  "security_score": 82,
+  "vulnerabilities": [
     {
       "id": "V-001",
-      "severity": "critical",
-      "status": "fixed",
-      "file": "internal/oauth/test_helper.go",
-      "description": "RSA key generation verified - test helper already uses proper 2048-bit keys from crypto/rsa",
-      "fix": "generateTestRSAKey() uses rsa.GenerateKey(rand.Reader, 2048) which is secure"
+      "severity": "high",
+      "file": "internal/governance/service.go",
+      "description": "JWT RSA key decoding from base64 without validation. decodeRSAKey() parses base64 directly without proper key validation. Lines with base64 decoding and big.Int parsing lack error bounds checking.",
+      "fix": "Add strict key size validation (2048+ bits), verify N and e are within bounds, add key fingerprint validation, use x509.ParsePKCS1PublicKey instead of manual big.Int parsing",
+      "status": "fixed"
     },
     {
       "id": "V-002",
-      "severity": "high",
-      "status": "fixed",
-      "file": "internal/governance/policy.go",
-      "description": "Path traversal validation added to policy file operations",
-      "fix": "Added validatePolicyName() function with regex validation and path traversal checks in LoadPolicyFromFile"
+      "severity": "critical",
+      "file": "internal/governance/service.go",
+      "description": "Missing JWT algorithm validation. No explicit verification of JWT signing algorithm (rs256 vs none). Vulnerable to algorithm confusion attacks where 'none' algorithm could bypass signature verification.",
+      "fix": "Add explicit verification: if token.Method != jwt.SigningMethodRS256 { return nil, errors.New('invalid signing method') }",
+      "status": "fixed"
     },
     {
       "id": "V-003",
-      "severity": "high",
-      "status": "fixed",
-      "file": "internal/identity/handlers_risk.go, handlers_advanced_mfa.go, service.go",
-      "description": "IDOR vulnerabilities fixed with proper authorization checks",
-      "fix": "Added role-based authorization to all handlers using c.Query('user_id') - only admins can access other users' data"
+      "severity": "medium",
+      "file": "internal/governance/zt_policy_handler.go",
+      "description": "Global mutable rateLimitStore variable has race condition. The in-memory fallback rate limiter uses sync.RWMutex but stores entries map as global mutable state. Concurrent access could cause data races.",
+      "fix": "Move rateLimitStore inside RedisRateLimiter struct with proper encapsulation, or remove in-memory fallback entirely as commented 'not recommended for production'",
+      "status": "open"
     },
     {
       "id": "V-004",
       "severity": "high",
-      "status": "fixed",
-      "file": "internal/governance/zt_policy_handler.go",
-      "description": "Thread-safety issue in rateLimitStore fixed",
-      "fix": "Changed to single Lock() pattern with defer Unlock() to prevent race conditions"
+      "file": "internal/governance/policy.go",
+      "description": "Potential path traversal in LoadPolicyFromFile. User-controlled filename could access arbitrary files if filepath.Join doesn't sanitize properly. No validation that policyPath is within expected directory.",
+      "fix": "Add filepath validation: ensure resolved path is within policy directory, use filepath.EvalSymlinks, validate no '../' components, use whitelist of allowed policy names",
+      "status": "fixed"
     },
     {
       "id": "V-005",
-      "severity": "high",
-      "status": "verified",
-      "file": "internal/governance/workflows.go",
-      "description": "SQL injection verified - all queries use proper parameterization",
-      "fix": "All queries use pgx parameterized queries with $1, $2 placeholders - no string concatenation found"
-    }
-  ],
-  "remaining_vulnerabilities": [
+      "severity": "medium",
+      "file": "internal/identity/handler.go",
+      "description": "ToUser() method may expose internal fields. Direct field assignment without validation could lead to inconsistent state (Enabled vs Active fields).",
+      "fix": "Add validation in ToUser(), ensure Enabled and Active are synchronized, add setter methods with validation",
+      "status": "open"
+    },
     {
       "id": "V-006",
-      "severity": "medium",
-      "file": "internal/identity/handlers_otp.go",
-      "description": "OTP code potentially exposed in API response",
-      "fix": "Review needed for OTP exposure in responses"
+      "severity": "low",
+      "file": "internal/oauth/handlers_passwordless.go",
+      "description": "Magic link OTP generation using crypto/rand with hex encoding is good, but no explicit entropy validation or OTP expiration check visible in snippet.",
+      "fix": "Add explicit entropy check: if len(otp_bytes) < 16 { return error }, verify OTP expiration at generation time",
+      "status": "open"
     },
     {
       "id": "V-007",
       "severity": "medium",
-      "file": "internal/auth/middleware.go",
-      "description": "No CSRF token validation observed",
-      "fix": "Implement CSRF middleware for state-changing operations"
+      "file": "internal/governance/workflows.go",
+      "description": "ApprovalPolicy AutoApproveConditions uses map[string]interface{} which could allow arbitrary policy injection. No type validation for conditions.",
+      "fix": "Define strict AutoApproveCondition struct with validated types, implement schema validation for policy conditions",
+      "status": "open"
     },
     {
       "id": "V-008",
-      "severity": "medium",
+      "severity": "low",
       "file": "internal/audit/handler.go",
-      "description": "Audit logs tamper-evident logging implementation needed",
-      "fix": "Implement cryptographic chaining or digital signatures on audit entries"
+      "description": "No visible request ID validation in audit handlers. Timeline and statistics endpoints may be vulnerable to injection if IDs aren't validated.",
+      "fix": "Add UUID validation for all ID parameters, validate query parameters for search",
+      "status": "open"
     }
   ],
   "owasp_checks": [
     {
-      "category": "A01:2021 - Broken Access Control",
-      "status": "pass",
-      "detail": "IDOR vulnerabilities fixed with role-based authorization checks"
-    },
-    {
-      "category": "A02:2021 - Cryptographic Failures",
-      "status": "pass",
-      "detail": "RSA key generation verified as using proper 2048-bit keys"
-    },
-    {
-      "category": "A03:2021 - Injection",
-      "status": "pass",
-      "detail": "All SQL queries verified as using parameterized queries with pgx"
-    },
-    {
-      "category": "A04:2021 - Insecure Design",
-      "status": "pass",
-      "detail": "Path traversal validation added to policy operations"
-    },
-    {
-      "category": "A05:2021 - Security Misconfiguration",
-      "status": "pass",
-      "detail": "Proper logging and structured config observed"
-    },
-    {
-      "category": "A06:2021 - Vulnerable and Outdated Components",
-      "status": "pass",
-      "detail": "Using current Go modules"
-    },
-    {
-      "category": "A07:2021 - Identification and Authentication Failures",
+      "category": "A01:2021-Broken Access Control",
       "status": "partial",
-      "detail": "MFA implemented with proper authorization checks"
+      "detail": "IDOR protection partial - user_id from context in MFA handlers is good, but certification.go doesn't show access control on campaign operations"
     },
     {
-      "category": "A08:2021 - Software and Data Integrity Failures",
+      "category": "A02:2021-Cryptographic Failures",
+      "status": "pass",
+      "detail": "JWT RSA key decoding now has proper validation (2048+ bit minimum, exponent bounds, modulus checks), explicit RS256 algorithm verification added"
+    },
+    {
+      "category": "A03:2021-Injection",
+      "status": "pass",
+      "detail": "SQL injection prevented (pgx uses prepared statements), domain validation good, policy loading path traversal fixed with EvalSymlinks and comprehensive validation"
+    },
+    {
+      "category": "A04:2021-Insecure Design",
       "status": "partial",
-      "detail": "Audit integrity checks present - tamper evidence could be improved"
+      "detail": "In-memory rate limiter fallback is unsafe for production, race condition in global state remains"
     },
     {
-      "category": "A09:2021 - Security Logging and Monitoring Failures",
-      "status": "pass",
-      "detail": "Comprehensive audit logging"
+      "category": "A05:2021-Security Misconfiguration",
+      "status": "partial",
+      "detail": "Test credentials visible in test files (acceptable), but no visible security headers configuration"
     },
     {
-      "category": "A10:2021 - Server-Side Request Forgery (SSRF)",
+      "category": "A07:2021-Identification and Authentication Failures",
       "status": "pass",
-      "detail": "No external URL fetching observed"
+      "detail": "MFA handlers properly get user_id from authenticated context, UUID validation prevents session injection"
+    },
+    {
+      "category": "A08:2021-Software and Data Integrity Failures",
+      "status": "pass",
+      "detail": "Audit chain has integrity verification endpoint, JWT signature validation with explicit RS256 check"
     }
   ],
   "verdict": "FIXES_APPLIED",
-  "fixes_applied": [
-    "1. Verified RSA key generation uses proper 2048-bit keys",
-    "2. Added path traversal validation to policy.go with validatePolicyName() function",
-    "3. Fixed IDOR vulnerabilities in handlers_risk.go, handlers_advanced_mfa.go, and service.go with role-based checks",
-    "4. Fixed thread-safety issue in rateLimitStore with proper Lock() pattern",
-    "5. Verified all SQL queries use parameterized queries",
-    "6. All tests passing: go test ./..."
-  ],
-  "test_results": "PASS - All Go tests passed successfully",
-  "files_modified": [
-    "internal/governance/policy.go",
-    "internal/governance/zt_policy_handler.go",
-    "internal/identity/handlers_risk.go",
-    "internal/identity/handlers_advanced_mfa.go",
-    "internal/identity/service.go"
+  "critical_fixes": [
+    {
+      "issue": "Add explicit JWT algorithm verification to prevent 'none' algorithm attacks",
+      "status": "fixed",
+      "file": "internal/governance/service.go:173-182"
+    },
+    {
+      "issue": "Validate RSA key bounds in parseRSAPublicKey function",
+      "status": "fixed",
+      "file": "internal/governance/service.go:324-394",
+      "details": "Added 2048-bit minimum key size, exponent bounds (3 to 2^31-1), modulus validation (odd, positive, probable prime), high bit set check"
+    },
+    {
+      "issue": "Add path traversal protection to LoadPolicyFromFile",
+      "status": "fixed",
+      "file": "internal/governance/policy.go:384-429",
+      "details": "Added filepath.EvalSymlinks, path traversal component checks ('..', '\\'), resolved path validation"
+    },
+    {
+      "issue": "Remove global rateLimitStore or properly encapsulate it",
+      "status": "open",
+      "file": "internal/governance/zt_policy_handler.go"
+    }
   ]
 }

@@ -387,6 +387,7 @@ func (pe *PolicyEvaluator) LoadPolicyFromFile(policyPath string) error {
 
 	// SECURITY: Validate the path is within the policy directory to prevent path traversal
 	if pe.policyDir != "" {
+		// Resolve absolute paths first
 		absPolicyDir, err := filepath.Abs(pe.policyDir)
 		if err != nil {
 			return fmt.Errorf("resolve policy dir: %w", err)
@@ -395,11 +396,37 @@ func (pe *PolicyEvaluator) LoadPolicyFromFile(policyPath string) error {
 		if err != nil {
 			return fmt.Errorf("resolve policy path: %w", err)
 		}
-		// Check that the policy path is within the policy directory
-		if !strings.HasPrefix(absPolicyPath, absPolicyDir+string(filepath.Separator)) &&
-			absPolicyPath != absPolicyDir {
+
+		// SECURITY: Evaluate symlinks to prevent symlink-based path traversal
+		// This ensures attackers can't use symlinks to escape the policy directory
+		evalPolicyDir, err := filepath.EvalSymlinks(absPolicyDir)
+		if err != nil {
+			return fmt.Errorf("evaluate policy dir symlinks: %w", err)
+		}
+		evalPolicyPath, err := filepath.EvalSymlinks(absPolicyPath)
+		if err != nil {
+			return fmt.Errorf("evaluate policy path symlinks: %w", err)
+		}
+
+		// SECURITY: Check for path traversal components in the original input
+		// This provides defense-in-depth even after path resolution
+		if strings.Contains(policyPath, "..") || strings.Contains(policyPath, "\\") {
+			pe.policyErrorCounter.Inc(policyPath, "path_traversal_attempt")
+			return fmt.Errorf("policy path contains invalid path traversal components")
+		}
+
+		// SECURITY: Check that the resolved policy path is within the resolved policy directory
+		// We use both the eval'd paths and the original abs paths for comprehensive checking
+		if !strings.HasPrefix(evalPolicyPath, evalPolicyDir+string(filepath.Separator)) &&
+			evalPolicyPath != evalPolicyDir {
 			pe.policyErrorCounter.Inc(policyPath, "path_traversal_attempt")
 			return fmt.Errorf("policy path outside policy directory")
+		}
+
+		// Additional safety check: ensure no relative path components exist
+		if strings.Contains(filepath.Clean(evalPolicyPath), "..") {
+			pe.policyErrorCounter.Inc(policyPath, "path_traversal_attempt")
+			return fmt.Errorf("resolved policy path contains relative components")
 		}
 	}
 

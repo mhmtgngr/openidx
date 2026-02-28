@@ -435,6 +435,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -485,7 +487,6 @@ type PolicyResource struct {
 	Path       string            `json:"path,omitempty"`
 	Attributes map[string]string `json:"attributes,omitempty"`
 	Tags       []string          `json:"tags,omitempty"`
-}
 --- internal/governance/zt_policy.go ---
 // Package governance provides Zero Trust policy evaluation for OpenIDX
 package governance
