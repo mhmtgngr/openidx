@@ -1,4 +1,4 @@
-# 🎬 Demo Report — 2026-02-25 18:07
+# 🎬 Demo Report — 2026-02-26 21:18
 
 ## Service Health
 ```
@@ -7,12 +7,12 @@
   ❌ :1280 → UNREACHABLE
   ❌ :3022 → UNREACHABLE
   ❌ :3023 → UNREACHABLE
-  ✅ :8001 → {"status":"up","components":{"database":{"status":"up","latency_ms":0,"checked_at":"2026-02-25T18:07:50Z"},"redis":{"status":"up","latency_ms":0,"checked_at":"2026-02-25T18:07:50Z"}},"dependencies":[{"name":"database","status":"up"},{"name":"redis","status":"up"}],"version":"dev","uptime":"2h 49m 33s","checked_at":"2026-02-25T18:07:50Z"}
+  ✅ :8001 → {"status":"up","components":{"database":{"status":"up","latency_ms":0,"checked_at":"2026-02-26T21:18:27Z"},"redis":{"status":"up","latency_ms":0,"checked_at":"2026-02-26T21:18:27Z"}},"dependencies":[{"name":"redis","status":"up"},{"name":"database","status":"up"}],"version":"dev","uptime":"1d 6h 0m 10s","checked_at":"2026-02-26T21:18:27Z"}
   ❌ :8002 → UNREACHABLE
   ❌ :8003 → UNREACHABLE
   ❌ :8004 → UNREACHABLE
-  ✅ :8005 → {"status":"up","components":{"database":{"status":"up","latency_ms":0,"checked_at":"2026-02-25T18:07:50Z"},"redis":{"status":"up","latency_ms":0,"checked_at":"2026-02-25T18:07:50Z"}},"dependencies":[{"name":"redis","status":"up"},{"name":"database","status":"up"}],"version":"dev","uptime":"3h 8m 5s","checked_at":"2026-02-25T18:07:50Z"}
-  ✅ :8006 → {"status":"up","components":{"database":{"status":"up","latency_ms":0,"checked_at":"2026-02-25T18:07:50Z"},"redis":{"status":"up","latency_ms":0,"checked_at":"2026-02-25T18:07:50Z"}},"dependencies":[{"name":"redis","status":"up"},{"name":"database","status":"up"}],"version":"dev","uptime":"3h 8m 7s","checked_at":"2026-02-25T18:07:50Z"}
+  ✅ :8005 → {"status":"up","components":{"database":{"status":"up","latency_ms":0,"checked_at":"2026-02-26T21:18:27Z"},"redis":{"status":"up","latency_ms":0,"checked_at":"2026-02-26T21:18:27Z"}},"dependencies":[{"name":"redis","status":"up"},{"name":"database","status":"up"}],"version":"dev","uptime":"1d 6h 18m 42s","checked_at":"2026-02-26T21:18:27Z"}
+  ✅ :8006 → {"status":"up","components":{"database":{"status":"up","latency_ms":0,"checked_at":"2026-02-26T21:18:27Z"},"redis":{"status":"up","latency_ms":0,"checked_at":"2026-02-26T21:18:27Z"}},"dependencies":[{"name":"redis","status":"up"},{"name":"database","status":"up"}],"version":"dev","uptime":"1d 6h 18m 44s","checked_at":"2026-02-26T21:18:27Z"}
   ❌ :8007 → UNREACHABLE
   ❌ :8025 → UNREACHABLE
   ❌ :8085 → UNREACHABLE
@@ -27,24 +27,24 @@
 ```
 ## Test Results
 ```
-ok  	github.com/openidx/openidx/internal/gateway/middleware	0.387s
-ok  	github.com/openidx/openidx/internal/gateway/proxy	0.027s
-ok  	github.com/openidx/openidx/internal/gateway/routes	0.036s
-ok  	github.com/openidx/openidx/internal/governance	77.770s
-ok  	github.com/openidx/openidx/internal/health	0.019s
-ok  	github.com/openidx/openidx/internal/identity	0.024s
-ok  	github.com/openidx/openidx/internal/metrics	0.149s
-ok  	github.com/openidx/openidx/internal/mfa	6.987s
-ok  	github.com/openidx/openidx/internal/middleware	2.175s
+ok  	github.com/openidx/openidx/internal/gateway/middleware	0.115s
+ok  	github.com/openidx/openidx/internal/gateway/proxy	0.017s
+ok  	github.com/openidx/openidx/internal/gateway/routes	0.024s
+ok  	github.com/openidx/openidx/internal/governance	95.207s
+ok  	github.com/openidx/openidx/internal/health	0.036s
+ok  	github.com/openidx/openidx/internal/identity	0.038s
+ok  	github.com/openidx/openidx/internal/metrics	0.183s
+ok  	github.com/openidx/openidx/internal/mfa	7.348s
+ok  	github.com/openidx/openidx/internal/middleware	2.191s
 ?   	github.com/openidx/openidx/internal/notifications	[no test files]
-ok  	github.com/openidx/openidx/internal/oauth	11.423s
+ok  	github.com/openidx/openidx/internal/oauth	16.009s
 ?   	github.com/openidx/openidx/internal/organization	[no test files]
 ?   	github.com/openidx/openidx/internal/portal	[no test files]
-ok  	github.com/openidx/openidx/internal/provisioning	0.010s
-ok  	github.com/openidx/openidx/internal/risk	0.052s
-ok  	github.com/openidx/openidx/internal/server	0.755s
-ok  	github.com/openidx/openidx/internal/sms	0.011s
+ok  	github.com/openidx/openidx/internal/provisioning	0.020s
+ok  	github.com/openidx/openidx/internal/risk	0.053s
+ok  	github.com/openidx/openidx/internal/server	0.771s
+ok  	github.com/openidx/openidx/internal/sms	0.015s
 ?   	github.com/openidx/openidx/internal/webhooks	[no test files]
-ok  	github.com/openidx/openidx/pkg/storage	0.218s
-ok  	github.com/openidx/openidx/test/integration	0.014s
+ok  	github.com/openidx/openidx/pkg/storage	0.183s
+ok  	github.com/openidx/openidx/test/integration	0.020s
 ```

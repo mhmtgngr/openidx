@@ -1,0 +1,1655 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Access Service
+  description: Zero Trust access proxy with route management, session control, OpenZiti network overlay, posture checks, BrowZer, and Guacamole integration.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8007
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Routes
+  - name: Sessions
+  - name: Ziti Status
+  - name: Ziti Services
+  - name: Ziti Identities
+  - name: Ziti Fabric
+  - name: Posture Checks
+  - name: Policy Sync
+  - name: Certificates
+  - name: BrowZer
+  - name: Auth Decision
+  - name: Policy
+  - name: Guacamole
+
+paths:
+  # --- Auth (session-based, no bearer auth) ---
+  /access/login:
+    get:
+      tags: [Auth]
+      summary: Login page
+      operationId: loginPage
+      security: []
+      responses:
+        '200':
+          description: Login page rendered
+        '302':
+          description: Redirect to identity provider
+
+  /access/callback:
+    get:
+      tags: [Auth]
+      summary: OAuth callback
+      operationId: oauthCallback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect after successful authentication
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /access/logout:
+    get:
+      tags: [Auth]
+      summary: Logout
+      operationId: logout
+      security: []
+      responses:
+        '302':
+          description: Redirect to login after logout
+
+  /access/session:
+    get:
+      tags: [Auth]
+      summary: Get current session info
+      operationId: getSessionInfo
+      security: []
+      responses:
+        '200':
+          description: Current session information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /access/idps:
+    get:
+      tags: [Auth]
+      summary: List identity providers
+      operationId: listIdps
+      security: []
+      responses:
+        '200':
+          description: Available identity providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdpSummary'
+
+  # --- Routes ---
+  /api/v1/access/routes:
+    get:
+      tags: [Routes]
+      summary: List proxy routes
+      operationId: listRoutes
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of proxy routes
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProxyRoute'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Routes]
+      summary: Create proxy route
+      operationId: createRoute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProxyRouteCreate'
+      responses:
+        '201':
+          description: Route created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyRoute'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/routes/{id}:
+    get:
+      tags: [Routes]
+      summary: Get proxy route
+      operationId: getRoute
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Route details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyRoute'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Routes]
+      summary: Update proxy route
+      operationId: updateRoute
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProxyRouteCreate'
+      responses:
+        '200':
+          description: Route updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyRoute'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Routes]
+      summary: Delete proxy route
+      operationId: deleteRoute
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Route deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Sessions ---
+  /api/v1/access/sessions:
+    get:
+      tags: [Sessions]
+      summary: List active sessions
+      operationId: listSessions
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of active sessions
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProxySession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/sessions/{id}:
+    delete:
+      tags: [Sessions]
+      summary: Revoke session
+      operationId: revokeSession
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Session revoked
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Ziti Status ---
+  /api/v1/access/ziti/status:
+    get:
+      tags: [Ziti Status]
+      summary: Get Ziti controller status
+      operationId: getZitiStatus
+      responses:
+        '200':
+          description: Ziti controller status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZitiStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # --- Ziti Services ---
+  /api/v1/access/ziti/services:
+    get:
+      tags: [Ziti Services]
+      summary: List Ziti services
+      operationId: listZitiServices
+      responses:
+        '200':
+          description: List of Ziti services
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ZitiService'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Ziti Services]
+      summary: Create Ziti service
+      operationId: createZitiService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZitiServiceCreate'
+      responses:
+        '201':
+          description: Ziti service created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZitiService'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/ziti/services/{id}:
+    delete:
+      tags: [Ziti Services]
+      summary: Delete Ziti service
+      operationId: deleteZitiService
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Ziti service deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Ziti Identities ---
+  /api/v1/access/ziti/identities:
+    get:
+      tags: [Ziti Identities]
+      summary: List Ziti identities
+      operationId: listZitiIdentities
+      responses:
+        '200':
+          description: List of Ziti identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ZitiIdentity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Ziti Identities]
+      summary: Create Ziti identity
+      operationId: createZitiIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZitiIdentityCreate'
+      responses:
+        '201':
+          description: Ziti identity created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZitiIdentity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/ziti/identities/{id}:
+    delete:
+      tags: [Ziti Identities]
+      summary: Delete Ziti identity
+      operationId: deleteZitiIdentity
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Ziti identity deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/identities/{id}/enrollment-jwt:
+    get:
+      tags: [Ziti Identities]
+      summary: Get enrollment JWT for identity
+      operationId: getEnrollmentJwt
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Enrollment JWT
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jwt:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Ziti Route Integration ---
+  /api/v1/access/ziti/routes/{id}/enable:
+    post:
+      tags: [Ziti Services]
+      summary: Enable Ziti on route
+      operationId: enableZitiOnRoute
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Ziti enabled on route
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyRoute'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/routes/{id}/disable:
+    post:
+      tags: [Ziti Services]
+      summary: Disable Ziti on route
+      operationId: disableZitiOnRoute
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Ziti disabled on route
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyRoute'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Ziti Fabric ---
+  /api/v1/access/ziti/fabric/overview:
+    get:
+      tags: [Ziti Fabric]
+      summary: Get fabric overview
+      operationId: getFabricOverview
+      responses:
+        '200':
+          description: Fabric overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FabricOverview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/ziti/fabric/routers:
+    get:
+      tags: [Ziti Fabric]
+      summary: List edge routers
+      operationId: listEdgeRouters
+      responses:
+        '200':
+          description: List of edge routers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EdgeRouter'
+
+  /api/v1/access/ziti/fabric/routers/{id}:
+    get:
+      tags: [Ziti Fabric]
+      summary: Get edge router
+      operationId: getEdgeRouter
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Edge router details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeRouter'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/fabric/health:
+    get:
+      tags: [Ziti Fabric]
+      summary: Get fabric health
+      operationId: getFabricHealth
+      responses:
+        '200':
+          description: Fabric health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FabricHealth'
+
+  /api/v1/access/ziti/fabric/reconnect:
+    post:
+      tags: [Ziti Fabric]
+      summary: Reconnect to Ziti controller
+      operationId: reconnectFabric
+      responses:
+        '200':
+          description: Reconnection initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+
+  /api/v1/access/ziti/fabric/metrics:
+    get:
+      tags: [Ziti Fabric]
+      summary: Get fabric metrics
+      operationId: getFabricMetrics
+      responses:
+        '200':
+          description: Fabric metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FabricMetrics'
+
+  /api/v1/access/ziti/fabric/service-policies:
+    get:
+      tags: [Ziti Fabric]
+      summary: List service policies
+      operationId: listServicePolicies
+      responses:
+        '200':
+          description: List of service policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServicePolicy'
+
+  # --- Posture Checks ---
+  /api/v1/access/ziti/posture/checks:
+    get:
+      tags: [Posture Checks]
+      summary: List posture checks
+      operationId: listPostureChecks
+      responses:
+        '200':
+          description: List of posture checks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PostureCheck'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Posture Checks]
+      summary: Create posture check
+      operationId: createPostureCheck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostureCheckCreate'
+      responses:
+        '201':
+          description: Posture check created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureCheck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/ziti/posture/checks/{id}:
+    put:
+      tags: [Posture Checks]
+      summary: Update posture check
+      operationId: updatePostureCheck
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostureCheckCreate'
+      responses:
+        '200':
+          description: Posture check updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureCheck'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Posture Checks]
+      summary: Delete posture check
+      operationId: deletePostureCheck
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Posture check deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/posture/identities/{id}:
+    get:
+      tags: [Posture Checks]
+      summary: Get identity posture
+      operationId: getIdentityPosture
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Identity posture status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityPosture'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/posture/identities/{id}/evaluate:
+    post:
+      tags: [Posture Checks]
+      summary: Evaluate identity posture
+      operationId: evaluateIdentityPosture
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Posture evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureEvaluation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/posture/summary:
+    get:
+      tags: [Posture Checks]
+      summary: Get posture summary
+      operationId: getPostureSummary
+      responses:
+        '200':
+          description: Posture summary across all identities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostureSummary'
+
+  # --- Policy Sync ---
+  /api/v1/access/ziti/policy-sync:
+    get:
+      tags: [Policy Sync]
+      summary: List policy sync states
+      operationId: listPolicySyncStates
+      responses:
+        '200':
+          description: List of policy sync states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PolicySyncState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Policy Sync]
+      summary: Sync governance policy to Ziti
+      operationId: syncGovernancePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicySyncRequest'
+      responses:
+        '200':
+          description: Policy sync initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicySyncState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/access/ziti/policy-sync/{id}/trigger:
+    post:
+      tags: [Policy Sync]
+      summary: Trigger policy sync
+      operationId: triggerPolicySync
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Policy sync triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicySyncState'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/policy-sync/{id}:
+    delete:
+      tags: [Policy Sync]
+      summary: Delete policy sync state
+      operationId: deletePolicySyncState
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Policy sync state deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Certificates ---
+  /api/v1/access/ziti/certificates:
+    get:
+      tags: [Certificates]
+      summary: List certificates
+      operationId: listCertificates
+      responses:
+        '200':
+          description: List of certificates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Certificate'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/ziti/certificates/expiry-alerts:
+    get:
+      tags: [Certificates]
+      summary: Get certificate expiry alerts
+      operationId: getCertificateExpiryAlerts
+      responses:
+        '200':
+          description: Certificates approaching expiry
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CertificateExpiryAlert'
+
+  /api/v1/access/ziti/certificates/{id}/rotate:
+    post:
+      tags: [Certificates]
+      summary: Rotate certificate
+      operationId: rotateCertificate
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Certificate rotated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Certificate'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- BrowZer ---
+  /api/v1/access/ziti/browzer/status:
+    get:
+      tags: [BrowZer]
+      summary: Get BrowZer status
+      operationId: getBrowzerStatus
+      responses:
+        '200':
+          description: BrowZer status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowzerStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/ziti/browzer/enable:
+    post:
+      tags: [BrowZer]
+      summary: Enable BrowZer
+      operationId: enableBrowzer
+      responses:
+        '200':
+          description: BrowZer enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowzerStatus'
+
+  /api/v1/access/ziti/browzer/disable:
+    post:
+      tags: [BrowZer]
+      summary: Disable BrowZer
+      operationId: disableBrowzer
+      responses:
+        '200':
+          description: BrowZer disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowzerStatus'
+
+  /api/v1/access/ziti/browzer/services/{id}/enable:
+    post:
+      tags: [BrowZer]
+      summary: Enable BrowZer on service
+      operationId: enableBrowzerOnService
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: BrowZer enabled on service
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/ziti/browzer/services/{id}/disable:
+    post:
+      tags: [BrowZer]
+      summary: Disable BrowZer on service
+      operationId: disableBrowzerOnService
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: BrowZer disabled on service
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Auth Decision ---
+  /api/v1/access/auth/decide:
+    post:
+      tags: [Auth Decision]
+      summary: Auth decision endpoint (POST)
+      operationId: authDecidePost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthDecisionRequest'
+      responses:
+        '200':
+          description: Auth decision result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthDecisionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      tags: [Auth Decision]
+      summary: Auth decision endpoint (GET)
+      operationId: authDecideGet
+      parameters:
+        - name: uri
+          in: query
+          schema:
+            type: string
+        - name: method
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Auth decision result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthDecisionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # --- Policy Validation ---
+  /api/v1/access/routes/validate-policy:
+    post:
+      tags: [Policy]
+      summary: Validate route policy
+      operationId: validateRoutePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyValidationRequest'
+      responses:
+        '200':
+          description: Policy validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyValidationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # --- Guacamole ---
+  /api/v1/access/guacamole/connections:
+    get:
+      tags: [Guacamole]
+      summary: List Guacamole connections
+      operationId: listGuacamoleConnections
+      responses:
+        '200':
+          description: List of Guacamole connections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuacamoleConnection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/guacamole/connections/{routeId}/connect:
+    post:
+      tags: [Guacamole]
+      summary: Connect to Guacamole session
+      operationId: connectGuacamole
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Guacamole connection details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuacamoleConnectResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    # --- Auth ---
+    SessionInfo:
+      type: object
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        authenticated:
+          type: boolean
+
+    IdpSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider_type:
+          type: string
+        enabled:
+          type: boolean
+
+    # --- Routes ---
+    ProxyRoute:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        from_url:
+          type: string
+        to_url:
+          type: string
+        preserve_host:
+          type: boolean
+        require_auth:
+          type: boolean
+        allowed_roles:
+          type: array
+          items:
+            type: string
+        allowed_groups:
+          type: array
+          items:
+            type: string
+        policy_ids:
+          type: array
+          items:
+            type: string
+        idle_timeout:
+          type: integer
+          description: Idle timeout in seconds
+        absolute_timeout:
+          type: integer
+          description: Absolute timeout in seconds
+        cors_allowed_origins:
+          type: array
+          items:
+            type: string
+        custom_headers:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        ziti_enabled:
+          type: boolean
+        ziti_service_name:
+          type: string
+        idp_id:
+          type: string
+        route_type:
+          type: string
+        remote_host:
+          type: string
+        remote_port:
+          type: integer
+        reverify_interval:
+          type: integer
+          description: Re-verification interval in seconds
+        posture_check_ids:
+          type: array
+          items:
+            type: string
+        inline_policy:
+          type: object
+        require_device_trust:
+          type: boolean
+        allowed_countries:
+          type: array
+          items:
+            type: string
+        max_risk_score:
+          type: number
+        guacamole_connection_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProxyRouteCreate:
+      type: object
+      required: [name, from_url, to_url]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        from_url:
+          type: string
+        to_url:
+          type: string
+        preserve_host:
+          type: boolean
+        require_auth:
+          type: boolean
+        allowed_roles:
+          type: array
+          items:
+            type: string
+        allowed_groups:
+          type: array
+          items:
+            type: string
+        policy_ids:
+          type: array
+          items:
+            type: string
+        idle_timeout:
+          type: integer
+        absolute_timeout:
+          type: integer
+        cors_allowed_origins:
+          type: array
+          items:
+            type: string
+        custom_headers:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+        ziti_enabled:
+          type: boolean
+        ziti_service_name:
+          type: string
+        idp_id:
+          type: string
+        route_type:
+          type: string
+        remote_host:
+          type: string
+        remote_port:
+          type: integer
+        reverify_interval:
+          type: integer
+        posture_check_ids:
+          type: array
+          items:
+            type: string
+        inline_policy:
+          type: object
+        require_device_trust:
+          type: boolean
+        allowed_countries:
+          type: array
+          items:
+            type: string
+        max_risk_score:
+          type: number
+        guacamole_connection_id:
+          type: string
+
+    # --- Sessions ---
+    ProxySession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        route_id:
+          type: string
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        started_at:
+          type: string
+          format: date-time
+        last_active_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+        device_fingerprint:
+          type: string
+        risk_score:
+          type: number
+        auth_methods:
+          type: array
+          items:
+            type: string
+        location:
+          type: string
+        device_trusted:
+          type: boolean
+
+    # --- Ziti ---
+    ZitiStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        controller_url:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+
+    ZitiService:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        encryption_required:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    ZitiServiceCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        encryption_required:
+          type: boolean
+
+    ZitiIdentity:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        is_online:
+          type: boolean
+        enrollment_status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ZitiIdentityCreate:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+
+    # --- Fabric ---
+    FabricOverview:
+      type: object
+      properties:
+        controller_version:
+          type: string
+        router_count:
+          type: integer
+        service_count:
+          type: integer
+        identity_count:
+          type: integer
+        session_count:
+          type: integer
+
+    EdgeRouter:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        hostname:
+          type: string
+        is_online:
+          type: boolean
+        is_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    FabricHealth:
+      type: object
+      properties:
+        healthy:
+          type: boolean
+        controller_status:
+          type: string
+        router_statuses:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              online:
+                type: boolean
+
+    FabricMetrics:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        sessions_active:
+          type: integer
+        data_transferred_bytes:
+          type: integer
+        connections_active:
+          type: integer
+
+    ServicePolicy:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        service_roles:
+          type: array
+          items:
+            type: string
+        identity_roles:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # --- Posture ---
+    PostureCheck:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+        parameters:
+          type: object
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PostureCheckCreate:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        parameters:
+          type: object
+        enabled:
+          type: boolean
+          default: true
+
+    IdentityPosture:
+      type: object
+      properties:
+        identity_id:
+          type: string
+        checks:
+          type: array
+          items:
+            type: object
+            properties:
+              check_id:
+                type: string
+              name:
+                type: string
+              passing:
+                type: boolean
+              last_evaluated:
+                type: string
+                format: date-time
+        overall_passing:
+          type: boolean
+
+    PostureEvaluation:
+      type: object
+      properties:
+        identity_id:
+          type: string
+        passing:
+          type: boolean
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              check_id:
+                type: string
+              name:
+                type: string
+              passing:
+                type: boolean
+              reason:
+                type: string
+
+    PostureSummary:
+      type: object
+      properties:
+        total_identities:
+          type: integer
+        passing:
+          type: integer
+        failing:
+          type: integer
+        unknown:
+          type: integer
+        checks_defined:
+          type: integer
+
+    # --- Policy Sync ---
+    PolicySyncState:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        governance_policy_id:
+          type: string
+        ziti_policy_id:
+          type: string
+        status:
+          type: string
+          enum: [synced, pending, error]
+        last_synced_at:
+          type: string
+          format: date-time
+        error_message:
+          type: string
+
+    PolicySyncRequest:
+      type: object
+      required: [governance_policy_id]
+      properties:
+        governance_policy_id:
+          type: string
+
+    # --- Certificates ---
+    Certificate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        issuer:
+          type: string
+        serial_number:
+          type: string
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        fingerprint:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+
+    CertificateExpiryAlert:
+      type: object
+      properties:
+        certificate_id:
+          type: string
+        subject:
+          type: string
+        not_after:
+          type: string
+          format: date-time
+        days_until_expiry:
+          type: integer
+        severity:
+          type: string
+          enum: [info, warning, critical]
+
+    # --- BrowZer ---
+    BrowzerStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        bootstrapper_url:
+          type: string
+        version:
+          type: string
+        services_enabled:
+          type: integer
+
+    # --- Auth Decision ---
+    AuthDecisionRequest:
+      type: object
+      properties:
+        uri:
+          type: string
+        method:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+
+    AuthDecisionResponse:
+      type: object
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+        user_id:
+          type: string
+        required_action:
+          type: string
+
+    # --- Policy Validation ---
+    PolicyValidationRequest:
+      type: object
+      properties:
+        inline_policy:
+          type: object
+        allowed_roles:
+          type: array
+          items:
+            type: string
+        allowed_groups:
+          type: array
+          items:
+            type: string
+        require_device_trust:
+          type: boolean
+        allowed_countries:
+          type: array
+          items:
+            type: string
+        max_risk_score:
+          type: number
+
+    PolicyValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    # --- Guacamole ---
+    GuacamoleConnection:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        protocol:
+          type: string
+          enum: [rdp, ssh, vnc, telnet]
+        hostname:
+          type: string
+        port:
+          type: integer
+        route_id:
+          type: string
+        active_connections:
+          type: integer
+
+    GuacamoleConnectResponse:
+      type: object
+      properties:
+        connection_id:
+          type: string
+        websocket_url:
+          type: string
+        token:
+          type: string

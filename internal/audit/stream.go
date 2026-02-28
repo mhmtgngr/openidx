@@ -17,12 +17,14 @@ import (
 
 // EventStreamer manages real-time streaming of audit events
 type EventStreamer struct {
-	logger        *zap.Logger
-	clients       map[string]*StreamClient
-	clientsMutex  sync.RWMutex
-	webhookQueue  chan *WebhookDelivery
-	webhookConfig *WebhookConfig
-	service       *Service
+	logger         *zap.Logger
+	clients        map[string]*StreamClient
+	clientsMutex   sync.RWMutex
+	webhookQueue   chan *WebhookDelivery
+	webhookConfig  *WebhookConfig
+	service        *Service
+	originValidator *OriginValidator
+	upgrader       *websocket.Upgrader
 }
 
 // StreamClient represents a connected WebSocket client
@@ -72,18 +74,9 @@ type WebhookSubscription struct {
 	FailureCount  int            `json:"failure_count"`
 }
 
-// WebSocket upgrader configuration
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // TODO: Configure proper origin checking
-	},
-}
-
-// NewEventStreamer creates a new event streamer
-func NewEventStreamer(logger *zap.Logger, service *Service) *EventStreamer {
-	config := &WebhookConfig{
+// NewEventStreamer creates a new event streamer with configurable origin validation
+func NewEventStreamer(logger *zap.Logger, service *Service, allowedOrigins []string) *EventStreamer {
+	webhookConfig := &WebhookConfig{
 		MaxRetries: 5,
 		RetryDelay: time.Second,
 		Timeout:    30 * time.Second,
@@ -91,12 +84,58 @@ func NewEventStreamer(logger *zap.Logger, service *Service) *EventStreamer {
 		Enabled:    true,
 	}
 
+	originValidator := NewOriginValidator(logger, allowedOrigins, true)
+
+	// Create upgrader with origin validation
+	upgrader := &websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     originValidator.CheckOrigin,
+		HandshakeTimeout: 10 * time.Second,
+	}
+
 	return &EventStreamer{
-		logger:       logger,
-		clients:      make(map[string]*StreamClient),
-		webhookQueue: make(chan *WebhookDelivery, config.QueueSize),
-		webhookConfig: config,
-		service:      service,
+		logger:          logger,
+		clients:         make(map[string]*StreamClient),
+		webhookQueue:    make(chan *WebhookDelivery, webhookConfig.QueueSize),
+		webhookConfig:   webhookConfig,
+		service:         service,
+		originValidator: originValidator,
+		upgrader:        upgrader,
+	}
+}
+
+// NewEventStreamerWithConfig creates a new event streamer with full stream config
+func NewEventStreamerWithConfig(logger *zap.Logger, service *Service, streamConfig *StreamConfig) *EventStreamer {
+	if streamConfig == nil {
+		streamConfig = DefaultStreamConfig()
+	}
+
+	webhookConfig := &WebhookConfig{
+		MaxRetries: 5,
+		RetryDelay: time.Second,
+		Timeout:    30 * time.Second,
+		QueueSize:  1000,
+		Enabled:    true,
+	}
+
+	originValidator := NewOriginValidator(logger, streamConfig.AllowedOrigins, streamConfig.EnableSecurityLogging)
+
+	upgrader := &websocket.Upgrader{
+		ReadBufferSize:  streamConfig.MaxMessageSize,
+		WriteBufferSize: streamConfig.MaxMessageSize,
+		CheckOrigin:     originValidator.CheckOrigin,
+		HandshakeTimeout: time.Duration(streamConfig.WriteTimeout) * time.Second,
+	}
+
+	return &EventStreamer{
+		logger:          logger,
+		clients:         make(map[string]*StreamClient),
+		webhookQueue:    make(chan *WebhookDelivery, webhookConfig.QueueSize),
+		webhookConfig:   webhookConfig,
+		service:         service,
+		originValidator: originValidator,
+		upgrader:        upgrader,
 	}
 }
 
@@ -122,9 +161,12 @@ func (es *EventStreamer) RegisterRoutes(r *gin.RouterGroup) {
 
 // handleWebSocketStream upgrades HTTP to WebSocket and streams events
 func (es *EventStreamer) handleWebSocketStream(c *gin.Context) {
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	conn, err := es.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		es.logger.Error("Failed to upgrade to WebSocket", zap.Error(err))
+		es.logger.Error("Failed to upgrade to WebSocket",
+			zap.String("client_id", c.Query("client_id")),
+			zap.String("remote_addr", c.Request.RemoteAddr),
+			zap.Error(err))
 		return
 	}
 
@@ -600,6 +642,24 @@ func (es *EventStreamer) GetConnectedClients() int {
 	es.clientsMutex.RLock()
 	defer es.clientsMutex.RUnlock()
 	return len(es.clients)
+}
+
+// GetAllowedOrigins returns the current allowed origins for WebSocket connections
+func (es *EventStreamer) GetAllowedOrigins() []string {
+	return es.originValidator.GetAllowedOrigins()
+}
+
+// UpdateAllowedOrigins updates the allowed origins for WebSocket connections
+func (es *EventStreamer) UpdateAllowedOrigins(origins []string) {
+	es.originValidator.UpdateAllowedOrigins(origins)
+	es.logger.Info("WebSocket allowed origins updated",
+		zap.Int("origin_count", len(origins)),
+		zap.Bool("wildcard_allowed", es.originValidator.IsWildcardAllowed()))
+}
+
+// GetOriginValidator returns the origin validator for external use
+func (es *EventStreamer) GetOriginValidator() *OriginValidator {
+	return es.originValidator
 }
 
 // splitAndTrim splits a string and trims whitespace from each part

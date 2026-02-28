@@ -27,7 +27,9 @@
       "Bash(echo Python parsing failed, showing raw...:*)",
       "Bash(podman-compose build:*)",
       "Bash(cat:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(./showcase.sh scan:*)",
+      "Bash(./showcase.sh build:*)"
     ]
   }
 }

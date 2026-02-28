@@ -63,7 +63,7 @@ export interface ProvisioningRule {
 
 // Get API base URL based on environment
 const getAPIBaseURL = (): string => {
-  const envURL = import.meta.env.VITE_API_URL
+  const envURL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
   if (envURL) {
     return envURL
   }

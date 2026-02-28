@@ -136,7 +136,7 @@ func main() {
 			PerUser:      cfg.RateLimitPerUser,
 		}, log))
 	}
-	router.Use(middleware.CORS("http://localhost:3000", "http://localhost:5173"))
+	router.Use(middleware.CORS("http://localhost:3000", "http://localhost:5173", "http://192.168.31.76:3000", "http://192.168.31.76:5173"))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.PrometheusMetrics("admin-api"))
 	router.Use(api.StandardVersionMiddleware())

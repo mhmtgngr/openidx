@@ -7,10 +7,10 @@
 
 ## Files Changed
 ```
- .team/artifacts/project_completion.json | 16 ++++++++--------
- .team/phase_history.json                |  8 +++++++-
- .team/state.json                        |  4 ++--
- 3 files changed, 17 insertions(+), 11 deletions(-)
+ .team/artifacts/project_completion.json |  2 +-
+ .team/demo/demo_report.md               | 40 ++++++++++++++++-----------------
+ .team/pr/demo_results.md                | 40 ++++++++++++++++-----------------
+ 3 files changed, 41 insertions(+), 41 deletions(-)
 ```
 
 ## Checklist

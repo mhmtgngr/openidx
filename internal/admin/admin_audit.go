@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -344,4 +345,286 @@ func (s *Service) handleGetSettingsHistory(c *gin.Context) {
 		"limit":   limit,
 		"offset":  offset,
 	})
+}
+
+// ============================================================================
+// Audit Stream Configuration Endpoints
+// ============================================================================
+
+// AuditStreamConfig represents the configuration for audit stream WebSocket
+type AuditStreamConfig struct {
+	AllowedOrigins []string `json:"allowed_origins"`
+	EnableLogging bool     `json:"enable_logging"`
+	MaxClients    int      `json:"max_clients"`
+	UpdatedAt     string   `json:"updated_at"`
+	UpdatedBy     string   `json:"updated_by,omitempty"`
+}
+
+// handleGetAuditStreamConfig returns the current audit stream configuration
+func (s *Service) handleGetAuditStreamConfig(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+
+	// Get current configuration from database or return defaults
+	config, err := s.getAuditStreamConfigFromDB(c.Request.Context())
+	if err != nil {
+		s.logger.Warn("Failed to get audit stream config from DB, using defaults", zap.Error(err))
+		config = &AuditStreamConfig{
+			AllowedOrigins: []string{},
+			EnableLogging:  true,
+			MaxClients:    100,
+			UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+
+	c.JSON(http.StatusOK, config)
+}
+
+// handleUpdateAuditStreamConfig updates the audit stream configuration
+func (s *Service) handleUpdateAuditStreamConfig(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+
+	var req AuditStreamConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid_request",
+			"message": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Validate configuration
+	if req.MaxClients < 1 || req.MaxClients > 10000 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid_max_clients",
+			"message": "max_clients must be between 1 and 10000",
+		})
+		return
+	}
+
+	// In production, validate that origins are not wildcard
+	if s.config.IsProduction() {
+		for _, origin := range req.AllowedOrigins {
+			if origin == "*" {
+				s.logger.Warn("Attempted to set wildcard origin in production",
+					zap.String("actor_id", getString(c, "user_id")))
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":   "wildcard_not_allowed",
+					"message": "Wildcard origin '*' is not allowed in production",
+				})
+				return
+			}
+		}
+	}
+
+	ctx := c.Request.Context()
+	actorID := getString(c, "user_id")
+	actorEmail := getString(c, "email")
+
+	// Store configuration in database
+	req.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	req.UpdatedBy = actorEmail
+
+	err := s.saveAuditStreamConfigToDB(ctx, &req)
+	if err != nil {
+		s.logger.Error("Failed to save audit stream config", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "save_failed",
+			"message": "Failed to save configuration",
+		})
+		return
+	}
+
+	// Record admin action
+	_ = s.RecordAdminAction(
+		ctx,
+		actorID,
+		actorEmail,
+		"update_audit_stream_config",
+		"audit_stream_config",
+		"",
+		"Audit Stream Configuration",
+		c.ClientIP(),
+		c.Request.UserAgent(),
+		c.GetString("request_id"),
+		nil,
+		&req,
+	)
+
+	s.logger.Info("Audit stream configuration updated",
+		zap.String("actor_id", actorID),
+		zap.Int("origin_count", len(req.AllowedOrigins)),
+		zap.Bool("enable_logging", req.EnableLogging),
+		zap.Int("max_clients", req.MaxClients))
+
+	c.JSON(http.StatusOK, req)
+}
+
+// handleTestAuditStreamOrigin tests if an origin is allowed for audit stream connections
+func (s *Service) handleTestAuditStreamOrigin(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+
+	var req struct {
+		Origin string `json:"origin" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid_request",
+			"message": "Invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	config, err := s.getAuditStreamConfigFromDB(c.Request.Context())
+	if err != nil {
+		s.logger.Warn("Failed to get audit stream config from DB", zap.Error(err))
+		config = &AuditStreamConfig{
+			AllowedOrigins: []string{},
+		}
+	}
+
+	// Check if origin is allowed
+	allowed := false
+	normalizedOrigin := normalizeOriginForTest(req.Origin)
+
+	for _, allowedOrigin := range config.AllowedOrigins {
+		allowedOrigin = normalizeOriginForTest(allowedOrigin)
+
+		// Wildcard match
+		if allowedOrigin == "*" {
+			allowed = true
+			break
+		}
+
+		// Exact match
+		if normalizedOrigin == allowedOrigin {
+			allowed = true
+			break
+		}
+
+		// Wildcard subdomain
+		if len(allowedOrigin) > 2 && allowedOrigin[0:2] == "*." {
+			domain := allowedOrigin[2:]
+			if len(normalizedOrigin) > len(domain)+2 &&
+				normalizedOrigin[len(normalizedOrigin)-len(domain)-1:] == "."+domain {
+				allowed = true
+				break
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"origin":  req.Origin,
+		"allowed": allowed,
+		"message": getMessageForOriginResult(allowed),
+	})
+}
+
+// handleGetAuditStreamStats returns statistics about the audit stream
+func (s *Service) handleGetAuditStreamStats(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Get connected clients count from audit service
+	var connectedClients int
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM audit_stream_sessions WHERE connected = true").Scan(&connectedClients)
+	if err != nil {
+		connectedClients = 0 // Table may not exist yet
+	}
+
+	// Get recent connection attempts
+	var recentAttempts int
+	s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM audit_stream_security_events WHERE created_at > NOW() - INTERVAL '1 hour'").
+		Scan(&recentAttempts)
+
+	// Get rejected connections
+	var rejectedConnections int
+	s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM audit_stream_security_events WHERE event_type = 'connection_rejected' AND created_at > NOW() - INTERVAL '24 hours'").
+		Scan(&rejectedConnections)
+
+	c.JSON(http.StatusOK, gin.H{
+		"connected_clients":       connectedClients,
+		"recent_attempts_1h":      recentAttempts,
+		"rejected_connections_24h": rejectedConnections,
+		"timestamp":               time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// getAuditStreamConfigFromDB retrieves audit stream configuration from database
+func (s *Service) getAuditStreamConfigFromDB(ctx context.Context) (*AuditStreamConfig, error) {
+	var configJSON []byte
+	var updatedAt time.Time
+
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT config_data, updated_at FROM audit_stream_config ORDER BY updated_at DESC LIMIT 1").
+		Scan(&configJSON, &updatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	var config AuditStreamConfig
+	if err := json.Unmarshal(configJSON, &config); err != nil {
+		return nil, err
+	}
+
+	config.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+
+	return &config, nil
+}
+
+// saveAuditStreamConfigToDB saves audit stream configuration to database
+func (s *Service) saveAuditStreamConfigToDB(ctx context.Context, config *AuditStreamConfig) error {
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO audit_stream_config (id, config_data, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (id) DO UPDATE
+		SET config_data = EXCLUDED.config_data, updated_at = NOW()
+	`, "default", configJSON)
+
+	return err
+}
+
+// normalizeOriginForTest normalizes an origin URL for comparison in tests
+func normalizeOriginForTest(origin string) string {
+	origin = strings.TrimSpace(origin)
+	origin = strings.ToLower(origin)
+	origin = strings.TrimSuffix(origin, ":80")
+	origin = strings.TrimSuffix(origin, ":443")
+	return origin
+}
+
+// getMessageForOriginResult returns a user-friendly message based on the origin test result
+func getMessageForOriginResult(allowed bool) string {
+	if allowed {
+		return "Origin is allowed for WebSocket audit stream connections"
+	}
+	return "Origin is NOT in the allowed list - connections will be rejected"
+}
+
+// getString safely gets a string value from Gin context
+func getString(c *gin.Context, key string) string {
+	if v, exists := c.Get(key); exists {
+		if str, ok := v.(string); ok {
+			return str
+		}
+	}
+	return ""
 }
