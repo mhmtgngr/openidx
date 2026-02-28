@@ -173,7 +173,8 @@ func RejectOriginHandler(logger *zap.Logger, allowedOrigins []string) gin.Handle
 			// Wildcard subdomain
 			if strings.HasPrefix(allowedOrigin, "*.") {
 				domain := strings.TrimPrefix(allowedOrigin, "*.")
-				if strings.HasSuffix(normalizedOrigin, "."+domain) || normalizedOrigin == domain {
+				// Only match subdomains, not the bare domain
+				if strings.HasSuffix(normalizedOrigin, "."+domain) {
 					allowed = true
 					break
 				}

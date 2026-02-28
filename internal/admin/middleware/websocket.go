@@ -78,6 +78,7 @@ func (wv *WebSocketOriginValidator) CheckOrigin(r *http.Request) bool {
 		// Wildcard subdomain
 		if strings.HasPrefix(allowed, "*.") {
 			domain := strings.TrimPrefix(allowed, "*.")
+			// Note: Admin API allows both subdomains and bare domain for wildcard patterns
 			if strings.HasSuffix(normalized, "."+domain) || normalized == domain {
 				if wv.config.EnableLogging {
 					wv.logger.Info("Admin WebSocket connection allowed (subdomain match)",

@@ -4,7 +4,6 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -421,18 +420,19 @@ func TestOriginValidatorMiddleware_CaseInsensitive(t *testing.T) {
 	})
 
 	tests := []struct {
+		name   string
 		origin string
 	}{
-		{"https://example.com"},
-		{"https://EXAMPLE.COM"},
-		{"HTTPS://EXAMPLE.COM"},
-		{"HtTpS://ExAmPlE.CoM"},
+		{"lowercase", "https://example.com"},
+		{"uppercase", "https://EXAMPLE.COM"},
+		{"mixed case", "HTTPS://EXAMPLE.COM"},
+		{"random case", "HtTpS://ExAmPlE.CoM"},
 	}
 
-	for _, origin := range tests {
-		t.Run("case: "+origin, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/test", nil)
-			req.Header.Set("Origin", origin)
+			req.Header.Set("Origin", tt.origin)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 

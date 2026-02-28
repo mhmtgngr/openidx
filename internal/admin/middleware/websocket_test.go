@@ -43,8 +43,7 @@ func TestNewWebSocketOriginValidator_NilConfig(t *testing.T) {
 }
 
 func TestWebSocketOriginValidator_CheckOrigin_NoOrigin(t *testing.T) {
-	zapCore, logs := observer.New(zapcore.InfoLevel)
-	logger := zap.New(zapCore)
+	logger := zap.NewNop()
 	cfg := &WebSocketOriginConfig{
 		AllowedOrigins: []string{"https://example.com"},
 		EnableLogging:  true,
@@ -89,17 +88,18 @@ func TestWebSocketOriginValidator_CheckOrigin_CaseInsensitive(t *testing.T) {
 	validator := NewWebSocketOriginValidator(logger, cfg)
 
 	tests := []struct {
+		name   string
 		origin string
 	}{
-		{"https://example.com"},
-		{"HTTPS://EXAMPLE.COM"},
-		{"HtTpS://ExAmPlE.CoM"},
+		{"lowercase", "https://example.com"},
+		{"uppercase", "HTTPS://EXAMPLE.COM"},
+		{"mixed case", "HtTpS://ExAmPlE.CoM"},
 	}
 
-	for _, origin := range tests {
-		t.Run("case: "+origin, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/ws", nil)
-			req.Header.Set("Origin", origin)
+			req.Header.Set("Origin", tt.origin)
 
 			result := validator.CheckOrigin(req)
 			assert.True(t, result)
@@ -143,7 +143,7 @@ func TestWebSocketOriginValidator_CheckOrigin_WildcardSubdomain(t *testing.T) {
 		{"https://app.example.com", true},
 		{"https://api.example.com", true},
 		{"https://sub.sub.example.com", true},
-		{"https://example.com", true}, // Note: Admin allows bare domain too
+		{"https://example.com", false}, // Bare domain not allowed by *.example.com pattern
 		{"https://evil.com", false},
 		{"https://example.com.evil.com", false},
 	}
@@ -369,8 +369,9 @@ func TestLogAdminWebSocketSecurityEvent(t *testing.T) {
 	entry := logs.All()[0]
 	assert.Equal(t, zapcore.WarnLevel, entry.Level)
 	assert.Equal(t, "Admin WebSocket security event", entry.Message)
-	assert.Equal(t, "origin_rejected", entry.ContextMap["event_type"])
-	assert.Equal(t, "https://evil.com", entry.ContextMap["origin"])
+	contextMap := entry.ContextMap()
+	assert.Equal(t, "origin_rejected", contextMap["event_type"])
+	assert.Equal(t, "https://evil.com", contextMap["origin"])
 }
 
 func TestAdminWebSocketSecurityEvent_Serialization(t *testing.T) {

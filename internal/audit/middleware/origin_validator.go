@@ -133,9 +133,10 @@ func OriginValidatorMiddleware(logger *zap.Logger, config *OriginValidationConfi
 			}
 
 			// Wildcard subdomain (e.g., *.example.com)
+			// Note: Only matches subdomains, not the bare domain
 			if strings.HasPrefix(allowedOrigin, "*.") {
 				domain := strings.TrimPrefix(allowedOrigin, "*.")
-				if strings.HasSuffix(normalizedOrigin, "."+domain) || normalizedOrigin == domain {
+				if strings.HasSuffix(normalizedOrigin, "."+domain) {
 					allowed = true
 					matchedPattern = allowedOrigin
 					break
@@ -189,10 +190,14 @@ func OriginValidatorMiddleware(logger *zap.Logger, config *OriginValidationConfi
 				})
 				return
 			}
+			// Mark as not validated and continue
+			c.Set("origin_validated", false)
+			c.Next()
+			return
 		}
 
 		// Log successful validation
-		if config.EnableLogging && allowed {
+		if config.EnableLogging {
 			securityLogger.LogAcceptedConnection(origin, realIP, c.Request.UserAgent())
 		}
 

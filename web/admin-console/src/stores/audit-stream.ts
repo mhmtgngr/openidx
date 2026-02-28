@@ -49,6 +49,7 @@ interface AuditStreamState {
   addEvent: (event: AuditEvent) => void
   clearEvents: () => void
   setAllowedOrigins: (origins: string[]) => void
+  setCurrentOrigin: (origin: string) => void
   clearError: () => void
 }
 
@@ -222,6 +223,10 @@ export const useAuditStreamStore = create<AuditStreamState>((set, get) => ({
 
     setAllowedOrigins: (origins) => {
       set({ allowedOrigins: origins })
+    },
+
+    setCurrentOrigin: (origin) => {
+      set({ currentOrigin: origin })
     },
 
     clearError: () => {

@@ -98,9 +98,10 @@ func IsOriginAllowed(origin string, allowedOrigins []string) bool {
 		}
 
 		// Wildcard subdomain (e.g., *.example.com)
+		// Note: This only matches subdomains, not the bare domain
 		if strings.HasPrefix(allowed, "*.") {
 			domain := strings.TrimPrefix(allowed, "*.")
-			if strings.HasSuffix(normalized, "."+domain) || normalized == domain {
+			if strings.HasSuffix(normalized, "."+domain) {
 				return true
 			}
 		}

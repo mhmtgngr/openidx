@@ -100,7 +100,8 @@ func (ov *OriginValidator) CheckOrigin(r *http.Request) bool {
 		// Wildcard subdomain (e.g., *.example.com)
 		if strings.HasPrefix(allowed, "*.") {
 			domain := strings.TrimPrefix(allowed, "*.")
-			if strings.HasSuffix(normalized, "."+domain) || normalized == domain {
+			// Only match subdomains, not the bare domain
+			if strings.HasSuffix(normalized, "."+domain) {
 				if ov.enableLogging {
 					ov.logger.Info("WebSocket connection allowed (subdomain match)",
 						zap.String("origin", origin),
