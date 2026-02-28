@@ -5414,9 +5414,26 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 		limit = 100
 	}
 	workflowID := c.Query("workflow_id")
-	userID := c.Query("user_id")
+	requestedUserID := c.Query("user_id")
+	authUserID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
 
-	executions, total, err := s.ListLifecycleExecutions(c.Request.Context(), offset, limit, workflowID, userID)
+	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' workflow executions
+	if requestedUserID != "" && requestedUserID != authUserID {
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(403, gin.H{"error": "insufficient permissions to view other users' executions"})
+			return
+		}
+	}
+
+	executions, total, err := s.ListLifecycleExecutions(c.Request.Context(), offset, limit, workflowID, requestedUserID)
 	if err != nil {
 		s.logger.Error("failed to list lifecycle executions", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})

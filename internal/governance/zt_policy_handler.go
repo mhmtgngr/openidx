@@ -446,31 +446,27 @@ func (h *ZTPolicyHandler) EvaluatePolicies(c *gin.Context) {
 		c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", time.Now().Add(windowDuration).Unix()))
 	} else {
 		// Fallback to in-memory rate limiting (not recommended for production)
+		// SECURITY: Fixed race condition by using single Lock() for entire check
 		now := time.Now()
 
-		rateLimitStore.RLock()
+		rateLimitStore.Lock()
+		defer rateLimitStore.Unlock()
+
 		entry, exists := rateLimitStore.entries[rateLimitKey]
-		rateLimitStore.RUnlock()
 
 		if !exists || now.After(entry.resetTime) {
 			// Create new entry or expired entry
-			rateLimitStore.Lock()
 			rateLimitStore.entries[rateLimitKey] = &rateLimitEntry{
 				count:     1,
 				resetTime: now.Add(windowDuration),
 			}
-			rateLimitStore.Unlock()
 		} else {
 			// Increment counter
-			rateLimitStore.Lock()
 			entry.count++
-			count := entry.count
-			rateLimitStore.Unlock()
-
-			if count > maxRequestsPerMinute {
+			if entry.count > maxRequestsPerMinute {
 				h.logger.Warn("Policy evaluation rate limit exceeded (in-memory)",
 					zap.String("client_ip", clientIP),
-					zap.Int64("count", count))
+					zap.Int64("count", entry.count))
 				c.JSON(http.StatusTooManyRequests, gin.H{
 					"error": "rate limit exceeded, please retry later",
 				})
