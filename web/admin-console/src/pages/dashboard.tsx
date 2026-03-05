@@ -12,11 +12,22 @@ import {
   Settings,
   Network,
   RefreshCw,
+  Laptop,
+  AppWindow,
+  UserCircle,
+  Rocket,
+  ArrowRight,
+  Lock,
+  Globe,
+  Bell,
+  Smartphone,
+  FolderKey,
 } from 'lucide-react'
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
 
 interface ActivityItem {
   id: string
@@ -84,7 +95,245 @@ function activityIcon(type: string) {
   }
 }
 
-export function DashboardPage() {
+// ─── User Dashboard (regular users) ───────────────────────────────
+
+function UserDashboard() {
+  const { user } = useAuth()
+  const firstName = user?.name?.split(' ')[0] || 'there'
+
+  const { data: zitiStatus } = useQuery({
+    queryKey: ['ziti-status'],
+    queryFn: () => api.get<ZitiStatus>('/api/v1/access/ziti/status'),
+    refetchInterval: 15000,
+  })
+
+  const { data: stats } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: () => api.get<DashboardStats>('/api/v1/dashboard'),
+  })
+
+  // Derive simple onboarding checklist from available data
+  const hasApps = (stats?.total_applications || 0) > 0
+  const hasMfa = (stats?.auth_stats?.mfa_usage || 0) > 0
+  const hasZiti = zitiStatus?.enabled && zitiStatus?.controller_reachable
+  const hasGroups = (stats?.total_groups || 0) > 0
+
+  const checklist = [
+    { label: 'Set up your profile', done: !!user?.name, href: '/profile', icon: UserCircle },
+    { label: 'Enable multi-factor authentication', done: hasMfa, href: '/mfa-management', icon: Lock },
+    { label: 'Browse available applications', done: hasApps, href: '/app-launcher', icon: AppWindow },
+    { label: 'Register a trusted device', done: false, href: '/my-devices', icon: Smartphone },
+  ]
+
+  const completedCount = checklist.filter((c) => c.done).length
+  const allDone = completedCount === checklist.length
+
+  const quickActions = [
+    { label: 'My Applications', description: 'Launch your apps', href: '/app-launcher', icon: AppWindow, color: 'text-blue-600 bg-blue-50' },
+    { label: 'My Access', description: 'View permissions & roles', href: '/my-access', icon: FolderKey, color: 'text-green-600 bg-green-50' },
+    { label: 'My Devices', description: 'Manage trusted devices', href: '/my-devices', icon: Laptop, color: 'text-purple-600 bg-purple-50' },
+    { label: 'Notifications', description: 'Alerts & updates', href: '/notification-center', icon: Bell, color: 'text-orange-600 bg-orange-50' },
+  ]
+
+  const recentActivity = (stats?.recent_activity || [])
+    .filter((a) => a.actor_id === user?.id || !a.actor_id)
+    .slice(0, 5)
+
+  return (
+    <div className="space-y-6">
+      {/* Welcome */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">
+          Welcome back, {firstName}
+        </h1>
+        <p className="text-muted-foreground">
+          Here&apos;s what&apos;s happening with your account
+        </p>
+      </div>
+
+      {/* Getting Started Card — show if not all done */}
+      {!allDone && (
+        <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Rocket className="h-5 w-5 text-blue-600" />
+              Getting Started
+            </CardTitle>
+            <CardDescription>
+              Complete these steps to secure your account ({completedCount}/{checklist.length})
+            </CardDescription>
+            {/* Progress bar */}
+            <div className="mt-2 h-2 w-full rounded-full bg-blue-100">
+              <div
+                className="h-2 rounded-full bg-blue-600 transition-all"
+                style={{ width: `${(completedCount / checklist.length) * 100}%` }}
+              />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checklist.map((item) => (
+                <Link
+                  key={item.label}
+                  to={item.href}
+                  className={`flex items-center gap-3 rounded-lg p-3 transition-colors ${
+                    item.done
+                      ? 'bg-green-50 text-green-700'
+                      : 'bg-white hover:bg-blue-50'
+                  }`}
+                >
+                  {item.done ? (
+                    <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
+                  ) : (
+                    <item.icon className="h-5 w-5 text-blue-500 flex-shrink-0" />
+                  )}
+                  <span className={`text-sm font-medium ${item.done ? 'line-through opacity-60' : ''}`}>
+                    {item.label}
+                  </span>
+                  {!item.done && <ArrowRight className="h-4 w-4 ml-auto text-gray-400" />}
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Quick Actions */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {quickActions.map((action) => (
+          <Link key={action.label} to={action.href} className="block transition-transform hover:scale-[1.02]">
+            <Card className="cursor-pointer hover:shadow-md transition-shadow h-full">
+              <CardContent className="flex items-center gap-4 p-5">
+                <div className={`rounded-xl p-3 ${action.color}`}>
+                  <action.icon className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">{action.label}</p>
+                  <p className="text-xs text-muted-foreground">{action.description}</p>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        ))}
+      </div>
+
+      {/* Secure Access & Activity row */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Secure Network Status — only show if Ziti is enabled */}
+        {hasZiti && (
+          <Link to="/client-setup" className="block">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-blue-200 bg-blue-50/30 h-full">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                  <Globe className="h-4 w-4 text-blue-600" />
+                  Secure Network
+                  <span className="ml-auto flex items-center gap-1.5 text-xs text-green-600">
+                    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                    Protected
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Your connection is secured with zero-trust networking.
+                </p>
+                <div className="flex items-center gap-4 text-sm">
+                  <div>
+                    <span className="text-xl font-bold">{zitiStatus?.services_count || 0}</span>
+                    <span className="text-muted-foreground ml-1">apps available</span>
+                  </div>
+                </div>
+                <p className="text-xs text-blue-600 mt-3 flex items-center gap-1">
+                  Set up your secure client <ArrowRight className="h-3 w-3" />
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+        )}
+
+        {/* My Recent Activity */}
+        <Card className={hasZiti ? '' : 'md:col-span-2'}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Activity className="h-4 w-4 text-blue-500" />
+              My Recent Activity
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-gray-500">No recent activity</p>
+              ) : (
+                recentActivity.map((item) => {
+                  const Icon = activityIcon(item.type)
+                  return (
+                    <div key={item.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm">{item.message}</span>
+                      </div>
+                      <span className="text-xs text-gray-500">{relativeTime(item.timestamp)}</span>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Security Status */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Shield className="h-4 w-4 text-green-500" />
+            Account Security
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="flex items-center gap-3 rounded-lg border p-4">
+              <Lock className={`h-5 w-5 ${hasMfa ? 'text-green-500' : 'text-orange-500'}`} />
+              <div>
+                <p className="text-sm font-medium">Multi-Factor Auth</p>
+                <p className={`text-xs ${hasMfa ? 'text-green-600' : 'text-orange-600'}`}>
+                  {hasMfa ? 'Enabled' : 'Not set up'}
+                </p>
+              </div>
+              {!hasMfa && (
+                <Link to="/mfa-management" className="ml-auto">
+                  <Button size="sm" variant="outline" className="text-xs">Enable</Button>
+                </Link>
+              )}
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border p-4">
+              <Smartphone className="h-5 w-5 text-blue-500" />
+              <div>
+                <p className="text-sm font-medium">Trusted Devices</p>
+                <p className="text-xs text-muted-foreground">
+                  <Link to="/my-devices" className="text-blue-600 hover:underline">Manage</Link>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border p-4">
+              <Key className="h-5 w-5 text-purple-500" />
+              <div>
+                <p className="text-sm font-medium">Active Sessions</p>
+                <p className="text-xs text-muted-foreground">{stats?.active_sessions || 0} active</p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ─── Admin Dashboard (original) ───────────────────────────────────
+
+function AdminDashboard() {
+  const { user } = useAuth()
+  const firstName = user?.name?.split(' ')[0] || 'Admin'
   const [period, setPeriod] = useState('30d')
 
   const { data: stats, isLoading } = useQuery({
@@ -162,7 +411,7 @@ export function DashboardPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-muted-foreground">
-          Overview of your identity platform
+          Welcome back, {firstName} — here&apos;s your platform overview
         </p>
       </div>
 
@@ -363,4 +612,13 @@ export function DashboardPage() {
       </div>
     </div>
   )
+}
+
+// ─── Main Dashboard (role-aware) ──────────────────────────────────
+
+export function DashboardPage() {
+  const { hasRole } = useAuth()
+  const isAdmin = hasRole('admin')
+
+  return isAdmin ? <AdminDashboard /> : <UserDashboard />
 }
