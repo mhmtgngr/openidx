@@ -210,6 +210,34 @@ oauthService:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
+# Access Service (Zero Trust Proxy)
+accessService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: access-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8007
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
 # Admin Console
 adminConsole:
   enabled: true

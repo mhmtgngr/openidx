@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,12 +74,37 @@ type WebhookSubscription struct {
 	FailureCount  int            `json:"failure_count"`
 }
 
+// allowedOrigins holds the set of allowed WebSocket origins.
+// Populated from ALLOWED_ORIGINS env var (comma-separated) plus localhost defaults.
+var allowedOrigins = initAllowedOrigins()
+
+func initAllowedOrigins() map[string]bool {
+	origins := map[string]bool{
+		"http://localhost:3000":  true,
+		"http://localhost:5173":  true,
+		"https://localhost:3000": true,
+	}
+	if env := os.Getenv("ALLOWED_ORIGINS"); env != "" {
+		for _, o := range strings.Split(env, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				origins[o] = true
+			}
+		}
+	}
+	return origins
+}
+
 // WebSocket upgrader configuration
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // TODO: Configure proper origin checking
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // Allow requests without Origin header (non-browser clients)
+		}
+		return allowedOrigins[origin]
 	},
 }
 
