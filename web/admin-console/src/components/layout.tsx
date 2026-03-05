@@ -135,6 +135,7 @@ const navigationSections: NavSection[] = [
       { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
       { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
       { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },
+      { name: 'Client Setup', href: '/client-setup', icon: Smartphone, adminOnly: false },
       { name: 'BrowZer', href: '/browzer-management', icon: Globe, adminOnly: true },
       { name: 'App Publish', href: '/app-publish', icon: Upload, adminOnly: true },
       { name: 'Certificates', href: '/certificates', icon: FileKey, adminOnly: true },

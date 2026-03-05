@@ -223,7 +223,7 @@ export function MyDevicesPage() {
 
       {/* Ziti Network Identity Card */}
       {zitiIdentity && (
-        <Card className={zitiIdentity.linked ? 'border-green-200 bg-green-50/30' : 'border-amber-200 bg-amber-50/30'}>
+        <Card className={zitiIdentity.linked ? (zitiIdentity.enrolled ? 'border-green-200 bg-green-50/30' : 'border-blue-200 bg-blue-50/30') : 'border-amber-200 bg-amber-50/30'}>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Network className="h-5 w-5 text-blue-600" />
@@ -231,65 +231,99 @@ export function MyDevicesPage() {
             </CardTitle>
             <CardDescription>
               {zitiIdentity.linked
-                ? 'Your account is linked to a Ziti network identity for secure access.'
-                : 'Your account does not yet have a Ziti network identity. Contact your administrator.'}
+                ? zitiIdentity.enrolled
+                  ? 'Your device is enrolled and connected to the zero-trust overlay.'
+                  : 'Your identity is ready — complete the setup to connect.'
+                : 'Your account does not yet have a Ziti network identity.'}
             </CardDescription>
           </CardHeader>
-          {zitiIdentity.linked && (
-            <CardContent>
-              <div className="flex flex-wrap items-center gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Identity:</span>{' '}
-                  <span className="font-medium">{zitiIdentity.name}</span>
-                </div>
-                <Badge variant={zitiIdentity.enrolled ? 'default' : 'secondary'}>
-                  {zitiIdentity.enrolled ? 'Enrolled' : 'Pending Enrollment'}
-                </Badge>
-                {zitiIdentity.attributes && zitiIdentity.attributes.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-muted-foreground">Roles:</span>
-                    {zitiIdentity.attributes.map((attr) => (
-                      <Badge key={attr} variant="outline" className="text-xs">{attr}</Badge>
-                    ))}
-                  </div>
-                )}
+          <CardContent>
+            {!zitiIdentity.linked && (
+              <div className="text-sm text-muted-foreground">
+                <p>Ask your administrator to provision your identity, or visit the setup page for instructions.</p>
+                <a href="/client-setup">
+                  <Button size="sm" className="mt-3">
+                    <Network className="mr-2 h-4 w-4" /> Go to Client Setup
+                  </Button>
+                </a>
               </div>
+            )}
 
-              {/* Enrollment section for unenrolled identities */}
-              {!zitiIdentity.enrolled && zitiIdentity.enrollment_jwt && (
-                <div className="mt-4 p-3 bg-white rounded-lg border">
-                  <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                    <FileKey className="h-4 w-4" />
-                    Enrollment Token
-                  </p>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    Use this token with the OpenZiti Desktop Edge tunneler to connect your device to the network.
-                  </p>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setShowJwt(!showJwt)}>
-                      {showJwt ? 'Hide Token' : 'Show Token'}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => {
-                      navigator.clipboard.writeText(zitiIdentity.enrollment_jwt!)
-                      toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
-                    }}>
-                      <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={downloadJwt}>
-                      <Download className="h-3.5 w-3.5 mr-1.5" /> Download .jwt
-                    </Button>
+            {zitiIdentity.linked && (
+              <>
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Identity:</span>{' '}
+                    <span className="font-medium">{zitiIdentity.name}</span>
                   </div>
-                  {showJwt && (
-                    <textarea
-                      readOnly
-                      value={zitiIdentity.enrollment_jwt}
-                      className="mt-2 w-full h-24 rounded-md border bg-muted p-2 text-xs font-mono"
-                    />
+                  <Badge variant={zitiIdentity.enrolled ? 'default' : 'secondary'}>
+                    {zitiIdentity.enrolled ? 'Enrolled' : 'Pending Enrollment'}
+                  </Badge>
+                  {zitiIdentity.attributes && zitiIdentity.attributes.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-muted-foreground">Roles:</span>
+                      {zitiIdentity.attributes.map((attr) => (
+                        <Badge key={attr} variant="outline" className="text-xs">{attr}</Badge>
+                      ))}
+                    </div>
                   )}
                 </div>
-              )}
-            </CardContent>
-          )}
+
+                {/* Enrollment section for unenrolled identities */}
+                {!zitiIdentity.enrolled && zitiIdentity.enrollment_jwt && (
+                  <div className="mt-4 p-3 bg-white rounded-lg border">
+                    <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <FileKey className="h-4 w-4" />
+                      Enrollment Token
+                    </p>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Download a tunneler client and import this token to connect. Need help?{' '}
+                      <a href="/client-setup" className="text-blue-600 underline">See full setup guide</a>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={downloadJwt}>
+                        <Download className="h-3.5 w-3.5 mr-1.5" /> Download .jwt
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => {
+                        navigator.clipboard.writeText(zitiIdentity.enrollment_jwt!)
+                        toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
+                      }}>
+                        <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setShowJwt(!showJwt)}>
+                        {showJwt ? 'Hide Token' : 'Show Token'}
+                      </Button>
+                      <a href="/client-setup">
+                        <Button variant="outline" size="sm">
+                          <Wifi className="h-3.5 w-3.5 mr-1.5" /> Setup Guide
+                        </Button>
+                      </a>
+                    </div>
+                    {showJwt && (
+                      <textarea
+                        readOnly
+                        value={zitiIdentity.enrollment_jwt}
+                        className="mt-2 w-full h-24 rounded-md border bg-muted p-2 text-xs font-mono"
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Enrolled status */}
+                {zitiIdentity.enrolled && (
+                  <div className="mt-3 flex items-center gap-3 text-sm">
+                    <span className="flex items-center gap-1.5 text-green-600">
+                      <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                      Connected
+                    </span>
+                    <span className="text-muted-foreground">
+                      Your tunneler is enrolled and routing traffic through the overlay.
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
         </Card>
       )}
 

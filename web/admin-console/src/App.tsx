@@ -40,6 +40,7 @@ import {
   ProxyRoutes,
   ZitiNetwork,
   ZitiDiscovery,
+  ClientSetup,
   BrowzerManagement,
   Certificates,
   Devices,
@@ -193,6 +194,7 @@ function App() {
         <Route path="proxy-routes" element={<ProxyRoutes />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="ziti-discovery" element={<ZitiDiscovery />} />
+        <Route path="client-setup" element={<ClientSetup />} />
         <Route path="browzer-management" element={<BrowzerManagement />} />
         <Route path="app-publish" element={<AppPublish />} />
         <Route path="certificates" element={<Certificates />} />

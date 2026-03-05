@@ -399,6 +399,16 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/ziti/topology", svc.handleGetNetworkTopology)
 		api.GET("/ziti/recommendations", svc.handleGetRecommendations)
 
+		// Client onboarding & enrollment management
+		api.GET("/ziti/client-platforms", svc.handleGetClientPlatforms)
+		api.GET("/ziti/enrollment-analytics", svc.handleGetEnrollmentAnalytics)
+		api.GET("/ziti/onboarding-status", svc.handleGetOnboardingStatus)
+		api.GET("/ziti/setup-checklist", svc.handleGetSetupChecklist)
+		api.POST("/ziti/identities/:id/enrollment-qr", svc.handleGetEnrollmentQR)
+		api.POST("/ziti/identities/:id/send-enrollment", svc.handleSendEnrollment)
+		api.POST("/ziti/bulk-enroll", svc.handleBulkEnroll)
+		api.DELETE("/ziti/stale-identities", svc.handleCleanupStaleIdentities)
+
 		// Unified audit log
 		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)
 		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
