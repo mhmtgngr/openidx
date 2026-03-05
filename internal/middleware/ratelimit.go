@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -38,13 +39,27 @@ func DefaultRateLimitConfig() RateLimitConfig {
 	}
 }
 
-// RateLimitConfigFromEnv creates rate limit config from environment variables
-// Env vars: RATE_LIMIT_IP_REQUESTS, RATE_LIMIT_USER_REQUESTS, RATE_LIMIT_WINDOW_SECONDS
+// RateLimitConfigFromEnv creates rate limit config from environment variables.
+// Supported env vars: RATE_LIMIT_IP_REQUESTS, RATE_LIMIT_USER_REQUESTS, RATE_LIMIT_WINDOW_SECONDS
 func RateLimitConfigFromEnv() RateLimitConfig {
 	cfg := DefaultRateLimitConfig()
 
-	// Can be overridden by env vars if needed
-	// This is a placeholder for env-based configuration
+	if v := os.Getenv("RATE_LIMIT_IP_REQUESTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.IPRequestsPerMin = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_USER_REQUESTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.UserRequestsPerMin = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_WINDOW_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Window = time.Duration(n) * time.Second
+		}
+	}
+
 	return cfg
 }
 

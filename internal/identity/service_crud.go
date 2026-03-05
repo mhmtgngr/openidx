@@ -12,18 +12,16 @@ import (
 // Repository-based CRUD methods
 // ============================================================
 
-// SetRepository sets the repository for the service (enables repository pattern)
-// Note: This is a placeholder for future repository pattern implementation
+// SetRepository sets the repository for the service, enabling the repository pattern
+// for data access. When set, CRUD methods will delegate to the repository instead of
+// using direct database queries.
 func (s *Service) SetRepository(repo Repository) {
-	// Repository would be set on Service struct in a future refactor
-	// For now, this is a no-op to maintain API compatibility
+	s.repository = repo
 }
 
-// getRepository returns the repository if set (for future use)
+// getRepository returns the repository if set, or nil to fall back to direct DB access
 func (s *Service) getRepository() Repository {
-	// In a future refactor, this would return s.repository
-	// For now, return nil to use direct database access
-	return nil
+	return s.repository
 }
 
 // ============================================================

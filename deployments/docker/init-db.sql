@@ -3372,3 +3372,36 @@ ON CONFLICT (id) DO NOTHING;
 -- Azure AD / Entra ID support
 ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);
 ALTER TABLE directory_sync_state ADD COLUMN IF NOT EXISTS last_delta_link TEXT;
+
+-- ============================================================================
+-- SAML SESSIONS TABLE (for IdP functionality)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS saml_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sp_id UUID,
+    sp_entity_id VARCHAR(500) NOT NULL,
+    session_index VARCHAR(255) NOT NULL,
+    name_id VARCHAR(500) NOT NULL,
+    name_id_format VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    UNIQUE(user_id, sp_entity_id, session_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saml_sessions_user_id ON saml_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_saml_sessions_sp_entity_id ON saml_sessions(sp_entity_id);
+CREATE INDEX IF NOT EXISTS idx_saml_sessions_session_index ON saml_sessions(session_index);
+CREATE INDEX IF NOT EXISTS idx_saml_sessions_expires_at ON saml_sessions(expires_at);
+
+-- ============================================================================
+-- MFA TEMP TOKENS TABLE (for secure MFA flow)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mfa_temp_tokens (
+    token VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_temp_tokens_expires ON mfa_temp_tokens(expires_at);

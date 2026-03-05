@@ -471,12 +471,24 @@ func calculateSpeed(distanceKm float64, timeDelta time.Duration) float64 {
 	return distanceKm / hours
 }
 
-// isIPBlocked checks if an IP is on the blocklist
-// This would integrate with the IP threat list from the database
+// ipBlocklistKey is the context key for the IP blocklist map
+type ipBlocklistKey struct{}
+
+// WithIPBlocklist injects a pre-computed IP blocklist into the context.
+// The blocklist maps blocked IP addresses to their block reasons.
+func WithIPBlocklist(ctx context.Context, blocklist map[string]string) context.Context {
+	return context.WithValue(ctx, ipBlocklistKey{}, blocklist)
+}
+
+// isIPBlocked checks if an IP is on the blocklist by looking up the
+// pre-computed blocklist stored in the context by upstream middleware.
 func isIPBlocked(ctx context.Context, ip string) (bool, string) {
-	// This is a placeholder - in production, this would query the database
-	// or Redis for the IP threat list
-	return false, ""
+	blocklist, ok := ctx.Value(ipBlocklistKey{}).(map[string]string)
+	if !ok || blocklist == nil {
+		return false, ""
+	}
+	reason, blocked := blocklist[ip]
+	return blocked, reason
 }
 
 // GetSignalSummary returns a formatted summary of all signals

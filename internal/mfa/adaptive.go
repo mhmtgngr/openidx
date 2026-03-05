@@ -3,7 +3,9 @@ package mfa
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +47,8 @@ type AuthSignal struct {
 	UserAgent       string    `json:"user_agent"`
 	DeviceID        string    `json:"device_id"`        // Browser/device fingerprint
 	Location        string    `json:"location"`         // Country/City
+	Latitude        float64   `json:"latitude,omitempty"`  // GeoIP latitude
+	Longitude       float64   `json:"longitude,omitempty"` // GeoIP longitude
 	Timestamp       time.Time `json:"timestamp"`
 	LoginTimeNormal bool      `json:"login_time_normal"` // Within normal login hours
 	IsNewDevice     bool      `json:"is_new_device"`
@@ -385,22 +389,114 @@ func (s *AdaptiveService) isNormalLoginTime(t time.Time) bool {
 	return hour >= s.config.NormalLoginHourStart && hour <= s.config.NormalLoginHourEnd
 }
 
+// lastLoginEntry stores the last login location and time for impossible travel detection
+type lastLoginEntry struct {
+	Location  string    `json:"location"`
+	Latitude  float64   `json:"latitude"`
+	Longitude float64   `json:"longitude"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+const (
+	lastLoginPrefix      = "mfa:adaptive:lastlogin:"
+	lastLoginTTL         = 7 * 24 * time.Hour
+	maxTravelSpeedKmH    = 900.0 // approximate max airline speed
+	earthRadiusKm        = 6371.0
+)
+
 // checkImpossibleTravel checks for impossible travel (logins from distant locations within short time)
 func (s *AdaptiveService) checkImpossibleTravel(ctx context.Context, signal *AuthSignal) (bool, error) {
 	if signal.Location == "" {
 		return false, nil
 	}
 
-	// Get the last login location for this user
-	// This would require storing last login location per user
-	// For now, this is a placeholder for the actual implementation
-	// In a full implementation, you would:
-	// 1. Store last login location and timestamp
-	// 2. Calculate distance between current and last location
-	// 3. Calculate time elapsed
-	// 4. Check if travel was physically possible
+	key := lastLoginPrefix + signal.UserID.String()
 
+	// Retrieve last login entry from Redis
+	result := s.redis.Get(ctx, key)
+	if result.Err() == redis.Nil {
+		// No previous login - store current and allow
+		s.storeLastLogin(ctx, key, signal)
+		return false, nil
+	}
+	if result.Err() != nil {
+		return false, fmt.Errorf("redis error: %w", result.Err())
+	}
+
+	var last lastLoginEntry
+	if err := json.Unmarshal([]byte(result.Val()), &last); err != nil {
+		// Corrupted entry - overwrite and allow
+		s.storeLastLogin(ctx, key, signal)
+		return false, nil
+	}
+
+	// Calculate time elapsed since last login
+	elapsed := signal.Timestamp.Sub(last.Timestamp)
+	if elapsed <= 0 {
+		// Same time or clock skew - allow
+		s.storeLastLogin(ctx, key, signal)
+		return false, nil
+	}
+
+	// If we have coordinates, use haversine distance
+	if signal.Latitude != 0 && signal.Longitude != 0 && last.Latitude != 0 && last.Longitude != 0 {
+		distKm := haversineDistance(last.Latitude, last.Longitude, signal.Latitude, signal.Longitude)
+		requiredHours := distKm / maxTravelSpeedKmH
+
+		if elapsed.Hours() < requiredHours && distKm > 100 {
+			s.logger.Warn("Impossible travel detected",
+				zap.String("user_id", signal.UserID.String()),
+				zap.String("from", last.Location),
+				zap.String("to", signal.Location),
+				zap.Float64("distance_km", distKm),
+				zap.Duration("elapsed", elapsed),
+			)
+			s.storeLastLogin(ctx, key, signal)
+			return true, nil
+		}
+	} else if last.Location != signal.Location {
+		// No coordinates but different location string - flag if under 1 hour
+		if elapsed < time.Hour {
+			s.logger.Warn("Possible impossible travel (location change within 1h)",
+				zap.String("user_id", signal.UserID.String()),
+				zap.String("from", last.Location),
+				zap.String("to", signal.Location),
+			)
+			s.storeLastLogin(ctx, key, signal)
+			return true, nil
+		}
+	}
+
+	// Store current login as last
+	s.storeLastLogin(ctx, key, signal)
 	return false, nil
+}
+
+func (s *AdaptiveService) storeLastLogin(ctx context.Context, key string, signal *AuthSignal) {
+	entry := lastLoginEntry{
+		Location:  signal.Location,
+		Latitude:  signal.Latitude,
+		Longitude: signal.Longitude,
+		Timestamp: signal.Timestamp,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	s.redis.Set(ctx, key, string(data), lastLoginTTL)
+}
+
+// haversineDistance calculates the great-circle distance between two points in km
+func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLon := (lon2 - lon1) * math.Pi / 180
+	lat1Rad := lat1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earthRadiusKm * c
 }
 
 // getRecentFailedLogins gets the count of recent failed login attempts

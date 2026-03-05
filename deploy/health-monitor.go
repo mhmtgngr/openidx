@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/smtp"
 	"os"
 	"sync"
 	"time"
@@ -240,11 +241,27 @@ func (hm *HealthMonitor) sendSlackAlert(service ServiceConfig, status *HealthSta
 	}
 }
 
-// sendEmailAlert sends an alert via email
+// sendEmailAlert sends an alert via email using SMTP
 func (hm *HealthMonitor) sendEmailAlert(service ServiceConfig, status *HealthStatus, message string) {
-	// TODO: Implement email sending
-	// This would typically use net/smtp or a library like mailgun/sendgrid
-	fmt.Printf("Email alert would be sent to %s: %s\n", hm.config.EmailTo, message)
+	if hm.config.EmailSMTP == "" || hm.config.EmailFrom == "" || hm.config.EmailTo == "" {
+		fmt.Printf("Email alert skipped (SMTP not configured): %s\n", message)
+		return
+	}
+
+	subject := fmt.Sprintf("[OpenIDX Alert] %s - %s", service.Name, status.Status)
+	body := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\n"+
+		"Service: %s\r\nStatus: %s\r\nURL: %s\r\nFail Count: %d\r\nLast Check: %s\r\n\r\n%s",
+		hm.config.EmailFrom, hm.config.EmailTo, subject,
+		service.Name, status.Status, service.URL,
+		status.FailCount, status.LastCheck.Format(time.RFC3339), message)
+
+	err := smtp.SendMail(hm.config.EmailSMTP, nil, hm.config.EmailFrom, []string{hm.config.EmailTo}, []byte(body))
+	if err != nil {
+		fmt.Printf("Failed to send email alert to %s: %v\n", hm.config.EmailTo, err)
+		return
+	}
+
+	fmt.Printf("Email alert sent to %s for service %s\n", hm.config.EmailTo, service.Name)
 }
 
 // GetStatus returns the current health status of all services
@@ -419,6 +436,8 @@ func defaultConfig() Config {
 		Timeout:         10 * time.Second,
 		AlertThreshold:  3,
 		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+		EmailSMTP:       os.Getenv("ALERT_EMAIL_SMTP"),
+		EmailFrom:       os.Getenv("ALERT_EMAIL_FROM"),
 		EmailTo:         os.Getenv("ALERT_EMAIL_TO"),
 	}
 }

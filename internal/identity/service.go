@@ -169,6 +169,7 @@ type Service struct {
 	smsProviderMu     sync.RWMutex     // Protects smsProvider for runtime hot-swap
 	phoneCallProvider PhoneCallProvider // Phone call MFA provider
 	risk              RiskService       // Risk evaluation service
+	repository        Repository        // Optional repository for data access
 
 	// JWKS public key cache
 	jwksCacheMu    sync.RWMutex

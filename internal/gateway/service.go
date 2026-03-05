@@ -232,20 +232,35 @@ func (s *Service) checkServiceHealth(ctx context.Context, serviceName, serviceUR
 	}
 }
 
-// Logging helpers - simplified without type assertion
+// Logging helpers - delegate to config.Logger
 func (s *Service) logInfo(msg string, fields ...zap.Field) {
-	// In production, would use proper logger
-	// For now, this is a placeholder
+	if s.config.Logger != nil {
+		args := zapFieldsToInterfaces(fields)
+		s.config.Logger.Info(msg, args...)
+	}
 }
 
 func (s *Service) logError(msg string, fields ...zap.Field) {
-	// In production, would use proper logger
-	// For now, this is a placeholder
+	if s.config.Logger != nil {
+		args := zapFieldsToInterfaces(fields)
+		s.config.Logger.Error(msg, args...)
+	}
 }
 
 func (s *Service) logWarn(msg string, fields ...zap.Field) {
-	// In production, would use proper logger
-	// For now, this is a placeholder
+	if s.config.Logger != nil {
+		args := zapFieldsToInterfaces(fields)
+		s.config.Logger.Warn(msg, args...)
+	}
+}
+
+// zapFieldsToInterfaces converts zap.Field slice to interface slice for the Logger interface
+func zapFieldsToInterfaces(fields []zap.Field) []interface{} {
+	args := make([]interface{}, len(fields))
+	for i, f := range fields {
+		args[i] = f
+	}
+	return args
 }
 
 // Create middleware implementations

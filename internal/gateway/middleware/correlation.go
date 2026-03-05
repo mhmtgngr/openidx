@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 const (
@@ -179,14 +181,32 @@ func SetCorrelationID(c *gin.Context, id string) {
 	c.Header(CorrelationIDHeader, id)
 }
 
-// WithCorrelationID creates a context with correlation ID for use with loggers
+// correlationIDKey is the context key for correlation ID
+type correlationIDKey struct{}
+
+// WithCorrelationID creates a context with correlation ID for use with loggers.
+// Supports context.Context (adds correlation ID as value) and *zap.Logger (adds field).
 func WithCorrelationID(c *gin.Context, baseCtx interface{}) interface{} {
 	correlationID := GetCorrelationID(c)
 	if correlationID == "" {
 		return baseCtx
 	}
-	// This is a placeholder - actual implementation depends on context type
-	return baseCtx
+	switch ctx := baseCtx.(type) {
+	case context.Context:
+		return context.WithValue(ctx, correlationIDKey{}, correlationID)
+	case *zap.Logger:
+		return ctx.With(zap.String("correlation_id", correlationID))
+	default:
+		return baseCtx
+	}
+}
+
+// CorrelationIDFromContext extracts the correlation ID from a context.Context
+func CorrelationIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(correlationIDKey{}).(string); ok {
+		return id
+	}
+	return ""
 }
 
 // generateID generates a new unique correlation ID

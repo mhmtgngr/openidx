@@ -1037,7 +1037,7 @@ type IdPTransform struct {
 	Algorithm  string   `xml:"Algorithm,attr"`
 }
 
-// logAuditEvent logs an audit event (placeholder - should integrate with audit service)
+// logAuditEvent logs an audit event to both structured logs and the audit_events table.
 func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, status string,
 	userID, ipAddress, resourceID, resourceType string, metadata map[string]interface{}) {
 
@@ -1052,6 +1052,19 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 		zap.String("resource_type", resourceType),
 		any("metadata", metadata),
 	)
+
+	// Persist to audit_events table
+	if s.db != nil && s.db.Pool != nil {
+		metadataJSON, _ := json.Marshal(metadata)
+		_, err := s.db.Pool.Exec(ctx,
+			`INSERT INTO audit_events (id, event_type, category, action, status, user_id, ip_address, resource_id, resource_type, metadata, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			uuid.New().String(), eventType, category, action, status,
+			userID, ipAddress, resourceID, resourceType, metadataJSON, time.Now().UTC())
+		if err != nil {
+			s.logger.Warn("Failed to persist SAML audit event", zap.Error(err))
+		}
+	}
 }
 
 // any is a helper for logging arbitrary data
