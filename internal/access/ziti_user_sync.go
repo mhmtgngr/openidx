@@ -317,17 +317,28 @@ func (zm *ZitiManager) GetSyncStatus(ctx context.Context) (*SyncStatus, error) {
 // StartUserSyncPoller starts a background goroutine that periodically checks
 // for users without Ziti identities and creates them.
 func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
+	syncInterval := time.Duration(zm.cfg.ZitiSyncInterval) * time.Second
+	if syncInterval <= 0 {
+		syncInterval = 30 * time.Second
+	}
+	startupDelay := time.Duration(zm.cfg.ZitiSyncStartupDelay) * time.Second
+	if startupDelay <= 0 {
+		startupDelay = 20 * time.Second
+	}
+
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(syncInterval)
 		defer ticker.Stop()
 
-		zm.logger.Info("Ziti user sync poller started", zap.Duration("interval", 30*time.Second))
+		zm.logger.Info("Ziti user sync poller started",
+			zap.Duration("interval", syncInterval),
+			zap.Duration("startup_delay", startupDelay))
 
 		// Initial delay to let services stabilize
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(20 * time.Second):
+		case <-time.After(startupDelay):
 		}
 
 		for {
@@ -344,12 +355,17 @@ func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 
 // runAutoSync is called each tick to sync new users and refresh stale group attributes.
 func (zm *ZitiManager) runAutoSync(ctx context.Context) {
-	// Find up to 10 users without Ziti identities
+	batchSize := zm.cfg.ZitiSyncBatchSize
+	if batchSize <= 0 {
+		batchSize = 10
+	}
+
+	// Find up to batchSize users without Ziti identities
 	rows, err := zm.db.Pool.Query(ctx,
 		`SELECT u.id FROM users u
 		 LEFT JOIN ziti_identities zi ON zi.user_id = u.id
 		 WHERE zi.id IS NULL AND u.enabled = true
-		 LIMIT 10`)
+		 LIMIT $1`, batchSize)
 	if err != nil {
 		zm.logger.Warn("Auto-sync query failed", zap.Error(err))
 		return
@@ -376,12 +392,16 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 			 WHERE id = (SELECT id FROM ziti_user_sync LIMIT 1)`)
 	}
 
-	// Re-sync stale group attributes (older than 5 minutes)
+	// Re-sync stale group attributes
+	staleThreshold := zm.cfg.ZitiGroupStaleThreshold
+	if staleThreshold <= 0 {
+		staleThreshold = 300
+	}
 	staleRows, err := zm.db.Pool.Query(ctx,
 		`SELECT zi.user_id FROM ziti_identities zi
 		 WHERE zi.user_id IS NOT NULL
-		 AND (zi.group_attrs_synced_at IS NULL OR zi.group_attrs_synced_at < NOW() - INTERVAL '5 minutes')
-		 LIMIT 10`)
+		 AND (zi.group_attrs_synced_at IS NULL OR zi.group_attrs_synced_at < NOW() - make_interval(secs => $1))
+		 LIMIT $2`, staleThreshold, batchSize)
 	if err != nil {
 		return
 	}

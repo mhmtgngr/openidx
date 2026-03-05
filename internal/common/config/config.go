@@ -60,12 +60,19 @@ type Config struct {
 	AccessProxyDomain  string `mapstructure:"access_proxy_domain"`
 
 	// OpenZiti configuration
-	ZitiEnabled       bool   `mapstructure:"ziti_enabled"`
-	ZitiCtrlURL       string `mapstructure:"ziti_ctrl_url"`
-	ZitiAdminUser     string `mapstructure:"ziti_admin_user"`
-	ZitiAdminPassword string `mapstructure:"ziti_admin_password"`
+	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
+	ZitiCtrlURL            string `mapstructure:"ziti_ctrl_url"`
+	ZitiAdminUser          string `mapstructure:"ziti_admin_user"`
+	ZitiAdminPassword      string `mapstructure:"ziti_admin_password"`
 	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
 	ZitiInsecureSkipVerify bool   `mapstructure:"ziti_insecure_skip_verify"`
+
+	// Ziti sync tuning (all intervals in seconds)
+	ZitiSyncInterval         int `mapstructure:"ziti_sync_interval"`           // user sync poll interval (default 30s)
+	ZitiSyncStartupDelay     int `mapstructure:"ziti_sync_startup_delay"`      // delay before first sync (default 20s)
+	ZitiSyncBatchSize        int `mapstructure:"ziti_sync_batch_size"`         // max users per sync tick (default 10)
+	ZitiGroupStaleThreshold  int `mapstructure:"ziti_group_stale_threshold"`   // group attr stale age in seconds (default 300)
+	ZitiCertCheckInterval    int `mapstructure:"ziti_cert_check_interval"`     // cert expiry check interval in seconds (default 3600)
 
 	// Continuous verification
 	ContinuousVerifyEnabled  bool   `mapstructure:"continuous_verify_enabled"`
@@ -323,6 +330,11 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
 	v.SetDefault("ziti_identity_dir", "/ziti")
 	v.SetDefault("ziti_insecure_skip_verify", false)
+	v.SetDefault("ziti_sync_interval", 30)
+	v.SetDefault("ziti_sync_startup_delay", 20)
+	v.SetDefault("ziti_sync_batch_size", 10)
+	v.SetDefault("ziti_group_stale_threshold", 300)
+	v.SetDefault("ziti_cert_check_interval", 3600)
 
 	// Continuous verification defaults
 	v.SetDefault("continuous_verify_enabled", false)

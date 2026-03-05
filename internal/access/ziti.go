@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,9 +27,11 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	pkgziti "github.com/openidx/openidx/pkg/ziti"
 )
 
-// ZitiManager handles OpenZiti SDK integration and management API communication
+// ZitiManager handles OpenZiti SDK integration and management API communication.
+// It implements pkgziti.Manager for use by other services via interface.
 type ZitiManager struct {
 	cfg         *config.Config
 	logger      *zap.Logger
@@ -38,6 +39,7 @@ type ZitiManager struct {
 	zitiCtx     ziti.Context
 	mgmtToken   string
 	mgmtClient  *http.Client
+	mgmt        *pkgziti.MgmtClient // clean management API client
 	mu          sync.RWMutex
 	initialized bool
 
@@ -49,6 +51,11 @@ type ZitiManager struct {
 	configTypeCacheMu sync.RWMutex
 	configTypeCache   map[string]string
 }
+
+// Note: ZitiManager's method signatures use internal types (ZitiServiceInfo, etc.)
+// which don't match pkgziti.Manager exactly. The pkgziti.Manager interface is designed
+// for external consumers who want to mock or wrap Ziti operations using the shared
+// pkg/ziti types. Use ZitiManagerAdapter (below) to bridge the two.
 
 // hostedService tracks a Ziti service listener that forwards to an upstream target
 type hostedService struct {
@@ -101,28 +108,31 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 		configTypeCache: make(map[string]string),
 	}
 
-	// Build TLS config for Ziti controller management API communication.
-	// The management API is internal (container-to-container) and uses the Ziti controller's
-	// self-signed PKI, so we skip TLS verification. The SDK-level identity auth uses the
-	// identity file's CA for proper verification.
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	// Initialize the clean management API client with proper TLS handling.
+	// TLS verification uses the Ziti controller's CA when available;
+	// InsecureSkipVerify is only enabled when explicitly configured.
 	caFile := filepath.Join(cfg.ZitiIdentityDir, "ca.pem")
-	if caPEM, err := os.ReadFile(caFile); err == nil {
-		pool := x509.NewCertPool()
-		if pool.AppendCertsFromPEM(caPEM) {
-			tlsConfig.RootCAs = pool
-			zm.logger.Info("Loaded Ziti CA certificate", zap.String("file", caFile))
-		}
+	mgmt, err := pkgziti.NewMgmtClient(pkgziti.MgmtClientConfig{
+		ControllerURL: cfg.ZitiCtrlURL,
+		AdminUser:     cfg.ZitiAdminUser,
+		AdminPassword: cfg.ZitiAdminPassword,
+		CAFile:        caFile,
+		AllowInsecure: cfg.ZitiInsecureSkipVerify,
+		Logger:        zm.logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize ziti management client: %w", err)
 	}
+	zm.mgmt = mgmt
 
+	// Keep legacy mgmtClient and mgmtToken in sync for backward compatibility
+	// with code that still uses mgmtRequest() directly.
+	zm.mu.Lock()
+	zm.mgmtToken = mgmt.Token()
+	zm.mu.Unlock()
 	zm.mgmtClient = &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
-	}
-
-	// Authenticate to management API
-	if err := zm.authenticate(); err != nil {
-		return nil, fmt.Errorf("failed to authenticate to ziti controller: %w", err)
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.ZitiInsecureSkipVerify}},
 	}
 	zm.logger.Info("Authenticated to Ziti controller", zap.String("url", cfg.ZitiCtrlURL))
 
@@ -1403,6 +1413,12 @@ func (zm *ZitiManager) CheckControllerHealth(ctx context.Context) (bool, error) 
 // GetDB returns the database reference for direct queries
 func (zm *ZitiManager) GetDB() *database.PostgresDB {
 	return zm.db
+}
+
+// Mgmt returns the clean management API client for direct use by other packages.
+// Prefer this over MgmtRequest for new code.
+func (zm *ZitiManager) Mgmt() *pkgziti.MgmtClient {
+	return zm.mgmt
 }
 
 // EnsureServiceEdgeRouterPolicy creates a service-edge-router policy if it doesn't already exist.
