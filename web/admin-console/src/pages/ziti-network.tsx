@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
   Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
   Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
   LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay, Lock, Pencil, ScrollText,
-  Settings, Zap, Upload,
+  Settings, Zap, Upload, Map, Lightbulb, ArrowRight, Activity, Gauge, CircleDot, Waypoints,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -288,6 +288,66 @@ interface AppZitiService {
   route_name: string
 }
 
+// ─── Topology & Recommendations Types ────────────────────────────────────────
+
+interface TopologyNode {
+  id: string
+  label: string
+  type: 'controller' | 'router' | 'service' | 'identity' | 'gateway' | 'policy'
+  status: string
+  metadata?: Record<string, unknown>
+}
+
+interface TopologyEdge {
+  source: string
+  target: string
+  type: string
+  label?: string
+}
+
+interface TopologySummary {
+  controllers: number
+  routers: number
+  routers_online: number
+  routers_offline: number
+  services: number
+  services_enabled: number
+  identities: number
+  identities_enrolled: number
+  service_policies: number
+  edge_router_policies: number
+}
+
+interface TopologyGraph {
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+  summary: TopologySummary
+  generated_at: string
+}
+
+interface RecommendationItem {
+  id: string
+  category: string
+  severity: string
+  title: string
+  description: string
+  action: string
+  auto_fixable: boolean
+}
+
+interface ScoreSummary {
+  overall: number
+  security: number
+  performance: number
+  reliability: number
+}
+
+interface RecommendationsResponse {
+  recommendations: RecommendationItem[]
+  scores: ScoreSummary
+  generated_at: string
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function TruncatedId({ value, label }: { value: string; label?: string }) {
@@ -408,6 +468,14 @@ export function ZitiNetworkPage() {
             <Monitor className="h-4 w-4" />
             Remote Access
           </TabsTrigger>
+          <TabsTrigger value="topology" className="gap-1.5">
+            <Waypoints className="h-4 w-4" />
+            Topology
+          </TabsTrigger>
+          <TabsTrigger value="recommendations" className="gap-1.5">
+            <Lightbulb className="h-4 w-4" />
+            Recommendations
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -424,6 +492,12 @@ export function ZitiNetworkPage() {
         </TabsContent>
         <TabsContent value="remote-access">
           <RemoteAccessTab />
+        </TabsContent>
+        <TabsContent value="topology">
+          <TopologyTab />
+        </TabsContent>
+        <TabsContent value="recommendations">
+          <RecommendationsTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -3686,6 +3760,706 @@ function TempAccessLinksSection() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+// ─── Network Topology Visualization ──────────────────────────────────────────
+
+const NODE_COLORS: Record<string, { bg: string; border: string; text: string; icon: React.ElementType }> = {
+  controller: { bg: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700', icon: Network },
+  router:     { bg: 'bg-green-100', border: 'border-green-500', text: 'text-green-700', icon: Router },
+  service:    { bg: 'bg-purple-100', border: 'border-purple-500', text: 'text-purple-700', icon: Server },
+  identity:   { bg: 'bg-orange-100', border: 'border-orange-500', text: 'text-orange-700', icon: Users2 },
+  gateway:    { bg: 'bg-cyan-100', border: 'border-cyan-500', text: 'text-cyan-700', icon: Shield },
+  policy:     { bg: 'bg-yellow-100', border: 'border-yellow-500', text: 'text-yellow-700', icon: Key },
+}
+
+const STATUS_INDICATORS: Record<string, string> = {
+  online:   'bg-green-500',
+  offline:  'bg-red-500',
+  pending:  'bg-yellow-500',
+  active:   'bg-green-500',
+  degraded: 'bg-orange-500',
+}
+
+function TopologyTab() {
+  const [filter, setFilter] = useState<string>('all')
+  const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null)
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null)
+
+  const { data: topology, isLoading } = useQuery({
+    queryKey: ['ziti-topology'],
+    queryFn: () => api.get<TopologyGraph>('/api/v1/access/ziti/topology'),
+    refetchInterval: 30000,
+  })
+
+  const filteredNodes = useMemo(() => {
+    if (!topology) return []
+    if (filter === 'all') return topology.nodes
+    return topology.nodes.filter((n) => n.type === filter)
+  }, [topology, filter])
+
+  const connectedNodeIds = useMemo(() => {
+    if (!hoveredNode || !topology) return new Set<string>()
+    const ids = new Set<string>()
+    ids.add(hoveredNode)
+    for (const edge of topology.edges) {
+      if (edge.source === hoveredNode) ids.add(edge.target)
+      if (edge.target === hoveredNode) ids.add(edge.source)
+    }
+    return ids
+  }, [hoveredNode, topology])
+
+  if (isLoading) return <Spinner />
+  if (!topology) return <EmptyState icon={Waypoints} title="No topology data" description="Unable to load network topology." />
+
+  const summary = topology.summary
+
+  // Layout nodes in concentric rings by type
+  const nodesByType = {
+    controller: filteredNodes.filter((n) => n.type === 'controller'),
+    router:     filteredNodes.filter((n) => n.type === 'router'),
+    gateway:    filteredNodes.filter((n) => n.type === 'gateway'),
+    service:    filteredNodes.filter((n) => n.type === 'service'),
+    identity:   filteredNodes.filter((n) => n.type === 'identity'),
+    policy:     filteredNodes.filter((n) => n.type === 'policy'),
+  }
+
+  const filterOptions = [
+    { value: 'all', label: 'All', count: topology.nodes.length },
+    { value: 'controller', label: 'Controllers', count: summary.controllers },
+    { value: 'router', label: 'Routers', count: summary.routers },
+    { value: 'service', label: 'Services', count: summary.services },
+    { value: 'identity', label: 'Identities', count: summary.identities },
+    { value: 'gateway', label: 'Gateways', count: nodesByType.gateway.length },
+    { value: 'policy', label: 'Policies', count: summary.service_policies },
+  ]
+
+  return (
+    <div className="space-y-6 mt-4">
+      {/* Summary Cards */}
+      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <Card className="border-blue-200">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2">
+              <Network className="h-4 w-4 text-blue-600" />
+              <span className="text-xs font-medium text-muted-foreground">Controller</span>
+            </div>
+            <p className="text-lg font-bold mt-1">{summary.controllers > 0 ? 'Online' : 'Offline'}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-green-200">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2">
+              <Router className="h-4 w-4 text-green-600" />
+              <span className="text-xs font-medium text-muted-foreground">Routers</span>
+            </div>
+            <p className="text-lg font-bold mt-1">
+              <span className="text-green-600">{summary.routers_online}</span>
+              <span className="text-muted-foreground text-sm"> / {summary.routers}</span>
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-purple-200">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2">
+              <Server className="h-4 w-4 text-purple-600" />
+              <span className="text-xs font-medium text-muted-foreground">Services</span>
+            </div>
+            <p className="text-lg font-bold mt-1">
+              <span className="text-purple-600">{summary.services_enabled}</span>
+              <span className="text-muted-foreground text-sm"> / {summary.services}</span>
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-orange-200">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2">
+              <Users2 className="h-4 w-4 text-orange-600" />
+              <span className="text-xs font-medium text-muted-foreground">Identities</span>
+            </div>
+            <p className="text-lg font-bold mt-1">
+              <span className="text-orange-600">{summary.identities_enrolled}</span>
+              <span className="text-muted-foreground text-sm"> / {summary.identities}</span>
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="border-yellow-200">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2">
+              <Key className="h-4 w-4 text-yellow-600" />
+              <span className="text-xs font-medium text-muted-foreground">Svc Policies</span>
+            </div>
+            <p className="text-lg font-bold mt-1">{summary.service_policies}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-teal-200">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-teal-600" />
+              <span className="text-xs font-medium text-muted-foreground">ER Policies</span>
+            </div>
+            <p className="text-lg font-bold mt-1">{summary.edge_router_policies}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-medium text-muted-foreground mr-1">Filter:</span>
+        {filterOptions.map((opt) => (
+          <Button
+            key={opt.value}
+            variant={filter === opt.value ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setFilter(opt.value)}
+          >
+            {opt.label}
+            <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px]">{opt.count}</Badge>
+          </Button>
+        ))}
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Network Graph Visualization */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Waypoints className="h-4 w-4" />
+              Network Topology Map
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="relative bg-muted/30 rounded-lg border min-h-[480px] overflow-hidden">
+              {/* SVG Canvas for edges */}
+              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 0 }}>
+                {topology.edges.map((edge, i) => {
+                  const sourceNode = filteredNodes.find((n) => n.id === edge.source)
+                  const targetNode = filteredNodes.find((n) => n.id === edge.target)
+                  if (!sourceNode || !targetNode) return null
+
+                  const positions = computeNodePositions(filteredNodes)
+                  const sourceIdx = filteredNodes.indexOf(sourceNode)
+                  const targetIdx = filteredNodes.indexOf(targetNode)
+                  const sp = positions[sourceIdx]
+                  const tp = positions[targetIdx]
+                  if (!sp || !tp) return null
+
+                  const isHighlighted = hoveredNode && (connectedNodeIds.has(edge.source) && connectedNodeIds.has(edge.target))
+                  const opacity = hoveredNode ? (isHighlighted ? 0.8 : 0.1) : 0.3
+
+                  return (
+                    <line
+                      key={`edge-${i}`}
+                      x1={`${sp.x}%`} y1={`${sp.y}%`}
+                      x2={`${tp.x}%`} y2={`${tp.y}%`}
+                      stroke={isHighlighted ? '#3b82f6' : '#94a3b8'}
+                      strokeWidth={isHighlighted ? 2 : 1}
+                      opacity={opacity}
+                      strokeDasharray={edge.type === 'policy' ? '4 2' : undefined}
+                    />
+                  )
+                })}
+              </svg>
+
+              {/* Node elements */}
+              {filteredNodes.map((node, idx) => {
+                const positions = computeNodePositions(filteredNodes)
+                const pos = positions[idx]
+                if (!pos) return null
+
+                const colors = NODE_COLORS[node.type] || NODE_COLORS.identity
+                const Icon = colors.icon
+                const statusColor = STATUS_INDICATORS[node.status] || 'bg-gray-400'
+                const isConnected = !hoveredNode || connectedNodeIds.has(node.id)
+
+                return (
+                  <button
+                    key={node.id}
+                    className={`absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 transition-all duration-200 ${
+                      isConnected ? 'opacity-100 scale-100' : 'opacity-20 scale-90'
+                    } ${selectedNode?.id === node.id ? 'ring-2 ring-primary ring-offset-2 rounded-lg' : ''}`}
+                    style={{ left: `${pos.x}%`, top: `${pos.y}%`, zIndex: 1 }}
+                    onClick={() => setSelectedNode(selectedNode?.id === node.id ? null : node)}
+                    onMouseEnter={() => setHoveredNode(node.id)}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <div className={`relative p-2 rounded-lg border-2 ${colors.bg} ${colors.border} shadow-sm hover:shadow-md transition-shadow`}>
+                      <Icon className={`h-5 w-5 ${colors.text}`} />
+                      <span className={`absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full ${statusColor} ring-2 ring-white`} />
+                    </div>
+                    <span className="text-[10px] font-medium max-w-[80px] truncate text-center">{node.label}</span>
+                  </button>
+                )
+              })}
+
+              {filteredNodes.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
+                  No nodes match the current filter
+                </div>
+              )}
+            </div>
+
+            {/* Legend */}
+            <div className="flex items-center gap-4 mt-3 flex-wrap">
+              {Object.entries(NODE_COLORS).map(([type, colors]) => {
+                const Icon = colors.icon
+                return (
+                  <div key={type} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <div className={`p-0.5 rounded ${colors.bg}`}>
+                      <Icon className={`h-3 w-3 ${colors.text}`} />
+                    </div>
+                    <span className="capitalize">{type}</span>
+                  </div>
+                )
+              })}
+              <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-green-500" />online
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-red-500" />offline
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-yellow-500" />pending
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Node Detail Panel */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              {selectedNode ? 'Node Details' : 'Select a Node'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {selectedNode ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  {(() => {
+                    const colors = NODE_COLORS[selectedNode.type] || NODE_COLORS.identity
+                    const Icon = colors.icon
+                    return (
+                      <div className={`p-2.5 rounded-lg ${colors.bg}`}>
+                        <Icon className={`h-6 w-6 ${colors.text}`} />
+                      </div>
+                    )
+                  })()}
+                  <div>
+                    <p className="font-semibold">{selectedNode.label}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <Badge variant="outline" className="text-[10px] capitalize">{selectedNode.type}</Badge>
+                      <Badge className={`text-[10px] ${
+                        selectedNode.status === 'online' || selectedNode.status === 'active'
+                          ? 'bg-green-100 text-green-700'
+                          : selectedNode.status === 'offline'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {selectedNode.status}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Properties</p>
+                  <div className="space-y-1.5">
+                    <DetailRow label="ID" value={selectedNode.id} />
+                    {selectedNode.metadata && Object.entries(selectedNode.metadata).map(([key, value]) => (
+                      <DetailRow key={key} label={key.replace(/_/g, ' ')} value={String(value)} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Connected nodes */}
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Connections</p>
+                  <div className="space-y-1">
+                    {topology.edges
+                      .filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
+                      .slice(0, 10)
+                      .map((edge, i) => {
+                        const otherId = edge.source === selectedNode.id ? edge.target : edge.source
+                        const otherNode = topology.nodes.find((n) => n.id === otherId)
+                        if (!otherNode) return null
+                        const colors = NODE_COLORS[otherNode.type] || NODE_COLORS.identity
+                        const Icon = colors.icon
+                        return (
+                          <button
+                            key={i}
+                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 text-left text-xs"
+                            onClick={() => setSelectedNode(otherNode)}
+                          >
+                            <Icon className={`h-3.5 w-3.5 ${colors.text}`} />
+                            <span className="truncate flex-1">{otherNode.label}</span>
+                            <Badge variant="outline" className="text-[9px]">{edge.type}</Badge>
+                          </button>
+                        )
+                      })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <CircleDot className="h-10 w-10 mb-3 opacity-40" />
+                <p className="text-sm">Click a node in the topology map to view its details and connections.</p>
+                <p className="text-xs mt-1">Hover to highlight connected nodes.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Client & Gateway Quick Actions */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users2 className="h-4 w-4" />
+              Client Management
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Clients are identities that <strong>dial</strong> (connect to) services through the overlay.
+              Each user or device should have their own identity with least-privilege access.
+            </p>
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                <span>Enroll clients using the desktop tunneler (ZDET) or mobile app with the JWT from the Identities tab.</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                <span>Assign role attributes to group clients (e.g., <code className="bg-muted px-1 rounded text-xs">#engineering</code>, <code className="bg-muted px-1 rounded text-xs">#contractors</code>).</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                <span>Use <strong>Dial</strong> service policies to grant groups access to specific services.</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                <span>Enable posture checks to enforce device health (OS version, MFA, disk encryption).</span>
+              </div>
+            </div>
+            <div className="pt-2 flex gap-2">
+              <Badge variant="outline" className="text-xs">
+                {summary.identities_enrolled} enrolled / {summary.identities} total
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Router className="h-4 w-4" />
+              Gateway & Router Management
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Gateways (edge routers) form the data plane. They route traffic between clients and services
+              through the encrypted overlay mesh.
+            </p>
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                <span>Deploy at least <strong>2 edge routers</strong> in different zones for high availability.</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                <span>Use <strong>edge router policies</strong> to control which identities can use which routers.</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                <span>Monitor router health from the Overview tab. Offline routers can&#39;t carry traffic.</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm">
+                <ArrowRight className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                <span>Use <strong>tunneler mode</strong> on gateway routers to reach services without SDK embedding.</span>
+              </div>
+            </div>
+            <div className="pt-2 flex gap-2">
+              <Badge variant="outline" className={`text-xs ${summary.routers_offline > 0 ? 'border-red-200 text-red-700' : ''}`}>
+                {summary.routers_online} online / {summary.routers} total
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between items-center text-xs">
+      <span className="text-muted-foreground capitalize">{label}</span>
+      <span className="font-mono text-right max-w-[180px] truncate" title={value}>{value}</span>
+    </div>
+  )
+}
+
+function computeNodePositions(nodes: TopologyNode[]): Array<{ x: number; y: number }> {
+  const positions: Array<{ x: number; y: number }> = []
+  const cx = 50
+  const cy = 50
+
+  const typeOrder: Record<string, number> = {
+    controller: 0,
+    router: 1,
+    gateway: 1,
+    policy: 2,
+    service: 3,
+    identity: 4,
+  }
+
+  const grouped: Record<number, TopologyNode[]> = {}
+  nodes.forEach((n) => {
+    const ring = typeOrder[n.type] ?? 3
+    if (!grouped[ring]) grouped[ring] = []
+    grouped[ring].push(n)
+  })
+
+  const ringRadii = [0, 15, 25, 35, 44]
+  const nodeMap = new Map<string, number>()
+  nodes.forEach((n, i) => nodeMap.set(n.id, i))
+
+  for (let i = 0; i < nodes.length; i++) {
+    positions.push({ x: cx, y: cy })
+  }
+
+  for (const [ringStr, group] of Object.entries(grouped)) {
+    const ring = parseInt(ringStr)
+    const radius = ringRadii[ring] ?? 40
+    const count = group.length
+
+    if (ring === 0) {
+      group.forEach((n) => {
+        const idx = nodeMap.get(n.id)
+        if (idx !== undefined) positions[idx] = { x: cx, y: cy }
+      })
+    } else {
+      group.forEach((n, i) => {
+        const angle = (2 * Math.PI * i) / count - Math.PI / 2
+        const jitter = (ring * 2) * Math.sin(i * 1.618)
+        const x = cx + (radius + jitter * 0.3) * Math.cos(angle)
+        const y = cy + (radius + jitter * 0.3) * Math.sin(angle)
+        const idx = nodeMap.get(n.id)
+        if (idx !== undefined) positions[idx] = { x: Math.max(5, Math.min(95, x)), y: Math.max(5, Math.min(95, y)) }
+      })
+    }
+  }
+
+  return positions
+}
+
+// ─── Recommendations Tab ─────────────────────────────────────────────────────
+
+const SEVERITY_STYLES: Record<string, { bg: string; text: string; badge: string }> = {
+  critical: { bg: 'bg-red-50 border-red-200', text: 'text-red-700', badge: 'bg-red-100 text-red-800' },
+  high:     { bg: 'bg-orange-50 border-orange-200', text: 'text-orange-700', badge: 'bg-orange-100 text-orange-800' },
+  medium:   { bg: 'bg-yellow-50 border-yellow-200', text: 'text-yellow-700', badge: 'bg-yellow-100 text-yellow-800' },
+  low:      { bg: 'bg-blue-50 border-blue-200', text: 'text-blue-700', badge: 'bg-blue-100 text-blue-800' },
+  info:     { bg: 'bg-gray-50 border-gray-200', text: 'text-gray-700', badge: 'bg-gray-100 text-gray-800' },
+}
+
+const CATEGORY_ICONS: Record<string, React.ElementType> = {
+  security:    Shield,
+  performance: Zap,
+  reliability: Activity,
+  cleanup:     Settings,
+  info:        CheckCircle,
+}
+
+function ScoreGauge({ label, score, color }: { label: string; score: number; color: string }) {
+  const radius = 30
+  const circumference = 2 * Math.PI * radius
+  const filled = (score / 100) * circumference
+  const scoreColor = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-yellow-600' : 'text-red-600'
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative w-[76px] h-[76px]">
+        <svg className="w-full h-full -rotate-90" viewBox="0 0 76 76">
+          <circle cx="38" cy="38" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="6" />
+          <circle
+            cx="38" cy="38" r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth="6"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference - filled}
+            strokeLinecap="round"
+            className="transition-all duration-700"
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className={`text-lg font-bold ${scoreColor}`}>{score}</span>
+        </div>
+      </div>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+    </div>
+  )
+}
+
+function RecommendationsTab() {
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['ziti-recommendations'],
+    queryFn: () => api.get<RecommendationsResponse>('/api/v1/access/ziti/recommendations'),
+    refetchInterval: 60000,
+  })
+
+  if (isLoading) return <Spinner />
+  if (!data) return <EmptyState icon={Lightbulb} title="No recommendations" description="Unable to generate recommendations." />
+
+  const filteredRecs = categoryFilter === 'all'
+    ? data.recommendations
+    : data.recommendations.filter((r) => r.category === categoryFilter)
+
+  const categories = ['all', ...Array.from(new Set(data.recommendations.map((r) => r.category)))]
+
+  return (
+    <div className="space-y-6 mt-4">
+      {/* Health Scores */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Gauge className="h-4 w-4" />
+            Network Health Scores
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center gap-8 py-2">
+            <ScoreGauge label="Overall" score={data.scores.overall} color={data.scores.overall >= 80 ? '#22c55e' : data.scores.overall >= 60 ? '#eab308' : '#ef4444'} />
+            <ScoreGauge label="Security" score={data.scores.security} color="#3b82f6" />
+            <ScoreGauge label="Performance" score={data.scores.performance} color="#8b5cf6" />
+            <ScoreGauge label="Reliability" score={data.scores.reliability} color="#06b6d4" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Category Filter */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-medium text-muted-foreground mr-1">Category:</span>
+        {categories.map((cat) => (
+          <Button
+            key={cat}
+            variant={categoryFilter === cat ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 text-xs capitalize"
+            onClick={() => setCategoryFilter(cat)}
+          >
+            {cat}
+          </Button>
+        ))}
+      </div>
+
+      {/* Recommendations List */}
+      <div className="space-y-3">
+        {filteredRecs.map((rec) => {
+          const severity = SEVERITY_STYLES[rec.severity] || SEVERITY_STYLES.info
+          const CategoryIcon = CATEGORY_ICONS[rec.category] || Lightbulb
+
+          return (
+            <Card key={rec.id} className={`border ${severity.bg}`}>
+              <CardContent className="py-4">
+                <div className="flex items-start gap-3">
+                  <div className={`p-2 rounded-lg ${severity.bg}`}>
+                    <CategoryIcon className={`h-5 w-5 ${severity.text}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h4 className="font-semibold text-sm">{rec.title}</h4>
+                      <Badge className={`text-[10px] ${severity.badge}`}>{rec.severity}</Badge>
+                      <Badge variant="outline" className="text-[10px] capitalize">{rec.category}</Badge>
+                      {rec.auto_fixable && (
+                        <Badge variant="outline" className="text-[10px] border-green-200 text-green-700">
+                          <Zap className="h-2.5 w-2.5 mr-0.5" />auto-fixable
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground">{rec.description}</p>
+                    <div className="mt-2 flex items-start gap-2 bg-white/60 rounded px-3 py-2 border border-dashed">
+                      <Lightbulb className="h-3.5 w-3.5 text-amber-500 mt-0.5 shrink-0" />
+                      <p className="text-xs">{rec.action}</p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )
+        })}
+
+        {filteredRecs.length === 0 && (
+          <EmptyState icon={CheckCircle} title="No recommendations" description="All checks passed for this category." />
+        )}
+      </div>
+
+      {/* Management Best Practices */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Lightbulb className="h-4 w-4" />
+            Management Best Practices
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold">Day-to-Day Operations</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                  Monitor the Overview tab daily for router health and connection status.
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                  Run identity sync after adding new users to auto-provision Ziti identities.
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                  Use the Topology view to verify service-to-identity connectivity.
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                  Review certificate expiry alerts and rotate proactively.
+                </li>
+              </ul>
+            </div>
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold">Security Hardening</h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li className="flex items-start gap-2">
+                  <Shield className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                  Enable posture checks to enforce device health before granting access.
+                </li>
+                <li className="flex items-start gap-2">
+                  <Shield className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                  Use role-based service policies instead of <code className="bg-muted px-1 rounded text-xs">#all</code> wildcards.
+                </li>
+                <li className="flex items-start gap-2">
+                  <Shield className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                  Sync governance policies to automatically enforce access reviews in Ziti.
+                </li>
+                <li className="flex items-start gap-2">
+                  <Shield className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                  Delete unenrolled identities whose JWTs have expired to reduce attack surface.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

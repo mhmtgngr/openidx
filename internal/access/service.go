@@ -395,6 +395,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/apps/:appId/publish", svc.handlePublishPaths)
 		api.GET("/apps/:appId/ziti-services", svc.handleGetAppZitiServices)
 
+		// Network topology & recommendations
+		api.GET("/ziti/topology", svc.handleGetNetworkTopology)
+		api.GET("/ziti/recommendations", svc.handleGetRecommendations)
+
 		// Unified audit log
 		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)
 		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
