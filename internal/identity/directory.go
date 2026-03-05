@@ -2,9 +2,12 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -723,14 +726,56 @@ func (s *LDAPSyncer) publishGroupEvent(ctx context.Context, eventType string, gr
 	}
 }
 
-// sendWebhook sends a webhook notification (placeholder implementation)
+// sendWebhook sends a webhook notification to the configured URL
 func (s *LDAPSyncer) sendWebhook(ctx context.Context, eventType string, event events.Event) {
-	s.logger.Debug("Webhook notification",
-		zap.String("event_type", eventType),
-		zap.String("event_id", event.ID),
-	)
-	// In a real implementation, this would make an HTTP POST request
-	// to the configured webhook URL
+	payload := map[string]interface{}{
+		"event_type": eventType,
+		"event_id":   event.ID,
+		"source":     event.Source,
+		"data":       event.Payload,
+		"timestamp":  time.Now().UTC(),
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.Error("Failed to marshal webhook payload", zap.Error(err))
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *s.webhookURL, bytes.NewReader(body))
+	if err != nil {
+		s.logger.Error("Failed to create webhook request", zap.Error(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Event-Type", eventType)
+	req.Header.Set("X-Event-ID", event.ID)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.logger.Warn("Webhook delivery failed",
+			zap.String("url", *s.webhookURL),
+			zap.String("event_type", eventType),
+			zap.Error(err),
+		)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		s.logger.Warn("Webhook returned error status",
+			zap.String("url", *s.webhookURL),
+			zap.Int("status", resp.StatusCode),
+			zap.String("event_type", eventType),
+		)
+	} else {
+		s.logger.Debug("Webhook delivered",
+			zap.String("event_type", eventType),
+			zap.String("event_id", event.ID),
+			zap.Int("status", resp.StatusCode),
+		)
+	}
 }
 
 // MockLDAPClient is a mock implementation for testing

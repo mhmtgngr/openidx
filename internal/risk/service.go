@@ -2,7 +2,9 @@ package risk
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +17,13 @@ import (
 
 	"github.com/openidx/openidx/internal/common/database"
 )
+
+// generateShortID generates a random 16-character hex ID
+func generateShortID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 // GeoResult represents a geo-IP lookup result
 type GeoResult struct {
@@ -603,35 +612,187 @@ func (s *Service) GetRecentFailedAttempts(ctx context.Context, userID string) in
 	return count
 }
 
-// ListRiskPolicies returns all risk policies (placeholder for compatibility)
+// ListRiskPolicies returns all risk policies, optionally filtering by enabled status
 func (s *Service) ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]RiskPolicy, error) {
-	// This is a placeholder - policies are per-tenant in this implementation
-	return []RiskPolicy{}, nil
+	query := `SELECT id, name, description, tenant_id, low_threshold, medium_threshold,
+	           high_threshold, critical_threshold, enabled, created_at, updated_at
+	           FROM risk_policies`
+	if enabledOnly {
+		query += ` WHERE enabled = true`
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list risk policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []RiskPolicy
+	for rows.Next() {
+		var p RiskPolicy
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.TenantID,
+			&p.LowThreshold, &p.MediumThreshold, &p.HighThreshold,
+			&p.CriticalThreshold, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan risk policy: %w", err)
+		}
+		policies = append(policies, p)
+	}
+	if policies == nil {
+		policies = []RiskPolicy{}
+	}
+	return policies, nil
 }
 
-// GetRiskPolicy returns a specific risk policy (placeholder for compatibility)
+// GetRiskPolicy returns a specific risk policy by ID
 func (s *Service) GetRiskPolicy(ctx context.Context, policyID string) (*RiskPolicy, error) {
-	return nil, fmt.Errorf("policy not found")
+	var p RiskPolicy
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, name, description, tenant_id, low_threshold, medium_threshold,
+		        high_threshold, critical_threshold, enabled, created_at, updated_at
+		 FROM risk_policies WHERE id = $1`, policyID).Scan(
+		&p.ID, &p.Name, &p.Description, &p.TenantID,
+		&p.LowThreshold, &p.MediumThreshold, &p.HighThreshold,
+		&p.CriticalThreshold, &p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("risk policy not found: %w", err)
+	}
+	return &p, nil
 }
 
-// CreateRiskPolicy creates a new risk policy (placeholder for compatibility)
+// CreateRiskPolicy creates a new risk policy with the given configuration
 func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	return nil, fmt.Errorf("not implemented")
+	now := time.Now()
+	policy := &RiskPolicy{
+		ID:          fmt.Sprintf("rpol_%s", generateShortID()),
+		Name:        req.Name,
+		Description: req.Description,
+		TenantID:    req.TenantID,
+		Enabled:     true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	// Apply thresholds with defaults
+	if req.LowThreshold != nil {
+		policy.LowThreshold = *req.LowThreshold
+	} else {
+		policy.LowThreshold = 30
+	}
+	if req.MediumThreshold != nil {
+		policy.MediumThreshold = *req.MediumThreshold
+	} else {
+		policy.MediumThreshold = 50
+	}
+	if req.HighThreshold != nil {
+		policy.HighThreshold = *req.HighThreshold
+	} else {
+		policy.HighThreshold = 70
+	}
+	if req.CriticalThreshold != nil {
+		policy.CriticalThreshold = *req.CriticalThreshold
+	} else {
+		policy.CriticalThreshold = 90
+	}
+	if req.Enabled != nil {
+		policy.Enabled = *req.Enabled
+	}
+
+	_, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO risk_policies (id, name, description, tenant_id, low_threshold, medium_threshold,
+		 high_threshold, critical_threshold, enabled, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		policy.ID, policy.Name, policy.Description, policy.TenantID,
+		policy.LowThreshold, policy.MediumThreshold, policy.HighThreshold,
+		policy.CriticalThreshold, policy.Enabled, policy.CreatedAt, policy.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create risk policy: %w", err)
+	}
+
+	s.logger.Info("Risk policy created",
+		zap.String("policy_id", policy.ID),
+		zap.String("name", policy.Name),
+		zap.String("tenant_id", policy.TenantID),
+	)
+	return policy, nil
 }
 
-// UpdateRiskPolicy updates an existing risk policy (placeholder for compatibility)
+// UpdateRiskPolicy updates an existing risk policy
 func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	return nil, fmt.Errorf("not implemented")
+	existing, err := s.GetRiskPolicy(ctx, policyID)
+	if err != nil {
+		return nil, err
+	}
+
+	existing.Name = req.Name
+	existing.Description = req.Description
+	existing.UpdatedAt = time.Now()
+
+	if req.LowThreshold != nil {
+		existing.LowThreshold = *req.LowThreshold
+	}
+	if req.MediumThreshold != nil {
+		existing.MediumThreshold = *req.MediumThreshold
+	}
+	if req.HighThreshold != nil {
+		existing.HighThreshold = *req.HighThreshold
+	}
+	if req.CriticalThreshold != nil {
+		existing.CriticalThreshold = *req.CriticalThreshold
+	}
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
+
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE risk_policies SET name = $1, description = $2, low_threshold = $3,
+		 medium_threshold = $4, high_threshold = $5, critical_threshold = $6,
+		 enabled = $7, updated_at = $8 WHERE id = $9`,
+		existing.Name, existing.Description, existing.LowThreshold,
+		existing.MediumThreshold, existing.HighThreshold, existing.CriticalThreshold,
+		existing.Enabled, existing.UpdatedAt, policyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update risk policy: %w", err)
+	}
+
+	s.logger.Info("Risk policy updated",
+		zap.String("policy_id", policyID),
+		zap.String("name", existing.Name),
+	)
+	return existing, nil
 }
 
-// DeleteRiskPolicy deletes a risk policy (placeholder for compatibility)
+// DeleteRiskPolicy deletes a risk policy by ID
 func (s *Service) DeleteRiskPolicy(ctx context.Context, policyID string) error {
-	return fmt.Errorf("not implemented")
+	result, err := s.db.Pool.Exec(ctx, `DELETE FROM risk_policies WHERE id = $1`, policyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete risk policy: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("risk policy not found")
+	}
+
+	s.logger.Info("Risk policy deleted", zap.String("policy_id", policyID))
+	return nil
 }
 
-// ToggleRiskPolicy enables or disables a risk policy (placeholder for compatibility)
+// ToggleRiskPolicy enables or disables a risk policy
 func (s *Service) ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error {
-	return fmt.Errorf("not implemented")
+	result, err := s.db.Pool.Exec(ctx,
+		`UPDATE risk_policies SET enabled = $1, updated_at = $2 WHERE id = $3`,
+		enabled, time.Now(), policyID)
+	if err != nil {
+		return fmt.Errorf("failed to toggle risk policy: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("risk policy not found")
+	}
+
+	s.logger.Info("Risk policy toggled",
+		zap.String("policy_id", policyID),
+		zap.Bool("enabled", enabled),
+	)
+	return nil
 }
 
 // EvaluateRiskPolicies evaluates risk for a given login context (placeholder for compatibility)
