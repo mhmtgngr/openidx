@@ -10,6 +10,39 @@ interface User {
   permissions: string[]
 }
 
+// Role hierarchy: super_admin > admin > operator > auditor > user
+export type UserRole = 'super_admin' | 'admin' | 'operator' | 'auditor' | 'user'
+
+const ROLE_LEVELS: Record<string, number> = {
+  super_admin: 4,
+  admin: 3,
+  operator: 2,
+  auditor: 1,
+  user: 0,
+}
+
+// Permissions each role inherits (cumulative)
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  user: ['users:read'],
+  auditor: ['users:read', 'audit:read', 'audit:export'],
+  operator: ['users:read', 'users:write', 'groups:manage', 'audit:read', 'policies:manage'],
+  admin: ['users:read', 'users:write', 'users:delete', 'groups:manage', 'config:manage', 'audit:read', 'audit:export', 'policies:manage'],
+  super_admin: ['users:read', 'users:write', 'users:delete', 'groups:manage', 'config:manage', 'audit:read', 'audit:export', 'policies:manage', 'tenants:manage'],
+}
+
+function getHighestRole(roles: string[]): UserRole {
+  let highest: UserRole = 'user'
+  let highestLevel = 0
+  for (const role of roles) {
+    const level = ROLE_LEVELS[role] ?? 0
+    if (level > highestLevel) {
+      highestLevel = level
+      highest = role as UserRole
+    }
+  }
+  return highest
+}
+
 interface AuthContextType {
   isAuthenticated: boolean
   isLoading: boolean
@@ -18,7 +51,11 @@ interface AuthContextType {
   login: () => void
   logout: () => void
   hasRole: (role: string) => boolean
+  /** Check if user's highest role meets or exceeds the minimum required role */
+  hasMinRole: (minRole: UserRole) => boolean
   hasPermission: (resource: string, action: string) => boolean
+  /** Returns the user's highest role */
+  highestRole: UserRole
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -323,9 +360,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user?.roles.includes(role) || false
   }
 
+  const hasMinRole = (minRole: UserRole): boolean => {
+    if (!user) return false
+    const highest = getHighestRole(user.roles)
+    return (ROLE_LEVELS[highest] ?? 0) >= (ROLE_LEVELS[minRole] ?? 0)
+  }
+
+  const highestRole: UserRole = user ? getHighestRole(user.roles) : 'user'
+
   const hasPermission = (resource: string, action: string) => {
-    if (user?.roles.includes('admin')) return true
-    return user?.permissions.includes(`${resource}:${action}`) || false
+    if (!user) return false
+    // Check via role hierarchy first
+    const role = getHighestRole(user.roles)
+    const rolePerms = ROLE_PERMISSIONS[role] || []
+    if (rolePerms.includes(`${resource}:${action}`)) return true
+    // Fallback to explicit token permissions
+    return user.permissions.includes(`${resource}:${action}`)
   }
 
   return (
@@ -338,7 +388,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         hasRole,
+        hasMinRole,
         hasPermission,
+        highestRole,
       }}
     >
       {children}

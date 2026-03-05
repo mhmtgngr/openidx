@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/common/database"
 )
@@ -854,358 +855,351 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 
 // RegisterRoutes registers admin service routes
 func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
-	// Dashboard and Settings are now handled by internal/admin/handlers package
-	// to avoid route registration conflicts
-
-	// SMS Settings (separate from main settings due to credential sensitivity)
-	router.GET("/settings/sms", svc.handleGetSMSSettings)
-	router.PUT("/settings/sms", svc.handleUpdateSMSSettings)
-	router.POST("/settings/sms/test", svc.handleTestSMS)
-	
-	// Applications
-	router.GET("/applications", svc.handleListApplications)
-	router.POST("/applications", svc.handleCreateApplication)
-	router.GET("/applications/:id", svc.handleGetApplication)
-	router.PUT("/applications/:id", svc.handleUpdateApplication)
-	router.DELETE("/applications/:id", svc.handleDeleteApplication)
-
-	// Application SSO Settings
-	router.GET("/applications/:id/sso-settings", svc.handleGetApplicationSSOSettings)
-	router.PUT("/applications/:id/sso-settings", svc.handleUpdateApplicationSSOSettings)
-	
-	// Directory integrations
-	router.GET("/directories", svc.handleListDirectories)
-	router.POST("/directories", svc.handleCreateDirectory)
-	router.GET("/directories/:id", svc.handleGetDirectory)
-	router.PUT("/directories/:id", svc.handleUpdateDirectory)
-	router.DELETE("/directories/:id", svc.handleDeleteDirectory)
-	router.POST("/directories/:id/sync", svc.handleSyncDirectory)
-	router.POST("/directories/:id/test", svc.handleTestConnection)
-	router.GET("/directories/:id/sync-logs", svc.handleGetSyncLogs)
-	router.GET("/directories/:id/sync-state", svc.handleGetSyncState)
-	
-	// MFA configuration
-	router.GET("/mfa/methods", svc.handleListMFAMethods)
-	router.PUT("/mfa/methods", svc.handleUpdateMFAMethods)
-
-	// Device management (conditional access)
-	router.GET("/devices", svc.handleListDevices)
-	router.GET("/users/:id/devices", svc.handleUserDevices)
-	router.POST("/devices/:id/trust", svc.handleTrustDevice)
-	router.DELETE("/devices/:id", svc.handleRevokeDevice)
-
-	// Risk stats and login history
-	router.GET("/risk/stats", svc.handleRiskStats)
-	router.GET("/login-history", svc.handleLoginHistory)
-
-	// Service accounts
-	router.GET("/service-accounts", svc.handleListServiceAccounts)
-	router.POST("/service-accounts", svc.handleCreateServiceAccount)
-	router.GET("/service-accounts/:id", svc.handleGetServiceAccount)
-	router.DELETE("/service-accounts/:id", svc.handleDeleteServiceAccount)
-
-	// API keys
-	router.GET("/service-accounts/:id/api-keys", svc.handleListServiceAccountAPIKeys)
-	router.POST("/service-accounts/:id/api-keys", svc.handleCreateServiceAccountAPIKey)
+	// Dashboard and Settings are handled by internal/admin/handlers package.
+	// User-scoped routes (no elevated role required):
 	router.POST("/api-keys", svc.handleCreateUserAPIKey)
 	router.GET("/api-keys", svc.handleListUserAPIKeys)
 	router.DELETE("/api-keys/:id", svc.handleRevokeAPIKey)
 
-	// Webhooks
-	router.GET("/webhooks", svc.handleListWebhooks)
-	router.POST("/webhooks", svc.handleCreateWebhook)
-	router.GET("/webhooks/:id", svc.handleGetWebhook)
-	router.DELETE("/webhooks/:id", svc.handleDeleteWebhook)
-	router.GET("/webhooks/:id/deliveries", svc.handleWebhookDeliveries)
-	router.POST("/webhooks/deliveries/:id/retry", svc.handleRetryWebhookDelivery)
-	router.POST("/webhooks/:id/test", svc.handleTestWebhook)
-	router.GET("/webhooks/:id/stats", svc.handleWebhookStats)
+	// ── Auditor+ routes (read-only audit, analytics, compliance) ──
+	auditor := router.Group("", middleware.RequireMinRole("auditor"))
+	{
+		auditor.GET("/analytics/logins", svc.handleLoginAnalytics)
+		auditor.GET("/analytics/risk", svc.handleRiskAnalytics)
+		auditor.GET("/analytics/users", svc.handleUserAnalytics)
+		auditor.GET("/analytics/events", svc.handleEventAnalytics)
+		auditor.GET("/compliance-posture", svc.handleGetCompliancePosture)
+		auditor.GET("/entitlements", svc.handleGetEntitlementCatalog)
+		auditor.GET("/entitlements/stats", svc.handleGetEntitlementStats)
+		auditor.GET("/audit-log", svc.handleGetAdminAuditLog)
+		auditor.GET("/audit-log/:id", svc.handleGetAdminAuditEntry)
+		auditor.GET("/settings-history", svc.handleGetSettingsHistory)
+		auditor.GET("/risk/stats", svc.handleRiskStats)
+		auditor.GET("/login-history", svc.handleLoginHistory)
+		auditor.GET("/security-alerts", svc.handleListSecurityAlerts)
+		auditor.GET("/security-alerts/:id", svc.handleGetSecurityAlert)
+	}
 
-	// Invitations
-	router.GET("/invitations", svc.handleListInvitations)
-	router.POST("/invitations", svc.handleCreateInvitation)
-	router.DELETE("/invitations/:id", svc.handleDeleteInvitation)
+	// ── Operator+ routes (user/group/device/session management, MFA, alerts) ──
+	operator := router.Group("", middleware.RequireMinRole("operator"))
+	{
+		// Device management
+		operator.GET("/devices", svc.handleListDevices)
+		operator.GET("/users/:id/devices", svc.handleUserDevices)
+		operator.POST("/devices/:id/trust", svc.handleTrustDevice)
+		operator.DELETE("/devices/:id", svc.handleRevokeDevice)
 
-	// Analytics
-	router.GET("/analytics/logins", svc.handleLoginAnalytics)
-	router.GET("/analytics/risk", svc.handleRiskAnalytics)
-	router.GET("/analytics/users", svc.handleUserAnalytics)
-	router.GET("/analytics/events", svc.handleEventAnalytics)
+		// MFA configuration
+		operator.GET("/mfa/methods", svc.handleListMFAMethods)
+		operator.PUT("/mfa/methods", svc.handleUpdateMFAMethods)
 
-	// Session management
-	router.GET("/sessions", svc.handleListAllSessions)
-	router.DELETE("/sessions/:id", svc.handleAdminRevokeSession)
-	router.DELETE("/users/:id/sessions", svc.handleAdminRevokeAllUserSessions)
+		// Session management
+		operator.GET("/sessions", svc.handleListAllSessions)
+		operator.DELETE("/sessions/:id", svc.handleAdminRevokeSession)
+		operator.DELETE("/users/:id/sessions", svc.handleAdminRevokeAllUserSessions)
 
-	// Security alerts
-	router.GET("/security-alerts", svc.handleListSecurityAlerts)
-	router.GET("/security-alerts/:id", svc.handleGetSecurityAlert)
-	router.PUT("/security-alerts/:id/status", svc.handleUpdateAlertStatus)
+		// Security alert actions
+		operator.PUT("/security-alerts/:id/status", svc.handleUpdateAlertStatus)
 
-	// IP threat management
-	router.GET("/ip-threats", svc.handleListIPThreats)
-	router.POST("/ip-threats", svc.handleAddIPThreat)
-	router.DELETE("/ip-threats/:id", svc.handleRemoveIPThreat)
+		// Entitlement metadata
+		operator.PUT("/entitlements/:type/:id/metadata", svc.handleUpdateEntitlementMetadata)
+	}
 
-	// Service account key rotation
-	router.POST("/service-accounts/:id/rotate-key", svc.handleRotateServiceAccountKey)
+	// ── Admin+ routes (full management: apps, directories, config, etc.) ──
+	admin := router.Group("", middleware.RequireMinRole("admin"))
+	{
+		// SMS Settings
+		admin.GET("/settings/sms", svc.handleGetSMSSettings)
+		admin.PUT("/settings/sms", svc.handleUpdateSMSSettings)
+		admin.POST("/settings/sms/test", svc.handleTestSMS)
 
-	// Compliance posture dashboard
-	router.GET("/compliance-posture", svc.handleGetCompliancePosture)
+		// Applications
+		admin.GET("/applications", svc.handleListApplications)
+		admin.POST("/applications", svc.handleCreateApplication)
+		admin.GET("/applications/:id", svc.handleGetApplication)
+		admin.PUT("/applications/:id", svc.handleUpdateApplication)
+		admin.DELETE("/applications/:id", svc.handleDeleteApplication)
+		admin.GET("/applications/:id/sso-settings", svc.handleGetApplicationSSOSettings)
+		admin.PUT("/applications/:id/sso-settings", svc.handleUpdateApplicationSSOSettings)
 
-	// Entitlement catalog
-	router.GET("/entitlements", svc.handleGetEntitlementCatalog)
-	router.GET("/entitlements/stats", svc.handleGetEntitlementStats)
-	router.PUT("/entitlements/:type/:id/metadata", svc.handleUpdateEntitlementMetadata)
+		// Directory integrations
+		admin.GET("/directories", svc.handleListDirectories)
+		admin.POST("/directories", svc.handleCreateDirectory)
+		admin.GET("/directories/:id", svc.handleGetDirectory)
+		admin.PUT("/directories/:id", svc.handleUpdateDirectory)
+		admin.DELETE("/directories/:id", svc.handleDeleteDirectory)
+		admin.POST("/directories/:id/sync", svc.handleSyncDirectory)
+		admin.POST("/directories/:id/test", svc.handleTestConnection)
+		admin.GET("/directories/:id/sync-logs", svc.handleGetSyncLogs)
+		admin.GET("/directories/:id/sync-state", svc.handleGetSyncState)
 
-	// Admin delegations
-	router.GET("/delegations", svc.handleListDelegations)
-	router.POST("/delegations", svc.handleCreateDelegation)
-	router.GET("/delegations/:id", svc.handleGetDelegation)
-	router.PUT("/delegations/:id", svc.handleUpdateDelegation)
-	router.DELETE("/delegations/:id", svc.handleDeleteDelegation)
+		// Service accounts
+		admin.GET("/service-accounts", svc.handleListServiceAccounts)
+		admin.POST("/service-accounts", svc.handleCreateServiceAccount)
+		admin.GET("/service-accounts/:id", svc.handleGetServiceAccount)
+		admin.DELETE("/service-accounts/:id", svc.handleDeleteServiceAccount)
+		admin.GET("/service-accounts/:id/api-keys", svc.handleListServiceAccountAPIKeys)
+		admin.POST("/service-accounts/:id/api-keys", svc.handleCreateServiceAccountAPIKey)
+		admin.POST("/service-accounts/:id/rotate-key", svc.handleRotateServiceAccountKey)
 
-	// Developer experience
-	router.GET("/developer/settings", svc.handleGetDeveloperSettings)
-	router.PUT("/developer/settings", svc.handleUpdateDeveloperSettings)
-	router.GET("/developer/api-catalog", svc.handleListAPIEndpoints)
-	router.GET("/developer/code-samples", svc.handleGetCodeSamples)
-	router.POST("/developer/playground/sessions", svc.handleCreatePlaygroundSession)
-	router.POST("/developer/playground/execute", svc.handleExecutePlayground)
+		// Webhooks
+		admin.GET("/webhooks", svc.handleListWebhooks)
+		admin.POST("/webhooks", svc.handleCreateWebhook)
+		admin.GET("/webhooks/:id", svc.handleGetWebhook)
+		admin.DELETE("/webhooks/:id", svc.handleDeleteWebhook)
+		admin.GET("/webhooks/:id/deliveries", svc.handleWebhookDeliveries)
+		admin.POST("/webhooks/deliveries/:id/retry", svc.handleRetryWebhookDelivery)
+		admin.POST("/webhooks/:id/test", svc.handleTestWebhook)
+		admin.GET("/webhooks/:id/stats", svc.handleWebhookStats)
 
-	// Admin audit log
-	router.GET("/audit-log", svc.handleGetAdminAuditLog)
-	router.GET("/audit-log/:id", svc.handleGetAdminAuditEntry)
-	router.GET("/settings-history", svc.handleGetSettingsHistory)
+		// Invitations
+		admin.GET("/invitations", svc.handleListInvitations)
+		admin.POST("/invitations", svc.handleCreateInvitation)
+		admin.DELETE("/invitations/:id", svc.handleDeleteInvitation)
 
-	// Enhanced analytics (Phase 12)
-	router.GET("/analytics/auth-dashboard", svc.handleAuthAnalyticsDashboard)
-	router.GET("/analytics/usage", svc.handleUsageAnalytics)
-	router.GET("/analytics/api-usage", svc.handleAPIUsageMetrics)
-	router.GET("/analytics/feature-adoption", svc.handleFeatureAdoption)
-	router.GET("/analytics/risk-timeline", svc.handleRiskScoreTimeline)
-	router.GET("/analytics/activity-heatmap", svc.handleUserActivityHeatmap)
+		// IP threat management
+		admin.GET("/ip-threats", svc.handleListIPThreats)
+		admin.POST("/ip-threats", svc.handleAddIPThreat)
+		admin.DELETE("/ip-threats/:id", svc.handleRemoveIPThreat)
 
-	// System health (Phase 14)
-	router.GET("/system/health", svc.handleSystemHealth)
+		// Admin delegations
+		admin.GET("/delegations", svc.handleListDelegations)
+		admin.POST("/delegations", svc.handleCreateDelegation)
+		admin.GET("/delegations/:id", svc.handleGetDelegation)
+		admin.PUT("/delegations/:id", svc.handleUpdateDelegation)
+		admin.DELETE("/delegations/:id", svc.handleDeleteDelegation)
 
-	// Error catalog (Phase 14)
-	router.GET("/error-catalog", svc.handleListErrorCatalog)
-	router.POST("/error-catalog", svc.handleCreateErrorCatalogEntry)
-	router.PUT("/error-catalog/:code", svc.handleUpdateErrorCatalogEntry)
-	router.DELETE("/error-catalog/:code", svc.handleDeleteErrorCatalogEntry)
+		// Developer experience
+		admin.GET("/developer/settings", svc.handleGetDeveloperSettings)
+		admin.PUT("/developer/settings", svc.handleUpdateDeveloperSettings)
+		admin.GET("/developer/api-catalog", svc.handleListAPIEndpoints)
+		admin.GET("/developer/code-samples", svc.handleGetCodeSamples)
+		admin.POST("/developer/playground/sessions", svc.handleCreatePlaygroundSession)
+		admin.POST("/developer/playground/execute", svc.handleExecutePlayground)
+	}
 
-	// Phase 15: AI & Intelligence
+	// ── Auditor+ routes (continued): enhanced analytics, risk ──
+	auditor2 := router.Group("", middleware.RequireMinRole("auditor"))
+	{
+		auditor2.GET("/analytics/auth-dashboard", svc.handleAuthAnalyticsDashboard)
+		auditor2.GET("/analytics/usage", svc.handleUsageAnalytics)
+		auditor2.GET("/analytics/api-usage", svc.handleAPIUsageMetrics)
+		auditor2.GET("/analytics/feature-adoption", svc.handleFeatureAdoption)
+		auditor2.GET("/analytics/risk-timeline", svc.handleRiskScoreTimeline)
+		auditor2.GET("/analytics/activity-heatmap", svc.handleUserActivityHeatmap)
+		auditor2.GET("/analytics/predictions", svc.handlePredictionsSummary)
+		auditor2.GET("/analytics/predictions/login-forecast", svc.handleLoginForecast)
+		auditor2.GET("/analytics/predictions/risk-forecast", svc.handleRiskForecast)
+		auditor2.GET("/analytics/predictions/capacity", svc.handleCapacityForecast)
+		auditor2.GET("/risk/anomalies", svc.handleLoginAnomalies)
+		auditor2.GET("/risk/user-profile/:id", svc.handleUserRiskProfile)
+		auditor2.GET("/risk/overview", svc.handleRiskOverview)
+		auditor2.GET("/mfa/enrollment-stats", svc.handleMFAEnrollmentStats)
+		auditor2.GET("/mfa/user-status", svc.handleListUserMFAStatus)
+		auditor2.GET("/mfa/user-status/:id", svc.handleGetUserMFAStatus)
+		auditor2.GET("/ibdr/incidents", svc.handleIBDRIncidents)
+		auditor2.GET("/ibdr/alerts", svc.handleIBDRAlerts)
+		auditor2.GET("/genai/metrics", svc.handleGenAIAttackMetrics)
+		auditor2.GET("/genai/rules", svc.handleGenAISecurityRules)
+	}
 
-	// AI Agent Identity Management
-	router.GET("/ai-agents", svc.handleListAIAgents)
-	router.POST("/ai-agents", svc.handleCreateAIAgent)
-	router.GET("/ai-agents/analytics", svc.handleAIAgentAnalytics)
-	router.GET("/ai-agents/:id", svc.handleGetAIAgent)
-	router.PUT("/ai-agents/:id", svc.handleUpdateAIAgent)
-	router.DELETE("/ai-agents/:id", svc.handleDeleteAIAgent)
-	router.POST("/ai-agents/:id/suspend", svc.handleSuspendAIAgent)
-	router.POST("/ai-agents/:id/activate", svc.handleActivateAIAgent)
-	router.POST("/ai-agents/:id/rotate-credentials", svc.handleRotateAIAgentCredentials)
-	router.GET("/ai-agents/:id/activity", svc.handleListAIAgentActivity)
-	router.GET("/ai-agents/:id/permissions", svc.handleListAIAgentPermissions)
-	router.POST("/ai-agents/:id/permissions", svc.handleGrantAIAgentPermission)
-	router.DELETE("/ai-agents/:id/permissions/:permId", svc.handleRevokeAIAgentPermission)
+	// ── Operator+ routes (continued): MFA policies, session actions ──
+	operator2 := router.Group("", middleware.RequireMinRole("operator"))
+	{
+		operator2.GET("/mfa/policies", svc.handleListMFAPolicies)
+		operator2.GET("/mfa/policies/:id", svc.handleGetMFAPolicy)
+		operator2.GET("/continuous-auth/risk", svc.handleContinuousAuthGetRisk)
+		operator2.POST("/continuous-auth/check", svc.handleContinuousAuthCheck)
+		operator2.POST("/continuous-auth/update", svc.handleContinuousAuthUpdate)
+		operator2.POST("/ibdr/detect", svc.handleIBDRDetectBreach)
+		operator2.POST("/ibdr/incidents/:id/respond", svc.handleIBDRTriggerResponse)
+	}
 
-	// Identity Security Posture Management (ISPM)
-	router.GET("/ispm/score", svc.handleGetPostureScore)
-	router.GET("/ispm/findings", svc.handleListPostureFindings)
-	router.GET("/ispm/findings/:id", svc.handleGetPostureFinding)
-	router.POST("/ispm/findings/:id/dismiss", svc.handleDismissPostureFinding)
-	router.POST("/ispm/findings/:id/remediate", svc.handleRemediatePostureFinding)
-	router.GET("/ispm/trends", svc.handleGetPostureTrends)
-	router.GET("/ispm/rules", svc.handleListPostureRules)
-	router.PUT("/ispm/rules/:id", svc.handleUpdatePostureRule)
-	router.POST("/ispm/scan", svc.RunPostureChecks)
+	// ── Admin+ routes (continued): full config, AI, enterprise, tenancy ──
+	admin2 := router.Group("", middleware.RequireMinRole("admin"))
+	{
+		// System health & error catalog
+		admin2.GET("/system/health", svc.handleSystemHealth)
+		admin2.GET("/error-catalog", svc.handleListErrorCatalog)
+		admin2.POST("/error-catalog", svc.handleCreateErrorCatalogEntry)
+		admin2.PUT("/error-catalog/:code", svc.handleUpdateErrorCatalogEntry)
+		admin2.DELETE("/error-catalog/:code", svc.handleDeleteErrorCatalogEntry)
 
-	// AI-Powered Access Recommendations
-	router.GET("/recommendations", svc.handleListRecommendations)
-	router.GET("/recommendations/stats", svc.handleRecommendationStats)
-	router.GET("/recommendations/:id", svc.handleGetRecommendation)
-	router.POST("/recommendations/:id/accept", svc.handleAcceptRecommendation)
-	router.POST("/recommendations/:id/dismiss", svc.handleDismissRecommendation)
-	router.POST("/recommendations/:id/apply", svc.handleApplyRecommendation)
-	router.POST("/recommendations/generate", svc.handleGenerateRecommendations)
+		// AI Agent Identity Management
+		admin2.GET("/ai-agents", svc.handleListAIAgents)
+		admin2.POST("/ai-agents", svc.handleCreateAIAgent)
+		admin2.GET("/ai-agents/analytics", svc.handleAIAgentAnalytics)
+		admin2.GET("/ai-agents/:id", svc.handleGetAIAgent)
+		admin2.PUT("/ai-agents/:id", svc.handleUpdateAIAgent)
+		admin2.DELETE("/ai-agents/:id", svc.handleDeleteAIAgent)
+		admin2.POST("/ai-agents/:id/suspend", svc.handleSuspendAIAgent)
+		admin2.POST("/ai-agents/:id/activate", svc.handleActivateAIAgent)
+		admin2.POST("/ai-agents/:id/rotate-credentials", svc.handleRotateAIAgentCredentials)
+		admin2.GET("/ai-agents/:id/activity", svc.handleListAIAgentActivity)
+		admin2.GET("/ai-agents/:id/permissions", svc.handleListAIAgentPermissions)
+		admin2.POST("/ai-agents/:id/permissions", svc.handleGrantAIAgentPermission)
+		admin2.DELETE("/ai-agents/:id/permissions/:permId", svc.handleRevokeAIAgentPermission)
 
-	// Predictive Analytics
-	router.GET("/analytics/predictions", svc.handlePredictionsSummary)
-	router.GET("/analytics/predictions/login-forecast", svc.handleLoginForecast)
-	router.GET("/analytics/predictions/risk-forecast", svc.handleRiskForecast)
-	router.GET("/analytics/predictions/capacity", svc.handleCapacityForecast)
+		// ISPM
+		admin2.GET("/ispm/score", svc.handleGetPostureScore)
+		admin2.GET("/ispm/findings", svc.handleListPostureFindings)
+		admin2.GET("/ispm/findings/:id", svc.handleGetPostureFinding)
+		admin2.POST("/ispm/findings/:id/dismiss", svc.handleDismissPostureFinding)
+		admin2.POST("/ispm/findings/:id/remediate", svc.handleRemediatePostureFinding)
+		admin2.GET("/ispm/trends", svc.handleGetPostureTrends)
+		admin2.GET("/ispm/rules", svc.handleListPostureRules)
+		admin2.PUT("/ispm/rules/:id", svc.handleUpdatePostureRule)
+		admin2.POST("/ispm/scan", svc.RunPostureChecks)
 
-	// Phase 16: Enterprise Operations
+		// AI Recommendations
+		admin2.GET("/recommendations", svc.handleListRecommendations)
+		admin2.GET("/recommendations/stats", svc.handleRecommendationStats)
+		admin2.GET("/recommendations/:id", svc.handleGetRecommendation)
+		admin2.POST("/recommendations/:id/accept", svc.handleAcceptRecommendation)
+		admin2.POST("/recommendations/:id/dismiss", svc.handleDismissRecommendation)
+		admin2.POST("/recommendations/:id/apply", svc.handleApplyRecommendation)
+		admin2.POST("/recommendations/generate", svc.handleGenerateRecommendations)
 
-	// Bulk Operations
-	router.POST("/bulk-operations", svc.handleCreateBulkOperation)
-	router.GET("/bulk-operations", svc.handleListBulkOperations)
-	router.GET("/bulk-operations/export/users", svc.handleExportUsersCSV)
-	router.GET("/bulk-operations/:id", svc.handleGetBulkOperation)
-	router.DELETE("/bulk-operations/:id", svc.handleCancelBulkOperation)
+		// Bulk Operations
+		admin2.POST("/bulk-operations", svc.handleCreateBulkOperation)
+		admin2.GET("/bulk-operations", svc.handleListBulkOperations)
+		admin2.GET("/bulk-operations/export/users", svc.handleExportUsersCSV)
+		admin2.GET("/bulk-operations/:id", svc.handleGetBulkOperation)
+		admin2.DELETE("/bulk-operations/:id", svc.handleCancelBulkOperation)
 
-	// Email Template Management
-	router.GET("/email-templates", svc.handleListEmailTemplates)
-	router.GET("/email-templates/:id", svc.handleGetEmailTemplate)
-	router.PUT("/email-templates/:id", svc.handleUpdateEmailTemplate)
-	router.POST("/email-templates/:id/preview", svc.handlePreviewEmailTemplate)
-	router.POST("/email-templates/:id/reset", svc.handleResetEmailTemplate)
-	router.GET("/email-branding", svc.handleGetEmailBranding)
-	router.PUT("/email-branding", svc.handleUpdateEmailBranding)
+		// Email Templates
+		admin2.GET("/email-templates", svc.handleListEmailTemplates)
+		admin2.GET("/email-templates/:id", svc.handleGetEmailTemplate)
+		admin2.PUT("/email-templates/:id", svc.handleUpdateEmailTemplate)
+		admin2.POST("/email-templates/:id/preview", svc.handlePreviewEmailTemplate)
+		admin2.POST("/email-templates/:id/reset", svc.handleResetEmailTemplate)
+		admin2.GET("/email-branding", svc.handleGetEmailBranding)
+		admin2.PUT("/email-branding", svc.handleUpdateEmailBranding)
 
-	// De-provisioning / Lifecycle Policies
-	router.GET("/lifecycle-policies", svc.handleListLifecyclePolicies)
-	router.POST("/lifecycle-policies", svc.handleCreateLifecyclePolicy)
-	router.GET("/lifecycle-policies/preview", svc.handlePreviewLifecyclePolicy)
-	router.GET("/lifecycle-policies/:id", svc.handleGetLifecyclePolicy)
-	router.PUT("/lifecycle-policies/:id", svc.handleUpdateLifecyclePolicy)
-	router.DELETE("/lifecycle-policies/:id", svc.handleDeleteLifecyclePolicy)
-	router.POST("/lifecycle-policies/:id/execute", svc.handleExecuteLifecyclePolicy)
-	router.GET("/lifecycle-policies/:id/executions", svc.handleListLifecycleExecutions)
+		// Lifecycle Policies
+		admin2.GET("/lifecycle-policies", svc.handleListLifecyclePolicies)
+		admin2.POST("/lifecycle-policies", svc.handleCreateLifecyclePolicy)
+		admin2.GET("/lifecycle-policies/preview", svc.handlePreviewLifecyclePolicy)
+		admin2.GET("/lifecycle-policies/:id", svc.handleGetLifecyclePolicy)
+		admin2.PUT("/lifecycle-policies/:id", svc.handleUpdateLifecyclePolicy)
+		admin2.DELETE("/lifecycle-policies/:id", svc.handleDeleteLifecyclePolicy)
+		admin2.POST("/lifecycle-policies/:id/execute", svc.handleExecuteLifecyclePolicy)
+		admin2.GET("/lifecycle-policies/:id/executions", svc.handleListLifecycleExecutions)
 
-	// Attestation Campaigns
-	router.GET("/attestation-campaigns", svc.handleListAttestationCampaigns)
-	router.POST("/attestation-campaigns", svc.handleCreateAttestationCampaign)
-	router.GET("/attestation-campaigns/:id", svc.handleGetAttestationCampaign)
-	router.PUT("/attestation-campaigns/:id", svc.handleUpdateAttestationCampaign)
-	router.POST("/attestation-campaigns/:id/launch", svc.handleLaunchAttestationCampaign)
-	router.GET("/attestation-campaigns/:id/items", svc.handleListAttestationItems)
-	router.POST("/attestation-campaigns/:id/items/:itemId/decide", svc.handleDecideAttestationItem)
-	router.POST("/attestation-campaigns/:id/items/:itemId/delegate", svc.handleDelegateAttestationItem)
-	router.GET("/attestation-campaigns/:id/progress", svc.handleAttestationProgress)
+		// Attestation Campaigns
+		admin2.GET("/attestation-campaigns", svc.handleListAttestationCampaigns)
+		admin2.POST("/attestation-campaigns", svc.handleCreateAttestationCampaign)
+		admin2.GET("/attestation-campaigns/:id", svc.handleGetAttestationCampaign)
+		admin2.PUT("/attestation-campaigns/:id", svc.handleUpdateAttestationCampaign)
+		admin2.POST("/attestation-campaigns/:id/launch", svc.handleLaunchAttestationCampaign)
+		admin2.GET("/attestation-campaigns/:id/items", svc.handleListAttestationItems)
+		admin2.POST("/attestation-campaigns/:id/items/:itemId/decide", svc.handleDecideAttestationItem)
+		admin2.POST("/attestation-campaigns/:id/items/:itemId/delegate", svc.handleDelegateAttestationItem)
+		admin2.GET("/attestation-campaigns/:id/progress", svc.handleAttestationProgress)
 
-	// Audit Archival & Retention
-	router.GET("/audit-retention", svc.handleListRetentionPolicies)
-	router.POST("/audit-retention", svc.handleCreateRetentionPolicy)
-	router.PUT("/audit-retention/:id", svc.handleUpdateRetentionPolicy)
-	router.DELETE("/audit-retention/:id", svc.handleDeleteRetentionPolicy)
-	router.POST("/audit-archives", svc.handleCreateAuditArchive)
-	router.GET("/audit-archives", svc.handleListAuditArchives)
-	router.GET("/audit-archives/:id", svc.handleGetAuditArchive)
-	router.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
+		// Audit Archival & Retention
+		admin2.GET("/audit-retention", svc.handleListRetentionPolicies)
+		admin2.POST("/audit-retention", svc.handleCreateRetentionPolicy)
+		admin2.PUT("/audit-retention/:id", svc.handleUpdateRetentionPolicy)
+		admin2.DELETE("/audit-retention/:id", svc.handleDeleteRetentionPolicy)
+		admin2.POST("/audit-archives", svc.handleCreateAuditArchive)
+		admin2.GET("/audit-archives", svc.handleListAuditArchives)
+		admin2.GET("/audit-archives/:id", svc.handleGetAuditArchive)
+		admin2.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
 
-	// Phase 17: Multi-Tenancy, Privacy, Federation & Notifications
+		// Tenant Branding & Management
+		admin2.POST("/tenants/switch", svc.handleSwitchTenant)
+		admin2.GET("/tenants/current", svc.handleGetCurrentTenant)
+		admin2.GET("/tenants/:orgId/branding", svc.handleGetTenantBrandingRecord)
+		admin2.PUT("/tenants/:orgId/branding", svc.handleUpdateTenantBrandingRecord)
+		admin2.GET("/tenants/:orgId/settings", svc.handleGetTenantSettings)
+		admin2.PUT("/tenants/:orgId/settings", svc.handleUpdateTenantSettings)
+		admin2.GET("/tenants/:orgId/domains", svc.handleListTenantDomains)
+		admin2.POST("/tenants/:orgId/domains", svc.handleCreateTenantDomain)
+		admin2.DELETE("/tenants/:orgId/domains/:domainId", svc.handleDeleteTenantDomain)
+		admin2.POST("/tenants/:orgId/domains/:domainId/verify", svc.handleVerifyTenantDomain)
 
-	// 17A: Tenant Branding & Management
-	router.POST("/tenants/switch", svc.handleSwitchTenant)
-	router.GET("/tenants/current", svc.handleGetCurrentTenant)
-	router.GET("/tenants/:orgId/branding", svc.handleGetTenantBrandingRecord)
-	router.PUT("/tenants/:orgId/branding", svc.handleUpdateTenantBrandingRecord)
-	router.GET("/tenants/:orgId/settings", svc.handleGetTenantSettings)
-	router.PUT("/tenants/:orgId/settings", svc.handleUpdateTenantSettings)
-	router.GET("/tenants/:orgId/domains", svc.handleListTenantDomains)
-	router.POST("/tenants/:orgId/domains", svc.handleCreateTenantDomain)
-	router.DELETE("/tenants/:orgId/domains/:domainId", svc.handleDeleteTenantDomain)
-	router.POST("/tenants/:orgId/domains/:domainId/verify", svc.handleVerifyTenantDomain)
+		// Privacy & GDPR
+		admin2.GET("/privacy/dashboard", svc.handlePrivacyDashboard)
+		admin2.GET("/privacy/consents", svc.handleListConsents)
+		admin2.GET("/privacy/consents/stats", svc.handleConsentStats)
+		admin2.GET("/privacy/dsars", svc.handleListDSARs)
+		admin2.POST("/privacy/dsars", svc.handleCreateDSAR)
+		admin2.GET("/privacy/dsars/:id", svc.handleGetDSAR)
+		admin2.PUT("/privacy/dsars/:id", svc.handleUpdateDSAR)
+		admin2.POST("/privacy/dsars/:id/execute", svc.handleExecuteDSAR)
+		admin2.GET("/privacy/retention", svc.handleListPrivacyRetention)
+		admin2.POST("/privacy/retention", svc.handleCreatePrivacyRetention)
+		admin2.PUT("/privacy/retention/:id", svc.handleUpdatePrivacyRetention)
+		admin2.DELETE("/privacy/retention/:id", svc.handleDeletePrivacyRetention)
+		admin2.GET("/privacy/assessments", svc.handleListPrivacyAssessments)
+		admin2.POST("/privacy/assessments", svc.handleCreatePrivacyAssessment)
+		admin2.GET("/privacy/assessments/:id", svc.handleGetPrivacyAssessment)
+		admin2.PUT("/privacy/assessments/:id", svc.handleUpdatePrivacyAssessment)
+		admin2.DELETE("/privacy/assessments/:id", svc.handleDeletePrivacyAssessment)
 
-	// 17B: Privacy & GDPR
-	router.GET("/privacy/dashboard", svc.handlePrivacyDashboard)
-	router.GET("/privacy/consents", svc.handleListConsents)
-	router.GET("/privacy/consents/stats", svc.handleConsentStats)
-	router.GET("/privacy/dsars", svc.handleListDSARs)
-	router.POST("/privacy/dsars", svc.handleCreateDSAR)
-	router.GET("/privacy/dsars/:id", svc.handleGetDSAR)
-	router.PUT("/privacy/dsars/:id", svc.handleUpdateDSAR)
-	router.POST("/privacy/dsars/:id/execute", svc.handleExecuteDSAR)
-	router.GET("/privacy/retention", svc.handleListPrivacyRetention)
-	router.POST("/privacy/retention", svc.handleCreatePrivacyRetention)
-	router.PUT("/privacy/retention/:id", svc.handleUpdatePrivacyRetention)
-	router.DELETE("/privacy/retention/:id", svc.handleDeletePrivacyRetention)
-	router.GET("/privacy/assessments", svc.handleListPrivacyAssessments)
-	router.POST("/privacy/assessments", svc.handleCreatePrivacyAssessment)
-	router.GET("/privacy/assessments/:id", svc.handleGetPrivacyAssessment)
-	router.PUT("/privacy/assessments/:id", svc.handleUpdatePrivacyAssessment)
-	router.DELETE("/privacy/assessments/:id", svc.handleDeletePrivacyAssessment)
+		// Federation & SSO
+		admin2.GET("/social-providers", svc.handleListSocialProviders)
+		admin2.POST("/social-providers", svc.handleCreateSocialProvider)
+		admin2.GET("/social-providers/:id", svc.handleGetSocialProvider)
+		admin2.PUT("/social-providers/:id", svc.handleUpdateSocialProvider)
+		admin2.DELETE("/social-providers/:id", svc.handleDeleteSocialProvider)
+		admin2.GET("/federation/rules", svc.handleListFederationRules)
+		admin2.POST("/federation/rules", svc.handleCreateFederationRule)
+		admin2.PUT("/federation/rules/:id", svc.handleUpdateFederationRule)
+		admin2.DELETE("/federation/rules/:id", svc.handleDeleteFederationRule)
+		admin2.GET("/users/:id/identity-links", svc.handleListUserIdentityLinks)
+		admin2.DELETE("/users/:id/identity-links/:linkId", svc.handleDeleteIdentityLink)
+		admin2.GET("/applications/:id/claims", svc.handleListCustomClaims)
+		admin2.POST("/applications/:id/claims", svc.handleCreateCustomClaim)
+		admin2.PUT("/applications/:id/claims/:claimId", svc.handleUpdateCustomClaim)
+		admin2.DELETE("/applications/:id/claims/:claimId", svc.handleDeleteCustomClaim)
 
-	// 17C: Federation & SSO
-	router.GET("/social-providers", svc.handleListSocialProviders)
-	router.POST("/social-providers", svc.handleCreateSocialProvider)
-	router.GET("/social-providers/:id", svc.handleGetSocialProvider)
-	router.PUT("/social-providers/:id", svc.handleUpdateSocialProvider)
-	router.DELETE("/social-providers/:id", svc.handleDeleteSocialProvider)
-	router.GET("/federation/rules", svc.handleListFederationRules)
-	router.POST("/federation/rules", svc.handleCreateFederationRule)
-	router.PUT("/federation/rules/:id", svc.handleUpdateFederationRule)
-	router.DELETE("/federation/rules/:id", svc.handleDeleteFederationRule)
-	router.GET("/users/:id/identity-links", svc.handleListUserIdentityLinks)
-	router.DELETE("/users/:id/identity-links/:linkId", svc.handleDeleteIdentityLink)
-	router.GET("/applications/:id/claims", svc.handleListCustomClaims)
-	router.POST("/applications/:id/claims", svc.handleCreateCustomClaim)
-	router.PUT("/applications/:id/claims/:claimId", svc.handleUpdateCustomClaim)
-	router.DELETE("/applications/:id/claims/:claimId", svc.handleDeleteCustomClaim)
+		// Notification Management
+		admin2.GET("/notifications/routing-rules", svc.handleListRoutingRules)
+		admin2.POST("/notifications/routing-rules", svc.handleCreateRoutingRule)
+		admin2.GET("/notifications/routing-rules/:id", svc.handleGetRoutingRule)
+		admin2.PUT("/notifications/routing-rules/:id", svc.handleUpdateRoutingRule)
+		admin2.DELETE("/notifications/routing-rules/:id", svc.handleDeleteRoutingRule)
+		admin2.GET("/notifications/broadcasts", svc.handleListBroadcasts)
+		admin2.POST("/notifications/broadcasts", svc.handleCreateBroadcast)
+		admin2.GET("/notifications/broadcasts/:id", svc.handleGetBroadcast)
+		admin2.POST("/notifications/broadcasts/:id/send", svc.handleSendBroadcast)
+		admin2.DELETE("/notifications/broadcasts/:id", svc.handleDeleteBroadcast)
+		admin2.GET("/notifications/stats", svc.handleNotificationStats)
 
-	// 17D: Notification Management
-	router.GET("/notifications/routing-rules", svc.handleListRoutingRules)
-	router.POST("/notifications/routing-rules", svc.handleCreateRoutingRule)
-	router.GET("/notifications/routing-rules/:id", svc.handleGetRoutingRule)
-	router.PUT("/notifications/routing-rules/:id", svc.handleUpdateRoutingRule)
-	router.DELETE("/notifications/routing-rules/:id", svc.handleDeleteRoutingRule)
-	router.GET("/notifications/broadcasts", svc.handleListBroadcasts)
-	router.POST("/notifications/broadcasts", svc.handleCreateBroadcast)
-	router.GET("/notifications/broadcasts/:id", svc.handleGetBroadcast)
-	router.POST("/notifications/broadcasts/:id/send", svc.handleSendBroadcast)
-	router.DELETE("/notifications/broadcasts/:id", svc.handleDeleteBroadcast)
-	router.GET("/notifications/stats", svc.handleNotificationStats)
+		// MFA policies (write)
+		admin2.POST("/mfa/policies", svc.handleCreateMFAPolicy)
+		admin2.PUT("/mfa/policies/:id", svc.handleUpdateMFAPolicy)
+		admin2.DELETE("/mfa/policies/:id", svc.handleDeleteMFAPolicy)
 
-	// Phase 18: MFA Management & Risk Analytics
-	// 18A: MFA Management
-	router.GET("/mfa/enrollment-stats", svc.handleMFAEnrollmentStats)
-	router.GET("/mfa/policies", svc.handleListMFAPolicies)
-	router.POST("/mfa/policies", svc.handleCreateMFAPolicy)
-	router.GET("/mfa/policies/:id", svc.handleGetMFAPolicy)
-	router.PUT("/mfa/policies/:id", svc.handleUpdateMFAPolicy)
-	router.DELETE("/mfa/policies/:id", svc.handleDeleteMFAPolicy)
-	router.GET("/mfa/user-status", svc.handleListUserMFAStatus)
-	router.GET("/mfa/user-status/:id", svc.handleGetUserMFAStatus)
+		// GenAI Attack Detection (write actions)
+		admin2.POST("/genai/analyze", svc.handleGenAIAttackDetect)
 
-	// 18B: Login Anomaly Analytics
-	router.GET("/risk/anomalies", svc.handleLoginAnomalies)
-	router.GET("/risk/user-profile/:id", svc.handleUserRiskProfile)
-	router.GET("/risk/overview", svc.handleRiskOverview)
+		// Passwordless Authentication
+		admin2.POST("/passwordless/initiate", svc.handlePasswordlessInitiate)
+		admin2.POST("/passwordless/verify", svc.handlePasswordlessVerify)
+		admin2.GET("/passwordless/methods", svc.handlePasswordlessListMethods)
 
-	// Phase 19: Advanced Security Features
-	// GenAI Attack Detection - rate limited and protected
-	router.POST("/genai/analyze", svc.handleGenAIAttackDetect)
-	router.GET("/genai/metrics", svc.handleGenAIAttackMetrics)
-	router.GET("/genai/rules", svc.handleGenAISecurityRules)
-
-	// Identity Breach Detection & Response (IBDR)
-	router.POST("/ibdr/detect", svc.handleIBDRDetectBreach)
-	router.GET("/ibdr/incidents", svc.handleIBDRIncidents)
-	router.GET("/ibdr/alerts", svc.handleIBDRAlerts)
-	router.POST("/ibdr/incidents/:id/respond", svc.handleIBDRTriggerResponse)
-
-	// Continuous Authentication
-	router.GET("/continuous-auth/risk", svc.handleContinuousAuthGetRisk)
-	router.POST("/continuous-auth/check", svc.handleContinuousAuthCheck)
-	router.POST("/continuous-auth/update", svc.handleContinuousAuthUpdate)
-
-	// Passwordless Authentication
-	router.POST("/passwordless/initiate", svc.handlePasswordlessInitiate)
-	router.POST("/passwordless/verify", svc.handlePasswordlessVerify)
-	router.GET("/passwordless/methods", svc.handlePasswordlessListMethods)
-
-	// AI Policy Recommendations
-	router.POST("/ai/analyze-access", svc.handleAIAnalyzeAccess)
-	router.GET("/ai/recommendations", svc.handleAIPolicyRecommendations)
-	router.POST("/ai/recommendations/:id/apply", svc.handleAIApplyRecommendation)
-	router.GET("/ai/compliance-gaps", svc.handleAIComplianceGaps)
+		// AI Policy Recommendations
+		admin2.POST("/ai/analyze-access", svc.handleAIAnalyzeAccess)
+		admin2.GET("/ai/recommendations", svc.handleAIPolicyRecommendations)
+		admin2.POST("/ai/recommendations/:id/apply", svc.handleAIApplyRecommendation)
+		admin2.GET("/ai/compliance-gaps", svc.handleAIComplianceGaps)
+	}
 }
 
 // HTTP Handlers
 
 func (s *Service) handleGetDashboard(c *gin.Context) {
-	// Check if user is admin
-	isAdmin := false
+	// Determine user's highest role level
+	highestLevel := 0
 	if roles, exists := c.Get("roles"); exists {
 		if roleList, ok := roles.([]string); ok {
+			levels := map[string]int{"super_admin": 4, "admin": 3, "operator": 2, "auditor": 1, "user": 0}
 			for _, r := range roleList {
-				if r == "admin" || r == "super_admin" {
-					isAdmin = true
-					break
+				if lvl, ok := levels[r]; ok && lvl > highestLevel {
+					highestLevel = lvl
 				}
 			}
 		}
@@ -1214,7 +1208,20 @@ func (s *Service) handleGetDashboard(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	uid, _ := userID.(string)
 
-	if !isAdmin && uid != "" {
+	// Auditor, operator, admin, super_admin all get the full system dashboard
+	if highestLevel >= 1 {
+		dashboard, err := s.GetDashboard(c.Request.Context())
+		if err != nil {
+			s.logger.Error("failed to get dashboard", zap.Error(err))
+			c.JSON(500, gin.H{"error": "internal server error"})
+			return
+		}
+		c.JSON(200, dashboard)
+		return
+	}
+
+	// Regular users get their own scoped dashboard
+	if uid != "" {
 		dashboard, err := s.GetUserDashboard(c.Request.Context(), uid)
 		if err != nil {
 			s.logger.Error("failed to get user dashboard", zap.String("user_id", uid), zap.Error(err))
@@ -1225,13 +1232,7 @@ func (s *Service) handleGetDashboard(c *gin.Context) {
 		return
 	}
 
-	dashboard, err := s.GetDashboard(c.Request.Context())
-	if err != nil {
-		s.logger.Error("failed to get dashboard", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, dashboard)
+	c.JSON(403, gin.H{"error": "unauthorized"})
 }
 
 func (s *Service) handleGetSettings(c *gin.Context) {

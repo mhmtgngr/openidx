@@ -62,7 +62,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useAuth } from '../lib/auth'
+import { useAuth, type UserRole } from '../lib/auth'
 import { api } from '../lib/api'
 import { NotificationBell } from './notification-bell'
 import { Badge } from './ui/badge'
@@ -81,158 +81,171 @@ interface NavItem {
   name: string
   href: string
   icon: React.ComponentType<{ className?: string }>
-  adminOnly: boolean
+  /** Minimum role required to see this item. 'user' = everyone */
+  minRole: UserRole
 }
 
 interface NavSection {
   label: string
-  adminOnly: boolean
+  /** Minimum role to see this entire section */
+  minRole: UserRole
   items: NavItem[]
 }
 
 const navigationSections: NavSection[] = [
+  // ── Everyone ──
   {
     label: '',
-    adminOnly: false,
+    minRole: 'user',
     items: [
-      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, adminOnly: false },
-      { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
-      { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
-      { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
-      { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
-      { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, adminOnly: false },
-      { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
-      { name: 'Notifications', href: '/notification-center', icon: Bell, adminOnly: false },
+      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, minRole: 'user' },
+      { name: 'My Profile', href: '/profile', icon: User, minRole: 'user' },
+      { name: 'My Apps', href: '/app-launcher', icon: Rocket, minRole: 'user' },
+      { name: 'My Access', href: '/my-access', icon: Eye, minRole: 'user' },
+      { name: 'My Devices', href: '/my-devices', icon: Smartphone, minRole: 'user' },
+      { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, minRole: 'user' },
+      { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, minRole: 'user' },
+      { name: 'Client Setup', href: '/client-setup', icon: Smartphone, minRole: 'user' },
+      { name: 'Notifications', href: '/notification-center', icon: Bell, minRole: 'user' },
     ],
   },
+  // ── Identity (operator+) ──
   {
     label: 'Identity',
-    adminOnly: true,
+    minRole: 'operator',
     items: [
-      { name: 'Users', href: '/users', icon: Users, adminOnly: true },
-      { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
-      { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
-      { name: 'Directories', href: '/directories', icon: FolderSync, adminOnly: true },
-      { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, adminOnly: true },
+      { name: 'Users', href: '/users', icon: Users, minRole: 'operator' },
+      { name: 'Groups', href: '/groups', icon: Users2, minRole: 'operator' },
+      { name: 'Roles', href: '/roles', icon: ShieldCheck, minRole: 'admin' },
+      { name: 'Directories', href: '/directories', icon: FolderSync, minRole: 'admin' },
+      { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, minRole: 'admin' },
     ],
   },
+  // ── Applications (admin+) ──
   {
     label: 'Applications',
-    adminOnly: true,
+    minRole: 'admin',
     items: [
-      { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
-      { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
-      { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
-      { name: 'Lifecycle Workflows', href: '/lifecycle-workflows', icon: Workflow, adminOnly: true },
-      { name: 'Social Providers', href: '/social-providers', icon: Globe, adminOnly: true },
-      { name: 'Federation', href: '/federation-config', icon: Link2, adminOnly: true },
+      { name: 'Applications', href: '/applications', icon: AppWindow, minRole: 'admin' },
+      { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, minRole: 'admin' },
+      { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, minRole: 'admin' },
+      { name: 'Lifecycle Workflows', href: '/lifecycle-workflows', icon: Workflow, minRole: 'admin' },
+      { name: 'Social Providers', href: '/social-providers', icon: Globe, minRole: 'admin' },
+      { name: 'Federation', href: '/federation-config', icon: Link2, minRole: 'admin' },
     ],
   },
+  // ── Network & Access (operator+ for monitoring, admin for config) ──
   {
     label: 'Network & Access',
-    adminOnly: true,
+    minRole: 'operator',
     items: [
-      { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
-      { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
-      { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },
-      { name: 'Client Setup', href: '/client-setup', icon: Smartphone, adminOnly: false },
-      { name: 'BrowZer', href: '/browzer-management', icon: Globe, adminOnly: true },
-      { name: 'App Publish', href: '/app-publish', icon: Upload, adminOnly: true },
-      { name: 'Certificates', href: '/certificates', icon: FileKey, adminOnly: true },
-      { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
+      { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, minRole: 'admin' },
+      { name: 'Ziti Network', href: '/ziti-network', icon: Shield, minRole: 'operator' },
+      { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, minRole: 'operator' },
+      { name: 'BrowZer', href: '/browzer-management', icon: Globe, minRole: 'admin' },
+      { name: 'App Publish', href: '/app-publish', icon: Upload, minRole: 'admin' },
+      { name: 'Certificates', href: '/certificates', icon: FileKey, minRole: 'admin' },
+      { name: 'Devices', href: '/devices', icon: Smartphone, minRole: 'operator' },
     ],
   },
+  // ── Governance (operator+) ──
   {
     label: 'Governance',
-    adminOnly: true,
+    minRole: 'operator',
     items: [
-      { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
-      { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, adminOnly: true },
-      { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
-      { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, adminOnly: true },
-      { name: 'Entitlements', href: '/entitlements', icon: Package, adminOnly: true },
-      { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, adminOnly: true },
-      { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
-      { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
-      { name: 'Privacy Dashboard', href: '/privacy-dashboard', icon: Shield, adminOnly: true },
-      { name: 'Consent Mgmt', href: '/consent-management', icon: FileCheck, adminOnly: true },
+      { name: 'Policies', href: '/policies', icon: Scale, minRole: 'operator' },
+      { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, minRole: 'admin' },
+      { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, minRole: 'operator' },
+      { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, minRole: 'admin' },
+      { name: 'Entitlements', href: '/entitlements', icon: Package, minRole: 'operator' },
+      { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, minRole: 'admin' },
+      { name: 'Sessions', href: '/sessions', icon: Monitor, minRole: 'operator' },
+      { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, minRole: 'operator' },
+      { name: 'Privacy Dashboard', href: '/privacy-dashboard', icon: Shield, minRole: 'admin' },
+      { name: 'Consent Mgmt', href: '/consent-management', icon: FileCheck, minRole: 'admin' },
     ],
   },
+  // ── Security & MFA (operator+) ──
   {
     label: 'Security & MFA',
-    adminOnly: true,
+    minRole: 'operator',
     items: [
-      { name: 'MFA Management', href: '/mfa-management', icon: Shield, adminOnly: true },
-      { name: 'Risk Policies', href: '/risk-policies', icon: Activity, adminOnly: true },
-      { name: 'Login Anomalies', href: '/login-anomalies', icon: AlertTriangle, adminOnly: true },
-      { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, adminOnly: true },
-      { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
-      { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },
-      { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, adminOnly: true },
-      { name: 'Security Keys', href: '/security-keys', icon: KeyRound, adminOnly: true },
-      { name: 'Push Devices', href: '/push-devices', icon: Bell, adminOnly: true },
+      { name: 'MFA Management', href: '/mfa-management', icon: Shield, minRole: 'operator' },
+      { name: 'Risk Policies', href: '/risk-policies', icon: Activity, minRole: 'admin' },
+      { name: 'Login Anomalies', href: '/login-anomalies', icon: AlertTriangle, minRole: 'operator' },
+      { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, minRole: 'operator' },
+      { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, minRole: 'operator' },
+      { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, minRole: 'admin' },
+      { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, minRole: 'admin' },
+      { name: 'Security Keys', href: '/security-keys', icon: KeyRound, minRole: 'operator' },
+      { name: 'Push Devices', href: '/push-devices', icon: Bell, minRole: 'operator' },
     ],
   },
+  // ── Audit & Reports (auditor+) ──
   {
     label: 'Audit & Reports',
-    adminOnly: true,
+    minRole: 'auditor',
     items: [
-      { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
-      { name: 'Unified Audit', href: '/unified-audit', icon: Layers, adminOnly: true },
-      { name: 'Admin Audit Log', href: '/admin-audit-log', icon: ScrollText, adminOnly: true },
-      { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
-      { name: 'Auth Analytics', href: '/auth-analytics', icon: TrendingUp, adminOnly: true },
-      { name: 'Usage Analytics', href: '/usage-analytics', icon: PieChart, adminOnly: true },
-      { name: 'Risk Dashboard', href: '/risk-dashboard', icon: AlertTriangle, adminOnly: true },
-      { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
-      { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, adminOnly: true },
-      { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
+      { name: 'Audit Logs', href: '/audit-logs', icon: FileText, minRole: 'auditor' },
+      { name: 'Unified Audit', href: '/unified-audit', icon: Layers, minRole: 'auditor' },
+      { name: 'Admin Audit Log', href: '/admin-audit-log', icon: ScrollText, minRole: 'admin' },
+      { name: 'Login Analytics', href: '/login-analytics', icon: Activity, minRole: 'auditor' },
+      { name: 'Auth Analytics', href: '/auth-analytics', icon: TrendingUp, minRole: 'auditor' },
+      { name: 'Usage Analytics', href: '/usage-analytics', icon: PieChart, minRole: 'auditor' },
+      { name: 'Risk Dashboard', href: '/risk-dashboard', icon: AlertTriangle, minRole: 'auditor' },
+      { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, minRole: 'auditor' },
+      { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, minRole: 'auditor' },
+      { name: 'Reports', href: '/reports', icon: BarChart3, minRole: 'auditor' },
     ],
   },
+  // ── AI & Intelligence (admin+) ──
   {
     label: 'AI & Intelligence',
-    adminOnly: true,
+    minRole: 'admin',
     items: [
-      { name: 'AI Agents', href: '/ai-agents', icon: Bot, adminOnly: true },
-      { name: 'Security Posture', href: '/ispm', icon: ShieldCheck, adminOnly: true },
-      { name: 'Recommendations', href: '/ai-recommendations', icon: Lightbulb, adminOnly: true },
-      { name: 'Predictions', href: '/predictive-analytics', icon: TrendingUp, adminOnly: true },
+      { name: 'AI Agents', href: '/ai-agents', icon: Bot, minRole: 'admin' },
+      { name: 'Security Posture', href: '/ispm', icon: ShieldCheck, minRole: 'admin' },
+      { name: 'Recommendations', href: '/ai-recommendations', icon: Lightbulb, minRole: 'admin' },
+      { name: 'Predictions', href: '/predictive-analytics', icon: TrendingUp, minRole: 'admin' },
     ],
   },
+  // ── Enterprise (admin+) ──
   {
     label: 'Enterprise',
-    adminOnly: true,
+    minRole: 'admin',
     items: [
-      { name: 'SAML Providers', href: '/saml-service-providers', icon: FingerprintIcon, adminOnly: true },
-      { name: 'Bulk Operations', href: '/bulk-operations', icon: Layers, adminOnly: true },
-      { name: 'Email Templates', href: '/email-templates', icon: Mail, adminOnly: true },
-      { name: 'Lifecycle Policies', href: '/lifecycle-policies', icon: UserMinus, adminOnly: true },
-      { name: 'Attestation', href: '/attestation-campaigns', icon: ClipboardSignature, adminOnly: true },
-      { name: 'Audit Archival', href: '/audit-archival', icon: ArchiveRestore, adminOnly: true },
+      { name: 'SAML Providers', href: '/saml-service-providers', icon: FingerprintIcon, minRole: 'admin' },
+      { name: 'Bulk Operations', href: '/bulk-operations', icon: Layers, minRole: 'admin' },
+      { name: 'Email Templates', href: '/email-templates', icon: Mail, minRole: 'admin' },
+      { name: 'Lifecycle Policies', href: '/lifecycle-policies', icon: UserMinus, minRole: 'admin' },
+      { name: 'Attestation', href: '/attestation-campaigns', icon: ClipboardSignature, minRole: 'admin' },
+      { name: 'Audit Archival', href: '/audit-archival', icon: ArchiveRestore, minRole: 'admin' },
     ],
   },
+  // ── Developer (admin+) ──
   {
     label: 'Developer',
-    adminOnly: true,
+    minRole: 'admin',
     items: [
-      { name: 'API Explorer', href: '/api-explorer', icon: Code2, adminOnly: true },
-      { name: 'OAuth Playground', href: '/oauth-playground', icon: Play, adminOnly: true },
-      { name: 'Developer Settings', href: '/developer-settings', icon: Settings, adminOnly: true },
-      { name: 'Error Catalog', href: '/error-catalog', icon: AlertTriangle, adminOnly: true },
+      { name: 'API Explorer', href: '/api-explorer', icon: Code2, minRole: 'admin' },
+      { name: 'OAuth Playground', href: '/oauth-playground', icon: Play, minRole: 'admin' },
+      { name: 'Developer Settings', href: '/developer-settings', icon: Settings, minRole: 'admin' },
+      { name: 'Error Catalog', href: '/error-catalog', icon: AlertTriangle, minRole: 'admin' },
     ],
   },
+  // ── System (admin+, tenant mgmt super_admin only) ──
   {
     label: 'System',
-    adminOnly: true,
+    minRole: 'admin',
     items: [
-      { name: 'System Health', href: '/system-health', icon: HeartPulse, adminOnly: true },
-      { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
-      { name: 'Delegations', href: '/delegations', icon: UserCheck, adminOnly: true },
-      { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
-      { name: 'API Docs', href: '/api-docs', icon: BookOpen, adminOnly: true },
-      { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
-      { name: 'Tenant Mgmt', href: '/tenant-management', icon: Building2, adminOnly: true },
-      { name: 'Notification Mgmt', href: '/notification-admin', icon: Send, adminOnly: true },
+      { name: 'System Health', href: '/system-health', icon: HeartPulse, minRole: 'admin' },
+      { name: 'Organizations', href: '/organizations', icon: Building2, minRole: 'admin' },
+      { name: 'Delegations', href: '/delegations', icon: UserCheck, minRole: 'admin' },
+      { name: 'Webhooks', href: '/webhooks', icon: Bell, minRole: 'admin' },
+      { name: 'API Docs', href: '/api-docs', icon: BookOpen, minRole: 'admin' },
+      { name: 'Settings', href: '/settings', icon: Settings, minRole: 'admin' },
+      { name: 'Tenant Mgmt', href: '/tenant-management', icon: Building2, minRole: 'super_admin' },
+      { name: 'Notification Mgmt', href: '/notification-admin', icon: Send, minRole: 'admin' },
     ],
   },
 ]
@@ -275,7 +288,7 @@ function ZitiStatusIndicator() {
 }
 
 export function Layout() {
-  const { user, logout, hasRole } = useAuth()
+  const { user, logout, hasRole, hasMinRole } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const navigate = useNavigate()
 
@@ -313,10 +326,10 @@ export function Layout() {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           {navigationSections
-            .filter((section) => !section.adminOnly || hasRole('admin'))
+            .filter((section) => hasMinRole(section.minRole))
             .map((section, sIdx) => {
               const visibleItems = section.items.filter(
-                (item) => !item.adminOnly || hasRole('admin')
+                (item) => hasMinRole(item.minRole)
               )
               if (visibleItems.length === 0) return null
               return (
@@ -381,7 +394,7 @@ export function Layout() {
                 <User className="mr-2 h-4 w-4" />
                 My Profile
               </DropdownMenuItem>
-              {hasRole('admin') && (
+              {hasMinRole('admin') && (
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
@@ -401,7 +414,7 @@ export function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar with status indicators and notification bell */}
         <header className="h-16 border-b bg-white flex items-center justify-end px-8 gap-4">
-          {hasRole('admin') && <ZitiStatusIndicator />}
+          {hasMinRole('operator') && <ZitiStatusIndicator />}
           <NotificationBell />
         </header>
         <main className="flex-1 overflow-auto">

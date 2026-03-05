@@ -512,6 +512,48 @@ func RequireRoles(roles ...string) gin.HandlerFunc {
 	}
 }
 
+// roleLevels maps role names to hierarchy levels for RequireMinRole.
+// Higher level = more privilege. Roles inherit all permissions from lower levels.
+var roleLevels = map[string]int{
+	"super_admin": 4,
+	"admin":       3,
+	"operator":    2,
+	"auditor":     1,
+	"user":        0,
+}
+
+// RequireMinRole ensures the user's highest role is at or above the specified minimum role.
+// This respects role hierarchy: super_admin > admin > operator > auditor > user.
+func RequireMinRole(minRole string) gin.HandlerFunc {
+	minLevel, ok := roleLevels[minRole]
+	if !ok {
+		minLevel = 99 // unknown role = deny all
+	}
+	return func(c *gin.Context) {
+		userRoles, exists := c.Get("roles")
+		if !exists {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "no roles found"})
+			return
+		}
+		userRolesList, ok := userRoles.([]string)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid roles format"})
+			return
+		}
+		highestLevel := -1
+		for _, r := range userRolesList {
+			if lvl, found := roleLevels[r]; found && lvl > highestLevel {
+				highestLevel = lvl
+			}
+		}
+		if highestLevel >= minLevel {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient role level"})
+	}
+}
+
 // PermissionEntry represents a resolved permission for a user
 type PermissionEntry struct {
 	Resource  string `json:"resource"`
