@@ -648,6 +648,12 @@ services:
 
         echo "==> Starting router with WSS support..."
         exec ziti router run "$$CONFIG"
+    healthcheck:
+      test: ["CMD", "ziti", "agent", "stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     volumes:
       - ziti_router_data:/ziti-router
       - ziti_router_shared:/ziti-shared:ro
@@ -1188,17 +1194,17 @@ services:
       network: host
       args:
         - SRC_DIR=.
-        - VITE_API_URL=http://openidx.tdv.org:8088
-        - VITE_OAUTH_URL=http://openidx.tdv.org:8006
-        - VITE_OAUTH_CLIENT_ID=admin-console
-        - VITE_AUTH_PROVIDER=openidx
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8088}
+        - VITE_OAUTH_URL=${VITE_OAUTH_URL:-http://localhost:8006}
+        - VITE_OAUTH_CLIENT_ID=${VITE_OAUTH_CLIENT_ID:-admin-console}
+        - VITE_AUTH_PROVIDER=${VITE_AUTH_PROVIDER:-openidx}
     container_name: openidx-admin-console
     restart: unless-stopped
     environment:
-      - VITE_API_URL=http://openidx.tdv.org:8088
-      - VITE_OAUTH_URL=http://openidx.tdv.org:8006
-      - VITE_OAUTH_CLIENT_ID=admin-console
-      - VITE_AUTH_PROVIDER=openidx
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8088}
+      - VITE_OAUTH_URL=${VITE_OAUTH_URL:-http://localhost:8006}
+      - VITE_OAUTH_CLIENT_ID=${VITE_OAUTH_CLIENT_ID:-admin-console}
+      - VITE_AUTH_PROVIDER=${VITE_AUTH_PROVIDER:-openidx}
     ports:
       - "3000:3000"
     depends_on:

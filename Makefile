@@ -128,9 +128,12 @@ dev:
 	@echo "🚀 Starting development environment..."
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml up -d
 	@echo "✅ Services running at:"
-	@echo "   - Admin Console: http://localhost:3000"
-	@echo "   - API Gateway:   http://localhost:8080"
-	@echo "   - Keycloak:      http://localhost:8180"
+	@echo "   - Admin Console:  http://localhost:3000"
+	@echo "   - APISIX Gateway: http://localhost:8088"
+	@echo "   - OAuth Service:  http://localhost:8006"
+	@echo "   - Identity API:   http://localhost:8001"
+	@echo "   - Admin API:      http://localhost:8005"
+	@echo "   - Mailpit UI:     http://localhost:8025"
 
 dev-stop:
 	@echo "🛑 Stopping development environment..."
@@ -139,8 +142,20 @@ dev-stop:
 dev-logs:
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml logs -f
 
+dev-logs-service:
+	@test -n "$(SVC)" || (echo "Usage: make dev-logs-service SVC=identity-service" && exit 1)
+	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml logs -f $(SVC)
+
+dev-status:
+	@echo "📊 Service status:"
+	@$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml ps
+
+dev-restart:
+	@echo "🔄 Restarting development environment..."
+	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml restart
+
 dev-clean:
-	@echo "🧹 Cleaning development environment..."
+	@echo "🧹 Cleaning development environment (removes volumes)..."
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml down -v --remove-orphans
 
 #---------------------------------------------------------------------------
