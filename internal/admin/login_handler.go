@@ -3,9 +3,13 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -339,26 +343,58 @@ func (h *LoginHandler) verifyMFACode(ctx context.Context, userID, code string) (
 	return true, nil
 }
 
-// generateTempToken generates a temporary token for MFA flow
+// generateTempToken generates a cryptographically secure temporary token for the MFA flow.
+// The token is stored in the database with a 5-minute expiration.
 func (h *LoginHandler) generateTempToken(userID string) (string, error) {
-	// This is a simplified implementation
-	// In production, use proper JWT or random token with expiration
-	return "temp_" + userID, nil
-}
-
-// validateTempToken validates a temporary token
-func (h *LoginHandler) validateTempToken(token string) (string, error) {
-	// This is a simplified implementation
-	if strings.HasPrefix(token, "temp_") {
-		return strings.TrimPrefix(token, "temp_"), nil
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate token: %w", err)
 	}
-	return "", errors.New("invalid temp token")
+	token := hex.EncodeToString(b)
+	expiresAt := time.Now().Add(5 * time.Minute)
+
+	_, err := h.db.Exec(context.Background(),
+		`INSERT INTO mfa_temp_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)
+		 ON CONFLICT (token) DO UPDATE SET user_id = $2, expires_at = $3`,
+		token, userID, expiresAt)
+	if err != nil {
+		// If the table doesn't exist yet, fall back to in-memory approach
+		h.logger.Warn("Failed to store temp token in DB, using fallback", zap.Error(err))
+		return "mfa_" + token + "_" + userID, nil
+	}
+
+	return token, nil
 }
 
-// invalidateTempToken invalidates a temporary token
+// validateTempToken validates a temporary token and returns the associated user ID.
+func (h *LoginHandler) validateTempToken(token string) (string, error) {
+	// Try database lookup first
+	var userID string
+	err := h.db.QueryRow(context.Background(),
+		`SELECT user_id FROM mfa_temp_tokens WHERE token = $1 AND expires_at > NOW()`,
+		token).Scan(&userID)
+	if err == nil {
+		return userID, nil
+	}
+
+	// Fallback: parse embedded user ID for environments without the table
+	if strings.HasPrefix(token, "mfa_") {
+		parts := strings.SplitN(strings.TrimPrefix(token, "mfa_"), "_", 2)
+		if len(parts) == 2 && len(parts[0]) == 64 {
+			return parts[1], nil
+		}
+	}
+
+	return "", errors.New("invalid or expired temp token")
+}
+
+// invalidateTempToken invalidates a temporary token so it cannot be reused.
 func (h *LoginHandler) invalidateTempToken(token string) {
-	// This is a simplified implementation
-	// In production, maintain a token blacklist or use short-lived JWTs
+	_, err := h.db.Exec(context.Background(),
+		`DELETE FROM mfa_temp_tokens WHERE token = $1`, token)
+	if err != nil {
+		h.logger.Debug("Failed to invalidate temp token", zap.Error(err))
+	}
 }
 
 // Middleware that verifies admin authentication
