@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { useToast } from '../hooks/use-toast'
+import { baseURL } from '../lib/api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,7 +134,6 @@ export function SystemHealthPage() {
   // We use the api helper but the health endpoint might be at a different path
   async function api_get_health(): Promise<HealthResponse> {
     const token = localStorage.getItem('token')
-    const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
     const response = await fetch(`${baseURL}/health`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })

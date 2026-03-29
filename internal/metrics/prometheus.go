@@ -4,6 +4,7 @@ package metrics
 import (
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -369,10 +370,15 @@ func SetActiveSessions(service string, count float64) {
 }
 
 // Runtime metrics collection
-var runtimeMetricsStarted = make(map[string]bool)
+var (
+	runtimeMetricsStarted = make(map[string]bool)
+	runtimeMetricsMu      sync.Mutex
+)
 
 // startRuntimeMetricsCollector starts a goroutine that collects runtime metrics
 func startRuntimeMetricsCollector(serviceName string) {
+	runtimeMetricsMu.Lock()
+	defer runtimeMetricsMu.Unlock()
 	if runtimeMetricsStarted[serviceName] {
 		return
 	}

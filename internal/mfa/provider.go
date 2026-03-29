@@ -214,7 +214,7 @@ func (p *LogProvider) SendEmail(ctx context.Context, to, subject, body string) e
 	p.logger.Info(msg)
 
 	if p.enablePrint {
-		fmt.Println(msg)
+		p.logger.Debug(msg)
 	}
 
 	return nil
@@ -227,7 +227,7 @@ func (p *LogProvider) SendSMS(ctx context.Context, to, message string) error {
 	p.logger.Info(msg)
 
 	if p.enablePrint {
-		fmt.Println(msg)
+		p.logger.Debug(msg)
 	}
 
 	return nil
