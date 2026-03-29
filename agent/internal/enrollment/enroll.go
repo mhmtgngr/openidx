@@ -2,6 +2,8 @@ package enrollment
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"go.uber.org/zap"
@@ -19,7 +21,7 @@ type EnrollResult struct {
 // Enroll performs the full enrollment flow: HTTP enrollment + optional Ziti enrollment.
 func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResult, error) {
 	// Step 1: HTTP enrollment with server
-	client := transport.NewClient(serverURL, "")
+	client := transport.NewClient(serverURL, "", "")
 	resp, err := client.Enroll(token)
 	if err != nil {
 		return nil, fmt.Errorf("server enrollment failed: %w", err)
@@ -45,10 +47,25 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 	result := &EnrollResult{AgentConfig: cfg}
 
 	// Step 3: Ziti enrollment (if server provided a Ziti JWT)
-	// The server response may include a ziti_jwt field for Ziti overlay enrollment.
-	// For now, we check if the field exists and log it.
-	// Full Ziti enrollment requires the enroll package which needs a running controller.
-	// This will be wired when the server-side creates Ziti identities during enrollment.
+	// Save the JWT to disk so the operator (or a future automated step) can
+	// complete Ziti identity enrollment against a running controller.
+	// The transport factory picks up ziti-identity.json on the next run once
+	// enrollment has been completed.
+	if resp.ZitiJWT != "" {
+		jwtPath := filepath.Join(configDir, "ziti-enrollment.jwt")
+		if err := os.WriteFile(jwtPath, []byte(resp.ZitiJWT), 0600); err != nil {
+			logger.Warn("Failed to save Ziti JWT", zap.Error(err))
+		} else {
+			logger.Info("Ziti enrollment JWT saved", zap.String("path", jwtPath))
+			// Update config with the identity file path (will exist after ziti enrollment).
+			cfg.ZitiIdentityFile = filepath.Join(configDir, "ziti-identity.json")
+			result.ZitiIdentity = cfg.ZitiIdentityFile
+			if err := cfg.Save(configDir); err != nil {
+				logger.Warn("Failed to update config with Ziti identity path", zap.Error(err))
+			}
+		}
+	}
+
 	logger.Info("Enrollment complete",
 		zap.String("config_dir", configDir),
 		zap.String("agent_id", cfg.AgentID))

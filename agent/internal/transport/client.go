@@ -14,20 +14,24 @@ type EnrollResponse struct {
 	AgentID   string `json:"agent_id"`
 	DeviceID  string `json:"device_id"`
 	AuthToken string `json:"auth_token"`
+	Status    string `json:"status"`
+	ZitiJWT   string `json:"ziti_jwt,omitempty"`
 }
 
 // Client is an HTTP client for communicating with the OpenIDX access API.
 type Client struct {
 	baseURL    string
 	authToken  string
+	agentID    string
 	httpClient *http.Client
 }
 
 // NewClient creates a new Client with a 30-second timeout.
-func NewClient(baseURL, authToken string) *Client {
+func NewClient(baseURL, authToken, agentID string) *Client {
 	return &Client{
 		baseURL:   baseURL,
 		authToken: authToken,
+		agentID:   agentID,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -74,6 +78,7 @@ func (c *Client) ReportResults(data []byte) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", c.agentID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -98,6 +103,7 @@ func (c *Client) GetConfig() ([]byte, error) {
 		return nil, fmt.Errorf("creating config request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
+	req.Header.Set("X-Agent-ID", c.agentID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
