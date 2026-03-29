@@ -182,6 +182,70 @@ func TestAgentEnroll_ResponseFields(t *testing.T) {
 	assert.Equal(t, "active", resp["status"])
 }
 
+// TestAgentReport_ParsesResults verifies that a POST to /agent/report with a
+// well-formed report body returns 202 with a compliance_score field.
+func TestAgentReport_ParsesResults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.POST("/agent/report", handler.HandleReport)
+
+	report := map[string]interface{}{
+		"agent_id":  "agent-abc123",
+		"device_id": "device-def456",
+		"results": []map[string]interface{}{
+			{
+				"check_type": "disk_encryption",
+				"severity":   "critical",
+				"ran_at":     "2026-03-29T00:00:00Z",
+				"result": map[string]interface{}{
+					"status":  "pass",
+					"score":   1.0,
+					"message": "FileVault enabled",
+				},
+			},
+			{
+				"check_type": "os_version",
+				"severity":   "high",
+				"ran_at":     "2026-03-29T00:00:00Z",
+				"result": map[string]interface{}{
+					"status":  "pass",
+					"score":   0.9,
+					"message": "OS up to date",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(report)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/report", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", "agent-abc123")
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	var resp map[string]interface{}
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, "accepted", resp["status"])
+	score, ok := resp["compliance_score"].(float64)
+	require.True(t, ok, "compliance_score should be a float64")
+	// critical(weight=4)*1.0 + high(weight=3)*0.9 = 4.0+2.7=6.7 / 7 ≈ 0.957
+	assert.InDelta(t, 6.7/7.0, score, 0.001)
+
+	actions, ok := resp["enforcement_actions"].([]interface{})
+	require.True(t, ok, "enforcement_actions should be an array")
+	assert.Len(t, actions, 2)
+}
+
 // TestRegisterAgentRoutes verifies that all three routes are registered and
 // respond to the correct HTTP methods.
 func TestRegisterAgentRoutes(t *testing.T) {
