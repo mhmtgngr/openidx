@@ -19,7 +19,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
 
       - name: Run tests
@@ -27,7 +27,7 @@ jobs:
 
       - name: Build Linux binaries
         run: |
-          for service in identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service; do
+          for service in identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service access-service; do
             GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=${{ github.ref_name }} -X main.CommitHash=$(git rev-parse --short HEAD)" \
               -o dist/${service}-linux-amd64 ./cmd/$service
           done
