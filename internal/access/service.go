@@ -402,7 +402,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
 
 		// Agent API (enrollment, reporting, config)
-		agentHandler := NewAgentAPIHandler(svc.logger, svc.db)
+		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.zitiManager)
 		agentHandler.RegisterAgentRoutes(api)
 	}
 

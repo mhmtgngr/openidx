@@ -16,13 +16,15 @@ import (
 type AgentAPIHandler struct {
 	logger *zap.Logger
 	db     *database.PostgresDB
+	zm     *ZitiManager
 }
 
-// NewAgentAPIHandler constructs an AgentAPIHandler with the given logger and database.
-func NewAgentAPIHandler(logger *zap.Logger, db *database.PostgresDB) *AgentAPIHandler {
+// NewAgentAPIHandler constructs an AgentAPIHandler with the given logger, database, and ZitiManager.
+func NewAgentAPIHandler(logger *zap.Logger, db *database.PostgresDB, zm *ZitiManager) *AgentAPIHandler {
 	return &AgentAPIHandler{
 		logger: logger,
 		db:     db,
+		zm:     zm,
 	}
 }
 
