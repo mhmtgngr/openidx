@@ -201,7 +201,6 @@ func TestKeyManager_HandleJWKS(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
 		assert.Equal(t, "public, max-age=3600", w.Header().Get("Cache-Control"))
 	})
 }

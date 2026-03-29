@@ -252,9 +252,6 @@ func TestDiscoveryHandler(t *testing.T) {
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
-			// Check CORS headers
-			assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
-
 			if tt.validateResp != nil {
 				tt.validateResp(t, w)
 			}

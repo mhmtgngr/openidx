@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
@@ -196,7 +197,7 @@ func enforcementAction(severity, status string) string {
 // results, updates the agent's compliance score, and returns 202 Accepted.
 func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	var report agentReport
-	if err := json.NewDecoder(c.Request.Body).Decode(&report); err != nil {
+	if err := json.NewDecoder(c.Request.Body).Decode(&report); err != nil && err != io.EOF {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse body"})
 		return
 	}
