@@ -68,9 +68,10 @@ routes:
       nodes:
         "provisioning-service:8003": 1
 
-  # Audit service
+  # Audit service (WebSocket enabled for /stream endpoint)
   - uri: /api/v1/audit/*
     name: audit-service
+    enable_websocket: true
     plugins:
       limit-req:
         rate: 200
@@ -79,7 +80,7 @@ routes:
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
-        allow_headers: "Content-Type,Authorization,X-Requested-With"
+        allow_headers: "Content-Type,Authorization,X-Requested-With,Upgrade,Connection"
         max_age: 3600
     upstream:
       type: roundrobin
@@ -219,6 +220,24 @@ routes:
       type: roundrobin
       nodes:
         "demo-app:8090": 1
+
+  # Gateway service
+  - uri: /api/v1/gateway/*
+    name: gateway-service
+    plugins:
+      limit-req:
+        rate: 100
+        burst: 50
+        key: remote_addr
+      cors:
+        allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
+        allow_methods: "GET,POST,PUT,DELETE,PATCH,OPTIONS"
+        allow_headers: "Content-Type,Authorization,X-Requested-With"
+        max_age: 3600
+    upstream:
+      type: roundrobin
+      nodes:
+        "gateway-service:8008": 1
 
   # Admin API (no auth for testing)
   - uri: /api/v1/*
