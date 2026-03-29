@@ -56,6 +56,13 @@ func (a *Agent) RegisterBuiltinChecks() {
 	a.registry.Register("os_version", &checks.OSVersionCheck{})
 	a.registry.Register("disk_encryption", &checks.DiskEncryptionCheck{})
 	a.registry.Register("process_running", &checks.ProcessCheck{})
+	a.registry.Register("firewall", &checks.FirewallCheck{})
+	a.registry.Register("screen_lock", &checks.ScreenLockCheck{})
+	a.registry.Register("antivirus", &checks.AntivirusCheck{})
+	a.registry.Register("domain_joined", &checks.DomainCheck{})
+	a.registry.Register("patch_level", &checks.PatchLevelCheck{})
+	a.registry.Register("integrity", &checks.IntegrityCheck{})
+	a.registry.Register("agent_version", &checks.AgentVersionCheck{})
 }
 
 // Registry returns the agent's check registry. Exposed primarily for testing.
