@@ -21,6 +21,9 @@ bin/
 /oauth-service
 /provisioning-service
 
+# Go test binaries
+*.test
+
 # IDE
 .idea/
 .vscode/
