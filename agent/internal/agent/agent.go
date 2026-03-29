@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/checks"
+	"github.com/openidx/openidx/agent/internal/plugin"
 	"github.com/openidx/openidx/agent/internal/transport"
 )
 
@@ -55,6 +56,37 @@ func (a *Agent) RegisterBuiltinChecks() {
 	a.registry.Register("os_version", &checks.OSVersionCheck{})
 	a.registry.Register("disk_encryption", &checks.DiskEncryptionCheck{})
 	a.registry.Register("process_running", &checks.ProcessCheck{})
+}
+
+// Registry returns the agent's check registry. Exposed primarily for testing.
+func (a *Agent) Registry() *checks.Registry {
+	return a.registry
+}
+
+// LoadPlugins discovers plugins in the configured plugin directory and registers
+// each as a PluginCheck in the agent's registry. If no PluginDir is configured,
+// LoadPlugins is a no-op.
+func (a *Agent) LoadPlugins() {
+	pluginDir := a.config.PluginDir
+	if pluginDir == "" {
+		return
+	}
+
+	loader := plugin.NewLoader(pluginDir, a.logger)
+	plugins, err := loader.Discover()
+	if err != nil {
+		a.logger.Error("plugin discovery failed", zap.String("dir", pluginDir), zap.Error(err))
+		return
+	}
+
+	for _, p := range plugins {
+		a.registry.Register(p.Name(), p)
+		a.logger.Info("plugin registered", zap.String("check_type", p.Name()))
+	}
+
+	if len(plugins) > 0 {
+		a.logger.Info("plugins loaded", zap.Int("count", len(plugins)))
+	}
 }
 
 // SyncConfig fetches the server-side configuration via the transport client and

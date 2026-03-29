@@ -111,6 +111,7 @@ begin enforcing access policies and reporting health checks.`,
 		}
 
 		a.RegisterBuiltinChecks()
+		a.LoadPlugins()
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
