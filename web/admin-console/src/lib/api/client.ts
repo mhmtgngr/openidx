@@ -4,6 +4,7 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 export interface ApiError {
   code: string
   message: string
+  status?: number
   details?: unknown
 }
 

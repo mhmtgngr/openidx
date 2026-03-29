@@ -321,7 +321,7 @@ describe('Audit API', () => {
       const params = {
         actor_id: 'user-123',
         action: 'user.login',
-        outcome: 'success',
+        outcome: 'success' as const,
         limit: 50,
         offset: 0,
       }

@@ -1,8 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { WebAuthnCredentialsPage } from './WebAuthnCredentials'
+
+const mockCredentials = [
+  {
+    id: 'cred1',
+    friendly_name: 'YubiKey 5C',
+    authenticator: 'FIDO2 Security Key',
+    is_passkey: false,
+    created_at: '2024-01-01T00:00:00Z',
+    last_used_at: '2024-03-01T00:00:00Z',
+  },
+  {
+    id: 'cred2',
+    friendly_name: 'MacBook Pro',
+    authenticator: 'Passkey',
+    is_passkey: true,
+    created_at: '2024-02-01T00:00:00Z',
+    last_used_at: null,
+  },
+]
 
 // Mock the WebAuthn credentials hooks
 const mockUseWebAuthnCredentials = {
@@ -37,25 +56,6 @@ vi.mock('../../hooks/use-toast', () => ({
     toast: vi.fn(),
   }),
 }))
-
-const mockCredentials = [
-  {
-    id: 'cred1',
-    friendly_name: 'YubiKey 5C',
-    authenticator: 'FIDO2 Security Key',
-    is_passkey: false,
-    created_at: '2024-01-01T00:00:00Z',
-    last_used_at: '2024-03-01T00:00:00Z',
-  },
-  {
-    id: 'cred2',
-    friendly_name: 'MacBook Pro',
-    authenticator: 'Passkey',
-    is_passkey: true,
-    created_at: '2024-02-01T00:00:00Z',
-    last_used_at: null,
-  },
-]
 
 function createWrapper() {
   const queryClient = new QueryClient({
