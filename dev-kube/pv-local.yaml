@@ -1,0 +1,78 @@
+# Local Persistent Volumes for Kind cluster
+# These use hostPath for local development (NOT for production)
+
+---
+# PostgreSQL PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-pv
+  labels:
+    app.kubernetes.io/component: postgres
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /tmp/openidx/postgres
+    type: DirectoryOrCreate
+
+---
+# Redis PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: redis-pv
+  labels:
+    app.kubernetes.io/component: redis
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /tmp/openidx/redis
+    type: DirectoryOrCreate
+
+---
+# Elasticsearch PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: elasticsearch-pv
+  labels:
+    app.kubernetes.io/component: elasticsearch
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /tmp/openidx/elasticsearch
+    type: DirectoryOrCreate
+
+---
+# etcd PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: etcd-pv
+  labels:
+    app.kubernetes.io/component: etcd
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    path: /tmp/openidx/etcd
+    type: DirectoryOrCreate

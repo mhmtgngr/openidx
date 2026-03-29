@@ -120,9 +120,14 @@ func (s *Service) handleStepUpChallenge(c *gin.Context) {
 		}
 	}
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "step_up_challenge_created", "success",
-		userID, c.ClientIP(), userID, "user",
-		map[string]interface{}{"challenge_id": challengeID, "reason": req.Reason})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "step_up_challenge_created", "success",
+			userID, c.ClientIP(), userID, "user",
+			map[string]interface{}{"challenge_id": challengeID, "reason": req.Reason})
+	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"challenge_id":      challengeID,
@@ -244,9 +249,14 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 		return
 	}
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "step_up_verified", "success",
-		userID, c.ClientIP(), userID, "user",
-		map[string]interface{}{"challenge_id": req.ChallengeID, "method": req.Method})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "step_up_verified", "success",
+			userID, c.ClientIP(), userID, "user",
+			map[string]interface{}{"challenge_id": req.ChallengeID, "method": req.Method})
+	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "verified",

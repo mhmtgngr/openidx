@@ -78,7 +78,7 @@ func TestWebhookDelivery_ExponentialBackoff(t *testing.T) {
 func TestWebhookDelivery_MaxRetries(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Configure shorter delays for testing
 	streamer.webhookConfig.MaxRetries = 3
@@ -116,7 +116,7 @@ func TestWebhookDelivery_Success(t *testing.T) {
 
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	event := &ServiceAuditEvent{
 		ID:        "event-123",
@@ -159,7 +159,7 @@ func TestWebhookDelivery_Failure(t *testing.T) {
 
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	event := &ServiceAuditEvent{
 		ID:        "event-456",
@@ -189,7 +189,7 @@ func TestWebhookDelivery_Timeout(t *testing.T) {
 
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Set a short timeout for testing
 	streamer.webhookConfig.Timeout = 50 * time.Millisecond
@@ -215,7 +215,7 @@ func TestWebhookDelivery_Timeout(t *testing.T) {
 func TestWebhookDelivery_InvalidURL(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	event := &ServiceAuditEvent{
 		ID:        "event-invalid",
@@ -283,7 +283,7 @@ func TestWebhookDelivery_RetryLogic(t *testing.T) {
 
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Configure for quick retry
 	streamer.webhookConfig.MaxRetries = 5
@@ -331,7 +331,7 @@ func TestWebhookDelivery_RetryLogic(t *testing.T) {
 func TestWebhookSubscription_Routes(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Create test router
 	gin.SetMode(gin.TestMode)
@@ -385,7 +385,7 @@ func TestWebhookDelivery_PayloadStructure(t *testing.T) {
 
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	event := &ServiceAuditEvent{
 		ID:          "event-payload",
@@ -432,7 +432,7 @@ func TestWebhookDelivery_PayloadStructure(t *testing.T) {
 func TestWebhookConfig_Update(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Verify defaults
 	assert.Equal(t, 5, streamer.webhookConfig.MaxRetries)
@@ -465,7 +465,7 @@ func BenchmarkWebhookDelivery_Success(b *testing.B) {
 
 	logger := zap.NewNop()
 	service := createTestService(&testing.T{})
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	event := &ServiceAuditEvent{
 		ID:        "bench-event",

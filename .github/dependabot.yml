@@ -1,35 +1,156 @@
+# Dependabot configuration for OpenIDX
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
 version: 2
 updates:
-  - package-ecosystem: gomod
-    directory: /
+  # ============================================================
+  # Go module updates - weekly
+  # ============================================================
+  - package-ecosystem: "gomod"
+    directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
     open-pull-requests-limit: 10
+    reviewers:
+      - "openidx/backend-team"
+    assignees:
+      - "openidx/maintainer"
     labels:
-      - dependencies
-      - go
+      - "dependencies"
+      - "go"
+      - "security"
+    commit-message:
+      prefix: "go"
+      prefix-development: "go-dev"
+      include: "scope"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "gorm.io/*"
+      gorm-dependencies:
+        patterns:
+          - "gorm.io/*"
+    rebase-strategy: "auto"
+    versioning-strategy: "increase"
 
-  - package-ecosystem: npm
-    directory: /web/admin-console
+  # ============================================================
+  # npm/yarn updates for admin console - weekly
+  # ============================================================
+  - package-ecosystem: "npm"
+    directory: "/web/admin-console"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
     open-pull-requests-limit: 10
+    reviewers:
+      - "openidx/frontend-team"
+    assignees:
+      - "openidx/frontend-maintainer"
     labels:
-      - dependencies
-      - frontend
+      - "dependencies"
+      - "frontend"
+      - "npm"
+      - "security"
+    commit-message:
+      prefix: "npm"
+      prefix-development: "npm-dev"
+      include: "scope"
+    groups:
+      react-dependencies:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router-dom"
+      radix-ui-dependencies:
+        patterns:
+          - "@radix-ui/*"
+      testing-dependencies:
+        patterns:
+          - "@testing-library/*"
+          - "@playwright/test"
+          - "vitest"
+      build-dependencies:
+        patterns:
+          - "vite"
+          - "typescript"
+          - "eslint"
+          - "tailwindcss"
+    rebase-strategy: "auto"
+    versioning-strategy: "increase"
+    # Automerge patch updates for non-major version bumps
+    automerge:
+      dependency-name: "*"
+      update-type: "patch"
+      required-status-checks:
+        strict: true
 
-  - package-ecosystem: docker
-    directory: /deployments/docker
+  # ============================================================
+  # GitHub Actions updates - monthly
+  # ============================================================
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: monthly
+      interval: "monthly"
+      day: "first monday"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "openidx/devops-team"
     labels:
-      - dependencies
-      - docker
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+      - "devops"
+      - "security"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      actions-dependencies:
+        patterns:
+          - "*"
+    rebase-strategy: "auto"
 
-  - package-ecosystem: github-actions
-    directory: /
+  # ============================================================
+  # Docker base image updates - monthly
+  # ============================================================
+  - package-ecosystem: "docker"
+    directory: "/deployments/docker"
     schedule:
-      interval: weekly
+      interval: "monthly"
+      day: "first tuesday"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "openidx/devops-team"
     labels:
-      - dependencies
-      - ci
+      - "dependencies"
+      - "docker"
+      - "devops"
+      - "security"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    groups:
+      docker-base-images:
+        patterns:
+          - "golang"
+          - "node"
+          - "gcr.io/distroless/*"
+          - "cgr.dev/chainguard/*"
+    ignore:
+      # Ignore major version updates for Docker images (require manual review)
+      - dependency-name: "golang"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+    rebase-strategy: "auto"
+
+  # ============================================================
+  # Pull request settings
+  # ============================================================
+  pull-request-branch-name:
+    separator: "-"

@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('API Integration Tests', () => {
-  const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
 
+test.describe('API Integration Tests', () => {
   test('should handle API errors gracefully', async ({ page }) => {
     // Navigate to a page that makes API calls
     await page.goto('/dashboard')

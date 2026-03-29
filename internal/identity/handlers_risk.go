@@ -204,10 +204,42 @@ func (s *Service) handleGetRiskStats(c *gin.Context) {
 
 // handleGetLoginHistory returns login history for a user or all users
 func (s *Service) handleGetLoginHistory(c *gin.Context) {
-	userID := c.Query("user_id")
+	requestedUserID := c.Query("user_id")
+	authUserID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
+
+	// SECURITY: IDOR fix - Only allow admin to query arbitrary users, otherwise users can only see their own history
+	if requestedUserID != "" && requestedUserID != authUserID {
+		// Check if user is admin
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' history"})
+			return
+		}
+	} else if requestedUserID == "" {
+		// If no user_id specified, require admin to view all history
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			// Non-admin users can only view their own history
+			requestedUserID = authUserID
+		}
+	}
+
 	limit := 100
 
-	history, err := s.risk.GetLoginHistory(c.Request.Context(), userID, limit)
+	history, err := s.risk.GetLoginHistory(c.Request.Context(), requestedUserID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

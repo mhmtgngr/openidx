@@ -21,12 +21,38 @@ type rateLimitEntry struct {
 	resetTime time.Time
 }
 
-// rateLimitStore tracks in-memory rate limits (fallback only, not recommended for production)
-var rateLimitStore = struct {
-	sync.RWMutex
+// inMemoryRateLimiter encapsulates in-memory rate limiting state (fallback only, not recommended for production)
+type inMemoryRateLimiter struct {
+	mu      sync.Mutex
 	entries map[string]*rateLimitEntry
-}{
+}
+
+// defaultInMemoryLimiter is the package-level fallback rate limiter
+var defaultInMemoryLimiter = &inMemoryRateLimiter{
 	entries: make(map[string]*rateLimitEntry),
+}
+
+// check performs a thread-safe rate limit check. Returns true if the request is allowed.
+func (rl *inMemoryRateLimiter) check(key string, maxRequests int64, window time.Duration) (bool, error) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	entry, exists := rl.entries[key]
+
+	if !exists || now.After(entry.resetTime) {
+		rl.entries[key] = &rateLimitEntry{
+			count:     1,
+			resetTime: now.Add(window),
+		}
+		return true, nil
+	}
+
+	entry.count++
+	if entry.count > maxRequests {
+		return false, nil
+	}
+	return true, nil
 }
 
 // RedisRateLimiter provides distributed rate limiting using Redis with TTL
@@ -446,36 +472,14 @@ func (h *ZTPolicyHandler) EvaluatePolicies(c *gin.Context) {
 		c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", time.Now().Add(windowDuration).Unix()))
 	} else {
 		// Fallback to in-memory rate limiting (not recommended for production)
-		now := time.Now()
-
-		rateLimitStore.RLock()
-		entry, exists := rateLimitStore.entries[rateLimitKey]
-		rateLimitStore.RUnlock()
-
-		if !exists || now.After(entry.resetTime) {
-			// Create new entry or expired entry
-			rateLimitStore.Lock()
-			rateLimitStore.entries[rateLimitKey] = &rateLimitEntry{
-				count:     1,
-				resetTime: now.Add(windowDuration),
-			}
-			rateLimitStore.Unlock()
-		} else {
-			// Increment counter
-			rateLimitStore.Lock()
-			entry.count++
-			count := entry.count
-			rateLimitStore.Unlock()
-
-			if count > maxRequestsPerMinute {
-				h.logger.Warn("Policy evaluation rate limit exceeded (in-memory)",
-					zap.String("client_ip", clientIP),
-					zap.Int64("count", count))
-				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error": "rate limit exceeded, please retry later",
-				})
-				return
-			}
+		allowed, err := defaultInMemoryLimiter.check(rateLimitKey, maxRequestsPerMinute, windowDuration)
+		if err != nil || !allowed {
+			h.logger.Warn("Policy evaluation rate limit exceeded (in-memory)",
+				zap.String("client_ip", clientIP))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "rate limit exceeded, please retry later",
+			})
+			return
 		}
 	}
 

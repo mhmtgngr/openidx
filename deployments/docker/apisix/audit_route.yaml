@@ -1,0 +1,225 @@
+# APISIX Route Configuration for Audit Service WebSocket Stream
+# This configuration secures the audit event stream WebSocket endpoint with
+# proper origin validation and CORS settings
+#
+# Environment Variable: AUDIT_STREAM_ALLOWED_ORIGINS
+# Comma-separated list of allowed origins for WebSocket connections
+# Example: https://admin.example.com,https://console.example.com
+# Empty (default): Same-origin policy only
+
+# Audit Service HTTP API routes
+routes:
+  # Audit stream WebSocket endpoint (SECURE - requires explicit origin configuration)
+  - uri: /api/v1/audit/stream
+    name: audit-stream-websocket
+    priority: 15
+    plugins:
+      # CORS must be configured for WebSocket upgrade
+      cors:
+        # Use environment variable or configure specific origins
+        # IMPORTANT: Do not use "*" in production for WebSocket endpoints
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Authorization,Origin"
+        max_age: 86400
+        # Expose the WebSocket upgrade headers
+        expose_headers: "Upgrade,Connection"
+      # Rate limiting for WebSocket connections
+      limit-req:
+        rate: 10
+        burst: 5
+        key: remote_addr
+        rejected_code: 429
+        rejected_msg: '{"error": "too_many_connection_attempts", "message": "Rate limit exceeded for WebSocket connections"}'
+      # Request ID for tracing
+      prometheus:
+        prefer_name: true
+    # Enable WebSocket proxying
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      # Configure timeout for long-lived WebSocket connections
+      timeout:
+        connect: 10s
+        send: 300s
+        read: 300s
+      scheme: http
+      nodes:
+        "audit-service:8004": 1
+
+  # Audit webhook endpoints (POST requests)
+  - uri: /api/v1/audit/webhooks
+    name: audit-webhooks
+    methods: ["POST", "GET", "DELETE"]
+    plugins:
+      limit-req:
+        rate: 30
+        burst: 10
+        key: remote_addr
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,POST,DELETE,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+      # IP restriction for webhook registration (optional)
+      ip-restriction:
+        whitelist:
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+    upstream:
+      type: roundrobin
+      nodes:
+        "audit-service:8004": 1
+
+  # Audit log query endpoints
+  - uri: /api/v1/audit/events
+    name: audit-events-query
+    methods: ["GET"]
+    plugins:
+      limit-req:
+        rate: 100
+        burst: 50
+        key: remote_addr
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+    upstream:
+      type: roundrobin
+      nodes:
+        "audit-service:8004": 1
+
+  # Compliance report generation
+  - uri: /api/v1/audit/reports
+    name: audit-reports
+    methods: ["POST", "GET"]
+    plugins:
+      limit-req:
+        rate: 20
+        burst: 5
+        key: remote_addr
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,POST,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+    upstream:
+      type: roundrobin
+      nodes:
+        "audit-service:8004": 1
+
+  # Audit statistics
+  - uri: /api/v1/audit/statistics
+    name: audit-statistics
+    methods: ["GET"]
+    plugins:
+      limit-req:
+        rate: 50
+        burst: 20
+        key: remote_addr
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+      # Cache statistics for 60 seconds
+      proxy-cache:
+        cache_zone: disk_cache_one
+        cache_key:
+          - "$uri"
+          - "$arg_start_date"
+          - "$arg_end_date"
+        cache_bypass:
+          - "$arg_skip_cache"
+        hide_cache_headers: true
+        cache_ttl: 60s
+    upstream:
+      type: roundrobin
+      nodes:
+        "audit-service:8004": 1
+
+# Admin API routes for audit stream configuration
+admin_routes:
+  # Get/update audit stream configuration
+  - uri: /api/v1/admin/audit/stream/config
+    name: admin-audit-stream-config
+    methods: ["GET", "PUT"]
+    plugins:
+      # Admin authentication should be enforced here
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,PUT,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+      # Require admin role
+      acl:
+        allow:
+          - "role:admin"
+        denied_msg: '{"error": "forbidden", "message": "Admin access required"}'
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-api:8005": 1
+
+  # Test audit stream origin
+  - uri: /api/v1/admin/audit/stream/test-origin
+    name: admin-audit-stream-test-origin
+    methods: ["POST"]
+    plugins:
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "POST,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+      acl:
+        allow:
+          - "role:admin"
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-api:8005": 1
+
+  # Get audit stream statistics
+  - uri: /api/v1/admin/audit/stream/stats
+    name: admin-audit-stream-stats
+    methods: ["GET"]
+    plugins:
+      cors:
+        allow_origins: "http://localhost:3000,http://localhost:5173"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+        max_age: 3600
+      acl:
+        allow:
+          - "role:admin"
+    upstream:
+      type: roundrobin
+      nodes:
+        "admin-api:8005": 1
+
+# WebSocket upgrade headers that must be passed through
+websocket_headers:
+  - "Upgrade"
+  - "Connection"
+  - "Sec-WebSocket-Key"
+  - "Sec-WebSocket-Version"
+  - "Sec-WebSocket-Protocol"
+  - "Sec-WebSocket-Accept"
+  - "Sec-WebSocket-Extensions"
+
+# Origin validation notes:
+# 1. APISIX CORS plugin validates the Origin header on HTTP requests
+# 2. The audit-service performs additional origin validation during WebSocket upgrade
+# 3. Both layers MUST agree on allowed origins for secure WebSocket connections
+# 4. Configure allowed origins via AUDIT_STREAM_ALLOWED_ORIGINS environment variable
+
+# Production configuration example:
+# Set environment variable:
+# AUDIT_STREAM_ALLOWED_ORIGINS=https://admin.example.com,https://console.example.com
+#
+# This will:
+# - Update APISIX CORS configuration
+# - Update audit-service CheckOrigin validation
+# - Enable security logging for rejected connections

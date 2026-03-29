@@ -209,10 +209,13 @@ func (c *SimpleContainer) Resolve(name string) (interface{}, error) {
 }
 
 // MustResolve resolves a service or panics
+// Deprecated: Use Resolve and handle the error properly.
+// This function is kept for test compatibility and should not be used in production code.
 func (c *SimpleContainer) MustResolve(name string) interface{} {
 	instance, err := c.Resolve(name)
 	if err != nil {
-		panic(err)
+		// This function is deprecated and should only be used in tests
+		panic("container resolve failed: " + err.Error())
 	}
 	return instance
 }
@@ -353,10 +356,13 @@ func (b *Builder) Build() (*SimpleContainer, error) {
 }
 
 // MustBuild builds the container or panics
+// Deprecated: Use Build and handle the error properly.
+// This function is kept for test compatibility and should not be used in production code.
 func (b *Builder) MustBuild() *SimpleContainer {
 	container, err := b.Build()
 	if err != nil {
-		panic(err)
+		// This function is deprecated and should only be used in tests
+		panic("container build failed: " + err.Error())
 	}
 	return container
 }

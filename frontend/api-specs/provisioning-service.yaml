@@ -1,0 +1,597 @@
+openapi: 3.0.3
+info:
+  title: OpenIDX Provisioning Service
+  description: SCIM 2.0 user and group provisioning, plus automation rules.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8003
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: SCIM Users
+  - name: SCIM Groups
+  - name: SCIM Discovery
+  - name: Provisioning Rules
+
+paths:
+  # --- SCIM Users ---
+  /scim/v2/Users:
+    get:
+      tags: [SCIM Users]
+      summary: List SCIM users
+      operationId: listSCIMUsers
+      parameters:
+        - name: filter
+          in: query
+          description: "SCIM filter expression (e.g. userName eq \"john\")"
+          schema:
+            type: string
+        - name: startIndex
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: SCIM list response
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMListResponse'
+    post:
+      tags: [SCIM Users]
+      summary: Create SCIM user
+      operationId: createSCIMUser
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMUser'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '409':
+          description: User already exists
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+
+  /scim/v2/Users/{id}:
+    get:
+      tags: [SCIM Users]
+      summary: Get SCIM user
+      operationId: getSCIMUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '404':
+          description: User not found
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMError'
+    put:
+      tags: [SCIM Users]
+      summary: Replace SCIM user
+      operationId: replaceSCIMUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMUser'
+      responses:
+        '200':
+          description: User replaced
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+    patch:
+      tags: [SCIM Users]
+      summary: Patch SCIM user
+      operationId: patchSCIMUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMPatchRequest'
+      responses:
+        '200':
+          description: User patched
+    delete:
+      tags: [SCIM Users]
+      summary: Delete SCIM user
+      operationId: deleteSCIMUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: User deleted
+
+  # --- SCIM Groups ---
+  /scim/v2/Groups:
+    get:
+      tags: [SCIM Groups]
+      summary: List SCIM groups
+      operationId: listSCIMGroups
+      parameters:
+        - name: filter
+          in: query
+          schema:
+            type: string
+        - name: startIndex
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: SCIM list response
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMListResponse'
+    post:
+      tags: [SCIM Groups]
+      summary: Create SCIM group
+      operationId: createSCIMGroup
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMGroup'
+      responses:
+        '201':
+          description: Group created
+
+  /scim/v2/Groups/{id}:
+    get:
+      tags: [SCIM Groups]
+      summary: Get SCIM group
+      operationId: getSCIMGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Group details
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMGroup'
+    put:
+      tags: [SCIM Groups]
+      summary: Replace SCIM group
+      operationId: replaceSCIMGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMGroup'
+      responses:
+        '200':
+          description: Group replaced
+    patch:
+      tags: [SCIM Groups]
+      summary: Patch SCIM group
+      operationId: patchSCIMGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMPatchRequest'
+      responses:
+        '200':
+          description: Group patched
+    delete:
+      tags: [SCIM Groups]
+      summary: Delete SCIM group
+      operationId: deleteSCIMGroup
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Group deleted
+
+  # --- SCIM Discovery ---
+  /scim/v2/Schemas:
+    get:
+      tags: [SCIM Discovery]
+      summary: List SCIM schemas
+      operationId: getSchemas
+      security: []
+      responses:
+        '200':
+          description: Supported schemas
+
+  /scim/v2/Schemas/{id}:
+    get:
+      tags: [SCIM Discovery]
+      summary: Get specific schema
+      operationId: getSchema
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Schema definition
+
+  /scim/v2/ResourceTypes:
+    get:
+      tags: [SCIM Discovery]
+      summary: List resource types
+      operationId: getResourceTypes
+      security: []
+      responses:
+        '200':
+          description: Supported resource types
+
+  /scim/v2/ServiceProviderConfig:
+    get:
+      tags: [SCIM Discovery]
+      summary: Get service provider configuration
+      operationId: getServiceProviderConfig
+      security: []
+      responses:
+        '200':
+          description: SCIM capabilities and configuration
+
+  # --- Provisioning Rules ---
+  /api/v1/provisioning/rules:
+    get:
+      tags: [Provisioning Rules]
+      summary: List provisioning rules
+      operationId: listRules
+      responses:
+        '200':
+          description: List of rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProvisioningRule'
+    post:
+      tags: [Provisioning Rules]
+      summary: Create provisioning rule
+      operationId: createRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvisioningRuleCreate'
+      responses:
+        '201':
+          description: Rule created
+
+  /api/v1/provisioning/rules/{id}:
+    get:
+      tags: [Provisioning Rules]
+      summary: Get provisioning rule
+      operationId: getRule
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Rule details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisioningRule'
+    put:
+      tags: [Provisioning Rules]
+      summary: Update provisioning rule
+      operationId: updateRule
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvisioningRuleCreate'
+      responses:
+        '200':
+          description: Rule updated
+    delete:
+      tags: [Provisioning Rules]
+      summary: Delete provisioning rule
+      operationId: deleteRule
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Rule deleted
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    SCIMUser:
+      type: object
+      required: [schemas, userName]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+        id:
+          type: string
+          readOnly: true
+        externalId:
+          type: string
+        userName:
+          type: string
+        name:
+          type: object
+          properties:
+            formatted:
+              type: string
+            familyName:
+              type: string
+            givenName:
+              type: string
+            middleName:
+              type: string
+        displayName:
+          type: string
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                format: email
+              type:
+                type: string
+              primary:
+                type: boolean
+        active:
+          type: boolean
+        groups:
+          type: array
+          readOnly: true
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+              display:
+                type: string
+        meta:
+          $ref: '#/components/schemas/SCIMMeta'
+
+    SCIMGroup:
+      type: object
+      required: [schemas, displayName]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:schemas:core:2.0:Group"]
+        id:
+          type: string
+          readOnly: true
+        externalId:
+          type: string
+        displayName:
+          type: string
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+              display:
+                type: string
+              type:
+                type: string
+        meta:
+          $ref: '#/components/schemas/SCIMMeta'
+
+    SCIMMeta:
+      type: object
+      readOnly: true
+      properties:
+        resourceType:
+          type: string
+        created:
+          type: string
+          format: date-time
+        lastModified:
+          type: string
+          format: date-time
+        location:
+          type: string
+        version:
+          type: string
+
+    SCIMListResponse:
+      type: object
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        totalResults:
+          type: integer
+        startIndex:
+          type: integer
+        itemsPerPage:
+          type: integer
+        Resources:
+          type: array
+          items: {}
+
+    SCIMPatchRequest:
+      type: object
+      required: [schemas, Operations]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+        Operations:
+          type: array
+          items:
+            type: object
+            required: [op]
+            properties:
+              op:
+                type: string
+                enum: [add, remove, replace]
+              path:
+                type: string
+              value: {}
+
+    SCIMError:
+      type: object
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        scimType:
+          type: string
+        detail:
+          type: string
+
+    ProvisioningRule:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        trigger:
+          type: string
+          enum: [user_created, user_updated, user_deleted, group_membership, attribute_change, scheduled]
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleCondition'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleAction'
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProvisioningRuleCreate:
+      type: object
+      required: [name, trigger]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        trigger:
+          type: string
+          enum: [user_created, user_updated, user_deleted, group_membership, attribute_change, scheduled]
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleCondition'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuleAction'
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+          default: 0
+
+    RuleCondition:
+      type: object
+      properties:
+        field:
+          type: string
+        operator:
+          type: string
+          enum: [equals, not_equals, contains, starts_with, ends_with, in, not_in]
+        value:
+          type: string
+
+    RuleAction:
+      type: object
+      properties:
+        type:
+          type: string
+        target:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true

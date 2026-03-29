@@ -452,17 +452,17 @@ func (zm *ZitiManager) MgmtRequestWithCircuitBreaker(method, path string, body [
 	var respData []byte
 	var statusCode int
 
-	err := cb.Execute(func() error {
+	_, err := cb.Execute(func() (interface{}, error) {
 		var reqErr error
 		respData, statusCode, reqErr = zm.mgmtRequest(method, path, body)
 		if reqErr != nil {
-			return reqErr
+			return nil, reqErr
 		}
 		// Treat 5xx as failures for circuit breaker purposes
 		if statusCode >= 500 {
-			return fmt.Errorf("controller returned server error: HTTP %d", statusCode)
+			return nil, fmt.Errorf("controller returned server error: HTTP %d", statusCode)
 		}
-		return nil
+		return nil, nil
 	})
 
 	return respData, statusCode, err

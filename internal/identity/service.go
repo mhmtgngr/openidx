@@ -5414,9 +5414,26 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 		limit = 100
 	}
 	workflowID := c.Query("workflow_id")
-	userID := c.Query("user_id")
+	requestedUserID := c.Query("user_id")
+	authUserID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
 
-	executions, total, err := s.ListLifecycleExecutions(c.Request.Context(), offset, limit, workflowID, userID)
+	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' workflow executions
+	if requestedUserID != "" && requestedUserID != authUserID {
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(403, gin.H{"error": "insufficient permissions to view other users' executions"})
+			return
+		}
+	}
+
+	executions, total, err := s.ListLifecycleExecutions(c.Request.Context(), offset, limit, workflowID, requestedUserID)
 	if err != nil {
 		s.logger.Error("failed to list lifecycle executions", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -5448,8 +5465,10 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 // It mirrors the pattern used in the OAuth service.
 func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		detailsJSON, _ := json.Marshal(details)
-		_, err := s.db.Pool.Exec(context.Background(), `
+		_, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
 			                          resource_id, details)

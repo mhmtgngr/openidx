@@ -5,7 +5,14 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'api/openapi/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Documentation version (e.g., v1.0.0)'
+        required: false
+        default: 'latest'
 
 permissions:
   contents: read
@@ -21,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,10 +39,51 @@ jobs:
           cache-dependency-path: docs/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r docs/requirements.txt
+        run: |
+          pip install -r docs/requirements.txt
+          pip install mike
 
-      - name: Build documentation
-        run: mkdocs build --config-file docs/mkdocs.yml --site-dir ../site
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build MkDocs documentation
+        run: mkdocs build --config-file docs/mkdocs.yml --site-dir ../site-main
+
+      - name: Copy API documentation
+        run: |
+          mkdir -p ../site/api
+          if [ -d "docs/api" ]; then
+            cp -r docs/api/* ../site/api/
+          fi
+          if [ -d "api/openapi" ]; then
+            mkdir -p ../site/api/specs
+            cp -r api/openapi/* ../site/api/specs/
+          fi
+
+      - name: Merge sites
+        run: |
+          if [ -d "site-main/api" ]; then
+            rm -rf site-main/api
+          fi
+          if [ -d "site/api" ]; then
+            cp -r site/api site-main/
+          fi
+          mv site-main site
+
+      - name: Deploy with mike (versioning)
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Extract version from git tag or use 'latest'
+            VERSION=$(git describe --tags --exact-match 2>/dev/null || echo "latest")
+          fi
+
+          # Deploy with mike for versioning
+          mike deploy --config-file docs/mkdocs.yml --branch gh-pages --update-aliases $VERSION latest
+          mike set-default --config-file docs/mkdocs.yml --branch gh-pages latest
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -50,3 +100,27 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  validate:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r docs/requirements.txt
+
+      - name: Build documentation
+        run: mkdocs build --config-file docs/mkdocs.yml --strict
+
+      - name: Check for broken links
+        run: |
+          pip install linkchecker
+          linkchecker site/index.html --check-extern || true

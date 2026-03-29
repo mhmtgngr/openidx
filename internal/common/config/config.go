@@ -99,6 +99,9 @@ type Config struct {
 	// Adaptive MFA / Risk-based authentication
 	AdaptiveMFA AdaptiveMFAConfig `mapstructure:"adaptive_mfa"`
 
+	// Audit Stream WebSocket configuration
+	AuditStreamAllowedOrigins string `mapstructure:"audit_stream_allowed_origins"`
+
 	// Redis Sentinel configuration
 	RedisSentinelEnabled    bool   `mapstructure:"redis_sentinel_enabled"`
 	RedisSentinelMasterName string `mapstructure:"redis_sentinel_master_name"`
@@ -135,6 +138,7 @@ type Config struct {
 	ElasticsearchPassword string `mapstructure:"elasticsearch_password"`
 	ElasticsearchTLS      bool   `mapstructure:"elasticsearch_tls"`
 	ElasticsearchCACert   string `mapstructure:"elasticsearch_ca_cert"`
+	AutoMigrate bool `mapstructure:"auto_migrate"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption
@@ -276,7 +280,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		"provisioning-service": 8003,
 		"audit-service":        8004,
 		"admin-api":            8005,
-		"gateway-service":      8006,
+		"gateway-service":      8008,
 		"access-service":       8007,
 	}
 	if port, ok := ports[serviceName]; ok {
@@ -407,6 +411,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("adaptive_mfa.low_risk_threshold", 30)
 	v.SetDefault("adaptive_mfa.medium_risk_threshold", 50)
 	v.SetDefault("adaptive_mfa.high_risk_threshold", 70)
+
+	// Audit Stream WebSocket defaults (development-friendly)
+	v.SetDefault("audit_stream_allowed_origins", "")
 }
 
 func bindEnvVars(v *viper.Viper) {
@@ -515,6 +522,7 @@ func bindEnvVars(v *viper.Viper) {
 		"rate_limit_auth_requests":   "RATE_LIMIT_AUTH_REQUESTS",
 		"rate_limit_auth_window":     "RATE_LIMIT_AUTH_WINDOW",
 		"rate_limit_per_user":        "RATE_LIMIT_PER_USER",
+		"audit_stream_allowed_origins": "AUDIT_STREAM_ALLOWED_ORIGINS",
 	}
 
 	for key, env := range envMappings {
@@ -570,6 +578,28 @@ func (c *Config) GetCORSOrigins() []string {
 		return []string{"*"}
 	}
 	return strings.Split(c.CORSAllowedOrigins, ",")
+}
+
+// GetAuditStreamAllowedOrigins returns audit stream WebSocket allowed origins as a slice.
+// If the config is empty, returns a same-origin policy (only the host itself).
+// Supports comma-separated values and wildcard subdomains (e.g., *.example.com).
+func (c *Config) GetAuditStreamAllowedOrigins() []string {
+	if c.AuditStreamAllowedOrigins == "" {
+		// Default to same-origin policy - only allow connections from the same host
+		return nil // nil indicates same-origin only
+	}
+	if c.AuditStreamAllowedOrigins == "*" {
+		return []string{"*"}
+	}
+	origins := strings.Split(c.AuditStreamAllowedOrigins, ",")
+	result := make([]string, 0, len(origins))
+	for _, o := range origins {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			result = append(result, o)
+		}
+	}
+	return result
 }
 
 // IsDevelopment returns true if running in development mode
@@ -673,6 +703,17 @@ func (c *Config) ValidateProduction() error {
 	if !c.TLS.Enabled {
 		criticalIssues = append(criticalIssues,
 			"tls.enabled must be true in production for inter-service encryption")
+	}
+
+	// Critical: Audit stream WebSocket must have origin validation in production
+	auditOrigins := c.GetAuditStreamAllowedOrigins()
+	if len(auditOrigins) == 0 && c.AuditStreamAllowedOrigins == "" {
+		criticalIssues = append(criticalIssues,
+			"audit_stream_allowed_origins must be configured in production; set specific origins for WebSocket audit stream")
+	}
+	if c.AuditStreamAllowedOrigins == "*" {
+		criticalIssues = append(criticalIssues,
+			"audit_stream_allowed_origins cannot be wildcard '*' in production; specify allowed WebSocket origins")
 	}
 
 	// Critical: OTP debug mode must NEVER be enabled in production

@@ -7,9 +7,16 @@ import { test, expect } from '@playwright/test'
  */
 
 test.describe('Access Reviews - Authenticated', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     // Navigate to access reviews page
     await page.goto('/reviews')
+    // Wait for auth redirect
+    await page.waitForURL({ url: /\/reviews|\/login/, timeout: 10000 })
 
     // If redirected to login, skip all tests
     if (page.url().includes('/login')) {
@@ -144,8 +151,13 @@ test.describe('Access Reviews - Authenticated', () => {
 })
 
 test.describe('Access Reviews - Pagination', () => {
-  test('should handle pagination controls', async ({ page }) => {
+  test('should handle pagination controls', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/reviews')
+    await page.waitForURL({ url: /\/reviews|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -171,8 +183,13 @@ test.describe('Access Reviews - Pagination', () => {
 })
 
 test.describe('Access Reviews - Status Badges', () => {
-  test('should display status badges with correct colors', async ({ page }) => {
+  test('should display status badges with correct colors', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/reviews')
+    await page.waitForURL({ url: /\/reviews|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()

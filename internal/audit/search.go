@@ -189,6 +189,8 @@ func (s *Searcher) buildWhereClause(query *SearchQuery) (string, []interface{}) 
 		argIdx++
 	}
 
+	// SECURITY: Column names in fmt.Sprintf calls below are hardcoded string literals,
+	// not user input. Only the parameter placeholder index is dynamic. Safe from SQL injection.
 	// IP filter
 	if query.IP != "" {
 		conditions = append(conditions, fmt.Sprintf("ip = $%d", argIdx))
@@ -210,6 +212,7 @@ func (s *Searcher) buildWhereClause(query *SearchQuery) (string, []interface{}) 
 	}
 
 	// Cursor filter (for pagination)
+	// SECURITY: query.AfterID is validated as a UUID before use, and the subquery is a hardcoded template
 	if query.AfterID != "" {
 		// Use subquery to get the timestamp of the cursor event
 		conditions = append(conditions, fmt.Sprintf("(timestamp, id) < (SELECT timestamp, id FROM audit_events_tamper_evident WHERE id = $%d)", argIdx))
@@ -225,12 +228,14 @@ func (s *Searcher) buildWhereClause(query *SearchQuery) (string, []interface{}) 
 }
 
 // buildOrderByClause builds the ORDER BY clause
+// SECURITY: Returns a hardcoded string to prevent SQL injection
 func (s *Searcher) buildOrderByClause(query *SearchQuery) string {
 	// Order by timestamp descending, then by ID descending for consistent pagination
 	return " ORDER BY timestamp DESC, id DESC"
 }
 
 // buildLimitClause builds the LIMIT clause
+// SECURITY: Returns a parameterized query with hardcoded placeholder
 func (s *Searcher) buildLimitClause(limit int) string {
 	return fmt.Sprintf(" LIMIT $%d", 1)
 }

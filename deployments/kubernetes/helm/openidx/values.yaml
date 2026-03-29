@@ -137,6 +137,18 @@ auditService:
   service:
     type: ClusterIP
     port: 8004
+  # WebSocket origin validation for audit stream
+  # Controls which origins can connect to the real-time audit event stream
+  # Prevents Cross-Site WebSocket Hijacking (CSWSH) attacks
+  allowedOrigins: []
+  # Examples:
+  #   allowedOrigins:
+  #     - https://admin.example.com
+  #     - https://audit.example.com
+  #   allowedOrigins:
+  #     - https://*.example.com  # Wildcard subdomain
+  # When empty (default), enforces same-origin policy
+  enableSecurityLogging: true
   resources:
     requests:
       cpu: 100m

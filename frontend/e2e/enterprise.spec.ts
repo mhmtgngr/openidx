@@ -1,8 +1,14 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('SAML Service Providers', () => {
-  test('should display SAML service providers page', async ({ page }) => {
+  test('should display SAML service providers page', async ({ page, context }) => {
+    // Clear localStorage to prevent auth provider from attempting token refresh
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/saml-service-providers')
+    await page.waitForURL({ url: /\/saml-service-providers|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -14,8 +20,13 @@ test.describe('SAML Service Providers', () => {
 })
 
 test.describe('Bulk Operations', () => {
-  test('should display bulk operations page', async ({ page }) => {
+  test('should display bulk operations page', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      localStorage.clear()
+      sessionStorage.clear()
+    })
     await page.goto('/bulk-operations')
+    await page.waitForURL({ url: /\/bulk-operations|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -29,6 +40,7 @@ test.describe('Bulk Operations', () => {
 test.describe('Email Templates', () => {
   test('should display email templates page', async ({ page }) => {
     await page.goto('/email-templates')
+    await page.waitForURL({ url: /\/email-templates|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -42,6 +54,7 @@ test.describe('Email Templates', () => {
 test.describe('Lifecycle Policies', () => {
   test('should display lifecycle policies page', async ({ page }) => {
     await page.goto('/lifecycle-policies')
+    await page.waitForURL({ url: /\/lifecycle-policies|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()
@@ -55,6 +68,7 @@ test.describe('Lifecycle Policies', () => {
 test.describe('Attestation Campaigns', () => {
   test('should display attestation campaigns page', async ({ page }) => {
     await page.goto('/attestation-campaigns')
+    await page.waitForURL({ url: /\/attestation-campaigns|\/login/, timeout: 10000 })
 
     if (page.url().includes('/login')) {
       test.skip()

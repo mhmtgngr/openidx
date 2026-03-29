@@ -12,11 +12,11 @@ import (
 // WebAuthnAuth wraps WebAuthnHandlers with authentication and CSRF middleware
 // It provides a secure way to register both public and protected WebAuthn routes
 type WebAuthnAuth struct {
-	handlers      *WebAuthnHandlers
-	rbac          *auth.RBACMiddleware
-	tokenService  *auth.TokenService
+	handlers       *WebAuthnHandlers
+	rbac           *auth.RBACMiddleware
+	tokenService   *auth.TokenService
 	tokenValidator auth.TokenValidator
-	logger        *zap.Logger
+	logger         *zap.Logger
 	csrfMiddleware gin.HandlerFunc
 }
 
@@ -66,7 +66,8 @@ func NewWebAuthnAuth(
 }
 
 // MustNewWebAuthnAuth creates a new WebAuthnAuth wrapper and panics on error
-// This is a convenience function for initialization where failure is fatal
+// Deprecated: Use NewWebAuthnAuth and handle the error properly.
+// This function is kept for test compatibility only.
 func MustNewWebAuthnAuth(
 	handlers *WebAuthnHandlers,
 	rbac *auth.RBACMiddleware,
@@ -76,7 +77,8 @@ func MustNewWebAuthnAuth(
 ) *WebAuthnAuth {
 	auth, err := NewWebAuthnAuth(handlers, rbac, tokenService, logger, csrfMiddleware)
 	if err != nil {
-		panic(err)
+		// This function is deprecated and should only be used in tests
+		panic("webauthn auth initialization failed: " + err.Error())
 	}
 	return auth
 }
@@ -125,7 +127,8 @@ func NewWebAuthnAuthWithValidator(
 }
 
 // MustNewWebAuthnAuthWithValidator creates a new WebAuthnAuth wrapper and panics on error
-// This is a convenience function for initialization in tests where failure is fatal
+// Deprecated: Use NewWebAuthnAuthWithValidator and handle the error properly.
+// This function is kept for test compatibility only.
 func MustNewWebAuthnAuthWithValidator(
 	handlers *WebAuthnHandlers,
 	rbac *auth.RBACMiddleware,
@@ -135,7 +138,8 @@ func MustNewWebAuthnAuthWithValidator(
 ) *WebAuthnAuth {
 	auth, err := NewWebAuthnAuthWithValidator(handlers, rbac, validator, logger, csrfMiddleware)
 	if err != nil {
-		panic(err)
+		// This function is deprecated and should only be used in tests
+		panic("webauthn auth initialization failed: " + err.Error())
 	}
 	return auth
 }

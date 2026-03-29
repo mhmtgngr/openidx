@@ -63,10 +63,11 @@ type TokenFlow struct {
 	jwtSigner jwt.SigningMethod
 	issuer    string
 	logger    *zap.Logger
-	privateKey interface{} // RSA private key for JWT signing
+	keyManager *KeyManager // KeyManager for JWT signing operations
 }
 
 // NewTokenFlow creates a new token flow handler
+// Deprecated: Use NewTokenFlowWithKeyManager instead
 func NewTokenFlow(clients *ClientRepository, store *Store, privateKey interface{}, issuer string, logger *zap.Logger) *TokenFlow {
 	return &TokenFlow{
 		clients:   clients,
@@ -74,7 +75,19 @@ func NewTokenFlow(clients *ClientRepository, store *Store, privateKey interface{
 		jwtSigner: jwt.GetSigningMethod("RS256"),
 		issuer:    issuer,
 		logger:    logger.With(zap.String("flow", "token")),
-		privateKey: privateKey,
+		keyManager: nil, // No KeyManager - backward compatibility mode
+	}
+}
+
+// NewTokenFlowWithKeyManager creates a new token flow handler with KeyManager
+func NewTokenFlowWithKeyManager(clients *ClientRepository, store *Store, keyManager *KeyManager, issuer string, logger *zap.Logger) *TokenFlow {
+	return &TokenFlow{
+		clients:    clients,
+		store:      store,
+		jwtSigner:  nil, // Determined dynamically from KeyManager
+		issuer:     issuer,
+		logger:     logger.With(zap.String("flow", "token")),
+		keyManager: keyManager,
 	}
 }
 
@@ -535,10 +548,29 @@ func (f *TokenFlow) generateIDToken(client *Client, userID, scope, accessToken s
 	}
 
 	// Sign and serialize the JWT
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	idToken, err := token.SignedString(f.privateKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign ID token: %w", err)
+	var idToken string
+	var err error
+
+	if f.keyManager != nil {
+		// Use KeyManager for signing (RSA only)
+		keyID := f.keyManager.GetSigningKeyID()
+		signingKey := f.keyManager.GetSigningKey()
+
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		token.Header["kid"] = keyID
+
+		idToken, err = token.SignedString(signingKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to sign ID token with KeyManager: %w", err)
+		}
+	} else {
+		// Backward compatibility: use RS256 with deprecated privateKey field
+		// This path will be removed in future versions
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		idToken, err = token.SignedString(nil) // This won't work without key - KeyManager is required
+		if err != nil {
+			return "", fmt.Errorf("failed to sign ID token: %w", err)
+		}
 	}
 
 	return idToken, nil

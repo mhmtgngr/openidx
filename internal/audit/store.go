@@ -180,6 +180,8 @@ func (s *Store) batchInsert(ctx context.Context, events []*AuditEvent) error {
 			metadataJSON, _ = json.Marshal(event.Metadata)
 		}
 
+		// SECURITY: GetPartitionName uses time.Format which produces a predictable, safe format like "audit_events_2024_01"
+		// This is not user input and is safe from SQL injection.
 		targetPartition := GetPartitionName(event.Timestamp)
 		partitionStmt := fmt.Sprintf("INSERT INTO %s %s", targetPartition, stmt[13:])
 
@@ -309,6 +311,8 @@ func (s *Store) ensurePartition(ctx context.Context, tx pgx.Tx, partitionName st
 }
 
 // GetPartitionName returns the partition name for a given timestamp
+// SECURITY: The partition name format is hardcoded ("audit_events_YYYY_MM")
+// and uses time.Format with a trusted format string. This is safe from SQL injection.
 func GetPartitionName(t time.Time) string {
 	return fmt.Sprintf("audit_events_%s", t.Format("2006_01"))
 }

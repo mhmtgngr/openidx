@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/smtp"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -240,11 +242,150 @@ func (hm *HealthMonitor) sendSlackAlert(service ServiceConfig, status *HealthSta
 	}
 }
 
-// sendEmailAlert sends an alert via email
+// sendEmailAlert sends an alert via email using SMTP
 func (hm *HealthMonitor) sendEmailAlert(service ServiceConfig, status *HealthStatus, message string) {
-	// TODO: Implement email sending
-	// This would typically use net/smtp or a library like mailgun/sendgrid
-	fmt.Printf("Email alert would be sent to %s: %s\n", hm.config.EmailTo, message)
+	// Skip if SMTP is not configured
+	if hm.config.EmailSMTP == "" {
+		fmt.Printf("Email alert would be sent to %s: %s (SMTP not configured)\n", hm.config.EmailTo, message)
+		return
+	}
+
+	if hm.config.EmailFrom == "" {
+		fmt.Printf("Email alert skipped: EMAIL_FROM not configured\n")
+		return
+	}
+
+	if hm.config.EmailTo == "" {
+		fmt.Printf("Email alert skipped: EMAIL_TO not configured\n")
+		return
+	}
+
+	// Parse SMTP address
+	smtpHost, smtpPort, err := parseSMTPAddress(hm.config.EmailSMTP)
+	if err != nil {
+		fmt.Printf("Failed to parse SMTP address: %v\n", err)
+		return
+	}
+
+	// Compose email
+	subject := fmt.Sprintf("[ALERT] Service %s is unhealthy", service.Name)
+	body := fmt.Sprintf(
+		"Service Health Alert\n\n"+
+			"Service: %s\n"+
+			"Status: %s\n"+
+			"Failed checks: %d\n"+
+			"Last error: %v\n"+
+			"Time: %s\n\n"+
+			"This is an automated alert from the OpenIDX Health Monitor.\n"+
+			"Please investigate the service health immediately.\n",
+		service.Name, status.Status, status.FailCount, status.LastError, status.LastCheck.Format(time.RFC3339),
+	)
+
+	// Create email message
+	emailMsg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		hm.config.EmailFrom, hm.config.EmailTo, subject, body)
+
+	// Configure TLS
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: false,
+		ServerName:         smtpHost,
+	}
+
+	// Connect to SMTP server with TLS
+	auth, err := smtpAuth(hm.config.EmailSMTP)
+	if err != nil {
+		fmt.Printf("Failed to create SMTP auth: %v\n", err)
+		return
+	}
+
+	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
+
+	// Try sending with TLS first
+	var sendErr error
+	if auth != nil {
+		// Plain SMTP with auth
+		sendErr = smtp.SendMail(addr, auth, hm.config.EmailFrom, []string{hm.config.EmailTo}, []byte(emailMsg))
+	} else {
+		// Try TLS connection
+		sendErr = sendMailTLS(addr, hm.config.EmailFrom, []string{hm.config.EmailTo}, []byte(emailMsg), tlsConfig)
+	}
+
+	if sendErr != nil {
+		fmt.Printf("Failed to send email alert: %v\n", sendErr)
+		return
+	}
+
+	fmt.Printf("Email alert sent successfully to %s\n", hm.config.EmailTo)
+}
+
+// parseSMTPAddress parses an SMTP address and returns host and port
+func parseSMTPAddress(smtpAddr string) (host, port string, err error) {
+	// Check if address already contains port
+	if strings.Contains(smtpAddr, ":") {
+		parts := strings.Split(smtpAddr, ":")
+		if len(parts) == 2 {
+			return parts[0], parts[1], nil
+		}
+		return "", "", fmt.Errorf("invalid SMTP address format: %s", smtpAddr)
+	}
+	// Default to submission port (587) for TLS
+	return smtpAddr, "587", nil
+}
+
+// smtpAuth creates SMTP authentication from environment variables
+func smtpAuth(smtpAddr string) (smtp.Auth, error) {
+	username := os.Getenv("SMTP_USERNAME")
+	password := os.Getenv("SMTP_PASSWORD")
+
+	if username == "" || password == "" {
+		// No auth configured
+		return nil, nil
+	}
+
+	host := strings.Split(smtpAddr, ":")[0]
+	return smtp.PlainAuth("", username, password, host), nil
+}
+
+// sendMailTLS sends an email using SMTP with TLS
+func sendMailTLS(addr, from string, to []string, msg []byte, tlsConfig *tls.Config) error {
+	// Connect to the server
+	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	if err != nil {
+		return fmt.Errorf("TLS dial failed: %w", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, strings.Split(addr, ":")[0])
+	if err != nil {
+		return fmt.Errorf("SMTP client creation failed: %w", err)
+	}
+	defer client.Quit()
+
+	// Set the sender
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("MAIL command failed: %w", err)
+	}
+
+	// Add recipients
+	for _, recipient := range to {
+		if err := client.Rcpt(recipient); err != nil {
+			return fmt.Errorf("RCPT command failed for %s: %w", recipient, err)
+		}
+	}
+
+	// Send message body
+	writer, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("DATA command failed: %w", err)
+	}
+	defer writer.Close()
+
+	_, err = writer.Write(msg)
+	if err != nil {
+		return fmt.Errorf("message write failed: %w", err)
+	}
+
+	return nil
 }
 
 // GetStatus returns the current health status of all services
@@ -419,6 +560,8 @@ func defaultConfig() Config {
 		Timeout:         10 * time.Second,
 		AlertThreshold:  3,
 		SlackWebhookURL: os.Getenv("SLACK_WEBHOOK_URL"),
+		EmailSMTP:       os.Getenv("SMTP_SERVER"),
+		EmailFrom:       os.Getenv("EMAIL_FROM"),
 		EmailTo:         os.Getenv("ALERT_EMAIL_TO"),
 	}
 }

@@ -455,3 +455,165 @@ func ValidateAll(validators ...func() error) error {
 
 	return nil
 }
+
+// SQL Column Name Validation
+// The following functions provide safe validation for SQL column names
+// to prevent SQL injection when building dynamic queries.
+
+// SafeSQLColumnNames is an allowlist of known-safe column names.
+// When using fmt.Sprintf to build SQL queries with column names,
+// only column names from this allowlist (or other validated sources)
+// should be used. This prevents SQL injection via column names.
+var SafeSQLColumnNames = map[string]bool{
+	// Primary key and identifiers
+	"id": true, "external_id": true,
+	"user_id": true, "org_id": true, "organization_id": true,
+	"provider_id": true, "policy_id": true, "application_id": true,
+	"directory_id": true, "resource_id": true, "target_id": true,
+	"agent_id": true, "owner_id": true, "claim_id": true,
+	"rule_id": true, "role_id": true, "group_id": true,
+	"link_id": true, "perm_id": true,
+
+	// User/Identity columns
+	"username": true, "display_name": true, "name": true,
+	"active": true, "enabled": true, "email": true, "email_verified": true,
+	"password": true, "password_hash": true, "password_changed_at": true,
+	"password_must_change": true, "failed_login_count": true,
+	"last_failed_login_at": true, "locked_until": true,
+	"last_login_at": true, "ldap_dn": true, "source": true,
+
+	// Profile JSONB columns
+	"emails": true, "phone_numbers": true, "photos": true, "addresses": true,
+	"groups": true, "roles": true, "entitlements": true,
+	"attributes": true, "meta": true,
+
+	// Group columns
+	"members": true,
+
+	// Organization columns
+	"description": true, "domain": true, "branding": true, "settings": true,
+
+	// Application/OAuth columns
+	"client_id": true, "type": true, "protocol": true,
+	"base_url": true, "redirect_uris": true,
+
+	// Policy/Rule columns
+	"priority": true, "conditions": true,
+	"required_methods": true, "grace_period_hours": true,
+	"thresholds": true,
+
+	// Notification columns
+	"channel": true, "title": true, "body": true, "link": true, "read": true,
+	"notification_type": true, "event_type": true, "category": true,
+
+	// Timestamp columns
+	"created_at": true, "updated_at": true, "deleted_at": true,
+	"expires_at": true, "sent_at": true, "scheduled_at": true,
+	"processed_by": true, "completed_at": true, "last_sent_at": true,
+	"next_scheduled_at": true, "rotated_at": true, "last_active_at": true,
+	"remediated_at": true, "dismissed_reason": true,
+	"started_at": true,
+
+	// Status and state columns
+	"status": true, "outcome": true, "state": true, "severity": true,
+
+	// Audit/Event columns
+	"action": true, "actor_type": true, "actor_ip": true,
+	"target_type": true, "resource_type": true,
+	"details": true, "session_id": true, "request_id": true,
+	"timestamp": true, "correlation_id": true,
+
+	// Federation/Identity Provider columns
+	"provider_key": true, "provider_name": true,
+	"sort_order": true, "icon_url": true,
+	"button_color": true, "button_text": true,
+	"auto_create_users": true, "auto_link_by_email": true,
+	"allowed_domains": true, "attribute_mapping": true,
+	"email_domain": true, "auto_redirect": true,
+	"external_email": true, "external_username": true,
+
+	// MFA columns
+	"totp_enabled": true, "sms_enabled": true, "email_otp_enabled": true,
+	"push_enabled": true, "webauthn_enabled": true, "backup_codes_remaining": true,
+	"credential_type": true, "key_prefix": true,
+
+	// Privacy/Data columns
+	"request_type": true, "result_file_path": true,
+	"result_file_size": true, "retention_days": true, "archive_enabled": true,
+	"archive_format": true, "anonymize_fields": true,
+	"data_category": true, "risk_level": true,
+	"assessor_id": true, "reviewer_id": true, "review_notes": true,
+	"approved_at": true, "findings": true, "mitigations": true,
+	"processing_purposes": true, "data_categories": true,
+
+	// SAML columns
+	"entity_id": true, "acs_url": true, "slo_url": true, "certificate": true,
+	"metadata_xml": true, "want_assertions_signed": true,
+	"encryption_enabled": true, "name_id_format": true,
+
+	// AI Agent columns
+	"agent_type": true, "capabilities": true,
+	"trust_level": true, "rate_limits": true, "allowed_scopes": true,
+	"ip_allowlist": true,
+
+	// ISPM columns
+	"check_type": true, "affected_entity_type": true, "affected_entity_id": true,
+	"affected_entity_name": true, "remediation_action": true, "remediation_details": true,
+	"dismissed_by": true,
+
+	// Common JSONB/JSON columns
+	"channels": true, "template_overrides": true,
+	"target_ids": true, "target_applications": true,
+	"claim_name": true, "claim_type": true, "source_value": true,
+	"include_in_id_token": true, "include_in_access_token": true, "include_in_userinfo": true,
+}
+
+// ValidateSQLColumnName checks if a column name is in the allowlist.
+// Returns an error if the column name is not safe for use in SQL queries.
+// Use this function when accepting column names from user input for sorting or filtering.
+func ValidateSQLColumnName(columnName string) error {
+	if columnName == "" {
+		return &ValidationError{
+			Field:   "column_name",
+			Message: "column name cannot be empty",
+		}
+	}
+
+	// Check against allowlist
+	if !SafeSQLColumnNames[columnName] {
+		return &ValidationError{
+			Field:   "column_name",
+			Message: "is not a valid column name",
+			Value:   columnName,
+		}
+	}
+
+	return nil
+}
+
+// IsSafeSQLColumnName returns true if the column name is in the allowlist.
+// This is a convenience function for quick checks without error handling.
+func IsSafeSQLColumnName(columnName string) bool {
+	return SafeSQLColumnNames[columnName]
+}
+
+// ValidateSortBy validates a sort-by column name against the allowlist.
+// Returns an error if the column name is not safe for ORDER BY clauses.
+func ValidateSortBy(columnName string) error {
+	// Sort by can include qualified names like "emails->0->>'value'"
+	// For now, validate the base column name
+	baseName := columnName
+	if idx := strings.Index(columnName, "->"); idx > 0 {
+		baseName = columnName[:idx]
+	}
+	if idx := strings.Index(columnName, "."); idx > 0 {
+		baseName = columnName[:idx]
+	}
+
+	// Special case for JSON operators - they're safe if the base column is safe
+	if strings.Contains(columnName, "->") || strings.Contains(columnName, ">>") {
+		return ValidateSQLColumnName(baseName)
+	}
+
+	return ValidateSQLColumnName(columnName)
+}

@@ -263,11 +263,41 @@ func (s *Service) handleRequestCallback(c *gin.Context) {
 
 func (s *Service) handleListDeviceTrustRequests(c *gin.Context) {
 	status := c.Query("status")
-	userID := c.Query("user_id")
+	requestedUserID := c.Query("user_id")
+	authUserID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
+
+	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' requests
+	if requestedUserID != "" && requestedUserID != authUserID {
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' requests"})
+			return
+		}
+	} else if requestedUserID == "" {
+		// Non-admin users can only view their own requests
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			requestedUserID = authUserID
+		}
+	}
+
 	limit := 50
 	offset := 0
 
-	requests, total, err := s.ListDeviceTrustRequests(c.Request.Context(), status, userID, limit, offset)
+	requests, total, err := s.ListDeviceTrustRequests(c.Request.Context(), status, requestedUserID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -397,11 +427,40 @@ func (s *Service) handleGenerateBypassCode(c *gin.Context) {
 }
 
 func (s *Service) handleListBypassCodes(c *gin.Context) {
-	userID := c.Query("user_id")
+	requestedUserID := c.Query("user_id")
 	status := c.Query("status")
 	activeOnly := c.Query("active_only") == "true"
+	authUserID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
 
-	codes, total, err := s.ListBypassCodes(c.Request.Context(), userID, status, activeOnly, 50, 0)
+	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' bypass codes
+	if requestedUserID != "" && requestedUserID != authUserID {
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' bypass codes"})
+			return
+		}
+	} else if requestedUserID == "" {
+		// Non-admin users can only view their own codes
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			requestedUserID = authUserID
+		}
+	}
+
+	codes, total, err := s.ListBypassCodes(c.Request.Context(), requestedUserID, status, activeOnly, 50, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -423,10 +482,26 @@ func (s *Service) handleRevokeBypassCode(c *gin.Context) {
 }
 
 func (s *Service) handleRevokeAllBypassCodes(c *gin.Context) {
-	userID := c.Param("user_id")
+	requestedUserID := c.Param("user_id")
 	adminID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
 
-	count, err := s.RevokeAllBypassCodes(c.Request.Context(), userID, adminID, c.ClientIP())
+	// SECURITY: IDOR fix - Only allow admin to revoke other users' bypass codes
+	if requestedUserID != adminID {
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to revoke other users' bypass codes"})
+			return
+		}
+	}
+
+	count, err := s.RevokeAllBypassCodes(c.Request.Context(), requestedUserID, adminID, c.ClientIP())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -456,9 +531,38 @@ func (s *Service) handleVerifyBypassCode(c *gin.Context) {
 }
 
 func (s *Service) handleGetBypassAuditLog(c *gin.Context) {
-	userID := c.Query("user_id")
+	requestedUserID := c.Query("user_id")
+	authUserID := c.GetString("user_id")
+	authRoles := c.GetStringSlice("roles")
 
-	entries, err := s.GetBypassAuditLog(c.Request.Context(), userID, 100, 0)
+	// SECURITY: IDOR fix - Only allow admin to query arbitrary users' audit logs
+	if requestedUserID != "" && requestedUserID != authUserID {
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions to view other users' audit logs"})
+			return
+		}
+	} else if requestedUserID == "" {
+		// Non-admin users can only view their own logs
+		isAdmin := false
+		for _, role := range authRoles {
+			if role == "admin" || role == "superadmin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			requestedUserID = authUserID
+		}
+	}
+
+	entries, err := s.GetBypassAuditLog(c.Request.Context(), requestedUserID, 100, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

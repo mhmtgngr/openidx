@@ -92,6 +92,7 @@ func main() {
 	router.Use(gin.Recovery())
 	router.Use(otelgin.Middleware("gateway-service"))
 	router.Use(logger.GinMiddleware(log))
+	router.Use(metrics.Middleware("gateway-service"))
 	router.Use(api.StandardVersionMiddleware())
 
 	// Metrics endpoint

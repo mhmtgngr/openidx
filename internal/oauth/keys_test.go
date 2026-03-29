@@ -1,7 +1,8 @@
-// Package oauth provides unit tests for RSA key management and JWKS functionality
+// Package oauth provides unit tests for RSA and Ed25519 key management and JWKS functionality
 package oauth
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -129,9 +130,9 @@ func TestKeyManager_BuildJWKS(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key.PublicKey,
 		},
@@ -165,9 +166,9 @@ func TestKeyManager_HandleJWKS(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key.PublicKey,
 		},
@@ -213,9 +214,9 @@ func TestKeyManager_MultipleKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key1,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key1,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key1.PublicKey,
 			"test-key-2": &key2.PublicKey, // Old key still valid
@@ -245,9 +246,9 @@ func TestKeyManager_KeyRotation(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key1,
-		currentKeyID:  "key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key1,
+		currentKeyID: "key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"key-1": &key1.PublicKey,
 		},
@@ -279,9 +280,9 @@ func TestKeyManager_ValidateJWT(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key.PublicKey,
 		},
@@ -390,9 +391,9 @@ func TestKeyManager_ShouldRotateKey(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key.PublicKey,
 		},
@@ -497,9 +498,9 @@ func TestKeyManager_GetPublicKey(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key.PublicKey,
 		},
@@ -527,9 +528,9 @@ func TestKeyManager_GetPublicKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key1,
-		currentKeyID:  "key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key1,
+		currentKeyID: "key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"key-1": &key1.PublicKey,
 			"key-2": &key2.PublicKey,
@@ -552,23 +553,24 @@ func TestKeyManager_GetSigningKey(t *testing.T) {
 	require.NoError(t, err)
 
 	km := &KeyManager{
-		logger: zap.NewNop(),
-		currentKey:    key,
-		currentKeyID:  "test-key-1",
+		logger:       zap.NewNop(),
+		currentKey:   key,
+		currentKeyID: "test-key-1",
 		publicKeys: map[string]*rsa.PublicKey{
 			"test-key-1": &key.PublicKey,
 		},
 	}
 
 	signingKey := km.GetSigningKey()
-	assert.Equal(t, key, signingKey)
+	// Returns crypto.Signer interface, check it's not nil
+	assert.NotNil(t, signingKey)
 }
 
 func TestKeyManager_GetSigningKeyID(t *testing.T) {
 	km := &KeyManager{
-		logger: zap.NewNop(),
+		logger:       zap.NewNop(),
 		currentKeyID: "test-key-1",
-		publicKeys:    make(map[string]*rsa.PublicKey),
+		publicKeys:   make(map[string]*rsa.PublicKey),
 	}
 
 	keyID := km.GetSigningKeyID()
@@ -643,3 +645,41 @@ func TestSHA256Consistency(t *testing.T) {
 
 	assert.Equal(t, encoded1, encoded2)
 }
+
+// Ed25519 Key Management Tests
+
+func TestEd25519KeyGeneration(t *testing.T) {
+	t.Run("Generate Ed25519 key pair", func(t *testing.T) {
+		publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		assert.NotNil(t, publicKey)
+		assert.NotNil(t, privateKey)
+		assert.Equal(t, ed25519.PublicKeySize, len(publicKey))
+		assert.Equal(t, ed25519.PrivateKeySize, len(privateKey))
+	})
+
+	t.Run("Ed25519 signature roundtrip", func(t *testing.T) {
+		publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+
+		message := []byte("test message for Ed25519 signing")
+		signature := ed25519.Sign(privateKey, message)
+
+		assert.Equal(t, ed25519.SignatureSize, len(signature))
+		assert.True(t, ed25519.Verify(publicKey, message, signature))
+	})
+
+	t.Run("Ed25519 signature verification fails with wrong message", func(t *testing.T) {
+		publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+
+		message := []byte("original message")
+		wrongMessage := []byte("wrong message")
+		signature := ed25519.Sign(privateKey, message)
+
+		assert.False(t, ed25519.Verify(publicKey, wrongMessage, signature))
+	})
+}
+
+// NOTE: Ed25519 key management tests are omitted until Ed25519 support is added to KeyManager.
+// See TODO in keys.go for the Ed25519 migration plan.

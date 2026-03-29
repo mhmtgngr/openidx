@@ -1,0 +1,142 @@
+# Apache APISIX API Gateway
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apisix
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: apisix
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9080
+      targetPort: 9080
+      name: http
+    - port: 9443
+      targetPort: 9443
+      name: https
+  selector:
+    app.kubernetes.io/name: apisix
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apisix-admin
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: apisix
+    app.kubernetes.io/component: admin
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9180
+      targetPort: 9180
+      name: admin
+  selector:
+    app.kubernetes.io/name: apisix
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apisix-config
+  namespace: openidx-dev
+data:
+  apisix.yaml: |
+    apisix:
+      node_listen: 9080
+      enable_ipv6: false
+      enable_admin: true
+      admin_key:
+        - name: admin
+          key: edd1c9f034335f136f87ad84b625c8f1
+          role: admin
+
+    deployment:
+      role: traditional
+      role_traditional:
+        config_provider: etcd
+      admin:
+        admin_key:
+          - name: admin
+            key: edd1c9f034335f136f87ad84b625c8f1
+            role: admin
+      etcd:
+        host:
+          - http://etcd:2379
+        prefix: /apisix
+
+    plugin_attr:
+      prometheus:
+        export_addr:
+          ip: 0.0.0.0
+          port: 9091
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apisix
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: apisix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: apisix
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: apisix
+    spec:
+      initContainers:
+        - name: wait-etcd
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z etcd 2379; do
+                echo "Waiting for etcd..."
+                sleep 2
+              done
+      containers:
+        - name: apisix
+          image: apache/apisix:3.8.0-debian
+          ports:
+            - containerPort: 9080
+              name: http
+            - containerPort: 9443
+              name: https
+            - containerPort: 9180
+              name: admin
+          volumeMounts:
+            - name: apisix-config
+              mountPath: /usr/local/apisix/conf/config.yaml
+              subPath: apisix.yaml
+          livenessProbe:
+            httpGet:
+              path: /apisix/admin/routes
+              port: 9180
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /apisix/admin/routes
+              port: 9180
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: apisix-config
+          configMap:
+            name: apisix-config

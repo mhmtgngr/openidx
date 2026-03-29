@@ -305,7 +305,9 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 	// Look up user info from the Ziti identity name (which is the OpenIDX user ID)
 	var email, name, roles string
 	if callerID != "" {
-		err := zm.db.Pool.QueryRow(context.Background(),
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := zm.db.Pool.QueryRow(ctx,
 			`SELECT COALESCE(u.email,''), COALESCE(u.first_name||' '||u.last_name,''), COALESCE(string_agg(r.name,','),'')
 			 FROM users u
 			 LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -1425,7 +1427,9 @@ func (zm *ZitiManager) EnsureServiceEdgeRouterPolicy(ctx context.Context, name s
 
 // GetServiceByName retrieves a Ziti service by its name
 func (zm *ZitiManager) GetServiceByName(serviceName string) (*ZitiServiceInfo, error) {
-	services, err := zm.ListServices(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	services, err := zm.ListServices(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1441,7 +1445,9 @@ func (zm *ZitiManager) GetServiceByName(serviceName string) (*ZitiServiceInfo, e
 
 // GetService retrieves a Ziti service by its ID
 func (zm *ZitiManager) GetService(zitiID string) (*ZitiServiceInfo, error) {
-	services, err := zm.ListServices(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	services, err := zm.ListServices(ctx)
 	if err != nil {
 		return nil, err
 	}

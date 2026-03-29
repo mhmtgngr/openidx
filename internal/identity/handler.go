@@ -34,6 +34,7 @@ func (r *CreateOrUpdateUserRequest) ToUser() *User {
 		user.DisplayName = r.DisplayName
 	}
 	if r.Enabled != nil {
+		// Sync both Enabled (OpenIDX) and Active (SCIM) fields to maintain consistency
 		user.Enabled = *r.Enabled
 		user.Active = *r.Enabled
 	}

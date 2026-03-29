@@ -1,0 +1,37 @@
+# ConfigMap for OpenIDX development environment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openidx-config
+  namespace: openidx-dev
+data:
+  # Application environment
+  APP_ENV: "development"
+  LOG_LEVEL: "debug"
+
+  # Service discovery
+  DATABASE_HOST: "postgres"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "openidx"
+  DATABASE_USER: "openidx"
+
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  # Elasticsearch
+  ELASTICSEARCH_URL: "http://elasticsearch:9200"
+
+  # OPA Policy Engine
+  OPA_URL: "http://opa:8281"
+
+  # OAuth/OIDC
+  OAUTH_ISSUER: "http://oauth-service:8006"
+  OAUTH_JWKS_URL: "http://oauth-service:8006/.well-known/jwks.json"
+
+  # Feature flags
+  OPENIDX_ENABLE_RATE_LIMIT: "false"
+  OPENIDX_ENABLE_METRICS: "true"
+  OPENIDX_ENABLE_TRACING: "false"
+
+  # Tracing (optional)
+  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"

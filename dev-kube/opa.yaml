@@ -1,0 +1,110 @@
+# Open Policy Agent (OPA) deployment
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/component: opa
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8281
+      targetPort: 8281
+      name: opa
+  selector:
+    app.kubernetes.io/component: opa
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/component: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: opa
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: opa
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:0.61.0
+          args:
+            - run
+            - --server
+            - --addr=0.0.0.0:8281
+            - --log-level=debug
+            - /policies
+          ports:
+            - containerPort: 8281
+              name: opa
+          volumeMounts:
+            - name: opa-policies
+              mountPath: /policies
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8281
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8281
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: opa-policies
+          configMap:
+            name: opa-policies
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+  namespace: openidx-dev
+data:
+  policies.rego: |
+    package openidx.authz
+
+    default allow = false
+
+    # Allow admin users full access
+    allow {
+      data.roles["admin"][input.user.role]
+    }
+
+    # Allow users to access their own resources
+    allow {
+      input.user.id == input.resource.owner
+    }
+
+    # Basic RBAC
+    allow {
+      action := input.action
+      allowed_actions[input.user.role][action]
+    }
+
+    allowed_actions = {
+      "admin": ["read", "write", "delete", "admin"],
+      "operator": ["read", "write"],
+      "auditor": ["read"],
+      "user": ["read"],
+    }

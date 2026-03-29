@@ -311,6 +311,11 @@ func GenerateAuthorizationCode() (string, error) {
 // ValidatePKCE validates the PKCE code_verifier against the stored code_challenge
 // Implements RFC 7636 validation
 func ValidatePKCE(codeVerifier, codeChallenge, codeChallengeMethod string) error {
+	// If no PKCE was used (no challenge stored), skip validation
+	if codeChallenge == "" && codeVerifier == "" && codeChallengeMethod == "" {
+		return nil
+	}
+
 	if codeVerifier == "" {
 		return fmt.Errorf("code_verifier is required")
 	}

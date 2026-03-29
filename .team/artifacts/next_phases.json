@@ -2,61 +2,140 @@
   "phases": [
     {
       "order": 1,
-      "name": "Fix SessionService.DeleteByUser Test",
+      "name": "WebSocket Origin Security",
       "priority": "critical",
-      "category": "test",
-      "description": "The TestSessionService_DeleteByUser test at internal/auth/session_test.go:374 is failing. The test expects an error containing 'session not found' when deleting sessions for a non-existent user, but the method returns nil instead. Review the DeleteByUser method implementation and ensure it properly handles the case where a user has no sessions or doesn't exist. The method should return a domain error rather than nil when no sessions are found for deletion.",
+      "category": "security",
+      "description": "Fix the security TODO at internal/audit/stream.go:80. The audit event WebSocket streamer currently returns true for all origin checks, allowing any origin to connect. Implement proper origin validation by parsing the Origin header from WebSocket handshake requests and validating against a configurable whitelist of allowed origins. Add configuration AUDIT_ALLOWED_ORIGINS to support comma-separated domain list. Default to localhost in development, require explicit configuration for production. This prevents cross-site WebSocket hijacking attacks.",
       "success_criteria": [
-        "TestSessionService_DeleteByUser passes",
-        "go test ./internal/auth/... passes all tests",
-        "DeleteByUser returns appropriate error for non-existent users"
+        "Origin validation function implemented",
+        "Configuration option AUDIT_ALLOWED_ORIGINS added",
+        "Unit tests cover valid/invalid/missing origin scenarios",
+        "TODO comment removed from stream.go:80"
       ],
-      "estimated_minutes": 45
+      "estimated_minutes": 60
     },
     {
       "order": 2,
-      "name": "Fix WebAuthN Middleware TODOs",
-      "priority": "high",
-      "category": "security",
-      "description": "Two critical security TODOs exist in internal/mfa/webauthn_handler.go at lines 515 and 525. Line 515 notes 'Implement proper authentication middleware' and line 525 notes 'Implement proper CSRF protection'. These are security-critical endpoints for WebAuthN credential management. Implement JWT-based authentication middleware using the existing internal/auth/middleware package and add CSRF token validation using double-submit cookie pattern or same-site cookies with strict flags.",
+      "name": "Ed25519 Key Support",
+      "priority": "medium",
+      "category": "feature",
+      "description": "Implement Ed25519 support in internal/oauth/keys.go:205 as a more modern alternative to RSA/ECDSA. Ed25519 offers faster signing, smaller signatures, and equivalent security at 128-bit level. Add Ed25519 as an option in the KeyType enum, implement GenerateEd25519KeyPair, SignEd25519, and VerifyEd25519 methods. Update the JWKS endpoint to expose Ed25519 public keys in correct format (crv: Ed25519). Add database migration to store Ed25519 key metadata. Include configuration option PREFERRED_KEY_TYPE to allow system-wide selection.",
       "success_criteria": [
-        "WebAuthN handlers use proper authentication middleware",
-        "CSRF protection implemented on state-changing endpoints",
-        "TODO comments removed from webauthn_handler.go lines 515 and 525"
+        "Ed25519 key generation implemented",
+        "JWT signing with Ed25519 works",
+        "JWKS endpoint serves Ed25519 keys correctly",
+        "Configuration option added",
+        "Tests cover Ed25519 key lifecycle"
       ],
-      "estimated_minutes": 90
+      "estimated_minutes": 120
     },
     {
       "order": 3,
-      "name": "Complete SMS Provider Test Coverage",
-      "priority": "medium",
+      "name": "Integration Test Coverage",
+      "priority": "high",
       "category": "test",
-      "description": "The TODO at internal/oauth/oidc_test.go:312 indicates need for mock Redis setup. The SMS provider code in internal/sms/providers_tr.go has Turkish phone number normalization logic that could benefit from tests. Set up a mock Redis using miniredis or testcontainers for the OIDC tests, and add comprehensive unit tests for the normalizePhoneTR function covering the three normalization paths: 90XXXXXXXXXX format preservation, 0XXXXXXXXXX to 90XXXXXXXXXX conversion, and 5XXXXXXXXX to 905XXXXXXXXX conversion.",
+      "description": "Expand integration test coverage beyond current 31 passing tests. The project has 349 Go files but only 100 test files indicating gaps. Add integration tests for critical cross-service flows: OAuth authorization code flow with PKCE, SCIM provisioning with webhook notifications, audit event streaming to WebSocket clients, policy evaluation via OPA integration, and multi-step governance review workflows. Use testcontainers for PostgreSQL, Redis, and Elasticsearch dependencies. Ensure tests can run in CI/CD pipeline.",
       "success_criteria": [
-        "OIDC tests have working mock Redis setup",
-        "TODO comment removed from oidc_test.go:312",
-        "Unit tests added for normalizePhoneTR covering all formats",
-        "go test ./internal/oauth/... and ./internal/sms/... pass"
+        "OAuth end-to-end flow test suite",
+        "SCIM provisioning integration tests",
+        "Audit WebSocket streaming tests",
+        "OPA policy evaluation tests",
+        "Minimum 60% code coverage target"
       ],
-      "estimated_minutes": 75
+      "estimated_minutes": 180
+    },
+    {
+      "order": 4,
+      "name": "Frontend TSX Migration",
+      "priority": "medium",
+      "category": "feature",
+      "description": "The diagnosis reports 0 TSX files despite having a React frontend. Investigate the frontend structure in web/admin-console and migrate JavaScript components to TypeScript. Add TypeScript strict mode configuration, create type definitions for API responses, and convert component files to .tsx. This will catch type errors at build time and improve developer experience. Radix UI components should be properly typed.",
+      "success_criteria": [
+        "Frontend builds with TypeScript strict mode",
+        "All components converted to .tsx",
+        "API types defined in shared types file",
+        "No any types used without justification"
+      ],
+      "estimated_minutes": 240
+    },
+    {
+      "order": 5,
+      "name": "Kubernetes Production Hardening",
+      "priority": "high",
+      "category": "devops",
+      "description": "Production-ready Kubernetes manifests in deployments/kubernetes/helm. Add pod security policies, network policies restricting inter-service communication, resource quotas and limits for all services, healthcheck and liveness probes, PodDisruptionBudgets for high availability, and secrets management via external secrets operator. Configure horizontal pod autoscaling based on CPU/memory metrics. Add monitoring with ServiceMonitor for Prometheus integration.",
+      "success_criteria": [
+        "Network policies for all microservices",
+        "HPA configured for stateless services",
+        "PDB for zero-downtime deployments",
+        "Resource limits on all pods",
+        "Monitoring dashboards available"
+      ],
+      "estimated_minutes": 150
+    },
+    {
+      "order": 6,
+      "name": "API Performance Optimization",
+      "priority": "medium",
+      "category": "performance",
+      "description": "Profile and optimize API response times. Add database connection pooling optimization, implement Redis query result caching with proper invalidation, add database indexes for common query patterns, and implement pagination for all list endpoints. Use pprof to identify CPU and memory hotspots. Add response compression middleware. Implement optimistic locking for update operations to prevent race conditions.",
+      "success_criteria": [
+        "pprof benchmarks before/after",
+        "All list endpoints support pagination",
+        "Cache hit rate >80% for hot paths",
+        "Database query plans show index usage",
+        "API p95 latency <200ms for common operations"
+      ],
+      "estimated_minutes": 180
+    },
+    {
+      "order": 7,
+      "name": "Compliance Report Generation",
+      "priority": "high",
+      "category": "feature",
+      "description": "Complete the audit service compliance reporting capabilities. Implement reports for SOC 2, ISO 27001, and GDPR compliance. Add templates for each compliance framework, data extraction queries from Elasticsearch audit logs, PDF generation with charts showing access patterns, and scheduling for automated report generation. Include configurable retention policies and report signing for integrity verification.",
+      "success_criteria": [
+        "SOC 2 report template functional",
+        "ISO 27001 report template functional",
+        "GDPR data access report available",
+        "Scheduled report generation works",
+        "Reports export to PDF with digital signature"
+      ],
+      "estimated_minutes": 200
+    },
+    {
+      "order": 8,
+      "name": "Observability and Alerting",
+      "priority": "medium",
+      "category": "devops",
+      "description": "Implement comprehensive observability stack. Add structured logging correlation IDs across all services for request tracing. Integrate OpenTelemetry for distributed tracing. Create Grafana dashboards for key metrics: request rates, error rates, latency percentiles, authentication success/failure, and resource utilization. Configure Prometheus alerting rules for critical conditions. Add dead letter queue processing for failed async operations.",
+      "success_criteria": [
+        "Distributed traces visible in Jaeger/Tempo",
+        "Grafana dashboards for all services",
+        "Alert rules configured and tested",
+        "Correlation IDs propagate through all services",
+        "Dead letter queue monitoring in place"
+      ],
+      "estimated_minutes": 160
     }
   ],
   "project_health": {
-    "score": 72,
+    "score": 78,
     "critical_issues": [
-      "Failing test in session service (TestSessionService_DeleteByUser)",
-      "Missing authentication middleware on WebAuthN endpoints",
-      "Missing CSRF protection on WebAuthN endpoints",
-      "Mock Redis not configured for OIDC tests"
+      "WebSocket origin validation bypass (security TODO)",
+      "Limited integration test coverage",
+      "Frontend lacks TypeScript migration"
     ],
     "strengths": [
-      "Build passes successfully",
-      "337 Go files with substantial codebase",
-      "97 test files indicating good test coverage intent",
-      "Docker support with 12 Dockerfiles",
-      "Frontend exists with React 18 + TypeScript",
-      "Recent team script improvements for reliability"
+      "All builds passing without errors",
+      "All tests passing (31/31)",
+      "No compilation or TypeScript errors",
+      "Comprehensive microservices architecture",
+      "Docker and Kubernetes deployment ready",
+      "OAuth/OIDC with PKCE implemented",
+      "SCIM 2.0 provisioning support",
+      "Policy engine with OPA integration"
     ]
   },
-  "rationale": "Phase 1 addresses the failing test as the highest priority - tests must pass before any feature work. Phase 2 tackles the security TODOs in WebAuthN handlers, as missing authentication and CSRF protection are security vulnerabilities that must be addressed before production use. Phase 3 completes the test infrastructure (mock Redis) and adds missing test coverage for SMS phone normalization, ensuring reliability of critical communication features. This ordering follows the rules: compilation is already passing, so fix tests first, then address security issues, then complete test infrastructure."
+  "rationale": "Project is in excellent health with passing builds and tests. The ordering prioritizes security first (WebSocket origin validation is a deployed vulnerability), then cryptographic enhancements (Ed25519), followed by test coverage expansion to ensure reliability. Frontend modernization comes next as the current 0 TSX count indicates a technical debt item. DevOps hardening follows to support production readiness. Performance optimization and additional features round out the roadmap once foundational stability is ensured."
 }

@@ -54,13 +54,26 @@ function generateCodeVerifier(): string {
 }
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(verifier)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
+  // Check if crypto.subtle is available (requires secure context: HTTPS or localhost)
+  if (!crypto.subtle) {
+    console.warn('[Auth] crypto.subtle not available - using plain code verifier (dev mode)')
+    // In development without secure context, use verifier as challenge (not secure but works for dev)
+    return verifier
+  }
+
+  try {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(verifier)
+    const digest = await crypto.subtle.digest('SHA-256', data)
+    return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+  } catch (error) {
+    console.error('[Auth] Failed to generate code challenge:', error)
+    // Fallback to plain verifier
+    return verifier
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

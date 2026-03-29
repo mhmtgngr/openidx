@@ -25,6 +25,8 @@ tags:
   - name: MFA - TOTP
   - name: MFA - WebAuthn
   - name: MFA - Push
+  - name: MFA - SMS
+  - name: MFA - Email
   - name: Public
 
 paths:
@@ -1010,6 +1012,729 @@ paths:
         '200':
           description: Challenge status
 
+  # --- Personal Access Tokens (User self-service) ---
+  /api/v1/identity/users/me/tokens:
+    get:
+      tags: [Self-Service]
+      summary: List personal access tokens
+      operationId: listUserPATs
+      responses:
+        '200':
+          description: List of PATs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonalAccessToken'
+    post:
+      tags: [Self-Service]
+      summary: Create personal access token
+      operationId: createUserPAT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, expires_in_days]
+              properties:
+                name:
+                  type: string
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+      responses:
+        '201':
+          description: Token created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalAccessToken'
+
+  /api/v1/identity/users/me/tokens/{id}:
+    delete:
+      tags: [Self-Service]
+      summary: Revoke personal access token
+      operationId: revokeUserPAT
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Token revoked
+
+  # --- Consent management (User self-service) ---
+  /api/v1/identity/users/me/consents:
+    get:
+      tags: [Self-Service]
+      summary: List user consents
+      operationId: listUserConsents
+      responses:
+        '200':
+          description: List of granted consents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserConsent'
+
+  /api/v1/identity/users/me/consents/{client_id}:
+    delete:
+      tags: [Self-Service]
+      summary: Revoke user consent
+      operationId: revokeUserConsent
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Consent revoked
+
+  # --- Privacy / GDPR self-service ---
+  /api/v1/identity/users/me/privacy/consents:
+    get:
+      tags: [Self-Service]
+      summary: Get privacy consents
+      operationId: getMyPrivacyConsents
+      responses:
+        '200':
+          description: Privacy consents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PrivacyConsent'
+    post:
+      tags: [Self-Service]
+      summary: Grant privacy consent
+      operationId: grantPrivacyConsent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consent_type, granted]
+              properties:
+                consent_type:
+                  type: string
+                  enum: [analytics, marketing, essential]
+                granted:
+                  type: boolean
+      responses:
+        '201':
+          description: Consent recorded
+
+  /api/v1/identity/users/me/privacy/consents/{consentType}:
+    delete:
+      tags: [Self-Service]
+      summary: Revoke privacy consent
+      operationId: revokePrivacyConsent
+      parameters:
+        - name: consentType
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Consent revoked
+
+  /api/v1/identity/users/me/privacy/dsar:
+    post:
+      tags: [Self-Service]
+      summary: Submit data subject access request
+      operationId: submitDSAR
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_type]
+              properties:
+                request_type:
+                  type: string
+                  enum: [export, delete, restrict]
+      responses:
+        '201':
+          description: Request submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DSARRequest'
+
+  /api/v1/identity/users/me/privacy/dsars:
+    get:
+      tags: [Self-Service]
+      summary: Get my DSARs
+      operationId: getMyDSARs
+      responses:
+        '200':
+          description: List of DSARs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DSARRequest'
+
+  # --- Identity links self-service ---
+  /api/v1/identity/users/me/identity-links:
+    get:
+      tags: [Self-Service]
+      summary: Get identity links
+      operationId: getMyIdentityLinks
+      responses:
+        '200':
+          description: List of linked identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityLink'
+
+  /api/v1/identity/users/me/identity-links/{linkId}:
+    delete:
+      tags: [Self-Service]
+      summary: Unlink identity
+      operationId: unlinkMyIdentity
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Identity unlinked
+
+  # --- User Role Assignments (with time bounds) ---
+  /api/v1/identity/users/{id}/role-assignments:
+    get:
+      tags: [Roles]
+      summary: Get user role assignments with time bounds
+      operationId: getUserRoleAssignments
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Role assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoleAssignment'
+
+  # --- Admin password reset ---
+  /api/v1/identity/users/{id}/reset-password:
+    post:
+      tags: [Users]
+      summary: Admin reset user password
+      operationId: adminResetPassword
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                new_password:
+                  type: string
+                  minLength: 12
+                send_notification:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: Password reset
+        '404':
+          description: User not found
+
+  # --- User offboarding ---
+  /api/v1/identity/users/{id}/offboard:
+    post:
+      tags: [Users]
+      summary: Offboard user
+      operationId: offboardUser
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retain_data:
+                  type: boolean
+                  default: false
+                forward_email:
+                  type: string
+                  format: email
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: User offboarded
+
+  # --- Public endpoints (no auth) ---
+  /api/v1/identity/verify-email:
+    post:
+      tags: [Public]
+      summary: Verify email address
+      operationId: verifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Email verified successfully
+        '400':
+          description: Invalid or expired token
+
+  /api/v1/identity/invitations/{token}/accept:
+    post:
+      tags: [Public]
+      summary: Accept invitation
+      operationId: acceptInvitation
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  minLength: 12
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+      responses:
+        '200':
+          description: Invitation accepted
+        '400':
+          description: Invalid request
+
+  /api/v1/identity/branding:
+    get:
+      tags: [Public]
+      summary: Get login branding
+      operationId: getLoginBranding
+      security: []
+      responses:
+        '200':
+          description: Branding configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginBranding'
+
+  /api/v1/identity/federation/discover:
+    post:
+      tags: [Public]
+      summary: Discover federation metadata
+      operationId: federationDiscover
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain:
+                  type: string
+                  format: hostname
+      responses:
+        '200':
+          description: Federation metadata discovered
+        '404':
+          description: No federation configuration found
+
+  # --- MFA SMS ---
+  /api/v1/identity/mfa/sms/enroll:
+    post:
+      tags: [MFA - SMS]
+      summary: Enroll in SMS MFA
+      operationId: enrollSMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone_number]
+              properties:
+                phone_number:
+                  type: string
+      responses:
+        '200':
+          description: SMS enrollment initiated
+        '400':
+          description: Invalid phone number
+
+  /api/v1/identity/mfa/sms/verify:
+    post:
+      tags: [MFA - SMS]
+      summary: Verify SMS enrollment
+      operationId: verifySMSEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: SMS verified
+        '400':
+          description: Invalid code
+
+  /api/v1/identity/mfa/sms/status:
+    get:
+      tags: [MFA - SMS]
+      summary: Get SMS MFA status
+      operationId: getSMSStatus
+      responses:
+        '200':
+          description: SMS MFA status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrolled:
+                    type: boolean
+                  phone_number:
+                    type: string
+
+  /api/v1/identity/mfa/sms:
+    delete:
+      tags: [MFA - SMS]
+      summary: Delete SMS MFA
+      operationId: deleteSMS
+      responses:
+        '200':
+          description: SMS MFA removed
+
+  /api/v1/identity/mfa/sms/challenge:
+    post:
+      tags: [MFA - SMS]
+      summary: Create SMS challenge
+      operationId: createSMSChallenge
+      responses:
+        '200':
+          description: SMS sent
+
+  # --- MFA Email OTP ---
+  /api/v1/identity/mfa/email/enroll:
+    post:
+      tags: [MFA - Email]
+      summary: Enroll in Email OTP MFA
+      operationId: enrollEmailOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Email OTP enrollment initiated
+
+  /api/v1/identity/mfa/email/status:
+    get:
+      tags: [MFA - Email]
+      summary: Get Email OTP status
+      operationId: getEmailOTPStatus
+      responses:
+        '200':
+          description: Email OTP status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrolled:
+                    type: boolean
+                  email:
+                    type: string
+
+  /api/v1/identity/mfa/email:
+    delete:
+      tags: [MFA - Email]
+      summary: Delete Email OTP MFA
+      operationId: deleteEmailOTP
+      responses:
+        '200':
+          description: Email OTP removed
+
+  /api/v1/identity/mfa/email/challenge:
+    post:
+      tags: [MFA - Email]
+      summary: Create Email OTP challenge
+      operationId: createEmailOTPChallenge
+      responses:
+        '200':
+          description: Email sent
+
+  # --- Common OTP verification ---
+  /api/v1/identity/mfa/otp/verify:
+    post:
+      tags: [MFA - SMS, MFA - Email]
+      summary: Verify OTP code (works for SMS or Email)
+      operationId: verifyOTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  minLength: 6
+                  maxLength: 8
+      responses:
+        '200':
+          description: OTP verified
+        '400':
+          description: Invalid OTP
+
+  /api/v1/identity/mfa/methods:
+    get:
+      tags: [MFA - TOTP, MFA - WebAuthn, MFA - Push]
+      summary: Get all enrolled MFA methods
+      operationId: getMFAMethods
+      responses:
+        '200':
+          description: List of enrolled MFA methods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    method:
+                      type: string
+                      enum: [totp, webauthn, push, sms, email, hardware_token]
+                    enabled:
+                      type: boolean
+                    primary:
+                      type: boolean
+
+  # --- Trusted browsers ---
+  /api/v1/identity/trusted-browsers:
+    post:
+      tags: [Self-Service]
+      summary: Trust current browser
+      operationId: trustBrowser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                duration_days:
+                  type: integer
+                  default: 30
+      responses:
+        '201':
+          description: Browser trusted
+    get:
+      tags: [Self-Service]
+      summary: Get trusted browsers
+      operationId: getTrustedBrowsers
+      responses:
+        '200':
+          description: List of trusted browsers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TrustedBrowser'
+
+  /api/v1/identity/trusted-browsers/{browser_id}:
+    delete:
+      tags: [Self-Service]
+      summary: Revoke trusted browser
+      operationId: revokeTrustedBrowser
+      parameters:
+        - name: browser_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Browser trust revoked
+
+  /api/v1/identity/trusted-browsers:
+    delete:
+      tags: [Self-Service]
+      summary: Revoke all trusted browsers
+      operationId: revokeAllTrustedBrowsers
+      requestBody: {}
+      responses:
+        '204':
+          description: All browser trusts revoked
+
+  /api/v1/identity/trusted-browsers/check:
+    get:
+      tags: [Self-Service]
+      summary: Check if current browser is trusted
+      operationId: checkTrustedBrowser
+      responses:
+        '200':
+          description: Browser trust status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trusted:
+                    type: boolean
+                  browser_id:
+                    type: string
+
+  # --- Risk assessment ---
+  /api/v1/identity/risk-assessment:
+    get:
+      tags: [Users]
+      summary: Get current user risk assessment
+      operationId: getRiskAssessment
+      responses:
+        '200':
+          description: Risk assessment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAssessment'
+
+  /api/v1/identity/resend-verification:
+    post:
+      tags: [Public]
+      summary: Resend email verification
+      operationId: resendVerification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Verification email sent
+
+  # --- Invitations ---
+  /api/v1/identity/invitations:
+    get:
+      tags: [Users]
+      summary: List invitations
+      operationId: listInvitations
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, accepted, expired, canceled]
+        - name: offset
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of invitations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Invitation'
+    post:
+      tags: [Users]
+      summary: Create invitation
+      operationId: createInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationCreate'
+      responses:
+        '201':
+          description: Invitation created
+
+  /api/v1/identity/invitations/{id}:
+    delete:
+      tags: [Users]
+      summary: Delete invitation
+      operationId: deleteInvitation
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Invitation deleted
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1178,6 +1903,249 @@ components:
         enabled:
           type: boolean
 
+    # --- Additional Schemas ---
+    PersonalAccessToken:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        token:
+          type: string
+          description: Full token (only returned on creation)
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    UserConsent:
+      type: object
+      properties:
+        client_id:
+          type: string
+        client_name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        granted_at:
+          type: string
+          format: date-time
+
+    PrivacyConsent:
+      type: object
+      properties:
+        consent_type:
+          type: string
+          enum: [analytics, marketing, essential]
+        granted:
+          type: boolean
+        granted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DSARRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        request_type:
+          type: string
+          enum: [export, delete, restrict]
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        download_url:
+          type: string
+          format: uri
+          nullable: true
+
+    IdentityLink:
+      type: object
+      properties:
+        link_id:
+          type: string
+        provider_id:
+          type: string
+        provider_name:
+          type: string
+        external_user_id:
+          type: string
+        linked_at:
+          type: string
+          format: date-time
+
+    RoleAssignment:
+      type: object
+      properties:
+        id:
+          type: string
+        role_id:
+          type: string
+        role_name:
+          type: string
+        user_id:
+          type: string
+        assigned_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        assigned_by:
+          type: string
+        timebound:
+          type: boolean
+        reason:
+          type: string
+
+    LoginBranding:
+      type: object
+      properties:
+        logo_url:
+          type: string
+          format: uri
+        company_name:
+          type: string
+        primary_color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+        background_color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+        custom_css:
+          type: string
+
+    RiskAssessment:
+      type: object
+      properties:
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+        level:
+          type: string
+          enum: [low, medium, high, critical]
+        factors:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              impact:
+                type: string
+                enum: [positive, neutral, negative]
+        recommended_action:
+          type: string
+          enum: [allow, challenge, block]
+        assessed_at:
+          type: string
+          format: date-time
+
+    TrustedBrowser:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        fingerprint:
+          type: string
+        user_agent:
+          type: string
+        ip_address:
+          type: string
+        trusted_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+
+    Invitation:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [pending, accepted, expired, canceled]
+        token:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    InvitationCreate:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        redirect_uri:
+          type: string
+          format: uri
+        expires_in_hours:
+          type: integer
+          default: 168
+        custom_message:
+          type: string
+
+
     IdentityProviderCreate:
       type: object
       required: [name, provider_type, client_id]
@@ -1199,3 +2167,246 @@ components:
             type: string
         enabled:
           type: boolean
+
+    # --- Additional Schemas ---
+    PersonalAccessToken:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        token:
+          type: string
+          description: Full token (only returned on creation)
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    UserConsent:
+      type: object
+      properties:
+        client_id:
+          type: string
+        client_name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        granted_at:
+          type: string
+          format: date-time
+
+    PrivacyConsent:
+      type: object
+      properties:
+        consent_type:
+          type: string
+          enum: [analytics, marketing, essential]
+        granted:
+          type: boolean
+        granted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DSARRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        request_type:
+          type: string
+          enum: [export, delete, restrict]
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        download_url:
+          type: string
+          format: uri
+          nullable: true
+
+    IdentityLink:
+      type: object
+      properties:
+        link_id:
+          type: string
+        provider_id:
+          type: string
+        provider_name:
+          type: string
+        external_user_id:
+          type: string
+        linked_at:
+          type: string
+          format: date-time
+
+    RoleAssignment:
+      type: object
+      properties:
+        id:
+          type: string
+        role_id:
+          type: string
+        role_name:
+          type: string
+        user_id:
+          type: string
+        assigned_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        assigned_by:
+          type: string
+        timebound:
+          type: boolean
+        reason:
+          type: string
+
+    LoginBranding:
+      type: object
+      properties:
+        logo_url:
+          type: string
+          format: uri
+        company_name:
+          type: string
+        primary_color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+        background_color:
+          type: string
+          pattern: ^#[0-9A-Fa-f]{6}$
+        custom_css:
+          type: string
+
+    RiskAssessment:
+      type: object
+      properties:
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+        level:
+          type: string
+          enum: [low, medium, high, critical]
+        factors:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              impact:
+                type: string
+                enum: [positive, neutral, negative]
+        recommended_action:
+          type: string
+          enum: [allow, challenge, block]
+        assessed_at:
+          type: string
+          format: date-time
+
+    TrustedBrowser:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        fingerprint:
+          type: string
+        user_agent:
+          type: string
+        ip_address:
+          type: string
+        trusted_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+
+    Invitation:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [pending, accepted, expired, canceled]
+        token:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    InvitationCreate:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+        groups:
+          type: array
+          items:
+            type: string
+        redirect_uri:
+          type: string
+          format: uri
+        expires_in_hours:
+          type: integer
+          default: 168
+        custom_message:
+          type: string
+

@@ -27,7 +27,10 @@ HELM := helm
 NAMESPACE ?= openidx
 
 # Services
-SERVICES := identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service
+SERVICES := identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service access-service
+
+# Tools
+TOOLS := profiler migrate openidx
 
 #---------------------------------------------------------------------------
 # Default target
@@ -56,13 +59,22 @@ deps-tools:
 # Build
 #---------------------------------------------------------------------------
 
-build: build-services build-web
+build: build-services build-tools build-web build-cli
 
 build-services:
 	@echo "🔨 Building services..."
 	@for service in $(SERVICES); do \
 		echo "  Building $$service..."; \
 		$(GOBUILD) -o bin/$$service ./cmd/$$service; \
+	done
+
+build-tools:
+	@echo "🔧 Building tools..."
+	@for tool in $(TOOLS); do \
+		if [ -d "./cmd/$$tool" ]; then \
+			echo "  Building $$tool..."; \
+			$(GOBUILD) -o bin/$$tool ./cmd/$$tool; \
+		fi \
 	done
 
 build-web:
@@ -73,6 +85,11 @@ build-linux:
 	@echo "🐧 Building for Linux..."
 	@for service in $(SERVICES); do \
 		GOOS=linux GOARCH=amd64 $(GOBUILD) -o bin/linux/$$service ./cmd/$$service; \
+	done
+	@for tool in $(TOOLS); do \
+		if [ -d "./cmd/$$tool" ]; then \
+			GOOS=linux GOARCH=amd64 $(GOBUILD) -o bin/linux/$$tool ./cmd/$$tool; \
+		fi \
 	done
 
 #---------------------------------------------------------------------------
@@ -95,7 +112,7 @@ test-integration:
 
 test-e2e:
 	@echo "🎭 Running end-to-end tests..."
-	cd test/e2e && npm test
+	cd web/admin-console && npx playwright test
 
 #---------------------------------------------------------------------------
 # Linting
@@ -142,6 +159,73 @@ dev-logs:
 dev-clean:
 	@echo "🧹 Cleaning development environment..."
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml down -v --remove-orphans
+
+#---------------------------------------------------------------------------
+# Profiling
+#---------------------------------------------------------------------------
+
+build-profiler:
+	@echo "🔬 Building profiler..."
+	$(GOBUILD) -o bin/profiler ./cmd/profiler
+
+profiler-cpu:
+	@echo "Capturing CPU profile..."
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "Error: SERVICE variable required. Usage: make profiler-cpu SERVICE=identity-service DURATION=30s"; \
+		exit 1; \
+	fi
+	./bin/profiler cpu $(SERVICE) $(DURATION)
+
+profiler-mem:
+	@echo "Capturing memory profile..."
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "Error: SERVICE variable required. Usage: make profiler-mem SERVICE=identity-service"; \
+		exit 1; \
+	fi
+	./bin/profiler mem $(SERVICE)
+
+profiler-trace:
+	@echo "Capturing execution trace..."
+	@if [ -z "$(SERVICE)" ]; then \
+		echo "Error: SERVICE variable required. Usage: make profiler-trace SERVICE=identity-service DURATION=5s"; \
+		exit 1; \
+	fi
+	./bin/profiler trace $(SERVICE) $(DURATION)
+
+profiler-flame:
+	@echo "Generating flame graph..."
+	@if [ -z "$(PROFILE)" ]; then \
+		echo "Error: PROFILE variable required. Usage: make profiler-flame PROFILE=cpu.prof"; \
+		exit 1; \
+	fi
+	@if ! command -v flamegraph.pl >/dev/null 2>&1; then \
+		echo "Error: flamegraph.pl not found. Install from: https://github.com/brendangregg/FlameGraph"; \
+		exit 1; \
+	fi
+	flamegraph.pl --title "$(SERVICE) CPU Flame Graph" $(PROFILE) > $(SERVICE)-flamegraph.svg
+	@echo "Flame graph generated: $(SERVICE)-flamegraph.svg"
+
+#---------------------------------------------------------------------------
+# CLI Tool
+#---------------------------------------------------------------------------
+
+build-cli:
+	@echo "🛠️  Building OpenIDX CLI..."
+	@$(GOBUILD) -o bin/openidx ./cmd/openidx
+	@echo "✅ CLI built: bin/openidx"
+
+install-cli: build-cli
+	@echo "📦 Installing OpenIDX CLI..."
+	@cp bin/openidx $(GOPATH)/bin/openidx || sudo cp bin/openidx /usr/local/bin/openidx
+	@echo "✅ CLI installed"
+
+cli-install-completion:
+	@echo "🔧 Installing shell completion..."
+	@bin/openidx install-completion
+
+profiler-http:
+	@echo "Starting pprof HTTP server..."
+	./bin/profiler http $(PORT)
 
 #---------------------------------------------------------------------------
 # Docker
@@ -268,10 +352,101 @@ clean-docker:
 	$(DOCKER) system prune -f
 
 #---------------------------------------------------------------------------
+# Security Scanning
+#---------------------------------------------------------------------------
+
+SCAN_SERVICES := identity-service governance-service provisioning-service audit-service admin-api oauth-service
+
+.PHONY: scan-all scan-trivy scan-sbom scan-secrets scan-deps scan-fs scan-license scan-sast scan-config
+
+scan-all: scan-trivy scan-sbom scan-secrets scan-deps scan-fs scan-sast
+	@echo "✅ All security scans complete!"
+
+scan-trivy:
+	@echo "🔍 Running Trivy vulnerability scans..."
+	@which trivy > /dev/null || (echo "Installing Trivy..." && go install github.com/aquasecurity/trivy/cmd/trivy@latest)
+	@for service in $(SCAN_SERVICES); do \
+		echo "  Scanning $$service..."; \
+		trivy image --severity HIGH,CRITICAL --exit-code 0 \
+			--format table --vuln-type os,library \
+			$(DOCKER_REGISTRY)/$$service:$(VERSION) 2>&1 || echo "    Image not found or scan failed"; \
+	done
+	@echo "  Scanning admin-console..."
+	trivy image --severity HIGH,CRITICAL --exit-code 0 \
+		--format table --vuln-type os,library \
+		$(DOCKER_REGISTRY)/admin-console:$(VERSION) 2>&1 || echo "    Image not found or scan failed"
+
+scan-sbom:
+	@echo "📋 Generating SBOMs..."
+	@which syft > /dev/null || (echo "Installing Syft..." && go install github.com/anchore/syft/cmd/syft@latest)
+	@mkdir -p sboms
+	@for service in $(SCAN_SERVICES); do \
+		echo "  Generating SBOM for $$service..."; \
+		syft $(DOCKER_REGISTRY)/$$service:$(VERSION) \
+			-o spdx-json > sboms/$$service-$(VERSION).spdx.json 2>/dev/null || echo "    Warning: Could not generate SBOM for $$service"; \
+	done
+	@echo "  Generating SBOM for admin-console..."
+	syft $(DOCKER_REGISTRY)/admin-console:$(VERSION) \
+		-o spdx-json > sboms/admin-console-$(VERSION).spdx.json 2>/dev/null || echo "    Warning: Could not generate SBOM for admin-console"
+	@echo "  SBOMs saved to sboms/"
+
+scan-secrets:
+	@echo "🔐 Scanning for secrets..."
+	@which gitleaks > /dev/null || (echo "Installing Gitleaks..." && go install github.com/gitleaks/gitleaks/v4/cmd/gitleaks@latest)
+	gitleaks detect --source . --verbose --report-format json --report-name gitleaks-report.json || true
+
+scan-deps:
+	@echo "📦 Scanning dependencies..."
+	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
+	@echo "  Scanning Go dependencies..."
+	govulncheck ./... || echo "    Warning: Vulnerabilities found in Go dependencies"
+	@echo "  Scanning NPM dependencies..."
+	cd web/admin-console && npm audit --audit-level=high || echo "    Warning: Vulnerabilities found in NPM dependencies"
+
+scan-fs:
+	@echo "🔍 Running Trivy filesystem scan..."
+	@which trivy > /dev/null || (echo "Installing Trivy..." && go install github.com/aquasecurity/trivy/cmd/trivy@latest)
+	trivy fs --severity HIGH,CRITICAL --format table --vuln-type library .
+
+scan-license:
+	@echo "📜 Checking license compliance..."
+	@which go-licenses > /dev/null || (echo "Installing go-licenses..." && go install github.com/google/go-licenses@latest)
+	@echo "  Checking Go licenses..."
+	go-licenses check ./... --disallowed_types=forbidden,restricted || echo "    Warning: License issues found"
+
+scan-sast:
+	@echo "🔬 Running SAST scan with semgrep..."
+	@which semgrep > /dev/null || (echo "Installing semgrep..." && python3 -m pip install semgrep || echo "    Warning: Could not install semgrep")
+	@which semgrep > /dev/null && semgrep --config auto --json --output semgrep-report.json . || echo "    Warning: SAST scan failed"
+
+scan-config:
+	@echo "⚙️  Scanning configuration files..."
+	@which trivy > /dev/null || (echo "Installing Trivy..." && go install github.com/aquasecurity/trivy/cmd/trivy@latest)
+	trivy config --severity HIGH,CRITICAL --format table .
+
+scan-report:
+	@echo "📊 Generating security scan report..."
+	@echo "OpenIDX Security Scan Report" > security-scan-report.txt
+	@echo "Generated: $$(date)" >> security-scan-report.txt
+	@echo "" >> security-scan-report.txt
+	@echo "=== Trivy Image Scan ===" >> security-scan-report.txt
+	@make scan-trivy >> security-scan-report.txt 2>&1 || true
+	@echo "" >> security-scan-report.txt
+	@echo "=== Dependency Scan ===" >> security-scan-report.txt
+	@make scan-deps >> security-scan-report.txt 2>&1 || true
+	@echo "" >> security-scan-report.txt
+	@echo "=== Secret Scan ===" >> security-scan-report.txt
+	@make scan-secrets >> security-scan-report.txt 2>&1 || true
+	@echo "" >> security-scan-report.txt
+	@echo "=== Filesystem Scan ===" >> security-scan-report.txt
+	@make scan-fs >> security-scan-report.txt 2>&1 || true
+	@echo "Report saved to security-scan-report.txt"
+
+#---------------------------------------------------------------------------
 # Release
 #---------------------------------------------------------------------------
 
-release: lint test build docker-build docker-push
+release: lint test build docker-build scan-trivy docker-push
 	@echo "🎉 Release $(VERSION) complete!"
 
 #---------------------------------------------------------------------------
@@ -283,9 +458,34 @@ help:
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
+	@echo "Development:"
+	@echo "  deps           Install dependencies"
+	@echo "  build          Build all services and web apps"
+	@echo "  build-cli      Build the openidx CLI tool"
+	@echo "  install-cli    Build and install CLI to \$GOPATH/bin or /usr/local/bin"
+	@echo "  test           Run unit tests"
+	@echo "  lint           Run linters"
+	@echo "  dev            Start development environment"
+	@echo "  dev-stop       Stop development environment"
+	@echo ""
+	@echo "CLI Usage (alternative to make):"
+	@echo "  openidx dev              Start development environment"
+	@echo "  openidx build            Build all services"
+	@echo "  openidx test             Run tests"
+	@echo "  openidx migrate up       Run migrations"
+	@echo "  openidx seed             Seed test data"
+	@echo "  openidx status           Show service status"
+	@echo "  openidx logs [service]   View logs"
+	@echo "  openidx cleanup          Stop and clean up"
+	@echo "  openidx doctor           Check environment"
+	@echo "  openidx --help           Show all commands"
+	@echo ""
+	@echo "Usage: make [target]"
+	@echo ""
 	@echo "Targets:"
 	@echo "  deps           Install dependencies"
 	@echo "  build          Build all services and web apps"
+	@echo "  build-profiler Build profiler CLI tool"
 	@echo "  test           Run unit tests"
 	@echo "  lint           Run linters"
 	@echo "  dev            Start development environment"
@@ -294,4 +494,25 @@ help:
 	@echo "  docker-push    Push Docker images"
 	@echo "  helm-install   Install via Helm"
 	@echo "  clean          Clean build artifacts"
+	@echo ""
+	@echo "Profiling:"
+	@echo "  build-profiler Build the profiler CLI tool"
+	@echo "  profiler-cpu   Capture CPU profile (SERVICE=name DURATION=30s)"
+	@echo "  profiler-mem   Capture memory profile (SERVICE=name)"
+	@echo "  profiler-trace Capture execution trace (SERVICE=name DURATION=5s)"
+	@echo "  profiler-flame Generate flame graph (PROFILE=cpu.prof)"
+	@echo "  profiler-http  Start pprof HTTP server (PORT=6060)"
+	@echo ""
+	@echo "Security Scanning:"
+	@echo "  scan-all       Run all security scans"
+	@echo "  scan-trivy     Run Trivy vulnerability scanner on images"
+	@echo "  scan-sbom      Generate SBOMs for all images"
+	@echo "  scan-secrets   Scan for secrets with gitleaks"
+	@echo "  scan-deps      Scan dependencies for vulnerabilities"
+	@echo "  scan-fs        Run filesystem vulnerability scan"
+	@echo "  scan-license   Check license compliance"
+	@echo "  scan-sast      Run SAST scan with semgrep"
+	@echo "  scan-config    Scan configuration files"
+	@echo "  scan-report    Generate combined security report"
+	@echo ""
 	@echo "  help           Show this help"

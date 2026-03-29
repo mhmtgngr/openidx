@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -327,6 +329,12 @@ func (pe *PolicyEvaluator) EvaluatePolicyDefault(ctx context.Context, input Poli
 
 // LoadPolicyFromBytes loads a policy from raw Rego content
 func (pe *PolicyEvaluator) LoadPolicyFromBytes(policyName string, regoContent []byte) error {
+	// SECURITY: Validate policy name to prevent injection attacks
+	if err := validatePolicyName(policyName); err != nil {
+		pe.policyErrorCounter.Inc(policyName, "invalid_name")
+		return fmt.Errorf("invalid policy name: %w", err)
+	}
+
 	pe.logger.Info("Loading policy from bytes",
 		zap.String("policy", policyName),
 		zap.Int("size", len(regoContent)),
@@ -377,6 +385,51 @@ func (pe *PolicyEvaluator) LoadPolicyFromBytes(policyName string, regoContent []
 func (pe *PolicyEvaluator) LoadPolicyFromFile(policyPath string) error {
 	pe.logger.Info("Loading policy from file", zap.String("path", policyPath))
 
+	// SECURITY: Validate the path is within the policy directory to prevent path traversal
+	if pe.policyDir != "" {
+		// Resolve absolute paths first
+		absPolicyDir, err := filepath.Abs(pe.policyDir)
+		if err != nil {
+			return fmt.Errorf("resolve policy dir: %w", err)
+		}
+		absPolicyPath, err := filepath.Abs(policyPath)
+		if err != nil {
+			return fmt.Errorf("resolve policy path: %w", err)
+		}
+
+		// SECURITY: Evaluate symlinks to prevent symlink-based path traversal
+		// This ensures attackers can't use symlinks to escape the policy directory
+		evalPolicyDir, err := filepath.EvalSymlinks(absPolicyDir)
+		if err != nil {
+			return fmt.Errorf("evaluate policy dir symlinks: %w", err)
+		}
+		evalPolicyPath, err := filepath.EvalSymlinks(absPolicyPath)
+		if err != nil {
+			return fmt.Errorf("evaluate policy path symlinks: %w", err)
+		}
+
+		// SECURITY: Check for path traversal components in the original input
+		// This provides defense-in-depth even after path resolution
+		if strings.Contains(policyPath, "..") || strings.Contains(policyPath, "\\") {
+			pe.policyErrorCounter.Inc(policyPath, "path_traversal_attempt")
+			return fmt.Errorf("policy path contains invalid path traversal components")
+		}
+
+		// SECURITY: Check that the resolved policy path is within the resolved policy directory
+		// We use both the eval'd paths and the original abs paths for comprehensive checking
+		if !strings.HasPrefix(evalPolicyPath, evalPolicyDir+string(filepath.Separator)) &&
+			evalPolicyPath != evalPolicyDir {
+			pe.policyErrorCounter.Inc(policyPath, "path_traversal_attempt")
+			return fmt.Errorf("policy path outside policy directory")
+		}
+
+		// Additional safety check: ensure no relative path components exist
+		if strings.Contains(filepath.Clean(evalPolicyPath), "..") {
+			pe.policyErrorCounter.Inc(policyPath, "path_traversal_attempt")
+			return fmt.Errorf("resolved policy path contains relative components")
+		}
+	}
+
 	content, err := os.ReadFile(policyPath)
 	if err != nil {
 		if pe.policyErrorCounter != nil {
@@ -385,7 +438,7 @@ func (pe *PolicyEvaluator) LoadPolicyFromFile(policyPath string) error {
 		return fmt.Errorf("read policy file: %w", err)
 	}
 
-	// Extract policy name from filename
+	// Extract policy name from filename and validate
 	policyName := filepath.Base(policyPath)
 	policyName = policyName[:len(policyName)-len(filepath.Ext(policyName))]
 
@@ -570,4 +623,31 @@ func (pe *PolicyEvaluator) Disable() {
 // IsEnabled returns whether the policy evaluator is enabled
 func (pe *PolicyEvaluator) IsEnabled() bool {
 	return pe.enabled
+}
+
+// validatePolicyName validates that a policy name is safe and doesn't contain
+// path traversal sequences or other dangerous patterns
+func validatePolicyName(name string) error {
+	if name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
+
+	// Check for path traversal sequences
+	if strings.Contains(name, "..") || strings.Contains(name, "\\") || strings.Contains(name, "/") {
+		return fmt.Errorf("policy name contains invalid path characters")
+	}
+
+	// Policy names should only contain alphanumeric, underscore, hyphen, and dot
+	// This matches valid Go identifiers and common naming patterns
+	validPattern := regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_\.-]*$`)
+	if !validPattern.MatchString(name) {
+		return fmt.Errorf("policy name must start with letter or underscore and contain only alphanumeric, underscore, hyphen, or dot characters")
+	}
+
+	// Length check to prevent potential issues
+	if len(name) > 255 {
+		return fmt.Errorf("policy name too long (max 255 characters)")
+	}
+
+	return nil
 }

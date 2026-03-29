@@ -102,9 +102,14 @@ func (s *Service) handleMFASendOTP(c *gin.Context) {
 		return
 	}
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_otp_sent", "success",
-		userID, clientIP, userID, "user",
-		map[string]interface{}{"method": req.Method})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "mfa_otp_sent", "success",
+			userID, clientIP, userID, "user",
+			map[string]interface{}{"method": req.Method})
+	}()
 
 	c.JSON(200, gin.H{"message": fmt.Sprintf("Verification code sent via %s", req.Method)})
 }
@@ -246,9 +251,14 @@ func (s *Service) handlePasskeyFinish(c *gin.Context) {
 	s.redis.Client.Del(ctx, "login_session:"+req.LoginSession)
 	s.redis.Client.Del(ctx, "passkey_session:"+req.LoginSession)
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "passkey_login", "success",
-		userID, clientIP, userID, "user",
-		map[string]interface{}{"method": "passkey"})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "passkey_login", "success",
+			userID, clientIP, userID, "user",
+			map[string]interface{}{"method": "passkey"})
+	}()
 
 	s.issueAuthorizationCode(c, oauthParams, userID)
 }
@@ -314,9 +324,14 @@ func (s *Service) handleOAuthMagicLink(c *gin.Context) {
 		s.logger.Info("DEBUG: Magic link verify URL", zap.String("url", verifyURL))
 	}
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "magic_link_sent", "success",
-		"", clientIP, req.Email, "email",
-		map[string]interface{}{"purpose": "login"})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "magic_link_sent", "success",
+			"", clientIP, req.Email, "email",
+			map[string]interface{}{"purpose": "login"})
+	}()
 
 	// Always return the same response regardless of whether the email was found
 	c.JSON(200, gin.H{"message": "If an account exists with that email, a magic link has been sent."})
@@ -416,9 +431,14 @@ func (s *Service) handleMagicLinkVerify(c *gin.Context) {
 	}
 	redirectURL.RawQuery = query.Encode()
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "magic_link_login", "success",
-		userID, clientIP, userID, "user",
-		map[string]interface{}{"method": "magic_link"})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "magic_link_login", "success",
+			userID, clientIP, userID, "user",
+			map[string]interface{}{"method": "magic_link"})
+	}()
 
 	c.Redirect(302, redirectURL.String())
 }
@@ -551,19 +571,32 @@ func (s *Service) handleQRLoginPoll(c *gin.Context) {
 	s.redis.Client.Del(ctx, "login_session:"+loginSession)
 	s.redis.Client.Del(ctx, "qr_oauth:"+sessionToken)
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "qr_login", "success",
-		userID, clientIP, userID, "user",
-		map[string]interface{}{"method": "qr_code"})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "qr_login", "success",
+			userID, clientIP, userID, "user",
+			map[string]interface{}{"method": "qr_code"})
+	}()
 
 	s.issueAuthorizationCode(c, oauthParams, userID)
 }
 
 // generateSecureHex generates a cryptographically secure random hex string.
 // This is used internally for authorization codes in redirect-based flows.
+// Minimum 16 bytes (128 bits) of entropy required.
 func generateSecureHex(nBytes int) (string, error) {
+	if nBytes < 16 {
+		return "", fmt.Errorf("insufficient entropy: minimum 16 bytes required, got %d", nBytes)
+	}
 	b := make([]byte, nBytes)
-	if _, err := rand.Read(b); err != nil {
+	n, err := rand.Read(b)
+	if err != nil {
 		return "", err
+	}
+	if n != nBytes {
+		return "", fmt.Errorf("insufficient random bytes: expected %d, got %d", nBytes, n)
 	}
 	return hex.EncodeToString(b), nil
 }

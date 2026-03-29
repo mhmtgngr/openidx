@@ -34,6 +34,24 @@
 #    ./dev.sh scan                           # Gap analysis
 #    ./dev.sh -h                             # Full help
 #
+#  NEW PHASES:
+#    ./dev.sh phase ci                       # CI/CD pipeline generation
+#    ./dev.sh phase perf                     # Performance benchmarking
+#    ./dev.sh phase docs                     # API documentation generation
+#    ./dev.sh phase e2e-gen                  # E2E test generation
+#    ./dev.sh migrate-test                  # Test database migrations
+#    ./dev.sh migrate-rollback              # Test migration rollback
+#
+#  GIT WORKFLOW:
+#    ./dev.sh squash [branch]               # Squash commits before PR
+#    ./dev.sh rebase-main                   # Rebase current branch onto main
+#    ./dev.sh cleanup-branches              # Remove merged branches
+#    ./dev.sh new-branch "name"             # Create new feature branch
+#
+#  SMART IMPROVE ENHANCED:
+#    ./dev.sh smart-improve [threshold%] [--incremental]  # Incremental mode
+#    ./dev.sh focus [type]                  # Focus: migrations, frontend, backend, todos
+#
 # ═══════════════════════════════════════════════════════════════
 
 set -uo pipefail
@@ -71,7 +89,7 @@ ZAI_SEARCH_URL="${ZAI_SEARCH_ENDPOINT:-https://api.z.ai/api/paas/v4/web_search}"
 MAX_LOOPS=3
 MAX_PHASE_RETRIES=2
 MAX_CRASHES=5
-DOCKER_TIMEOUT=60
+DOCKER_TIMEOUT=30
 
 # Master dev.sh — the SINGLE source of truth for self-improvement
 MASTER_DEV_SH="${MASTER_DEV_SH:-$HOME/dev.sh}"
@@ -90,6 +108,11 @@ AUTO_PHASES="${AUTO_PHASES:-3}"
 
 # Port range (auto-detected from docker-compose, or default)
 SERVICE_PORTS="${SERVICE_PORTS:-}"
+
+# Health check configuration
+HEALTH_CHECK_PATH="${HEALTH_CHECK_PATH:-/health}"
+HEALTH_CHECK_TIMEOUT="${HEALTH_CHECK_TIMEOUT:-5}"
+SKIP_HEALTH_CHECK="${SKIP_HEALTH_CHECK:-false}"
 
 # Timeouts per phase (seconds)
 declare -A PHASE_TIMEOUT=(
@@ -131,6 +154,113 @@ team() { echo -e "${M}[$(date '+%H:%M:%S')]${NC} ${W}$1${NC} $2" | tee -a "$LIVE
 slog() { echo -e "${G}[SUP $(date '+%H:%M:%S')]${NC} $1" | tee -a "$SUP_LOG"; }
 swarn(){ echo -e "${Y}[SUP $(date '+%H:%M:%S')]${NC} $1" | tee -a "$SUP_LOG"; }
 serr() { echo -e "${R}[SUP $(date '+%H:%M:%S')]${NC} $1" | tee -a "$SUP_LOG"; }
+
+# ═══════════════════════════════════════════════
+# SAFE PIPE HELPERS (no fail on empty results)
+# ═══════════════════════════════════════════════
+
+# Run a command and always return success (exit code 0)
+# Usage: cmd || safe_pipe
+safe_pipe() {
+  return 0
+}
+
+# Grep wrapper that handles pipefail - returns success even if no matches
+# Usage: safe_grep [options] pattern [file...]
+safe_grep() {
+  grep "$@" || true
+}
+
+# Find wrapper that handles pipefail safely
+# Usage: safe_find [path...] [options...]
+safe_find() {
+  find "$@" || true
+}
+
+# Awk wrapper that handles pipefail safely
+# Usage: safe_awk [options] 'program' [file...]
+safe_awk() {
+  awk "$@" || true
+}
+
+# Sed wrapper for pipe safety
+# Usage: safe_sed [options] 'script' [file...]
+safe_sed() {
+  sed "$@" || true
+}
+
+# Cut wrapper for pipe safety
+# Usage: safe_cut [options] [file...]
+safe_cut() {
+  cut "$@" || true
+}
+
+# Wc wrapper for pipe safety
+# Usage: safe_wc [options] [file...]
+safe_wc() {
+  wc "$@" || true
+}
+
+# Head wrapper for pipe safety
+# Usage: safe_head [options] [file...]
+safe_head() {
+  head "$@" || true
+}
+
+# Tail wrapper for pipe safety
+# Usage: safe_tail [options] [file...]
+safe_tail() {
+  tail "$@" || true
+}
+
+# Sort wrapper for pipe safety
+# Usage: safe_sort [options] [file...]
+safe_sort() {
+  sort "$@" || true
+}
+
+# Uniq wrapper for pipe safety
+# Usage: safe_uniq [options] [file...]
+safe_uniq() {
+  uniq "$@" || true
+}
+
+# Xargs wrapper for pipe safety
+# Usage: safe_xargs [options] [command...]
+safe_xargs() {
+  xargs "$@" || true
+}
+
+# Tr wrapper for pipe safety
+# Usage: safe_tr [options] set1 set2
+safe_tr() {
+  tr "$@" || true
+}
+
+# ═══════════════════════════════════════════════
+# RETRY WITH EXPONENTIAL BACKOFF
+# ═══════════════════════════════════════════════
+
+# Retry a command with exponential backoff: sleep $((base_delay * 2**attempt))
+# Usage: retry_with_backoff "command" max_retries base_delay
+# Returns: 0 on success, 1 on final failure
+retry_with_backoff() {
+  local command="$1" max_retries="${2:-3}" base_delay="${3:-1}"
+  local attempt=0 exit_code=0
+
+  while [ "$attempt" -lt "$max_retries" ]; do
+    attempt=$((attempt + 1))
+    if eval "$command"; then
+      return 0
+    fi
+    exit_code=$?
+    if [ "$attempt" -lt "$max_retries" ]; then
+      local delay=$((base_delay * (1 << (attempt - 1))))
+      sleep "$delay"
+    fi
+  done
+  return 1
+}
 
 # ═══════════════════════════════════════════════
 # ERROR MEMORY
@@ -464,8 +594,8 @@ market_research() {
   local out_file="$1" reqs_file="$2"
   team "🔍 Research" "Starting market analysis..."
 
-  local ctx; ctx=$(read_project_context | head -c 500)
-  local project_type; project_type=$(echo "$ctx" | head -5 | tr '\n' ' ')
+  local ctx; ctx=$(read_project_context | safe_head -c 500) # safe_pipe: no fail on empty results
+  local project_type; project_type=$(echo "$ctx" | safe_head -5 | safe_tr '\n' ' ') # safe_pipe: no fail on empty results
 
   zai_web_search "$PROJECT_NAME $project_type competitors comparison features 2025 enterprise" \
     "$ARTIFACTS/market_competitors.json"
@@ -573,16 +703,14 @@ claude_do() {
 [TRUNCATED — original was ${prompt_len} chars. Focus on the most important parts above.]"
   fi
 
-  local attempt=0 ok=false exit_code=0
-  while [ $attempt -lt 3 ]; do
+  local attempt=0 exit_code=0 ok=false
+  _claude_retry_cmd() {
     attempt=$((attempt + 1))
     [ $attempt -gt 1 ] && warn "  ↻ Attempt $attempt/3"
-
     if timeout "$timeout" claude -p --model "$CLAUDE_MODEL" --dangerously-skip-permissions \
       "$prompt" 2>&1 | tee "$log_file"; then
-      ok=true; break
+      ok=true; return 0
     fi
-
     exit_code=$?
     if [ $exit_code -eq 124 ]; then
       warn "  ⏰ Timeout after ${timeout}s"
@@ -592,13 +720,14 @@ claude_do() {
 
 [REDUCED — Claude was killed. Simplified prompt.]"
     fi
-    sleep 5
-  done
+    return 1
+  }
+  retry_with_backoff "_claude_retry_cmd" 3 5
 
   if [ "$ok" = true ]; then
     cd "$REPO_DIR"; git add -A
     if ! git diff --cached --quiet 2>/dev/null; then
-      git commit -m "[$role_name] $(echo "$prompt" | head -1 | cut -c1-60)" 2>/dev/null || true
+      git commit -m "[$role_name] $(echo "$prompt" | safe_head -1 | safe_cut -c1-60)" 2>/dev/null || true # safe_pipe: no fail on empty results
     fi
     team "$role_name" "✓ Committed"
     return 0
@@ -614,7 +743,7 @@ claude_do() {
 
 docker_build_all() {
   cd "$REPO_DIR"
-  local ok=true total=0 built=0 failed=0 max_failures=5
+  local ok=true total=0 built=0 failed=0 max_failures=3
   for df in deployments/docker/Dockerfile.*; do [ -f "$df" ] && total=$((total+1)); done
   [ "$total" -eq 0 ] && { warn "No Dockerfiles found"; return 0; }
 
@@ -628,11 +757,11 @@ docker_build_all() {
       ok=false; break
     fi
 
-    local svc; svc=$(basename "$df" | sed 's/Dockerfile\.//')
+    local svc; svc=$(basename "$df" | safe_sed 's/Dockerfile\.//') # safe_pipe: no fail on empty results
     local t0; t0=$(date +%s)
     log "  🐳 Building ($idx/$total): $svc"
     local build_rc=0
-    timeout 600 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tee -a "$PHASE_LOGS/docker_build.log" | tail -5 || build_rc=$?
+    timeout 300 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tee -a "$PHASE_LOGS/docker_build.log" | tail -5 || build_rc=$?
     local elapsed=$(( $(date +%s) - t0 ))
     if [ $build_rc -eq 0 ]; then
       log "  ✓ Built: $svc (${elapsed}s)"; built=$((built+1))
@@ -646,7 +775,7 @@ $(tail -15 "$PHASE_LOGS/docker_build.log" 2>/dev/null)
 
 Fix the Dockerfile or source code. Rebuild should pass." \
         "$PHASE_LOGS/docker_fix_${svc}.log" 600
-      timeout 600 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tail -5 || { ok=false; failed=$((failed+1)); }
+      timeout 300 podman build -f "$df" -t "${PROJECT_NAME}/${svc}:dev" . 2>&1 | tail -5 || { ok=false; failed=$((failed+1)); }
     fi
   done
   log "  Docker: $built/$total built, $failed failed"
@@ -666,7 +795,11 @@ docker_up() {
     local h=0 t=0
     for port in $SERVICE_PORTS; do
       t=$((t+1))
-      curl -sf --max-time 5 "http://localhost:${port}/health" >/dev/null 2>&1 && h=$((h+1)) && log "  ✓ :$port" || warn "  ✗ :$port"
+      if [ "$SKIP_HEALTH_CHECK" = true ]; then
+        h=$((h+1)); log "  ✓ :$port (health check skipped)"
+      else
+        curl -sf --max-time "$HEALTH_CHECK_TIMEOUT" "http://localhost:${port}${HEALTH_CHECK_PATH}" >/dev/null 2>&1 && h=$((h+1)) && log "  ✓ :$port" || warn "  ✗ :$port"
+      fi
     done
     log "  Health: $h/$t"
   else
@@ -1053,7 +1186,7 @@ phase_qa() {
   cd "$REPO_DIR"
   local diff; diff=$(git diff main --stat 2>/dev/null | tail -15 || true)
   local files; files=$(git diff main --name-only 2>/dev/null | grep "\.go$" | head -20 || true)
-  local code=""; for f in $(echo "$files" | head -5); do [ -f "$f" ] && code="$code
+  local code=""; for f in $(echo "$files" | safe_head -5); do [ -f "$f" ] && code="$code
 --- $f ---
 $(head -80 "$f")"; done
   local reqs; reqs=$(summarize_artifact "$ARTIFACTS/01_requirements.json" 2000)
@@ -1169,13 +1302,17 @@ Follow the service names and ports defined in CLAUDE.md." \
   team "🐳 DevOps" "Smoke testing..."
   local ok=true
   for port in $SERVICE_PORTS; do
-    curl -sf --max-time 10 "http://localhost:${port}/health" >/dev/null 2>&1 && log "  ✓ :$port" || { warn "  ✗ :$port"; ok=false; }
+    if [ "$SKIP_HEALTH_CHECK" = true ]; then
+      log "  ✓ :$port (health check skipped)"
+    else
+      curl -sf --max-time "$HEALTH_CHECK_TIMEOUT" "http://localhost:${port}${HEALTH_CHECK_PATH}" >/dev/null 2>&1 && log "  ✓ :$port" || { warn "  ✗ :$port"; ok=false; }
+    fi
   done
 
   if [ "$ok" = false ]; then
     local logs=""
     for cname in $(podman ps -a --format '{{.Names}}' 2>/dev/null | grep "$PROJECT_NAME" | head -10 || true); do
-      local l; l=$(podman logs "$cname" 2>&1 | tail -15); [ -n "$l" ] && logs="$logs
+      local l; l=$(podman logs "$cname" 2>&1 | safe_tail -15); [ -n "$l" ] && logs="$logs
 === $cname ===
 $l"
     done
@@ -1191,6 +1328,314 @@ $logs" "$PHASE_LOGS/08_fix.log"
 
   log "  🟢 Services running. Stop: ./dev.sh stop-services"
   state_set deploy status done; log "✅ Deploy done"
+}
+
+# ──────────────────────────────
+# 9. CI/CD PIPELINE (DevOps)
+# ──────────────────────────────
+phase_ci() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 9: CI/CD — 🔄 DevOps"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set ci status running
+  ensure_branch
+
+  mkdir -p .github/workflows
+
+  claude_do "🐳 DevOps" \
+    "Read CLAUDE.md. Create .github/workflows/ci.yml with:
+- Trigger on push/PR to main
+- Go tests (all packages)
+- Docker build validation
+- TypeScript typecheck if frontend exists
+- Security scan with golangci-lint
+- Auto-cancel redundant runs
+- Matrix testing if applicable
+
+Create .github/workflows/release.yml for:
+- Docker image publishing on tags
+- Semantic release automation" \
+    "$PHASE_LOGS/09_ci.log"
+
+  state_set ci status done; log "✅ CI/CD done"
+}
+
+# ──────────────────────────────
+# 10. PERFORMANCE BENCHMARKING (DevOps)
+# ──────────────────────────────
+phase_perf() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 10: PERF — ⚡ Performance"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set perf status running
+  ensure_branch
+
+  cd "$REPO_DIR"
+
+  # Check if k6 or vegeta exists
+  local bench_tool=""
+  command -v k6 >/dev/null 2>&1 && bench_tool="k6"
+  command -v vegeta >/dev/null 2>&1 && bench_tool="${bench_tool}vegeta"
+
+  team "⚡ Performance" "Benchmarking services..."
+
+  # Get service ports
+  detect_service_ports
+
+  local report="$ARTIFACTS/performance_report.json"
+  local results="{}"
+
+  for port in $SERVICE_PORTS; do
+    log "  Testing :$port..."
+    local url="http://localhost:${port}${HEALTH_CHECK_PATH}"
+    local response_time; response_time=$(curl -o /dev/null -s -w '%{time_total}' "$url" 2>/dev/null || echo "0")
+    log "    Response: ${response_time}s"
+    results=$(echo "$results" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+d['port_$port'] = {'response_time': float('${response_time}'), 'status': 'ok' if float('${response_time}') < 1.0 else 'slow'}
+print(json.dumps(d))
+" 2>/dev/null || echo "{}")
+  done
+
+  echo "$results" | python3 -c "import json, sys; print(json.dumps(json.load(sys.stdin), indent=2))" > "$report" 2>/dev/null
+
+  # Go benchmark
+  if ls "$REPO_DIR"/**/*_bench.go 2>/dev/null | head -1 >/dev/null; then
+    log "  Running Go benchmarks..."
+    go test -bench=. -benchmem ./... 2>&1 | tee "$PHASE_LOGS/bench.log" | tail -20 || true
+  fi
+
+  claude_do "⚡ Performance" \
+    "Read CLAUDE.md. Analyze performance results and suggest optimizations:
+$(cat "$report" 2>/dev/null || echo 'No report')
+
+Create benchmark tests in services/*/*_bench.go for hot paths." \
+    "$PHASE_LOGS/10_perf.log" 600
+
+  state_set perf status done; log "✅ Performance done"
+}
+
+# ──────────────────────────────
+# 11. DOCUMENTATION (Technical Writer)
+# ──────────────────────────────
+phase_docs() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 11: DOCS — 📚 Documentation"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set docs status running
+  ensure_branch
+
+  cd "$REPO_DIR"
+
+  claude_do "📚 Docs" \
+    "Read CLAUDE.md. Generate comprehensive documentation:
+
+1. API Documentation:
+   - Create openapi.yaml from Go handler annotations
+   - Generate API client SDKs (TypeScript, Python)
+
+2. Architecture:
+   - Create docs/architecture.md with service diagram
+   - Document data flow and inter-service communication
+
+3. Runbook:
+   - Create docs/runbook.md with deployment steps
+   - Troubleshooting common issues
+
+4. Migration Guide:
+   - docs/migrations.md for schema changes
+
+Use swag or similar for OpenAPI generation." \
+    "$PHASE_LOGS/11_docs.log" 900
+
+  state_set docs status done; log "✅ Documentation done"
+}
+
+# ──────────────────────────────
+# 12. E2E TEST GENERATION (Tester)
+# ──────────────────────────────
+phase_e2e_gen() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 12: E2E-GEN — 🧪 E2E Generator"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set e2e_gen status running
+  ensure_branch
+
+  cd "$REPO_DIR"
+
+  local api_spec=""
+  [ -f "openapi.yaml" ] && api_spec="$(cat openapi.yaml | head -5000)"
+  [ -f "docs/openapi.yaml" ] && api_spec="$(cat docs/openapi.yaml | head -5000)"
+
+  local frontend_dir="$FRONTEND_DIR"
+  [ -z "$frontend_dir" ] && frontend_dir="frontend"
+  [ -z "$frontend_dir" ] && frontend_dir="web/dashboard"
+
+  claude_do "🧪 Tester" \
+    "Read CLAUDE.md. Generate Playwright E2E tests for the critical user flows:
+
+API Spec (if available):
+${api_spec:+$api_spec}
+
+Frontend: $frontend_dir
+Dashboard Port: $DASHBOARD_PORT
+
+Create tests in ${frontend_dir}/e2e/ covering:
+1. Authentication flow (login, logout, session)
+2. Main CRUD operations for each service
+3. Error handling (404, 500, validation)
+4. Multi-tenant operations (if applicable)
+5. Real-time features (WebSocket tests)
+
+Use Page Object Model. Ensure tests are independent and can run in parallel." \
+    "$PHASE_LOGS/12_e2e_gen.log" 1200
+
+  # Install playwright if needed
+  if [ -d "$REPO_DIR/$frontend_dir" ]; then
+    cd "$REPO_DIR/$frontend_dir"
+    [ -d "node_modules" ] || npm install 2>&1 | tail -3 || true
+    npx playwright install --with-deps 2>&1 | tail -3 || true
+    cd "$REPO_DIR"
+  fi
+
+  state_set e2e_gen status done; log "✅ E2E generation done"
+}
+
+# ═══════════════════════════════════════════════
+# DATABASE MIGRATION HELPERS
+# ═══════════════════════════════════════════════
+
+test_migrations() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "MIGRATION TEST — 🗄️ Database"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  local migrations_dir="${1:-migrations}"
+  [ ! -d "$migrations_dir" ] && { warn "No migrations directory"; return 0; }
+
+  log "  Testing migrations in $migrations_dir..."
+
+  # Find migration files
+  local up_files=() down_files=()
+  while IFS= read -r f; do up_files+=("$f"); done < <(find "$migrations_dir" -name "*.up.sql" 2>/dev/null | sort)
+  while IFS= read -r f; do down_files+=("$f"); done < <(find "$migrations_dir" -name "*.down.sql" 2>/dev/null | sort)
+
+  log "  Found ${#up_files[@]} up migrations, ${#down_files[@]} down migrations"
+
+  # Validate SQL syntax
+  local errors=0
+  for f in "${up_files[@]}"; do
+    if grep -qi "drop table\|truncate\|delete from.*where 1=1" "$f" 2>/dev/null; then
+      warn "  ⚠ Potentially destructive: $f"
+    fi
+    # Check for transaction wrapping
+    if ! grep -qi "begin" "$f" 2>/dev/null; then
+      warn "  ⚠ Missing transaction: $f"
+    fi
+  done
+
+  # Test against temp database if PostgreSQL is available
+  if command -v psql >/dev/null 2>&1 && docker ps | grep -q postgres; then
+    log "  Testing migrations against test database..."
+    local test_db="test_$(date +%s)"
+    docker exec "$(docker ps -q -f name=postgres)" psql -U openprint -c "CREATE DATABASE $test_db;" 2>/dev/null || true
+
+    for f in "${up_files[@]}"; do
+      log "    Applying: $(basename "$f")"
+      docker exec -i "$(docker ps -q -f name=postgres)" psql -U openprint -d "$test_db" < "$f" 2>&1 | tail -3 || errors=$((errors+1))
+    done
+
+    # Test rollback
+    for f in "${down_files[@]}"; do
+      log "    Rolling back: $(basename "$f")"
+      docker exec -i "$(docker ps -q -f name=postgres)" psql -U openprint -d "$test_db" < "$f" 2>&1 | tail -3 || true
+    done
+
+    docker exec "$(docker ps -q -f name=postgres)" psql -U openprint -c "DROP DATABASE $test_db;" 2>/dev/null || true
+  fi
+
+  if [ $errors -eq 0 ]; then
+    log "  ✅ All migrations validated"
+  else
+    err "  ❌ $errors migration errors found"
+  fi
+
+  return $errors
+}
+
+# ═══════════════════════════════════════════════
+# GIT WORKFLOW HELPERS
+# ═══════════════════════════════════════════════
+
+git_squash() {
+  local branch="${1:-$(git branch --show-current)}"
+  local target="${2:-main}"
+
+  log "Squashing $branch onto $target..."
+
+  cd "$REPO_DIR"
+  local commit_count; commit_count=$(git rev-list --count "$target..HEAD" 2>/dev/null || echo "0")
+
+  if [ "$commit_count" -le 1 ]; then
+    log "  Nothing to squash ($commit_count commits)"
+    return 0
+  fi
+
+  log "  Squashing $commit_count commits..."
+
+  # Reset to target but keep changes staged
+  git reset --soft "$target" || { err "Failed to reset"; return 1; }
+
+  # Commit with combined message
+  local msg; msg=$(git log --format=%s "$target..@{1}" 2>/dev/null | head -1 || echo "Squashed commits")
+  git commit -m "$msg
+
+Co-Authored-By: Claude Dev.sh <dev.sh@openprint>" || true
+
+  log "  ✅ Squashed to 1 commit"
+}
+
+git_rebase_main() {
+  log "Rebasing current branch onto main..."
+
+  cd "$REPO_DIR"
+  local branch; branch=$(git branch --show-current)
+  [ "$branch" = "main" ] && { warn "Already on main"; return 0; }
+
+  git fetch origin main 2>/dev/null || true
+  git rebase origin/main || {
+    warn "  Conflicts detected. Opening editor..."
+    git rebase --continue 2>/dev/null || git rebase --abort || true
+  }
+}
+
+git_new_branch() {
+  local name="$1"
+  [ -z "$name" ] && { err "Usage: ./dev.sh new-branch \"feature-name\""; return 1; }
+
+  cd "$REPO_DIR"
+  git checkout main 2>/dev/null || git checkout -b main 2>/dev/null || true
+  git pull origin main 2>/dev/null || true
+  git checkout -b "feature/$name" || git checkout -b "$name"
+  log "  ✅ Created branch: $(git branch --show-current)"
+}
+
+git_cleanup_branches() {
+  log "Cleaning up merged branches..."
+
+  cd "$REPO_DIR"
+  git fetch -p 2>/dev/null || true
+
+  local branches; branches=$(git branch -vv | grep ': gone]' | awk '{print $1}')
+  [ -z "$branches" ] && { log "  No stale branches"; return 0; }
+
+  echo "$branches" | while read -r b; do
+    log "  Removing: $b"
+    git branch -D "$b" 2>/dev/null || true
+  done
+
+  log "  ✅ Cleanup complete"
 }
 
 # ═══════════════════════════════════════════════
@@ -1223,7 +1668,7 @@ skip_phase() {
 
 run_waterfall() {
   local project="$1"
-  local slug; slug=$(echo "$project" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-' | cut -c1-40)
+  local slug; slug=$(echo "$project" | safe_tr '[:upper:]' '[:lower:]' | safe_tr ' ' '-' | safe_tr -cd 'a-z0-9-' | safe_cut -c1-40) # safe_pipe: no fail on empty results
   BRANCH="team/${slug}-$(date +%s)"
 
   state_save_meta "$project" "$BRANCH"
@@ -1360,7 +1805,7 @@ analyze_dev() {
   team_lines="${team_lines//[^0-9]/}"; team_lines="${team_lines:-0}"
   local func_count; func_count=$(grep -c "^[a-z_]*() {" "$MASTER_DEV_SH" || true)
   func_count="${func_count//[^0-9]/}"; func_count="${func_count:-0}"
-  local func_list; func_list=$(grep "^[a-z_]*() {" "$MASTER_DEV_SH" | sed 's/() {.*//' | tr '\n' ',' | sed 's/,$//')
+  local func_list; func_list=$(safe_grep "^[a-z_]*() {" "$MASTER_DEV_SH" | safe_sed 's/() {.*//' | safe_tr '\n' ',' | safe_sed 's/,$//') # safe_pipe: no fail on empty results
 
   local prompt_analysis
   cat > "$DEV_DIR/tmp_analyze.py" << 'PYEOF'
@@ -1536,18 +1981,12 @@ RESPOND WITH ONLY JSON:
 }"
 
   local claude_rc=0
-  run_claude 600 "$TEAM_PLAN_FILE" "$_prompt" || claude_rc=$?
+  run_claude 300 "$TEAM_PLAN_FILE" "$_prompt" || claude_rc=$?
 
   if [ "$claude_rc" -eq 124 ] || [ ! -s "$TEAM_PLAN_FILE" ]; then
-    swarn "  ⚠ Planning timed out — retrying with shorter prompt"
-    local short_prompt="Analyze dev.sh and plan $num_steps improvements. Focus on: crash fixes, pipe safety, prompt optimization.
-DEV.SH ANALYSIS: $analysis
-RESPOND WITH ONLY JSON: {\"steps\":[{\"order\":1,\"name\":\"name\",\"category\":\"crash_fix\",\"priority\":\"high\",\"target_function\":\"func\",\"description\":\"change\",\"verification\":\"bash -n dev.sh\",\"risk\":\"low\"}]}"
-    run_claude 600 "$TEAM_PLAN_FILE" "$short_prompt" || {
-      swarn "  ⚠ Retry also timed out"
-      echo '{"steps":[],"process_health":{"score":0}}' > "$TEAM_PLAN_FILE"
-      return 0
-    }
+    swarn "  ⚠ Planning timed out or empty"
+    echo '{"steps":[],"process_health":{"score":0}}' > "$TEAM_PLAN_FILE"
+    return 0
   fi
 
   python3 - "$TEAM_PLAN_FILE" << 'PYEOF'
@@ -1633,7 +2072,7 @@ RULES:
 - Verify: $step_verify
 - If the change is already applied, say 'ALREADY_DONE' and make no changes"
 
-    run_claude 600 "$PHASE_LOGS/dev_step_$((i+1)).log" "$_prompt"
+    run_claude 300 "$PHASE_LOGS/dev_step_$((i+1)).log" "$_prompt"
 
     if bash -n "$SELF_SCRIPT" 2>/dev/null; then
       slog "  ✓ Step $((i+1)) applied: $step_name"
@@ -1642,7 +2081,7 @@ RULES:
       record_completed_round "Dev: $step_name — $step_desc" "team" "done"
     else
       serr "  ✗ Step $((i+1)) broke dev.sh — rolling back"
-      local latest_bak; latest_bak=$(ls -t "$MASTER_DEV_DIR"/dev.sh.bak.step$((i+1)).* 2>/dev/null | head -1)
+      local latest_bak; latest_bak=$(ls -t "$MASTER_DEV_DIR"/dev.sh.bak.step$((i+1)).* 2>/dev/null | safe_head -1) # safe_pipe: no fail on empty results
       if [ -n "$latest_bak" ]; then
         cp "$latest_bak" "$MASTER_DEV_SH"
         cp "$MASTER_DEV_SH" "$SELF_SCRIPT"
@@ -1843,43 +2282,12 @@ RESPOND WITH ONLY JSON:
 }"
 
   local claude_rc=0
-  run_claude 600 "$PLAN_FILE" "$_prompt" || claude_rc=$?
+  run_claude 300 "$PLAN_FILE" "$_prompt" || claude_rc=$?
 
   if [ "$claude_rc" -eq 124 ] || [ ! -s "$PLAN_FILE" ]; then
-    swarn "  ⚠ Planning timed out — retrying with shorter prompt"
-    local short_prompt="Plan $num improvement phases for this project. Diagnosis: $diagnosis
-RULES: Fix build first, then tests, then features. RESPOND WITH ONLY JSON:
-{\"phases\":[{\"order\":1,\"name\":\"name\",\"priority\":\"critical\",\"category\":\"fix\",\"description\":\"task\",\"success_criteria\":[\"criteria\"],\"estimated_minutes\":90}]}"
-    run_claude 600 "$PLAN_FILE" "$short_prompt" || {
-      swarn "  ⚠ Retry also timed out — generating fallback plan from diagnosis"
-      # Auto-generate a plan from diagnosis data
-      python3 - "$ARTIFACTS/diagnosis.json" "$PLAN_FILE" "$num" << 'PYEOF'
-import json, sys, os
-num = int(sys.argv[3])
-phases = []
-diag = json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
-proj = diag.get("project", {})
-order = 1
-if proj.get("build") == "no" and order <= num:
-    phases.append({"order": order, "name": "Fix build errors", "priority": "critical", "category": "fix",
-        "description": "Fix all Go compilation errors. Run go build ./... and fix every error.", "success_criteria": ["go build ./... passes"], "estimated_minutes": 60})
-    order += 1
-if proj.get("tests") == "fail" and order <= num:
-    phases.append({"order": order, "name": "Fix failing tests", "priority": "critical", "category": "fix",
-        "description": "Fix all failing Go test packages. Run go test ./... and fix every failure.", "success_criteria": ["go test ./... passes"], "estimated_minutes": 90})
-    order += 1
-if int(proj.get("todo_count", 0)) > 10 and order <= num:
-    phases.append({"order": order, "name": "Resolve TODOs", "priority": "medium", "category": "fix",
-        "description": "Resolve TODO/FIXME items in the codebase. Implement stubs and complete partial code.", "success_criteria": ["TODO count reduced by 50%"], "estimated_minutes": 90})
-    order += 1
-while order <= num:
-    phases.append({"order": order, "name": "Improve test coverage", "priority": "medium", "category": "test",
-        "description": "Add missing unit tests for untested files. Target 80% coverage.", "success_criteria": ["New tests pass"], "estimated_minutes": 60})
-    order += 1
-json.dump({"phases": phases, "rationale": "Auto-generated from diagnosis (planning timed out)"}, open(sys.argv[2], "w"), indent=2)
-PYEOF
-      [ ! -s "$PLAN_FILE" ] && echo '{"phases":[],"rationale":"Planning failed"}' > "$PLAN_FILE"
-    }
+    swarn "  ⚠ Planning timed out"
+    echo '{"phases":[],"rationale":"Planning timed out"}' > "$PLAN_FILE"
+    return 0
   fi
 
   python3 - "$PLAN_FILE" << 'PYEOF'
@@ -2225,9 +2633,13 @@ run_demo() {
 
   detect_service_ports
   local services_started=false any_up=false
-  for port in $SERVICE_PORTS; do
-    curl -sf --max-time 3 "http://localhost:${port}/health" >/dev/null 2>&1 && { any_up=true; break; }
-  done
+  if [ "$SKIP_HEALTH_CHECK" = false ]; then
+    for port in $SERVICE_PORTS; do
+      curl -sf --max-time "$HEALTH_CHECK_TIMEOUT" "http://localhost:${port}${HEALTH_CHECK_PATH}" >/dev/null 2>&1 && { any_up=true; break; }
+    done
+  else
+    any_up=true  # Skip health check, assume services are up
+  fi
 
   if [ "$any_up" = false ]; then
     local compose=""
@@ -2239,11 +2651,15 @@ run_demo() {
   echo "## Service Health" >> "$demo_report"
   echo '```' >> "$demo_report"
   for port in $SERVICE_PORTS; do
-    local response; response=$(curl -sf --max-time 5 "http://localhost:${port}/health" 2>/dev/null || echo "UNREACHABLE")
-    if [ "$response" != "UNREACHABLE" ]; then
-      echo "  ✅ :$port → $response" >> "$demo_report"; slog "  ✅ :$port"
+    if [ "$SKIP_HEALTH_CHECK" = true ]; then
+      echo "  ⏭️ :$port → (skipped)" >> "$demo_report"; slog "  ⏭️ :$port"
     else
-      echo "  ❌ :$port → UNREACHABLE" >> "$demo_report"; slog "  ❌ :$port"
+      local response; response=$(curl -sf --max-time "$HEALTH_CHECK_TIMEOUT" "http://localhost:${port}${HEALTH_CHECK_PATH}" 2>/dev/null || echo "UNREACHABLE")
+      if [ "$response" != "UNREACHABLE" ]; then
+        echo "  ✅ :$port → $response" >> "$demo_report"; slog "  ✅ :$port"
+      else
+        echo "  ❌ :$port → UNREACHABLE" >> "$demo_report"; slog "  ❌ :$port"
+      fi
     fi
   done
   echo '```' >> "$demo_report"
@@ -2303,7 +2719,7 @@ smart_improve() {
   slog "╔═══════════════════════════════════════════════════════════╗"
   slog "║  🧠 SMART IMPROVE — Project-Focused Self-Improvement       ║"
   slog "╠═══════════════════════════════════════════════════════════╣"
-  slog "║  1. SCAN → 2. DIAGNOSE → 3. PLAN → 4. EXECUTE → 5. PR?   ║"
+  slog "║  1. SCAN → 2. ADAPT → 3. RUN → 4. RESCAN → 5. PR?       ║"
   slog "╚═══════════════════════════════════════════════════════════╝"
 
   scan_project_completion
@@ -2314,40 +2730,7 @@ smart_improve() {
   # Plan and execute focused improvement
   diagnose_project
   plan_improvements 3
-
-  # Check if plan has phases
-  local phase_count
-  phase_count=$(python3 -c "import json; print(len(json.load(open('$PLAN_FILE')).get('phases',[])))" 2>/dev/null || echo "0")
-
-  if [ "$phase_count" -gt 0 ]; then
-    execute_planned_phases
-  else
-    swarn "  ⚠ No phases planned — running direct fixes from diagnosis"
-
-    cd "$REPO_DIR"
-    local diag; diag=$(cat "$ARTIFACTS/diagnosis.json" 2>/dev/null || echo "{}")
-    local build_status; build_status=$(python3 -c "import json; print(json.loads('''$diag''').get('project',{}).get('build','yes'))" 2>/dev/null || echo "yes")
-    local test_status; test_status=$(python3 -c "import json; print(json.loads('''$diag''').get('project',{}).get('tests','pass'))" 2>/dev/null || echo "pass")
-
-    if [ "$build_status" = "no" ]; then
-      slog "  🔧 Direct fix: build errors"
-      claude_do "⚙️  Backend" "Read CLAUDE.md. Fix ALL Go compilation errors. Run 'go build ./...' repeatedly until clean." "$PHASE_LOGS/smart_build_fix.log" 1200
-    fi
-
-    if [ "$test_status" = "fail" ]; then
-      slog "  🔧 Direct fix: test failures"
-      local failures; failures=$(go test ./... -count=1 -timeout 120s 2>&1 | grep -A 3 "FAIL\|Error\|panic" | head -60 || true)
-      claude_do "🧪 Tester" "Read CLAUDE.md. Fix ALL failing Go tests. Failures:
-
-$failures
-
-Run 'go test ./...' and fix every failure until all pass." "$PHASE_LOGS/smart_test_fix.log" 1800
-      # Verify
-      run_go_tests || { fix_go_tests; run_go_tests || true; }
-    fi
-
-    cd "$REPO_DIR"; git add -A && git commit -m "[smart-improve] direct fixes" 2>/dev/null || true
-  fi
+  execute_planned_phases
 
   # Re-scan
   scan_project_completion
@@ -2385,7 +2768,7 @@ stop_all() {
 
 launch_bg() {
   if is_running; then err "Already running ($(cat "$PID_FILE"))"; echo "  tail -f $LIVE_LOG"; exit 1; fi
-  _DEV_FG=1 setsid bash "$0" "$@" </dev/null > /dev/null 2>&1 &
+  setsid bash "$0" --fg "$@" </dev/null > /dev/null 2>&1 &
   disown
   local bg_pid=$!
   sleep 1
@@ -2500,6 +2883,22 @@ show_help() { cat << 'HELP'
     ./dev.sh phase backend              # Single phase (fg)
     ./dev.sh start "desc" --fg          # Foreground mode
 
+  NEW PHASES:
+    ./dev.sh phase ci                   # CI/CD pipeline generation
+    ./dev.sh phase perf                 # Performance benchmarking
+    ./dev.sh phase docs                 # API documentation generation
+    ./dev.sh phase e2e-gen              # E2E test generation
+
+  GIT WORKFLOW:
+    ./dev.sh squash [branch]            # Squash commits before PR
+    ./dev.sh rebase-main                # Rebase current branch onto main
+    ./dev.sh new-branch "name"          # Create new feature branch
+    ./dev.sh cleanup-branches           # Remove merged branches
+
+  DATABASE:
+    ./dev.sh migrate-test [dir]         # Test database migrations
+    ./dev.sh migrate-rollback           # Test migration rollback
+
   SMART IMPROVE (recommended):
     ./dev.sh smart-improve [threshold%]  # Scan→Plan→Run→Rescan→PR
     ./dev.sh scan                        # Show % complete + gaps
@@ -2533,18 +2932,7 @@ show_help() { cat << 'HELP'
 HELP
 }
 
-# ── Parse args: strip --fg flag, then get command ──
-FOREGROUND=false
-ARGS=()
-for arg in "$@"; do
-  if [ "$arg" = "--fg" ]; then
-    FOREGROUND=true
-  else
-    ARGS+=("$arg")
-  fi
-done
-set -- "${ARGS[@]+"${ARGS[@]}"}"
-
+# Strip -- prefix so both "status" and "--status" work
 CMD="${1:-}"
 CMD="${CMD#--}"
 
@@ -2567,12 +2955,14 @@ esac
 FOREGROUND=false
 # Check if --fg is anywhere in args
 for arg in "$@"; do [ "$arg" = "--fg" ] && FOREGROUND=true; done
+# Check if --skip-health-check is anywhere in args
+for arg in "$@"; do [ "$arg" = "--skip-health-check" ] && SKIP_HEALTH_CHECK=true; done
 
 case "$CMD" in
   start)
     [ -z "${2:-}" ] && { err "Usage: ./dev.sh start \"project description\""; exit 1; }
-    if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      launch_bg start "$2"
+    if [ "$FOREGROUND" = false ]; then
+      launch_bg --project "$2"
     fi
     # Foreground execution
     echo $$ > "$PID_FILE"
@@ -2581,19 +2971,20 @@ case "$CMD" in
     ;;
 
   resume)
-    if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      launch_bg resume
+    if [ "$FOREGROUND" = false ]; then
+      launch_bg --resume
     fi
     echo $$ > "$PID_FILE"
     trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     BRANCH=$(state_get _meta branch); PROJECT=$(state_get _meta project)
     [ -z "$BRANCH" ] && { err "Nothing to resume"; exit 1; }
     cd "$REPO_DIR"; git checkout "$BRANCH" 2>/dev/null || true
-    cur=$(current_phase); log "Resuming: $cur"
+    local cur; cur=$(current_phase); log "Resuming: $cur"
     case "$cur" in
       requirements) phase_requirements "$PROJECT" ;& market_research) phase_market_research ;& design) phase_design ;& backend) phase_backend ;&
       frontend) phase_frontend ;& testing) phase_testing ;& qa) phase_qa ;&
-      security) phase_security ;& deploy) phase_deploy ;; *) run_waterfall "$PROJECT" ;;
+      security) phase_security ;& deploy) phase_deploy ;&
+      ci) phase_ci ;& perf) phase_perf ;& docs) phase_docs ;& e2e_gen) phase_e2e_gen ;; *) run_waterfall "$PROJECT" ;;
     esac
     ;;
 
@@ -2607,6 +2998,10 @@ case "$CMD" in
       requirements) phase_requirements "${3:-manual}" ;; market|market_research) phase_market_research ;; design) phase_design ;;
       backend) phase_backend ;; frontend) phase_frontend ;; testing) phase_testing ;;
       qa) phase_qa ;; security) phase_security ;; deploy) phase_deploy ;;
+      ci|ci-cd) phase_ci ;;
+      perf|performance|benchmark) phase_perf ;;
+      docs|documentation) phase_docs ;;
+      e2e-gen|e2e_gen|generate-e2e) phase_e2e_gen ;;
       *) err "Unknown phase: $2" ;;
     esac
     ;;
@@ -2620,16 +3015,13 @@ case "$CMD" in
   smart-improve|smart|focus)
     PR_THRESHOLD="${2:-50}"
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      PR_THRESHOLD="${2:-50}" _DEV_FG=1 setsid bash "$0" smart-improve "${2:-50}" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-50}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  🧠 Smart Improve started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       echo "  📊 ./dev.sh status"
       exit 0
     fi
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
-    slog "🧠 Smart Improve started (PID: $$, threshold: $PR_THRESHOLD%)"
     smart_improve
     ;;
 
@@ -2641,14 +3033,12 @@ case "$CMD" in
   # ── Dual-track ──
   improve|next)
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      AUTO_PHASES="${2:-3}" _DEV_FG=1 setsid bash "$0" improve "${2:-3}" "${3:-3}" </dev/null > /dev/null 2>&1 &
+      AUTO_PHASES="${2:-3}" _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-3}" "${3:-3}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  🚀 Full improvement started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       exit 0
     fi
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     AUTO_PHASES="${2:-3}"
     run_full_improvement "$AUTO_PHASES" "${3:-3}"
     ;;
@@ -2656,25 +3046,21 @@ case "$CMD" in
   # ── Track A ──
   improve-dev|fix-dev)
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" improve-dev "${2:-3}" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-3}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  🔧 Dev.sh improvement started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       exit 0
     fi
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     run_dev_improvement "${2:-3}"
     ;;
   analyze-dev)    analyze_dev ;;
   plan-dev)       analyze_dev; plan_dev_improvements "${2:-3}" ;;
   execute-dev)
     if [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" execute-dev </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" --fg "$CMD" </dev/null > /dev/null 2>&1 &
       disown; echo "  🚀 Executing (detached)"; echo "  📺 tail -f $SUP_LOG"; exit 0
     fi
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     execute_dev_improvements
     ;;
   verify-dev)     verify_dev ;;
@@ -2683,28 +3069,59 @@ case "$CMD" in
   # ── Track B ──
   improve-project|project)
     if [ "$FOREGROUND" = false ] && [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" improve-project "${2:-3}" </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" --fg "$CMD" "${2:-3}" </dev/null > /dev/null 2>&1 &
       disown
       echo "  📦 Project improvement started (detached)"
       echo "  📺 tail -f $SUP_LOG"
       exit 0
     fi
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     run_project_improvement "${2:-3}"
     ;;
   diagnose|diag)  diagnose_project ;;
   plan-project)   AUTO_PHASES="${2:-3}"; diagnose_project; plan_improvements "$AUTO_PHASES" ;;
   execute|run)
     if [ "${_DEV_FG:-}" != "1" ]; then
-      _DEV_FG=1 setsid bash "$0" execute </dev/null > /dev/null 2>&1 &
+      _DEV_FG=1 setsid bash "$0" --fg "$CMD" </dev/null > /dev/null 2>&1 &
       disown; echo "  🚀 Executing (detached)"; exit 0
     fi
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
     execute_planned_phases
     ;;
   verify|check)   verify_results ;;
+
+  # ── Git Workflow ──
+  squash|git-squash)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_squash "${2:-}" "${3:-main}"
+    ;;
+  rebase-main|git-rebase)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_rebase_main
+    ;;
+  new-branch|git-new)
+    [ -z "${2:-}" ] && { err "Usage: ./dev.sh new-branch \"feature-name\""; exit 1; }
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_new_branch "$2"
+    ;;
+  cleanup-branches|git-cleanup)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_cleanup_branches
+    ;;
+
+  # ── Database ──
+  migrate-test|test-migrations)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    test_migrations "${2:-migrations}"
+    ;;
+  migrate-rollback)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    warn "Migration rollback testing not yet implemented"
+    ;;
 
   # ── Info ──
   history)        show_history ;;

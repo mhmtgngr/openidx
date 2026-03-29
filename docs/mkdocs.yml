@@ -25,21 +25,31 @@ theme:
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.tracking
+    - navigation.indexes
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
     - content.action.edit
+    - content.tabs.link
   icon:
     repo: fontawesome/brands/github
 
 plugins:
-  - search
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|&amp;'
   - minify:
       minify_html: true
+  - git-revision-date-localized:
+      type: date
+      fallback_to_build_date: true
 
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -48,41 +58,84 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path: docs/docs
   - admonition
   - tables
   - attr_list
   - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
   - toc:
       permalink: true
+      toc_depth: 4
 
 nav:
   - Home: index.md
+
   - Getting Started:
+      - Installation: guide/installation.md
       - Quick Start: guide/quickstart.md
       - Architecture: guide/architecture.md
       - Configuration: guide/configuration.md
+
   - Deployment:
       - Docker Compose: deployment/docker.md
       - Kubernetes (Helm): deployment/kubernetes.md
       - AWS (Terraform): deployment/aws.md
+      - Configuration Reference: deployment/configuration.md
+
   - API Reference:
       - Overview: api/overview.md
+      - Authentication: api/authentication.md
+      - Examples: api/examples.md
       - Identity Service: api/identity.md
       - OAuth/OIDC: api/oauth.md
       - Governance: api/governance.md
       - Provisioning (SCIM): api/provisioning.md
       - Audit: api/audit.md
       - Admin API: api/admin.md
+
   - Development:
+      - Development Setup: development/setup.md
       - Contributing: development/contributing.md
       - Testing: development/testing.md
       - Observability: development/observability.md
+
+  - Go Reference:
+      - About: reference/index.md
+      - Identity Service: reference/identity.md
+      - Governance Service: reference/governance.md
+      - Provisioning Service: reference/provisioning.md
+      - Audit Service: reference/audit.md
+      - OAuth Service: reference/oauth.md
+      - Middleware: reference/middleware.md
+      - Database: reference/database.md
+
   - Troubleshooting: troubleshooting.md
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/openidx/openidx
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/openidx
+  version:
+    provider: mike
+    default: latest
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 
 copyright: Copyright &copy; 2024 OpenIDX Contributors — Apache License 2.0

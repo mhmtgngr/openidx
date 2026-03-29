@@ -1,0 +1,89 @@
+{
+  "title": "OpenIDX API Reference",
+  "description": "Interactive API documentation for OpenIDX Zero Trust Access Platform",
+  "version": "0.1.0",
+  "specs": {
+    "identity-service": {
+      "name": "Identity Service",
+      "description": "User, group, role, MFA, and identity provider management",
+      "port": 8001,
+      "spec": "identity-service.yaml",
+      "base_url": "/api/v1/identity"
+    },
+    "oauth-service": {
+      "name": "OAuth/OIDC Service",
+      "description": "OAuth 2.0 authorization server with OpenID Connect and SAML 2.0 support",
+      "port": 8006,
+      "spec": "oauth-service.yaml",
+      "base_url": "/oauth"
+    },
+    "governance-service": {
+      "name": "Governance Service",
+      "description": "Access reviews, certification campaigns, and policy management",
+      "port": 8002,
+      "spec": "governance-service.yaml",
+      "base_url": "/api/v1/governance"
+    },
+    "provisioning-service": {
+      "name": "Provisioning Service",
+      "description": "SCIM 2.0 user and group provisioning, plus automation rules",
+      "port": 8003,
+      "spec": "provisioning-service.yaml",
+      "base_url": "/scim/v2"
+    },
+    "audit-service": {
+      "name": "Audit Service",
+      "description": "Audit event logging, compliance reporting, and export",
+      "port": 8004,
+      "spec": "audit-service.yaml",
+      "base_url": "/api/v1/audit"
+    },
+    "admin-api": {
+      "name": "Admin API",
+      "description": "Dashboard, system settings, application management, directory integrations",
+      "port": 8005,
+      "spec": "admin-api.yaml",
+      "base_url": "/api/v1"
+    },
+    "access-service": {
+      "name": "Access Service",
+      "description": "Zero Trust access proxy with route management and session control",
+      "port": 8007,
+      "spec": "access-service.yaml",
+      "base_url": "/api/v1/access"
+    },
+    "portal-service": {
+      "name": "Self-Service Portal",
+      "description": "Self-service portal for application access and group membership requests",
+      "port": 8001,
+      "spec": "portal-service.yaml",
+      "base_url": "/api/v1/portal"
+    },
+    "notifications-service": {
+      "name": "Notifications Service",
+      "description": "User notification management and preferences",
+      "port": 8001,
+      "spec": "notifications-service.yaml",
+      "base_url": "/api/v1/notifications"
+    },
+    "organization-service": {
+      "name": "Organization Service",
+      "description": "Organization and member management",
+      "port": 8005,
+      "spec": "organization-service.yaml",
+      "base_url": "/api/v1/organization"
+    }
+  },
+  "servers": {
+    "local": "http://localhost:{port}",
+    "staging": "https://staging-api.openidx.org",
+    "production": "https://api.openidx.org"
+  },
+  "authentication": {
+    "type": "bearer",
+    "description": "JWT tokens issued by the OAuth Service",
+    "token_endpoint": "/oauth/token",
+    "authorization_endpoint": "/oauth/authorize",
+    "revocation_endpoint": "/oauth/revoke"
+  }
+}

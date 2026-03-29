@@ -112,7 +112,7 @@ type ApprovalPolicy struct {
 	Name                  string                   `json:"name"`
 	ResourceType          string                   `json:"resource_type"`
 	ResourceID            *string                  `json:"resource_id,omitempty"`
-	ApprovalSteps         []map[string]interface{} `json:"approval_steps"`
+	ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
 	AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
 	MaxWaitHours          int                      `json:"max_wait_hours"`
 	Enabled               bool                     `json:"enabled"`
@@ -196,16 +196,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
-// rateLimitEntry tracks rate limit state per client
+// rateLimitEntry tracks rate limit state per client (for non-Redis fallback)
 type rateLimitEntry struct {
 	count     int64
 	resetTime time.Time
 }
 
-// rateLimitStore tracks in-memory rate limits
+// rateLimitStore tracks in-memory rate limits (fallback only, not recommended for production)
 var rateLimitStore = struct {
 	sync.RWMutex
 	entries map[string]*rateLimitEntry
@@ -213,36 +214,35 @@ var rateLimitStore = struct {
 	entries: make(map[string]*rateLimitEntry),
 }
 
-// ZTPolicyHandler handles HTTP requests for policy management
-type ZTPolicyHandler struct {
-	store     *ZTPolicyStore
-	eval      *ZTPolicyEvaluator
-	logger    *zap.Logger
+// RedisRateLimiter provides distributed rate limiting using Redis with TTL
+type RedisRateLimiter struct {
+	redis      *redis.Client
+	logger     *zap.Logger
+	keyPrefix  string
 }
 
-// NewZTPolicyHandler creates a new policy handler
-func NewZTPolicyHandler(store *ZTPolicyStore, logger *zap.Logger) *ZTPolicyHandler {
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-	return &ZTPolicyHandler{
-		store:  store,
-		eval:   NewZTPolicyEvaluator(),
-		logger: logger.With(zap.String("handler", "zt_policy")),
+// NewRedisRateLimiter creates a new Redis-based rate limiter
+func NewRedisRateLimiter(redisClient *redis.Client, logger *zap.Logger) *RedisRateLimiter {
+	return &RedisRateLimiter{
+		redis:     redisClient,
+		logger:    logger.With(zap.String("component", "rate_limiter")),
+		keyPrefix: "ratelimit:",
 	}
 }
 
-// RegisterRoutes registers all policy routes
-func (h *ZTPolicyHandler) RegisterRoutes(r gin.IRouter) {
-	policies := r.Group("/api/v1/policies")
-	{
-		policies.POST("", h.CreatePolicy)
-		policies.GET("", h.ListPolicies)
-		policies.GET("/count", h.CountPolicies)
-		policies.GET("/:id", h.GetPolicy)
-		policies.PUT("/:id", h.UpdatePolicy)
-		policies.DELETE("/:id", h.DeletePolicy)
-		policies.PATCH("/:id/enable", h.SetPolicyEnabled)
+// CheckRateLimit implements token bucket algorithm with Redis
+// Returns (allowed: bool, remaining: int, error: error)
+func (rl *RedisRateLimiter) CheckRateLimit(ctx context.Context, key string, maxRequests int, window time.Duration) (bool, int, error) {
+	redisKey := rl.keyPrefix + key
+
+	// Use Lua script for atomic increment and expiry
+	// This implements a sliding window counter with automatic cleanup via TTL
+	luaScript := `
+		local current = redis.call("GET", KEYS[1])
+		if current == false then
+			current = 0
+		else
+			current = tonumber(current)
 --- internal/governance/zt_policy_test.go ---
 // Package governance provides tests for Zero Trust policy evaluation
 package governance
@@ -435,6 +435,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -485,7 +487,6 @@ type PolicyResource struct {
 	Path       string            `json:"path,omitempty"`
 	Attributes map[string]string `json:"attributes,omitempty"`
 	Tags       []string          `json:"tags,omitempty"`
-}
 --- internal/governance/zt_policy.go ---
 // Package governance provides Zero Trust policy evaluation for OpenIDX
 package governance
@@ -500,53 +501,53 @@ import (
 	"github.com/google/uuid"
 )
 
-// ZTPolicy represents a Zero Trust access policy with versioning support
-type ZTPolicy struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Effect      PolicyEffect    `json:"effect"`
-	Conditions  ConditionGroup  `json:"conditions"`
-	Priority    int             `json:"priority"`
-	Enabled     bool            `json:"enabled"`
-	TenantID    string          `json:"tenant_id,omitempty"`
-	Version     int             `json:"version"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	CreatedBy   string          `json:"created_by,omitempty"`
-	UpdatedBy   string          `json:"updated_by,omitempty"`
-	Metadata    json.RawMessage `json:"metadata,omitempty"`
+// allowedFields is the allowlist of valid field names that can be used in policy conditions
+// This prevents injection attacks via arbitrary field access
+var allowedFields = map[string]bool{
+	// Subject/User fields
+	"subject.id":          true,
+	"subject.type":        true,
+	"subject.authenticated": true,
+	"subject.roles":       true,
+	"subject.groups":      true,
+	"subject.attributes":  true,
+	"user.id":             true,
+	"user.type":           true,
+	"user.authenticated":  true,
+	"user.roles":          true,
+	"user.groups":         true,
+	"user.attributes":     true,
+
+	// Resource fields
+	"resource.id":         true,
+	"resource.type":       true,
+	"resource.name":       true,
+	"resource.owner":      true,
+	"resource.path":       true,
+	"resource.tags":       true,
+	"resource.attributes": true,
+
+	// Context fields
+	"context.ip":          true,
+	"context.ip_address":  true,
+	"context.user_agent":  true,
+	"context.time":        true,
+	"context.environment": true,
+	"context.device_id":   true,
+	"context.session_id":  true,
+	"context.request_id":  true,
+	"context.location":    true,
+	"context.attributes":  true,
+
+	// Action field
+	"action":              true,
 }
 
-// PolicyEffect defines the allow/deny effect of a policy
-type PolicyEffect string
-
-const (
-	EffectAllow PolicyEffect = "allow"
-	EffectDeny  PolicyEffect = "deny"
-)
-
-// ConditionGroup represents a group of conditions with logical operators
-type ConditionGroup struct {
-	Operator LogicalOperator `json:"operator"` // and, or, not
-	Conditions []Condition    `json:"conditions,omitempty"`
-	Groups     []ConditionGroup `json:"groups,omitempty"` // Nested groups
-}
-
-// LogicalOperator defines how conditions/groups are combined
-type LogicalOperator string
-
-const (
-	OpAnd LogicalOperator = "and"
-	OpOr  LogicalOperator = "or"
-	OpNot LogicalOperator = "not"
-)
-
-// Condition represents a single condition to evaluate
-type Condition struct {
-	Field    string      `json:"field"`     // user.role, resource.type, context.ip, etc.
-	Operator string      `json:"operator"`  // equals, contains, in, regex, etc.
-	Value    interface{} `json:"value"`     // The value to compare against
+// allowedAttributePrefixes defines allowed prefixes for dynamic attribute access
+// These are safe because they only access pre-defined map keys, not arbitrary paths
+var allowedAttributePrefixes = []string{
+	"subject.attributes.",
+	"user.attributes.",
 --- internal/governance/zt_policy_store_test.go ---
 // Package governance provides tests for Zero Trust policy storage
 package governance
@@ -630,21 +631,20 @@ import (
 	"go.uber.org/zap"
 )
 
-// validSessionIDPattern validates session tokens to prevent Redis key injection
-// Only allows hexadecimal characters (0-9, a-f) and hyphens for UUIDs
-var validSessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_\.]{8,128}$`)
-
-// maxSessionLength prevents excessively long session strings
-const maxSessionLength = 128
+// validUUIDPattern validates UUID format only (RFC 4122)
+// Pattern matches: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx where x is hexadecimal digit
+// This prevents Redis key injection by strictly limiting to UUID format
+var validUUIDPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 // isValidSessionID validates session token format to prevent Redis key injection attacks
+// RESTRICTED TO UUID FORMAT ONLY for JWT session IDs to prevent injection attacks
 func isValidSessionID(sessionID string) bool {
-	if len(sessionID) == 0 || len(sessionID) > maxSessionLength {
+	// Strict UUID format validation (36 characters with hyphens in specific positions)
+	// This prevents path traversal and injection attacks while allowing legitimate UUIDs
+	if len(sessionID) != 36 {
 		return false
 	}
-	// Check for valid characters only (alphanumeric, hyphen, underscore, dot)
-	// This prevents Redis injection via special characters like newlines, spaces, etc.
-	return validSessionIDPattern.MatchString(sessionID)
+	return validUUIDPattern.MatchString(sessionID)
 }
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.

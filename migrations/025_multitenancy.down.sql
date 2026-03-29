@@ -1,0 +1,31 @@
+-- Rollback 025: Multi-Tenancy Support with Organizations
+
+DELETE FROM organization_members WHERE organization_id = '00000000-0000-0000-0000-000000000010';
+UPDATE users SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE groups SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE roles SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE applications SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+DELETE FROM organizations WHERE id = '00000000-0000-0000-0000-000000000010';
+DROP INDEX IF EXISTS idx_applications_org_id;
+DROP INDEX IF EXISTS idx_roles_org_id;
+DROP INDEX IF EXISTS idx_groups_org_id;
+DROP INDEX IF EXISTS idx_users_org_id;
+ALTER TABLE security_alerts DROP COLUMN IF EXISTS org_id;
+ALTER TABLE access_requests DROP COLUMN IF EXISTS org_id;
+ALTER TABLE webhook_subscriptions DROP COLUMN IF EXISTS org_id;
+ALTER TABLE service_accounts DROP COLUMN IF EXISTS org_id;
+ALTER TABLE access_reviews DROP COLUMN IF EXISTS org_id;
+ALTER TABLE policies DROP COLUMN IF EXISTS org_id;
+ALTER TABLE sessions DROP COLUMN IF EXISTS org_id;
+ALTER TABLE audit_events DROP COLUMN IF EXISTS org_id;
+ALTER TABLE oauth_clients DROP COLUMN IF EXISTS org_id;
+ALTER TABLE applications DROP COLUMN IF EXISTS org_id;
+ALTER TABLE roles DROP COLUMN IF EXISTS org_id;
+ALTER TABLE groups DROP COLUMN IF EXISTS org_id;
+ALTER TABLE users DROP COLUMN IF EXISTS org_id;
+DROP INDEX IF EXISTS idx_org_members_user;
+DROP INDEX IF EXISTS idx_org_members_org;
+DROP INDEX IF EXISTS idx_organizations_domain;
+DROP INDEX IF EXISTS idx_organizations_slug;
+DROP TABLE IF EXISTS organization_members;
+DROP TABLE IF EXISTS organizations;

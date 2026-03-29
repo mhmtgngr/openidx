@@ -1,0 +1,578 @@
+# OpenIDX microservices deployments
+---
+# Identity Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: identity-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8001
+      targetPort: 8001
+      name: http
+  selector:
+    app.kubernetes.io/name: identity-service
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: identity-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity-service
+    spec:
+      containers:
+        - name: identity-service
+          image: openidx-dev/identity-service:dev
+          ports:
+            - containerPort: 8001
+              name: http
+          env:
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: APP_ENV
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: LOG_LEVEL
+            - name: DATABASE_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: DATABASE_HOST
+            - name: DATABASE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: DATABASE_PORT
+            - name: DATABASE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: DATABASE_NAME
+            - name: DATABASE_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: DATABASE_USER
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: REDIS_PORT
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: REDIS_PASSWORD
+            - name: OPA_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: OPA_URL
+            - name: OAUTH_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: OAUTH_ISSUER
+            - name: OAUTH_JWKS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: openidx-config
+                  key: OAUTH_JWKS_URL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# Governance Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: governance-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8002
+      targetPort: 8002
+      name: http
+  selector:
+    app.kubernetes.io/name: governance-service
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: governance-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: governance-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: governance-service
+    spec:
+      containers:
+        - name: governance-service
+          image: openidx-dev/governance-service:dev
+          ports:
+            - containerPort: 8002
+              name: http
+          envFrom:
+            - configMapRef:
+                name: openidx-config
+            - secretRef:
+                name: openidx-secrets
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: REDIS_PASSWORD
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# Provisioning Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: provisioning-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: provisioning-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8003
+      targetPort: 8003
+      name: http
+  selector:
+    app.kubernetes.io/name: provisioning-service
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provisioning-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: provisioning-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: provisioning-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: provisioning-service
+    spec:
+      containers:
+        - name: provisioning-service
+          image: openidx-dev/provisioning-service:dev
+          ports:
+            - containerPort: 8003
+              name: http
+          envFrom:
+            - configMapRef:
+                name: openidx-config
+            - secretRef:
+                name: openidx-secrets
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: REDIS_PASSWORD
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# Audit Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: audit-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8004
+      targetPort: 8004
+      name: http
+  selector:
+    app.kubernetes.io/name: audit-service
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: audit-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: audit-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: audit-service
+    spec:
+      containers:
+        - name: audit-service
+          image: openidx-dev/audit-service:dev
+          ports:
+            - containerPort: 8004
+              name: http
+          envFrom:
+            - configMapRef:
+                name: openidx-config
+            - secretRef:
+                name: openidx-secrets
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: REDIS_PASSWORD
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# Admin API
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-api
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: admin-api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8005
+      targetPort: 8005
+      name: http
+  selector:
+    app.kubernetes.io/name: admin-api
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-api
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: admin-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admin-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: admin-api
+    spec:
+      containers:
+        - name: admin-api
+          image: openidx-dev/admin-api:dev
+          ports:
+            - containerPort: 8005
+              name: http
+          envFrom:
+            - configMapRef:
+                name: openidx-config
+            - secretRef:
+                name: openidx-secrets
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: REDIS_PASSWORD
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# OAuth Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: oauth-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8006
+      targetPort: 8006
+      name: http
+  selector:
+    app.kubernetes.io/name: oauth-service
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth-service
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: oauth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oauth-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oauth-service
+    spec:
+      containers:
+        - name: oauth-service
+          image: openidx-dev/oauth-service:dev
+          ports:
+            - containerPort: 8006
+              name: http
+          envFrom:
+            - configMapRef:
+                name: openidx-config
+            - secretRef:
+                name: openidx-secrets
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: REDIS_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openidx-secrets
+                  key: JWT_SECRET
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+# Admin Console (Frontend)
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-console
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: admin-console
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  selector:
+    app.kubernetes.io/name: admin-console
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-console
+  namespace: openidx-dev
+  labels:
+    app.kubernetes.io/name: admin-console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admin-console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: admin-console
+    spec:
+      containers:
+        - name: admin-console
+          image: openidx-dev/admin-console:dev
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: VITE_API_URL
+              value: http://localhost:8088
+            - name: VITE_OAUTH_URL
+              value: http://localhost:8006
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

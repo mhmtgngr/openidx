@@ -23,7 +23,7 @@ func TestNewEventStreamer(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
 
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	assert.NotNil(t, streamer)
 	assert.NotNil(t, streamer.clients)
@@ -37,7 +37,7 @@ func TestNewEventStreamer(t *testing.T) {
 func TestEventStreamer_Broadcast(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Create a mock client
 	mockClient := &StreamClient{
@@ -213,7 +213,7 @@ func TestStreamClient_MatchesFilters(t *testing.T) {
 func TestEventStreamer_GetConnectedClients(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Initially no clients
 	assert.Equal(t, 0, streamer.GetConnectedClients())
@@ -243,7 +243,7 @@ func TestEventStreamer_GetConnectedClients(t *testing.T) {
 func TestWebhookConfig_DefaultValues(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	config := streamer.webhookConfig
 
@@ -335,7 +335,7 @@ func TestSplitAndTrim(t *testing.T) {
 func TestHandleWebSocketStream(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Create test router
 	router := gin.New()
@@ -374,7 +374,7 @@ func TestHandleWebSocketStream(t *testing.T) {
 func TestEventStreamer_RemoveClient(t *testing.T) {
 	logger := zap.NewNop()
 	service := createTestService(t)
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Add a mock client
 	client := &StreamClient{
@@ -473,7 +473,7 @@ func TestStreamFilters_JSONUnmarshal(t *testing.T) {
 func BenchmarkEventStreamer_Broadcast(b *testing.B) {
 	logger := zap.NewNop()
 	service := createTestService(&testing.T{})
-	streamer := NewEventStreamer(logger, service)
+	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	// Add mock clients
 	for i := 0; i < 100; i++ {

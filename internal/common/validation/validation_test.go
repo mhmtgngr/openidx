@@ -464,3 +464,135 @@ func BenchmarkValidatePassword(b *testing.B) {
 		ValidatePassword("password", password)
 	}
 }
+
+// SQL Column Name Validation Tests
+
+func TestValidateSQLColumnName(t *testing.T) {
+	tests := []struct {
+		name        string
+		columnName  string
+		expectError bool
+	}{
+		{"Valid - id", "id", false},
+		{"Valid - username", "username", false},
+		{"Valid - email", "email", false},
+		{"Valid - created_at", "created_at", false},
+		{"Valid - display_name", "display_name", false},
+		{"Valid - password_hash", "password_hash", false},
+		{"Valid - organization_id", "organization_id", false},
+		{"Empty string", "", true},
+		{"Invalid - malicious column", "id; DROP TABLE users--", true},
+		{"Invalid - SQL injection attempt", "id OR 1=1", true},
+		{"Invalid - unknown column", "not_a_real_column", true},
+		{"Invalid - with quotes", `"id"`, true},
+		{"Invalid - with semicolon", "id;SELECT", true},
+		{"Invalid - with comment", "id--", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSQLColumnName(tt.columnName)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestIsSafeSQLColumnName(t *testing.T) {
+	tests := []struct {
+		name     string
+		column   string
+		expected bool
+	}{
+		{"Valid column", "username", true},
+		{"Valid id", "id", true},
+		{"Invalid column", "malicious", false},
+		{"Empty string", "", false},
+		{"SQL injection", "id OR 1=1", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsSafeSQLColumnName(tt.column)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestValidateSortBy(t *testing.T) {
+	tests := []struct {
+		name        string
+		sortBy      string
+		expectError bool
+	}{
+		{"Valid - simple column", "username", false},
+		{"Valid - created_at", "created_at", false},
+		{"Valid - JSON operator", "emails->0->>'value'", false},
+		{"Valid - JSON path", "attributes->>'department'", false},
+		{"Invalid - unknown column", "not_a_column", true},
+		{"Invalid - SQL injection", "id; DROP TABLE", true},
+		{"Invalid - empty", "", true},
+		{"Invalid - with OR", "id OR 1=1", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSortBy(tt.sortBy)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSafeSQLColumnNames(t *testing.T) {
+	// Verify that critical columns are in the allowlist
+	criticalColumns := []string{
+		"id", "username", "email", "created_at", "updated_at",
+		"display_name", "enabled", "active", "status",
+		"user_id", "organization_id", "provider_id",
+		"event_type", "action", "resource_type", "timestamp",
+	}
+
+	for _, col := range criticalColumns {
+		t.Run("Column in allowlist: "+col, func(t *testing.T) {
+			if !SafeSQLColumnNames[col] {
+				t.Errorf("Critical column %s not in SafeSQLColumnNames allowlist", col)
+			}
+		})
+	}
+
+	// Verify that obviously malicious inputs are NOT in the allowlist
+	maliciousInputs := []string{
+		"id; DROP TABLE users", "id' OR '1'='1", "id--",
+		"id UNION SELECT", "(SELECT password FROM users)",
+	}
+
+	for _, malicious := range maliciousInputs {
+		t.Run("Malicious rejected: "+malicious, func(t *testing.T) {
+			if SafeSQLColumnNames[malicious] {
+				t.Errorf("Malicious input %s should NOT be in SafeSQLColumnNames allowlist", malicious)
+			}
+		})
+	}
+}
+
+// Benchmark for SQL column validation
+func BenchmarkValidateSQLColumnName(b *testing.B) {
+	column := "username"
+	for i := 0; i < b.N; i++ {
+		ValidateSQLColumnName(column)
+	}
+}
+
+func BenchmarkIsSafeSQLColumnName(b *testing.B) {
+	column := "username"
+	for i := 0; i < b.N; i++ {
+		IsSafeSQLColumnName(column)
+	}
+}

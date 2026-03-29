@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -195,10 +196,11 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		}
 	}
 
-	// Regenerate BrowZer bootstrapper targets and router config
+	// Regenerate BrowZer bootstrapper targets and router config with timeout
 	if s.browzerTargetManager != nil {
 		go func() {
-			bgCtx := context.Background()
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			s.browzerTargetManager.WriteBrowZerTargets(bgCtx)
 			s.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
 		}()
@@ -252,10 +254,11 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
 	}
 
-	// Regenerate BrowZer bootstrapper targets and router config
+	// Regenerate BrowZer bootstrapper targets and router config with timeout
 	if s.browzerTargetManager != nil {
 		go func() {
-			bgCtx := context.Background()
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			s.browzerTargetManager.WriteBrowZerTargets(bgCtx)
 			s.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
 		}()

@@ -1,36 +1,65 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# Optimized multi-stage Dockerfile for Gateway Service
+# Key optimizations:
+# 1. Multi-stage build to reduce final image size
+# 2. Combined RUN commands to reduce layers
+# 3. --no-cache for apk and cleanup in single layer
+# 4. -trimpath and -ldflags for smaller binary
+# 5. Alpine 3.20 for smaller base image
 
-RUN apk add --no-cache git ca-certificates
+# ============================================
+# Stage 1: Build
+# ============================================
+FROM golang:1.25-alpine AS builder
+
+# Install build dependencies and setup in a single layer
+RUN apk add --no-cache git ca-certificates gcc musl-dev && \
+    echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
 
 WORKDIR /app
 
+# Copy dependency files first for better layer caching
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download && go mod verify
 
+# Copy source code
 COPY . .
 
+# Build arguments
 ARG VERSION=dev
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# Build with optimization flags
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -a \
     -ldflags="-w -s -X main.Version=${VERSION}" \
-    -o /app/service ./cmd/gateway-service
+    -trimpath \
+    -o /app/gateway-service \
+    ./cmd/gateway-service && \
+    ls -lh /app/gateway-service && \
+    strip /app/gateway-service 2>/dev/null || true
 
-# Runtime stage
-FROM alpine:3.19
+# ============================================
+# Stage 2: Runtime
+# ============================================
+FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata
-RUN addgroup -S openidx && adduser -S openidx -G openidx
+# Install runtime dependencies and clean up in same layer
+RUN apk add --no-cache ca-certificates tzdata wget && \
+    rm -rf /var/cache/apk/*
+
+# Create non-root user in same layer
+RUN addgroup -S openidx && \
+    adduser -S openidx -G openidx
 
 WORKDIR /app
 
-COPY --from=builder /app/service .
+COPY --from=builder /app/gateway-service /app/service
 
 USER openidx
 
-EXPOSE 8006
+EXPOSE 8008
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost:8006/health || exit 1
+    CMD wget -q --spider http://localhost:8008/health || exit 1
 
-ENTRYPOINT ["./service"]
+ENTRYPOINT ["/app/service"]

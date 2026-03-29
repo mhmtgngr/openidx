@@ -88,7 +88,8 @@ func (s *Service) GenerateReportExport(ctx context.Context, orgID, reportType, f
 
 // generateReportAsync runs report generation in the background
 func (s *Service) generateReportAsync(export *ReportExport) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	s.logger.Info("Starting async report generation",
 		zap.String("export_id", export.ID),
 		zap.String("report_type", export.ReportType))

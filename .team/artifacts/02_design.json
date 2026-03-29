@@ -1,1 +1,399 @@
-{"architecture_decisions":[{"decision":"Use miniredis for Redis mocking in unit tests","rationale":"miniredis is a pure Go implementation that provides a realistic Redis mock for testing without external dependencies. It's faster than testcontainers and suitable for unit tests that don't need Redis persistence or clustering features."},{"decision":"Table-driven tests for phone normalization","rationale":"Go's standard testing pattern with table-driven tests provides comprehensive coverage of Turkish phone number formats, making it easy to add new test cases and understand the expected behavior at a glance."},{"decision":"Create test helper package for OIDC tests","rationale":"Centralizing test setup/teardown logic reduces code duplication and makes tests more maintainable. The helper will manage miniredis lifecycle and provide common test fixtures."}],"backend_tasks":[{"order":1,"file":"internal/oauth/oidc_test.go","action":"modify","purpose":"Update TODO at line 312 to use new test helper with mock Redis","key_functions":["TestOIDCAuthorizationCodeFlow","TestOIDCTokenExchange","TestOIDCUserInfo"]},{"order":2,"file":"internal/sms/providers_tr_test.go","action":"create","purpose":"Comprehensive unit tests for Turkish phone number normalization","key_functions":["TestNormalizePhoneTR","TestNormalizePhoneTREdgeCases","TestNormalizePhoneTRInternationalFormats"]},{"order":3,"file":"internal/common/testutil/redis_mock.go","action":"create","purpose":"Test helper for miniredis setup/teardown in OIDC tests","key_functions":["SetupMockRedis","ShutdownMockRedis","GetMockRedisClient","ClearMockRedisData"]},{"order":4,"file":"internal/oauth/oidc.go","action":"modify","purpose":"Add comments for testability and export constants used in tests","key_functions":["NormalizePhoneTR","StoreAuthCode","ValidateAuthCode"]},{"order":5,"file":"internal/sms/providers_tr.go","action":"read","purpose":"Understand existing normalizePhoneTR implementation before writing tests","key_functions":["normalizePhoneTR","SendSMS","ValidatePhoneFormat"]},{"order":6,"file":"internal/oauth/test_helper.go","action":"create","purpose":"OIDC-specific test helpers building on redis_mock.go","key_functions":["NewTestOIDCContext","CreateTestUser","CreateTestClient","SetupTestScopes"]},{"order":7,"file":"internal/admin/ai_agents.go","action":"create","purpose":"AI Agent identity management system (market-driven FR-M004)","key_functions":["CreateAIIdentity","ListAIIdentities","UpdateAIIdentity","RevokeAIIdentity","RotateAICredentials","GetAISessionTokens"]},{"order":8,"file":"internal/admin/genai_attack_detection.go","action":"create","purpose":"GenAI attack detection for prompt injection, data exfiltration (market-driven FR-M005)","key_functions":["DetectPromptInjection","DetectDataExfiltration","AnalyzeAIRequestPattern","GetAttackMetrics","CreateSecurityRule"]},{"order":9,"file":"internal/admin/ai_policy_recommendations.go","action":"create","purpose":"AI-powered IGA policy recommendations (market-driven FR-M006)","key_functions":["AnalyzeAccessPatterns","GeneratePolicyRecommendation","GetPolicySuggestion","ApplyRecommendedPolicy","GetComplianceGaps"]},{"order":10,"file":"internal/admin/passwordless_auth.go","action":"create","purpose":"Passwordless authentication engine (market-driven FR-M007)","key_functions":["InitiatePasswordlessAuth","VerifyPasswordlessChallenge","RegisterPasskey","ListPasskeys","DeletePasskey","GetPasswordlessMethods"]},{"order":11,"file":"internal/admin/continuous_auth.go","action":"create","purpose":"Continuous authentication engine with risk scoring (market-driven FR-M008)","key_functions":["CalculateSessionRisk","GetAuthContext","UpdateAuthScore","RequireReauthentication","GetRiskFactors"]},{"order":12,"file":"internal/admin/ibdr.go","action":"create","purpose":"Identity Breach Detection & Response system (market-driven FR-M009)","key_functions":["DetectBreachAttempt","QuarantineIdentity,"TriggerIncidentResponse","GetBreachAlerts","AnalyzeBreachPattern","RestoreIdentity"]}],"frontend_tasks":[{"order":1,"file":"web/admin-console/src/pages/ai-agents/AgentList.tsx","action":"create","purpose":"AI Agent identity management UI (FR-M004)"},{"order":2,"file":"web/admin-console/src/pages/ai-agents/AgentDetail.tsx","action":"create","purpose":"Individual AI agent detail and management page"},{"order":3,"file":"web/admin-console/src/pages/security/GenAIAttackDetection.tsx","action":"create","purpose":"GenAI attack detection dashboard (FR-M005)"},{"order":4,"file":"web/admin-console/src/pages/governance/AIPolicyRecommendations.tsx","action":"create","purpose":"AI policy recommendations interface (FR-M006)"},{"order":5,"file":"web/admin-console/src/pages/auth/PasswordlessSetup.tsx","action":"create","purpose":"Passwordless authentication configuration UI (FR-M007)"},{"order":6,"file":"web/admin-console/src/pages/auth/ContinuousAuthMonitor.tsx","action":"create","purpose":"Continuous authentication risk monitoring dashboard (FR-M008)"},{"order":7,"file":"web/admin-console/src/pages/security/IdentityBreachResponse.tsx","action":"create","purpose":"Identity Breach Detection & Response UI (FR-M009)"}],"database_migrations":[{"file":"migrations/20250225_create_ai_identities_table.up.sql","sql":"CREATE TABLE ai_identities (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  name VARCHAR(255) NOT NULL,\n  agent_type VARCHAR(50) NOT NULL CHECK (agent_type IN ('autonomous', 'semi-autonomous', 'human-supervised')),\n  service_account_id UUID REFERENCES service_accounts(id) ON DELETE CASCADE,\n  api_key_hash VARCHAR(255),\n  jwk_id UUID,\n  permissions JSONB NOT NULL DEFAULT '{}',\n  rate_limit_per_minute INTEGER DEFAULT 60,\n  allowed_operations TEXT[] NOT NULL DEFAULT ARRAY['read', 'write'],\n  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'revoked')),\n  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  last_used_at TIMESTAMP WITH TIME ZONE,\n  created_by UUID REFERENCES users(id),\n  metadata JSONB DEFAULT '{}'\n); CREATE INDEX idx_ai_identities_service_account ON ai_identities(service_account_id); CREATE INDEX idx_ai_identities_status ON ai_identities(status); CREATE INDEX idx_ai_identities_type ON ai_identities(agent_type);"},{"file":"migrations/20250225_create_ai_security_events_table.up.sql","sql":"CREATE TABLE ai_security_events (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  ai_identity_id UUID REFERENCES ai_identities(id) ON DELETE SET NULL,\n  event_type VARCHAR(50) NOT NULL CHECK (event_type IN ('prompt_injection', 'data_exfiltration', 'unauthorized_access', 'rate_limit_exceeded', 'anomalous_behavior')),\n  severity VARCHAR(20) NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'critical')),\n  request_data JSONB,\n  detection_method VARCHAR(50) NOT NULL,\n  blocked BOOLEAN NOT NULL DEFAULT false,\n  detected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  reviewed_by UUID REFERENCES users(id),\n  reviewed_at TIMESTAMP WITH TIME ZONE,\n  resolution VARCHAR(100),\n  false_positive BOOLEAN DEFAULT false\n); CREATE INDEX idx_ai_security_events_ai_identity ON ai_security_events(ai_identity_id); CREATE INDEX idx_ai_security_events_type_severity ON ai_security_events(event_type, severity); CREATE INDEX idx_ai_security_events_detected_at ON ai_security_events(detected_at);"},{"file":"migrations/20250225_create_passwordless_credentials_table.up.sql","sql":"CREATE TABLE passwordless_credentials (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  credential_type VARCHAR(20) NOT NULL CHECK (credential_type IN ('passkey', 'webauthn', 'magic_link', 'biometric')),\n  credential_id VARCHAR(255) UNIQUE NOT NULL,\n  public_key TEXT NOT NULL,\n  counter BIGINT DEFAULT 0,\n  transports TEXT[],\n  aaguid UUID,\n  attestation_type VARCHAR(50),\n  trustworthy BOOLEAN DEFAULT true,\n  backup_eligible BOOLEAN DEFAULT false,\n  backup_status BOOLEAN DEFAULT false,\n  user_verified BOOLEAN DEFAULT false,\n  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  last_used_at TIMESTAMP WITH TIME ZONE,\n  expires_at TIMESTAMP WITH TIME ZONE,\n  device_info JSONB\n); CREATE INDEX idx_passwordless_credentials_user ON passwordless_credentials(user_id); CREATE INDEX idx_passwordless_credentials_type ON passwordless_credentials(credential_type);"},{"file":"migrations/20250225_create_continuous_auth_sessions_table.up.sql","sql":"CREATE TABLE continuous_auth_sessions (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id UUID NOT NULL REFERENCES users(id),\n  session_token UUID NOT NULL,\n  risk_score DECIMAL(5,2) NOT NULL DEFAULT 0.00 CHECK (risk_score BETWEEN 0 AND 100),\n  risk_factors JSONB DEFAULT '[]',\n  auth_context JSONB NOT NULL DEFAULT '{}',\n  ip_address INET,\n  user_agent TEXT,\n  location GEOGRAPHY(POINT, 4326),\n  device_fingerprint VARCHAR(255),\n  behaviors JSONB DEFAULT '{}',\n  last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  reauth_required BOOLEAN DEFAULT false,\n  reauth_threshold DECIMAL(5,2) DEFAULT 75.00,\n  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  expires_at TIMESTAMP WITH TIME ZONE NOT NULL\n); CREATE INDEX idx_continuous_auth_sessions_user ON continuous_auth_sessions(user_id); CREATE INDEX idx_continuous_auth_sessions_token ON continuous_auth_sessions(session_token); CREATE INDEX idx_continuous_auth_sessions_risk ON continuous_auth_sessions(risk_score);"},{"file":"migrations/20250225_create_identity_breach_alerts_table.up.sql","sql":"CREATE TABLE identity_breach_alerts (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  affected_user_id UUID REFERENCES users(id),\n  breach_type VARCHAR(50) NOT NULL CHECK (breach_type IN ('credential_stuffing', 'impossible_travel', 'anomalous_volume', 'suspicious_location', 'privilege_escalation', 'data_exfiltration')),\n  severity VARCHAR(20) NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'critical')),\n  status VARCHAR(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'investigating', 'resolved', 'false_positive')),\n  detection_evidence JSONB NOT NULL,\n  quarantine_actions JSONB DEFAULT '[]',\n  remediation_steps JSONB DEFAULT '[]',\n  detected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n  resolved_at TIMESTAMP WITH TIME ZONE,\n  resolved_by UUID REFERENCES users(id),\n  incident_id UUID,\n  related_alerts UUID[] DEFAULT ARRAY[]::UUID[],\n  notifications_sent TEXT[] DEFAULT ARRAY[]::TEXT[]\n); CREATE INDEX idx_breach_alerts_user ON identity_breach_alerts(affected_user_id); CREATE INDEX idx_breach_alerts_status ON identity_breach_alerts(status); CREATE INDEX idx_breach_alerts_severity ON identity_breach_alerts(severity); CREATE INDEX idx_breach_alerts_detected_at ON identity_breach_alerts(detected_at);"}],"api_contracts":[{"method":"POST","path":"/api/v1/admin/ai-identities","request":{"agent_type":"semi-autonomous","name":"CustomerServiceBot","permissions":["read:customers","write:tickets"],"rate_limit_per_minute":120},"response":{"id":"uuid","name":"CustomerServiceBot","agent_type":"semi-autonomous","api_key":"sk-...","status":"active","created_at":"2025-02-25T10:00:00Z"},"status_codes":[201,400,401,403]},{"method":"GET","path":"/api/v1/admin/ai-identities","response":{"identities":[{"id":"uuid","name":"Bot","agent_type":"autonomous","status":"active","last_used_at":"2025-02-25T10:00:00Z"}],"total":10,"page":1,"per_page":20},"status_codes":[200,401,403]},{"method":"GET","path":"/api/v1/admin/ai-identities/:id","response":{"id":"uuid","name":"Bot","agent_type":"semi-autonomous","permissions":{},"rate_limit_per_minute":60,"status":"active","created_at":"2025-02-25T10:00:00Z","last_used_at":"2025-02-25T11:30:00Z","session_tokens":[]},"status_codes":[200,404,401,403]},{"method":"PUT","path":"/api/v1/admin/ai-identities/:id","request":{"name":"Updated Name","permissions":["new:permission"],"rate_limit_per_minute":100},"response":{"id":"uuid","name":"Updated Name","permissions":["new:permission"],"rate_limit_per_minute":100,"updated_at":"2025-02-25T12:00:00Z"},"status_codes":[200,400,404,401,403]},{"method":"POST","path":"/api/v1/admin/ai-identities/:id/revoke","request":{"reason":"Security incident","revoked_by":"admin@company.com"},"response":{"revoked_at":"2025-02-25T12:00:00Z","status":"revoked"},"status_codes":[200,404,401,403]},{"method":"POST","path":"/api/v1/admin/ai-identities/:id/rotate-credentials","response":{"api_key":"sk-new-...","rotated_at":"2025-02-25T12:00:00Z","previous_key_expires":"2025-02-26T12:00:00Z"},"status_codes":[200,404,401,403]},{"method":"POST","path":"/api/v1/admin/ai-identities/:id/sessions","request":{"ttl_seconds":3600},"response":{"session_token":"uuid","expires_at":"2025-02-25T13:00:00Z"},"status_codes":[200,400,404,401,403]},{"method":"GET","path":"/api/v1/admin/genai-security/events","response":{"events":[{"id":"uuid","ai_identity":"BotName","event_type":"prompt_injection","severity":"high","blocked":true,"detected_at":"2025-02-25T10:00:00Z"}],"total":50,"page":1,"per_page":20},"status_codes":[200,401,403]},{"method":"POST","path":"/api/v1/admin/genai-security/rules","request":{"rule_name":"Block SQL Injection patterns","pattern":"(?i)(union select|drop table)","action":"block","severity":"high"},"response":{"id":"uuid","rule_name":"Block SQL Injection patterns","enabled":true,"created_at":"2025-02-25T10:00:00Z"},"status_codes":[201,400,401,403]},{"method":"GET","path":"/api/v1/admin/genai-security/metrics","response":{"total_events":1500,"blocked":120,"prompt_injection":45,"data_exfiltration":12,"avg_risk_score":23.5,"trend":"decreasing"},"status_codes":[200,401,403]},{"method":"GET","path":"/api/v1/admin/policy-recommendations","response":{"recommendations":[{"id":"uuid","type":"access_review","priority":"high","description":"Review access for dormant accounts","potential_risk_reduction":0.45,"implementation_effort":"low"}]},"status_codes":[200,401,403]},{"method":"POST","path":"/api/v1/admin/policy-recommendations/:id/apply","request":{"modifications":{"review_period_days":90,"auto_revoke":true}},"response":{"policy_id":"uuid","status":"applied","applied_at":"2025-02-25T10:00:00Z"},"status_codes":[200,400,404,401,403]},{"method":"GET","path":"/api/v1/admin/compliance/gaps","response":{"gaps":[{"control_id":"AC-2","title":"Account Management","status":"non_compliant","affected_resources":25,"remediation_steps":["Enable periodic access reviews"]}]},"status_codes":[200,401,403]},{"method":"POST","path":"/api/v1/auth/passwordless/initiate","request":{"user_id":"uuid","method":"passkey","challenge_options":{"userVerification":"preferred"}},"response":{"challenge_id":"uuid","challenge":"base64-encoded-challenge","timeout":60000,"allowed_credentials":["credential_id"]},"status_codes":[200,400,404]},{"method":"POST","path":"/api/v1/auth/passwordless/verify","request":{"challenge_id":"uuid","response":{"clientDataJSON":"...","authenticatorData":"...","signature":"..."}},"response":{"verified":true,"session_token":"jwt","user":{"id":"uuid","email":"user@example.com"}},"status_codes":[200,400,401]},{"method":"GET","path":"/api/v1/users/:id/passkeys","response":[{"id":"uuid","name":"My YubiKey","created_at":"2025-02-25T10:00:00Z","last_used":"2025-02-25T11:30:00Z"}],"status_codes":[200,401,403]},{"method":"DELETE","path":"/api/v1/users/:id/passkeys/:passkey_id","response":{"deleted":true},"status_codes":[200,404,401,403]},{"method":"GET","path":"/api/v1/auth/continuous/session","response":{"session_id":"uuid","risk_score":12.5,"reauth_required":false,"expires_at":"2025-02-25T14:00:00Z","risk_factors":[]},"status_codes":[200,401]},{"method":"POST","path":"/api/v1/auth/continuous/ping","request":{"context":{"mouse_movement":true,"keystroke_biometrics":"...","device_fingerprint":"..."}},"response":{"risk_score":15.2,"delta":2.7,"reauth_required":false},"status_codes":[200,400,401]},{"method":"GET","path":"/api/v1/admin/breach-alerts","response":{"alerts":[{"id":"uuid","affected_user_id":"uuid","breach_type":"impossible_travel","severity":"high","status":"open","detected_at":"2025-02-25T10:00:00Z"}],"total":5},"status_codes":[200,401,403]},{"method":"POST","path":"/api/v1/admin/breach-alerts/:id/quarantine","request":{"quarantine_duration_hours":24,"notify_user":true},"response":{"quarantined_until":"2025-02-26T10:00:00Z","notifications_sent":["email","sms"]},"status_codes":[200,400,404,401,403]},{"method":"PUT","path":"/api/v1/admin/breach-alerts/:id/resolve","request":{"resolution":"Legitimate access - user traveling","false_positive":true},"response":{"resolved_at":"2025-02-25T12:00:00Z","status":"resolved"},"status_codes":[200,400,404,401,403]}],"test_plan":{"unit_tests":[{"file":"internal/sms/providers_tr_test.go","cases":["90XXXXXXXXXX preserves format unchanged","0XXXXXXXXXX converts to 90XXXXXXXXXX","5XXXXXXXXX converts to 905XXXXXXXXX","+905XXXXXXXXX preserves +90 and adds 5 if missing","905XXXXXXXXX unchanged","Empty string returns error","Non-numeric input returns error","Invalid length returns error","International format without + prefix handles correctly","Multiple leading zeros handled","Whitespace trimmed and normalized"]},{"file":"internal/common/testutil/redis_mock_test.go","cases":["SetupMockRedis creates instance","GetMockRedisClient returns client","ClearMockRedisData clears all keys","ShutdownMockRedis closes connection","Concurrent operations handled"]},{"file":"internal/oauth/oidc_test.go","cases":["Authorization code flow with mock Redis","Token exchange with valid code","Token exchange rejects expired code","Token exchange rejects used code","UserInfo endpoint returns valid claims","Token generation includes required scopes","Refresh token generates new access token","Invalid client credentials rejected"]},{"file":"internal/admin/ai_agents_test.go","cases":["CreateAIIdentity with valid data succeeds","CreateAIIdentity with invalid agent_type fails","ListAIIdentities returns paginated results","UpdateAIIdentity modifies allowed fields","RevokeAIIdentity sets status to revoked","RotateAICredentials generates new API key","RevokeAIIdentity invalidates existing sessions","CreateAIIdentity enforces rate limit defaults"]},{"file":"internal/admin/genai_attack_detection_test.go","cases":["DetectPromptInjection identifies SQL injection patterns","DetectPromptInjection identifies XSS patterns","DetectDataExfiltration detects large data transfers","DetectDataExfiltration detects encoding-based exfiltration","AnalyzeAIRequestPattern detects anomalous behavior","CreateSecurityRule validates severity","CreateSecurityRule validates action type"]},{"file":"internal/admin/ai_policy_recommendations_test.go","cases":["AnalyzeAccessPatterns identifies unused permissions","GeneratePolicyRecommendation creates least-privilege policy","GetPolicySuggestion returns confidence score","ApplyRecommendedPolicy creates governance policy","GetComplianceGaps maps to SOC2 controls"]},{"file":"internal/admin/passwordless_auth_test.go","cases":["InitiatePasswordlessAuth generates challenge","VerifyPasswordlessChallenge validates signature","RegisterPasskey stores credential","ListPasskeys returns user credentials","DeletePasskey removes credential","VerifyPasswordlessChallenge rejects expired challenge"]},{"file":"internal/admin/continuous_auth_test.go","cases":["CalculateSessionScore returns risk 0-100","CalculateSessionScore weights impossible travel high","CalculateSessionScore weights new device medium","GetAuthContext returns all factors","UpdateAuthScore increments for risk events","ReauthRequired when threshold exceeded"]},{"file":"internal/admin/ibdr_test.go","cases":["DetectBreachAttempt identifies impossible travel","DetectBreachAttempt identifies anomalous volume","QuarantineIdentity revokes all sessions","TriggerIncidentResponse creates incident","GetBreachAlerts filters by severity","AnalyzeBreachPattern identifies trends"]}],"e2e_tests":[{"name":"OIDC Authorization Flow End-to-End","steps":["Start mock Redis using test helper","Register OIDC client","User initiates authorization request","Receive authorization code","Exchange code for tokens","Verify tokens with JWKS","Access userinfo endpoint","Clean up mock Redis"]},{"name":"Turkish Phone SMS Delivery End-to-End","steps":["Create test user with Turkish phone","Initiate SMS OTP","Verify phone normalized to 90XXXXXXXXXX","Send SMS via Turkish provider","Verify delivery status","Validate OTP code","Complete authentication"]},{"name":"AI Agent Lifecycle End-to-End","steps":["Create AI identity via API","Receive API credentials","Make authenticated request","Rotate credentials","Verify old credentials rejected","Revoke AI identity","Verify all access blocked"]},{"name":"Passwordless Authentication End-to-End","steps":["Register passkey for user","Initiate passwordless login","Complete WebAuthn challenge","Verify session created","Access protected resource","Logout and cleanup"]},{"name":"Identity Breach Response End-to-End","steps":["Simulate impossible travel login","Verify breach alert created","Quarantine identity","Verify sessions terminated","Resolve as false positive","Restore identity access"]},{"name":"Continuous Auth Risk Scoring End-to-End","steps":["User login with good credentials","Continuous pings with normal behavior","Simulate location jump","Verify risk score increases","Trigger reauthentication","Verify session blocked until verified"]}]},"security_notes":["AI identities must use unique service accounts with principle of least privilege","API keys for AI identities should be rotatable without downtime","GenAI attack detection patterns should be customizable via admin UI","Prompt injection detection should use both rule-based and ML approaches","Passwordless credentials must be stored with proper attestation validation","Continuous auth risk factors should be configurable per organization","Breach quarantine should notify security team immediately","All AI security events must be logged to audit service","Phone numbers must be validated and normalized before SMS delivery","Turkish phone normalization must preserve country code 90","Test credentials must never use production secrets"],"docker_changes":["Add miniredis to go.mod for testing","Update docker-compose.test.yml with test infrastructure","Add test-specific environment variables to .env.test","Create Dockerfile for test runner service"],"market_driven_features":["AI Agent Identity Management (FR-M004) - Direct competitor feature to Microsoft Entra ID's AI agent management","GenAI Attack Detection (FR-M005) - Addresses emerging threat landscape not covered by most competitors","Automated IGA with AI Policy Recommendations (FR-M006) - Competes with Okta Lifecycle Management automation","Full Passwordless Architecture (FR-M007) - Matches Microsoft Entra ID and Okta passwordless capabilities","Continuous Authentication Engine (FR-M008) - Advanced feature matching Microsoft Entra ID Identity Protection","Identity Breach Detection & Response (FR-M009) - Combines breach detection with automated response, surpassing Duo's limited IAM"]}
+{
+  "architecture_decisions": [
+    {
+      "decision": "Implement Origin validation middleware in audit service WebSocket upgrader",
+      "rationale": "Prevents Cross-Site WebSocket Hijacking (CSWSH) attacks by verifying the Origin header against a whitelist of approved origins"
+    },
+    {
+      "decision": "Centralize WebSocket configuration in internal/audit/config.go",
+      "rationale": "Provides single source of truth for WebSocket security settings, enables environment-specific configuration"
+    },
+    {
+      "decision": "Add configurable origin validator with development defaults",
+      "rationality": "Ensures development productivity while enforcing production security"
+    },
+    {
+      "decision": "Implement structured logging for connection attempts",
+      "rationale": "Provides audit trail for security monitoring and forensic analysis"
+    }
+  ],
+  "backend_tasks": [
+    {
+      "order": 1,
+      "file": "internal/common/config/config.go",
+      "action": "modify",
+      "purpose": "Add AuditAllowedOrigins configuration field with environment variable binding",
+      "key_functions": [
+        "GetAuditAllowedOrigins",
+        "ValidateProduction"
+      ]
+    },
+    {
+      "order": 2,
+      "file": "internal/audit/config.go",
+      "action": "create",
+      "purpose": "Audit-specific configuration wrapper with origin validation logic",
+      "key_functions": [
+        "ValidateOrigin",
+        "GetAllowedOrigins",
+        "IsProductionMode"
+      ]
+    },
+    {
+      "order": 3,
+      "file": "internal/audit/stream.go",
+      "action": "modify",
+      "purpose": "Add origin validation to WebSocket upgrader",
+      "key_functions": [
+        "NewEventStreamer",
+        "validateOrigin",
+        "handleWebSocketConnection"
+      ]
+    },
+    {
+      "order": 4,
+      "file": "internal/audit/websocket.go",
+      "action": "create",
+      "purpose": "WebSocket connection manager with origin tracking",
+      "key_functions": [
+        "NewConnectionManager",
+        "RegisterConnection",
+        "UnregisterConnection",
+        "BroadcastEvent",
+        "GetOriginStats"
+      ]
+    },
+    {
+      "order": 5,
+      "file": "internal/audit/middleware/origin_validator.go",
+      "action": "create",
+      "purpose": "Reusable middleware for HTTP endpoint origin validation",
+      "key_functions": [
+        "OriginValidator",
+        "ValidateOriginHeader",
+        "IsOriginAllowed"
+      ]
+    },
+    {
+      "order": 6,
+      "file": "internal/admin/middleware/websocket.go",
+      "action": "create",
+      "purpose": "Admin API WebSocket middleware with origin validation",
+      "key_functions": [
+        "WebSocketAdminMiddleware",
+        "ValidateAdminOrigin"
+      ]
+    },
+    {
+      "order": 7,
+      "file": "cmd/audit-service/main.go",
+      "action": "modify",
+      "purpose": "Wire up configuration and initialize EventStreamer with allowed origins",
+      "key_functions": [
+        "initConfig",
+        "startAuditStreamServer"
+      ]
+    },
+    {
+      "order": 8,
+      "file": "configs/audit-service.yaml",
+      "action": "modify",
+      "purpose": "Add audit.allowed_origins configuration with defaults",
+      "key_functions": []
+    },
+    {
+      "order": 9,
+      "file": "deployments/docker/docker-compose.yml",
+      "action": "modify",
+      "purpose": "Add OPENIDX_AUDIT_ALLOWED_ORIGINS environment variable",
+      "key_functions": []
+    },
+    {
+      "order": 10,
+      "file": "deployments/kubernetes/helm/audit-service/values.yaml",
+      "action": "modify",
+      "purpose": "Add allowedOrigins configuration parameter",
+      "key_functions": []
+    },
+    {
+      "order": 11,
+      "file": "deployments/terraform/modules/audit-service/variables.tf",
+      "action": "create",
+      "purpose": "Terraform variables for audit service configuration",
+      "key_functions": []
+    },
+    {
+      "order": 12,
+      "file": "deployments/terraform/modules/audit-service/main.tf",
+      "action": "create",
+      "purpose": "Terraform configuration for audit service deployment",
+      "key_functions": []
+    }
+  ],
+  "frontend_tasks": [
+    {
+      "order": 1,
+      "file": "web/admin-console/src/components/audit/AuditStream.tsx",
+      "action": "modify",
+      "purpose": "Add explicit origin handling and connection error display",
+      "key_functions": [
+        "useAuditStream",
+        "handleConnectionError",
+        "connectToAuditStream"
+      ]
+    },
+    {
+      "order": 2,
+      "file": "web/admin-console/src/lib/api.ts",
+      "action": "modify",
+      "purpose": "Add WebSocket connection helper with origin header",
+      "key_functions": [
+        "createAuditWebSocket",
+        "closeWebSocket",
+        "WebSocketEventListener"
+      ]
+    },
+    {
+      "order": 3,
+      "file": "web/admin-console/src/pages/audit/AuditDashboard.tsx",
+      "action": "modify",
+      "purpose": "Display connection status and origin validation feedback",
+      "key_functions": [
+        "AuditDashboardComponent",
+        "ConnectionStatusIndicator"
+      ]
+    },
+    {
+      "order": 4,
+      "file": "web/admin-console/src/stores/audit-stream.ts",
+      "action": "create",
+      "purpose": "Zustand store for WebSocket connection state management",
+      "key_functions": [
+        "useAuditStreamStore",
+        "setConnected",
+        "setError",
+        "setOrigin"
+      ]
+    }
+  ],
+  "database_migrations": [
+    {
+      "file": "migrations/202502280001_add_audit_stream_log.up.sql",
+      "sql": "CREATE TABLE IF NOT EXISTS audit_stream_connections (\n    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    origin TEXT NOT NULL,\n    client_ip INET NOT NULL,\n    user_id UUID REFERENCES users(id),\n    connected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n    disconnected_at TIMESTAMP WITH TIME ZONE,\n    events_received INTEGER DEFAULT 0,\n    status TEXT DEFAULT 'active',\n    INDEX idx_origin (origin),\n    INDEX idx_user_id (user_id),\n    INDEX idx_connected_at (connected_at)\n);"
+    },
+    {
+      "file": "migrations/202502280002_add_audit_config_table.up.sql",
+      "sql": "CREATE TABLE IF NOT EXISTS audit_service_config (\n    key TEXT PRIMARY KEY,\n    value JSONB NOT NULL,\n    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),\n    updated_by UUID REFERENCES users(id)\n);"
+    }
+  ],
+  "api_contracts": [
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/streams/config",
+      "request": {},
+      "response": {
+        "allowed_origins": [
+          "string"
+        ],
+        "production_mode": "boolean"
+      },
+      "status_codes": [
+        200,
+        401,
+        403
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/audit/streams/origins",
+      "request": {
+        "origins": [
+          "string"
+        ]
+      },
+      "response": {
+        "success": "boolean",
+        "message": "string"
+      },
+      "status_codes": [
+        200,
+        400,
+        401,
+        403
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/streams/connections",
+      "request": {},
+      "response": {
+        "connections": [
+          {
+            "id": "string",
+            "origin": "string",
+            "client_ip": "string",
+            "user_id": "string",
+            "connected_at": "string",
+            "status": "string"
+          }
+        ]
+      },
+      "status_codes": [
+        200,
+        401,
+        403
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/audit/streams/connections/:id",
+      "request": {},
+      "response": {
+        "success": "boolean"
+      },
+      "status_codes": [
+        200,
+        401,
+        403,
+        404
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/audit/stream/stats",
+      "request": {},
+      "response": {
+        "active_connections": 0,
+        "total_connections": 0,
+        "origins": {
+          "origin": 0
+        }
+      },
+      "status_codes": [
+        200,
+        401,
+        403
+      ]
+    }
+  ],
+  "test_plan": {
+    "unit_tests": [
+      {
+        "file": "internal/audit/stream_test.go",
+        "cases": [
+          "ValidateOrigin_AcceptsWhitelistedOrigin",
+          "ValidateOrigin_RejectsUnknownOrigin",
+          "ValidateOrigin_NormalizesPort",
+          "ValidateOrigin_HandlesIPv6",
+          "ValidateOrigin_RejectsEmptyHeader",
+          "NewEventStreamer_WithConfig",
+          "CheckOrigin_ClosureBehavior"
+        ]
+      },
+      {
+        "file": "internal/audit/config_test.go",
+        "cases": [
+          "GetAllowedOrigins_ReturnsDevelopmentDefaults",
+          "GetAllowedOrigins_ParsesEnvVariable",
+          "GetAllowedOrigins_TrimsWhitespace",
+          "ValidateProduction_RejectsEmptyOriginsInProduction",
+          "ValidateOrigin_MatchesExactString",
+          "ValidateOrigin_MatchesWildcard",
+          "ValidateOrigin_RejectsSubdomainWithoutWildcard"
+        ]
+      },
+      {
+        "file": "internal/audit/middleware/origin_validator_test.go",
+        "cases": [
+          "OriginValidator_AllowsValidOrigin",
+          "OriginValidator_RejectsInvalidOrigin",
+          "OriginValidator_LoggingCapturesAttempts",
+          "IsOriginAllowed_WildcardMatching",
+          "IsOriginAllowed_PortMatching"
+        ]
+      },
+      {
+        "file": "internal/admin/middleware/websocket_test.go",
+        "cases": [
+          "WebSocketAdminMiddleware_ValidatesOrigin",
+          "WebSocketAdminMiddleware_RejectsUnauthorizedOrigin",
+          "ValidateAdminOrigin_RequiresAdminRole"
+        ]
+      }
+    ],
+    "e2e_tests": [
+      {
+        "name": "WebSocket Connection with Valid Origin",
+        "steps": [
+          "Configure audit service with allowed origin",
+          "Connect WebSocket with valid Origin header",
+          "Verify connection accepted",
+          "Send audit event",
+          "Verify event received",
+          "Disconnect gracefully"
+        ]
+      },
+      {
+        "name": "WebSocket Connection Rejected with Invalid Origin",
+        "steps": [
+          "Configure audit service with specific origin",
+          "Attempt WebSocket connection with different Origin header",
+          "Verify connection rejected with 403",
+          "Verify rejection logged in audit_stream_connections"
+        ]
+      },
+      {
+        "name": "Production Environment Validation",
+        "steps": [
+          "Set APP_ENV=production",
+          "Set OPENIDX_AUDIT_ALLOWED_ORIGINS empty",
+          "Start audit service",
+          "Verify service rejects configuration or uses safe defaults",
+          "Verify warning logged"
+        ]
+      },
+      {
+        "name": "Wildcard Origin Matching",
+        "steps": [
+          "Configure allowed origins with wildcard *.example.com",
+          "Connect from app.example.com",
+          "Verify connection accepted",
+          "Connect from evil.com",
+          "Verify connection rejected"
+        ]
+      },
+      {
+        "name": "Origin Header Spoofing Prevention",
+        "steps": [
+          "Attempt connection without Origin header",
+          "Verify connection rejected",
+          "Attempt connection with null origin",
+          "Verify connection rejected",
+          "Attempt connection with malformed origin",
+          "Verify connection rejected"
+        ]
+      }
+    ]
+  },
+  "security_notes": [
+    "CSWSH (Cross-Site WebSocket Hijacking) vulnerability mitigated by strict Origin validation",
+    "Development mode allows localhost origins for convenience",
+    "Production mode requires explicit origin configuration; empty list is rejected",
+    "All connection attempts (accepted and rejected) are logged to audit_stream_connections table",
+    "Origin validation occurs BEFORE WebSocket handshake upgrade to minimize attack surface",
+    "Consider adding rate limiting per origin to prevent DoS",
+    "Monitor for suspicious connection patterns (repeated rejected origins)",
+    "Consider implementing Origin-Allowlist refresh without restart in future version"
+  ],
+  "docker_changes": [
+    "Add OPENIDX_AUDIT_ALLOWED_ORIGINS environment variable to audit-service container",
+    "Add health check endpoint for WebSocket availability",
+    "Document required production configuration in docker-compose README"
+  ],
+  "market_driven_features": [
+    "Conditional access checks before allowing audit stream connections (FR-M008)",
+    "User identity verification required for privileged audit access (FR-M011)",
+    "Device trust validation before establishing WebSocket connection (FR-M010)",
+    "Audit stream connection events logged for compliance reporting (FR-M014)"
+  ]
+}

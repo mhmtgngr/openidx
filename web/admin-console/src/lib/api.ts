@@ -63,7 +63,7 @@ export interface ProvisioningRule {
 
 // Get API base URL based on environment
 const getAPIBaseURL = (): string => {
-  const envURL = import.meta.env.VITE_API_URL
+  const envURL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
   if (envURL) {
     return envURL
   }
@@ -73,7 +73,7 @@ const getAPIBaseURL = (): string => {
     return window.location.origin
   }
 
-  return 'http://localhost:8080'
+  return 'http://localhost:8005'
 }
 
 export const baseURL = getAPIBaseURL()
@@ -233,6 +233,60 @@ export const api = {
 
   deletePushDevice: async (deviceId: string): Promise<void> => {
     await api.delete<void>(`/api/v1/identity/mfa/push/devices/${deviceId}`)
+  },
+
+  // Audit stream WebSocket helpers
+  createAuditStreamConnection: (options: {
+    token?: string
+    onMessage: (event: MessageEvent) => void
+    onOpen?: () => void
+    onError?: (error: Event) => void
+    onClose?: (event: CloseEvent) => void
+  }) => {
+    const apiBase = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || ''
+    let wsUrl: string
+
+    if (apiBase) {
+      // Convert HTTP to WebSocket protocol
+      wsUrl = apiBase.replace(/^https?:\/\//, window.location.protocol === 'https:' ? 'wss://' : 'ws://')
+    } else {
+      // Default to current origin with WebSocket protocol
+      wsUrl = window.location.protocol === 'https:'
+        ? `wss://${window.location.host}`
+        : `ws://${window.location.host}`
+    }
+
+    wsUrl = `${wsUrl}/api/v1/audit/stream`
+
+    // Note: Origin header cannot be set manually in browser WebSocket API
+    // The browser automatically sets it based on the current page origin
+    // Origin validation happens server-side
+    const protocols = []
+    if (options.token) {
+      // Use subprotocol for token (common pattern)
+      protocols.push(`access_token_${options.token}`)
+    }
+
+    const ws = new WebSocket(wsUrl, protocols)
+
+    ws.onopen = options.onOpen ?? null
+    ws.onmessage = options.onMessage
+    ws.onerror = options.onError ?? null
+    ws.onclose = options.onClose ?? null
+
+    return ws
+  },
+
+  getWebSocketUrl: (): string => {
+    const apiBase = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || ''
+
+    if (apiBase) {
+      return apiBase.replace(/^https?:\/\//, window.location.protocol === 'https:' ? 'wss://' : 'ws://')
+    }
+
+    return window.location.protocol === 'https:'
+      ? `wss://${window.location.host}`
+      : `ws://${window.location.host}`
   },
 }
 
