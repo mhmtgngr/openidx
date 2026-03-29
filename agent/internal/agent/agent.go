@@ -50,11 +50,11 @@ func NewAgent(logger *zap.Logger, configDir string) (*Agent, error) {
 }
 
 // RegisterBuiltinChecks registers the built-in check implementations with the
-// agent's registry. This is a hook for Task 4 check implementations; if the
-// check types are not yet available this method is a no-op.
+// agent's registry.
 func (a *Agent) RegisterBuiltinChecks() {
-	// Placeholder: built-in checks (os_version, disk_encryption, process_running)
-	// will be registered here once Task 4 check implementations are complete.
+	a.registry.Register("os_version", &checks.OSVersionCheck{})
+	a.registry.Register("disk_encryption", &checks.DiskEncryptionCheck{})
+	a.registry.Register("process_running", &checks.ProcessCheck{})
 }
 
 // SyncConfig fetches the server-side configuration via the transport client and
