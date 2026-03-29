@@ -11,6 +11,16 @@ bin/
 *.so
 *.dylib
 
+# Compiled service binaries (root level)
+/access-service
+/admin-api
+/audit-service
+/gateway-service
+/governance-service
+/identity-service
+/oauth-service
+/provisioning-service
+
 # IDE
 .idea/
 .vscode/
