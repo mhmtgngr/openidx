@@ -5,6 +5,14 @@ import (
 	"sort"
 )
 
+// CheckConfig describes a single security check to run on the device.
+type CheckConfig struct {
+	Type     string                 `json:"type"`
+	Params   map[string]interface{} `json:"params,omitempty"`
+	Severity string                 `json:"severity"`
+	Interval string                 `json:"interval"`
+}
+
 // Status represents the outcome of a security check.
 type Status string
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/openidx/openidx/agent/internal/checks"
 )
 
 // AgentConfig holds the persisted configuration for a registered agent.
@@ -16,13 +18,9 @@ type AgentConfig struct {
 	AuthToken  string `json:"auth_token,omitempty"`
 }
 
-// CheckConfig describes a single security check to run on the device.
-type CheckConfig struct {
-	Type     string                 `json:"type"`
-	Params   map[string]interface{} `json:"params,omitempty"`
-	Severity string                 `json:"severity"`
-	Interval string                 `json:"interval"`
-}
+// CheckConfig is an alias for checks.CheckConfig so callers that import the
+// agent package do not also need to import the checks package.
+type CheckConfig = checks.CheckConfig
 
 // ServerConfig holds the configuration delivered by the server to the agent.
 type ServerConfig struct {

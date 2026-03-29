@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/openidx/openidx/agent/internal/agent"
 )
 
 // EngineResult wraps a CheckResult with metadata about how the check was
@@ -30,7 +28,7 @@ func NewEngine(registry *Registry) *Engine {
 // RunChecks iterates configs, resolves each check type from the registry, runs
 // it, and returns the collected results. Configs that reference an unregistered
 // check type receive a StatusError result.
-func (e *Engine) RunChecks(ctx context.Context, configs []agent.CheckConfig) []EngineResult {
+func (e *Engine) RunChecks(ctx context.Context, configs []CheckConfig) []EngineResult {
 	results := make([]EngineResult, 0, len(configs))
 
 	for _, cfg := range configs {

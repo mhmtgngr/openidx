@@ -6,8 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/openidx/openidx/agent/internal/agent"
 )
 
 func TestEngine_RunChecks(t *testing.T) {
@@ -33,7 +31,7 @@ func TestEngine_RunChecks(t *testing.T) {
 
 	engine := NewEngine(r)
 
-	configs := []agent.CheckConfig{
+	configs := []CheckConfig{
 		{Type: "pass_check", Severity: "low", Interval: "1h"},
 		{Type: "fail_check", Severity: "high", Interval: "30m"},
 	}
@@ -60,7 +58,7 @@ func TestEngine_SkipsUnknownCheck(t *testing.T) {
 	r := NewRegistry()
 	engine := NewEngine(r)
 
-	configs := []agent.CheckConfig{
+	configs := []CheckConfig{
 		{Type: "does_not_exist", Severity: "critical", Interval: "5m"},
 	}
 
