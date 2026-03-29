@@ -222,6 +222,69 @@ oauthService:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
+# Gateway Service
+gatewayService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: gateway-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8008
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+# Access Service
+accessService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: access-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8007
+  # Ziti (OpenZiti) configuration for zero-trust network access
+  ziti:
+    enabled: true
+    ctrlUrl: ""
+    # If set, mount this Secret as the Ziti identity directory (/ziti).
+    # When empty an emptyDir is used (suitable for dynamic enrollment).
+    identitySecret: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
 # Admin Console
 adminConsole:
   enabled: true
