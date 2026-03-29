@@ -15,7 +15,10 @@ type AgentConfig struct {
 	AgentID    string `json:"agent_id"`
 	DeviceID   string `json:"device_id"`
 	EnrolledAt string `json:"enrolled_at"`
-	AuthToken  string `json:"auth_token,omitempty"`
+	AuthToken        string `json:"auth_token,omitempty"`
+	ZitiIdentityFile string `json:"ziti_identity_file,omitempty"`
+	ZitiServiceName  string `json:"ziti_service_name,omitempty"`
+	PluginDir        string `json:"plugin_dir,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the

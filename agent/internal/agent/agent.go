@@ -17,7 +17,7 @@ type Agent struct {
 	logger    *zap.Logger
 	config    *AgentConfig
 	configDir string
-	client    *transport.Client
+	client    transport.Transport
 	registry  *checks.Registry
 	engine    *checks.Engine
 	serverCfg *ServerConfig
@@ -31,7 +31,7 @@ func NewAgent(logger *zap.Logger, configDir string) (*Agent, error) {
 		return nil, fmt.Errorf("loading agent config: %w", err)
 	}
 
-	client := transport.NewClient(cfg.ServerURL, cfg.AuthToken)
+	client := transport.NewTransport(cfg.ServerURL, cfg.AuthToken, cfg.ZitiIdentityFile, cfg.ZitiServiceName, logger)
 	registry := checks.NewRegistry()
 	engine := checks.NewEngine(registry)
 
