@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent docker-build-agent
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -266,6 +266,10 @@ docker-push:
 		$(DOCKER) push $(DOCKER_REGISTRY)/$$service:$(VERSION); \
 	done
 	$(DOCKER) push $(DOCKER_REGISTRY)/admin-console:$(VERSION)
+
+docker-build-agent:
+	@echo "Building openidx-agent Docker image..."
+	docker build -t openidx/agent -f deployments/docker/Dockerfile.agent .
 
 #---------------------------------------------------------------------------
 # Kubernetes & Helm

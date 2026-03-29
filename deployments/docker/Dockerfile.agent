@@ -1,0 +1,41 @@
+# Multi-stage build for OpenIDX Endpoint Agent
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+WORKDIR /app
+
+# Copy agent module
+COPY agent/go.mod agent/go.sum ./
+RUN go mod download
+
+COPY agent/ ./
+
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -ldflags="-w -s -X main.Version=${VERSION}" \
+    -trimpath \
+    -o /app/openidx-agent \
+    ./cmd/openidx-agent
+
+# Runtime stage
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata curl && \
+    rm -rf /var/cache/apk/*
+
+RUN addgroup -S openidx && adduser -S openidx -G openidx
+
+WORKDIR /app
+RUN mkdir -p /var/lib/openidx-agent && chown openidx:openidx /var/lib/openidx-agent
+
+COPY --from=builder /app/openidx-agent /usr/local/bin/openidx-agent
+COPY deployments/docker/agent-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+USER openidx
+
+ENV OPENIDX_CONFIG_DIR=/var/lib/openidx-agent
+
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenIDX Endpoint Agent
+Documentation=https://github.com/openidx/openidx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/openidx-agent run --config-dir /var/lib/openidx-agent
+Restart=always
+RestartSec=10
+User=openidx-agent
+Group=openidx-agent
+
+EnvironmentFile=-/etc/openidx-agent/agent.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openidx-agent
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openidx-agent
+
+[Install]
+WantedBy=multi-user.target
