@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -141,6 +142,9 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		zap.String("agent_id", agentID),
 		zap.String("device_id", deviceID),
 		zap.String("status", status))
+
+	h.logAuditEvent("agent.enrolled", agentID, "success", "status="+status)
+	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", agentID, "success", "status="+status)
 
 	response := gin.H{
 		"agent_id":    agentID,
@@ -344,6 +348,9 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 		}
 	}
 
+	h.logAuditEvent("agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))
+	h.logAuditEventToDB(c.Request.Context(), "agent.report", agentID, "success", fmt.Sprintf("score=%.2f", complianceScore))
+
 	c.JSON(http.StatusAccepted, gin.H{
 		"status":              "accepted",
 		"compliance_score":    complianceScore,
@@ -426,6 +433,8 @@ func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
 		}
 		h.logger.Warn("Agent suspended: grace period expired",
 			zap.String("agent_id", agentID))
+		h.logAuditEvent("agent.suspended", agentID, "enforced", "grace period expired")
+		h.logAuditEventToDB(ctx, "agent.suspended", agentID, "enforced", "grace period expired")
 		count++
 	}
 	if count > 0 {
@@ -474,6 +483,8 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 	// 4. Build response based on status.
 	switch status {
 	case "revoked":
+		h.logAuditEvent("agent.config_denied", agentID, "denied", "agent revoked")
+		h.logAuditEventToDB(ctx, "agent.config_denied", agentID, "denied", "agent revoked")
 		c.JSON(http.StatusForbidden, gin.H{"error": "agent has been revoked"})
 		return
 
@@ -656,6 +667,8 @@ func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
 	}
 
 	h.logger.Info("Agent revoked", zap.String("agent_id", agentID))
+	h.logAuditEvent("agent.revoked", agentID, "success", "admin action")
+	h.logAuditEventToDB(c.Request.Context(), "agent.revoked", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
 }
 
@@ -705,5 +718,7 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 	}
 
 	h.logger.Info("Agent approved", zap.String("agent_id", agentID))
+	h.logAuditEvent("agent.approved", agentID, "success", "admin action")
+	h.logAuditEventToDB(c.Request.Context(), "agent.approved", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, response)
 }
