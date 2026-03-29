@@ -404,6 +404,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Agent API (enrollment, reporting, config)
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.zitiManager)
 		agentHandler.RegisterAgentRoutes(api)
+		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 	}
 
 	// Temp access public endpoint (no auth - uses token)

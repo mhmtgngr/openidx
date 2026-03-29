@@ -2,6 +2,7 @@ package access
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -244,6 +245,14 @@ func TestAgentReport_ParsesResults(t *testing.T) {
 	actions, ok := resp["enforcement_actions"].([]interface{})
 	require.True(t, ok, "enforcement_actions should be an array")
 	assert.Len(t, actions, 2)
+}
+
+// TestGracePeriodEnforcer_NoDBNoPanic verifies that enforceExpiredGracePeriods
+// does not panic when the handler has no database connection.
+func TestGracePeriodEnforcer_NoDBNoPanic(t *testing.T) {
+	handler := newTestAgentHandler()
+	// Should not panic with nil DB
+	handler.enforceExpiredGracePeriods(context.Background())
 }
 
 // TestRegisterAgentRoutes verifies that all three routes are registered and

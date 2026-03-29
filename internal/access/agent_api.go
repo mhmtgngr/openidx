@@ -2,6 +2,7 @@
 package access
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -340,6 +341,59 @@ func defaultAgentConfig() agentConfigResponse {
 	}
 }
 
+// StartGracePeriodEnforcer runs a background goroutine that periodically
+// checks for expired grace periods and escalates to suspended status.
+func (h *AgentAPIHandler) StartGracePeriodEnforcer(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				h.enforceExpiredGracePeriods(ctx)
+			}
+		}
+	}()
+	h.logger.Info("Grace period enforcer started", zap.Duration("interval", interval))
+}
+
+func (h *AgentAPIHandler) enforceExpiredGracePeriods(ctx context.Context) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+
+	// Find agents with expired grace periods
+	rows, err := h.db.Pool.Query(ctx, `
+		UPDATE enrolled_agents
+		SET status = 'suspended', compliance_status = 'non_compliant'
+		WHERE compliance_status = 'grace_period'
+		AND last_report_at < NOW() - INTERVAL '24 hours'
+		RETURNING agent_id, ziti_identity_id
+	`)
+	if err != nil {
+		h.logger.Error("Failed to enforce grace periods", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var agentID string
+		var zitiID *string
+		if err := rows.Scan(&agentID, &zitiID); err != nil {
+			continue
+		}
+		h.logger.Warn("Agent suspended: grace period expired",
+			zap.String("agent_id", agentID))
+		count++
+	}
+	if count > 0 {
+		h.logger.Info("Grace period enforcement complete", zap.Int("suspended", count))
+	}
+}
+
 // HandleConfig returns the agent configuration, taking into account the agent's
 // enrollment status when an X-Agent-ID header (or query parameter) is supplied.
 //
@@ -457,4 +511,160 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		// Unknown status — return defaults.
 		c.JSON(http.StatusOK, defaultAgentConfig())
 	}
+}
+
+// agentRecord holds the fields returned by HandleListAgents.
+type agentRecord struct {
+	AgentID          string     `json:"agent_id"`
+	DeviceID         string     `json:"device_id"`
+	Status           string     `json:"status"`
+	ComplianceStatus string     `json:"compliance_status"`
+	ComplianceScore  float64    `json:"compliance_score"`
+	LastSeenAt       *time.Time `json:"last_seen_at"`
+	EnrolledAt       *time.Time `json:"enrolled_at"`
+}
+
+// HandleListAgents returns a JSON array of all enrolled agents (admin endpoint).
+// When the database is unavailable it returns an empty array.
+func (h *AgentAPIHandler) HandleListAgents(c *gin.Context) {
+	if h.db == nil || h.db.Pool == nil {
+		c.JSON(http.StatusOK, []agentRecord{})
+		return
+	}
+
+	ctx := c.Request.Context()
+	rows, err := h.db.Pool.Query(ctx, `
+		SELECT agent_id, device_id, status, compliance_status, compliance_score, last_seen_at, enrolled_at
+		FROM enrolled_agents
+		ORDER BY enrolled_at DESC
+	`)
+	if err != nil {
+		h.logger.Error("HandleListAgents: failed to query enrolled_agents", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list agents"})
+		return
+	}
+	defer rows.Close()
+
+	agents := []agentRecord{}
+	for rows.Next() {
+		var rec agentRecord
+		if scanErr := rows.Scan(
+			&rec.AgentID,
+			&rec.DeviceID,
+			&rec.Status,
+			&rec.ComplianceStatus,
+			&rec.ComplianceScore,
+			&rec.LastSeenAt,
+			&rec.EnrolledAt,
+		); scanErr != nil {
+			h.logger.Warn("HandleListAgents: failed to scan row", zap.Error(scanErr))
+			continue
+		}
+		agents = append(agents, rec)
+	}
+	if rows.Err() != nil {
+		h.logger.Warn("HandleListAgents: rows iteration error", zap.Error(rows.Err()))
+	}
+
+	c.JSON(http.StatusOK, agents)
+}
+
+// HandleRevokeAgent sets an agent's status to 'revoked' and optionally removes
+// its Ziti identity.
+func (h *AgentAPIHandler) HandleRevokeAgent(c *gin.Context) {
+	agentID := c.Param("agent_id")
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
+		return
+	}
+
+	if h.db != nil && h.db.Pool != nil {
+		ctx := c.Request.Context()
+
+		// Fetch the Ziti identity ID before revoking so we can remove it.
+		var zitiIdentityID string
+		_ = h.db.Pool.QueryRow(ctx,
+			`SELECT COALESCE(ziti_identity_id, '') FROM enrolled_agents WHERE agent_id = $1`,
+			agentID,
+		).Scan(&zitiIdentityID)
+
+		_, err := h.db.Pool.Exec(ctx,
+			`UPDATE enrolled_agents SET status = 'revoked' WHERE agent_id = $1`,
+			agentID,
+		)
+		if err != nil {
+			h.logger.Error("HandleRevokeAgent: failed to update status",
+				zap.String("agent_id", agentID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke agent"})
+			return
+		}
+
+		// Remove Ziti identity if available.
+		if h.zm != nil && zitiIdentityID != "" {
+			if delErr := h.zm.DeleteIdentity(ctx, zitiIdentityID); delErr != nil {
+				h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity",
+					zap.String("agent_id", agentID),
+					zap.String("ziti_identity_id", zitiIdentityID),
+					zap.Error(delErr))
+			}
+		}
+	} else if h.zm != nil {
+		// No DB but ZitiManager present — best-effort removal using agentID as identity name.
+		if delErr := h.zm.DeleteIdentity(context.Background(), agentID); delErr != nil {
+			h.logger.Warn("HandleRevokeAgent: failed to delete Ziti identity (no db)",
+				zap.String("agent_id", agentID), zap.Error(delErr))
+		}
+	}
+
+	h.logger.Info("Agent revoked", zap.String("agent_id", agentID))
+	c.JSON(http.StatusOK, gin.H{"status": "revoked", "agent_id": agentID})
+}
+
+// HandleApproveAgent transitions an agent from 'pending' to 'active' and
+// optionally creates a Ziti identity, returning a ziti_jwt if available.
+func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
+	agentID := c.Param("agent_id")
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
+		return
+	}
+
+	response := gin.H{"status": "active", "agent_id": agentID}
+
+	if h.db != nil && h.db.Pool != nil {
+		ctx := c.Request.Context()
+		tag, err := h.db.Pool.Exec(ctx,
+			`UPDATE enrolled_agents SET status = 'active' WHERE agent_id = $1 AND status = 'pending'`,
+			agentID,
+		)
+		if err != nil {
+			h.logger.Error("HandleApproveAgent: failed to update status",
+				zap.String("agent_id", agentID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to approve agent"})
+			return
+		}
+
+		// If no rows were updated the agent either doesn't exist or is not pending.
+		if tag.RowsAffected() == 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "agent not found or not in pending state"})
+			return
+		}
+
+		// Create Ziti identity for the newly approved agent.
+		if h.zm != nil {
+			zitiID, zitiJWT, zitiErr := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+			if zitiErr != nil {
+				h.logger.Warn("HandleApproveAgent: failed to create Ziti identity",
+					zap.String("agent_id", agentID), zap.Error(zitiErr))
+			} else {
+				h.db.Pool.Exec(ctx,
+					`UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2`,
+					zitiID, agentID)
+				response["ziti_jwt"] = zitiJWT
+			}
+		}
+	}
+
+	h.logger.Info("Agent approved", zap.String("agent_id", agentID))
+	c.JSON(http.StatusOK, response)
 }
