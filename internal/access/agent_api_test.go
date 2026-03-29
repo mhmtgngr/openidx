@@ -113,6 +113,37 @@ func TestAgentConfig_ReturnsDefaults(t *testing.T) {
 	assert.Equal(t, "1h", resp.ReportInterval)
 }
 
+// TestAgentEnroll_ResponseFields verifies that a successful enroll response
+// includes the status and enrolled_at fields in addition to the core identifiers.
+func TestAgentEnroll_ResponseFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.POST("/agent/enroll", handler.HandleEnroll)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/enroll", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, resp["agent_id"], "agent_id should be present")
+	assert.NotEmpty(t, resp["device_id"], "device_id should be present")
+	assert.NotEmpty(t, resp["auth_token"], "auth_token should be present")
+	assert.NotEmpty(t, resp["status"], "status should be present")
+	assert.NotEmpty(t, resp["enrolled_at"], "enrolled_at should be present")
+
+	// In development mode (no real DB) status should be auto-approved to "active"
+	assert.Equal(t, "active", resp["status"])
+}
+
 // TestRegisterAgentRoutes verifies that all three routes are registered and
 // respond to the correct HTTP methods.
 func TestRegisterAgentRoutes(t *testing.T) {
