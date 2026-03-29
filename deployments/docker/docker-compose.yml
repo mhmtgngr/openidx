@@ -348,6 +348,40 @@ services:
     networks:
       - openidx-network
 
+  gateway-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.gateway-service
+      network: host
+    container_name: openidx-gateway-service
+    restart: unless-stopped
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
+      - OAUTH_ISSUER=https://oauth.localtest.me:8446
+      - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
+      - LOG_LEVEL=debug
+      - OPENIDX_ENABLE_RATE_LIMIT=false
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_SERVICE_NAME=gateway-service
+    ports:
+      - "8008:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - openidx-network
+
   #---------------------------------------------------------------------------
   # OAuth/OIDC Service - OpenIDX Native OAuth Provider
   #---------------------------------------------------------------------------
@@ -1173,12 +1207,12 @@ services:
       - VITE_OAUTH_CLIENT_ID=admin-console
       - VITE_AUTH_PROVIDER=openidx
     ports:
-      - "3000:3000"
+      - "3000:8080"
     depends_on:
       - admin-api
       - oauth-service
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/ > /dev/null"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

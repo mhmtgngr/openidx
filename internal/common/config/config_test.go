@@ -54,7 +54,7 @@ func TestLoad(t *testing.T) {
 			"provisioning-service": 8003,
 			"audit-service":        8004,
 			"admin-api":            8005,
-			"gateway-service":      8006,
+			"gateway-service":      8008,
 			"access-service":       8007,
 		}
 
