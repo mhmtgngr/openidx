@@ -3411,3 +3411,16 @@ CREATE TABLE IF NOT EXISTS agent_posture_results (
 
 CREATE INDEX IF NOT EXISTS idx_agent_posture_agent ON agent_posture_results(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_posture_reported ON agent_posture_results(reported_at);
+
+CREATE TABLE IF NOT EXISTS agent_enrollment_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash  VARCHAR(128) UNIQUE NOT NULL,
+    description VARCHAR(255),
+    created_by  VARCHAR(255),
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    used_by_agent VARCHAR(64),
+    revoked     BOOLEAN DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_hash ON agent_enrollment_tokens(token_hash);

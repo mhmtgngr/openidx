@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 )
 
@@ -43,7 +45,16 @@ func NewClient(baseURL, authToken, agentID string) *Client {
 func (c *Client) Enroll(token string) (*EnrollResponse, error) {
 	url := c.baseURL + "/api/v1/access/agent/enroll"
 
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	hostname, _ := os.Hostname()
+	body, _ := json.Marshal(map[string]string{
+		"token":    token,
+		"hostname": hostname,
+		"os":       runtime.GOOS,
+		"arch":     runtime.GOARCH,
+		"platform": runtime.GOOS + "/" + runtime.GOARCH,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating enroll request: %w", err)
 	}

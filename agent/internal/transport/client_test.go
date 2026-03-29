@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,10 +18,14 @@ func TestClient_Enroll(t *testing.T) {
 		AuthToken: "tok-supersecret",
 	}
 
+	var gotBody map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/access/agent/enroll", r.URL.Path)
 		assert.Equal(t, "Bearer enroll-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		json.NewDecoder(r.Body).Decode(&gotBody)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -36,6 +41,14 @@ func TestClient_Enroll(t *testing.T) {
 	assert.Equal(t, expected.AgentID, got.AgentID)
 	assert.Equal(t, expected.DeviceID, got.DeviceID)
 	assert.Equal(t, expected.AuthToken, got.AuthToken)
+
+	// Verify platform info is sent in the body.
+	require.NotNil(t, gotBody)
+	assert.Equal(t, "enroll-token", gotBody["token"])
+	assert.NotEmpty(t, gotBody["hostname"])
+	assert.Equal(t, runtime.GOOS, gotBody["os"])
+	assert.Equal(t, runtime.GOARCH, gotBody["arch"])
+	assert.Equal(t, runtime.GOOS+"/"+runtime.GOARCH, gotBody["platform"])
 }
 
 func TestClient_Enroll_Error(t *testing.T) {

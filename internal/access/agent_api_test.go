@@ -352,3 +352,143 @@ func TestRegisterAgentRoutes(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+// TestHandleGenerateToken_NilDB verifies that HandleGenerateToken returns 200
+// with a plaintext token, id, and expires_at even when no database is configured.
+func TestHandleGenerateToken_NilDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.POST("/agent/tokens", handler.HandleGenerateToken)
+
+	body, _ := json.Marshal(map[string]string{
+		"description": "test token",
+		"created_by":  "admin",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/agent/tokens", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, resp["token"], "plaintext token must be returned")
+	assert.NotEmpty(t, resp["id"], "token id must be returned")
+	assert.NotEmpty(t, resp["expires_at"], "expires_at must be returned")
+}
+
+// TestHandleGenerateToken_NoBody verifies that HandleGenerateToken works with an
+// empty request body (all fields optional).
+func TestHandleGenerateToken_NoBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.POST("/agent/tokens", handler.HandleGenerateToken)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/tokens", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp["token"])
+}
+
+// TestHandleListTokens_NilDB verifies that GET /agent/tokens returns 200 with
+// an empty array when no database is configured.
+func TestHandleListTokens_NilDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.GET("/agent/tokens", handler.HandleListTokens)
+
+	req := httptest.NewRequest(http.MethodGet, "/agent/tokens", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp []interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Empty(t, resp, "expected empty array when DB is nil")
+}
+
+// TestHandleRevokeToken_NilDB verifies that DELETE /agent/tokens/:token_id
+// returns 200 on the nil-DB path.
+func TestHandleRevokeToken_NilDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.DELETE("/agent/tokens/:token_id", handler.HandleRevokeToken)
+
+	req := httptest.NewRequest(http.MethodDelete, "/agent/tokens/some-uuid", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "revoked", resp["status"])
+	assert.Equal(t, "some-uuid", resp["id"])
+}
+
+// TestHandleRevokeToken_MissingID verifies that DELETE /agent/tokens/ without a
+// token_id param returns 404 (route not matched).
+func TestHandleRevokeToken_MissingID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.DELETE("/agent/tokens/:token_id", handler.HandleRevokeToken)
+
+	// Request to a path that does not match the :token_id wildcard.
+	req := httptest.NewRequest(http.MethodDelete, "/agent/tokens/", nil)
+	router.ServeHTTP(w, req)
+
+	// Gin returns 301 redirect or 404 when trailing slash does not match.
+	assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusMovedPermanently,
+		"expected 404 or 301, got %d", w.Code)
+}
+
+// TestAgentEnrollDevMode verifies that HandleEnroll succeeds with nil DB
+// (dev/fallback mode) without token validation.
+func TestAgentEnrollDevMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler() // nil DB
+	router.POST("/agent/enroll", handler.HandleEnroll)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/enroll", nil)
+	req.Header.Set("Authorization", "Bearer any-token-works-in-dev")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "active", resp["status"], "dev mode should auto-approve enrollment")
+}

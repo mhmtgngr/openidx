@@ -78,11 +78,17 @@ func (h *AgentAPIHandler) RegisterAgentRoutes(r *gin.RouterGroup) {
 	r.POST("/agent/enroll", h.HandleEnroll)
 	r.POST("/agent/report", h.HandleReport)
 	r.GET("/agent/config", h.HandleConfig)
+	r.POST("/agent/tokens", h.HandleGenerateToken)
+	r.GET("/agent/tokens", h.HandleListTokens)
+	r.DELETE("/agent/tokens/:token_id", h.HandleRevokeToken)
 }
 
 // enrollRequest is the optional JSON body accepted by HandleEnroll.
 type enrollRequest struct {
+	Token    string `json:"token"`
 	Hostname string `json:"hostname"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
 	Platform string `json:"platform"`
 }
 
@@ -93,8 +99,10 @@ type enrollResponse struct {
 	AuthToken string `json:"auth_token"`
 }
 
-// HandleEnroll validates the Authorization header, persists the new agent to the
-// database, optionally creates a Ziti identity, and returns enrollment credentials.
+// HandleEnroll validates the Authorization header, validates the enrollment token
+// against agent_enrollment_tokens, persists the new agent to the database,
+// optionally creates a Ziti identity, and returns enrollment credentials.
+// When the DB is unavailable, it falls back to accepting any non-empty token (dev mode).
 func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 	token := c.GetHeader("Authorization")
 	if token == "" {
@@ -106,32 +114,82 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		token = token[7:]
 	}
 
+	// Parse optional device info from request body.
+	var enrollReq enrollRequest
+	c.ShouldBindJSON(&enrollReq)
+
 	// Generate identifiers
 	agentID := "agent-" + uuid.New().String()[:8]
 	deviceID := "device-" + uuid.New().String()[:8]
 	authToken := uuid.New().String()
 
 	// Hash auth token for storage (never store plaintext)
-	tokenHash := sha256Hex(authToken)
+	authTokenHash := sha256Hex(authToken)
 
-	// Determine initial status (auto-approve in development)
-	status := "pending"
-	appEnv := ""
+	// Validate enrollment token against the database.
+	// When DB is unavailable fall back to dev mode (accept any token).
 	if h.db != nil && h.db.Pool != nil {
-		// Could check config, but for now use simple env check
+		ctx := c.Request.Context()
+		incomingHash := sha256Hex(token)
+
+		var tokenID string
+		var expiresAt time.Time
+		var usedAt *time.Time
+		var revoked bool
+		err := h.db.Pool.QueryRow(ctx, `
+			SELECT id, expires_at, used_at, revoked
+			FROM agent_enrollment_tokens
+			WHERE token_hash = $1
+		`, incomingHash).Scan(&tokenID, &expiresAt, &usedAt, &revoked)
+		if err != nil {
+			h.logger.Warn("HandleEnroll: enrollment token not found", zap.Error(err))
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid enrollment token"})
+			return
+		}
+		if revoked {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has been revoked"})
+			return
+		}
+		if time.Now().UTC().After(expiresAt) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has expired"})
+			return
+		}
+		if usedAt != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has already been used"})
+			return
+		}
+
+		// Mark token as used.
+		_, err = h.db.Pool.Exec(ctx, `
+			UPDATE agent_enrollment_tokens
+			SET used_at = NOW(), used_by_agent = $1
+			WHERE id = $2
+		`, agentID, tokenID)
+		if err != nil {
+			h.logger.Warn("HandleEnroll: failed to mark token as used",
+				zap.String("token_id", tokenID), zap.Error(err))
+			// Non-fatal: proceed with enrollment.
+		}
 	}
-	// Auto-approve in development mode
-	if appEnv == "" || appEnv == "development" {
-		status = "active"
-	}
+
+	// Always active once token is validated (or in dev mode with no DB).
+	status := "active"
+
+	// Build metadata from device info provided by the agent.
+	metadata, _ := json.Marshal(map[string]string{
+		"hostname": enrollReq.Hostname,
+		"os":       enrollReq.OS,
+		"arch":     enrollReq.Arch,
+		"platform": enrollReq.Platform,
+	})
 
 	// Persist to database
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
 		_, err := h.db.Pool.Exec(ctx, `
-            INSERT INTO enrolled_agents (agent_id, device_id, status, auth_token_hash, enrolled_at, compliance_status)
-            VALUES ($1, $2, $3, $4, NOW(), 'unknown')
-        `, agentID, deviceID, status, tokenHash)
+            INSERT INTO enrolled_agents (agent_id, device_id, status, auth_token_hash, enrolled_at, compliance_status, metadata)
+            VALUES ($1, $2, $3, $4, NOW(), 'unknown', $5)
+        `, agentID, deviceID, status, authTokenHash, metadata)
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
 			// Don't fail enrollment if DB write fails — agent can still function
@@ -721,4 +779,132 @@ func (h *AgentAPIHandler) HandleApproveAgent(c *gin.Context) {
 	h.logAuditEvent("agent.approved", agentID, "success", "admin action")
 	h.logAuditEventToDB(c.Request.Context(), "agent.approved", agentID, "success", "admin action")
 	c.JSON(http.StatusOK, response)
+}
+
+// enrollmentTokenRecord is the response shape for list-tokens.
+type enrollmentTokenRecord struct {
+	ID          string     `json:"id"`
+	Description string     `json:"description"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	UsedAt      *time.Time `json:"used_at"`
+	Revoked     bool       `json:"revoked"`
+}
+
+// generateTokenRequest is the optional body for HandleGenerateToken.
+type generateTokenRequest struct {
+	Description string `json:"description"`
+	CreatedBy   string `json:"created_by"`
+}
+
+// HandleGenerateToken creates a new enrollment token, stores its SHA-256 hash,
+// and returns the plaintext token to the caller exactly once.
+func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
+	var req generateTokenRequest
+	// Ignore parse errors — all fields are optional.
+	_ = c.ShouldBindJSON(&req)
+
+	plaintext := uuid.New().String()
+	hash := sha256Hex(plaintext)
+	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+
+	var tokenID string
+
+	if h.db != nil && h.db.Pool != nil {
+		ctx := c.Request.Context()
+		err := h.db.Pool.QueryRow(ctx, `
+			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id
+		`, hash, req.Description, req.CreatedBy, expiresAt).Scan(&tokenID)
+		if err != nil {
+			h.logger.Error("HandleGenerateToken: failed to insert token", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
+			return
+		}
+	} else {
+		// Dev mode — generate a local ID without DB persistence.
+		tokenID = uuid.New().String()
+	}
+
+	h.logger.Info("Enrollment token generated", zap.String("token_id", tokenID))
+	h.logAuditEvent("token.generated", tokenID, "success", "")
+	h.logAuditEventToDB(c.Request.Context(), "token.generated", tokenID, "success", "")
+
+	c.JSON(http.StatusOK, gin.H{
+		"token":      plaintext,
+		"id":         tokenID,
+		"expires_at": expiresAt.Format(time.RFC3339),
+	})
+}
+
+// HandleListTokens returns all enrollment tokens without their hashes.
+func (h *AgentAPIHandler) HandleListTokens(c *gin.Context) {
+	if h.db == nil || h.db.Pool == nil {
+		c.JSON(http.StatusOK, []enrollmentTokenRecord{})
+		return
+	}
+
+	ctx := c.Request.Context()
+	rows, err := h.db.Pool.Query(ctx, `
+		SELECT id, COALESCE(description, ''), created_at, expires_at, used_at, revoked
+		FROM agent_enrollment_tokens
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		h.logger.Error("HandleListTokens: failed to query tokens", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
+		return
+	}
+	defer rows.Close()
+
+	tokens := []enrollmentTokenRecord{}
+	for rows.Next() {
+		var rec enrollmentTokenRecord
+		if scanErr := rows.Scan(
+			&rec.ID,
+			&rec.Description,
+			&rec.CreatedAt,
+			&rec.ExpiresAt,
+			&rec.UsedAt,
+			&rec.Revoked,
+		); scanErr != nil {
+			h.logger.Warn("HandleListTokens: failed to scan row", zap.Error(scanErr))
+			continue
+		}
+		tokens = append(tokens, rec)
+	}
+	if rows.Err() != nil {
+		h.logger.Warn("HandleListTokens: rows iteration error", zap.Error(rows.Err()))
+	}
+
+	c.JSON(http.StatusOK, tokens)
+}
+
+// HandleRevokeToken sets a token's revoked flag to true.
+func (h *AgentAPIHandler) HandleRevokeToken(c *gin.Context) {
+	tokenID := c.Param("token_id")
+	if tokenID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token_id is required"})
+		return
+	}
+
+	if h.db != nil && h.db.Pool != nil {
+		ctx := c.Request.Context()
+		_, err := h.db.Pool.Exec(ctx,
+			`UPDATE agent_enrollment_tokens SET revoked = true WHERE id = $1`,
+			tokenID,
+		)
+		if err != nil {
+			h.logger.Error("HandleRevokeToken: failed to revoke token",
+				zap.String("token_id", tokenID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke token"})
+			return
+		}
+	}
+
+	h.logger.Info("Enrollment token revoked", zap.String("token_id", tokenID))
+	h.logAuditEvent("token.revoked", tokenID, "success", "admin action")
+	h.logAuditEventToDB(c.Request.Context(), "token.revoked", tokenID, "success", "admin action")
+	c.JSON(http.StatusOK, gin.H{"status": "revoked", "id": tokenID})
 }
