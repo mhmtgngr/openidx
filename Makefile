@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -217,6 +217,19 @@ build-cli:
 	@echo "🛠️  Building OpenIDX CLI..."
 	@$(GOBUILD) -o bin/openidx ./cmd/openidx
 	@echo "✅ CLI built: bin/openidx"
+
+build-agent:
+	@echo "Building openidx-agent..."
+	cd agent && go build -o ../bin/openidx-agent ./cmd/openidx-agent
+
+build-agent-all:
+	@echo "Cross-compiling openidx-agent..."
+	cd agent && make build-all
+	cp agent/bin/* bin/ 2>/dev/null || true
+
+test-agent:
+	@echo "Testing openidx-agent..."
+	cd agent && go test -v -race ./...
 
 install-cli: build-cli
 	@echo "📦 Installing OpenIDX CLI..."
