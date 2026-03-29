@@ -1051,10 +1051,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 }
 
 func (s *Service) handleDiscovery(c *gin.Context) {
-	// CORS headers for BrowZer and other browser-based clients
-	c.Header("Access-Control-Allow-Origin", "*")
-	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	// CORS is handled by the APISIX gateway for all routes
 	c.Header("Cache-Control", "public, max-age=3600")
 
 	if c.Request.Method == "OPTIONS" {
@@ -1085,10 +1082,7 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 }
 
 func (s *Service) handleJWKS(c *gin.Context) {
-	// CORS headers for BrowZer and other browser-based clients
-	c.Header("Access-Control-Allow-Origin", "*")
-	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	// CORS is handled by the APISIX gateway for all routes
 	c.Header("Cache-Control", "public, max-age=3600")
 
 	if c.Request.Method == "OPTIONS" {
@@ -2286,11 +2280,7 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 }
 
 func (s *Service) handleToken(c *gin.Context) {
-	// CORS headers for BrowZer and other browser-based clients
-	c.Header("Access-Control-Allow-Origin", "*")
-	c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
+	// CORS is handled by the APISIX gateway for all routes
 	if c.Request.Method == "OPTIONS" {
 		c.AbortWithStatus(204)
 		return
@@ -2571,11 +2561,7 @@ func (s *Service) handleRevoke(c *gin.Context) {
 }
 
 func (s *Service) handleUserInfo(c *gin.Context) {
-	// CORS headers for BrowZer and other browser-based clients
-	c.Header("Access-Control-Allow-Origin", "*")
-	c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
+	// CORS is handled by the APISIX gateway for all routes
 	if c.Request.Method == "OPTIONS" {
 		c.AbortWithStatus(204)
 		return

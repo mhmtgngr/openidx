@@ -545,10 +545,7 @@ func (km *KeyManager) encodeExponent(e int) string {
 // HandleJWKS handles the JWKS endpoint
 // Implements RFC 7517 and JWK specification
 func (km *KeyManager) HandleJWKS(c *gin.Context) {
-	// Set CORS headers
-	c.Header("Access-Control-Allow-Origin", "*")
-	c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-	c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	// CORS is handled by the APISIX gateway for all routes
 	c.Header("Cache-Control", "public, max-age=3600") // Cache for 1 hour
 
 	if c.Request.Method == "OPTIONS" {

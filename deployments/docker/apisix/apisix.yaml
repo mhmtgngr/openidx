@@ -109,6 +109,10 @@ routes:
   - uri: /.well-known/*
     name: oidc-discovery
     plugins:
+      limit-req:
+        rate: 50
+        burst: 25
+        key: remote_addr
       cors:
         allow_origins: "http://localhost:3000,http://openidx.tdv.org:3000,https://openidx.tdv.org,http://openidx.tdv.org"
         allow_methods: "GET,OPTIONS"
