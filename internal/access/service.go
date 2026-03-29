@@ -400,6 +400,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/audit/unified/services/:id", svc.handleGetServiceAuditEvents)
 		api.POST("/audit/unified/sync", svc.handleSyncExternalAuditEvents)
 		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
+
+		// Agent API (enrollment, reporting, config)
+		agentHandler := NewAgentAPIHandler(svc.logger, svc.db)
+		agentHandler.RegisterAgentRoutes(api)
 	}
 
 	// Temp access public endpoint (no auth - uses token)
