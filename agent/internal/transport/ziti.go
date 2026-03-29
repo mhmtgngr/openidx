@@ -14,13 +14,14 @@ import (
 type ZitiClient struct {
 	baseURL     string
 	authToken   string
+	agentID     string
 	httpClient  *http.Client
 	zitiCtx     ziti.Context
 	serviceName string
 }
 
 // NewZitiClient creates a transport client that routes through Ziti.
-func NewZitiClient(identityFile, serviceName, baseURL, authToken string) (*ZitiClient, error) {
+func NewZitiClient(identityFile, serviceName, baseURL, authToken, agentID string) (*ZitiClient, error) {
 	cfg, err := ziti.NewConfigFromFile(identityFile)
 	if err != nil {
 		return nil, fmt.Errorf("load ziti identity: %w", err)
@@ -43,6 +44,7 @@ func NewZitiClient(identityFile, serviceName, baseURL, authToken string) (*ZitiC
 	return &ZitiClient{
 		baseURL:     baseURL,
 		authToken:   authToken,
+		agentID:     agentID,
 		httpClient:  &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		zitiCtx:     zitiCtx,
 		serviceName: serviceName,
@@ -58,18 +60,18 @@ func (c *ZitiClient) Close() {
 
 // Enroll delegates to a Client using the Ziti-backed HTTP client.
 func (c *ZitiClient) Enroll(token string) (*EnrollResponse, error) {
-	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, httpClient: c.httpClient}
+	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
 	return inner.Enroll(token)
 }
 
 // ReportResults delegates to a Client using the Ziti-backed HTTP client.
 func (c *ZitiClient) ReportResults(data []byte) error {
-	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, httpClient: c.httpClient}
+	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
 	return inner.ReportResults(data)
 }
 
 // GetConfig delegates to a Client using the Ziti-backed HTTP client.
 func (c *ZitiClient) GetConfig() ([]byte, error) {
-	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, httpClient: c.httpClient}
+	inner := &Client{baseURL: c.baseURL, authToken: c.authToken, agentID: c.agentID, httpClient: c.httpClient}
 	return inner.GetConfig()
 }

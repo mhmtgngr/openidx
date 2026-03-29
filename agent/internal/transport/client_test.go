@@ -28,7 +28,7 @@ func TestClient_Enroll(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "")
+	client := NewClient(server.URL, "", "")
 	got, err := client.Enroll("enroll-token")
 
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestClient_Enroll_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "")
+	client := NewClient(server.URL, "", "")
 	got, err := client.Enroll("bad-token")
 
 	assert.Error(t, err)
@@ -65,7 +65,7 @@ func TestClient_ReportResults(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "auth-token")
+	client := NewClient(server.URL, "auth-token", "")
 	err := client.ReportResults(payload)
 
 	assert.NoError(t, err)
@@ -77,7 +77,7 @@ func TestClient_ReportResults_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "auth-token")
+	client := NewClient(server.URL, "auth-token", "")
 	err := client.ReportResults([]byte(`{}`))
 
 	assert.Error(t, err)
@@ -98,7 +98,7 @@ func TestClient_GetConfig(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "auth-token")
+	client := NewClient(server.URL, "auth-token", "")
 	body, err := client.GetConfig()
 
 	require.NoError(t, err)
@@ -111,10 +111,42 @@ func TestClient_GetConfig_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, "auth-token")
+	client := NewClient(server.URL, "auth-token", "")
 	body, err := client.GetConfig()
 
 	assert.Error(t, err)
 	assert.Nil(t, body)
 	assert.Contains(t, err.Error(), "404")
+}
+
+func TestClient_ReportResults_SendsAgentIDHeader(t *testing.T) {
+	var gotAgentID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAgentID = r.Header.Get("X-Agent-ID")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "auth-token", "agent-test-001")
+	err := client.ReportResults([]byte(`{}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, "agent-test-001", gotAgentID)
+}
+
+func TestClient_GetConfig_SendsAgentIDHeader(t *testing.T) {
+	var gotAgentID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAgentID = r.Header.Get("X-Agent-ID")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "auth-token", "agent-test-002")
+	_, err := client.GetConfig()
+
+	require.NoError(t, err)
+	assert.Equal(t, "agent-test-002", gotAgentID)
 }
