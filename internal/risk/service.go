@@ -603,35 +603,265 @@ func (s *Service) GetRecentFailedAttempts(ctx context.Context, userID string) in
 	return count
 }
 
-// ListRiskPolicies returns all risk policies (placeholder for compatibility)
+// ListRiskPolicies returns all risk policies, optionally filtered by enabled status
 func (s *Service) ListRiskPolicies(ctx context.Context, enabledOnly bool) ([]RiskPolicy, error) {
-	// This is a placeholder - policies are per-tenant in this implementation
-	return []RiskPolicy{}, nil
+	query := `SELECT id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
+	                 COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at
+	          FROM risk_policies`
+	args := []interface{}{}
+	if enabledOnly {
+		query += ` WHERE enabled = $1`
+		args = append(args, true)
+	}
+	query += ` ORDER BY priority ASC, created_at DESC`
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list risk policies: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []RiskPolicy
+	for rows.Next() {
+		p, err := scanRiskPolicy(rows)
+		if err != nil {
+			s.logger.Warn("Failed to scan risk policy row", zap.Error(err))
+			continue
+		}
+		policies = append(policies, *p)
+	}
+	if policies == nil {
+		policies = []RiskPolicy{}
+	}
+	return policies, nil
 }
 
-// GetRiskPolicy returns a specific risk policy (placeholder for compatibility)
+// GetRiskPolicy returns a specific risk policy by ID
 func (s *Service) GetRiskPolicy(ctx context.Context, policyID string) (*RiskPolicy, error) {
-	return nil, fmt.Errorf("policy not found")
+	row := s.db.Pool.QueryRow(ctx,
+		`SELECT id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
+		        COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at
+		 FROM risk_policies WHERE id = $1`, policyID)
+
+	var p RiskPolicy
+	var priority int
+	var conditionsJSON, actionsJSON []byte
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
+		&conditionsJSON, &actionsJSON, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("policy not found")
+	}
+
+	parseThresholdsFromJSON(conditionsJSON, actionsJSON, &p)
+	return &p, nil
 }
 
-// CreateRiskPolicy creates a new risk policy (placeholder for compatibility)
+// CreateRiskPolicy creates a new risk policy
 func (s *Service) CreateRiskPolicy(ctx context.Context, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	return nil, fmt.Errorf("not implemented")
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	conditions := buildConditionsJSON(req)
+	actions := buildActionsJSON(req)
+
+	var p RiskPolicy
+	var priority int
+	var conditionsOut, actionsOut []byte
+	err := s.db.Pool.QueryRow(ctx,
+		`INSERT INTO risk_policies (name, description, enabled, priority, conditions, actions)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
+		           COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at`,
+		req.Name, req.Description, enabled, 100, conditions, actions,
+	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
+		&conditionsOut, &actionsOut, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create risk policy: %w", err)
+	}
+
+	parseThresholdsFromJSON(conditionsOut, actionsOut, &p)
+	p.TenantID = req.TenantID
+
+	s.logger.Info("Risk policy created",
+		zap.String("id", p.ID),
+		zap.String("name", p.Name),
+	)
+	return &p, nil
 }
 
-// UpdateRiskPolicy updates an existing risk policy (placeholder for compatibility)
+// UpdateRiskPolicy updates an existing risk policy
 func (s *Service) UpdateRiskPolicy(ctx context.Context, policyID string, req CreateRiskPolicyRequest) (*RiskPolicy, error) {
-	return nil, fmt.Errorf("not implemented")
+	// First verify the policy exists
+	existing, err := s.GetRiskPolicy(ctx, policyID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge: use existing values where request fields are nil
+	if req.LowThreshold == nil {
+		req.LowThreshold = &existing.LowThreshold
+	}
+	if req.MediumThreshold == nil {
+		req.MediumThreshold = &existing.MediumThreshold
+	}
+	if req.HighThreshold == nil {
+		req.HighThreshold = &existing.HighThreshold
+	}
+	if req.CriticalThreshold == nil {
+		req.CriticalThreshold = &existing.CriticalThreshold
+	}
+	if req.Enabled == nil {
+		req.Enabled = &existing.Enabled
+	}
+	if req.Name == "" {
+		req.Name = existing.Name
+	}
+	if req.Description == "" {
+		req.Description = existing.Description
+	}
+
+	conditions := buildConditionsJSON(req)
+	actions := buildActionsJSON(req)
+
+	var p RiskPolicy
+	var priority int
+	var conditionsOut, actionsOut []byte
+	err = s.db.Pool.QueryRow(ctx,
+		`UPDATE risk_policies
+		 SET name = $2, description = $3, enabled = $4, conditions = $5, actions = $6, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING id, name, COALESCE(description,''), enabled, COALESCE(priority,100),
+		           COALESCE(conditions,'{}'), COALESCE(actions,'{}'), created_at, updated_at`,
+		policyID, req.Name, req.Description, *req.Enabled, conditions, actions,
+	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
+		&conditionsOut, &actionsOut, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update risk policy: %w", err)
+	}
+
+	parseThresholdsFromJSON(conditionsOut, actionsOut, &p)
+	p.TenantID = req.TenantID
+
+	s.logger.Info("Risk policy updated",
+		zap.String("id", p.ID),
+		zap.String("name", p.Name),
+	)
+	return &p, nil
 }
 
-// DeleteRiskPolicy deletes a risk policy (placeholder for compatibility)
+// DeleteRiskPolicy deletes a risk policy by ID
 func (s *Service) DeleteRiskPolicy(ctx context.Context, policyID string) error {
-	return fmt.Errorf("not implemented")
+	result, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM risk_policies WHERE id = $1`, policyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete risk policy: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("policy not found")
+	}
+
+	s.logger.Info("Risk policy deleted", zap.String("id", policyID))
+	return nil
 }
 
-// ToggleRiskPolicy enables or disables a risk policy (placeholder for compatibility)
+// ToggleRiskPolicy enables or disables a risk policy
 func (s *Service) ToggleRiskPolicy(ctx context.Context, policyID string, enabled bool) error {
-	return fmt.Errorf("not implemented")
+	result, err := s.db.Pool.Exec(ctx,
+		`UPDATE risk_policies SET enabled = $2, updated_at = NOW() WHERE id = $1`,
+		policyID, enabled)
+	if err != nil {
+		return fmt.Errorf("failed to toggle risk policy: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("policy not found")
+	}
+
+	s.logger.Info("Risk policy toggled",
+		zap.String("id", policyID),
+		zap.Bool("enabled", enabled),
+	)
+	return nil
+}
+
+// scanRiskPolicy scans a risk policy row from a pgx.Rows iterator
+func scanRiskPolicy(rows interface{ Scan(dest ...interface{}) error }) (*RiskPolicy, error) {
+	var p RiskPolicy
+	var priority int
+	var conditionsJSON, actionsJSON []byte
+	err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &priority,
+		&conditionsJSON, &actionsJSON, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	parseThresholdsFromJSON(conditionsJSON, actionsJSON, &p)
+	return &p, nil
+}
+
+// parseThresholdsFromJSON extracts threshold and tenant values from the JSONB columns
+func parseThresholdsFromJSON(conditionsJSON, actionsJSON []byte, p *RiskPolicy) {
+	var conditions map[string]interface{}
+	if json.Unmarshal(conditionsJSON, &conditions) == nil {
+		if v, ok := conditions["low_threshold"]; ok {
+			if f, ok := v.(float64); ok {
+				p.LowThreshold = int(f)
+			}
+		}
+		if v, ok := conditions["medium_threshold"]; ok {
+			if f, ok := v.(float64); ok {
+				p.MediumThreshold = int(f)
+			}
+		}
+		if v, ok := conditions["high_threshold"]; ok {
+			if f, ok := v.(float64); ok {
+				p.HighThreshold = int(f)
+			}
+		}
+		if v, ok := conditions["critical_threshold"]; ok {
+			if f, ok := v.(float64); ok {
+				p.CriticalThreshold = int(f)
+			}
+		}
+	}
+
+	var actions map[string]interface{}
+	if json.Unmarshal(actionsJSON, &actions) == nil {
+		if v, ok := actions["tenant_id"]; ok {
+			if s, ok := v.(string); ok {
+				p.TenantID = s
+			}
+		}
+	}
+}
+
+// buildConditionsJSON creates the conditions JSONB value from request thresholds
+func buildConditionsJSON(req CreateRiskPolicyRequest) []byte {
+	conditions := map[string]interface{}{}
+	if req.LowThreshold != nil {
+		conditions["low_threshold"] = *req.LowThreshold
+	}
+	if req.MediumThreshold != nil {
+		conditions["medium_threshold"] = *req.MediumThreshold
+	}
+	if req.HighThreshold != nil {
+		conditions["high_threshold"] = *req.HighThreshold
+	}
+	if req.CriticalThreshold != nil {
+		conditions["critical_threshold"] = *req.CriticalThreshold
+	}
+	data, _ := json.Marshal(conditions)
+	return data
+}
+
+// buildActionsJSON creates the actions JSONB value from request fields
+func buildActionsJSON(req CreateRiskPolicyRequest) []byte {
+	actions := map[string]interface{}{}
+	if req.TenantID != "" {
+		actions["tenant_id"] = req.TenantID
+	}
+	data, _ := json.Marshal(actions)
+	return data
 }
 
 // EvaluateRiskPolicies evaluates risk for a given login context (placeholder for compatibility)

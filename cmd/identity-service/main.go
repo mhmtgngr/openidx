@@ -25,7 +25,9 @@ import (
 	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/metrics"
+	"github.com/openidx/openidx/internal/migrations"
 	"github.com/openidx/openidx/internal/notifications"
+	"github.com/openidx/openidx/internal/profiling"
 	"github.com/openidx/openidx/internal/portal"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/server"
@@ -81,6 +83,12 @@ func main() {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
 
+	// Run auto-migrations if enabled
+	if cfg.AutoMigrate {
+		log.Info("Running auto-migrations")
+		migrations.MustAutoMigrate(context.Background(), db.Pool, log)
+	}
+
 	// Initialize Redis connection
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
 		URL:                cfg.RedisURL,
@@ -108,7 +116,7 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(otelgin.Middleware("identity-service"))
-	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
+	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
 		router.Use(middleware.DistributedRateLimit(redis.Client, middleware.RateLimitConfig{
@@ -124,6 +132,9 @@ func main() {
 
 	// Metrics endpoint
 	router.GET("/metrics", metrics.Handler())
+
+	// Register pprof endpoints in development mode
+	profiling.RegisterWithEngine(router, cfg.IsDevelopment())
 
 	// API versioning middleware
 	router.Use(api.StandardVersionMiddleware())

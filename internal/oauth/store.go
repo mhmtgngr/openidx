@@ -477,6 +477,13 @@ func (s *Store) StoreAccessToken(ctx context.Context, token *AccessTokenData, tt
 		return fmt.Errorf("failed to store access token: %w", err)
 	}
 
+	// Track token in user's token set for efficient revocation
+	if token.UserID != "" {
+		userTokensKey := s.userTokensKey(token.UserID)
+		s.redis.Client.SAdd(ctx, userTokensKey, token.Token)
+		s.redis.Client.Expire(ctx, userTokensKey, ttl)
+	}
+
 	return nil
 }
 
@@ -513,24 +520,28 @@ func (s *Store) RevokeAccessToken(ctx context.Context, token string) error {
 
 // RevokeUserTokens revokes all tokens for a specific user
 func (s *Store) RevokeUserTokens(ctx context.Context, userID string) error {
-	// Scan for all keys matching the user's tokens
-	pattern := fmt.Sprintf("oauth:token:*:%s", userID)
-	iter := s.redis.Client.Scan(ctx, 0, pattern, 100).Iterator()
+	userTokensKey := s.userTokensKey(userID)
 
-	var keys []string
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
+	// Get all token IDs from the user's token set
+	tokens, err := s.redis.Client.SMembers(ctx, userTokensKey).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("failed to get user tokens: %w", err)
 	}
 
-	if err := iter.Err(); err != nil {
-		return fmt.Errorf("failed to scan for user tokens: %w", err)
-	}
+	if len(tokens) > 0 {
+		// Build the list of Redis keys to delete
+		var keys []string
+		for _, token := range tokens {
+			keys = append(keys, s.accessTokenKey(token))
+		}
 
-	if len(keys) > 0 {
 		err := s.redis.Client.Del(ctx, keys...).Err()
 		if err != nil {
 			return fmt.Errorf("failed to delete user tokens: %w", err)
 		}
+
+		// Remove the user token set
+		s.redis.Client.Del(ctx, userTokensKey)
 
 		s.logger.Info("Revoked all user tokens",
 			zap.String("user_id", userID),
@@ -556,6 +567,10 @@ func (s *Store) accessTokenKey(token string) string {
 
 func (s *Store) tokenFamilyKey(familyID string) string {
 	return fmt.Sprintf("oauth:token_family:%s", familyID)
+}
+
+func (s *Store) userTokensKey(userID string) string {
+	return fmt.Sprintf("oauth:user_tokens:%s", userID)
 }
 
 func (s *Store) createFamily(ctx context.Context, clientID, userID, scope string, ttl time.Duration) *RefreshTokenFamily {
@@ -588,6 +603,21 @@ func (s *Store) getOrCreateFamily(ctx context.Context, clientID, userID, scope, 
 		}
 	}
 
-	// Family doesn't exist, create a new one
-	return s.createFamily(ctx, clientID, userID, scope, ttl)
+	// Family doesn't exist, create a new one with the specified familyID
+	family := &RefreshTokenFamily{
+		FamilyID:    familyID,
+		ClientID:    clientID,
+		UserID:      userID,
+		Scope:       scope,
+		CreatedAt:   time.Now(),
+		LastRotated: time.Now(),
+		TokenCount:  1,
+		ExpiresAt:   time.Now().Add(ttl),
+	}
+
+	newFamilyKey := s.tokenFamilyKey(familyID)
+	familyData, _ := json.Marshal(family)
+	s.redis.Client.Set(ctx, newFamilyKey, familyData, ttl)
+
+	return family
 }

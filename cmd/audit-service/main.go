@@ -116,7 +116,7 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(otelgin.Middleware("audit-service"))
-	router.Use(middleware.SecurityHeaders(cfg.IsProduction()))
+	router.Use(middleware.SecurityHeadersForEnv(cfg.IsProduction()))
 	router.Use(logger.GinMiddleware(log))
 	if cfg.EnableRateLimit {
 		var redisClient *goredis.Client

@@ -3,12 +3,29 @@ package audit
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// validIDPattern matches UUIDs and common audit event ID formats (hex strings, UUIDs)
+var validIDPattern = regexp.MustCompile(`^[a-fA-F0-9-]{1,64}$`)
+
+// validEntityTypePattern matches safe entity type strings (alphanumeric, underscores, hyphens)
+var validEntityTypePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+// isValidEventID validates audit event ID format to prevent injection
+func isValidEventID(id string) bool {
+	return len(id) > 0 && len(id) <= 64 && validIDPattern.MatchString(id)
+}
+
+// isValidEntityParam validates entity type and entity ID parameters
+func isValidEntityParam(param string) bool {
+	return len(param) > 0 && len(param) <= 128 && validEntityTypePattern.MatchString(param)
+}
 
 // Handler provides HTTP handlers for audit operations
 type Handler struct {
@@ -172,6 +189,10 @@ func (h *Handler) SearchEvents(c *gin.Context) {
 // GetEvent handles GET /api/v1/audit/events/:id
 func (h *Handler) GetEvent(c *gin.Context) {
 	eventID := c.Param("id")
+	if !isValidEventID(eventID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event ID format"})
+		return
+	}
 
 	event, err := h.store.ReadByID(c.Request.Context(), eventID)
 	if err != nil {
@@ -317,6 +338,11 @@ func (h *Handler) GetTimeline(c *gin.Context) {
 
 	if entityType == "" || entityID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "entity_type and entity_id are required"})
+		return
+	}
+
+	if !isValidEntityParam(entityType) || !isValidEventID(entityID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid entity_type or entity_id format"})
 		return
 	}
 

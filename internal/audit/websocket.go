@@ -133,8 +133,8 @@ func (ov *OriginValidator) logRejectedConnection(r *http.Request, origin, reason
 		} else {
 			realIP = forwardedFor
 		}
-	} else if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		realIP = realIP
+	} else if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
+		realIP = xRealIP
 	}
 
 	ov.logger.Warn("WebSocket connection rejected",

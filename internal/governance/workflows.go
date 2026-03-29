@@ -43,18 +43,27 @@ type Approval struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
+// AutoApproveConditions defines typed conditions for automatic approval (V-007 security fix)
+type AutoApproveConditions struct {
+	MaxRiskScore    *int     `json:"max_risk_score,omitempty"`
+	AllowedRoles    []string `json:"allowed_roles,omitempty"`
+	AllowedGroups   []string `json:"allowed_groups,omitempty"`
+	RequireMFA      *bool    `json:"require_mfa,omitempty"`
+	MaxRequestCount *int     `json:"max_request_count,omitempty"`
+}
+
 // ApprovalPolicy defines who must approve requests for specific resource types
 type ApprovalPolicy struct {
-	ID                    string                   `json:"id"`
-	Name                  string                   `json:"name"`
-	ResourceType          string                   `json:"resource_type"`
-	ResourceID            *string                  `json:"resource_id,omitempty"`
-	ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
-	AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
-	MaxWaitHours          int                      `json:"max_wait_hours"`
-	Enabled               bool                     `json:"enabled"`
-	CreatedAt             time.Time                `json:"created_at"`
-	UpdatedAt             time.Time                `json:"updated_at"`
+	ID                    string                 `json:"id"`
+	Name                  string                 `json:"name"`
+	ResourceType          string                 `json:"resource_type"`
+	ResourceID            *string                `json:"resource_id,omitempty"`
+	ApprovalSteps         []ApprovalStep         `json:"approval_steps"`
+	AutoApproveConditions *AutoApproveConditions `json:"auto_approve_conditions,omitempty"`
+	MaxWaitHours          int                    `json:"max_wait_hours"`
+	Enabled               bool                   `json:"enabled"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
 // parseDuration converts a human-friendly duration string to time.Duration.
@@ -196,15 +205,74 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 				)
 			}
 		case ApprovalStepTypeRole:
-			// For role-based approval, we need to query users with this role
-			// For now, skip role-based approvals in this implementation
-			s.logger.Debug("Role-based approval step not yet implemented", zap.Int("step", i+1), zap.String("role_id", step.RoleID))
+			if step.RoleID != "" {
+				roleRows, err := s.db.Pool.Query(ctx,
+					`SELECT id FROM users WHERE $1 = ANY(roles)`, step.RoleID,
+				)
+				if err != nil {
+					s.logger.Error("Failed to query users by role", zap.Error(err), zap.String("role_id", step.RoleID))
+				} else {
+					defer roleRows.Close()
+					for roleRows.Next() {
+						var userID string
+						if err := roleRows.Scan(&userID); err != nil {
+							s.logger.Error("Failed to scan role user", zap.Error(err))
+							continue
+						}
+						_, _ = s.db.Pool.Exec(ctx,
+							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
+							 VALUES ($1, $2, $3, $4, $5, $6)`,
+							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(),
+						)
+					}
+				}
+			}
 		case ApprovalStepTypeGroup:
-			// For group-based approval, we need to query users in this group
-			s.logger.Debug("Group-based approval step not yet implemented", zap.Int("step", i+1), zap.String("group_id", step.GroupID))
+			if step.GroupID != "" {
+				groupRows, err := s.db.Pool.Query(ctx,
+					`SELECT user_id FROM group_memberships WHERE group_id = $1`, step.GroupID,
+				)
+				if err != nil {
+					s.logger.Error("Failed to query group members", zap.Error(err), zap.String("group_id", step.GroupID))
+				} else {
+					defer groupRows.Close()
+					for groupRows.Next() {
+						var userID string
+						if err := groupRows.Scan(&userID); err != nil {
+							s.logger.Error("Failed to scan group member", zap.Error(err))
+							continue
+						}
+						_, _ = s.db.Pool.Exec(ctx,
+							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
+							 VALUES ($1, $2, $3, $4, $5, $6)`,
+							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(),
+						)
+					}
+				}
+			}
 		case ApprovalStepTypeManager:
-			// For manager approval, find the resource owner's manager
-			s.logger.Debug("Manager-based approval step not yet implemented", zap.Int("step", i+1))
+			// Look up the requester's manager from the access request
+			var requesterID string
+			err := s.db.Pool.QueryRow(ctx,
+				`SELECT requester_id FROM access_requests WHERE id = $1`, requestID,
+			).Scan(&requesterID)
+			if err != nil {
+				s.logger.Error("Failed to get requester for manager approval", zap.Error(err))
+			} else {
+				var managerID *string
+				err = s.db.Pool.QueryRow(ctx,
+					`SELECT manager_id FROM users WHERE id = $1`, requesterID,
+				).Scan(&managerID)
+				if err != nil {
+					s.logger.Error("Failed to get manager for requester", zap.Error(err), zap.String("requester_id", requesterID))
+				} else if managerID != nil {
+					_, _ = s.db.Pool.Exec(ctx,
+						`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
+						 VALUES ($1, $2, $3, $4, $5, $6)`,
+						uuid.New().String(), requestID, *managerID, step.Order, "pending", time.Now(),
+					)
+				}
+			}
 		case ApprovalStepTypeAuto:
 			// Automatic approval - no human approver needed
 			s.logger.Debug("Auto-approval step", zap.Int("step", i+1))
@@ -656,13 +724,13 @@ func (s *Service) handleListApprovalPolicies(c *gin.Context) {
 // handleCreateApprovalPolicy creates a new approval policy
 func (s *Service) handleCreateApprovalPolicy(c *gin.Context) {
 	var body struct {
-		Name                  string                   `json:"name"`
-		ResourceType          string                   `json:"resource_type"`
-		ResourceID            *string                  `json:"resource_id,omitempty"`
-		ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
-		AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
-		MaxWaitHours          int                      `json:"max_wait_hours"`
-		Enabled               bool                     `json:"enabled"`
+		Name                  string                 `json:"name"`
+		ResourceType          string                 `json:"resource_type"`
+		ResourceID            *string                `json:"resource_id,omitempty"`
+		ApprovalSteps         []ApprovalStep         `json:"approval_steps"`
+		AutoApproveConditions *AutoApproveConditions `json:"auto_approve_conditions,omitempty"`
+		MaxWaitHours          int                    `json:"max_wait_hours"`
+		Enabled               bool                   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -723,13 +791,13 @@ func (s *Service) handleUpdateApprovalPolicy(c *gin.Context) {
 	id := c.Param("id")
 
 	var body struct {
-		Name                  string                   `json:"name"`
-		ResourceType          string                   `json:"resource_type"`
-		ResourceID            *string                  `json:"resource_id,omitempty"`
-		ApprovalSteps         []ApprovalStep           `json:"approval_steps"`
-		AutoApproveConditions map[string]interface{}   `json:"auto_approve_conditions,omitempty"`
-		MaxWaitHours          int                      `json:"max_wait_hours"`
-		Enabled               bool                     `json:"enabled"`
+		Name                  string                 `json:"name"`
+		ResourceType          string                 `json:"resource_type"`
+		ResourceID            *string                `json:"resource_id,omitempty"`
+		ApprovalSteps         []ApprovalStep         `json:"approval_steps"`
+		AutoApproveConditions *AutoApproveConditions `json:"auto_approve_conditions,omitempty"`
+		MaxWaitHours          int                    `json:"max_wait_hours"`
+		Enabled               bool                   `json:"enabled"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})

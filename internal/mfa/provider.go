@@ -2,8 +2,11 @@
 package mfa
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/smtp"
 	"strings"
@@ -352,23 +355,112 @@ func NewWebhookProvider(url, apiKey string, logger *zap.Logger) *WebhookProvider
 
 // SendEmail sends an email via webhook
 func (p *WebhookProvider) SendEmail(ctx context.Context, to, subject, body string) error {
-	// This would make a webhook call to send email
-	// Implementation depends on the webhook API specification
-	p.logger.Info("Webhook: Would send email",
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	payload := map[string]string{
+		"type":    "email",
+		"to":      to,
+		"subject": subject,
+		"body":    body,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", p.url, bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create webhook request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		p.logger.Error("Failed to send email via webhook",
+			zap.String("to", to),
+			zap.Error(err),
+		)
+		return fmt.Errorf("webhook request failed: %w", err)
+	}
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		p.logger.Error("Webhook returned error status",
+			zap.String("to", to),
+			zap.Int("status", resp.StatusCode),
+		)
+		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+	}
+
+	p.logger.Info("Email sent successfully via webhook",
 		zap.String("to", to),
 		zap.String("subject", subject),
 	)
-	return fmt.Errorf("webhook email sending not implemented")
+
+	return nil
 }
 
 // SendSMS sends an SMS via webhook
 func (p *WebhookProvider) SendSMS(ctx context.Context, to, message string) error {
-	// This would make a webhook call to send SMS
-	// Implementation depends on the webhook API specification
-	p.logger.Info("Webhook: Would send SMS",
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	payload := map[string]string{
+		"type":    "sms",
+		"to":      to,
+		"message": message,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", p.url, bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create webhook request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		p.logger.Error("Failed to send SMS via webhook",
+			zap.String("to", to),
+			zap.Error(err),
+		)
+		return fmt.Errorf("webhook request failed: %w", err)
+	}
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		p.logger.Error("Webhook returned error status",
+			zap.String("to", to),
+			zap.Int("status", resp.StatusCode),
+		)
+		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+	}
+
+	p.logger.Info("SMS sent successfully via webhook",
 		zap.String("to", to),
 	)
-	return fmt.Errorf("webhook SMS sending not implemented")
+
+	return nil
 }
 
 // MultiProvider sends via multiple providers with fallback
