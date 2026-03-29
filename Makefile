@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -113,6 +113,10 @@ test-integration:
 test-e2e:
 	@echo "🎭 Running end-to-end tests..."
 	cd web/admin-console && npx playwright test
+
+smoke-test:
+	@echo "Running smoke tests..."
+	@./scripts/smoke-test.sh
 
 #---------------------------------------------------------------------------
 # Linting
