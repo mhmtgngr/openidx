@@ -32,40 +32,40 @@ import (
 
 // OAuthClient represents an OAuth 2.0 client application
 type OAuthClient struct {
-	ID                  string    `json:"id"`
-	ClientID            string    `json:"client_id"`
-	ClientSecret        string    `json:"client_secret,omitempty"`
-	Name                string    `json:"name"`
-	Description         string    `json:"description"`
-	Type                string    `json:"type"` // confidential, public
-	RedirectURIs        []string  `json:"redirect_uris"`
-	GrantTypes          []string  `json:"grant_types"`
-	ResponseTypes       []string  `json:"response_types"`
-	Scopes              []string  `json:"scopes"`
-	LogoURI             string    `json:"logo_uri,omitempty"`
-	PolicyURI           string    `json:"policy_uri,omitempty"`
-	TOSUri              string    `json:"tos_uri,omitempty"`
-	PKCERequired        bool      `json:"pkce_required"`
-	AllowRefreshToken   bool      `json:"allow_refresh_token"`
-	AccessTokenLifetime int       `json:"access_token_lifetime"`  // seconds
-	RefreshTokenLifetime int      `json:"refresh_token_lifetime"` // seconds
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                   string    `json:"id"`
+	ClientID             string    `json:"client_id"`
+	ClientSecret         string    `json:"client_secret,omitempty"`
+	Name                 string    `json:"name"`
+	Description          string    `json:"description"`
+	Type                 string    `json:"type"` // confidential, public
+	RedirectURIs         []string  `json:"redirect_uris"`
+	GrantTypes           []string  `json:"grant_types"`
+	ResponseTypes        []string  `json:"response_types"`
+	Scopes               []string  `json:"scopes"`
+	LogoURI              string    `json:"logo_uri,omitempty"`
+	PolicyURI            string    `json:"policy_uri,omitempty"`
+	TOSUri               string    `json:"tos_uri,omitempty"`
+	PKCERequired         bool      `json:"pkce_required"`
+	AllowRefreshToken    bool      `json:"allow_refresh_token"`
+	AccessTokenLifetime  int       `json:"access_token_lifetime"`  // seconds
+	RefreshTokenLifetime int       `json:"refresh_token_lifetime"` // seconds
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // AuthorizationCode represents an OAuth authorization code
 type AuthorizationCode struct {
-	Code              string    `json:"code"`
-	ClientID          string    `json:"client_id"`
-	UserID            string    `json:"user_id"`
-	RedirectURI       string    `json:"redirect_uri"`
-	Scope             string    `json:"scope"`
-	State             string    `json:"state,omitempty"`
-	Nonce             string    `json:"nonce,omitempty"`
-	CodeChallenge     string    `json:"code_challenge,omitempty"`
-	CodeChallengeMethod string  `json:"code_challenge_method,omitempty"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	CreatedAt         time.Time `json:"created_at"`
+	Code                string    `json:"code"`
+	ClientID            string    `json:"client_id"`
+	UserID              string    `json:"user_id"`
+	RedirectURI         string    `json:"redirect_uri"`
+	Scope               string    `json:"scope"`
+	State               string    `json:"state,omitempty"`
+	Nonce               string    `json:"nonce,omitempty"`
+	CodeChallenge       string    `json:"code_challenge,omitempty"`
+	CodeChallengeMethod string    `json:"code_challenge_method,omitempty"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // AccessToken represents an OAuth access token
@@ -125,26 +125,26 @@ type OIDCDiscovery struct {
 	SubjectTypesSupported             []string `json:"subject_types_supported"`
 	IDTokenSigningAlgValuesSupported  []string `json:"id_token_signing_alg_values_supported"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
-	ClaimsSupported                      []string `json:"claims_supported"`
-	CodeChallengeMethodsSupported        []string `json:"code_challenge_methods_supported"`
-	EndSessionEndpoint                   string   `json:"end_session_endpoint,omitempty"`
-	BackchannelLogoutSupported           bool     `json:"backchannel_logout_supported,omitempty"`
-	BackchannelLogoutSessionSupported    bool     `json:"backchannel_logout_session_supported,omitempty"`
+	ClaimsSupported                   []string `json:"claims_supported"`
+	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported"`
+	EndSessionEndpoint                string   `json:"end_session_endpoint,omitempty"`
+	BackchannelLogoutSupported        bool     `json:"backchannel_logout_supported,omitempty"`
+	BackchannelLogoutSessionSupported bool     `json:"backchannel_logout_session_supported,omitempty"`
 }
-
 
 // Service provides OAuth/OIDC operations
 type Service struct {
-	db         *database.PostgresDB
-	redis      *database.RedisClient
-	config     *config.Config
-	logger     *zap.Logger
-	privateKey *rsa.PrivateKey
-	publicKey  *rsa.PublicKey
-	issuer     string
-	identityService *identity.Service
-	riskService     *risk.Service
-	webhookService  WebhookPublisher
+	db               *database.PostgresDB
+	redis            *database.RedisClient
+	config           *config.Config
+	logger           *zap.Logger
+	privateKey       *rsa.PrivateKey
+	publicKey        *rsa.PublicKey
+	keyManager       *KeyManager // KeyManager for Ed25519 and RSA key management
+	issuer           string
+	identityService  *identity.Service
+	riskService      *risk.Service
+	webhookService   WebhookPublisher
 	authorizeHandler *AuthorizeHandler
 }
 
@@ -163,9 +163,24 @@ func (s *Service) SetWebhookService(ws WebhookPublisher) {
 	s.webhookService = ws
 }
 
+// SetKeyManager sets the key manager for RSA key management
+func (s *Service) SetKeyManager(km *KeyManager) {
+	s.keyManager = km
+	// Also update the legacy privateKey/publicKey fields for backward compatibility
+	if km != nil {
+		s.privateKey = km.GetSigningKey()
+		s.publicKey = &km.GetSigningKey().PublicKey
+	}
+}
+
 // AuthorizeHandler returns the authorization handler
 func (s *Service) AuthorizeHandler() *AuthorizeHandler {
 	return s.authorizeHandler
+}
+
+// withDBTimeout returns a context with timeout for database operations
+func (s *Service) withDBTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, 5*time.Second)
 }
 
 // NewService creates a new OAuth service
@@ -173,7 +188,12 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	// Try to load RSA key from database, generate if not found
 	var privateKey *rsa.PrivateKey
 	var keyPEMStr string
-	err := db.Pool.QueryRow(context.Background(),
+
+	// Use timeout context for database operations during initialization
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := db.Pool.QueryRow(ctx,
 		"SELECT value::text FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&keyPEMStr)
 	if err == nil && len(keyPEMStr) > 0 {
 		// value is stored as a JSON string, strip quotes
@@ -198,7 +218,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
 		pemBytes := pem.EncodeToMemory(keyBlock)
 		pemJSON, _ := json.Marshal(string(pemBytes))
-		db.Pool.Exec(context.Background(),
+		db.Pool.Exec(ctx,
 			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb",
 			string(pemJSON))
 		logger.Info("RSA signing key generated and persisted to database")
@@ -213,13 +233,13 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	}
 
 	svc := &Service{
-		db:         db,
-		redis:      redis,
-		config:     cfg,
-		logger:     logger.With(zap.String("service", "oauth")),
-		privateKey: privateKey,
-		publicKey:  &privateKey.PublicKey,
-		issuer:     issuer,
+		db:              db,
+		redis:           redis,
+		config:          cfg,
+		logger:          logger.With(zap.String("service", "oauth")),
+		privateKey:      privateKey,
+		publicKey:       &privateKey.PublicKey,
+		issuer:          issuer,
 		identityService: idSvc,
 	}
 
@@ -290,15 +310,20 @@ func (s *Service) checkCountryBlock(ctx context.Context, clientIP, userID, usern
 
 	for _, blocked := range blockedCountries {
 		if strings.EqualFold(blocked, geo.CountryCode) {
-			go s.logAuditEvent(context.Background(), "authentication", "security",
-				"login_blocked_country", "failure", userID, clientIP, userID, "user",
-				map[string]interface{}{
-					"username":     username,
-					"country_code": geo.CountryCode,
-					"country":      geo.Country,
-					"city":         geo.City,
-					"reason":       "country_blocked",
-				})
+			// Log audit event in background with timeout
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s.logAuditEvent(ctx, "authentication", "security",
+					"login_blocked_country", "failure", userID, clientIP, userID, "user",
+					map[string]interface{}{
+						"username":     username,
+						"country_code": geo.CountryCode,
+						"country":      geo.Country,
+						"city":         geo.City,
+						"reason":       "country_blocked",
+					})
+			}()
 
 			s.logger.Warn("Login blocked: country restriction",
 				zap.String("user_id", userID),
@@ -338,7 +363,11 @@ func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
 	scopesJSON, _ := json.Marshal(client.Scopes)
 
-	_, err := s.db.Pool.Exec(ctx, `
+	// Use timeout context for database operation
+	dbCtx, cancel := s.withDBTimeout(ctx)
+	defer cancel()
+
+	_, err := s.db.Pool.Exec(dbCtx, `
 		INSERT INTO oauth_clients (
 			id, client_id, client_secret, name, description, type,
 			redirect_uris, grant_types, response_types, scopes,
@@ -362,7 +391,11 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 	var clientSecret, description, logoURI, policyURI, tosURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
 
-	err := s.db.Pool.QueryRow(ctx, `
+	// Use timeout context for database operation
+	dbCtx, cancel := s.withDBTimeout(ctx)
+	defer cancel()
+
+	err := s.db.Pool.QueryRow(dbCtx, `
 		SELECT id, client_id, client_secret, name, description, type,
 		       redirect_uris, grant_types, response_types, scopes,
 		       logo_uri, policy_uri, tos_uri, pkce_required,
@@ -409,12 +442,17 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 // ListClients retrieves all OAuth clients
 func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthClient, int, error) {
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM oauth_clients").Scan(&total)
+
+	// Use timeout context for database operations
+	dbCtx, cancel := s.withDBTimeout(ctx)
+	defer cancel()
+
+	err := s.db.Pool.QueryRow(dbCtx, "SELECT COUNT(*) FROM oauth_clients").Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
+	rows, err := s.db.Pool.Query(dbCtx, `
 		SELECT id, client_id, name, description, type, created_at, updated_at
 		FROM oauth_clients
 		ORDER BY created_at DESC
@@ -844,12 +882,12 @@ func (s *Service) GetUserInfo(ctx context.Context, userID string) (*UserInfo, er
 	}
 
 	return &UserInfo{
-		Sub:           userID,
-		Email:         email,
-		EmailVerified: emailVerified,
-		Name:          name,
-		GivenName:     firstName,
-		FamilyName:    lastName,
+		Sub:               userID,
+		Email:             email,
+		EmailVerified:     emailVerified,
+		Name:              name,
+		GivenName:         firstName,
+		FamilyName:        lastName,
 		PreferredUsername: email,
 	}, nil
 }
@@ -857,13 +895,34 @@ func (s *Service) GetUserInfo(ctx context.Context, userID string) (*UserInfo, er
 // Utility Functions
 
 // GenerateRandomToken generates a cryptographically secure random token.
-// Panics if the CSPRNG fails, as producing weak tokens would be a critical security issue.
+// It uses crypto/rand for security and panics if the CSPRNG fails.
+// In a properly configured system, crypto/rand should never fail.
+// For code that needs explicit error handling, use GenerateRandomTokenSafe.
 func GenerateRandomToken(length int) string {
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
+	token, err := GenerateRandomTokenSafe(length)
+	if err != nil {
+		// If crypto/rand fails, it's a critical system failure.
+		// Panicking is safer than continuing with weak tokens.
 		panic("crypto/rand failed: " + err.Error())
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return token
+}
+
+// GenerateRandomTokenSafe generates a cryptographically secure random token.
+// Returns an error if the CSPRNG fails. Use this function when you need
+// explicit error handling instead of panicking on failure.
+func GenerateRandomTokenSafe(length int) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("invalid token length: %d", length)
+	}
+	if length > 4096 {
+		return "", fmt.Errorf("token length too large: %d (max 4096)", length)
+	}
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to read random bytes: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
 // VerifyPKCE verifies PKCE code challenge
@@ -1004,19 +1063,19 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 	}
 
 	discovery := OIDCDiscovery{
-		Issuer:                s.issuer,
-		AuthorizationEndpoint: s.issuer + "/oauth/authorize",
-		TokenEndpoint:         s.issuer + "/oauth/token",
-		UserInfoEndpoint:      s.issuer + "/oauth/userinfo",
-		JwksURI:               s.issuer + "/.well-known/jwks.json",
-		ScopesSupported:       []string{"openid", "profile", "email", "offline_access"},
-		ResponseTypesSupported: []string{"code", "id_token", "token id_token", "code id_token"},
-		GrantTypesSupported:    []string{"authorization_code", "refresh_token", "client_credentials"},
-		SubjectTypesSupported:  []string{"public"},
-		IDTokenSigningAlgValuesSupported: []string{"RS256"},
+		Issuer:                            s.issuer,
+		AuthorizationEndpoint:             s.issuer + "/oauth/authorize",
+		TokenEndpoint:                     s.issuer + "/oauth/token",
+		UserInfoEndpoint:                  s.issuer + "/oauth/userinfo",
+		JwksURI:                           s.issuer + "/.well-known/jwks.json",
+		ScopesSupported:                   []string{"openid", "profile", "email", "offline_access"},
+		ResponseTypesSupported:            []string{"code", "id_token", "token id_token", "code id_token"},
+		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials"},
+		SubjectTypesSupported:             []string{"public"},
+		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
-		ClaimsSupported: []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
-		CodeChallengeMethodsSupported: []string{"S256", "plain"},
+		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
+		CodeChallengeMethodsSupported:     []string{"S256", "plain"},
 		EndSessionEndpoint:                s.issuer + "/oauth/logout",
 		BackchannelLogoutSupported:        true,
 		BackchannelLogoutSessionSupported: true,
@@ -1288,10 +1347,14 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 	user, err := s.identityService.AuthenticateUser(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		// Log failed login audit event
-		go s.logAuditEvent(context.Background(), "authentication", "security", "login_failed", "failure",
-			req.Username, clientIP, "", "user",
-			map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
+		// Log failed login audit event in background with timeout
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.logAuditEvent(ctx, "authentication", "security", "login_failed", "failure",
+				req.Username, clientIP, "", "user",
+				map[string]interface{}{"reason": err.Error(), "user_agent": userAgent})
+		}()
 
 		// Return appropriate error message
 		errorMsg := "Invalid username or password"
@@ -1304,10 +1367,14 @@ func (s *Service) handleLogin(c *gin.Context) {
 		return
 	}
 
-	// Log successful login audit event
-	go s.logAuditEvent(context.Background(), "authentication", "security", "login", "success",
-		user.ID, clientIP, user.ID, "user",
-		map[string]interface{}{"username": user.UserName, "email": user.GetEmail(), "user_agent": userAgent})
+	// Log successful login audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "login", "success",
+			user.ID, clientIP, user.ID, "user",
+			map[string]interface{}{"username": user.UserName, "email": user.GetEmail(), "user_agent": userAgent})
+	}()
 
 	// Country-based login blocking
 	if err := s.checkCountryBlock(c.Request.Context(), clientIP, user.ID, user.UserName); err != nil {
@@ -1494,13 +1561,13 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 
 		c.JSON(200, gin.H{
-			"mfa_required":     true,
-			"mfa_session":      mfaSession,
-			"mfa_methods":      availableMFAMethods,
-			"risk_score":       riskScore,
-			"risk_level":       riskLevel,
-			"risk_factors":     riskFactors,
-			"device_trusted":   deviceTrusted,
+			"mfa_required":      true,
+			"mfa_session":       mfaSession,
+			"mfa_methods":       availableMFAMethods,
+			"risk_score":        riskScore,
+			"risk_level":        riskLevel,
+			"risk_factors":      riskFactors,
+			"device_trusted":    deviceTrusted,
 			"can_trust_browser": !browserTrusted,
 		})
 		return
@@ -1512,9 +1579,14 @@ func (s *Service) handleLogin(c *gin.Context) {
 			zap.String("user_id", user.ID),
 			zap.String("fingerprint", fingerprint),
 		)
-		go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_skipped", "success",
-			user.ID, clientIP, user.ID, "user",
-			map[string]interface{}{"reason": "trusted_browser", "fingerprint": fingerprint})
+		// Log audit event in background with timeout
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.logAuditEvent(ctx, "authentication", "security", "mfa_skipped", "success",
+				user.ID, clientIP, user.ID, "user",
+				map[string]interface{}{"reason": "trusted_browser", "fingerprint": fingerprint})
+		}()
 	}
 
 	// Deny access if risk assessment says so (or legacy: high risk + no MFA)
@@ -1718,10 +1790,14 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 	}
 
 	if verifyErr != nil || !valid {
-		// Log failed MFA attempt
-		go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_failed", "failure",
-			userID, clientIP, userID, "user",
-			map[string]interface{}{"method": req.Method, "error": verifyErr})
+		// Log failed MFA attempt in background with timeout
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.logAuditEvent(ctx, "authentication", "security", "mfa_failed", "failure",
+				userID, clientIP, userID, "user",
+				map[string]interface{}{"method": req.Method, "error": verifyErr})
+		}()
 
 		c.JSON(401, gin.H{"error": "invalid_mfa_code", "error_description": "Invalid verification code"})
 		return
@@ -1730,10 +1806,14 @@ func (s *Service) handleMFAVerify(c *gin.Context) {
 	// MFA verified — delete session
 	s.redis.Client.Del(c.Request.Context(), "mfa_session:"+req.MFASession)
 
-	// Log MFA verification audit event
-	go s.logAuditEvent(context.Background(), "authentication", "security", "mfa_verified", "success",
-		userID, clientIP, userID, "user",
-		map[string]interface{}{"method": req.Method, "trust_browser": req.TrustBrowser})
+	// Log MFA verification audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "mfa_verified", "success",
+			userID, clientIP, userID, "user",
+			map[string]interface{}{"method": req.Method, "trust_browser": req.TrustBrowser})
+	}()
 
 	// Handle trusted browser request
 	var trustedBrowserID string
@@ -1958,13 +2038,13 @@ func (s *Service) handleSSOAuthorize(c *gin.Context, idpID string) {
 	// 2. Store original request parameters in Redis
 	state := GenerateRandomToken(32)
 	originalParams := map[string]string{
-		"client_id":       c.Query("client_id"),
-		"redirect_uri":    c.Query("redirect_uri"),
-		"response_type":   c.Query("response_type"),
-		"scope":           c.Query("scope"),
-		"state":           c.Query("state"),
-		"nonce":           c.Query("nonce"),
-		"code_challenge":  c.Query("code_challenge"),
+		"client_id":             c.Query("client_id"),
+		"redirect_uri":          c.Query("redirect_uri"),
+		"response_type":         c.Query("response_type"),
+		"scope":                 c.Query("scope"),
+		"state":                 c.Query("state"),
+		"nonce":                 c.Query("nonce"),
+		"code_challenge":        c.Query("code_challenge"),
 		"code_challenge_method": c.Query("code_challenge_method"),
 	}
 	paramsJSON, _ := json.Marshal(originalParams)
@@ -2372,7 +2452,12 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		// Debounced activity update (only if >30s since last update)
 		debounceKey := "session_activity:" + token.SessionID
 		if set, _ := s.redis.Client.SetNX(c.Request.Context(), debounceKey, "1", 30*time.Second).Result(); set {
-			go s.identityService.UpdateSessionActivity(context.Background(), token.SessionID)
+			// Update session activity in background with timeout
+			go func(sessionID string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				s.identityService.UpdateSessionActivity(ctx, sessionID)
+			}(token.SessionID)
 		}
 	}
 
@@ -2820,9 +2905,14 @@ func (s *Service) handleLogout(c *gin.Context) {
 		s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
 		s.logger.Info("Global logout for user", zap.String("user_id", userID))
 
-		go s.logAuditEvent(context.Background(), "authentication", "security", "global_logout", "success",
-			userID, c.ClientIP(), userID, "user",
-			map[string]interface{}{"method": "logout_endpoint"})
+		// Log audit event in background with timeout
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.logAuditEvent(ctx, "authentication", "security", "global_logout", "success",
+				userID, c.ClientIP(), userID, "user",
+				map[string]interface{}{"method": "logout_endpoint"})
+		}()
 	}
 
 	if postLogoutRedirectURI != "" {
@@ -2866,9 +2956,14 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 
 	s.logger.Info("Logout-all for user", zap.String("user_id", userID))
 
-	go s.logAuditEvent(context.Background(), "authentication", "security", "logout_all", "success",
-		userID, c.ClientIP(), userID, "user",
-		map[string]interface{}{"method": "logout_all_endpoint"})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "security", "logout_all", "success",
+			userID, c.ClientIP(), userID, "user",
+			map[string]interface{}{"method": "logout_all_endpoint"})
+	}()
 
 	c.JSON(200, gin.H{"status": "all_sessions_revoked"})
 }
@@ -3002,4 +3097,3 @@ func containsScope(scopes []string, scope string) bool {
 	}
 	return false
 }
-

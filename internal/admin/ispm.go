@@ -423,6 +423,8 @@ func (s *Service) handleUpdatePostureRule(c *gin.Context) {
 	}
 
 	sets = append(sets, "updated_at = NOW()")
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE ispm_rules SET %s WHERE id = $%d RETURNING id", joinStrings(sets, ", "), argIdx)
 	args = append(args, id)
 

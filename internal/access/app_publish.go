@@ -272,7 +272,12 @@ func (s *Service) handleStartDiscovery(c *gin.Context) {
 
 	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='discovering', discovery_started_at=NOW(), discovery_error=NULL, updated_at=NOW() WHERE id=$1`, appID)
 
-	go s.runAppDiscovery(context.Background(), appID)
+	// Run app discovery in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		s.runAppDiscovery(ctx, appID)
+	}()
 
 	s.logAuditEvent(c, "app_discovery_started", appID, "published_app", nil)
 	c.JSON(http.StatusAccepted, gin.H{"message": "discovery started", "app_id": appID})
@@ -379,6 +384,8 @@ func (s *Service) handleUpdatePathClassification(c *gin.Context) {
 	}
 
 	args = append(args, pathID)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE discovered_paths SET %s WHERE id=$%d", strings.Join(sets, ", "), argIdx)
 
 	tag, err := s.db.Pool.Exec(ctx, query, args...)

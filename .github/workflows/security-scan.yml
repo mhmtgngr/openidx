@@ -1,0 +1,414 @@
+name: Security Scanning
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 02:00 UTC
+    - cron: '0 3 * * 0'  # Weekly on Sunday at 03:00 UTC (extended scan)
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: 'Scan type to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - vulnerabilities
+          - dependencies
+          - secrets
+          - sast
+          - license
+  push:
+    branches: [main, dev]
+    paths:
+      - '**/go.mod'
+      - '**/go.sum'
+      - '**/package.json'
+      - '**/package-lock.json'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - '**/go.mod'
+      - '**/go.sum'
+      - '**/package.json'
+      - '**/package-lock.json'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/openidx
+  TRIVY_SEVERITY: 'CRITICAL,HIGH'
+  TRIVY_EXIT_CODE: '0'  # Don't fail on nightly scans
+
+jobs:
+  nightly-vulnerability-scan:
+    name: Nightly Vulnerability Scan
+    if: github.event_name == 'schedule' || github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'vulnerabilities' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - identity-service
+          - governance-service
+          - provisioning-service
+          - audit-service
+          - admin-api
+          - oauth-service
+          - admin-console
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest image
+        run: |
+          docker pull ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main || \
+          docker pull ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest || \
+          echo "Image not found, skipping..."
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: ${{ env.TRIVY_EXIT_CODE }}
+          vuln-type: 'os,library'
+          scan-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'nightly-${{ matrix.service }}'
+
+      - name: Generate vulnerability report
+        if: always()
+        run: |
+          echo "### Trivy Scan Results for ${{ matrix.service }}" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          if [ -f trivy-results.sarif ]; then
+            echo 'Scan completed successfully. Results uploaded to Security tab.' >> $GITHUB_STEP_SUMMARY
+          else
+            echo 'Scan failed or image not found.' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload scan results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results-${{ matrix.service }}
+          path: trivy-results.sarif
+          retention-days: 30
+
+  go-dependency-scan:
+    name: Go Dependency Scan
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'dependencies' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        id: vulncheck
+        run: |
+          govulncheck ./... | tee govulncheck-report.txt || true
+        continue-on-error: true
+
+      - name: Upload govulncheck results
+        uses: actions/upload-artifact@v4
+        with:
+          name: govulncheck-report
+          path: govulncheck-report.txt
+          retention-days: 30
+
+      - name: Run go list for dependencies
+        run: go list -json -m all > go-deps.json
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'library'
+
+      - name: Upload Trivy FS results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-fs-results.sarif'
+          category: 'go-fs-scan'
+
+      - name: Generate dependency summary
+        run: |
+          echo "### Go Dependency Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          head -n 50 govulncheck-report.txt >> $GITHUB_STEP_SUMMARY || true
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  npm-dependency-scan:
+    name: NPM Dependency Scan
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'dependencies' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/admin-console/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./web/admin-console
+        run: npm ci
+
+      - name: Run npm audit
+        working-directory: ./web/admin-console
+        run: |
+          npm audit --json > npm-audit-report.json || true
+          npm audit --audit-level=high || true
+        continue-on-error: true
+
+      - name: Upload npm audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: web/admin-console/npm-audit-report.json
+          retention-days: 30
+
+      - name: Run Trivy on package files
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './web/admin-console'
+          format: 'sarif'
+          output: 'trivy-npm-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'library'
+
+      - name: Upload Trivy npm results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-npm-results.sarif'
+          category: 'npm-fs-scan'
+
+      - name: Generate npm audit summary
+        if: always()
+        run: |
+          echo "### NPM Dependency Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          if [ -f web/admin-console/npm-audit-report.json ]; then
+            echo 'NPM audit completed. Results uploaded as artifact.' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'secrets' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          retention-days: 30
+
+      - name: Generate secret scan summary
+        if: always()
+        run: |
+          echo "### Secret Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          if [ -f gitleaks-report.json ]; then
+            echo 'Gitleaks scan completed. Results uploaded as artifact.' >> $GITHUB_STEP_SUMMARY
+          else
+            echo 'No secrets detected!' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  sast-scan:
+    name: SAST Scan (Semgrep)
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'sast' || github.event.inputs.scan_type == '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/golang
+            p/javascript
+            p/secrets
+            p/cwe-top-25
+          output: semgrep-report.json
+          output-format: sarif
+          generate-sarif: '1'
+
+      - name: Upload Semgrep results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep-report.sarif
+          category: 'semgrep-sast'
+
+      - name: Upload Semgrep report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+          retention-days: 30
+
+      - name: Generate SAST summary
+        if: always()
+        run: |
+          echo "### SAST Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          if [ -f semgrep-report.json ]; then
+            echo 'Semgrep scan completed. Results uploaded to Security tab.' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  license-compliance:
+    name: License Compliance
+    if: github.event.inputs.scan_type == 'all' || github.event.inputs.scan_type == 'license' || github.event.inputs.scan_type == '' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - name: Check Go licenses
+        run: |
+          go-licenses check ./... --disallowed_types=forbidden,restricted || echo "License check completed with warnings"
+          go-licenses save ./... --save_path=./licenses-go || true
+        continue-on-error: true
+
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-licenses
+          path: licenses-go
+          retention-days: 90
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate NPM license report
+        working-directory: ./web/admin-console
+        run: |
+          npm install -g license-reporter
+          npm ci || true
+          license-reporter --json > ../npm-licenses.json || true
+        continue-on-error: true
+
+      - name: Upload npm license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-licenses
+          path: npm-licenses.json
+          retention-days: 90
+
+      - name: Generate license summary
+        if: always()
+        run: |
+          echo "### License Compliance Summary" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo 'License reports generated for Go and NPM dependencies.' >> $GITHUB_STEP_SUMMARY
+
+  security-summary:
+    name: Security Scan Summary
+    if: always() && github.event_name == 'schedule'
+    needs:
+      - nightly-vulnerability-scan
+      - go-dependency-scan
+      - npm-dependency-scan
+      - secret-scan
+      - sast-scan
+      - license-compliance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./reports
+
+      - name: Generate summary
+        run: |
+          echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scan completed at: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Reports Generated:" >> $GITHUB_STEP_SUMMARY
+          ls -R ./reports >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for HIGH/CRITICAL vulnerabilities
+        run: |
+          echo "## Vulnerability Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          find ./reports -name "*.sarif" -o -name "*-report.json" | while read file; do
+            echo "- $(basename $file)" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: Fail on critical findings (schedule only)
+        if: contains(needs.*.result, 'failure')
+        run: |
+          echo "One or more security scans failed. Please review the results."
+          exit 1
+        continue-on-error: true

@@ -427,7 +427,9 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 }
 
 func (s *Service) executeLifecyclePolicy(execID string, p LifecyclePolicy, affected []AffectedUser) {
-	ctx := context.Background()
+	// Use timeout context for lifecycle policy execution
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 	usersAffected := 0
 	var actionsTaken []map[string]string
 

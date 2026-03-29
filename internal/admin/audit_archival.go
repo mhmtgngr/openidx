@@ -171,6 +171,8 @@ func (s *Service) handleUpdateRetentionPolicy(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE audit_retention_policies SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
@@ -254,7 +256,9 @@ func (s *Service) handleCreateAuditArchive(c *gin.Context) {
 }
 
 func (s *Service) createAuditArchive(archiveID string, start, end time.Time, category string) {
-	ctx := context.Background()
+	// Use timeout context for archive creation (can be long-running)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
 
 	// Query events in date range
 	query := `SELECT id, timestamp, event_type, category, action, outcome, actor_id, actor_type,

@@ -1,0 +1,50 @@
+# Kustomization for development environment
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: openidx-dev
+
+# Labels applied to all resources
+commonLabels:
+  environment: development
+  app.kubernetes.io/part-of: openidx
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to deploy
+resources:
+  - namespace.yaml
+  - pv-local.yaml
+  - pvc-local.yaml
+  - secrets-env.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - elasticsearch.yaml
+  - opa.yaml
+  - etcd.yaml
+  - apisix.yaml
+  - services.yaml
+
+# Images to use for development
+images:
+  - name: openidx/identity-service
+    newName: openidx-dev/identity-service
+    newTag: dev
+  - name: openidx/governance-service
+    newName: openidx-dev/governance-service
+    newTag: dev
+  - name: openidx/provisioning-service
+    newName: openidx-dev/provisioning-service
+    newTag: dev
+  - name: openidx/audit-service
+    newName: openidx-dev/audit-service
+    newTag: dev
+  - name: openidx/admin-api
+    newName: openidx-dev/admin-api
+    newTag: dev
+  - name: openidx/oauth-service
+    newName: openidx-dev/oauth-service
+    newTag: dev
+  - name: openidx/admin-console
+    newName: openidx-dev/admin-console
+    newTag: dev

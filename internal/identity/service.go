@@ -5465,8 +5465,10 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 // It mirrors the pattern used in the OAuth service.
 func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		detailsJSON, _ := json.Marshal(details)
-		_, err := s.db.Pool.Exec(context.Background(), `
+		_, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
 			                          resource_id, details)

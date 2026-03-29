@@ -143,6 +143,7 @@ func (s *Service) GetUserNotifications(ctx context.Context, userID, channel stri
 	}
 
 	// Count query.
+	// SECURITY: baseWhere is built from hardcoded string literals and parameterized query values only
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM notifications %s", baseWhere)
 	var total int
 	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {

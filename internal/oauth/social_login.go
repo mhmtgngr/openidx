@@ -227,13 +227,18 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 		return
 	}
 
-	go s.logAuditEvent(context.Background(), "authentication", "social_login", "login", "success",
-		userID, c.ClientIP(), providerID, "identity_provider",
-		map[string]interface{}{
-			"provider_type": provider.ProviderType,
-			"social_id":     userInfo.ID,
-			"email":         userInfo.Email,
-		})
+	// Log audit event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "social_login", "login", "success",
+			userID, c.ClientIP(), providerID, "identity_provider",
+			map[string]interface{}{
+				"provider_type": provider.ProviderType,
+				"social_id":     userInfo.ID,
+				"email":         userInfo.Email,
+			})
+	}()
 
 	// If we have a login_session, issue an auth code via the normal OAuth flow
 	if loginSession != "" {

@@ -120,6 +120,51 @@ sequenceDiagram
     OAuth->>App: Access token + ID token + refresh token
 ```
 
+### Service Communication
+
+```mermaid
+graph LR
+    subgraph "Service Mesh"
+        IS[Identity<br/>8001]
+        OS[OAuth<br/>8006]
+        GS[Governance<br/>8002]
+        PS[Provisioning<br/>8003]
+        AS[Audit<br/>8004]
+        AA[Admin<br/>8005]
+    end
+
+    IS <--> |validate user| OS
+    IS <--> |log events| AS
+    IS <--> |policies| GS
+    IS <--> |provision| PS
+
+    OS <--> |validate user| IS
+    OS <--> |log auth| AS
+
+    GS <--> |user data| IS
+    GS <--> |log reviews| AS
+
+    PS <--> |sync users| IS
+    PS <--> |log changes| AS
+
+    AA <--> |all services| IS
+    AA <--> |all services| AS
+```
+
+### Database Schema
+
+```mermaid
+erDiagram
+    users ||--o{ sessions : has
+    users ||--o{ mfa_factors : has
+    users ||--o{ user_groups : belongs_to
+    groups ||--o{ user_groups : has
+    users ||--o{ audit_events : creates
+    applications ||--o{ oauth_clients : has
+    reviews ||--o{ review_items : contains
+    review_items ||--|| review_decisions : has
+```
+
 ## Technology Stack
 
 | Layer | Technology |

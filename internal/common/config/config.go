@@ -138,6 +138,7 @@ type Config struct {
 	ElasticsearchPassword string `mapstructure:"elasticsearch_password"`
 	ElasticsearchTLS      bool   `mapstructure:"elasticsearch_tls"`
 	ElasticsearchCACert   string `mapstructure:"elasticsearch_ca_cert"`
+	AutoMigrate bool `mapstructure:"auto_migrate"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

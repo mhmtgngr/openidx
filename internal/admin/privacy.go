@@ -564,6 +564,8 @@ func (s *Service) handleUpdateDSAR(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE data_subject_requests SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
@@ -867,6 +869,8 @@ func (s *Service) handleUpdatePrivacyRetention(c *gin.Context) {
 
 	sets = append(sets, "updated_at = NOW()")
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE privacy_retention_policies SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
@@ -1158,6 +1162,8 @@ func (s *Service) handleUpdatePrivacyAssessment(c *gin.Context) {
 
 	sets = append(sets, "updated_at = NOW()")
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE privacy_assessments SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)

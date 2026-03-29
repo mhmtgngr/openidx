@@ -222,6 +222,8 @@ func (s *Service) handleUpdateRoutingRule(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE notification_routing_rules SET %s WHERE id = $%d",
 		joinStrings(sets, ", "), argIdx)
 

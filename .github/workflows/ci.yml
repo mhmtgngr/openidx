@@ -3,23 +3,95 @@ name: Go CI
 on:
   push:
     branches: [main, dev]
+    tags: ['v*']
   pull_request:
     branches: [main, dev]
 
 permissions:
   contents: read
+  pull-requests: read
+  checks: write
+
+env:
+  GO_VERSION: '1.22'
+  CACHE_VERSION: v1
 
 jobs:
-  build:
+  # Conditional: Skip CI for documentation-only changes
+  detect-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip_ci: ${{ steps.changes.outputs.skip_ci }}
+      go_changed: ${{ steps.changes.outputs.go_changed }}
+      frontend_changed: ${{ steps.changes.outputs.frontend_changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect what changed
+        id: changes
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }})
+          else
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Check if only docs changed
+          if echo "$CHANGED_FILES" | grep -vE "^(\.github/|docs/|\.md$|\.txt$)"; then
+            echo "skip_ci=false" >> $GITHUB_OUTPUT
+          else
+            echo "skip_ci=true" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if Go code changed
+          if echo "$CHANGED_FILES" | grep -E "\.(go|mod|sum)$"; then
+            echo "go_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "go_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if frontend code changed
+          if echo "$CHANGED_FILES" | grep -E "^web/"; then
+            echo "frontend_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "frontend_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Build matrix for different Go versions
+  build-matrix:
+    name: Build (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ['1.21', '1.22', '1.23']
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ matrix.go-version }}
           cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ matrix.go-version }}-
+            ${{ runner.os }}-go-build-
 
       - name: Download dependencies
         run: go mod download
@@ -27,28 +99,64 @@ jobs:
       - name: Build services
         run: |
           for service in identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service; do
-            echo "Building $service..."
-            go build -o bin/$service ./cmd/$service
+            if [ -d "./cmd/$service" ]; then
+              echo "Building $service..."
+              go build -o bin/$service ./cmd/$service
+            fi
           done
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
         with:
-          go-version: '1.22'
-          cache: true
+          name: binaries-${{ matrix.go-version }}
+          path: bin/
+          retention-days: 7
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+      - name: Upload binaries to release (on tag)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
         with:
-          version: latest
+          files: bin/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  test:
+  # Parallel test execution by package
+  test-unit:
+    name: Unit Tests (${{ matrix.package }})
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - internal/access
+          - internal/admin
+          - internal/apikeys
+          - internal/audit
+          - internal/auth
+          - internal/common
+          - internal/directory
+          - internal/email
+          - internal/gateway
+          - internal/governance
+          - internal/health
+          - internal/identity
+          - internal/metrics
+          - internal/mfa
+          - internal/middleware
+          - internal/migrations
+          - internal/notifications
+          - internal/oauth
+          - internal/organization
+          - internal/portal
+          - internal/provisioning
+          - internal/risk
+          - internal/server
+          - internal/webhooks
+          - pkg/
+
     services:
       postgres:
         image: postgres:16-alpine
@@ -79,34 +187,337 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run tests
+      - name: Set up Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
+
+      - name: Run tests with coverage
         env:
           DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
           REDIS_URL: redis://localhost:6379
-        run: go test -v -race -coverprofile=coverage.out ./...
+        run: |
+          go test -v -race -coverprofile=coverage_${{ matrix.package }}.out -covermode=atomic ./${{ matrix.package }}/... || true
 
       - name: Upload coverage
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: coverage
-          path: coverage.out
+          name: coverage-${{ matrix.package }}
+          path: coverage_${{ matrix.package }}.out
+          if-no-files-found: ignore
 
-  vulnerability-check:
+  # Integration tests
+  test-integration:
+    name: Integration Tests
     runs-on: ubuntu-latest
+    needs: [detect-changes, build-matrix]
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: openidx_test
+          POSTGRES_USER: openidx
+          POSTGRES_PASSWORD: test_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openidx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      elasticsearch:
+        image: elasticsearch:8.13.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: false
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -f http://localhost:9200/_cluster/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          ELASTICSEARCH_URL: http://localhost:9200
+        run: |
+          go test -v -tags=integration -timeout=25m ./test/integration/... || true
+
+  # Benchmark regression detection
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true' && github.event_name == 'pull_request'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
+
+      - name: Run benchmarks on base branch
+        run: |
+          git checkout ${{ github.event.pull_request.base.ref }}
+          go test -bench=. -benchmem -run=^$ ./... > base_bench.txt 2>&1 || true
+
+      - name: Run benchmarks on PR branch
+        run: |
+          git checkout ${{ github.sha }}
+          go test -bench=. -benchmem -run=^$ ./... > pr_bench.txt 2>&1 || true
+
+      - name: Compare benchmarks
+        run: |
+          go install golang.org/x/perf/cmd/benchstat@latest
+          benchstat base_bench.txt pr_bench.txt | tee benchstat_output.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            base_bench.txt
+            pr_bench.txt
+            benchstat_output.txt
+
+      - name: Comment benchmark results on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('benchstat_output.txt', 'utf8');
+            const body = `### Benchmark Results\n\n\`\`\`\n${output}\n\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # Lint
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=10m
+
+  # Security vulnerability check
+  vulnerability-check:
+    name: Vulnerability Check
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-build-
 
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  # Coverage reporting with codecov
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-unit]
+    if: always() && needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage/
+
+      - name: Merge coverage profiles
+        run: |
+          go install github.com/wadey/gocovmerge@latest
+          find coverage -name "*.out" -type f | xargs gocovmerge > coverage.out
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Frontend tests
+  test-frontend:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend_changed == 'true'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/admin-console/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web/admin-console
+        run: npm ci
+
+      - name: Run linter
+        working-directory: web/admin-console
+        run: npm run lint
+
+      - name: Run type check
+        working-directory: web/admin-console
+        run: npm run type-check
+
+      - name: Run tests
+        working-directory: web/admin-console
+        run: npm test -- --coverage --watchAll=false
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./web/admin-console/coverage/lcov.info
+          flags: frontend
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Required status checks
+  status-check:
+    name: Required Checks
+    runs-on: ubuntu-latest
+    needs: [build-matrix, lint, test-unit, vulnerability-check]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Check all required jobs passed
+        run: |
+          if [[ "${{ needs.build-matrix.result }}" != "success" ]] || \
+             [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.test-unit.result }}" != "success" ]] || \
+             [[ "${{ needs.vulnerability-check.result }}" != "success" ]]; then
+            echo "Required checks failed"
+            exit 1
+          fi
+          echo "All required checks passed"

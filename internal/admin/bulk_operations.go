@@ -112,7 +112,9 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 }
 
 func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, params json.RawMessage) {
-	ctx := context.Background()
+	// Use timeout context for bulk operation execution
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
 	successCount := 0
 	errorCount := 0
 	var errors []map[string]string

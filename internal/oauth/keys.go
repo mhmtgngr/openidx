@@ -105,11 +105,15 @@ func NewKeyManager(db *database.PostgresDB, logger *zap.Logger, issuer string) (
 		publicKeys: make(map[string]*rsa.PublicKey),
 	}
 
-	// Try to load keys from database
-	if err := km.loadKeysFromDatabase(context.Background()); err != nil {
+	// Try to load keys from database with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := km.loadKeysFromDatabase(ctx); err != nil {
 		if errors.Is(err, ErrKeyNotFound) {
 			// No keys found, generate initial key
-			if err := km.generateAndStoreInitialKey(context.Background()); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := km.generateAndStoreInitialKey(ctx); err != nil {
 				return nil, fmt.Errorf("failed to generate initial key: %w", err)
 			}
 		} else {
@@ -408,9 +412,11 @@ func (km *KeyManager) RevokeOldKeys(ctx context.Context) error {
 
 // ShouldRotateKey checks if the current key should be rotated
 func (km *KeyManager) ShouldRotateKey() bool {
-	// Get the current key's metadata from database
+	// Get the current key's metadata from database with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var expiresAt time.Time
-	err := km.db.Pool.QueryRow(context.Background(), `
+	err := km.db.Pool.QueryRow(ctx, `
 		SELECT expires_at FROM oauth_signing_keys
 		WHERE key_id = $1 AND status = 'active'
 	`, km.currentKeyID).Scan(&expiresAt)

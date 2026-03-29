@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenIDX API Reference</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>ID</text></svg>">
+    <style>
+        :root {
+            --openidx-primary: #4f46e5;
+            --openidx-primary-dark: #4338ca;
+            --openidx-secondary: #0f172a;
+            --openidx-accent: #06b6d4;
+            --openidx-bg: #ffffff;
+            --openidx-bg-alt: #f8fafc;
+            --openidx-text: #1e293b;
+            --openidx-text-muted: #64748b;
+            --openidx-border: #e2e8f0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--openidx-bg-alt);
+            color: var(--openidx-text);
+            line-height: 1.6;
+        }
+
+        /* Header */
+        .api-header {
+            background: var(--openidx-secondary);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .api-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .api-logo svg {
+            width: 40px;
+            height: 40px;
+        }
+
+        .api-logo-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+        }
+
+        .api-logo-text small {
+            font-size: 0.75rem;
+            font-weight: 400;
+            opacity: 0.8;
+        }
+
+        .api-nav {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .api-nav a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            font-size: 0.875rem;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .api-nav a:hover {
+            background: rgba(255,255,255,0.1);
+            color: white;
+        }
+
+        /* Service Selector */
+        .service-selector {
+            background: var(--openidx-bg);
+            border-bottom: 1px solid var(--openidx-border);
+            padding: 1.5rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .service-selector h2 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--openidx-text);
+        }
+
+        .service-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .service-btn {
+            background: var(--openidx-bg);
+            border: 1px solid var(--openidx-border);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--openidx-text);
+        }
+
+        .service-btn:hover {
+            border-color: var(--openidx-primary);
+            color: var(--openidx-primary);
+        }
+
+        .service-btn.active {
+            background: var(--openidx-primary);
+            border-color: var(--openidx-primary);
+            color: white;
+        }
+
+        /* Redoc Container */
+        .redoc-container {
+            height: calc(100vh - 140px);
+        }
+
+        /* Auth Section */
+        .auth-section {
+            background: var(--openidx-bg);
+            border-bottom: 1px solid var(--openidx-border);
+            padding: 1.5rem 2rem;
+        }
+
+        .auth-section h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--openidx-text);
+        }
+
+        .auth-tabs {
+            display: flex;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .auth-tab {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            font-size: 0.875rem;
+            color: var(--openidx-text-muted);
+            transition: all 0.2s;
+        }
+
+        .auth-tab:hover {
+            color: var(--openidx-primary);
+        }
+
+        .auth-tab.active {
+            color: var(--openidx-primary);
+            border-bottom-color: var(--openidx-primary);
+        }
+
+        .auth-content {
+            display: none;
+            background: var(--openidx-bg-alt);
+            padding: 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        .auth-content.active {
+            display: block;
+        }
+
+        .auth-content pre {
+            background: var(--openidx-secondary);
+            color: #f8f8f2;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin-top: 0.5rem;
+        }
+
+        .auth-content code {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.8125rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .api-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .service-selector {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .redoc-container {
+                height: calc(100vh - 200px);
+            }
+        }
+
+        /* Redoc Customization */
+        redoc {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <header class="api-header">
+        <div class="api-logo">
+            <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="40" height="40" rx="8" fill="white"/>
+                <path d="M12 12C12 10.8954 12.8954 10 14 10H26C27.1046 10 28 10.8954 28 12V28C28 29.1046 27.1046 30 26 30H14C12.8954 30 12 29.1046 12 28V12Z" fill="#4f46e5"/>
+                <path d="M16 16H24M16 20H24M16 24H20" stroke="white" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <div class="api-logo-text">
+                OpenIDX
+                <small>Zero Trust Access Platform</small>
+            </div>
+        </div>
+        <nav class="api-nav">
+            <a href="../">Documentation</a>
+            <a href="https://github.com/openidx/openidx" target="_blank">GitHub</a>
+            <a href="#authentication">Authentication</a>
+        </nav>
+    </header>
+
+    <div class="service-selector">
+        <h2>Select Service:</h2>
+        <div class="service-buttons" id="serviceButtons">
+            <button class="service-btn active" data-spec="identity-service">Identity Service</button>
+            <button class="service-btn" data-spec="oauth-service">OAuth/OIDC</button>
+            <button class="service-btn" data-spec="governance-service">Governance</button>
+            <button class="service-btn" data-spec="provisioning-service">Provisioning (SCIM)</button>
+            <button class="service-btn" data-spec="audit-service">Audit</button>
+            <button class="service-btn" data-spec="admin-api">Admin API</button>
+            <button class="service-btn" data-spec="access-service">Access</button>
+            <button class="service-btn" data-spec="portal-service">Portal</button>
+            <button class="service-btn" data-spec="notifications-service">Notifications</button>
+            <button class="service-btn" data-spec="organization-service">Organization</button>
+        </div>
+    </div>
+
+    <section class="auth-section" id="authentication">
+        <h3>Authentication Examples</h3>
+        <div class="auth-tabs">
+            <button class="auth-tab active" data-auth="curl">cURL</button>
+            <button class="auth-tab" data-auth="javascript">JavaScript</button>
+            <button class="auth-tab" data-auth="python">Python</button>
+            <button class="auth-tab" data-auth="go">Go</button>
+        </div>
+        <div class="auth-content active" id="auth-curl">
+            <p>Use the Bearer token in the Authorization header:</p>
+            <pre><code># Get an access token first via OAuth 2.0
+TOKEN=$(curl -s -X POST http://localhost:8006/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{"grant_type":"client_credentials","client_id":"your_client_id","client_secret":"your_client_secret"}' \
+  | jq -r '.access_token')
+
+# Use the token in API requests
+curl -X GET http://localhost:8001/api/v1/identity/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json"</code></pre>
+        </div>
+        <div class="auth-content" id="auth-javascript">
+            <p>Using fetch API:</p>
+            <pre><code>async function getAccessToken() {
+  const response = await fetch('http://localhost:8006/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'client_credentials',
+      client_id: 'your_client_id',
+      client_secret: 'your_client_secret'
+    })
+  });
+  const data = await response.json();
+  return data.access_token;
+}
+
+const token = await getAccessToken();
+
+const response = await fetch('http://localhost:8001/api/v1/identity/users', {
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  }
+});
+const users = await response.json();</code></pre>
+        </div>
+        <div class="auth-content" id="auth-python">
+            <p>Using requests library:</p>
+            <pre><code>import requests
+
+# Get access token
+token_response = requests.post(
+    'http://localhost:8006/oauth/token',
+    json={
+        'grant_type': 'client_credentials',
+        'client_id': 'your_client_id',
+        'client_secret': 'your_client_secret'
+    }
+)
+access_token = token_response.json()['access_token']
+
+# Use the token
+headers = {
+    'Authorization': f'Bearer {access_token}',
+    'Content-Type': 'application/json'
+}
+response = requests.get(
+    'http://localhost:8001/api/v1/identity/users',
+    headers=headers
+)
+users = response.json()</code></pre>
+        </div>
+        <div class="auth-content" id="auth-go">
+            <p>Using http.Client:</p>
+            <pre><code>package main
+
+import (
+    "context"
+    "encoding/json"
+    "net/http"
+    "strings"
+)
+
+type TokenResponse struct {
+    AccessToken string `json:"access_token"`
+}
+
+func getAccessToken() (string, error) {
+    payload := `{"grant_type":"client_credentials",` +
+        `"client_id":"your_client_id",` +
+        `"client_secret":"your_client_secret"}`
+
+    resp, err := http.Post(
+        "http://localhost:8006/oauth/token",
+        "application/json",
+        strings.NewReader(payload),
+    )
+    if err != nil {
+        return "", err
+    }
+    defer resp.Body.Close()
+
+    var tokenResp TokenResponse
+    if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+        return "", err
+    }
+    return tokenResp.AccessToken, nil
+}
+
+func main() {
+    token, _ := getAccessToken()
+
+    req, _ := http.NewRequest(
+        "GET",
+        "http://localhost:8001/api/v1/identity/users",
+        nil,
+    )
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+
+    client := &http.Client{}
+    resp, _ := client.Do(req)
+    defer resp.Body.Close()
+}</code></pre>
+        </div>
+    </section>
+
+    <div class="redoc-container">
+        <redoc spec-url=""></redoc>
+    </div>
+
+    <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+    <script>
+        // Configuration
+        const config = {
+            specBase: '../../api/openapi/',
+            currentSpec: 'identity-service.yaml'
+        };
+
+        // DOM Elements
+        const redocContainer = document.querySelector('redoc');
+        const serviceButtons = document.querySelectorAll('.service-btn');
+        const authTabs = document.querySelectorAll('.auth-tab');
+        const authContents = document.querySelectorAll('.auth-content');
+
+        // Initialize Redoc
+        function loadRedoc(specName) {
+            const specUrl = config.specBase + specName + '.yaml';
+            redocContainer.setAttribute('spec-url', specUrl);
+            Redoc.init(specUrl, {
+                expandResponses: '200,201',
+                expandSingleSchemaField: true,
+                theme: {
+                    colors: {
+                        primary: {
+                            main: '#4f46e5'
+                        },
+                        success: {
+                            main: '#10b981'
+                        },
+                        warning: {
+                            main: '#f59e0b'
+                        },
+                        error: {
+                            main: '#ef4444'
+                        }
+                    },
+                    typography: {
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif',
+                        fontSize: '14px',
+                        lineHeight: '1.5'
+                    },
+                    sidebar: {
+                        backgroundColor: '#0f172a',
+                        textColor: '#e2e8f0'
+                    },
+                    rightPanel: {
+                        backgroundColor: '#f8fafc'
+                    }
+                },
+                scrollYOffset: 140
+            }, redocContainer);
+        }
+
+        // Service button click handler
+        serviceButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                serviceButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                loadRedoc(btn.dataset.spec);
+            });
+        });
+
+        // Auth tab click handler
+        authTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                authTabs.forEach(t => t.classList.remove('active'));
+                authContents.forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('auth-' + tab.dataset.auth).classList.add('active');
+            });
+        });
+
+        // Load initial spec
+        loadRedoc(config.currentSpec);
+    </script>
+</body>
+</html>

@@ -608,12 +608,13 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 
 		// Update last delivery time
 		if es.service.db != nil && es.service.db.Pool != nil {
-			updateCtx := context.Background()
+			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_, _ = es.service.db.Pool.Exec(updateCtx, `
 				UPDATE webhook_subscriptions
 				SET last_delivery = NOW(), failure_count = 0
 				WHERE url = $1
 			`, delivery.WebhookURL)
+			cancel()
 		}
 
 		return true
@@ -626,12 +627,13 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 
 	// Increment failure count
 	if es.service.db != nil && es.service.db.Pool != nil {
-		updateCtx := context.Background()
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, _ = es.service.db.Pool.Exec(updateCtx, `
 			UPDATE webhook_subscriptions
 			SET failure_count = failure_count + 1
 			WHERE url = $1
 		`, delivery.WebhookURL)
+		cancel()
 	}
 
 	return false

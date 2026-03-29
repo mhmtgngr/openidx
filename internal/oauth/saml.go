@@ -391,14 +391,18 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		return
 	}
 
-	// Log the successful SSO
-	go s.logAuditEvent(context.Background(), "authentication", "saml_idp", "sso", "success",
-		user.ID, c.ClientIP(), sp.EntityID, "service_provider",
-		map[string]interface{}{
-			"sp_entity_id": sp.EntityID,
-			"sp_name": sp.Name,
-			"request_id": authnReq.ID,
-		})
+	// Log the successful SSO in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "success",
+			user.ID, c.ClientIP(), sp.EntityID, "service_provider",
+			map[string]interface{}{
+				"sp_entity_id": sp.EntityID,
+				"sp_name": sp.Name,
+				"request_id": authnReq.ID,
+			})
+	}()
 
 	// Send response to SP via auto-submit form
 	s.sendSAMLResponseToSP(c, sp.ACSURL, samlResponse, relayState)
@@ -458,10 +462,19 @@ func (s *Service) authenticateIdPUser(c *gin.Context) (*SAMLUser, error) {
 // extractSAMLUserFromToken extracts SAML user info from a JWT token
 func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+		// Support both RSA and Ed25519 signing methods
+		switch t.Method.(type) {
+		case *jwt.SigningMethodRSA:
+			if s.publicKey == nil {
+				return nil, fmt.Errorf("RSA public key not configured")
+			}
+			return s.publicKey, nil
+		case *jwt.SigningMethodEd25519:
+			// Ed25519 not yet supported - use RSA only
+			return nil, fmt.Errorf("Ed25519 not supported, use RS256")
+		default:
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		return s.publicKey, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
@@ -483,9 +496,11 @@ func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
 		return nil, fmt.Errorf("missing sub claim")
 	}
 
-	// Fetch additional user details
+	// Fetch additional user details with timeout
 	var firstName, lastName string
-	_ = s.db.Pool.QueryRow(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.db.Pool.QueryRow(ctx,
 		"SELECT COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1",
 		userID).Scan(&firstName, &lastName)
 
@@ -500,8 +515,8 @@ func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
 		}
 	}
 
-	groups := s.getUserGroups(context.Background(), userID)
-	roles := s.getUserRoles(context.Background(), userID)
+	groups := s.getUserGroups(ctx, userID)
+	roles := s.getUserRoles(ctx, userID)
 
 	return &SAMLUser{
 		ID:          userID,

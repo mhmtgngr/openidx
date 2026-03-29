@@ -34,6 +34,24 @@
 #    ./dev.sh scan                           # Gap analysis
 #    ./dev.sh -h                             # Full help
 #
+#  NEW PHASES:
+#    ./dev.sh phase ci                       # CI/CD pipeline generation
+#    ./dev.sh phase perf                     # Performance benchmarking
+#    ./dev.sh phase docs                     # API documentation generation
+#    ./dev.sh phase e2e-gen                  # E2E test generation
+#    ./dev.sh migrate-test                  # Test database migrations
+#    ./dev.sh migrate-rollback              # Test migration rollback
+#
+#  GIT WORKFLOW:
+#    ./dev.sh squash [branch]               # Squash commits before PR
+#    ./dev.sh rebase-main                   # Rebase current branch onto main
+#    ./dev.sh cleanup-branches              # Remove merged branches
+#    ./dev.sh new-branch "name"             # Create new feature branch
+#
+#  SMART IMPROVE ENHANCED:
+#    ./dev.sh smart-improve [threshold%] [--incremental]  # Incremental mode
+#    ./dev.sh focus [type]                  # Focus: migrations, frontend, backend, todos
+#
 # ═══════════════════════════════════════════════════════════════
 
 set -uo pipefail
@@ -96,74 +114,11 @@ HEALTH_CHECK_PATH="${HEALTH_CHECK_PATH:-/health}"
 HEALTH_CHECK_TIMEOUT="${HEALTH_CHECK_TIMEOUT:-5}"
 SKIP_HEALTH_CHECK="${SKIP_HEALTH_CHECK:-false}"
 
-# External server configuration (for client connectivity)
-# Auto-detects server IP, can be overridden for remote testing
-SERVER_HOST="${SERVER_HOST:-$(hostname -f 2>/dev/null || hostname)}"
-SERVER_IP="${SERVER_IP:-$(hostname -I 2>/dev/null | awk '{print $1}' || echo '127.0.0.1')}"
-
-# Project type auto-detection
-detect_project_type() {
-  if [ -f "go.mod" ] && grep -q "module " go.mod 2>/dev/null; then
-    echo "go"
-  elif [ -f "package.json" ] && [ -d "src" ]; then
-    echo "node"
-  elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
-    echo "python"
-  elif [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
-    echo "java"
-  elif [ -f "Cargo.toml" ]; then
-    echo "rust"
-  else
-    echo "unknown"
-  fi
-}
-
-PROJECT_TYPE="${PROJECT_TYPE:-$(detect_project_type)}"
-
-# Auto-detect frontend directory and port
-detect_frontend_config() {
-  local frontend_dir=""
-  local default_port="3000"
-
-  # Common frontend locations
-  for dir in "frontend" "web" "client" "ui" "dashboard" "app"; do
-    if [ -d "$REPO_DIR/$dir" ] && [ -f "$REPO_DIR/$dir/package.json" ]; then
-      frontend_dir="$dir"
-      break
-    fi
-  done
-
-  # Detect port from package.json or docker-compose
-  if [ -n "$frontend_dir" ]; then
-    local pkg_port; pkg_port=$(grep -oP '"port":\s*\K\d+' "$REPO_DIR/$frontend_dir/package.json" 2>/dev/null || echo "")
-    [ -n "$pkg_port" ] && default_port="$pkg_port"
-  fi
-
-  # Check docker-compose for port mappings
-  if [ -f "$REPO_DIR/docker-compose.yml" ] || [ -f "$REPO_DIR/deployments/docker/docker-compose.yml" ]; then
-    local compose_file; compose_file="$REPO_DIR/docker-compose.yml"
-    [ -f "$REPO_DIR/deployments/docker/docker-compose.yml" ] && compose_file="$REPO_DIR/deployments/docker/docker-compose.yml"
-    local dc_port; dc_port=$(grep -oP '"\K\d{4,5}(?=:'"$default_port"')' "$compose_file" 2>/dev/null | head -1 || echo "")
-    [ -n "$dc_port" ] && default_port="$dc_port"
-  fi
-
-  echo "$frontend_dir:$default_port"
-}
-
-FRONTEND_CONFIG="${FRONTEND_CONFIG:-$(detect_frontend_config)}"
-FRONTEND_DIR="${FRONTEND_DIR:-${FRONTEND_CONFIG%%:*}}"
-DASHBOARD_PORT="${DASHBOARD_PORT:-${FRONTEND_CONFIG##*:}}"
-
-# E2E Testing configuration (generic)
-E2E_BASE_URL="${E2E_BASE_URL:-http://${SERVER_IP}:${DASHBOARD_PORT}}"
-E2E_ENABLED="${E2E_ENABLED:-true}"
-
 # Timeouts per phase (seconds)
 declare -A PHASE_TIMEOUT=(
   [requirements]=600    [market_research]=900  [design]=900
   [backend]=3600        [frontend]=3600        [testing]=2400
   [qa]=600              [security]=600         [deploy]=1800
-  [e2e_production]=1200
 )
 
 BRANCH=""
@@ -280,6 +235,31 @@ safe_xargs() {
 # Usage: safe_tr [options] set1 set2
 safe_tr() {
   tr "$@" || true
+}
+
+# ═══════════════════════════════════════════════
+# RETRY WITH EXPONENTIAL BACKOFF
+# ═══════════════════════════════════════════════
+
+# Retry a command with exponential backoff: sleep $((base_delay * 2**attempt))
+# Usage: retry_with_backoff "command" max_retries base_delay
+# Returns: 0 on success, 1 on final failure
+retry_with_backoff() {
+  local command="$1" max_retries="${2:-3}" base_delay="${3:-1}"
+  local attempt=0 exit_code=0
+
+  while [ "$attempt" -lt "$max_retries" ]; do
+    attempt=$((attempt + 1))
+    if eval "$command"; then
+      return 0
+    fi
+    exit_code=$?
+    if [ "$attempt" -lt "$max_retries" ]; then
+      local delay=$((base_delay * (1 << (attempt - 1))))
+      sleep "$delay"
+    fi
+  done
+  return 1
 }
 
 # ═══════════════════════════════════════════════
@@ -423,262 +403,6 @@ except:
     print(open(f).read()[:max_c])
 PYEOF
   fi
-}
-
-# ═══════════════════════════════════════════════
-# EXTERNAL ACCESS HELPERS (Generic)
-# ═══════════════════════════════════════════════
-
-# Get server's external IP for client connectivity
-get_external_ip() {
-  # Try multiple methods to get external IP
-  local ip=""
-
-  # Method 1: From environment variable
-  [ -n "$SERVER_IP" ] && echo "$SERVER_IP" && return
-
-  # Method 2: From hostname -I
-  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-  [ -n "$ip" ] && echo "$ip" && return
-
-  # Method 3: From ip command
-  ip=$(ip route get 1 2>/dev/null | awk '{print $7}' | head -1)
-  [ -n "$ip" ] && echo "$ip" && return
-
-  # Method 4: From ifconfig
-  ip=$(ifconfig 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | head -1 | awk '{print $2}')
-  [ -n "$ip" ] && echo "$ip" && return
-
-  # Fallback
-  echo "127.0.0.1"
-}
-
-# Check if port is accessible from external
-check_external_access() {
-  local port="$1"
-  local host="${2:-0.0.0.0}"
-
-  # Check if service is listening on all interfaces
-  if command -v ss >/dev/null 2>&1; then
-    ss -tlnp 2>/dev/null | grep -q ":$port " || return 1
-  elif command -v netstat >/dev/null 2>&1; then
-    netstat -tlnp 2>/dev/null | grep -q ":$port " || return 1
-  fi
-
-  # Test connectivity
-  curl -sf --max-time 5 "http://$(get_external_ip):$port${HEALTH_CHECK_PATH}" >/dev/null 2>&1
-}
-
-# Generate access report for client connection
-generate_access_report() {
-  local report_file="$ARTIFACTS/access_report.json"
-  local external_ip; external_ip=$(get_external_ip)
-
-  python3 - "$report_file" "$external_ip" "$DASHBOARD_PORT" "$SERVICE_PORTS" "$PROJECT_NAME" << 'PYEOF'
-import json, sys, socket
-from datetime import datetime
-
-report_file, ext_ip, dash_port, svc_ports_str, proj_name = sys.argv[1:]
-
-# Parse service ports
-svc_ports = svc_ports_str.split() if svc_ports_str else []
-
-# Check which ports are accessible
-accessible_ports = []
-for port in svc_ports:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        result = s.connect_ex(('127.0.0.1', int(port)))
-        if result == 0:
-            accessible_ports.append(int(port))
-        s.close()
-    except:
-        pass
-
-report = {
-    "generated_at": datetime.now().isoformat(),
-    "project": proj_name,
-    "server": {
-        "hostname": socket.gethostname(),
-        "external_ip": ext_ip,
-        "localhost": "127.0.0.1"
-    },
-    "services": {
-        "dashboard": {
-            "url": f"http://{ext_ip}:{dash_port}",
-            "local_url": f"http://localhost:{dash_port}",
-            "port": int(dash_port),
-            "accessible": int(dash_port) in accessible_ports
-        },
-        "api_ports": [int(p) for p in svc_ports if p != dash_port],
-        "all_accessible_ports": accessible_ports
-    },
-    "client_connection": {
-        "base_url": f"http://{ext_ip}:{dash_port}",
-        "api_base": f"http://{ext_ip}",
-        "note": "Ensure firewall allows inbound connections to the ports listed above"
-    }
-}
-
-json.dump(report, open(report_file, 'w'), indent=2)
-print(f"Access report saved to: {report_file}")
-PYEOF
-}
-
-# ═══════════════════════════════════════════════
-# E2E TESTING HELPERS (Generic)
-# ═══════════════════════════════════════════════
-
-# Detect E2E framework and run tests
-run_e2e_tests() {
-  local base_url="$1"
-  local report_file="$2"
-
-  log "  🧪 Running E2E tests against: $base_url"
-
-  # Detect E2E framework
-  if [ -f "$REPO_DIR/$FRONTEND_DIR/playwright.config.ts" ] || [ -f "$REPO_DIR/$FRONTEND_DIR/playwright.config.js" ]; then
-    run_playwright_e2e "$base_url" "$report_file"
-    return $?
-  elif [ -f "$REPO_DIR/$FRONTEND_DIR/cypress.config.ts" ] || [ -f "$REPO_DIR/$FRONTEND_DIR/cypress.config.js" ]; then
-    run_cypress_e2e "$base_url" "$report_file"
-    return $?
-  elif [ -f "$REPO_DIR/$FRONTEND_DIR/test/e2e" ] || find "$REPO_DIR" -name "*.e2e.ts" -o -name "*.e2e.js" 2>/dev/null | grep -v node_modules | head -1 | read -r; then
-    run_generic_e2e "$base_url" "$report_file"
-    return $?
-  else
-    warn "  No E2E framework detected - skipping"
-    return 0
-  fi
-}
-
-# Run Playwright E2E tests
-run_playwright_e2e() {
-  local base_url="$1"
-  local report_file="$2"
-  local e2e_dir="$REPO_DIR/$FRONTEND_DIR"
-
-  cd "$e2e_dir"
-
-  # Install dependencies if needed
-  [ -d "node_modules" ] || npm install 2>&1 | tail -3 || true
-
-  # Install browsers if needed
-  npx playwright install --with-deps 2>&1 | tail -3 || true
-
-  # Run tests with baseURL
-  export BASE_URL="$base_url"
-  local rc=0
-  npx playwright test --reporter=json --reporter=list --output="$ARTIFACTS/playwright-report" \
-    --base-url="$base_url" 2>&1 | tee "$PHASE_LOGS/e2e_production.log" | tail -30 || rc=$?
-
-  # Parse results
-  local results_json="$e2e_dir/playwright-report/results.json"
-  if [ -f "$results_json" ]; then
-    python3 - "$results_json" "$report_file" << 'PYEOF' 2>/dev/null || true
-import json, sys
-from datetime import datetime
-
-results_file = sys.argv[1]
-report_file = sys.argv[2]
-
-try:
-    with open(results_file) as f:
-        data = json.load(f)
-
-    total = len(data.get('suites', []))
-    passed = sum(1 for s in data.get('suites', []) for t in s.get('specs', []) for r in t.get('tests', []) if r.get('results', [{}])[0].get('status') == 'passed')
-    failed = sum(1 for s in data.get('suites', []) for t in s.get('specs', []) for r in t.get('tests', []) if r.get('results', [{}])[0].get('status') == 'failed')
-    skipped = sum(1 for s in data.get('suites', []) for t in s.get('specs', []) for r in t.get('tests', []) if r.get('results', [{}])[0].get('status') == 'skipped' or r.get('results', [{}])[0].get('status') == 'interrupted')
-
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "framework": "playwright",
-        "summary": {"total": total, "passed": passed, "failed": failed, "skipped": skipped},
-        "success_rate": round(passed / total * 100, 1) if total > 0 else 0,
-        "status": "passed" if failed == 0 else "failed"
-    }
-
-    with open(report_file, 'w') as f:
-        json.dump(report, f, indent=2)
-except Exception as e:
-    with open(report_file, 'w') as f:
-        json.dump({"error": str(e), "status": "error"}, f, indent=2)
-PYEOF
-  fi
-
-  return $rc
-}
-
-# Run Cypress E2E tests
-run_cypress_e2e() {
-  local base_url="$1"
-  local report_file="$2"
-  local e2e_dir="$REPO_DIR/$FRONTEND_DIR"
-
-  cd "$e2e_dir"
-
-  [ -d "node_modules" ] || npm install 2>&1 | tail -3 || true
-
-  export CYPRESS_baseUrl="$base_url"
-  local rc=0
-  npx cypress run --config baseUrl="$base_url" --reporter=json 2>&1 | tee "$PHASE_LOGS/e2e_production.log" | tail -20 || rc=$?
-
-  # Parse Cypress results if available
-  return $rc
-}
-
-# Generic E2E test runner (uses curl for smoke tests)
-run_generic_e2e() {
-  local base_url="$1"
-  local report_file="$2"
-
-  log "  Running generic smoke tests..."
-
-  local passed=0 failed=0 checks=()
-
-  # Check if main page is accessible
-  if curl -sf --max-time 10 "$base_url" >/dev/null 2>&1; then
-    ((passed++))
-    checks+=({"check": "homepage", "status": "passed", "url": "$base_url"})
-  else
-    ((failed++))
-    checks+=({"check": "homepage", "status": "failed", "url": "$base_url"})
-  fi
-
-  # Check health endpoint
-  if curl -sf --max-time 5 "${base_url}${HEALTH_CHECK_PATH}" >/dev/null 2>&1; then
-    ((passed++))
-    checks+=({"check": "health", "status": "passed"})
-  else
-    ((failed++))
-    checks+=({"check": "health", "status": "failed"})
-  fi
-
-  # Generate report
-  python3 - "$report_file" "$passed" "$failed" << 'PYEOF'
-import json, sys
-from datetime import datetime
-
-report_file = sys.argv[1]
-passed = int(sys.argv[2])
-failed = int(sys.argv[3])
-
-total = passed + failed
-report = {
-    "timestamp": datetime.now().isoformat(),
-    "framework": "generic/smoke",
-    "summary": {"total": total, "passed": passed, "failed": failed, "skipped": 0},
-    "success_rate": round(passed / total * 100, 1) if total > 0 else 0,
-    "status": "passed" if failed == 0 else "failed"
-}
-
-with open(report_file, 'w') as f:
-    json.dump(report, f, indent=2)
-PYEOF
-
-  [ "$failed" -eq 0 ]
 }
 
 # ═══════════════════════════════════════════════
@@ -979,16 +703,14 @@ claude_do() {
 [TRUNCATED — original was ${prompt_len} chars. Focus on the most important parts above.]"
   fi
 
-  local attempt=0 ok=false exit_code=0
-  while [ $attempt -lt 3 ]; do
+  local attempt=0 exit_code=0 ok=false
+  _claude_retry_cmd() {
     attempt=$((attempt + 1))
     [ $attempt -gt 1 ] && warn "  ↻ Attempt $attempt/3"
-
     if timeout "$timeout" claude -p --model "$CLAUDE_MODEL" --dangerously-skip-permissions \
       "$prompt" 2>&1 | tee "$log_file"; then
-      ok=true; break
+      ok=true; return 0
     fi
-
     exit_code=$?
     if [ $exit_code -eq 124 ]; then
       warn "  ⏰ Timeout after ${timeout}s"
@@ -998,8 +720,9 @@ claude_do() {
 
 [REDUCED — Claude was killed. Simplified prompt.]"
     fi
-    sleep 5
-  done
+    return 1
+  }
+  retry_with_backoff "_claude_retry_cmd" 3 5
 
   if [ "$ok" = true ]; then
     cd "$REPO_DIR"; git add -A
@@ -1562,13 +1285,12 @@ phase_deploy() {
   log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   state_set deploy status running
 
-  if ! ls "$REPO_DIR/deployments/docker/Dockerfile."* >/dev/null 2>&1 && [ ! -f "$REPO_DIR/Dockerfile" ]; then
+  if ! ls "$REPO_DIR/deployments/docker/Dockerfile."* >/dev/null 2>&1; then
     claude_do "🐳 DevOps" \
       "Read CLAUDE.md. Create Docker setup in deployments/docker/:
 - Dockerfile for each service (multi-stage build, non-root user, HEALTHCHECK)
-- docker-compose.yml with all services + database + networking, health checks, volumes.
-Follow the service names and ports defined in CLAUDE.md.
-Ensure services bind to 0.0.0.0 for external access." \
+- docker-compose.yml with all services + PostgreSQL 16 + Redis 7, networking, health checks, volumes.
+Follow the service names and ports defined in CLAUDE.md." \
       "$PHASE_LOGS/08_docker.log"
   fi
 
@@ -1599,19 +1321,7 @@ $logs" "$PHASE_LOGS/08_fix.log"
     docker_build_all || true; docker_down; docker_up
   fi
 
-  # Generate access report for external client connectivity
-  log ""
-  log "  📡 Generating access report..."
-  generate_access_report
-
-  local access_report="$ARTIFACTS/access_report.json"
-  if [ -f "$access_report" ]; then
-    local ext_url; ext_url=$(python3 -c "import json; print(json.load(open('$access_report'))['client_connection']['base_url'])" 2>/dev/null || echo "N/A")
-    log "  🌐 External Access URL: $ext_url"
-    log "  📄 Full report: $access_report"
-  fi
-
-  [ -d "$REPO_DIR/$FRONTEND_DIR" ] && { run_playwright || true; }
+  [ -d "$REPO_DIR/frontend" ] && { run_playwright || true; }
 
   cd "$REPO_DIR"; git add -A && git commit -m "[DevOps] deploy ready" 2>/dev/null || true
   merge_to_main
@@ -1621,142 +1331,311 @@ $logs" "$PHASE_LOGS/08_fix.log"
 }
 
 # ──────────────────────────────
-# 9. E2E PRODUCTION (End-to-End Testing)
+# 9. CI/CD PIPELINE (DevOps)
 # ──────────────────────────────
-phase_e2e_production() {
+phase_ci() {
   log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  log "PHASE 9: E2E PRODUCTION — 🧪 Full System Test"
+  log "PHASE 9: CI/CD — 🔄 DevOps"
   log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  state_set e2e_production status running
+  state_set ci status running
+  ensure_branch
 
-  # Re-detect configuration in case it changed
-  FRONTEND_CONFIG=$(detect_frontend_config)
-  FRONTEND_DIR="${FRONTEND_CONFIG%%:*}"
-  DASHBOARD_PORT="${FRONTEND_CONFIG##*:}"
+  mkdir -p .github/workflows
 
-  local external_ip; external_ip=$(get_external_ip)
-  local base_url="$E2E_BASE_URL"
+  claude_do "🐳 DevOps" \
+    "Read CLAUDE.md. Create .github/workflows/ci.yml with:
+- Trigger on push/PR to main
+- Go tests (all packages)
+- Docker build validation
+- TypeScript typecheck if frontend exists
+- Security scan with golangci-lint
+- Auto-cancel redundant runs
+- Matrix testing if applicable
 
-  log "  🌐 Testing against: $base_url"
-  log "  📡 Server IP: $external_ip"
-  log "  🐳 Services should be running from deploy phase"
+Create .github/workflows/release.yml for:
+- Docker image publishing on tags
+- Semantic release automation" \
+    "$PHASE_LOGS/09_ci.log"
 
-  # Ensure services are still running
-  detect_service_ports
-  local services_ok=true
-  for port in $SERVICE_PORTS; do
-    check_external_access "$port" "$external_ip" || { warn "  Service on port $port not accessible"; services_ok=false; }
-  done
-
-  if [ "$services_ok" = false ]; then
-    warn "  Some services not accessible - attempting restart..."
-    docker_up
-    sleep 10
-  fi
-
-  # Run E2E tests
-  local e2e_report="$ARTIFACTS/e2e_production_report.json"
-  local e2e_result=0
-
-  if [ "$E2E_ENABLED" = true ]; then
-    run_e2e_tests "$base_url" "$e2e_report" || e2e_result=$?
-  else
-    log "  ⏭️  E2E tests disabled (E2E_ENABLED=false)"
-  fi
-
-  # Parse and display results
-  if [ -f "$e2e_report" ]; then
-    local summary; summary=$(python3 -c "
-import json, sys
-d = json.load(open(sys.argv[1]))
-s = d.get('summary', {})
-print(f\"{s.get('passed',0)}/{s.get('total',0)} passed\")
-print(f\"Status: {d.get('status', 'unknown').upper()}\")
-print(f\"Success Rate: {d.get('success_rate',0)}%\")
-" "$e2e_report" 2>/dev/null || echo "Results unavailable")
-
-    log "  📊 E2E Results: $summary"
-
-    local status; status=$(python3 -c "import json; print(json.load(open('$e2e_report')).get('status','failed'))" 2>/dev/null || echo "failed")
-    state_set e2e_production result "$status"
-  else
-    warn "  ⚠️  E2E report not generated"
-    state_set e2e_production result "skipped"
-  fi
-
-  # Generate final system status report
-  local final_report="$ARTIFACTS/final_system_status.json"
-  python3 - "$final_report" "$external_ip" "$base_url" "$e2e_report" "$access_report" << 'PYEOF'
-import json, sys, socket, subprocess
-from datetime import datetime
-
-final_file = sys.argv[1]
-ext_ip = sys.argv[2]
-base_url = sys.argv[3]
-e2e_file = sys.argv[4]
-access_file = sys.argv[5]
-
-# Load E2E results
-e2e_data = {}
-try:
-    with open(e2e_file) as f:
-        e2e_data = json.load(f)
-except:
-    pass
-
-# Load access report
-access_data = {}
-try:
-    with open(access_file) as f:
-        access_data = json.load(f)
-except:
-    pass
-
-# Check service status
-services = {}
-try:
-    result = subprocess.run(['podman', 'ps', '--format', 'json'], capture_output=True, text=True, timeout=10)
-    if result.returncode == 0:
-        for container in json.loads(result.stdout):
-            services[container['Names']] = {
-                'status': container['State'],
-                'ports': container.get('Ports', '')
-            }
-except:
-    pass
-
-report = {
-    "generated_at": datetime.now().isoformat(),
-    "server": {
-        "hostname": socket.gethostname(),
-        "external_ip": ext_ip,
-        "base_url": base_url
-    },
-    "e2e_tests": {
-        "framework": e2e_data.get('framework', 'none'),
-        "status": e2e_data.get('status', 'not_run'),
-        "summary": e2e_data.get('summary', {}),
-        "success_rate": e2e_data.get('success_rate', 0)
-    },
-    "services": services,
-    "access_info": access_data.get('client_connection', {}),
-    "ready_for_production": e2e_data.get('status', 'failed') == 'passed' and len(services) > 0
+  state_set ci status done; log "✅ CI/CD done"
 }
 
-with open(final_file, 'w') as f:
-    json.dump(report, f, indent=2)
-PYEOF
+# ──────────────────────────────
+# 10. PERFORMANCE BENCHMARKING (DevOps)
+# ──────────────────────────────
+phase_perf() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 10: PERF — ⚡ Performance"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set perf status running
+  ensure_branch
 
-  log "  📄 Final report: $final_report"
+  cd "$REPO_DIR"
 
-  if [ "$e2e_result" -ne 0 ] && [ "$e2e_result" -ne 0 ]; then
-    warn "  ⚠️  E2E tests had issues - system may not be fully functional"
-  else
-    log "  ✅ System verified and accessible"
+  # Check if k6 or vegeta exists
+  local bench_tool=""
+  command -v k6 >/dev/null 2>&1 && bench_tool="k6"
+  command -v vegeta >/dev/null 2>&1 && bench_tool="${bench_tool}vegeta"
+
+  team "⚡ Performance" "Benchmarking services..."
+
+  # Get service ports
+  detect_service_ports
+
+  local report="$ARTIFACTS/performance_report.json"
+  local results="{}"
+
+  for port in $SERVICE_PORTS; do
+    log "  Testing :$port..."
+    local url="http://localhost:${port}${HEALTH_CHECK_PATH}"
+    local response_time; response_time=$(curl -o /dev/null -s -w '%{time_total}' "$url" 2>/dev/null || echo "0")
+    log "    Response: ${response_time}s"
+    results=$(echo "$results" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+d['port_$port'] = {'response_time': float('${response_time}'), 'status': 'ok' if float('${response_time}') < 1.0 else 'slow'}
+print(json.dumps(d))
+" 2>/dev/null || echo "{}")
+  done
+
+  echo "$results" | python3 -c "import json, sys; print(json.dumps(json.load(sys.stdin), indent=2))" > "$report" 2>/dev/null
+
+  # Go benchmark
+  if ls "$REPO_DIR"/**/*_bench.go 2>/dev/null | head -1 >/dev/null; then
+    log "  Running Go benchmarks..."
+    go test -bench=. -benchmem ./... 2>&1 | tee "$PHASE_LOGS/bench.log" | tail -20 || true
   fi
 
-  state_set e2e_production status done
-  log "✅ E2E Production done"
+  claude_do "⚡ Performance" \
+    "Read CLAUDE.md. Analyze performance results and suggest optimizations:
+$(cat "$report" 2>/dev/null || echo 'No report')
+
+Create benchmark tests in services/*/*_bench.go for hot paths." \
+    "$PHASE_LOGS/10_perf.log" 600
+
+  state_set perf status done; log "✅ Performance done"
+}
+
+# ──────────────────────────────
+# 11. DOCUMENTATION (Technical Writer)
+# ──────────────────────────────
+phase_docs() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 11: DOCS — 📚 Documentation"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set docs status running
+  ensure_branch
+
+  cd "$REPO_DIR"
+
+  claude_do "📚 Docs" \
+    "Read CLAUDE.md. Generate comprehensive documentation:
+
+1. API Documentation:
+   - Create openapi.yaml from Go handler annotations
+   - Generate API client SDKs (TypeScript, Python)
+
+2. Architecture:
+   - Create docs/architecture.md with service diagram
+   - Document data flow and inter-service communication
+
+3. Runbook:
+   - Create docs/runbook.md with deployment steps
+   - Troubleshooting common issues
+
+4. Migration Guide:
+   - docs/migrations.md for schema changes
+
+Use swag or similar for OpenAPI generation." \
+    "$PHASE_LOGS/11_docs.log" 900
+
+  state_set docs status done; log "✅ Documentation done"
+}
+
+# ──────────────────────────────
+# 12. E2E TEST GENERATION (Tester)
+# ──────────────────────────────
+phase_e2e_gen() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "PHASE 12: E2E-GEN — 🧪 E2E Generator"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  state_set e2e_gen status running
+  ensure_branch
+
+  cd "$REPO_DIR"
+
+  local api_spec=""
+  [ -f "openapi.yaml" ] && api_spec="$(cat openapi.yaml | head -5000)"
+  [ -f "docs/openapi.yaml" ] && api_spec="$(cat docs/openapi.yaml | head -5000)"
+
+  local frontend_dir="$FRONTEND_DIR"
+  [ -z "$frontend_dir" ] && frontend_dir="frontend"
+  [ -z "$frontend_dir" ] && frontend_dir="web/dashboard"
+
+  claude_do "🧪 Tester" \
+    "Read CLAUDE.md. Generate Playwright E2E tests for the critical user flows:
+
+API Spec (if available):
+${api_spec:+$api_spec}
+
+Frontend: $frontend_dir
+Dashboard Port: $DASHBOARD_PORT
+
+Create tests in ${frontend_dir}/e2e/ covering:
+1. Authentication flow (login, logout, session)
+2. Main CRUD operations for each service
+3. Error handling (404, 500, validation)
+4. Multi-tenant operations (if applicable)
+5. Real-time features (WebSocket tests)
+
+Use Page Object Model. Ensure tests are independent and can run in parallel." \
+    "$PHASE_LOGS/12_e2e_gen.log" 1200
+
+  # Install playwright if needed
+  if [ -d "$REPO_DIR/$frontend_dir" ]; then
+    cd "$REPO_DIR/$frontend_dir"
+    [ -d "node_modules" ] || npm install 2>&1 | tail -3 || true
+    npx playwright install --with-deps 2>&1 | tail -3 || true
+    cd "$REPO_DIR"
+  fi
+
+  state_set e2e_gen status done; log "✅ E2E generation done"
+}
+
+# ═══════════════════════════════════════════════
+# DATABASE MIGRATION HELPERS
+# ═══════════════════════════════════════════════
+
+test_migrations() {
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log "MIGRATION TEST — 🗄️ Database"
+  log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  local migrations_dir="${1:-migrations}"
+  [ ! -d "$migrations_dir" ] && { warn "No migrations directory"; return 0; }
+
+  log "  Testing migrations in $migrations_dir..."
+
+  # Find migration files
+  local up_files=() down_files=()
+  while IFS= read -r f; do up_files+=("$f"); done < <(find "$migrations_dir" -name "*.up.sql" 2>/dev/null | sort)
+  while IFS= read -r f; do down_files+=("$f"); done < <(find "$migrations_dir" -name "*.down.sql" 2>/dev/null | sort)
+
+  log "  Found ${#up_files[@]} up migrations, ${#down_files[@]} down migrations"
+
+  # Validate SQL syntax
+  local errors=0
+  for f in "${up_files[@]}"; do
+    if grep -qi "drop table\|truncate\|delete from.*where 1=1" "$f" 2>/dev/null; then
+      warn "  ⚠ Potentially destructive: $f"
+    fi
+    # Check for transaction wrapping
+    if ! grep -qi "begin" "$f" 2>/dev/null; then
+      warn "  ⚠ Missing transaction: $f"
+    fi
+  done
+
+  # Test against temp database if PostgreSQL is available
+  if command -v psql >/dev/null 2>&1 && docker ps | grep -q postgres; then
+    log "  Testing migrations against test database..."
+    local test_db="test_$(date +%s)"
+    docker exec "$(docker ps -q -f name=postgres)" psql -U openprint -c "CREATE DATABASE $test_db;" 2>/dev/null || true
+
+    for f in "${up_files[@]}"; do
+      log "    Applying: $(basename "$f")"
+      docker exec -i "$(docker ps -q -f name=postgres)" psql -U openprint -d "$test_db" < "$f" 2>&1 | tail -3 || errors=$((errors+1))
+    done
+
+    # Test rollback
+    for f in "${down_files[@]}"; do
+      log "    Rolling back: $(basename "$f")"
+      docker exec -i "$(docker ps -q -f name=postgres)" psql -U openprint -d "$test_db" < "$f" 2>&1 | tail -3 || true
+    done
+
+    docker exec "$(docker ps -q -f name=postgres)" psql -U openprint -c "DROP DATABASE $test_db;" 2>/dev/null || true
+  fi
+
+  if [ $errors -eq 0 ]; then
+    log "  ✅ All migrations validated"
+  else
+    err "  ❌ $errors migration errors found"
+  fi
+
+  return $errors
+}
+
+# ═══════════════════════════════════════════════
+# GIT WORKFLOW HELPERS
+# ═══════════════════════════════════════════════
+
+git_squash() {
+  local branch="${1:-$(git branch --show-current)}"
+  local target="${2:-main}"
+
+  log "Squashing $branch onto $target..."
+
+  cd "$REPO_DIR"
+  local commit_count; commit_count=$(git rev-list --count "$target..HEAD" 2>/dev/null || echo "0")
+
+  if [ "$commit_count" -le 1 ]; then
+    log "  Nothing to squash ($commit_count commits)"
+    return 0
+  fi
+
+  log "  Squashing $commit_count commits..."
+
+  # Reset to target but keep changes staged
+  git reset --soft "$target" || { err "Failed to reset"; return 1; }
+
+  # Commit with combined message
+  local msg; msg=$(git log --format=%s "$target..@{1}" 2>/dev/null | head -1 || echo "Squashed commits")
+  git commit -m "$msg
+
+Co-Authored-By: Claude Dev.sh <dev.sh@openprint>" || true
+
+  log "  ✅ Squashed to 1 commit"
+}
+
+git_rebase_main() {
+  log "Rebasing current branch onto main..."
+
+  cd "$REPO_DIR"
+  local branch; branch=$(git branch --show-current)
+  [ "$branch" = "main" ] && { warn "Already on main"; return 0; }
+
+  git fetch origin main 2>/dev/null || true
+  git rebase origin/main || {
+    warn "  Conflicts detected. Opening editor..."
+    git rebase --continue 2>/dev/null || git rebase --abort || true
+  }
+}
+
+git_new_branch() {
+  local name="$1"
+  [ -z "$name" ] && { err "Usage: ./dev.sh new-branch \"feature-name\""; return 1; }
+
+  cd "$REPO_DIR"
+  git checkout main 2>/dev/null || git checkout -b main 2>/dev/null || true
+  git pull origin main 2>/dev/null || true
+  git checkout -b "feature/$name" || git checkout -b "$name"
+  log "  ✅ Created branch: $(git branch --show-current)"
+}
+
+git_cleanup_branches() {
+  log "Cleaning up merged branches..."
+
+  cd "$REPO_DIR"
+  git fetch -p 2>/dev/null || true
+
+  local branches; branches=$(git branch -vv | grep ': gone]' | awk '{print $1}')
+  [ -z "$branches" ] && { log "  No stale branches"; return 0; }
+
+  echo "$branches" | while read -r b; do
+    log "  Removing: $b"
+    git branch -D "$b" 2>/dev/null || true
+  done
+
+  log "  ✅ Cleanup complete"
 }
 
 # ═══════════════════════════════════════════════
@@ -1768,7 +1647,7 @@ skip_phase() {
   warn "Skipping phase: $phase"
   state_set "$phase" status done
 
-  local phases=(requirements market_research design backend frontend testing qa security deploy e2e_production)
+  local phases=(requirements market_research design backend frontend testing qa security deploy)
   local next="" found=false
   for p in "${phases[@]}"; do
     if [ "$found" = true ]; then next="$p"; break; fi
@@ -1803,7 +1682,6 @@ run_waterfall() {
   log "╠═══════════════════════════════════════════════╣"
   log "║ 🧑‍💼 PM → 🔍 Market → 🏗️ Arch → ⚙️ Back         ║"
   log "║ → 🎨 Front → 🧪 Test → 📋 QA → 🔒 Sec → 🐳      ║"
-  log "║ → 🧪 E2E (Production)                          ║"
   log "╚═══════════════════════════════════════════════╝"
   log "Project: $project"
   log "Branch:  $BRANCH"
@@ -1847,18 +1725,10 @@ run_waterfall() {
     fi
 
     # Deploy
-    phase_deploy
-
-    # E2E Production Testing (Final Verification)
-    phase_e2e_production
-
-    break
+    phase_deploy; break
   done
 
   local elapsed=$(( $(date +%s) - t0 ))
-  local external_ip; external_ip=$(get_external_ip)
-  local final_report="$ARTIFACTS/final_system_status.json"
-
   log ""
   log "╔═══════════════════════════════════════════════╗"
   log "║   🎉 PROJECT COMPLETE                         ║"
@@ -1867,28 +1737,6 @@ run_waterfall() {
   log "  Loops:     $loop"
   log "  Branch:    $BRANCH → main"
   log "  Artifacts: $ARTIFACTS/"
-  log ""
-  log "╔═══════════════════════════════════════════════╗"
-  log "║   🌐 CLIENT CONNECTION INFO                   ║"
-  log "╚═══════════════════════════════════════════════╝"
-  log "  Server IP:      $external_ip"
-  log "  Dashboard URL:  http://$external_ip:$DASHBOARD_PORT"
-  log "  Status Report:  $final_report"
-
-  # Display final status
-  if [ -f "$final_report" ]; then
-    local ready; ready=$(python3 -c "import json; print('READY' if json.load(open('$final_report')).get('ready_for_production') else 'NEEDS FIXES')" 2>/dev/null || echo "UNKNOWN")
-    local e2e_status; e2e_status=$(python3 -c "import json; print(json.load(open('$final_report')).get('e2e_tests',{}).get('status','unknown').upper())" 2>/dev/null || echo "UNKNOWN")
-    log "  System Status:  $ready"
-    log "  E2E Tests:      $e2e_status"
-  fi
-
-  log ""
-  log "  To connect from your client:"
-  log "    1. Ensure network connectivity to: $external_ip"
-  log "    2. Open browser: http://$external_ip:$DASHBOARD_PORT"
-  log "    3. For firewall, allow ports: $SERVICE_PORTS"
-  log ""
   log "  Next:      ./dev.sh start \"next feature\""
 }
 
@@ -3035,10 +2883,21 @@ show_help() { cat << 'HELP'
     ./dev.sh phase backend              # Single phase (fg)
     ./dev.sh start "desc" --fg          # Foreground mode
 
-  PRODUCTION TESTING (after deploy):
-    ./dev.sh e2e                        # Run E2E tests against deployed system
-    ./dev.sh e2e --url http://IP:PORT   # Test specific URL
-    ./dev.sh access-report              # Show client connection info
+  NEW PHASES:
+    ./dev.sh phase ci                   # CI/CD pipeline generation
+    ./dev.sh phase perf                 # Performance benchmarking
+    ./dev.sh phase docs                 # API documentation generation
+    ./dev.sh phase e2e-gen              # E2E test generation
+
+  GIT WORKFLOW:
+    ./dev.sh squash [branch]            # Squash commits before PR
+    ./dev.sh rebase-main                # Rebase current branch onto main
+    ./dev.sh new-branch "name"          # Create new feature branch
+    ./dev.sh cleanup-branches           # Remove merged branches
+
+  DATABASE:
+    ./dev.sh migrate-test [dir]         # Test database migrations
+    ./dev.sh migrate-rollback           # Test migration rollback
 
   SMART IMPROVE (recommended):
     ./dev.sh smart-improve [threshold%]  # Scan→Plan→Run→Rescan→PR
@@ -3073,28 +2932,9 @@ show_help() { cat << 'HELP'
 HELP
 }
 
-# ── Parse global flags (must come before command extraction) ──
-FOREGROUND=false
-SKIP_HEALTH_CHECK=false
-
-# Extract command from args, skipping global flags
-for arg in "$@"; do
-  case "$arg" in
-    --fg) FOREGROUND=true ;;
-    --skip-health-check) SKIP_HEALTH_CHECK=true ;;
-    --*)
-      # Strip -- prefix for command detection
-      CMD="${arg#--}"
-      break
-      ;;
-    *)
-      CMD="$arg"
-      break
-      ;;
-  esac
-done
-
-CMD="${CMD:-}"
+# Strip -- prefix so both "status" and "--status" work
+CMD="${1:-}"
+CMD="${CMD#--}"
 
 # ── Preflight checks (only for commands that need tools) ──
 case "$CMD" in
@@ -3110,6 +2950,13 @@ case "$CMD" in
     fi
     ;;
 esac
+
+# ── Handle background dispatch for long-running commands ──
+FOREGROUND=false
+# Check if --fg is anywhere in args
+for arg in "$@"; do [ "$arg" = "--fg" ] && FOREGROUND=true; done
+# Check if --skip-health-check is anywhere in args
+for arg in "$@"; do [ "$arg" = "--skip-health-check" ] && SKIP_HEALTH_CHECK=true; done
 
 case "$CMD" in
   start)
@@ -3136,7 +2983,8 @@ case "$CMD" in
     case "$cur" in
       requirements) phase_requirements "$PROJECT" ;& market_research) phase_market_research ;& design) phase_design ;& backend) phase_backend ;&
       frontend) phase_frontend ;& testing) phase_testing ;& qa) phase_qa ;&
-      security) phase_security ;& deploy) phase_deploy ;& e2e_production) phase_e2e_production ;; *) run_waterfall "$PROJECT" ;;
+      security) phase_security ;& deploy) phase_deploy ;&
+      ci) phase_ci ;& perf) phase_perf ;& docs) phase_docs ;& e2e_gen) phase_e2e_gen ;; *) run_waterfall "$PROJECT" ;;
     esac
     ;;
 
@@ -3150,40 +2998,12 @@ case "$CMD" in
       requirements) phase_requirements "${3:-manual}" ;; market|market_research) phase_market_research ;; design) phase_design ;;
       backend) phase_backend ;; frontend) phase_frontend ;; testing) phase_testing ;;
       qa) phase_qa ;; security) phase_security ;; deploy) phase_deploy ;;
-      e2e|e2e_production) phase_e2e_production ;;
+      ci|ci-cd) phase_ci ;;
+      perf|performance|benchmark) phase_perf ;;
+      docs|documentation) phase_docs ;;
+      e2e-gen|e2e_gen|generate-e2e) phase_e2e_gen ;;
       *) err "Unknown phase: $2" ;;
     esac
-    ;;
-
-  # Production E2E testing
-  e2e|e2e-test)
-    E2E_BASE_URL="${2:-$E2E_BASE_URL}"
-    echo "Running E2E tests against: $E2E_BASE_URL"
-    echo $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
-    phase_e2e_production
-    ;;
-
-  access-report)
-    echo "Generating access report..."
-    generate_access_report
-    if [ -f "$ARTIFACTS/access_report.json" ]; then
-      python3 - "$ARTIFACTS/access_report.json" << 'PYEOF'
-import json, sys
-d = json.load(open(sys.argv[1]))
-print(f"\n╔═══════════════════════════════════════════════════════╗")
-print(f"║  CLIENT CONNECTION INFO                               ║")
-print(f"╚═══════════════════════════════════════════════════════╝")
-print(f"  Server:         {d['server']['hostname']}")
-print(f"  External IP:    {d['server']['external_ip']}")
-print(f"  Dashboard URL:  {d['client_connection']['base_url']}")
-print(f"\n  Accessible Ports: {', '.join(map(str, d['services']['all_accessible_ports']))}")
-print(f"\n  To connect from your client:")
-print(f"    1. Ensure network connectivity to: {d['server']['external_ip']}")
-print(f"    2. Open browser: {d['client_connection']['base_url']}")
-print(f"    3. For firewall, allow ports: {', '.join(map(str, d['services']['api_ports']))}")
-PYEOF
-    fi
     ;;
 
   stop)            stop_all ;;
@@ -3267,6 +3087,41 @@ PYEOF
     execute_planned_phases
     ;;
   verify|check)   verify_results ;;
+
+  # ── Git Workflow ──
+  squash|git-squash)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_squash "${2:-}" "${3:-main}"
+    ;;
+  rebase-main|git-rebase)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_rebase_main
+    ;;
+  new-branch|git-new)
+    [ -z "${2:-}" ] && { err "Usage: ./dev.sh new-branch \"feature-name\""; exit 1; }
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_new_branch "$2"
+    ;;
+  cleanup-branches|git-cleanup)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    git_cleanup_branches
+    ;;
+
+  # ── Database ──
+  migrate-test|test-migrations)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    test_migrations "${2:-migrations}"
+    ;;
+  migrate-rollback)
+    echo $$ > "$PID_FILE"
+    trap 'rm -f "$PID_FILE"; exit' EXIT INT TERM
+    warn "Migration rollback testing not yet implemented"
+    ;;
 
   # ── Info ──
   history)        show_history ;;

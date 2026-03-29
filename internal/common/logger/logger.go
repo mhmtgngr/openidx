@@ -3,6 +3,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -12,7 +13,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// New creates a new zap logger with sensible defaults
+// New creates a new zap logger with sensible defaults.
+// Falls back to a production-safe default logger if initialization fails.
 func New() *zap.Logger {
 	env := os.Getenv("APP_ENV")
 	level := os.Getenv("LOG_LEVEL")
@@ -51,7 +53,32 @@ func New() *zap.Logger {
 		zap.AddStacktrace(zapcore.ErrorLevel),
 	)
 	if err != nil {
-		panic("failed to initialize logger: " + err.Error())
+		// Fall back to a minimal safe logger instead of panicking.
+		// Write to stderr and return a no-op logger to avoid crashing.
+		// In production, this ensures the service can start even if logging config is invalid.
+		logger = zap.NewNop()
+		_ = logger.Sync() // Ensure the nop logger is safe
+		// Use stderr directly since we can't log
+		fmt.Fprintf(os.Stderr, "WARNING: Failed to initialize logger, using no-op logger: %v\n", err)
+		// Create a minimal stderr logger as fallback
+		logger = zap.New(zapcore.NewCore(
+			zapcore.NewJSONEncoder(zapcore.EncoderConfig{
+				TimeKey:        "ts",
+				LevelKey:       "level",
+				NameKey:        "logger",
+				CallerKey:      "caller",
+				FunctionKey:    zapcore.OmitKey,
+				MessageKey:     "msg",
+				StacktraceKey:  "stacktrace",
+				LineEnding:     zapcore.DefaultLineEnding,
+				EncodeLevel:    zapcore.LowercaseLevelEncoder,
+				EncodeTime:     zapcore.EpochMillisTimeEncoder,
+				EncodeDuration: zapcore.SecondsDurationEncoder,
+				EncodeCaller:   zapcore.ShortCallerEncoder,
+			}),
+			zapcore.AddSync(os.Stderr),
+			zap.NewAtomicLevelAt(zap.InfoLevel),
+		))
 	}
 
 	return logger

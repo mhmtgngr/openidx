@@ -196,14 +196,18 @@ func (s *Service) handleSPInitiatedSLO(c *gin.Context, samlRequest, relayState, 
 		return
 	}
 
-	// Log the SLO event
-	go s.logAuditEvent(context.Background(), "authentication", "saml_idp", "slo_sp_initiated", "success",
-		userID, c.ClientIP(), sp.EntityID, "service_provider",
-		map[string]interface{}{
-			"sp_entity_id": sp.EntityID,
-			"sp_name": sp.Name,
-			"request_id": logoutReq.ID,
-		})
+	// Log the SLO event in background with timeout
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.logAuditEvent(ctx, "authentication", "saml_idp", "slo_sp_initiated", "success",
+			userID, c.ClientIP(), sp.EntityID, "service_provider",
+			map[string]interface{}{
+				"sp_entity_id": sp.EntityID,
+				"sp_name": sp.Name,
+				"request_id": logoutReq.ID,
+			})
+	}()
 
 	// Send success response
 	s.sendSAMLLogoutResponse(c, sp.SLOURL, sp.EntityID, logoutReq.ID, SAMLLogoutStatusSuccess, "", sp)
@@ -407,8 +411,12 @@ func (s *Service) sendLogoutToSPs(c *gin.Context, sessions []SAMLSession) {
 		// Create LogoutRequest
 		logoutReq := s.createLogoutRequest(session, sp)
 
-		// Send logout request (async)
-		go s.sendLogoutRequestToSP(context.Background(), logoutReq, sp.SLOURL)
+		// Send logout request (async) with timeout
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			s.sendLogoutRequestToSP(ctx, logoutReq, sp.SLOURL)
+		}()
 	}
 }
 

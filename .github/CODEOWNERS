@@ -1,0 +1,212 @@
+# CODEOWNERS File for OpenIDX
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Format:
+#   pattern @owner1 @owner2
+#
+# Order matters: The last matching pattern takes precedence.
+# Use an @org/team-name to specify a team.
+
+# ============================================================
+# Default Owners
+# ============================================================
+# Default to core maintainers for everything
+* @openidx/maintainer
+
+# ============================================================
+# Go Backend Services
+# ============================================================
+# All Go modules
+**/*.go @openidx/backend-team @openidx/maintainer
+go.* @openidx/backend-team @openidx/maintainer
+
+# Identity Service
+/internal/identity/** @openidx/backend-team @openidx/identity-team
+/cmd/identity-service/** @openidx/backend-team @openidx/identity-team
+
+# OAuth Service
+/internal/oauth/** @openidx/backend-team @openidx/oauth-team
+/cmd/oauth-service/** @openidx/backend-team @openidx/oauth-team
+
+# Governance Service
+/internal/governance/** @openidx/backend-team @openidx/governance-team
+/cmd/governance-service/** @openidx/backend-team @openidx/governance-team
+
+# Provisioning Service
+/internal/provisioning/** @openidx/backend-team @openidx/provisioning-team
+/cmd/provisioning-service/** @openidx/backend-team @openidx/provisioning-team
+
+# Audit Service
+/internal/audit/** @openidx/backend-team @openidx/audit-team
+/cmd/audit-service/** @openidx/backend-team @openidx/audit-team
+
+# Admin API
+/internal/admin/** @openidx/backend-team @openidx/admin-team
+/cmd/admin-api/** @openidx/backend-team @openidx/admin-team
+
+# Access Service
+/internal/access/** @openidx/backend-team @openidx/access-team
+/cmd/access-service/** @openidx/backend-team @openidx/access-team
+
+# Gateway Service
+/internal/gateway/** @openidx/backend-team @openidx/gateway-team
+/cmd/gateway-service/** @openidx/backend-team @openidx/gateway-team
+
+# Common packages
+/internal/common/** @openidx/backend-team @openidx/maintainer
+
+# ============================================================
+# Frontend (React/TypeScript)
+# ============================================================
+# Admin Console
+/web/admin-console/** @openidx/frontend-team @openidx/maintainer
+**/*.tsx @openidx/frontend-team
+**/*.ts @openidx/frontend-team
+**/*.jsx @openidx/frontend-team
+
+# Frontend configuration
+/web/admin-console/package.json @openidx/frontend-team
+/web/admin-console/vite.config.ts @openidx/frontend-team
+/web/admin-console/tailwind.config.* @openidx/frontend-team
+/web/admin-console/tsconfig.json @openidx/frontend-team
+
+# ============================================================
+# Infrastructure & DevOps
+# ============================================================
+# Docker
+**/Dockerfile* @openidx/devops-team @openidx/maintainer
+**/.dockerignore @openidx/devops-team
+/docker-compose*.yml @openidx/devops-team
+
+# Kubernetes
+**/kubernetes/** @openidx/devops-team
+**/helm/** @openidx/devops-team
+**/*.yaml @openidx/devops-team
+
+# Terraform
+**/terraform/** @openidx/devops-team
+**/*.tf @openidx/devops-team
+**/*.tfvars @openidx/devops-team
+
+# CI/CD
+.github/workflows/** @openidx/devops-team
+.github/actions/** @openidx/devops-team
+
+# ============================================================
+# Configuration
+# ============================================================
+# Application configuration
+configs/** @openidx/maintainer @openidx/devops-team
+**/*.conf @openidx/maintainer
+**/*.env.example @openidx/maintainer
+
+# Makefile
+Makefile @openidx/maintainer @openidx/devops-team
+
+# ============================================================
+# Documentation
+# ============================================================
+# Markdown documentation
+**/*.md @openidx/maintainer
+docs/** @openidx/docs-team @openidx/maintainer
+
+# API definitions
+/api/** @openidx/backend-team @openidx/docs-team
+**/openapi.yaml @openidx/backend-team @openidx/docs-team
+**/openapi.yml @openidx/backend-team @openidx/docs-team
+
+# ============================================================
+# Security
+# ============================================================
+# Security policies and scans
+SECURITY.md @openidx/security-team
+**/security-scan.yml @openidx/security-team @openidx/devops-team
+**/codeql.yml @openidx/security-team @openidx/devops-team
+
+# Secrets handling (never commit actual secrets)
+**/*.key @openidx/security-team
+**/*.pem @openidx/security-team
+**/*.cert @openidx/security-team
+
+# ============================================================
+# Database
+# ============================================================
+# Migrations and schemas
+**/migrations/** @openidx/backend-team @openidx/dba-team
+**/*.sql @openidx/backend-team @openidx/dba-team
+
+# ============================================================
+# Tests
+# ============================================================
+# Test files
+**/*_test.go @openidx/backend-team @openidx/maintainer
+**/*.test.ts @openidx/frontend-team @openidx/backend-team
+**/*.test.tsx @openidx/frontend-team @openidx/backend-team
+**/*.spec.ts @openidx/frontend-team @openidx/backend-team
+**/*.spec.tsx @openidx/frontend-team @openidx/backend-team
+
+# E2E tests
+**/e2e/** @openidx/qe-team @openidx/maintainer
+
+# ============================================================
+# Dependency Management
+# ============================================================
+# Dependabot and Renovate
+.github/dependabot.yml @openidx/maintainer @openidx/devops-team
+renovate.json @openidx/maintainer @openidx/devops-team
+
+# ============================================================
+# GitHub Configuration
+# ============================================================
+# GitHub-specific files
+.github/** @openidx/maintainer
+!/.github/workflows/** @openidx/devops-team
+!/.github/dependabot.yml @openidx/maintainer @openidx/devops-team
+
+# Issue templates
+.github/ISSUE_TEMPLATE/** @openidx/maintainer
+
+# Pull request template
+.github/pull_request_template.md @openidx/maintainer
+
+# ============================================================
+# Build Artifacts (optional review)
+# ============================================================
+# Generated files (optional review)
+**/generated/** @openidx/maintainer
+**/dist/** @openidx/maintainer
+**/build/** @openidx/maintainer
+
+# ============================================================
+# Special Files
+# ============================================================
+# License and legal
+LICENSE @openidx/maintainer
+COPYING @openidx/maintainer
+NOTICE @openidx/maintainer
+
+# Contributing guidelines
+CONTRIBUTING.md @openidx/maintainer
+
+# Changelog
+CHANGELOG.md @openidx/maintainer
+
+# ============================================================
+# Exclusions (no approval required)
+# ============================================================
+# Documentation typos
+**/README.md @openidx/maintainer
+
+# Test fixtures
+**/fixtures/** @openidx/maintainer
+**/testdata/** @openidx/maintainer
+
+# ============================================================
+# Security Review Requirements
+# ============================================================
+# Files that always require security review
+/internal/common/middleware/** @openidx/backend-team @openidx/security-team
+/internal/identity/handlers_auth*.go @openidx/backend-team @openidx/security-team
+/internal/oauth/** @openidx/backend-team @openidx/security-team
+**/jwt*.go @openidx/backend-team @openidx/security-team
+**/crypto*.go @openidx/backend-team @openidx/security-team

@@ -324,6 +324,8 @@ func (s *Service) handleUpdateAIAgent(c *gin.Context) {
 	}
 
 	sets = append(sets, "updated_at = NOW()")
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE ai_agents SET %s WHERE id = $%d RETURNING id", joinStrings(sets, ", "), argIdx)
 	args = append(args, id)
 

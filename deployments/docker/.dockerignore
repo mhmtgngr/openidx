@@ -1,1 +1,206 @@
-.claude
+# ============================================
+# Docker build context optimization
+# This file excludes unnecessary files from Docker build contexts
+# to reduce build time and image size
+# ============================================
+
+# ============================================
+# Version Control
+# ============================================
+.git/
+.gitignore
+.gitattributes
+
+# ============================================
+# CI/CD (not needed in containers)
+# ============================================
+.github/
+.gitlab-ci.yml
+azure-pipelines.yml
+Jenkinsfile
+.circleci/
+
+# ============================================
+# Claude Code
+# ============================================
+.claude/
+.team/
+
+# ============================================
+# IDE and Editor Files
+# ============================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.vscode-server/
+*.iml
+
+# ============================================
+# OS Files
+# ============================================
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# ============================================
+# Environment Files - NEVER include these
+# ============================================
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# ============================================
+# Secrets - NEVER include these
+# ============================================
+*.pem
+*.key
+!*.key.example
+*.crt
+!*.crt.example
+credentials.json
+credentials-*.json
+secrets.yaml
+secrets/*.yaml
+secrets/*.json
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# ============================================
+# Dependencies (downloaded in container)
+# ============================================
+vendor/
+node_modules/
+web/*/node_modules/
+**/node_modules/
+
+# ============================================
+# Build Outputs (rebuild in container)
+# ============================================
+dist/
+build/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+go.work
+go.work.sum
+
+# Service binaries (we rebuild in container)
+access-service
+admin-api
+gateway-service
+identity-service
+governance-service
+provisioning-service
+audit-service
+oauth-service
+demo-app
+
+# ============================================
+# Test Coverage and Reports
+# ============================================
+coverage/
+*.cover
+*.out
+test-results/
+playwright-report/
+frontend/test-results/
+frontend/playwright-report/
+web/*/test-results/
+web/*/playwright-report/
+web/*/e2e/
+
+# ============================================
+# Logs
+# ============================================
+*.log
+logs/
+*.log.*
+
+# ============================================
+# Temporary Files
+# ============================================
+tmp/
+temp/
+*.tmp
+*.bak
+.npm/
+.eslintcache
+.turbo/
+.vite/
+
+# ============================================
+# Docker (exclude from build context)
+# ============================================
+.docker/
+**/.dockerignore
+**/Dockerfile*
+# Keep only the Dockerfiles we actually use
+!Dockerfile.service
+!Dockerfile.*-service
+!Dockerfile.admin-api
+!Dockerfile.admin-console
+!Dockerfile.demo-app
+!Dockerfile.simple-web
+docker-compose.override.yml
+
+# ============================================
+# Documentation (not needed in containers)
+# ============================================
+docs/
+*.md
+!README.md
+**/README.md
+
+# ============================================
+# Infrastructure as Code (not needed in containers)
+# ============================================
+deployments/kubernetes/helm/
+deployments/terraform/
+infrastructure/
+
+# ============================================
+# Development Tools
+# ============================================
+Makefile
+.editorconfig
+.prettierrc*
+.eslintrc*
+.tsconfig.json
+.prettierignore
+.eslintignore
+
+# ============================================
+# Azure Storage Emulation
+# ============================================
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+
+# ============================================
+# Frontend Build Artifacts
+# ============================================
+web/admin-console/dist/
+web/admin-console/.vite/
+web/admin-console/.turbo/
+
+# ============================================
+# Miscellaneous
+# ============================================
+frontend/
+nul
+*.txt
+!LICENSE.txt
+!go.txt
+!requirements.txt

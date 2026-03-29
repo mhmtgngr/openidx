@@ -564,6 +564,12 @@ services:
           sed -i '/dns:/a\        - ziti-controller.localtest.me' "$$CONFIG"
           echo "==> CSR SAN added"
         fi
+        # Add browzer.localtest.me to CSR SANs for WSS listener
+        if ! grep -q "browzer.localtest.me" "$$CONFIG"; then
+          echo "==> Adding browzer.localtest.me to CSR SANs..."
+          sed -i '/dns:/a\        - browzer.localtest.me' "$$CONFIG"
+          echo "==> browzer.localtest.me CSR SAN added"
+        fi
 
         # Add WSS listener (idempotent)
         if ! grep -q "wss:" "$$CONFIG"; then

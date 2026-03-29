@@ -407,20 +407,23 @@ func (r *PostgreSQLRepository) ListUsers(ctx context.Context, filter UserFilter)
 			order = "ASC"
 		}
 		// Prevent SQL injection in sort
-		validSortFields := map[string]bool{
-			"username": true, "display_name": true, "created_at": true,
-			"updated_at": true, "last_login_at": true, "email": true,
-		}
-		if validSortFields[filter.SortBy] {
-			if filter.SortBy == "email" {
-				orderBy = fmt.Sprintf("emails->0->>'value' %s", order)
-			} else {
-				orderBy = fmt.Sprintf("%s %s", filter.SortBy, order)
-			}
+		// Validate sort column against allowlist to prevent SQL injection
+	// SECURITY: filter.SortBy is validated against the validSortFields allowlist
+	validSortFields := map[string]bool{
+		"username": true, "display_name": true, "created_at": true,
+		"updated_at": true, "last_login_at": true, "email": true,
+	}
+	if validSortFields[filter.SortBy] {
+		// SECURITY: filter.SortBy is validated against the allowlist above, and filter.SortOrder is checked to be "asc" or "desc"
+		if filter.SortBy == "email" {
+			orderBy = fmt.Sprintf("emails->0->>'value' %s", order)
+		} else {
+			orderBy = fmt.Sprintf("%s %s", filter.SortBy, order)
 		}
 	}
+	}
 
-	// Get total count
+	// SECURITY: whereClause is built from hardcoded string literals and validated user input only through parameterized queries
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM users WHERE %s", whereClause)
 	var totalResults int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&totalResults)
@@ -741,6 +744,7 @@ func (r *PostgreSQLRepository) ListGroups(ctx context.Context, filter GroupFilte
 		if filter.SortOrder == "asc" {
 			order = "ASC"
 		}
+		// SECURITY: filter.SortBy is validated against the allowlist below to prevent SQL injection
 		validSortFields := map[string]bool{
 			"display_name": true, "created_at": true, "updated_at": true,
 		}
@@ -749,6 +753,7 @@ func (r *PostgreSQLRepository) ListGroups(ctx context.Context, filter GroupFilte
 		}
 	}
 
+	// SECURITY: whereClause is built from hardcoded string literals and validated user input only through parameterized queries
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM groups WHERE %s", whereClause)
 	var totalResults int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&totalResults)
@@ -804,6 +809,8 @@ func (r *PostgreSQLRepository) ListGroupsByUser(ctx context.Context, userID stri
 	args := []interface{}{userID}
 	argIdx := 2
 
+	// SECURITY: Column names in fmt.Sprintf calls below are hardcoded string literals,
+	// not user input. Only the parameter placeholder index is dynamic. Safe from SQL injection.
 	if filter.Query != nil && *filter.Query != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("display_name ILIKE $%d", argIdx))
 		args = append(args, "%"+*filter.Query+"%")
@@ -1167,6 +1174,7 @@ func (r *PostgreSQLRepository) ListOrganizations(ctx context.Context, filter Org
 		if filter.SortOrder == "asc" {
 			order = "ASC"
 		}
+		// SECURITY: filter.SortBy is validated against the allowlist below to prevent SQL injection
 		validSortFields := map[string]bool{
 			"name": true, "display_name": true, "created_at": true, "updated_at": true,
 		}
@@ -1175,6 +1183,7 @@ func (r *PostgreSQLRepository) ListOrganizations(ctx context.Context, filter Org
 		}
 	}
 
+	// SECURITY: whereClause is built from hardcoded string literals and validated user input only through parameterized queries
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM organizations WHERE %s", whereClause)
 	var totalResults int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&totalResults)

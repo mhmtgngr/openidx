@@ -1,0 +1,226 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate configuration for OpenIDX - Automated dependency updates",
+
+  "extends": [
+    "config:base",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergeDigest",
+    ":automergeBranch",
+    ":labelSecurity",
+    ":enablePreCommit",
+    "docker:enableMajor",
+    "github>whitesource/merge-confidence:beta"
+  ],
+
+  "timezone": "America/New_York",
+  "schedule": ["before 6am on Monday"],
+
+  "labels": [
+    "dependencies",
+    "renovate"
+  ],
+
+  "commitMessagePrefix": "deps",
+  "commitMessageAction": "update",
+  "commitMessageTopic": "{{depName}}",
+  "commitMessageExtra": "{{#if isPin}}pins{{else}}updates{{end}} {{#if isMajor}}major{{else if isMinor}}minor{{else}}patch{{/if}} version to {{newVersion}}",
+  "commitMessage": "{{commitMessagePrefix}} {{commitMessageAction}} {{commitMessageTopic}} {{commitMessageExtra}}",
+
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 2,
+  "rebaseWhen": "conflicted",
+  "recreateWhen": "always",
+
+  "assignees": ["openidx/maintainer"],
+  "reviewers": ["openidx/backend-team", "openidx/frontend-team"],
+
+  "semanticCommits": "enabled",
+  "separateMajorMinor": true,
+  "separateMultipleMajor": true,
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 3am on Monday"]
+  },
+
+  "vulnerabilityAlerts": {
+    "labels": ["security", "high-priority"],
+    "assignees": ["openidx/maintainer"]
+  },
+
+  "regexManagers": [
+    {
+      "description": "Update Docker image references in Dockerfiles",
+      "fileMatch": ["(^|/)Dockerfile[^/]*$"],
+      "matchStrings": ["FROM\\s+(?<depName>[^:]+):(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Update Go version in Dockerfiles",
+      "fileMatch": ["(^|/)Dockerfile[^/]*$"],
+      "matchStrings": ["FROM golang:(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "golang"
+    },
+    {
+      "description": "Update Node.js version in Dockerfiles",
+      "fileMatch": ["(^|/)Dockerfile[^/]*$"],
+      "matchStrings": ["FROM node:(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "node"
+    },
+    {
+      "description": "Update action versions in GitHub workflows",
+      "fileMatch": ["\\.github/workflows/[^/]+\\.ya?ml$"],
+      "matchStrings": ["uses: (?<depName>[^/]+/[^/]+)@(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "github-tags"
+    }
+  ],
+
+  "packageRules": [
+    {
+      "description": "Automerge non-major dependency updates",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "branch",
+      "requiredStatusChecks": ["ci"],
+      "schedule": ["before 6am on Monday"]
+    },
+    {
+      "description": "Require manual approval for major updates",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["major-update", "needs-review"]
+    },
+    {
+      "description": "Group Go dependencies",
+      "matchManagers": ["gomod"],
+      "groupName": "Go dependencies",
+      "separateMinorPatch": false,
+      "automerge": true
+    },
+    {
+      "description": "Group GORM dependencies separately",
+      "matchManagers": ["gomod"],
+      "matchDepPatterns": ["gorm.io/*"],
+      "groupName": "GORM dependencies",
+      "automerge": true
+    },
+    {
+      "description": "Group npm production dependencies",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["production"],
+      "groupName": "npm production dependencies",
+      "separateMinorPatch": true
+    },
+    {
+      "description": "Group npm dev dependencies",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "npm dev dependencies",
+      "automerge": true
+    },
+    {
+      "description": "Group React ecosystem",
+      "matchManagers": ["npm"],
+      "matchDepPatterns": [
+        "react",
+        "react-dom",
+        "react-router-dom",
+        "@tanstack/react-query"
+      ],
+      "groupName": "React ecosystem",
+      "automerge": false
+    },
+    {
+      "description": "Group Radix UI components",
+      "matchManagers": ["npm"],
+      "matchDepPatterns": ["@radix-ui/*"],
+      "groupName": "Radix UI components",
+      "automerge": true
+    },
+    {
+      "description": "Group testing dependencies",
+      "matchManagers": ["npm"],
+      "matchDepPatterns": [
+        "@testing-library/*",
+        "@playwright/test",
+        "vitest",
+        "jsdom"
+      ],
+      "groupName": "Testing dependencies",
+      "automerge": true
+    },
+    {
+      "description": "Group build tooling",
+      "matchManagers": ["npm"],
+      "matchDepPatterns": [
+        "vite",
+        "typescript",
+        "eslint",
+        "tailwindcss",
+        "postcss",
+        "autoprefixer"
+      ],
+      "groupName": "Build tooling",
+      "automerge": true
+    },
+    {
+      "description": "Group GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": true
+    },
+    {
+      "description": "Group Docker base images",
+      "matchManagers": ["docker"],
+      "matchDepPatterns": [
+        "golang",
+        "node",
+        "gcr.io/distroless/*",
+        "cgr.dev/chainguard/*"
+      ],
+      "groupName": "Docker base images",
+      "automerge": false
+    },
+    {
+      "description": "Apply security label to vulnerability updates",
+      "matchUpdateTypes": ["security"],
+      "labels": ["security", "high-priority"],
+      "assignees": ["openidx/maintainer"],
+      "automerge": false
+    },
+    {
+      "description": "Skip major version updates for distroless (manual review required)",
+      "matchManagers": ["docker"],
+      "matchDepPatterns": ["gcr.io/distroless/*"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ],
+
+  "go": {
+    "mode": "mod"
+  },
+
+  "npm": {
+    "fileMatch": ["web/admin-console/package.json"],
+    "commitMessageTopic": "npm {{depName}}",
+    "lockFileMaintenance": {
+      "enabled": true
+    }
+  },
+
+  "docker": {
+    "fileMatch": ["(^|/)Dockerfile[^/]*$"],
+    "commitMessageTopic": "Docker image {{depName}}"
+  },
+
+  "github-actions": {
+    "fileMatch": ["\\.github/workflows/[^/]+\\.ya?ml$"],
+    "pinDigests": true,
+    "commitMessageTopic": "GitHub Action {{depName}}"
+  }
+}

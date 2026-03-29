@@ -1,41 +1,63 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# Optimized multi-stage Dockerfile for Access Service
+# Key optimizations:
+# 1. Multi-stage build to reduce final image size
+# 2. Combined RUN commands to reduce layers
+# 3. --no-cache for apk and cleanup in single layer
+# 4. -trimpath and -ldflags for smaller binary
+# 5. Alpine 3.20 for smaller base image (required for shell script entrypoint)
 
-RUN apk add --no-cache git ca-certificates
-RUN echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
+# ============================================
+# Stage 1: Build
+# ============================================
+FROM golang:1.25-alpine AS builder
+
+# Install build dependencies and setup in a single layer
+RUN apk add --no-cache git ca-certificates gcc musl-dev && \
+    echo 'precedence ::ffff:0:0/96 100' >> /etc/gai.conf
 
 WORKDIR /app
 
+# Copy dependency files first for better layer caching
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download && go mod verify
 
+# Copy source code
 COPY . .
 
+# Build arguments
 ARG VERSION=dev
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# Build with optimization flags
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -a \
     -ldflags="-w -s -X main.Version=${VERSION}" \
-    -o /app/service ./cmd/access-service
+    -trimpath \
+    -o /app/access-service \
+    ./cmd/access-service && \
+    ls -lh /app/access-service && \
+    strip /app/access-service 2>/dev/null || true
 
-# Runtime stage
-FROM alpine:3.19
+# ============================================
+# Stage 2: Runtime
+# ============================================
+# NOTE: Access service needs Alpine for shell script entrypoint
+FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata
-RUN addgroup -S openidx && adduser -S openidx -G openidx
+# Install runtime dependencies, create user and directories, cleanup in single layer
+RUN apk add --no-cache ca-certificates tzdata wget && \
+    addgroup -S openidx && \
+    adduser -S openidx -G openidx && \
+    mkdir -p /ziti /shared-config /shared-certs && \
+    chown -R openidx:openidx /ziti /shared-config /shared-certs && \
+    rm -rf /var/cache/apk/*
 
 WORKDIR /app
 
-COPY --from=builder /app/service .
+# Copy binary from builder
+COPY --from=builder /app/access-service /app/service
 
-# Create Ziti identity directory writable by openidx user
-RUN mkdir -p /ziti && chown openidx:openidx /ziti
-
-# Create shared config directory for BrowZer bootstrapper targets
-RUN mkdir -p /shared-config && chown openidx:openidx /shared-config
-
-# Create shared certs directory for BrowZer TLS certificates
-RUN mkdir -p /shared-certs && chown openidx:openidx /shared-certs
-
+# Copy entrypoint script
 COPY deployments/docker/entrypoint-access.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

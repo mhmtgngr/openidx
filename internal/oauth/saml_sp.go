@@ -649,6 +649,8 @@ func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req 
 	argIdx++
 
 	args = append(args, id)
+	// SECURITY: Column names in 'updates' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE saml_service_providers SET %s WHERE id = $%d",
 		strings.Join(updates, ", "), argIdx)
 

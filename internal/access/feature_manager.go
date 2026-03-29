@@ -618,10 +618,11 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		resourceIDs["browzer_enabled"] = "true"
 		resourceIDs["ziti_service_id"] = zitiServiceID
 
-		// Regenerate BrowZer bootstrapper targets and router config
+		// Regenerate BrowZer bootstrapper targets and router config with timeout
 		if fm.browzerTargetManager != nil {
 			go func() {
-				bgCtx := context.Background()
+				bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
 				fm.browzerTargetManager.WriteBrowZerTargets(bgCtx)
 				fm.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
 			}()
@@ -706,10 +707,11 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 				}
 			}
 		}
-		// Regenerate BrowZer bootstrapper targets and router config
+		// Regenerate BrowZer bootstrapper targets and router config with timeout
 		if fm.browzerTargetManager != nil {
 			go func() {
-				bgCtx := context.Background()
+				bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
 				fm.browzerTargetManager.WriteBrowZerTargets(bgCtx)
 				fm.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
 			}()

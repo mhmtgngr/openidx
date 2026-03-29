@@ -145,6 +145,8 @@ func (s *Service) handleUpdateEmailTemplate(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE email_templates SET %s WHERE id = $%d", strings.Join(sets, ", "), argIdx)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)

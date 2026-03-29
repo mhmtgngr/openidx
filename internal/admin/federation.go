@@ -283,6 +283,8 @@ func (s *Service) handleUpdateSocialProvider(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE social_providers SET %s WHERE id = $%d",
 		joinStrings(sets, ", "), argIdx)
 
@@ -450,6 +452,8 @@ func (s *Service) handleUpdateFederationRule(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE federation_rules SET %s WHERE id = $%d",
 		joinStrings(sets, ", "), argIdx)
 
@@ -705,6 +709,8 @@ func (s *Service) handleUpdateCustomClaim(c *gin.Context) {
 	}
 
 	args = append(args, claimID)
+	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
+	// not user input. This is safe from SQL injection.
 	query := fmt.Sprintf("UPDATE custom_claims_mappings SET %s WHERE id = $%d",
 		joinStrings(sets, ", "), argIdx)
 
