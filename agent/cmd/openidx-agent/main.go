@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/transport"
 )
 
 // Version information injected via ldflags at build time.
@@ -63,16 +70,41 @@ resulting credentials in the config directory for subsequent runs.`,
 		token, _ := cmd.Flags().GetString("token")
 		server, _ := cmd.Flags().GetString("server")
 
-		if logger != nil {
-			logger.Info("enroll command invoked",
-				zap.String("server", server),
-				zap.String("config_dir", configDir),
-				zap.Bool("verbose", verbose),
-			)
+		logger.Info("enrolling agent",
+			zap.String("server", server),
+			zap.String("config_dir", configDir),
+		)
+
+		client := transport.NewClient(server, "")
+
+		resp, err := client.Enroll(token)
+		if err != nil {
+			return fmt.Errorf("enrollment failed: %w", err)
 		}
 
-		fmt.Printf("enroll: not yet implemented (server=%s, token=%s, config-dir=%s)\n",
-			server, token, configDir)
+		cfg := &agent.AgentConfig{
+			ServerURL:  server,
+			AgentID:    resp.AgentID,
+			DeviceID:   resp.DeviceID,
+			AuthToken:  resp.AuthToken,
+			EnrolledAt: time.Now().UTC().Format(time.RFC3339),
+		}
+
+		if err := cfg.Save(configDir); err != nil {
+			return fmt.Errorf("saving agent config: %w", err)
+		}
+
+		fmt.Printf("Enrollment successful!\n")
+		fmt.Printf("  Server:    %s\n", server)
+		fmt.Printf("  Agent ID:  %s\n", resp.AgentID)
+		fmt.Printf("  Device ID: %s\n", resp.DeviceID)
+		fmt.Printf("  Config:    %s\n", configDir)
+
+		logger.Info("enrollment complete",
+			zap.String("agent_id", resp.AgentID),
+			zap.String("device_id", resp.DeviceID),
+		)
+
 		return nil
 	},
 }
@@ -84,14 +116,32 @@ var runCmd = &cobra.Command{
 from the config directory, establish a secure connection to the OpenIDX server, and
 begin enforcing access policies and reporting health checks.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if logger != nil {
-			logger.Info("run command invoked",
-				zap.String("config_dir", configDir),
-				zap.Bool("verbose", verbose),
-			)
+		logger.Info("starting agent",
+			zap.String("config_dir", configDir),
+		)
+
+		a, err := agent.NewAgent(logger, configDir)
+		if err != nil {
+			return fmt.Errorf("creating agent: %w", err)
 		}
 
-		fmt.Printf("run: not yet implemented (config-dir=%s)\n", configDir)
+		a.RegisterBuiltinChecks()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			sig := <-sigCh
+			logger.Info("received signal, shutting down", zap.String("signal", sig.String()))
+			cancel()
+		}()
+
+		if err := a.Run(ctx); err != nil && err != context.Canceled {
+			return fmt.Errorf("agent run failed: %w", err)
+		}
+
 		return nil
 	},
 }
