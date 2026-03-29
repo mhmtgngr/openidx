@@ -1,49 +1,63 @@
 #!/bin/bash
 # Database seeding script for OpenIDX
-# This script is called by the openidx CLI seed command
+#
+# Seed data is automatically loaded on first `docker compose up` via
+# deployments/docker/init-db.sql. This script re-applies seed data
+# to a running database for reset scenarios.
 
 set -e
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Project root
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$PROJECT_ROOT"
 
-echo -e "${BLUE}Seeding database with test data...${NC}"
+# Default to docker-compose postgres
+DATABASE_URL="${DATABASE_URL:-postgres://openidx:$(grep POSTGRES_PASSWORD "$PROJECT_ROOT/.env" 2>/dev/null | cut -d= -f2)@localhost:5432/openidx?sslmode=disable}"
 
-# Check if DATABASE_URL is set
-if [ -z "$DATABASE_URL" ]; then
-    echo -e "${RED}Error: DATABASE_URL environment variable is not set${NC}"
-    echo -e "  Run: export DATABASE_URL='postgres://user:pass@localhost:5432/openidx?sslmode=disable'"
-    exit 1
-fi
-
-# Check if database is accessible
-if ! psql "$DATABASE_URL" -c '\q' 2>/dev/null; then
-    echo -e "${RED}Error: Cannot connect to database${NC}"
-    echo -e "  Make sure PostgreSQL is running and DATABASE_URL is correct"
-    exit 1
-fi
-
-# Run seed migrations
-echo -e "${GREEN}Running seed migrations...${NC}"
-if [ -f "$PROJECT_ROOT/migrations/010_seed_data.up.sql" ]; then
-    psql "$DATABASE_URL" -f "$PROJECT_ROOT/migrations/010_seed_data.up.sql"
-    echo -e "${GREEN}✓ Seed data applied${NC}"
-else
-    echo -e "${YELLOW}Warning: Seed file not found${NC}"
-fi
-
-echo -e "${GREEN}✓ Database seeded${NC}"
+echo -e "${BLUE}OpenIDX Database Seeder${NC}"
 echo
-echo -e "${BLUE}Seed data created:${NC}"
-echo -e "  Admin user:     ${GREEN}admin@openidx.local${NC} / ${GREEN}admin123${NC}"
-echo -e "  Test user:      ${GREEN}user@openidx.local${NC} / ${GREEN}user123${NC}"
-echo -e "  Test roles:     Admin, User, Auditor"
-echo -e "  Test policies:  Default access policies"
+
+# Check psql
+if ! command -v psql &> /dev/null; then
+    echo -e "${YELLOW}psql not found. Trying via docker...${NC}"
+    PSQL_CMD="docker exec openidx-postgres psql -U openidx -d openidx"
+else
+    PSQL_CMD="psql $DATABASE_URL"
+fi
+
+# Check connectivity
+if ! $PSQL_CMD -c '\q' 2>/dev/null; then
+    echo -e "${RED}Error: Cannot connect to database${NC}"
+    echo -e "  Make sure PostgreSQL is running (docker compose up -d postgres)"
+    echo -e "  Or set DATABASE_URL environment variable"
+    exit 1
+fi
+
+echo -e "${GREEN}Connected to database${NC}"
+
+# Check if seed data already exists
+ADMIN_EXISTS=$($PSQL_CMD -tAc "SELECT count(*) FROM users WHERE email='admin@openidx.local'" 2>/dev/null || echo "0")
+
+if [ "$ADMIN_EXISTS" -gt 0 ] && [ "${1:-}" != "--force" ]; then
+    echo -e "${YELLOW}Seed data already present (admin user exists)${NC}"
+    echo -e "  Use ${BLUE}--force${NC} to re-apply"
+    echo
+    echo -e "${BLUE}Existing seed credentials:${NC}"
+else
+    echo -e "${GREEN}Applying seed data from init-db.sql...${NC}"
+    $PSQL_CMD -f "$PROJECT_ROOT/deployments/docker/init-db.sql" 2>/dev/null || true
+    echo -e "${GREEN}Done${NC}"
+    echo
+    echo -e "${BLUE}Seed credentials:${NC}"
+fi
+
+echo -e "  Admin:         ${GREEN}admin@openidx.local${NC}"
+echo -e "  Test users:    jsmith, jdoe, bwilson, amartin"
+echo -e "  OAuth clients: admin-console (public), api-service (confidential), test-client"
+echo -e "  API client:    ${GREEN}api-service${NC} / ${GREEN}api-service-secret${NC}"
+echo -e "  Roles:         admin, user, manager, auditor, developer"
+echo -e "  Groups:        Administrators, Developers, DevOps, QA, Finance, HR"
