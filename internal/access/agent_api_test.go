@@ -113,6 +113,44 @@ func TestAgentConfig_ReturnsDefaults(t *testing.T) {
 	assert.Equal(t, "1h", resp.ReportInterval)
 }
 
+// TestAgentConfig_DefaultsWhenNoAgentID verifies that a GET to /agent/config
+// without an X-Agent-ID header or agent_id query param returns the same
+// default configuration as when the database is unavailable.
+func TestAgentConfig_DefaultsWhenNoAgentID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	// Handler has no DB (nil), so fallback must apply regardless.
+	handler := newTestAgentHandler()
+	router.GET("/agent/config", handler.HandleConfig)
+
+	// Request without X-Agent-ID header and without agent_id query param.
+	req := httptest.NewRequest(http.MethodGet, "/agent/config", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp agentConfigResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Must return the three default checks.
+	assert.Equal(t, 3, len(resp.Checks), "expected 3 default checks when no agent_id provided")
+	assert.Equal(t, "1h", resp.ReportInterval)
+	assert.Equal(t, "monitor", resp.EnforcementPolicy)
+
+	// Verify specific check names match the built-in defaults.
+	names := make([]string, len(resp.Checks))
+	for i, ch := range resp.Checks {
+		names[i] = ch.Name
+	}
+	assert.Contains(t, names, "os_version")
+	assert.Contains(t, names, "disk_encryption")
+	assert.Contains(t, names, "process_running")
+}
+
 // TestAgentEnroll_ResponseFields verifies that a successful enroll response
 // includes the status and enrolled_at fields in addition to the core identifiers.
 func TestAgentEnroll_ResponseFields(t *testing.T) {
