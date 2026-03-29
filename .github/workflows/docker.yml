@@ -32,6 +32,8 @@ jobs:
           - audit-service
           - admin-api
           - oauth-service
+          - gateway-service
+          - access-service
         platform:
           - linux/amd64
           - linux/arm64
@@ -203,7 +205,7 @@ jobs:
 
       - name: Create and push service manifests
         run: |
-          for service in identity-service governance-service provisioning-service audit-service admin-api oauth-service; do
+          for service in identity-service governance-service provisioning-service audit-service admin-api oauth-service gateway-service access-service; do
             echo "Creating manifest for $service..."
             docker buildx imagetools create \
               --tag ${{ env.IMAGE_PREFIX }}/$service:${{ github.sha }} \
@@ -252,7 +254,7 @@ jobs:
 
       - name: Tag and push service images with version
         run: |
-          for service in identity-service governance-service provisioning-service audit-service admin-api oauth-service; do
+          for service in identity-service governance-service provisioning-service audit-service admin-api oauth-service gateway-service access-service; do
             echo "Tagging $service with version ${{ steps.version.outputs.version }}..."
             docker buildx imagetools create \
               --tag ${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.version }} \
