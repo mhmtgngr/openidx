@@ -20,7 +20,7 @@ updates:
     labels:
       - "dependencies"
       - "go"
-      "security"
+      - "security"
     commit-message:
       prefix: "go"
       prefix-development: "go-dev"
@@ -148,27 +148,6 @@ updates:
       - dependency-name: "node"
         update-types: ["version-update:semver-major"]
     rebase-strategy: "auto"
-
-  # ============================================================
-  # Additional security-only checks
-  # ============================================================
-  - package-ecosystem: "gomod"
-    directory: "/"
-    schedule:
-      interval: "daily"
-    target-branch: "main"
-    labels:
-      - "security"
-      - "high-priority"
-    open-pull-requests-limit: 3
-    allow:
-      - dependency-type: "direct"
-    update-types: ["security", "semver:patch"]
-    automerge:
-      dependency-name: "*"
-      update-type: "semver:patch"
-      required-status-checks:
-        strict: true
 
   # ============================================================
   # Pull request settings

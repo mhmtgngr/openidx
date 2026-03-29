@@ -100,6 +100,19 @@ build:
           - src: internal/gateway/**/*.go
             dest: .
 
+    - image: openidx/access-service
+      context: .
+      docker:
+        dockerfile: deployments/docker/Dockerfile.access-service
+        buildArgs:
+          VERSION: dev
+      sync:
+        manual:
+          - src: cmd/access-service/**/*.go
+            dest: .
+          - src: internal/access/**/*.go
+            dest: .
+
     # Admin Console (React/Vite)
     - image: openidx/admin-console
       context: .
@@ -144,9 +157,12 @@ portForward:
     - labelSelector: app.kubernetes.io/name=oauth-service
       localPort: 8006
       port: 8006
+    - labelSelector: app.kubernetes.io/name=access-service
+      localPort: 8007
+      port: 8007
     - labelSelector: app.kubernetes.io/name=gateway-service
-      localPort: 8080
-      port: 8080
+      localPort: 8008
+      port: 8008
     - labelSelector: app.kubernetes.io/name=admin-console
       localPort: 3000
       port: 3000

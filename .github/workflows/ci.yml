@@ -98,7 +98,7 @@ jobs:
 
       - name: Build services
         run: |
-          for service in identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service; do
+          for service in identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service access-service; do
             if [ -d "./cmd/$service" ]; then
               echo "Building $service..."
               go build -o bin/$service ./cmd/$service
