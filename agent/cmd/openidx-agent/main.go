@@ -6,13 +6,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/agent"
-	"github.com/openidx/openidx/agent/internal/transport"
+	"github.com/openidx/openidx/agent/internal/enrollment"
 )
 
 // Version information injected via ldflags at build time.
@@ -75,35 +74,21 @@ resulting credentials in the config directory for subsequent runs.`,
 			zap.String("config_dir", configDir),
 		)
 
-		client := transport.NewClient(server, "")
-
-		resp, err := client.Enroll(token)
+		result, err := enrollment.Enroll(logger, server, token, configDir)
 		if err != nil {
 			return fmt.Errorf("enrollment failed: %w", err)
 		}
 
-		cfg := &agent.AgentConfig{
-			ServerURL:  server,
-			AgentID:    resp.AgentID,
-			DeviceID:   resp.DeviceID,
-			AuthToken:  resp.AuthToken,
-			EnrolledAt: time.Now().UTC().Format(time.RFC3339),
-		}
-
-		if err := cfg.Save(configDir); err != nil {
-			return fmt.Errorf("saving agent config: %w", err)
-		}
+		cfg := result.AgentConfig
 
 		fmt.Printf("Enrollment successful!\n")
-		fmt.Printf("  Server:    %s\n", server)
-		fmt.Printf("  Agent ID:  %s\n", resp.AgentID)
-		fmt.Printf("  Device ID: %s\n", resp.DeviceID)
+		fmt.Printf("  Server:    %s\n", cfg.ServerURL)
+		fmt.Printf("  Agent ID:  %s\n", cfg.AgentID)
+		fmt.Printf("  Device ID: %s\n", cfg.DeviceID)
 		fmt.Printf("  Config:    %s\n", configDir)
-
-		logger.Info("enrollment complete",
-			zap.String("agent_id", resp.AgentID),
-			zap.String("device_id", resp.DeviceID),
-		)
+		if result.ZitiIdentity != "" {
+			fmt.Printf("  Ziti:      %s\n", result.ZitiIdentity)
+		}
 
 		return nil
 	},
