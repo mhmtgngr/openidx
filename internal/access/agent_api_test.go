@@ -255,6 +255,74 @@ func TestGracePeriodEnforcer_NoDBNoPanic(t *testing.T) {
 	handler.enforceExpiredGracePeriods(context.Background())
 }
 
+// TestHandleListAgents_EmptyDB verifies that GET /agent/list returns 200 with an
+// empty JSON array when no database is configured.
+func TestHandleListAgents_EmptyDB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.GET("/agent/list", handler.HandleListAgents)
+
+	req := httptest.NewRequest(http.MethodGet, "/agent/list", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp []interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Empty(t, resp, "expected empty array when DB is nil")
+}
+
+// TestHandleRevokeAgent verifies that POST /agent/:agent_id/revoke returns 200
+// on the nil-DB path.
+func TestHandleRevokeAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.POST("/agent/:agent_id/revoke", handler.HandleRevokeAgent)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/agent-abc123/revoke", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "revoked", resp["status"])
+	assert.Equal(t, "agent-abc123", resp["agent_id"])
+}
+
+// TestHandleApproveAgent verifies that POST /agent/:agent_id/approve returns 200
+// on the nil-DB path.
+func TestHandleApproveAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+
+	handler := newTestAgentHandler()
+	router.POST("/agent/:agent_id/approve", handler.HandleApproveAgent)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/agent-abc123/approve", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "active", resp["status"])
+	assert.Equal(t, "agent-abc123", resp["agent_id"])
+}
+
 // TestRegisterAgentRoutes verifies that all three routes are registered and
 // respond to the correct HTTP methods.
 func TestRegisterAgentRoutes(t *testing.T) {

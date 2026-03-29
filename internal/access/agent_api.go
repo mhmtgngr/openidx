@@ -33,6 +33,45 @@ func NewAgentAPIHandler(logger *zap.Logger, db *database.PostgresDB, zm *ZitiMan
 	}
 }
 
+// logAuditEvent emits a structured audit log entry for an agent lifecycle event.
+// The log line uses the "AUDIT" message with consistent fields so that log
+// aggregation pipelines (e.g. Loki, Elasticsearch) can index and query them.
+func (h *AgentAPIHandler) logAuditEvent(action, agentID, outcome, detail string) {
+	h.logger.Info("AUDIT",
+		zap.String("service", "access-service"),
+		zap.String("category", "agent_lifecycle"),
+		zap.String("action", action),
+		zap.String("agent_id", agentID),
+		zap.String("outcome", outcome),
+		zap.String("detail", detail),
+		zap.Time("timestamp", time.Now().UTC()),
+	)
+}
+
+// logAuditEventToDB persists an audit record to unified_audit_events when the DB
+// is available. Errors are logged as warnings so they never block the caller.
+func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID, outcome, detail string) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+	details := map[string]interface{}{
+		"agent_id": agentID,
+		"outcome":  outcome,
+		"detail":   detail,
+	}
+	detailsJSON, _ := json.Marshal(details)
+	_, err := h.db.Pool.Exec(ctx, `
+		INSERT INTO unified_audit_events (id, source, event_type, user_id, details, created_at)
+		VALUES ($1, 'access-service', $2, $3, $4, NOW())
+	`, uuid.New().String(), action, agentID, detailsJSON)
+	if err != nil {
+		h.logger.Warn("logAuditEventToDB: failed to persist audit event",
+			zap.String("action", action),
+			zap.String("agent_id", agentID),
+			zap.Error(err))
+	}
+}
+
 // RegisterAgentRoutes registers the agent API routes onto the provided router group.
 func (h *AgentAPIHandler) RegisterAgentRoutes(r *gin.RouterGroup) {
 	r.POST("/agent/enroll", h.HandleEnroll)
