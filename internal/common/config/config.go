@@ -139,6 +139,14 @@ type Config struct {
 	ElasticsearchTLS      bool   `mapstructure:"elasticsearch_tls"`
 	ElasticsearchCACert   string `mapstructure:"elasticsearch_ca_cert"`
 	AutoMigrate bool `mapstructure:"auto_migrate"`
+
+	// Play Integrity (Phase 1+ Android agent attestation). When both
+	// PlayIntegrityServiceAccountJSON and PlayIntegrityPackageName are set
+	// the access service verifies Play Integrity tokens server-side via
+	// Google's decodeIntegrityToken API. When unset, agent-reported tokens
+	// are persisted unverified — useful for dev, dangerous in prod.
+	PlayIntegrityServiceAccountJSON string `mapstructure:"play_integrity_service_account_json"`
+	PlayIntegrityPackageName        string `mapstructure:"play_integrity_package_name"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

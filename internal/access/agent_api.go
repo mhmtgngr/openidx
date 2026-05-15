@@ -23,9 +23,10 @@ import (
 
 // AgentAPIHandler handles HTTP endpoints for agent communication.
 type AgentAPIHandler struct {
-	logger *zap.Logger
-	db     *database.PostgresDB
-	zm     *ZitiManager
+	logger        *zap.Logger
+	db            *database.PostgresDB
+	zm            *ZitiManager
+	playIntegrity *PlayIntegrityVerifier
 }
 
 // NewAgentAPIHandler constructs an AgentAPIHandler with the given logger, database, and ZitiManager.
@@ -35,6 +36,14 @@ func NewAgentAPIHandler(logger *zap.Logger, db *database.PostgresDB, zm *ZitiMan
 		db:     db,
 		zm:     zm,
 	}
+}
+
+// SetPlayIntegrityVerifier installs the Play Integrity verifier used by
+// HandleReport. Optional — when nil (or unconfigured) HandleReport stores
+// agent-supplied tokens unchanged and emits a warning audit so admins know
+// they're trusting unverified attestations.
+func (h *AgentAPIHandler) SetPlayIntegrityVerifier(v *PlayIntegrityVerifier) {
+	h.playIntegrity = v
 }
 
 // logAuditEvent emits a structured audit log entry for an agent lifecycle event.
@@ -473,6 +482,15 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 	)
 
 	for _, r := range report.Results {
+		// Server-side Play Integrity verification — rewrite r when the
+		// posture-check result is a play_integrity token so the persisted
+		// row records the decoded verdict (and the strict pass/fail
+		// that the policy decided) instead of the opaque agent-supplied
+		// token. Other check types pass through untouched.
+		if r.CheckType == "play_integrity" {
+			r = h.verifyPlayIntegrityResult(c.Request.Context(), agentID, r)
+		}
+
 		action := enforcementAction(r.Severity, r.Result.Status)
 		enforcementActions = append(enforcementActions, actionEntry{
 			CheckType: r.CheckType,
@@ -558,6 +576,124 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 		"compliance_score":    complianceScore,
 		"enforcement_actions": enforcementActions,
 	})
+}
+
+// verifyPlayIntegrityResult is invoked by HandleReport for every check
+// result whose check_type is "play_integrity". It:
+//
+//  1. Extracts the agent-supplied integrity token from result.details.
+//  2. Calls Google's decodeIntegrityToken via the configured verifier.
+//  3. Replaces the token in result.details with the decoded verdict
+//     (we never persist the raw token — it's a one-shot bearer credential
+//     against Google's API).
+//  4. Overrides result.status to pass/fail based on the policy stored in
+//     posture_checks.parameters for this check_type.
+//
+// When the verifier isn't configured (dev mode), the original result is
+// returned with a `verified=false` marker added to details and an audit
+// event so admins notice they're trusting unverified attestations.
+func (h *AgentAPIHandler) verifyPlayIntegrityResult(
+	ctx context.Context,
+	agentID string,
+	r checkResult,
+) checkResult {
+	// Pull the agent-supplied token out of the details map. Anything else
+	// in the bag (nonce, version info) is preserved.
+	token := ""
+	if rawTok, ok := r.Result.Details["token"]; ok {
+		if s, ok := rawTok.(string); ok {
+			token = s
+		}
+	}
+
+	// Always strip the raw token from what we persist; it's bearer-style
+	// credential material against Google's API and has no value to anyone
+	// looking at posture history later.
+	delete(r.Result.Details, "token")
+
+	if !h.playIntegrity.Enabled() {
+		r.Result.Details["verified"] = false
+		r.Result.Details["verifier_status"] = "disabled"
+		h.logAuditEvent("agent.play_integrity.unverified", agentID, "warning",
+			"verifier not configured")
+		return r
+	}
+
+	if token == "" {
+		r.Result.Details["verified"] = false
+		r.Result.Details["verifier_status"] = "missing_token"
+		r.Result.Status = "error"
+		r.Result.Score = 0
+		return r
+	}
+
+	verdict, err := h.playIntegrity.Verify(ctx, token)
+	if err != nil {
+		h.logger.Warn("play integrity verify failed",
+			zap.String("agent_id", agentID), zap.Error(err))
+		r.Result.Details["verified"] = false
+		r.Result.Details["verifier_status"] = "rejected"
+		r.Result.Details["verifier_error"] = err.Error()
+		r.Result.Status = "fail"
+		r.Result.Score = 0
+		h.logAuditEvent("agent.play_integrity.rejected", agentID, "denied", err.Error())
+		h.logAuditEventToDB(ctx, "agent.play_integrity.rejected", agentID, "denied", err.Error())
+		return r
+	}
+
+	// Persist the decoded verdict so admins can audit later. Each verdict
+	// field becomes its own map entry to keep the on-disk shape flat and
+	// queryable.
+	r.Result.Details["verified"] = true
+	r.Result.Details["verifier_status"] = "ok"
+	r.Result.Details["app_recognition_verdict"] = verdict.AppRecognitionVerdict
+	r.Result.Details["device_recognition_verdict"] = verdict.DeviceRecognitionVerdict
+	r.Result.Details["app_licensing_verdict"] = verdict.AccountActivity
+	r.Result.Details["package_name"] = verdict.PackageName
+	r.Result.Details["nonce"] = verdict.Nonce
+	r.Result.Details["request_timestamp_ms"] = verdict.RequestTimestampMillis
+
+	// Evaluate the policy stored against this check_type. Default policy is
+	// the empty one (everything passes) so admins explicitly opt into
+	// strictness by editing posture_checks.parameters.
+	policy := h.loadIntegrityPolicy(ctx)
+	if !policy.Pass(verdict) {
+		r.Result.Status = "fail"
+		r.Result.Score = 0
+		r.Result.Details["policy_failed"] = true
+		h.logAuditEvent("agent.play_integrity.policy_failed", agentID, "denied", "")
+		h.logAuditEventToDB(ctx, "agent.play_integrity.policy_failed", agentID, "denied", "")
+	} else {
+		r.Result.Status = "pass"
+		r.Result.Score = 1
+	}
+	return r
+}
+
+// loadIntegrityPolicy reads parameters from posture_checks for the
+// play_integrity check_type and parses them as an IntegrityPolicy. Returns
+// the zero policy on any error so a misconfigured DB row doesn't lock out
+// every agent reporting today.
+func (h *AgentAPIHandler) loadIntegrityPolicy(ctx context.Context) IntegrityPolicy {
+	if h.db == nil || h.db.Pool == nil {
+		return IntegrityPolicy{}
+	}
+	var raw []byte
+	err := h.db.Pool.QueryRow(ctx, `
+        SELECT COALESCE(parameters, '{}'::jsonb)
+          FROM posture_checks
+         WHERE check_type = 'play_integrity'
+         LIMIT 1
+    `).Scan(&raw)
+	if err != nil {
+		return IntegrityPolicy{}
+	}
+	var p IntegrityPolicy
+	if err := json.Unmarshal(raw, &p); err != nil {
+		h.logger.Warn("loadIntegrityPolicy: malformed parameters JSON", zap.Error(err))
+		return IntegrityPolicy{}
+	}
+	return p
 }
 
 // agentCheck represents a single posture check in the agent configuration.

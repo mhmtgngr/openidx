@@ -310,9 +310,84 @@ managed Google Play for Device-Owner devices — already the chosen channel.
 - Per-tenant TURN credentials minted by OpenIDX (we currently accept admin-
   supplied ICE servers verbatim).
 
+## Play Integrity server-side verification (implemented)
+
+The Android agent forwards the Play Integrity token raw inside its
+posture-report payload. The access service now verifies the token via
+Google's `decodeIntegrityToken` API before persisting the result.
+
+### Flow
+
+1. Agent runs `IntegrityCheck` (Phase 1), gets a signed integrity token,
+   posts it as `details.token` in the `play_integrity` posture result.
+2. Access service's `HandleReport` detects `check_type=play_integrity`
+   and calls `verifyPlayIntegrityResult` for that single result.
+3. `PlayIntegrityVerifier.Verify` POSTs the token to
+   `https://playintegrity.googleapis.com/v1/<package>:decodeIntegrityToken`
+   with a service-account-derived bearer; Google returns the decoded
+   `TokenPayloadExternal`.
+4. Server-side validations:
+   - **Package match** — the verdict's `requestPackageName` must equal
+     the configured expected package (rejects token-replay across apps).
+   - **Freshness** — `requestTimestampMillis` within ±30 s of "now",
+     and within `maxTokenAge` (10 min default) of arrival (rejects
+     replayed tokens past their useful window).
+5. Policy evaluation: parameters stored in `posture_checks` for the
+   `play_integrity` row are parsed as an `IntegrityPolicy`:
+   - `require_meets_device_integrity`
+   - `require_meets_basic_integrity`
+   - `require_meets_strong_integrity`
+   - `require_play_recognized`
+   A failed policy flips the result to `status=fail` regardless of
+   what the agent reported.
+6. The raw token is **stripped** from the persisted details (it's
+   one-shot bearer credential material, no audit value). The decoded
+   verdict fields go in instead so admins can query history.
+
+### Configuration
+
+| Setting | Env var | Meaning |
+|---|---|---|
+| `play_integrity_service_account_json` | `PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON` | Service-account JSON for the Google Cloud project linked to the Play Integrity API |
+| `play_integrity_package_name` | `PLAY_INTEGRITY_PACKAGE_NAME` | Package name of the OpenIDX Android agent — must match the verdict's `requestPackageName` |
+
+When **both** values are set, server-side verification is active. When
+either is empty the verifier is disabled, agent-supplied tokens are
+persisted with `verified=false` and `verifier_status=disabled` in their
+details, and every report emits an `agent.play_integrity.unverified`
+audit so admins can see they're trusting unverified attestations.
+
+### Audit events
+
+- `agent.play_integrity.unverified` — verifier disabled, token recorded
+  but not validated.
+- `agent.play_integrity.rejected` — Google returned an error, or the
+  decoded verdict failed package-match or freshness checks.
+- `agent.play_integrity.policy_failed` — verdict decoded successfully
+  but didn't satisfy the configured `IntegrityPolicy`.
+
+### Threat model
+
+| Threat | Mitigation |
+|---|---|
+| Replay of a known-good token across many devices | Token is one-shot against Google; `decodeIntegrityToken` rejects reuse |
+| Replay across apps (sideloaded malicious app forwards real token) | Server-side package-name match against the configured expected package |
+| Stale token from a previously-compromised state | `requestTimestampMillis` freshness window |
+| Agent lying about its own check status | Server overrides `status` based on verifier output, not the agent's claim |
+| Verifier outage masking failures | When verification fails, status flips to `fail` rather than passing through the agent claim |
+
+### Deferred
+
+- **Nonce binding** — the agent currently sends Google a freshly-generated
+  nonce, but the server doesn't track expected nonces. Adding a
+  server-issued nonce (delivered via `/agent/config`) would close the
+  remaining replay-during-window window.
+- **Strong device integrity** — `MEETS_STRONG_INTEGRITY` (hardware-backed
+  attestation) is available in the verdict; we just don't enforce it yet.
+  Will be tightened as a policy default once hardware test coverage is in.
+
 ## Open items
 
-- Server-side Play Integrity decode + verdict policy (Phase 1 just stores the token).
 - Push notifications (FCM) so the server can wake the agent on policy changes without polling.
 - iOS / Windows / macOS / Linux unified clients — extend after Android stabilizes.
 - BYOD work-profile mode (Profile Owner instead of Device Owner) — Phase 3 follow-up.

@@ -422,6 +422,27 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 		svc.agentHandler = agentHandler
 
+		// Server-side Play Integrity verification (Phase 1+ Android client).
+		// When unconfigured, NewPlayIntegrityVerifier returns (nil, nil) and
+		// HandleReport persists agent-supplied tokens unverified — fine for
+		// dev, flagged as a production warning by the config validator.
+		if svc.config != nil {
+			verifier, err := NewPlayIntegrityVerifier(
+				context.Background(),
+				svc.logger,
+				[]byte(svc.config.PlayIntegrityServiceAccountJSON),
+				svc.config.PlayIntegrityPackageName,
+			)
+			if err != nil {
+				svc.logger.Warn("play integrity verifier init failed; running unverified",
+					zap.Error(err))
+			} else if verifier != nil {
+				agentHandler.SetPlayIntegrityVerifier(verifier)
+				svc.logger.Info("Play Integrity verifier enabled",
+					zap.String("package", svc.config.PlayIntegrityPackageName))
+			}
+		}
+
 		// Kiosk policy admin surface (Phase 3). Audits ride the agent handler
 		// so kiosk + enrollment events appear together in unified_audit_events.
 		kioskHandler := NewKioskAPIHandler(svc.logger, svc.db, agentHandler)
