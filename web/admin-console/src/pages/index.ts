@@ -31,6 +31,9 @@ export { ZitiDiscoveryPage as ZitiDiscovery } from './ziti-discovery'
 export { BrowZerManagementPage as BrowzerManagement } from './browzer-management'
 export { CertificatesPage as Certificates } from './certificates'
 export { DevicesPage as Devices } from './devices'
+export { AgentFleetPage as AgentFleet } from './agent-fleet'
+export { KioskPoliciesPage as KioskPolicies } from './kiosk-policies'
+export { RemoteSupportPage as RemoteSupport } from './remote-support'
 
 // Governance
 export { ApprovalPoliciesPage as ApprovalPolicies } from './approval-policies'

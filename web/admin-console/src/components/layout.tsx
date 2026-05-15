@@ -59,6 +59,8 @@ import {
   ArchiveRestore,
   FileCheck,
   Send,
+  Video,
+  Lock,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -139,6 +141,9 @@ const navigationSections: NavSection[] = [
       { name: 'App Publish', href: '/app-publish', icon: Upload, adminOnly: true },
       { name: 'Certificates', href: '/certificates', icon: FileKey, adminOnly: true },
       { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
+      { name: 'Agent Fleet', href: '/agent-fleet', icon: Smartphone, adminOnly: true },
+      { name: 'Kiosk Policies', href: '/kiosk-policies', icon: Lock, adminOnly: true },
+      { name: 'Remote Support', href: '/remote-support', icon: Video, adminOnly: true },
     ],
   },
   {
