@@ -1,5 +1,6 @@
 package com.openidx.agent.ui
 
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
@@ -82,9 +83,14 @@ class KioskLauncherActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")
+    @SuppressLint("MissingSuperCall")
     override fun onBackPressed() {
         // Suppress back inside the launcher; lock-task lets back leave the
-        // activity stack but we always want to land back here.
+        // activity stack but we always want to land back here. The Activity
+        // Result API's OnBackPressedDispatcher would be the modern fix, but
+        // we want an absolute block — not even framework default behavior
+        // (which can pop the activity) should fire.
     }
 }
 

@@ -11,10 +11,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
-    <uses-permission android:name="android.permission.BIND_DEVICE_ADMIN" />
+    <!-- Note: BIND_DEVICE_ADMIN and BIND_ACCESSIBILITY_SERVICE are signature
+         permissions enforced on the receiver / service that holds them; the
+         platform never grants them to a uses-permission declaration. They
+         appear as android:permission="..." on the relevant components below. -->
+
     <!-- Remote support (Phase 4) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 

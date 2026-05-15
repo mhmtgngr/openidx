@@ -31,12 +31,19 @@ class OpenIDXDeviceAdminReceiver : DeviceAdminReceiver() {
 
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
         super.onProfileProvisioningComplete(context, intent)
-        val extras: PersistableBundle? =
-            intent.getParcelableExtra(Intent.EXTRA_USER) // future profile owner
-                ?: intent.extras?.getParcelable(
-                    "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE",
-                    PersistableBundle::class.java,
-                )
+        // Bundle.getParcelable(String, Class) requires API 33; we target
+        // minSdk 30, so branch on SDK and fall back to the deprecated single-
+        // argument overload below it. The type cast is safe — Android
+        // guarantees the bundle holds a PersistableBundle on this key.
+        val extras: PersistableBundle? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.extras?.getParcelable(
+                EXTRAS_BUNDLE_KEY,
+                PersistableBundle::class.java,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            intent.extras?.getParcelable<PersistableBundle>(EXTRAS_BUNDLE_KEY)
+        }
 
         val serverUrl = extras?.getString(EXTRA_SERVER_URL).orEmpty()
         val token = extras?.getString(EXTRA_ENROLLMENT_TOKEN).orEmpty()
@@ -56,5 +63,6 @@ class OpenIDXDeviceAdminReceiver : DeviceAdminReceiver() {
         private const val TAG = "OpenIDXDeviceAdmin"
         const val EXTRA_SERVER_URL = "openidx_server_url"
         const val EXTRA_ENROLLMENT_TOKEN = "openidx_enrollment_token"
+        private const val EXTRAS_BUNDLE_KEY = "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"
     }
 }
