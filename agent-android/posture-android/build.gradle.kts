@@ -29,4 +29,10 @@ dependencies {
 
     // Play Integrity API for the integrity check.
     implementation("com.google.android.play:integrity:1.3.0")
+
+    // Posture checks construct CheckOutcome.details with JsonPrimitive /
+    // JsonArray. :core's serialization-json dep is implementation-scope
+    // (intentional — keeps the core API surface minimal) so we declare our
+    // own here.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }

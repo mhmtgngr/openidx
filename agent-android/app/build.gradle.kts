@@ -104,6 +104,11 @@ dependencies {
     // same API, current builds.
     implementation("io.getstream:stream-webrtc-android:1.1.1")
 
+    // RemoteSupportEngine parses inbound signaling payloads with
+    // kotlinx.serialization.json. :core keeps the dep at implementation
+    // scope, so we declare it here too.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.1")
