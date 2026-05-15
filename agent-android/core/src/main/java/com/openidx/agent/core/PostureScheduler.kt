@@ -3,8 +3,9 @@ package com.openidx.agent.core
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ListenableWorker
 import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
 import java.time.Duration
 import java.util.concurrent.TimeUnit
@@ -46,12 +47,19 @@ class PostureScheduler(private val context: Context) {
     fun schedule(interval: Duration, workerClassName: String = POSTURE_WORKER_CLASS) {
         val effective = if (interval.toMinutes() < 15) Duration.ofMinutes(15) else interval
 
-        val workerClass = runCatching {
+        // Resolve by name so this lives in :core (the app's PostureWorker
+        // class isn't on the :core classpath). Failure to resolve = the app
+        // module isn't on the runtime classpath, which only happens in
+        // tests; in that case we silently skip scheduling.
+        val workerClass: Class<out ListenableWorker> = runCatching {
             @Suppress("UNCHECKED_CAST")
-            Class.forName(workerClassName) as Class<out androidx.work.ListenableWorker>
-        }.getOrNull() ?: return // app module not yet present (tests)
+            Class.forName(workerClassName) as Class<out ListenableWorker>
+        }.getOrNull() ?: return
 
-        val request = PeriodicWorkRequestBuilder<androidx.work.ListenableWorker>(
+        // Use the plain Java builder API: the ktx PeriodicWorkRequestBuilder
+        // factory takes a reified type parameter, which we can't use here
+        // because the concrete class is only known at runtime.
+        val request = PeriodicWorkRequest.Builder(
             workerClass,
             effective.toMinutes(), TimeUnit.MINUTES,
         )

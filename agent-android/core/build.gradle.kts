@@ -1,6 +1,7 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
 }
@@ -37,8 +38,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // Ziti Android SDK — embeds the dial side of the zero-trust mesh.
-    implementation("org.openziti:ziti-android:0.27.5")
+    // TODO(phase-4-followup): wire the real Ziti Android SDK once we settle on
+    // the artifact coordinates. The 0.27.5 version we tried isn't published to
+    // Maven Central; openziti/ziti-sdk-android publishes via GitHub Packages
+    // which requires auth in the resolution config. ZitiClient is a stub for
+    // now so the rest of the build is unblocked — traffic falls back to
+    // direct HTTPS until this is restored.
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

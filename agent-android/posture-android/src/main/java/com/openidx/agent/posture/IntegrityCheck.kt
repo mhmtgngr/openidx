@@ -1,6 +1,7 @@
 package com.openidx.agent.posture
 
 import android.content.Context
+import com.google.android.play.core.integrity.IntegrityManager
 import com.google.android.play.core.integrity.IntegrityManagerFactory
 import com.google.android.play.core.integrity.IntegrityTokenRequest
 import com.openidx.agent.core.PostureCheck
@@ -50,7 +51,7 @@ class IntegrityCheck(private val context: Context) : PostureCheck {
     }
 
     private suspend fun requestToken(
-        manager: com.google.android.play.core.integrity.IntegrityManager,
+        manager: IntegrityManager,
         nonce: String,
     ): String = suspendCancellableCoroutine { cont ->
         manager.requestIntegrityToken(
