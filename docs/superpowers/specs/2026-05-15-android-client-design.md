@@ -202,15 +202,113 @@ Client-side `kiosk.entered` / `kiosk.exited` transitions are surfaced through th
 - Group-based assignment (depends on identity-service group exposure).
 - Managed Google Play catalog binding so `allowed_packages` can be picked from a real list.
 
-## Phase 4 (sketch): remote control
+## Phase 4: remote control (implemented)
 
-- WebRTC signaling over Ziti.
-- `MediaProjection` for screen capture; H.264 via `MediaCodec`.
-- Input injection: Device Owner privileges where available; Accessibility Service fallback (requires user-toggle prompt).
-- Admin viewer in the OpenIDX web console.
-- Non-suppressible foreground-service banner when a remote session is live.
-- Session row + optional recording in `remote_support_sessions`.
-- Play Store caveat: Accessibility-Service apps are restricted; distribute via `/downloads/...` or managed Google Play. Already the chosen channel.
+### Data model
+
+- `remote_support_sessions` — one row per attempt to remote-control an agent.
+  Columns: `id`, `agent_id`, `admin_user_id`, `status` (`pending` / `active` /
+  `ended` / `expired` / `declined`), `mode` (`interactive` / `view`),
+  `ice_servers` JSONB, `end_reason`, `recording_url` (reserved), `started_at`,
+  `accepted_at`, `ended_at`, `notes`, `last_activity_at`.
+
+### Signaling broker
+
+`internal/access/remote_support_api.go` runs an in-memory broker that relays
+WebRTC offer / answer / ICE candidates between exactly two peers per session
+(admin browser + agent). Sessions persist in Postgres so reconnects work, but
+signaling messages themselves are ephemeral — when both peers drop the broker
+slot is freed.
+
+A background janitor (`StartJanitor`, every minute) ages out pending / active
+sessions whose `last_activity_at` is older than 5 minutes, flipping their
+status to `expired`.
+
+### Endpoints
+
+| Method | Path | Surface | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/access/remote-support/sessions` | admin | Start session (returns `id`, `admin_ws`, `agent_ws`, `ice_servers`) |
+| `GET` | `/api/v1/access/remote-support/sessions` | admin | List recent sessions |
+| `GET` | `/api/v1/access/remote-support/sessions/:id` | admin | Get one session |
+| `POST` | `/api/v1/access/remote-support/sessions/:id/end` | admin | Explicit end with reason |
+| `GET` | `/api/v1/access/remote-support/sessions/:id/ws` | admin | Signaling WebSocket (browser viewer) |
+| `GET` | `/api/v1/access/agent/remote-support/sessions/:id/ws` | public (agent-auth) | Signaling WebSocket (device side) |
+
+The agent-side WebSocket authenticates with `X-Agent-ID` + `X-Auth-Token`
+(same pattern as `/agent/report`), verified against
+`enrolled_agents.auth_token_hash`.
+
+### `/agent/config` integration
+
+`agentConfigResponse.remote_support` is populated by
+`findActiveSessionForAgent` whenever a pending / active session targets the
+agent. The agent's heartbeat picks this up within 60 seconds and launches the
+consent prompt.
+
+### Android client
+
+| Component | File | Role |
+|---|---|---|
+| `SignalingClient` | `core/SignalingClient.kt` | OkHttp WebSocket, exposes incoming as a SharedFlow |
+| `RemoteSupportEngine` | `app/remote/RemoteSupportEngine.kt` | PeerConnection lifecycle, screen capture, data channel |
+| `OpenIDXAccessibilityService` | `app/remote/OpenIDXAccessibilityService.kt` | `dispatchGesture` + `performGlobalAction` injector |
+| `InputInjector` | `app/remote/InputInjector.kt` | Routes data-channel events; prefers Device Owner, falls back to Accessibility |
+| `RemoteSupportService` | `app/remote/RemoteSupportService.kt` | Foreground service hosting the engine; non-suppressible banner |
+| `RemoteSupportTriggerActivity` | `app/remote/RemoteSupportTriggerActivity.kt` | Transparent activity prompting for `MediaProjection` consent |
+| Heartbeat hook | `app/service/OpenIDXAgentService.kt` | Reads `remote_support` from `/agent/config`, fires the trigger once per session |
+
+Screen capture uses `ScreenCapturerAndroid` from the `io.getstream:stream-webrtc-android`
+artifact, fed at 1280×720@15fps; bitrate and resolution adapt via WebRTC
+congestion control, so admins on a slow link still get a usable stream.
+
+### Signaling protocol
+
+All messages share a `{type, payload}` envelope:
+
+| `type` | `payload` shape | Direction |
+|---|---|---|
+| `control` | `{action, reason}` (`accept` / `decline` / `end` / `ping`) | both |
+| `sdp` | `{sdp, type}` (`offer` / `answer`) | both |
+| `ice` | `{candidate, sdp_mid, sdp_m_line_index}` | both |
+| input | `{event, x, y, x_end, y_end, duration_ms, key_code, text, action}` | admin → agent only |
+
+Input events ride a WebRTC data channel inside the same PeerConnection rather
+than going over signaling — keeps the broker stateless and gives end-to-end
+encryption for free.
+
+### Input injection paths
+
+| Device state | Path | Notes |
+|---|---|---|
+| Device Owner (QR provisioning) | Accessibility Service (system-pre-granted on DO devices) | No user toggle needed; we still use the AS API so the same code path serves both |
+| BYOD / sideloaded | Accessibility Service (user-toggled) | Requires the user to enable the service in Settings. `accessibility_audit` posture check surfaces non-OpenIDX accessibility services to admins |
+| Key events / text input | Not yet implemented | Reserved for a follow-up with an IME-based injector |
+
+### Consent and audit
+
+- The Phase-4 foreground service banner ("Remote support session active — An
+  OpenIDX admin can see and control this device") is at `IMPORTANCE_HIGH`
+  with an action button to end the session locally.
+- Audit events: `remote_support.session_started`, `..._active` (both peers
+  connected), `..._ended`, `..._expired`. Each logs the session ID + admin
+  user + reason.
+
+### Distribution caveat
+
+The agent registers an Accessibility Service. Google Play restricts apps that
+do so. Distribution remains via `/downloads/openidx-agent.apk` (sideload) or
+managed Google Play for Device-Owner devices — already the chosen channel.
+
+### Out of scope (deferred)
+
+- Admin-console web viewer (server endpoints are ready; React WebRTC peer
+  lands in a follow-up).
+- Session recording — `recording_url` column is reserved; upload pipeline
+  not yet wired.
+- IME-based text injection for keyboard and clipboard.
+- Per-tenant TURN credentials minted by OpenIDX (we currently accept admin-
+  supplied ICE servers verbatim).
 
 ## Open items
 

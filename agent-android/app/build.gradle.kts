@@ -84,6 +84,11 @@ dependencies {
     // Google Play Integrity for posture attestation
     implementation("com.google.android.play:integrity:1.3.0")
 
+    // WebSocket client for remote-support signaling. OkHttp is already in
+    // the core module; this is the explicit dependency so the WS extension
+    // ships with the app's classpath.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.1")

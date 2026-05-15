@@ -103,6 +103,7 @@ type Service struct {
 	browzerTargetManager *BrowZerTargetManager
 	apisixConfigPath     string
 	agentHandler         *AgentAPIHandler
+	remoteSupportHandler *RemoteSupportHandler
 }
 
 // handleAgentAPKDownload serves the hosted Android agent APK without auth so
@@ -425,6 +426,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// so kiosk + enrollment events appear together in unified_audit_events.
 		kioskHandler := NewKioskAPIHandler(svc.logger, svc.db, agentHandler)
 		kioskHandler.RegisterKioskAdminRoutes(api)
+
+		// Remote-support session admin + signaling broker (Phase 4). Admin
+		// HTTP + WS endpoints land here behind auth; the agent-side WS is
+		// mounted on the public group below.
+		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
+		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
+		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
+		svc.remoteSupportHandler = remoteSupport
 	}
 
 	// Public agent surface: enrollment (carries an enrollment token), posture
@@ -434,6 +443,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 	if svc.agentHandler != nil {
 		publicAgent := router.Group("/api/v1/access")
 		svc.agentHandler.RegisterAgentPublicRoutes(publicAgent)
+		// Agent-side remote-support WebSocket — authenticated via the same
+		// X-Agent-ID + X-Auth-Token pattern as /agent/report.
+		if svc.remoteSupportHandler != nil {
+			svc.remoteSupportHandler.RegisterRemoteSupportPublicRoutes(publicAgent)
+		}
 	}
 
 	// Public APK download for Android Enterprise provisioning. The device

@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.BIND_DEVICE_ADMIN" />
+    <!-- Remote support (Phase 4) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -71,6 +74,37 @@
             android:name=".service.OpenIDXAgentService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Phase 4: remote-support session host. mediaProjection is the
+             only foregroundServiceType that allows MediaProjection.start. -->
+        <service
+            android:name=".remote.RemoteSupportService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- Phase 4: invisible activity that prompts the user for screen-
+             capture consent before starting the foreground service. -->
+        <activity
+            android:name=".remote.RemoteSupportTriggerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Phase 4: Accessibility service used for input-injection fallback
+             when the device isn't Device Owner. The service stays registered
+             but inert outside active sessions. -->
+        <service
+            android:name=".remote.OpenIDXAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
 
         <!-- DeviceAdminReceiver — installed by Android Enterprise provisioning
              so the app becomes Device Owner. Phase 3 (kiosk) and Phase 4

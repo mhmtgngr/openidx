@@ -43,6 +43,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
+    // WebRTC for Phase 4 remote control. The stream-webrtc-android fork is
+    // the maintained drop-in successor to the now-archived org.webrtc:
+    // google-webrtc artifact; same API, current builds.
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
+
     implementation("com.google.dagger:hilt-android:2.51.1")
     ksp("com.google.dagger:hilt-android-compiler:2.51.1")
 }

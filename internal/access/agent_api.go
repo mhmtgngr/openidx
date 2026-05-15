@@ -572,11 +572,25 @@ type agentCheck struct {
 // for Android (and future iOS) clients when an enabled kiosk_policies row is
 // assigned to the agent or a tag it carries; omitted otherwise so legacy
 // (Go) agents that don't understand the field stay happy.
+//
+// RemoteSupport is filled when an admin has started a session targeting
+// this agent but the agent hasn't connected to the signaling channel yet
+// (or has reconnected mid-session). The agent uses this block to know
+// where to dial the signaling WebSocket.
 type agentConfigResponse struct {
-	Checks            []agentCheck    `json:"checks"`
-	ReportInterval    string          `json:"report_interval"`
-	EnforcementPolicy string          `json:"enforcement_policy,omitempty"`
-	KioskPolicy       *kioskPolicyRow `json:"kiosk_policy,omitempty"`
+	Checks            []agentCheck            `json:"checks"`
+	ReportInterval    string                  `json:"report_interval"`
+	EnforcementPolicy string                  `json:"enforcement_policy,omitempty"`
+	KioskPolicy       *kioskPolicyRow         `json:"kiosk_policy,omitempty"`
+	RemoteSupport     *agentRemoteSupportInfo `json:"remote_support,omitempty"`
+}
+
+// agentRemoteSupportInfo tells an agent how to join an in-flight session.
+type agentRemoteSupportInfo struct {
+	SessionID  string          `json:"session_id"`
+	Mode       string          `json:"mode"`
+	WSPath     string          `json:"ws_path"`
+	ICEServers json.RawMessage `json:"ice_servers,omitempty"`
 }
 
 // defaultAgentConfig returns the built-in fallback configuration used when no
@@ -788,6 +802,17 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		} else if kpErr != nil {
 			h.logger.Warn("HandleConfig: kiosk policy resolution failed",
 				zap.String("agent_id", agentID), zap.Error(kpErr))
+		}
+
+		// Phase 4: embed an in-flight remote-support session pointer if one
+		// exists for this agent so the device knows where to dial signaling.
+		if sid, mode, ice, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
+			cfg.RemoteSupport = &agentRemoteSupportInfo{
+				SessionID:  sid,
+				Mode:       mode,
+				WSPath:     "/api/v1/access/agent/remote-support/sessions/" + sid + "/ws",
+				ICEServers: ice,
+			}
 		}
 
 		c.JSON(http.StatusOK, cfg)

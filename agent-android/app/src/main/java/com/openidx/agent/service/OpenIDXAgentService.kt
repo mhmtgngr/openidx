@@ -17,6 +17,7 @@ import com.openidx.agent.core.PostureScheduler
 import com.openidx.agent.core.ServerApi
 import com.openidx.agent.core.ZitiClient
 import com.openidx.agent.enrollment.QrEnrollmentBootstrapper
+import com.openidx.agent.remote.RemoteSupportTriggerActivity
 import com.openidx.agent.ui.EnrollmentActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,16 +73,46 @@ class OpenIDXAgentService : Service() {
         kioskState.load()?.let { kioskController.apply(it) }
 
         heartbeatJob?.cancel()
+        var lastRemoteSessionSeen: String? = null
         heartbeatJob = scope.launch {
             val api = ServerApi(identity.serverUrl)
             while (true) {
                 val cfg = runCatching { api.fetchConfig(identity) }.getOrNull()
                 if (cfg != null) {
                     applyKioskFromConfig(cfg.kiosk_policy, kioskState, kioskController)
+
+                    // Phase 4: if a pending remote-support session targets this
+                    // agent and we haven't already launched the prompt, fire
+                    // the trigger activity. lastRemoteSessionSeen guards
+                    // against repeated prompts when the user hasn't yet
+                    // responded to an outstanding consent dialog.
+                    val rs = cfg.remote_support
+                    if (rs != null && rs.session_id != lastRemoteSessionSeen) {
+                        lastRemoteSessionSeen = rs.session_id
+                        launchRemoteSupportTrigger(
+                            sessionId = rs.session_id,
+                            wsPath = rs.ws_path,
+                            mode = rs.mode,
+                            iceServers = rs.ice_servers?.toString().orEmpty(),
+                        )
+                    } else if (rs == null) {
+                        lastRemoteSessionSeen = null
+                    }
                 }
                 delay(60_000)
             }
         }
+    }
+
+    private fun launchRemoteSupportTrigger(sessionId: String, wsPath: String, mode: String, iceServers: String) {
+        val intent = Intent(this, RemoteSupportTriggerActivity::class.java).apply {
+            putExtra(RemoteSupportTriggerActivity.EXTRA_SESSION_ID, sessionId)
+            putExtra(RemoteSupportTriggerActivity.EXTRA_WS_PATH, wsPath)
+            putExtra(RemoteSupportTriggerActivity.EXTRA_MODE, mode)
+            putExtra(RemoteSupportTriggerActivity.EXTRA_ICE_SERVERS, iceServers)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     /**
