@@ -18,6 +18,12 @@ android {
         // QR provisioning. Production builds override these at install time
         // via the Android Enterprise admin extras bundle.
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"https://openidx.local\"")
+
+        // AppAuth requires this manifest placeholder so its internal
+        // <data android:scheme="${appAuthRedirectScheme}" /> resolves. Must
+        // match the scheme portion of OAuthEnrollmentFlow.REDIRECT_URI
+        // (com.openidx.agent://oauth/redirect).
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.openidx.agent"
     }
 
     buildFeatures {

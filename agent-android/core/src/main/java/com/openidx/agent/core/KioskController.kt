@@ -89,6 +89,12 @@ class KioskController(
      * Convert the wire array of feature names into the packed int bitmask
      * DevicePolicyManager expects. Unknown names are silently dropped so
      * adding a new feature on the server doesn't break older clients.
+     *
+     * The `blocked_activity` server-side name maps to
+     * LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_WHEN_LOCKED, which is defined
+     * on DevicePolicyManager but not part of the public AGP-visible API
+     * surface, so we leave it unmapped here. The server's editor still
+     * accepts it on the wire; the agent just won't apply it.
      */
     private fun packLockTaskFeatures(features: List<String>): Int {
         var mask = 0
@@ -100,7 +106,6 @@ class KioskController(
                 "system_info" -> DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO
                 "keyguard" -> DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
                 "overview" -> DevicePolicyManager.LOCK_TASK_FEATURE_OVERVIEW
-                "blocked_activity" -> DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_WHEN_LOCKED
                 else -> 0
             }
         }
