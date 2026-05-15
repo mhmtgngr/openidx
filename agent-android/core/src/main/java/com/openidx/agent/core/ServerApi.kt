@@ -66,11 +66,31 @@ data class AgentCheckConfig(
     val severity: String = "medium",
 )
 
+/**
+ * Kiosk policy block (Phase 3). Server-side schema is intentionally
+ * extensible — unknown keys inside branding / allowed_packages /
+ * lock_task_features are ignored on the client.
+ */
+@Serializable
+data class KioskPolicy(
+    val id: String,
+    val name: String = "",
+    val description: String = "",
+    val mode: String = "off",                       // single_app | multi_app | off
+    val allowed_packages: List<String> = emptyList(),
+    val primary_activity: String = "",
+    val lock_task_features: List<String> = emptyList(),
+    val branding: Map<String, JsonElement> = emptyMap(),
+    val has_exit_pin: Boolean = false,
+    val enabled: Boolean = true,
+)
+
 @Serializable
 data class AgentConfigResponse(
     val checks: List<AgentCheckConfig> = emptyList(),
     val report_interval: String = "1h",
     val enforcement_policy: String = "monitor",
+    val kiosk_policy: KioskPolicy? = null,
 )
 
 /**

@@ -568,11 +568,15 @@ type agentCheck struct {
 	Severity  string `json:"severity,omitempty"`
 }
 
-// agentConfigResponse is returned by HandleConfig.
+// agentConfigResponse is returned by HandleConfig. KioskPolicy is filled in
+// for Android (and future iOS) clients when an enabled kiosk_policies row is
+// assigned to the agent or a tag it carries; omitted otherwise so legacy
+// (Go) agents that don't understand the field stay happy.
 type agentConfigResponse struct {
-	Checks            []agentCheck `json:"checks"`
-	ReportInterval    string       `json:"report_interval"`
-	EnforcementPolicy string       `json:"enforcement_policy,omitempty"`
+	Checks            []agentCheck    `json:"checks"`
+	ReportInterval    string          `json:"report_interval"`
+	EnforcementPolicy string          `json:"enforcement_policy,omitempty"`
+	KioskPolicy       *kioskPolicyRow `json:"kiosk_policy,omitempty"`
 }
 
 // defaultAgentConfig returns the built-in fallback configuration used when no
@@ -775,6 +779,17 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 			ReportInterval:    "15m",
 			EnforcementPolicy: "enforce",
 		}
+
+		// Embed the effective kiosk policy (Phase 3). Errors during
+		// resolution are non-fatal — they don't break the rest of config
+		// delivery, just leave the kiosk_policy field unset.
+		if kp, kpErr := resolveEffectiveKioskPolicy(ctx, h.db, agentID); kpErr == nil && kp != nil {
+			cfg.KioskPolicy = kp
+		} else if kpErr != nil {
+			h.logger.Warn("HandleConfig: kiosk policy resolution failed",
+				zap.String("agent_id", agentID), zap.Error(kpErr))
+		}
+
 		c.JSON(http.StatusOK, cfg)
 		return
 

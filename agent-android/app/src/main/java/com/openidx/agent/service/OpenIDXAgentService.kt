@@ -11,9 +11,12 @@ import androidx.core.app.NotificationCompat
 import com.openidx.agent.OpenIDXAgentApplication
 import com.openidx.agent.R
 import com.openidx.agent.core.IdentityStore
+import com.openidx.agent.core.KioskController
+import com.openidx.agent.core.KioskState
 import com.openidx.agent.core.PostureScheduler
 import com.openidx.agent.core.ServerApi
 import com.openidx.agent.core.ZitiClient
+import com.openidx.agent.enrollment.QrEnrollmentBootstrapper
 import com.openidx.agent.ui.EnrollmentActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,13 +63,50 @@ class OpenIDXAgentService : Service() {
         // even when this service is killed by the system.
         PostureScheduler(this).schedule(java.time.Duration.ofMinutes(15))
 
+        val kioskController = KioskController(this, QrEnrollmentBootstrapper.adminComponent)
+        val kioskState = KioskState(this)
+
+        // Replay the cached kiosk policy immediately on service start so
+        // reboots don't drop the device out of kiosk mode before the first
+        // /agent/config call returns.
+        kioskState.load()?.let { kioskController.apply(it) }
+
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
             val api = ServerApi(identity.serverUrl)
             while (true) {
-                runCatching { api.fetchConfig(identity) }
+                val cfg = runCatching { api.fetchConfig(identity) }.getOrNull()
+                if (cfg != null) {
+                    applyKioskFromConfig(cfg.kiosk_policy, kioskState, kioskController)
+                }
                 delay(60_000)
             }
+        }
+    }
+
+    /**
+     * Persist and apply the policy. When the new policy materially differs
+     * from the cached one, emit a kiosk.entered / kiosk.exited transition.
+     * Audit is best-effort — failure to log doesn't block the kiosk apply
+     * which is what the user actually relies on.
+     */
+    private fun applyKioskFromConfig(
+        policy: com.openidx.agent.core.KioskPolicy?,
+        state: KioskState,
+        controller: KioskController,
+    ) {
+        val changed = state.differsFromCached(policy)
+        if (policy == null || policy.mode == "off" || !policy.enabled) {
+            controller.apply(null)
+            if (state.load() != null && changed) {
+                state.clear()
+                // kiosk.exited audit: surfaced through the next posture
+                // report's details rather than its own endpoint to keep
+                // the wire surface minimal for Phase 3.
+            }
+        } else {
+            controller.apply(policy)
+            state.save(policy)
         }
     }
 

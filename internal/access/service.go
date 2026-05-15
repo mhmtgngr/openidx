@@ -420,6 +420,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		agentHandler.RegisterAgentAdminRoutes(api)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 		svc.agentHandler = agentHandler
+
+		// Kiosk policy admin surface (Phase 3). Audits ride the agent handler
+		// so kiosk + enrollment events appear together in unified_audit_events.
+		kioskHandler := NewKioskAPIHandler(svc.logger, svc.db, agentHandler)
+		kioskHandler.RegisterKioskAdminRoutes(api)
 	}
 
 	// Public agent surface: enrollment (carries an enrollment token), posture

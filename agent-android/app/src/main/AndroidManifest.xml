@@ -43,6 +43,27 @@
             </intent-filter>
         </activity>
 
+        <!-- Multi-app kiosk launcher (Phase 3). Registered as a HOME-category
+             activity so DevicePolicyManager.addPersistentPreferredActivity
+             can promote it to "the" launcher on Device-Owner provisioned
+             devices when policy.mode='multi_app'. On consumer Android the
+             user could pick any other launcher; on a Device-Owner device the
+             policy makes the choice for them. -->
+        <activity
+            android:name=".ui.KioskLauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:screenOrientation="user"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar.Fullscreen">
+            <intent-filter android:priority="0">
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Foreground service that owns the Ziti tunnel and runs the posture
              scheduler. Started by EnrollmentActivity post-enrollment and
              again on BOOT_COMPLETED via BootReceiver. -->

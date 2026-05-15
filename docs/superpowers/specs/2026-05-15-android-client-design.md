@@ -131,13 +131,76 @@ Both paths converge on `IdentityStore.save(AgentIdentity)`, which is the only pl
 3. `cd agent-android && ./gradlew :app:assembleDebug` — needs Android SDK; will be exercised in CI follow-up.
 4. End-to-end checklist in `/home/cmit/.claude/plans/iterative-whistling-shell.md` § Verification.
 
-## Phase 3 (sketch): kiosk mode
+## Phase 3: kiosk mode (implemented)
 
-- `DevicePolicyManager.setLockTaskPackages` + `startLockTask` + `setLockTaskFeatures`.
-- New tables: `kiosk_policies`, `kiosk_policy_assignments`.
-- `/agent/config` extended with optional `kiosk_policy` block; agent applies on receipt.
-- Admin UI: kiosk policy editor (allowed apps, lock-task features, branding, exit PIN).
-- Audit: `kiosk.entered`, `kiosk.exited`, `kiosk.policy_changed`.
+### Data model
+
+- `kiosk_policies` — `mode` ∈ {`single_app`, `multi_app`, `off`}, `allowed_packages` (JSONB array), `primary_activity` (component name), `lock_task_features` (JSONB array of feature names — translated to `LOCK_TASK_FEATURE_*` int constants on the client), `branding` (JSONB passthrough), `exit_pin_hash` (optional SHA-256 of the on-site exit PIN), `enabled`.
+- `kiosk_policy_assignments` — maps a policy to a target. `target_kind` ∈ {`agent`, `group`, `tag`}, `target_id` is the kind-specific identifier, `priority` defaults to 300/200/100 respectively. Higher priority wins.
+
+Policy resolution (`resolveEffectiveKioskPolicy` in `internal/access/kiosk_api.go`) walks direct agent assignments and tag-based assignments (against `enrolled_agents.metadata->'tags'`) in one query and returns the highest-priority enabled policy. Group support is reserved for future identity-service integration.
+
+### Server endpoints (admin)
+
+All mounted on the auth-protected `api` group:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/access/kiosk/policies` | List all policies |
+| `POST` | `/api/v1/access/kiosk/policies` | Create policy |
+| `GET` | `/api/v1/access/kiosk/policies/:id` | Get one |
+| `PUT` | `/api/v1/access/kiosk/policies/:id` | Update (fields are COALESCEd — omitted fields preserved) |
+| `DELETE` | `/api/v1/access/kiosk/policies/:id` | Delete (cascades to assignments) |
+| `GET` | `/api/v1/access/kiosk/policies/:id/assignments` | List assignments for a policy |
+| `POST` | `/api/v1/access/kiosk/policies/:id/assignments` | Assign to agent/group/tag |
+| `DELETE` | `/api/v1/access/kiosk/assignments/:assignment_id` | Remove an assignment |
+
+### `/agent/config` integration
+
+`agentConfigResponse` gains an optional `kiosk_policy` field that's populated from `resolveEffectiveKioskPolicy` for active agents. Legacy Go agents that don't know about the field simply ignore it (JSON omit-empty semantics).
+
+### Android client
+
+| Component | File | Role |
+|---|---|---|
+| `KioskPolicy` | `core/ServerApi.kt` | Wire model (kotlinx.serialization with `ignoreUnknownKeys`) |
+| `KioskController` | `core/KioskController.kt` | Applies policy via `DevicePolicyManager.setLockTaskPackages` / `setLockTaskFeatures`; no-op when not Device Owner |
+| `KioskState` | `core/KioskState.kt` | Caches the most-recently-applied policy in `EncryptedSharedPreferences`. Reapplied on service start; used to detect transitions for audit |
+| `KioskLauncherActivity` | `app/ui/KioskLauncherActivity.kt` | Multi-app launcher; registered as `category.HOME` so DPM can promote it to the system launcher |
+| `OpenIDXAgentService` | `app/service/OpenIDXAgentService.kt` | Applies cached policy on start; reapplies after every `/agent/config` cycle |
+
+### Behaviour matrix
+
+| Server says `mode=` | KioskController action | UX |
+|---|---|---|
+| `off` or `enabled=false` | Clear lock-task whitelist, stop lock-task if active | Device behaves normally |
+| `single_app` | Whitelist `primary_activity`'s package + agent; launch the activity | One app pinned full-screen |
+| `multi_app` | Whitelist `allowed_packages` + agent; let HOME route to `KioskLauncherActivity` | Curated grid of allowed apps |
+
+### Edge cases handled
+
+- **Not Device Owner** — `KioskController.apply` early-returns and logs. Posture report's `enterprise_managed` check already surfaces this to admins.
+- **Network loss** — `KioskState` survives offline cycles; service replays cached policy on every start. Devices stay in kiosk even when /agent/config is unreachable.
+- **Policy churn** — `setLockTaskPackages` is set-replace, so reapplying the same policy is a no-op. `KioskState.differsFromCached` is used to suppress redundant audit events.
+
+### Audit events
+
+Emitted via the agent handler's existing pipeline:
+
+- `kiosk.policy_created`
+- `kiosk.policy_changed`
+- `kiosk.policy_deleted`
+- `kiosk.policy_assigned`
+- `kiosk.policy_unassigned`
+
+Client-side `kiosk.entered` / `kiosk.exited` transitions are surfaced through the next posture report's details (no separate endpoint) — keeps the wire surface flat for Phase 3.
+
+### Out of scope (deferred)
+
+- Admin-console UI for the kiosk policy editor (server endpoints are ready; React side lands in a follow-up).
+- Exit-PIN UX on the device — server stores the hash, client lookup wiring is in `KioskPolicy.has_exit_pin` but the modal lives in a Phase-3.1 task.
+- Group-based assignment (depends on identity-service group exposure).
+- Managed Google Play catalog binding so `allowed_packages` can be picked from a real list.
 
 ## Phase 4 (sketch): remote control
 
