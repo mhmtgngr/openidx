@@ -97,6 +97,13 @@ dependencies {
     // ships with the app's classpath.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // WebRTC for Phase 4 remote control. Only used by classes under
+    // app/.../remote, so the dep lives at the app level rather than in
+    // :core. The stream-webrtc-android fork is the maintained drop-in
+    // successor to the now-archived org.webrtc:google-webrtc artifact;
+    // same API, current builds.
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.1")
