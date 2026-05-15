@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import com.openidx.agent.BuildConfig
 import com.openidx.agent.core.IdentityStore
 import com.openidx.agent.enrollment.OAuthEnrollmentFlow
@@ -65,7 +66,7 @@ class EnrollmentActivity : ComponentActivity() {
         val flow = oauthFlow ?: return
         val intent = intent ?: return
         if (intent.data == null) return
-        lifecycleScope().launch {
+        lifecycleScope.launch {
             flow.handleRedirect(intent)
                 .onSuccess { OpenIDXAgentService.start(this@EnrollmentActivity) }
         }
@@ -76,9 +77,6 @@ class EnrollmentActivity : ComponentActivity() {
         super.onDestroy()
     }
 }
-
-// Small helper to keep imports tidy in this file.
-private fun ComponentActivity.lifecycleScope() = androidx.lifecycle.lifecycleScope
 
 @Composable
 private fun EnrollmentScreen(onSignIn: (String) -> Unit) {

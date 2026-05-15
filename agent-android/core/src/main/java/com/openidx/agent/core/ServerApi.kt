@@ -85,12 +85,27 @@ data class KioskPolicy(
     val enabled: Boolean = true,
 )
 
+/**
+ * Remote-support session pointer (Phase 4). Populated by /agent/config when
+ * an admin has started a session targeting this agent and the agent hasn't
+ * connected to signaling yet. ice_servers is left as a raw JsonElement so
+ * the agent can pass it through to WebRTC unchanged.
+ */
+@Serializable
+data class RemoteSupportInfo(
+    val session_id: String,
+    val mode: String = "interactive",
+    val ws_path: String = "",
+    val ice_servers: JsonElement? = null,
+)
+
 @Serializable
 data class AgentConfigResponse(
     val checks: List<AgentCheckConfig> = emptyList(),
     val report_interval: String = "1h",
     val enforcement_policy: String = "monitor",
     val kiosk_policy: KioskPolicy? = null,
+    val remote_support: RemoteSupportInfo? = null,
 )
 
 /**
