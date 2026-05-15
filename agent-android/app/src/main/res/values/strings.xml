@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenIDX Agent</string>
+    <string name="device_admin_description">Enrolls this device in OpenIDX. Allows IT to enforce posture, kiosk policy, and (when consented) remote support.</string>
+    <string name="enrollment_in_progress">Enrolling device…</string>
+    <string name="enrollment_success">Device enrolled successfully.</string>
+    <string name="enrollment_failed">Enrollment failed.</string>
+    <string name="agent_active_notification">OpenIDX agent is active</string>
+</resources>

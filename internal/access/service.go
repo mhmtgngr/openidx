@@ -102,6 +102,18 @@ type Service struct {
 	auditService         *UnifiedAuditService
 	browzerTargetManager *BrowZerTargetManager
 	apisixConfigPath     string
+	agentHandler         *AgentAPIHandler
+}
+
+// handleAgentAPKDownload serves the hosted Android agent APK without auth so
+// Android Enterprise provisioning can fetch it during factory-reset setup.
+// Delegates to AgentAPIHandler so the path constant lives in one place.
+func (s *Service) handleAgentAPKDownload(c *gin.Context) {
+	if s.agentHandler == nil {
+		c.JSON(503, gin.H{"error": "agent handler not initialized"})
+		return
+	}
+	s.agentHandler.HandleAPKDownload(c)
 }
 
 // SetGuacamoleClient sets the Guacamole client for the service
@@ -401,11 +413,27 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/audit/unified/sync", svc.handleSyncExternalAuditEvents)
 		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
 
-		// Agent API (enrollment, reporting, config)
+		// Agent admin surface (enrollment-token CRUD, agent list / approve /
+		// revoke, OAuth-based mobile enrollment, Android QR helpers). Inherits
+		// the auth middleware applied to `api`.
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.zitiManager)
-		agentHandler.RegisterAgentRoutes(api)
+		agentHandler.RegisterAgentAdminRoutes(api)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
+		svc.agentHandler = agentHandler
 	}
+
+	// Public agent surface: enrollment (carries an enrollment token), posture
+	// report (carries X-Agent-ID + auth token), config (same). These run
+	// OUTSIDE the JWT auth middleware because the agent doesn't have a tenant
+	// JWT yet — its own credentials authenticate the request.
+	if svc.agentHandler != nil {
+		publicAgent := router.Group("/api/v1/access")
+		svc.agentHandler.RegisterAgentPublicRoutes(publicAgent)
+	}
+
+	// Public APK download for Android Enterprise provisioning. The device
+	// fetches this during factory-reset setup, before any auth context exists.
+	router.GET("/downloads/openidx-agent.apk", svc.handleAgentAPKDownload)
 
 	// Temp access public endpoint (no auth - uses token)
 	router.GET("/temp-access/:token", svc.handleUseTempAccess)

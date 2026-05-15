@@ -4,11 +4,14 @@ package access
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,23 +76,51 @@ func (h *AgentAPIHandler) logAuditEventToDB(ctx context.Context, action, agentID
 	}
 }
 
-// RegisterAgentRoutes registers the agent API routes onto the provided router group.
+// RegisterAgentRoutes registers ALL agent API routes onto the provided router
+// group. Callers that want to apply different middleware to the public
+// (token / device-credential authenticated) and admin (JWT authenticated)
+// surfaces should use RegisterAgentPublicRoutes and RegisterAgentAdminRoutes
+// instead. Kept for backward compatibility with tests and earlier callers.
 func (h *AgentAPIHandler) RegisterAgentRoutes(r *gin.RouterGroup) {
+	h.RegisterAgentPublicRoutes(r)
+	h.RegisterAgentAdminRoutes(r)
+}
+
+// RegisterAgentPublicRoutes registers endpoints that agents reach BEFORE they
+// have a tenant JWT: enrollment (carries an enrollment token), posture report
+// (carries X-Agent-ID + auth token), and config (same). These MUST NOT be
+// mounted behind the JWKS Auth middleware, since agents authenticate via their
+// own credentials.
+func (h *AgentAPIHandler) RegisterAgentPublicRoutes(r *gin.RouterGroup) {
 	r.POST("/agent/enroll", h.HandleEnroll)
 	r.POST("/agent/report", h.HandleReport)
 	r.GET("/agent/config", h.HandleConfig)
+}
+
+// RegisterAgentAdminRoutes registers endpoints that REQUIRE a valid OpenIDX
+// OAuth JWT: enrollment-token CRUD, agent listing / approve / revoke, the
+// OAuth-based agent enrollment used by mobile clients, and Android QR /
+// APK-info admin helpers. Mount behind middleware.Auth.
+func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup) {
+	r.POST("/agent/enroll/oauth", h.HandleEnrollOAuth)
 	r.POST("/agent/tokens", h.HandleGenerateToken)
 	r.GET("/agent/tokens", h.HandleListTokens)
 	r.DELETE("/agent/tokens/:token_id", h.HandleRevokeToken)
+	r.GET("/agents", h.HandleListAgents)
+	r.DELETE("/agents/:agent_id", h.HandleRevokeAgent)
+	r.POST("/agents/:agent_id/approve", h.HandleApproveAgent)
+	r.POST("/agent/qr", h.HandleGenerateQR)
+	r.GET("/agent/apk-info", h.HandleAPKInfo)
 }
 
 // enrollRequest is the optional JSON body accepted by HandleEnroll.
 type enrollRequest struct {
-	Token    string `json:"token"`
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	Platform string `json:"platform"`
+	Token      string `json:"token"`
+	Hostname   string `json:"hostname"`
+	OS         string `json:"os"`
+	Arch       string `json:"arch"`
+	Platform   string `json:"platform"`
+	FormFactor string `json:"form_factor"`
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -97,6 +128,134 @@ type enrollResponse struct {
 	AgentID   string `json:"agent_id"`
 	DeviceID  string `json:"device_id"`
 	AuthToken string `json:"auth_token"`
+}
+
+// normalizePlatform maps caller-supplied platform strings to the canonical set
+// stored in enrolled_agents.platform. Anything unrecognized becomes "unknown"
+// so the column stays well-formed and downstream platform-filtered queries
+// remain predictable.
+func normalizePlatform(p string) string {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "linux":
+		return "linux"
+	case "darwin", "macos":
+		return "macos"
+	case "windows":
+		return "windows"
+	case "android":
+		return "android"
+	case "ios":
+		return "ios"
+	default:
+		return "unknown"
+	}
+}
+
+// normalizeFormFactor returns the canonical form_factor or "" if unknown so
+// callers can leave it unset rather than persist garbage.
+func normalizeFormFactor(f string) string {
+	switch strings.ToLower(strings.TrimSpace(f)) {
+	case "desktop", "laptop", "phone", "tablet", "kiosk", "server":
+		return strings.ToLower(strings.TrimSpace(f))
+	default:
+		return ""
+	}
+}
+
+// issuedAgentCredentials carries everything the caller (HandleEnroll /
+// HandleEnrollOAuth) needs to assemble a response after the agent record is
+// persisted.
+type issuedAgentCredentials struct {
+	AgentID   string
+	DeviceID  string
+	AuthToken string
+	Status    string
+	ZitiJWT   string
+}
+
+// issueAgentCredentials performs the credential-minting half of enrollment
+// shared by every enrollment path:
+//
+//  1. Generate agent_id / device_id / auth_token.
+//  2. Persist the enrolled_agents row with platform, form_factor, method, etc.
+//  3. Optionally provision a Ziti identity (returning its JWT).
+//
+// It does NOT validate enrollment tokens or OAuth JWTs; that lives in the
+// HTTP handlers, which decide whether to call this helper at all.
+func (h *AgentAPIHandler) issueAgentCredentials(
+	ctx context.Context,
+	req enrollRequest,
+	method string,
+	enrolledByUserID string,
+) issuedAgentCredentials {
+	agentID := "agent-" + uuid.New().String()[:8]
+	deviceID := "device-" + uuid.New().String()[:8]
+	authToken := uuid.New().String()
+	authTokenHash := sha256Hex(authToken)
+	status := "active"
+
+	platform := normalizePlatform(req.Platform)
+	if platform == "unknown" && req.OS != "" {
+		platform = normalizePlatform(req.OS)
+	}
+	formFactor := normalizeFormFactor(req.FormFactor)
+
+	metadata, _ := json.Marshal(map[string]string{
+		"hostname":    req.Hostname,
+		"os":          req.OS,
+		"arch":        req.Arch,
+		"platform":    platform,
+		"form_factor": formFactor,
+	})
+
+	if h.db != nil && h.db.Pool != nil {
+		// Use NULLIF so empty string columns don't leak past the platform check;
+		// platform stays NULL for legacy callers that omit it.
+		var userIDArg interface{}
+		if enrolledByUserID != "" {
+			userIDArg = enrolledByUserID
+		}
+		_, err := h.db.Pool.Exec(ctx, `
+            INSERT INTO enrolled_agents (
+                agent_id, device_id, status, auth_token_hash,
+                enrolled_at, compliance_status, metadata,
+                platform, form_factor, enrollment_method, enrolled_by_user_id
+            )
+            VALUES ($1,$2,$3,$4, NOW(), 'unknown', $5,
+                    NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9)
+        `, agentID, deviceID, status, authTokenHash, metadata,
+			platform, formFactor, method, userIDArg)
+		if err != nil {
+			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
+		}
+	}
+
+	result := issuedAgentCredentials{
+		AgentID:   agentID,
+		DeviceID:  deviceID,
+		AuthToken: authToken,
+		Status:    status,
+	}
+
+	if status == "active" && h.zm != nil {
+		zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
+		if err != nil {
+			h.logger.Warn("Failed to create Ziti identity for agent",
+				zap.String("agent_id", agentID), zap.Error(err))
+		} else {
+			if h.db != nil && h.db.Pool != nil {
+				h.db.Pool.Exec(ctx,
+					"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
+					zitiID, agentID)
+			}
+			result.ZitiJWT = zitiJWT
+			h.logger.Info("Ziti identity created for agent",
+				zap.String("agent_id", agentID),
+				zap.String("ziti_id", zitiID))
+		}
+	}
+
+	return result
 }
 
 // HandleEnroll validates the Authorization header, validates the enrollment token
@@ -118,16 +277,9 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 	var enrollReq enrollRequest
 	c.ShouldBindJSON(&enrollReq)
 
-	// Generate identifiers
-	agentID := "agent-" + uuid.New().String()[:8]
-	deviceID := "device-" + uuid.New().String()[:8]
-	authToken := uuid.New().String()
-
-	// Hash auth token for storage (never store plaintext)
-	authTokenHash := sha256Hex(authToken)
-
-	// Validate enrollment token against the database.
-	// When DB is unavailable fall back to dev mode (accept any token).
+	// Validate enrollment token against the database when configured. The token
+	// itself is consumed (marked used) before credentials are minted so a
+	// failure to mint cannot leak a still-usable token.
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
 		incomingHash := sha256Hex(token)
@@ -159,85 +311,77 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			return
 		}
 
-		// Mark token as used.
+		// Mark token as used. We don't yet know agent_id, so update post-issue.
 		_, err = h.db.Pool.Exec(ctx, `
 			UPDATE agent_enrollment_tokens
-			SET used_at = NOW(), used_by_agent = $1
-			WHERE id = $2
-		`, agentID, tokenID)
+			SET used_at = NOW()
+			WHERE id = $1
+		`, tokenID)
 		if err != nil {
 			h.logger.Warn("HandleEnroll: failed to mark token as used",
 				zap.String("token_id", tokenID), zap.Error(err))
-			// Non-fatal: proceed with enrollment.
 		}
+
+		creds := h.issueAgentCredentials(ctx, enrollReq, "token", "")
+
+		// Stamp used_by_agent now that we have the agent_id.
+		_, _ = h.db.Pool.Exec(ctx,
+			`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2`,
+			creds.AgentID, tokenID)
+
+		writeEnrollResponse(c, creds, "token")
+		h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token")
+		h.logAuditEventToDB(ctx, "agent.enrolled", creds.AgentID, "success", "method=token")
+		return
 	}
 
-	// Always active once token is validated (or in dev mode with no DB).
-	status := "active"
+	// Dev mode: no DB, accept any non-empty token.
+	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "token", "")
+	writeEnrollResponse(c, creds, "token")
+	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token (no-db)")
+}
 
-	// Build metadata from device info provided by the agent.
-	metadata, _ := json.Marshal(map[string]string{
-		"hostname": enrollReq.Hostname,
-		"os":       enrollReq.OS,
-		"arch":     enrollReq.Arch,
-		"platform": enrollReq.Platform,
-	})
-
-	// Persist to database
-	if h.db != nil && h.db.Pool != nil {
-		ctx := c.Request.Context()
-		_, err := h.db.Pool.Exec(ctx, `
-            INSERT INTO enrolled_agents (agent_id, device_id, status, auth_token_hash, enrolled_at, compliance_status, metadata)
-            VALUES ($1, $2, $3, $4, NOW(), 'unknown', $5)
-        `, agentID, deviceID, status, authTokenHash, metadata)
-		if err != nil {
-			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
-			// Don't fail enrollment if DB write fails — agent can still function
-		}
-	}
-
-	h.logger.Info("Agent enrolled",
-		zap.String("agent_id", agentID),
-		zap.String("device_id", deviceID),
-		zap.String("status", status))
-
-	h.logAuditEvent("agent.enrolled", agentID, "success", "status="+status)
-	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", agentID, "success", "status="+status)
-
+// writeEnrollResponse serializes the agent credentials into the standard
+// enrollment response shape that all enrollment paths share.
+func writeEnrollResponse(c *gin.Context, creds issuedAgentCredentials, method string) {
 	response := gin.H{
-		"agent_id":    agentID,
-		"device_id":   deviceID,
-		"auth_token":  authToken,
-		"status":      status,
-		"enrolled_at": time.Now().UTC().Format(time.RFC3339),
+		"agent_id":          creds.AgentID,
+		"device_id":         creds.DeviceID,
+		"auth_token":        creds.AuthToken,
+		"status":            creds.Status,
+		"enrollment_method": method,
+		"enrolled_at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	if creds.ZitiJWT != "" {
+		response["ziti_jwt"] = creds.ZitiJWT
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// HandleEnrollOAuth enrolls an agent on behalf of an authenticated OpenIDX
+// user. The route MUST sit behind middleware.Auth so that c.Get("user_id")
+// returns the OIDC subject of a valid JWT. The agent inherits the user's
+// identity for governance lookups (compliance per-user, BYOD flows, etc.).
+func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
+	userIDRaw, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user_id missing from auth context"})
+		return
+	}
+	userID, _ := userIDRaw.(string)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user_id missing from auth context"})
+		return
 	}
 
-	// Create Ziti identity if active and ZitiManager available
-	if status == "active" && h.zm != nil {
-		zitiID, zitiJWT, err := h.zm.CreateIdentity(
-			c.Request.Context(),
-			agentID,
-			"Device",
-			[]string{"openidx-agent"},
-		)
-		if err != nil {
-			h.logger.Warn("Failed to create Ziti identity for agent",
-				zap.String("agent_id", agentID), zap.Error(err))
-		} else {
-			// Update DB with Ziti identity
-			if h.db != nil && h.db.Pool != nil {
-				h.db.Pool.Exec(c.Request.Context(),
-					"UPDATE enrolled_agents SET ziti_identity_id = $1 WHERE agent_id = $2",
-					zitiID, agentID)
-			}
-			response["ziti_jwt"] = zitiJWT
-			h.logger.Info("Ziti identity created for agent",
-				zap.String("agent_id", agentID),
-				zap.String("ziti_id", zitiID))
-		}
-	}
+	var enrollReq enrollRequest
+	_ = c.ShouldBindJSON(&enrollReq)
 
-	c.JSON(200, response)
+	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID)
+	writeEnrollResponse(c, creds, "oauth")
+
+	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
+	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
 }
 
 // sha256Hex returns the lowercase hex-encoded SHA-256 digest of s.
@@ -525,17 +669,23 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// 3. Query enrolled_agents for the agent's current status.
+	// 3. Query enrolled_agents for the agent's current status AND platform so
+	//    we can filter posture_checks to the rows applicable to this client.
 	var status string
+	var platform *string
 	err := h.db.Pool.QueryRow(ctx,
-		`SELECT status FROM enrolled_agents WHERE agent_id = $1`, agentID,
-	).Scan(&status)
+		`SELECT status, platform FROM enrolled_agents WHERE agent_id = $1`, agentID,
+	).Scan(&status, &platform)
 	if err != nil {
 		// Agent not found or DB error — return defaults.
 		h.logger.Warn("HandleConfig: could not fetch agent status",
 			zap.String("agent_id", agentID), zap.Error(err))
 		c.JSON(http.StatusOK, defaultAgentConfig())
 		return
+	}
+	agentPlatform := ""
+	if platform != nil {
+		agentPlatform = *platform
 	}
 
 	// 4. Build response based on status.
@@ -567,13 +717,26 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 		return
 
 	case "active":
-		// 5. Query enabled posture checks ordered by severity.
-		rows, queryErr := h.db.Pool.Query(ctx,
-			`SELECT check_type, parameters, severity
-			   FROM posture_checks
-			  WHERE enabled = true
-			  ORDER BY severity`,
-		)
+		// 5. Query enabled posture checks ordered by severity, filtered to the
+		//    agent's platform when one was recorded at enrollment. platforms
+		//    is a JSONB array (see migration 202605150002); the ? operator
+		//    tests array membership. When platform is unset (legacy Go agents
+		//    enrolled before 202605150001), fall back to returning every
+		//    enabled check.
+		query := `SELECT check_type, parameters, severity
+		            FROM posture_checks
+		           WHERE enabled = true
+		           ORDER BY severity`
+		args := []interface{}{}
+		if agentPlatform != "" {
+			query = `SELECT check_type, parameters, severity
+			           FROM posture_checks
+			          WHERE enabled = true
+			            AND (platforms IS NULL OR platforms ? $1 OR platforms ? 'any')
+			          ORDER BY severity`
+			args = []interface{}{agentPlatform}
+		}
+		rows, queryErr := h.db.Pool.Query(ctx, query, args...)
 		if queryErr != nil {
 			h.logger.Warn("HandleConfig: could not query posture_checks",
 				zap.String("agent_id", agentID), zap.Error(queryErr))
@@ -836,6 +999,159 @@ func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 		"id":         tokenID,
 		"expires_at": expiresAt.Format(time.RFC3339),
 	})
+}
+
+// androidAPKPath is the on-disk location served by HandleAPKDownload and
+// hashed by HandleAPKInfo. Resolved at request time so the file can be
+// replaced without restarting the access service.
+const androidAPKPath = "deployments/android/openidx-agent.apk"
+
+// generateQRRequest is the body accepted by HandleGenerateQR. ServerURL must
+// be the externally-reachable OpenIDX base URL the device will use during
+// Android Enterprise provisioning to download the APK and POST /agent/enroll.
+type generateQRRequest struct {
+	Description  string `json:"description"`
+	TTLMinutes   int    `json:"ttl_minutes"`
+	ServerURL    string `json:"server_url"`
+	PackageName  string `json:"package_name"`
+	ReceiverName string `json:"receiver_name"`
+}
+
+// HandleGenerateQR creates a one-shot enrollment token and assembles the
+// Android Enterprise QR provisioning payload that bundles it. The plaintext
+// token is returned alongside the payload so admins can also distribute it
+// out-of-band (link, email).
+//
+// The payload format follows the Android Enterprise spec
+// (PROVISIONING_DEVICE_ADMIN_*) so that scanning the QR during factory-reset
+// setup installs our APK and triggers OpenIDXDeviceAdminReceiver with the
+// extras bundle that drives auto-enrollment.
+func (h *AgentAPIHandler) HandleGenerateQR(c *gin.Context) {
+	var req generateQRRequest
+	_ = c.ShouldBindJSON(&req)
+
+	if req.TTLMinutes <= 0 {
+		req.TTLMinutes = 60 // 1h default — long enough to scan and provision.
+	}
+	if req.ServerURL == "" {
+		req.ServerURL = "https://" + c.Request.Host
+	}
+	if req.PackageName == "" {
+		req.PackageName = "com.openidx.agent"
+	}
+	if req.ReceiverName == "" {
+		req.ReceiverName = req.PackageName + "/.admin.OpenIDXDeviceAdminReceiver"
+	}
+
+	plaintext := uuid.New().String()
+	hash := sha256Hex(plaintext)
+	expiresAt := time.Now().UTC().Add(time.Duration(req.TTLMinutes) * time.Minute)
+	description := req.Description
+	if description == "" {
+		description = "Android enrollment QR"
+	}
+
+	var tokenID string
+	createdBy := ""
+	if v, ok := c.Get("user_id"); ok {
+		if s, _ := v.(string); s != "" {
+			createdBy = s
+		}
+	}
+
+	if h.db != nil && h.db.Pool != nil {
+		ctx := c.Request.Context()
+		err := h.db.Pool.QueryRow(ctx, `
+			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at)
+			VALUES ($1,$2,$3,$4)
+			RETURNING id
+		`, hash, description, createdBy, expiresAt).Scan(&tokenID)
+		if err != nil {
+			h.logger.Error("HandleGenerateQR: failed to insert token", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate QR token"})
+			return
+		}
+	} else {
+		tokenID = uuid.New().String()
+	}
+
+	// Look up the APK SHA-256 so the payload's signature-checksum field is
+	// honest. Android refuses to provision if the downloaded APK doesn't match.
+	apkURL := strings.TrimRight(req.ServerURL, "/") + "/downloads/openidx-agent.apk"
+	apkChecksum := ""
+	if sum, err := computeAPKSHA256URLSafe(androidAPKPath); err == nil {
+		apkChecksum = sum
+	}
+
+	payload := map[string]interface{}{
+		"android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME":             req.ReceiverName,
+		"android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION":  apkURL,
+		"android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM":         apkChecksum,
+		"android.app.extra.PROVISIONING_SKIP_ENCRYPTION":                         false,
+		"android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED":           true,
+		"android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE": map[string]string{
+			"openidx_server_url":       req.ServerURL,
+			"openidx_enrollment_token": plaintext,
+		},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	h.logAuditEvent("token.qr_generated", tokenID, "success", description)
+	h.logAuditEventToDB(c.Request.Context(), "token.qr_generated", tokenID, "success", description)
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":              tokenID,
+		"token":           plaintext,
+		"expires_at":      expiresAt.Format(time.RFC3339),
+		"server_url":      req.ServerURL,
+		"apk_url":         apkURL,
+		"apk_checksum":    apkChecksum,
+		"qr_payload":      payload,
+		"qr_payload_json": string(payloadBytes),
+	})
+}
+
+// HandleAPKInfo reports the version + checksum of the currently-hosted Android
+// agent APK so external installers (CI publishing, MDM relays) can verify
+// they have the latest build.
+func (h *AgentAPIHandler) HandleAPKInfo(c *gin.Context) {
+	checksum, err := computeAPKSHA256URLSafe(androidAPKPath)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "APK not yet published",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"package": "com.openidx.agent",
+		"sha256":  checksum,
+		"url":     "/downloads/openidx-agent.apk",
+	})
+}
+
+// HandleAPKDownload serves the hosted Android agent APK. Mounted publicly so
+// Android Enterprise provisioning can fetch it during factory-reset setup,
+// before any auth context exists.
+func (h *AgentAPIHandler) HandleAPKDownload(c *gin.Context) {
+	c.Header("Content-Type", "application/vnd.android.package-archive")
+	c.Header("Cache-Control", "public, max-age=60")
+	c.File(androidAPKPath)
+}
+
+// computeAPKSHA256URLSafe returns the URL-safe base64 SHA-256 (no padding) of
+// the file at path. This is the exact format Android Enterprise expects for
+// PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM.
+func computeAPKSHA256URLSafe(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(hasher.Sum(nil)), nil
 }
 
 // HandleListTokens returns all enrollment tokens without their hashes.
