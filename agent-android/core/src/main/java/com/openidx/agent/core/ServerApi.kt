@@ -11,7 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Wire types for the OpenIDX `/agent/*` HTTP API. Field names match the Go
+ * Wire types for the OpenIDX `/agent/...` HTTP API. Field names match the Go
  * structs in /internal/access/agent_api.go verbatim — keep them in sync when
  * the server protocol changes.
  */
@@ -94,7 +94,7 @@ data class AgentConfigResponse(
 )
 
 /**
- * Thin client over the public `/agent/*` endpoints on the access service. The
+ * Thin client over the public `/agent` endpoints on the access service. The
  * underlying [OkHttpClient] is swappable so the foreground service can plug
  * in a Ziti-tunneled client once enrollment finishes; before that, the
  * default direct-HTTPS client is used for enrollment-time bootstrapping.

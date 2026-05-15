@@ -18,7 +18,7 @@ import okhttp3.OkHttpClient
  *   - shutdown()                  — tear the context down
  *
  * Until the SDK is back in, [okHttpClient] returns a vanilla client so
- * /agent/* traffic continues over direct HTTPS. Posture and config flow
+ * `/agent` traffic continues over direct HTTPS. Posture and config flow
  * works; the only thing missing is the zero-trust overlay.
  */
 class ZitiClient(private val context: Context) {

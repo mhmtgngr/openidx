@@ -2,8 +2,6 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("com.google.devtools.ksp")
-    id("com.google.dagger.hilt.android")
 }
 
 android {
@@ -52,7 +50,4 @@ dependencies {
     // the maintained drop-in successor to the now-archived org.webrtc:
     // google-webrtc artifact; same API, current builds.
     implementation("io.getstream:stream-webrtc-android:1.1.1")
-
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    ksp("com.google.dagger:hilt-android-compiler:2.51.1")
 }

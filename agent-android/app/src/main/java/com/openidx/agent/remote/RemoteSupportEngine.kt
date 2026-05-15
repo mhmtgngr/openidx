@@ -107,10 +107,10 @@ class RemoteSupportEngine(
         videoSource = factory.createVideoSource(/* isScreencast = */ true)
         capturer!!.initialize(helper, context, videoSource!!.capturerObserver)
         capturer!!.startCapture(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_FPS)
-        videoTrack = factory.createVideoTrack("openidx-screen", videoSource).apply {
+        videoTrack = factory.createVideoTrack("openidx-screen", videoSource!!).apply {
             setEnabled(true)
         }
-        peerConnection!!.addTrack(videoTrack, listOf("openidx-stream"))
+        peerConnection!!.addTrack(videoTrack!!, listOf("openidx-stream"))
 
         // 4. Data channel for input injection in interactive mode. View-only
         //    sessions skip this — the agent ignores any incoming input.

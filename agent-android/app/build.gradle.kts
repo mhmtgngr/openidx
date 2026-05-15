@@ -1,8 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.google.devtools.ksp")
-    id("com.google.dagger.hilt.android")
 }
 
 android {
@@ -63,11 +61,15 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Hilt DI
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    ksp("com.google.dagger:hilt-android-compiler:2.51.1")
-    implementation("androidx.hilt:hilt-work:1.2.0")
-    ksp("androidx.hilt:hilt-compiler:1.2.0")
+    // Hilt and the corresponding KSP-generated DI graph are deferred until a
+    // module actually needs DI — no @HiltAndroidApp / @AndroidEntryPoint /
+    // @Inject in the codebase today. Re-add the plugins (root build.gradle.kts)
+    // and the implementation lines below when wiring DI.
+    //
+    // implementation("com.google.dagger:hilt-android:2.51.1")
+    // ksp("com.google.dagger:hilt-android-compiler:2.51.1")
+    // implementation("androidx.hilt:hilt-work:1.2.0")
+    // ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // OAuth (AppAuth) for email/OAuth enrollment path
     implementation("net.openid:appauth:0.11.1")
