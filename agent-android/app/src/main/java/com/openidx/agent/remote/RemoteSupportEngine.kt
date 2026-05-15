@@ -208,7 +208,8 @@ class RemoteSupportEngine(
                 if (type == SessionDescription.Type.OFFER) {
                     // Admin initiated; respond with answer.
                     pc.createAnswer(object : SimpleSdpObserver() {
-                        override fun onCreateSuccess(desc: SessionDescription) {
+                        override fun onCreateSuccess(desc: SessionDescription?) {
+                            if (desc == null) return
                             pc.setLocalDescription(SimpleSdpObserver(), desc)
                             signaling.sendEnvelope("sdp", SdpMessage(sdp = desc.description, type = "answer"))
                         }
@@ -230,7 +231,8 @@ class RemoteSupportEngine(
     private fun createAndSendOffer() {
         val pc = peerConnection ?: return
         pc.createOffer(object : SimpleSdpObserver() {
-            override fun onCreateSuccess(desc: SessionDescription) {
+            override fun onCreateSuccess(desc: SessionDescription?) {
+                if (desc == null) return
                 pc.setLocalDescription(SimpleSdpObserver(), desc)
                 signaling.sendEnvelope("sdp", SdpMessage(sdp = desc.description, type = "offer"))
             }
