@@ -549,6 +549,40 @@ right state — no banner-text flicker. Wire path:
 `HandleConfig → activeSessionInfo.Recording → agentRemoteSupportInfo
 → RemoteSupportInfo.recording → service intent extra → buildBanner`.
 
+**Legal hold (wired)**: a specific session's recording can be exempted
+from the retention sweep without touching the org's policy. Use case:
+litigation / compliance requires preserving one recording past its
+normal window. Holds are append-only history rows; "release" stamps
+`released_at` rather than deleting, so the audit trail survives the
+eventual purge of the recording itself.
+
+- Migration `202605180003_recording_legal_hold` creates the
+  `recording_legal_holds` table with a partial unique index on
+  `(session_id) WHERE released_at IS NULL` — at most one active hold
+  per session, but multiple sequential cycles produce distinct
+  history rows.
+- Endpoints (admin, auth-required):
+    - `POST /api/v1/access/remote-support/sessions/:id/legal-hold` —
+      body `{reason}`. Returns 409 when an active hold already exists.
+    - `DELETE /api/v1/access/remote-support/sessions/:id/legal-hold` —
+      body `{reason}` (optional). Stamps `released_at` + `released_by`.
+    - `GET /api/v1/access/remote-support/sessions/:id/legal-holds` —
+      full history newest-first.
+- Sweeper: `sweepExpiredRecordings` now `NOT EXISTS`-joins against
+  the active-hold subquery so held sessions are skipped entirely.
+  Tight index lookup via the partial unique index.
+- Session row surface: `remote_support_sessions` SELECTs gain an
+  `is_on_legal_hold` flag computed via `EXISTS` subquery so the admin
+  UI can render the lock icon in the row without a second round-trip.
+- Audit events: `remote_support.legal_hold_placed`,
+  `remote_support.legal_hold_released`.
+
+**Admin UI**: per-row lock / unlock button in the sessions table.
+Click lock → admin types the reason (e.g. "litigation case #1234") →
+mutation fires → row's icon flips amber-unlock so future admins can
+see the hold is active. Release prompts for an optional reason that
+ends up in the audit row.
+
 **Admin console**: a `RetentionPolicyCard` lives at the top of
 `/remote-support`. It reads the policy via the GET endpoint, surfaces
 the source as a badge (`org policy` vs `server default`), and exposes
@@ -557,8 +591,6 @@ update via React Query's `setQueryData` so the card reflects the new
 value immediately on save.
 
 **Deferred**:
-- Legal-hold workflow that exempts specific sessions from sweep when
-  the org policy is non-infinite.
 - Encryption at rest for the filesystem backend (S3 backend inherits
   bucket-level SSE-S3 / SSE-KMS when the bucket policy enables it).
 - Global disk-usage quota check before each chunk append.

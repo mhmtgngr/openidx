@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Video, Play, Square, MonitorPlay, Eye, MousePointer2, Clock,
   CheckCircle2, XCircle, AlertCircle, Download, Trash2, Infinity as InfinityIcon,
+  Lock, Unlock,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -40,6 +41,7 @@ interface RemoteSession {
   recording_size_bytes?: number
   recording_chunk_count?: number
   recording_finalized_at?: string
+  is_on_legal_hold: boolean
   started_at: string
   accepted_at?: string
   ended_at?: string
@@ -85,6 +87,34 @@ export function RemoteSupportPage() {
       toast({ title: 'Session ended' })
     },
     onError: () => toast({ title: 'Failed to end session', variant: 'destructive' }),
+  })
+
+  const placeHoldMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post(`/api/v1/access/remote-support/sessions/${id}/legal-hold`, { reason }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['remote-support-sessions'] })
+      toast({ title: 'Recording placed on legal hold — exempt from retention sweeper.' })
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Failed to place hold'
+      toast({ title: msg, variant: 'destructive' })
+    },
+  })
+
+  const releaseHoldMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.delete(`/api/v1/access/remote-support/sessions/${id}/legal-hold`, {
+        data: { reason },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['remote-support-sessions'] })
+      toast({ title: 'Legal hold released — recording subject to retention again.' })
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Failed to release hold'
+      toast({ title: msg, variant: 'destructive' })
+    },
   })
 
   function openViewer(session: RemoteSession, wsPath: string) {
@@ -174,6 +204,41 @@ export function RemoteSupportPage() {
                             <Download className="h-3 w-3" />
                           </Button>
                         )}
+                        {s.recording_url && (
+                          s.is_on_legal_hold ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Release legal hold (recording becomes subject to retention again)"
+                              onClick={() => {
+                                const reason = window.prompt(
+                                  'Reason for releasing this legal hold (logged in audit):',
+                                  '',
+                                )
+                                if (reason === null) return
+                                releaseHoldMutation.mutate({ id: s.id, reason })
+                              }}
+                            >
+                              <Unlock className="h-3 w-3 text-amber-600" />
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Place this recording on legal hold (exempt from retention sweep)"
+                              onClick={() => {
+                                const reason = window.prompt(
+                                  'Reason for the legal hold (e.g. "litigation case #1234"):',
+                                  '',
+                                )
+                                if (!reason) return
+                                placeHoldMutation.mutate({ id: s.id, reason })
+                              }}
+                            >
+                              <Lock className="h-3 w-3" />
+                            </Button>
+                          )
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -206,6 +271,7 @@ export function RemoteSupportPage() {
                 mode: (resp.mode === 'view' ? 'view' : 'interactive'),
                 ice_servers: resp.ice_servers,
                 recording_enabled: resp.recording_enabled,
+                is_on_legal_hold: false,
                 started_at: new Date().toISOString(),
                 last_activity_at: new Date().toISOString(),
               },

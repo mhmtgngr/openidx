@@ -218,14 +218,21 @@ type purgeCandidate struct {
 }
 
 func (h *RemoteSupportHandler) sweepExpiredRecordings(ctx context.Context) {
+	// Sweeper SKIPS sessions with an active legal hold. The NOT EXISTS
+	// subquery rides the partial unique index uq_recording_legal_holds_active
+	// so this stays a single index lookup per session.
 	rows, err := h.db.Pool.Query(ctx, `
-        SELECT id,
-               COALESCE(org_id::text, ''),
-               recording_retention_days,
-               recording_finalized_at
-          FROM remote_support_sessions
-         WHERE recording_finalized_at IS NOT NULL
-           AND recording_purged_at IS NULL
+        SELECT s.id,
+               COALESCE(s.org_id::text, ''),
+               s.recording_retention_days,
+               s.recording_finalized_at
+          FROM remote_support_sessions s
+         WHERE s.recording_finalized_at IS NOT NULL
+           AND s.recording_purged_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM recording_legal_holds rlh
+                WHERE rlh.session_id = s.id AND rlh.released_at IS NULL
+           )
     `)
 	if err != nil {
 		h.logger.Warn("sweepExpiredRecordings: query failed", zap.Error(err))

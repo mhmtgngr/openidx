@@ -119,6 +119,8 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 	r.GET("/remote-support/sessions/:id/recording", h.HandleDownloadRecording)
 	// Per-tenant retention policy.
 	h.RegisterRetentionAdminRoutes(r)
+	// Legal hold workflow (exempts a session's recording from sweep).
+	h.RegisterLegalHoldAdminRoutes(r)
 }
 
 // RegisterRemoteSupportPublicRoutes mounts the agent-facing WebSocket. It
@@ -160,6 +162,11 @@ type remoteSessionRow struct {
 	EndedAt             *time.Time      `json:"ended_at,omitempty"`
 	Notes               string          `json:"notes,omitempty"`
 	LastActivityAt      time.Time       `json:"last_activity_at"`
+	// IsOnLegalHold derives from a LEFT JOIN against recording_legal_holds
+	// — true when at least one row exists with released_at IS NULL for
+	// this session. The admin UI uses this to render a lock icon next to
+	// the recording link.
+	IsOnLegalHold       bool            `json:"is_on_legal_hold"`
 }
 
 // HandleStartSession creates a new session targeting an enrolled agent.
@@ -275,14 +282,16 @@ func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
 		return
 	}
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
-        SELECT id, agent_id, COALESCE(admin_user_id::text,''), status, mode,
-               ice_servers, COALESCE(end_reason,''), COALESCE(recording_url,''),
-               recording_enabled, recording_size_bytes, recording_chunk_count,
-               recording_finalized_at,
-               started_at, accepted_at, ended_at, COALESCE(notes,''),
-               last_activity_at
-          FROM remote_support_sessions
-         ORDER BY started_at DESC
+        SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
+               s.ice_servers, COALESCE(s.end_reason,''), COALESCE(s.recording_url,''),
+               s.recording_enabled, s.recording_size_bytes, s.recording_chunk_count,
+               s.recording_finalized_at,
+               s.started_at, s.accepted_at, s.ended_at, COALESCE(s.notes,''),
+               s.last_activity_at,
+               EXISTS (SELECT 1 FROM recording_legal_holds rlh
+                        WHERE rlh.session_id = s.id AND rlh.released_at IS NULL)
+          FROM remote_support_sessions s
+         ORDER BY s.started_at DESC
          LIMIT 200
     `)
 	if err != nil {
@@ -599,14 +608,16 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
 		return remoteSessionRow{}, errors.New("database unavailable")
 	}
 	row := h.db.Pool.QueryRow(ctx, `
-        SELECT id, agent_id, COALESCE(admin_user_id::text,''), status, mode,
-               ice_servers, COALESCE(end_reason,''), COALESCE(recording_url,''),
-               recording_enabled, recording_size_bytes, recording_chunk_count,
-               recording_finalized_at,
-               started_at, accepted_at, ended_at, COALESCE(notes,''),
-               last_activity_at
-          FROM remote_support_sessions
-         WHERE id = $1
+        SELECT s.id, s.agent_id, COALESCE(s.admin_user_id::text,''), s.status, s.mode,
+               s.ice_servers, COALESCE(s.end_reason,''), COALESCE(s.recording_url,''),
+               s.recording_enabled, s.recording_size_bytes, s.recording_chunk_count,
+               s.recording_finalized_at,
+               s.started_at, s.accepted_at, s.ended_at, COALESCE(s.notes,''),
+               s.last_activity_at,
+               EXISTS (SELECT 1 FROM recording_legal_holds rlh
+                        WHERE rlh.session_id = s.id AND rlh.released_at IS NULL)
+          FROM remote_support_sessions s
+         WHERE s.id = $1
     `, id)
 	return scanRemoteSessionRow(row)
 }
@@ -621,6 +632,7 @@ func scanRemoteSessionRow(r rowScanner) (remoteSessionRow, error) {
 		&rec.RecordingFinalizedAt,
 		&rec.StartedAt, &rec.AcceptedAt, &rec.EndedAt, &rec.Notes,
 		&rec.LastActivityAt,
+		&rec.IsOnLegalHold,
 	)
 	rec.ICEServers = json.RawMessage(iceBytes)
 	return rec, err
