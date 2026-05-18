@@ -79,6 +79,12 @@ class InputInjector(
                     Log.w(TAG, "text inject failed (no focused editable)")
                 }
             }
+            "clipboard" -> {
+                val s = svc ?: run { warnUnavailable("clipboard (no accessibility)"); return }
+                if (!s.setClipboardText(event.text)) {
+                    Log.w(TAG, "clipboard push failed")
+                }
+            }
             else -> warnUnavailable("unknown=${event.event}")
         }
     }

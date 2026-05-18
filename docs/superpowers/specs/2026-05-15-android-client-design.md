@@ -317,6 +317,31 @@ Caveats:
   (previously `"false"`); without it, `findFocus(FOCUS_INPUT)` returns
   null and ACTION_SET_TEXT has no target.
 
+### Clipboard push (wired)
+
+Admin → device clipboard push: admin types text into the "Push
+clipboard" input below the video, presses Enter, and the device's
+ClipboardManager receives a `setPrimaryClip` call so the user can
+paste the value wherever they need it.
+
+Use case: admin pastes a long token / one-time URL / boilerplate
+response that's painful for the user to type. The user pastes it into
+the app or browser. Cleaner than the typing path for non-text-field
+destinations.
+
+Direction is push-only by design:
+- Reading the user's clipboard from a background service is heavily
+  restricted on Android 10+ and only available to default IMEs +
+  foreground apps.
+- The privacy story is much stronger when the only direction is
+  admin-initiated push — there's no risk of accidental exfiltration
+  of whatever the user happened to have copied.
+
+Wire shape: same `openidx-input` data channel, event `"clipboard"`,
+`text` field carries the payload. `OpenIDXAccessibilityService.setClipboardText`
+returns boolean so `InputInjector` can log a warning when the
+ClipboardManager service is unavailable (some restricted profiles).
+
 ### Future work
 
 - **Custom InputMethodService** for arbitrary KeyCode injection. Would
@@ -326,6 +351,9 @@ Caveats:
   significant UX shift — defer until a concrete use case demands it.
 - Reflect `injectText` failures back to the admin viewer so the operator
   knows when the field they expected isn't actually focused.
+- Audit clipboard pushes at the server level (currently logged only
+  client-side; would need a server-side hook that observes the
+  data-channel stream or an explicit `POST /clipboard-pushed` call).
 
 ### Consent and audit
 
@@ -639,7 +667,8 @@ break the encryption-at-rest claim.
 
 ### Out of scope (deferred)
 
-- Clipboard sync between admin and device.
+(No remaining items at the top-level scope; new deferred work is
+tracked under each feature's "Future work" subsection above.)
 
 ## Ziti zero-trust transport (wired)
 

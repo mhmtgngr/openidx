@@ -35,7 +35,7 @@ data class IceCandidateMessage(
 
 @Serializable
 data class InputEventMessage(
-    val event: String,            // "tap" | "swipe" | "key" | "text" | "global_action"
+    val event: String,            // "tap" | "swipe" | "key" | "text" | "global_action" | "clipboard"
     val x: Double = 0.0,
     val y: Double = 0.0,
     val x_end: Double = 0.0,
@@ -43,7 +43,7 @@ data class InputEventMessage(
     val duration_ms: Long = 0,
     val key_code: Int = 0,
     val key_name: String = "",    // "enter" | "backspace" | "tab" — preferred over key_code
-    val text: String = "",
+    val text: String = "",        // for "text": typed into focused field; for "clipboard": written to system clipboard
     val replace: Boolean = false, // text events: when true replace field content instead of append
     val action: String = "",      // "back" | "home" | "recents" | "notifications"
 )

@@ -330,11 +330,21 @@ export function RemoteSupportViewer({
   // compose a longer string and commit it as one message instead of one
   // keystroke per data-channel frame.
   const [pendingText, setPendingText] = useState('')
+  // Clipboard-push state. Distinct from pendingText: the device's
+  // ClipboardManager.setPrimaryClip path is "paste this somewhere
+  // later", not "type this into the focused field now".
+  const [pendingClipboard, setPendingClipboard] = useState('')
 
   function sendPendingText() {
     if (!pendingText) return
     sendInput({ event: 'text', text: pendingText })
     setPendingText('')
+  }
+
+  function sendPendingClipboard() {
+    if (!pendingClipboard) return
+    sendInput({ event: 'clipboard', text: pendingClipboard })
+    setPendingClipboard('')
   }
 
   return (
@@ -393,31 +403,58 @@ export function RemoteSupportViewer({
       </p>
 
       {mode === 'interactive' && (
-        <div className="flex items-center gap-2 pt-1">
-          <input
-            type="text"
-            value={pendingText}
-            onChange={(e) => setPendingText(e.target.value)}
-            onKeyDown={(e) => {
-              // Send on Enter; consume so the overlay's onKeyDown doesn't
-              // also fire an 'enter' key event for the same press.
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                sendPendingText()
-              }
-            }}
-            placeholder="Type and press Enter to inject into the focused field…"
-            className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
-            disabled={state !== 'streaming'}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={sendPendingText}
-            disabled={!pendingText || state !== 'streaming'}
-          >
-            Send text
-          </Button>
+        <div className="space-y-2 pt-1">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={pendingText}
+              onChange={(e) => setPendingText(e.target.value)}
+              onKeyDown={(e) => {
+                // Send on Enter; consume so the overlay's onKeyDown doesn't
+                // also fire an 'enter' key event for the same press.
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  sendPendingText()
+                }
+              }}
+              placeholder="Type and press Enter to inject into the focused field…"
+              className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
+              disabled={state !== 'streaming'}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={sendPendingText}
+              disabled={!pendingText || state !== 'streaming'}
+            >
+              Send text
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={pendingClipboard}
+              onChange={(e) => setPendingClipboard(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  sendPendingClipboard()
+                }
+              }}
+              placeholder="Push to device clipboard (user pastes wherever they need it)…"
+              className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
+              disabled={state !== 'streaming'}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={sendPendingClipboard}
+              disabled={!pendingClipboard || state !== 'streaming'}
+            >
+              Push clipboard
+            </Button>
+          </div>
         </div>
       )}
     </div>

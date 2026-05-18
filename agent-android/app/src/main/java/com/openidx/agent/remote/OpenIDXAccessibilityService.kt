@@ -2,8 +2,12 @@ package com.openidx.agent.remote
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Path
 import android.os.Bundle
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -147,6 +151,32 @@ class OpenIDXAccessibilityService : AccessibilityService() {
         val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         node.recycle()
         return ok
+    }
+
+    /**
+     * Write the supplied text to the system clipboard. Push-only by
+     * design (admin → device); reading the user's clipboard is restricted
+     * on Android 10+ from background contexts and is a stronger privacy
+     * concern than the typing path, so we don't expose it from here.
+     *
+     * Use case: admin pastes a long token / URL / boilerplate response
+     * the user couldn't easily type, and the user pastes it where they
+     * need it. The audit row (logged by InputInjector's caller) records
+     * the operator action.
+     *
+     * Returns true on a successful setPrimaryClip call. False is
+     * surfaced for the rare case where ClipboardManager is unavailable
+     * (some restricted profiles).
+     */
+    fun setClipboardText(text: String): Boolean {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (cm == null) {
+            Log.w("OpenIDXAS", "clipboard service unavailable")
+            return false
+        }
+        return runCatching {
+            cm.setPrimaryClip(ClipData.newPlainText("OpenIDX remote support", text))
+        }.isSuccess
     }
 
     /**
