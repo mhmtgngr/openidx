@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.util.Log
+import com.openidx.agent.core.ZitiClient
 
 /**
  * Application entry point. Owns the singleton notification channel used by
@@ -21,6 +23,12 @@ class OpenIDXAgentApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         createForegroundNotificationChannel()
+        // Boot the Ziti SDK once for the whole process. Safe to call before
+        // any identity is enrolled — the SDK simply runs without an overlay
+        // until an /agent/enroll response provides a JWT and ZitiClient
+        // forwards it to Ziti.enrollZiti.
+        runCatching { ZitiClient(this).initializeFromStored() }
+            .onFailure { e -> Log.w("OpenIDXApp", "ziti init failed at app start", e) }
     }
 
     private fun createForegroundNotificationChannel() {

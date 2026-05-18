@@ -36,12 +36,13 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
-    // TODO(phase-4-followup): wire the real Ziti Android SDK once we settle on
-    // the artifact coordinates. The 0.27.5 version we tried isn't published to
-    // Maven Central; openziti/ziti-sdk-android publishes via GitHub Packages
-    // which requires auth in the resolution config. ZitiClient is a stub for
-    // now so the rest of the build is unblocked — traffic falls back to
-    // direct HTTPS until this is restored.
+    // Ziti Android SDK — embeds the dial side of the zero-trust mesh. Once
+    // Ziti.init(applicationContext) is called by OpenIDXAgentApplication
+    // and an identity is enrolled via Ziti.enrollZiti, the SDK's seamless
+    // mode replaces the JVM default SocketFactory so all subsequent traffic
+    // (including the OkHttp client below) routes through the overlay.
+    // Published to Maven Central — no auth required.
+    implementation("org.openziti:ziti-android:0.30.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")

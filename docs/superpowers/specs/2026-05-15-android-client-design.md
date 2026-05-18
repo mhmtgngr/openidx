@@ -302,13 +302,61 @@ managed Google Play for Device-Owner devices — already the chosen channel.
 
 ### Out of scope (deferred)
 
-- Admin-console web viewer (server endpoints are ready; React WebRTC peer
-  lands in a follow-up).
 - Session recording — `recording_url` column is reserved; upload pipeline
   not yet wired.
 - IME-based text injection for keyboard and clipboard.
 - Per-tenant TURN credentials minted by OpenIDX (we currently accept admin-
   supplied ICE servers verbatim).
+
+## Ziti zero-trust transport (wired)
+
+The Phase 1 design described a fallback to direct HTTPS while the Ziti
+Android SDK coordinates were being settled. The agent now wires the real
+SDK:
+
+- **Artifact**: `org.openziti:ziti-android:0.30.0` on Maven Central
+  (Apache 2.0, published from `openziti/ziti-sdk-android` via Sonatype).
+- **Repository config**: already satisfied by `mavenCentral()` in
+  `agent-android/settings.gradle.kts` — no extra auth or repo entries.
+
+### Bootstrap
+
+1. `OpenIDXAgentApplication.onCreate` calls `ZitiClient(this).initializeFromStored()`
+   which invokes `org.openziti.android.Ziti.init(applicationContext, seamless = true)`.
+   `init` is idempotent and process-global; calling it twice is a no-op.
+2. `seamless = true` replaces the JVM default `SocketFactory` after init
+   so any unmodified OkHttp client routes through the overlay for hosts
+   the network advertises. Vanilla HTTPS continues to work for everything
+   else.
+3. After `/agent/enroll` returns a `ziti_jwt`, `ZitiClient.enrollWithJwt`
+   calls `Ziti.enrollZiti(jwt.toByteArray())`. The SDK provisions the
+   identity on a background thread and stores keys in the
+   AndroidKeyStore + sharedPrefs (`ziti` file) keyed by the SDK's internal
+   `"ziti-sdk"` alias. We listen on `Ziti.identityEvents()` for the
+   completion signal if a caller needs to block on enrollment finishing.
+
+### Lifecycle reentry
+
+- **Reboot**: `BootReceiver` runs `OpenIDXAgentService.start(context)`,
+  which calls `ZitiClient(this).initializeFromStored()` on service
+  `onCreate`. `Ziti.init` rehydrates identities from sharedPrefs +
+  AndroidKeyStore.
+- **Process death**: same path — Android restarts the foreground service
+  due to `START_STICKY`, and Ziti reinitializes from stored identities.
+- **Revocation**: when the server marks an agent revoked, the agent
+  receives a 403 from `/agent/config` and clears its identity store. We
+  rely on the SDK's own posture / token failure detection for graceful
+  shutdown of in-flight connections.
+
+### Known follow-ups
+
+- The SDK posts a "Application is not enrolled with Ziti Network" system
+  notification on init when no identities exist. For the OpenIDX agent
+  this fires briefly during first-time enrollment. A custom notification
+  channel / suppression is tracked separately; current UX is acceptable.
+- The SDK pulls in `com.goterl:lazysodium-android` + JNA which ships
+  native libraries (~3–4 MB across ABIs). Acceptable for an enterprise
+  agent; revisit if APK size becomes a constraint.
 
 ## Play Integrity server-side verification (implemented)
 
