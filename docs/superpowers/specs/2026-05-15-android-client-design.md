@@ -549,9 +549,14 @@ right state — no banner-text flicker. Wire path:
 `HandleConfig → activeSessionInfo.Recording → agentRemoteSupportInfo
 → RemoteSupportInfo.recording → service intent extra → buildBanner`.
 
+**Admin console**: a `RetentionPolicyCard` lives at the top of
+`/remote-support`. It reads the policy via the GET endpoint, surfaces
+the source as a badge (`org policy` vs `server default`), and exposes
+a number input + "Set to infinite" affordance for editing. Optimistic
+update via React Query's `setQueryData` so the card reflects the new
+value immediately on save.
+
 **Deferred**:
-- Admin-console UI to edit the per-org retention policy (server-side
-  CRUD is in place, React form lands in a follow-up).
 - Legal-hold workflow that exempts specific sessions from sweep when
   the org policy is non-infinite.
 - Encryption at rest for the filesystem backend (S3 backend inherits
