@@ -44,6 +44,11 @@ type recordingStore interface {
 	// Key returns the storage key (relative path) of the recording, used
 	// to populate recording_storage_key.
 	Key(sessionID string) string
+	// Delete removes every byte the store holds for this session. Used
+	// by the retention sweeper to purge expired recordings without
+	// dropping the audit row in remote_support_sessions. Idempotent — a
+	// missing session must succeed.
+	Delete(sessionID string) error
 }
 
 // filesystemRecordingStore writes per-session WebM files under a root
@@ -105,6 +110,18 @@ func (s *filesystemRecordingStore) Open(sessionID string) (io.ReadCloser, int64,
 		return nil, 0, err
 	}
 	return f, fi.Size(), nil
+}
+
+// Delete drops the per-session directory and everything below it.
+// Idempotent: a missing session-dir is treated as a successful delete
+// because the retention sweeper may retry against rows whose blob was
+// already cleaned up by an out-of-band process.
+func (s *filesystemRecordingStore) Delete(sessionID string) error {
+	dir := filepath.Dir(s.path(sessionID))
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // s3RecordingStore stores each MediaRecorder chunk as a discrete S3
@@ -225,6 +242,34 @@ func (s *s3RecordingStore) Open(sessionID string) (io.ReadCloser, int64, error) 
 	}
 
 	return &s3ConcatenatingReader{client: s.client, bucket: s.bucket, keys: keys}, total, nil
+}
+
+// Delete removes every chunk object under the session's prefix. Uses
+// minio-go's bulk-remove channel so we issue one DELETE per chunk in
+// parallel; idempotent on missing objects.
+func (s *s3RecordingStore) Delete(sessionID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	objects := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    s.sessionPrefix(sessionID),
+		Recursive: false,
+	})
+	toRemove := make(chan minio.ObjectInfo)
+	go func() {
+		defer close(toRemove)
+		for obj := range objects {
+			if obj.Err != nil {
+				continue
+			}
+			toRemove <- obj
+		}
+	}()
+	for rmErr := range s.client.RemoveObjects(ctx, s.bucket, toRemove, minio.RemoveObjectsOptions{}) {
+		if rmErr.Err != nil {
+			return fmt.Errorf("remove %s: %w", rmErr.ObjectName, rmErr.Err)
+		}
+	}
+	return nil
 }
 
 // s3ConcatenatingReader streams the per-chunk S3 objects one after the

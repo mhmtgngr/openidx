@@ -495,6 +495,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 			}
 			if store != nil {
 				remoteSupport.SetRecordingStore(store)
+				remoteSupport.SetDefaultRetentionDays(svc.config.RecordingsDefaultRetentionDays)
+				// Sweep every hour. Cheap query — predicate index on
+				// recording_finalized_at WHERE recording_purged_at IS NULL.
+				remoteSupport.StartRecordingRetentionEnforcer(context.Background(), time.Hour)
 			}
 		}
 

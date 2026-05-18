@@ -173,6 +173,10 @@ type Config struct {
 	RecordingsS3AccessKey string `mapstructure:"recordings_s3_access_key"`
 	RecordingsS3SecretKey string `mapstructure:"recordings_s3_secret_key"`
 	RecordingsS3UseSSL    bool   `mapstructure:"recordings_s3_use_ssl"`      // default true; set false for local MinIO dev
+
+	// Recording retention default. Resolves at the bottom of the lookup
+	// chain — session override → per-org policy → this value → hard 90d.
+	RecordingsDefaultRetentionDays int `mapstructure:"recordings_default_retention_days"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

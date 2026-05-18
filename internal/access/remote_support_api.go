@@ -42,12 +42,13 @@ import (
 // RemoteSupportHandler owns the broker (peer registry + signaling fan-out)
 // and the admin HTTP surface. Construct one per access-service instance.
 type RemoteSupportHandler struct {
-	logger         *zap.Logger
-	db             *database.PostgresDB
-	auditAgent     *AgentAPIHandler
-	turn           *TurnMinter
-	recordingStore recordingStore
-	upgrader       websocket.Upgrader
+	logger               *zap.Logger
+	db                   *database.PostgresDB
+	auditAgent           *AgentAPIHandler
+	turn                 *TurnMinter
+	recordingStore       recordingStore
+	defaultRetentionDays int
+	upgrader             websocket.Upgrader
 
 	mu       sync.Mutex
 	sessions map[string]*signalingSession
@@ -80,6 +81,13 @@ func (h *RemoteSupportHandler) SetTurnMinter(m *TurnMinter) {
 	h.turn = m
 }
 
+// SetDefaultRetentionDays installs the bottom-of-chain default that
+// applies when neither a session override nor a per-org policy exists.
+// Zero means "use the hard fallback (90)".
+func (h *RemoteSupportHandler) SetDefaultRetentionDays(days int) {
+	h.defaultRetentionDays = days
+}
+
 // signalingSession is the live broker record for a session that has at
 // least one peer connected. mu protects the conn pointers; everything else
 // is immutable for the session's lifetime.
@@ -109,6 +117,8 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 	r.POST("/remote-support/sessions/:id/recording/chunk", h.HandleUploadRecordingChunk)
 	r.POST("/remote-support/sessions/:id/recording/finalize", h.HandleFinalizeRecording)
 	r.GET("/remote-support/sessions/:id/recording", h.HandleDownloadRecording)
+	// Per-tenant retention policy.
+	h.RegisterRetentionAdminRoutes(r)
 }
 
 // RegisterRemoteSupportPublicRoutes mounts the agent-facing WebSocket. It
@@ -125,6 +135,10 @@ type startSessionRequest struct {
 	ICEServers json.RawMessage `json:"ice_servers"`        // optional override
 	Notes      string          `json:"notes"`
 	Record     bool            `json:"record"`             // opt-in MediaRecorder capture
+	// RecordingRetentionDays: per-session retention override. nil means
+	// "use the per-org policy or default". 0 means "infinite". Positive
+	// values cap the recording lifetime to that many days.
+	RecordingRetentionDays *int `json:"recording_retention_days,omitempty"`
 }
 
 // remoteSessionRow is what we return to admins (list + get + start).
@@ -210,11 +224,23 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	}
 
 	recordingEnabled := req.Record && h.recordingStore != nil
+	orgID := getOrgID(c)
+	var retentionArg interface{}
+	if req.RecordingRetentionDays != nil {
+		retentionArg = *req.RecordingRetentionDays
+	}
+	var orgArg interface{}
+	if orgID != "" {
+		orgArg = orgID
+	}
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO remote_support_sessions
-            (id, agent_id, admin_user_id, status, mode, ice_servers, notes, recording_enabled)
-        VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6, $7)
-    `, id, req.AgentID, adminID, mode, string(ice), req.Notes, recordingEnabled)
+            (id, agent_id, admin_user_id, status, mode, ice_servers, notes,
+             recording_enabled, org_id, recording_retention_days)
+        VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6,
+                $7, $8::uuid, $9)
+    `, id, req.AgentID, adminID, mode, string(ice), req.Notes,
+		recordingEnabled, orgArg, retentionArg)
 	if err != nil {
 		h.logger.Error("HandleStartSession: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start session"})

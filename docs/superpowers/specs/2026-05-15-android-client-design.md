@@ -493,6 +493,52 @@ mp4; everything else lands on VP8 by default.
 | Admin downloads someone else's recording | Endpoint is behind `middleware.Auth`. Downstream: tenant-scoped check once tenant boundaries are enforced on this surface. |
 | Disk fill / DoS | 50 MiB cap per chunk request, surfaced as `http.MaxBytesReader`. No global cap yet — flagged as deferred work. |
 
+**Retention policy + auto-purge (wired)**: recordings have a four-layer
+retention resolution chain and a background sweeper that purges expired
+blobs.
+
+Resolution priority (`resolveEffectiveRetention` in
+`remote_support_retention.go`):
+
+1. `recording_retention_days` on the session row — admin can override
+   per-session at start (`record: true` + `recording_retention_days: 30`).
+2. `retention_days` on `recording_retention_policies` for the session's
+   org — per-tenant policy.
+3. `RecordingsDefaultRetentionDays` config — global default.
+4. Hard fallback (90 days) — last-ditch so a misconfigured deployment
+   doesn't accumulate blobs forever.
+
+A retention value of `0` anywhere means "infinite" — useful for
+compliance regimes that need indefinite hold under a separate legal-hold
+process. The sweeper skips those rows.
+
+**Sweeper** (`StartRecordingRetentionEnforcer`): runs hourly, selects
+finalized-but-not-purged recordings via the predicate index from
+migration 202605180001, resolves each session's retention, and for
+expired ones calls `recordingStore.Delete` + stamps
+`recording_purged_at` + nulls `recording_storage_key` / `recording_url`.
+The session row itself stays so audit history survives the purge.
+
+**Per-tenant policy endpoints**:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/access/recording-retention-policy` | Read the caller's org policy; falls back to the configured default with `source: "default"` when no row exists. |
+| `PUT` | `/api/v1/access/recording-retention-policy` | Upsert the policy for the caller's org. `retention_days >= 0`; 0 = infinite. |
+
+**Storage interface gains `Delete(sessionID)`**: implemented on both
+backends — filesystem rms the per-session directory; S3 does a parallel
+bulk-remove via `minio-go`'s `RemoveObjects` channel. Both are
+idempotent on missing sessions so the sweeper can safely retry.
+
+**Audit events**: `remote_support.retention_policy_set`,
+`remote_support.recording_purged` (one per session purged).
+
+**Tests** (`remote_support_retention_test.go`): unit tests for the
+four-layer resolution chain (override / 0 = infinite / default
+fallback / hard fallback) and `Append` → `Open` → `Delete` round-trip
+on the filesystem store including the idempotent-delete contract.
+
 **Device-side banner reflects recording state**: `/agent/config`'s
 `remote_support` block carries a `recording: bool` field. When true,
 the agent's `RemoteSupportService` swaps its foreground-notification
@@ -504,8 +550,10 @@ right state — no banner-text flicker. Wire path:
 → RemoteSupportInfo.recording → service intent extra → buildBanner`.
 
 **Deferred**:
-- Per-tenant retention policy + automated purge (rely on S3 lifecycle
-  policies for now when the S3 backend is configured).
+- Admin-console UI to edit the per-org retention policy (server-side
+  CRUD is in place, React form lands in a follow-up).
+- Legal-hold workflow that exempts specific sessions from sweep when
+  the org policy is non-infinite.
 - Encryption at rest for the filesystem backend (S3 backend inherits
   bucket-level SSE-S3 / SSE-KMS when the bucket policy enables it).
 - Global disk-usage quota check before each chunk append.
