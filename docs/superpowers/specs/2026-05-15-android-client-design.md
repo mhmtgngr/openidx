@@ -300,13 +300,69 @@ The agent registers an Accessibility Service. Google Play restricts apps that
 do so. Distribution remains via `/downloads/openidx-agent.apk` (sideload) or
 managed Google Play for Device-Owner devices — already the chosen channel.
 
+### TURN credential minting (wired)
+
+OpenIDX now mints short-lived TURN credentials per session, so admins
+don't have to manage long-lived shared secrets or paste ICE-server
+config into every start-session request.
+
+**Pattern**: coturn's `use-auth-secret` mode (also
+`draft-uberti-rtcweb-turn-rest-00`). OpenIDX and the TURN server share a
+static secret. For each session:
+
+```
+username   = "<expiry_unix_ts>:<session_id>"
+credential = base64(HMAC-SHA1(static_secret, username))
+```
+
+The TURN server validates by computing the same HMAC; expired usernames
+are rejected by comparing the embedded timestamp against `now`. No
+shared state, no credential rotation infrastructure — every credential
+is intrinsically short-lived (default TTL 2 h, configurable).
+
+**Code**:
+- `internal/access/turn_credentials.go` — `TurnConfig`, `TurnMinter`,
+  `Mint` / `MintAsRawJSON` (returns the ICE-servers JSON shape both
+  the browser viewer and Android client already consume).
+- `internal/access/remote_support_api.go` — `HandleStartSession`
+  resolves `ice_servers` in priority order:
+    1. Admin-supplied JSON (verbatim, back-compat).
+    2. Minted per-session TURN credentials when the minter is configured.
+    3. Empty array (LAN / Ziti-overlay-only mode).
+  Audits `turn=minted` in the `remote_support.session_started` event
+  when minting fires.
+- `internal/access/service.go` — constructs the minter from config at
+  startup. Soft-disabled when uris/secret are unset; logs at INFO when
+  enabled.
+
+**Configuration**:
+
+| Setting | Env var | Notes |
+|---|---|---|
+| `turn_uris` | `TURN_URIS` | Comma-separated `turn:` / `turns:` URIs |
+| `turn_static_secret` | `TURN_STATIC_SECRET` | Must match TURN server's `static-auth-secret` |
+| `turn_realm` | `TURN_REALM` | Optional |
+| `turn_credential_ttl_seconds` | `TURN_CREDENTIAL_TTL_SECONDS` | Default 7200 (2 h) |
+
+**Threat model**:
+
+| Threat | Mitigation |
+|---|---|
+| TURN credentials reused across sessions / leaked | Each session gets a unique HMAC; credentials expire on schedule |
+| Long-lived shared password copy-pasted into admin requests | Removed — minter is the default path, admin override is back-compat only |
+| Static-secret leak letting an attacker mint creds | Same impact as before this change; rotation is the same operational gesture (update both sides). Future work: per-tenant secrets in DB |
+| Admin starts session with malicious ICE servers | Admin path is still an authenticated endpoint behind JWT; minting doesn't widen the attack surface, just removes the operational toil |
+
+**Deferred**:
+- Per-tenant TURN config in DB (currently global at the access-service
+  instance level). Multi-tenant deployments share one TURN server today.
+- STUN-only fallback when TURN isn't configured.
+
 ### Out of scope (deferred)
 
 - Session recording — `recording_url` column is reserved; upload pipeline
   not yet wired.
 - IME-based text injection for keyboard and clipboard.
-- Per-tenant TURN credentials minted by OpenIDX (we currently accept admin-
-  supplied ICE servers verbatim).
 
 ## Ziti zero-trust transport (wired)
 

@@ -147,6 +147,15 @@ type Config struct {
 	// are persisted unverified — useful for dev, dangerous in prod.
 	PlayIntegrityServiceAccountJSON string `mapstructure:"play_integrity_service_account_json"`
 	PlayIntegrityPackageName        string `mapstructure:"play_integrity_package_name"`
+
+	// TURN credentials for Phase 4 remote-support. When TurnURIs and
+	// TurnStaticSecret are set the access service mints short-lived TURN
+	// credentials per session (coturn-style use-auth-secret). Unset leaves
+	// admins to supply ICE servers per session via the start-session API.
+	TurnURIs                 string `mapstructure:"turn_uris"`            // comma-separated turn:/turns: URIs
+	TurnStaticSecret         string `mapstructure:"turn_static_secret"`   // matches the TURN server's static-auth-secret
+	TurnRealm                string `mapstructure:"turn_realm"`           // optional
+	TurnCredentialTTLSeconds int    `mapstructure:"turn_credential_ttl_seconds"` // default 7200
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

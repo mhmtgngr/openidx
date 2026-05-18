@@ -45,6 +45,7 @@ type RemoteSupportHandler struct {
 	logger     *zap.Logger
 	db         *database.PostgresDB
 	auditAgent *AgentAPIHandler
+	turn       *TurnMinter
 	upgrader   websocket.Upgrader
 
 	mu       sync.Mutex
@@ -69,6 +70,13 @@ func NewRemoteSupportHandler(logger *zap.Logger, db *database.PostgresDB, auditA
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+}
+
+// SetTurnMinter installs the per-session TURN credential minter. Optional —
+// when unset, HandleStartSession falls back to admin-supplied ice_servers
+// (or empty if neither is configured).
+func (h *RemoteSupportHandler) SetTurnMinter(m *TurnMinter) {
+	h.turn = m
 }
 
 // signalingSession is the live broker record for a session that has at
@@ -168,9 +176,27 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 
 	adminID := getUserID(c)
 	id := uuid.New().String()
+
+	// Resolve ice_servers in priority order:
+	//   1. Admin-supplied (verbatim, back-compat).
+	//   2. Minted per-session TURN credentials when the minter is wired.
+	//   3. Empty array — LAN / Ziti-overlay-only mode.
 	ice := req.ICEServers
+	mintedTurn := false
 	if len(ice) == 0 {
-		ice = json.RawMessage(`[]`)
+		if h.turn != nil {
+			minted, mintErr := h.turn.MintAsRawJSON(id)
+			if mintErr != nil {
+				h.logger.Warn("HandleStartSession: TURN mint failed; continuing without",
+					zap.String("session_id", id), zap.Error(mintErr))
+			} else {
+				ice = minted
+				mintedTurn = true
+			}
+		}
+		if len(ice) == 0 {
+			ice = json.RawMessage(`[]`)
+		}
 	}
 
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
@@ -184,8 +210,11 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		return
 	}
 
-	h.audit(c.Request.Context(), "remote_support.session_started", id, "success",
-		"agent="+req.AgentID+" admin="+adminID)
+	auditDetail := "agent=" + req.AgentID + " admin=" + adminID
+	if mintedTurn {
+		auditDetail += " turn=minted"
+	}
+	h.audit(c.Request.Context(), "remote_support.session_started", id, "success", auditDetail)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"id":          id,

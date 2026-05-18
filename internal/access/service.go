@@ -454,6 +454,31 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
+
+		// Per-session TURN credential minter. Soft-disabled when the
+		// shared secret / URIs aren't configured — callers can still
+		// supply ice_servers explicitly on start-session.
+		if svc.config != nil {
+			var turnURIs []string
+			for _, raw := range strings.Split(svc.config.TurnURIs, ",") {
+				if t := strings.TrimSpace(raw); t != "" {
+					turnURIs = append(turnURIs, t)
+				}
+			}
+			minter := NewTurnMinter(TurnConfig{
+				URIs:         turnURIs,
+				StaticSecret: svc.config.TurnStaticSecret,
+				Realm:        svc.config.TurnRealm,
+				TTL:          time.Duration(svc.config.TurnCredentialTTLSeconds) * time.Second,
+			})
+			if minter != nil {
+				remoteSupport.SetTurnMinter(minter)
+				svc.logger.Info("TURN credential minter enabled",
+					zap.Int("uris", len(turnURIs)),
+					zap.String("realm", minter.Realm()))
+			}
+		}
+
 		svc.remoteSupportHandler = remoteSupport
 	}
 
