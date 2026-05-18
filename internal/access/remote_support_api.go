@@ -42,11 +42,12 @@ import (
 // RemoteSupportHandler owns the broker (peer registry + signaling fan-out)
 // and the admin HTTP surface. Construct one per access-service instance.
 type RemoteSupportHandler struct {
-	logger     *zap.Logger
-	db         *database.PostgresDB
-	auditAgent *AgentAPIHandler
-	turn       *TurnMinter
-	upgrader   websocket.Upgrader
+	logger         *zap.Logger
+	db             *database.PostgresDB
+	auditAgent     *AgentAPIHandler
+	turn           *TurnMinter
+	recordingStore recordingStore
+	upgrader       websocket.Upgrader
 
 	mu       sync.Mutex
 	sessions map[string]*signalingSession
@@ -104,6 +105,10 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportAdminRoutes(r *gin.RouterGro
 	r.POST("/remote-support/sessions/:id/end", h.HandleEndSession)
 	// Admin-side WebSocket — the browser viewer connects here.
 	r.GET("/remote-support/sessions/:id/ws", h.HandleAdminWS)
+	// Recording upload pipeline (Phase 4 follow-up).
+	r.POST("/remote-support/sessions/:id/recording/chunk", h.HandleUploadRecordingChunk)
+	r.POST("/remote-support/sessions/:id/recording/finalize", h.HandleFinalizeRecording)
+	r.GET("/remote-support/sessions/:id/recording", h.HandleDownloadRecording)
 }
 
 // RegisterRemoteSupportPublicRoutes mounts the agent-facing WebSocket. It
@@ -119,23 +124,28 @@ type startSessionRequest struct {
 	Mode       string          `json:"mode"`               // "view" | "interactive" (default)
 	ICEServers json.RawMessage `json:"ice_servers"`        // optional override
 	Notes      string          `json:"notes"`
+	Record     bool            `json:"record"`             // opt-in MediaRecorder capture
 }
 
 // remoteSessionRow is what we return to admins (list + get + start).
 type remoteSessionRow struct {
-	ID             string          `json:"id"`
-	AgentID        string          `json:"agent_id"`
-	AdminUserID    string          `json:"admin_user_id,omitempty"`
-	Status         string          `json:"status"`
-	Mode           string          `json:"mode"`
-	ICEServers     json.RawMessage `json:"ice_servers"`
-	EndReason      string          `json:"end_reason,omitempty"`
-	RecordingURL   string          `json:"recording_url,omitempty"`
-	StartedAt      time.Time       `json:"started_at"`
-	AcceptedAt     *time.Time      `json:"accepted_at,omitempty"`
-	EndedAt        *time.Time      `json:"ended_at,omitempty"`
-	Notes          string          `json:"notes,omitempty"`
-	LastActivityAt time.Time       `json:"last_activity_at"`
+	ID                  string          `json:"id"`
+	AgentID             string          `json:"agent_id"`
+	AdminUserID         string          `json:"admin_user_id,omitempty"`
+	Status              string          `json:"status"`
+	Mode                string          `json:"mode"`
+	ICEServers          json.RawMessage `json:"ice_servers"`
+	EndReason           string          `json:"end_reason,omitempty"`
+	RecordingURL        string          `json:"recording_url,omitempty"`
+	RecordingEnabled    bool            `json:"recording_enabled"`
+	RecordingSizeBytes  int64           `json:"recording_size_bytes,omitempty"`
+	RecordingChunkCount int             `json:"recording_chunk_count,omitempty"`
+	RecordingFinalizedAt *time.Time     `json:"recording_finalized_at,omitempty"`
+	StartedAt           time.Time       `json:"started_at"`
+	AcceptedAt          *time.Time      `json:"accepted_at,omitempty"`
+	EndedAt             *time.Time      `json:"ended_at,omitempty"`
+	Notes               string          `json:"notes,omitempty"`
+	LastActivityAt      time.Time       `json:"last_activity_at"`
 }
 
 // HandleStartSession creates a new session targeting an enrolled agent.
@@ -199,11 +209,12 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		}
 	}
 
+	recordingEnabled := req.Record && h.recordingStore != nil
 	_, err := h.db.Pool.Exec(c.Request.Context(), `
         INSERT INTO remote_support_sessions
-            (id, agent_id, admin_user_id, status, mode, ice_servers, notes)
-        VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6)
-    `, id, req.AgentID, adminID, mode, string(ice), req.Notes)
+            (id, agent_id, admin_user_id, status, mode, ice_servers, notes, recording_enabled)
+        VALUES ($1, $2, NULLIF($3,'')::uuid, 'pending', $4, $5::jsonb, $6, $7)
+    `, id, req.AgentID, adminID, mode, string(ice), req.Notes, recordingEnabled)
 	if err != nil {
 		h.logger.Error("HandleStartSession: insert failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start session"})
@@ -214,16 +225,20 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 	if mintedTurn {
 		auditDetail += " turn=minted"
 	}
+	if recordingEnabled {
+		auditDetail += " recording=on"
+	}
 	h.audit(c.Request.Context(), "remote_support.session_started", id, "success", auditDetail)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":          id,
-		"status":      "pending",
-		"agent_id":    req.AgentID,
-		"mode":        mode,
-		"admin_ws":    "/api/v1/access/remote-support/sessions/" + id + "/ws",
-		"agent_ws":    "/api/v1/access/agent/remote-support/sessions/" + id + "/ws",
-		"ice_servers": json.RawMessage(ice),
+		"id":                id,
+		"status":            "pending",
+		"agent_id":          req.AgentID,
+		"mode":              mode,
+		"admin_ws":          "/api/v1/access/remote-support/sessions/" + id + "/ws",
+		"agent_ws":          "/api/v1/access/agent/remote-support/sessions/" + id + "/ws",
+		"ice_servers":       json.RawMessage(ice),
+		"recording_enabled": recordingEnabled,
 	})
 }
 
@@ -236,6 +251,8 @@ func (h *RemoteSupportHandler) HandleListSessions(c *gin.Context) {
 	rows, err := h.db.Pool.Query(c.Request.Context(), `
         SELECT id, agent_id, COALESCE(admin_user_id::text,''), status, mode,
                ice_servers, COALESCE(end_reason,''), COALESCE(recording_url,''),
+               recording_enabled, recording_size_bytes, recording_chunk_count,
+               recording_finalized_at,
                started_at, accepted_at, ended_at, COALESCE(notes,''),
                last_activity_at
           FROM remote_support_sessions
@@ -545,6 +562,8 @@ func (h *RemoteSupportHandler) fetchSession(ctx context.Context, id string) (rem
 	row := h.db.Pool.QueryRow(ctx, `
         SELECT id, agent_id, COALESCE(admin_user_id::text,''), status, mode,
                ice_servers, COALESCE(end_reason,''), COALESCE(recording_url,''),
+               recording_enabled, recording_size_bytes, recording_chunk_count,
+               recording_finalized_at,
                started_at, accepted_at, ended_at, COALESCE(notes,''),
                last_activity_at
           FROM remote_support_sessions
@@ -559,6 +578,8 @@ func scanRemoteSessionRow(r rowScanner) (remoteSessionRow, error) {
 	err := r.Scan(
 		&rec.ID, &rec.AgentID, &rec.AdminUserID, &rec.Status, &rec.Mode,
 		&iceBytes, &rec.EndReason, &rec.RecordingURL,
+		&rec.RecordingEnabled, &rec.RecordingSizeBytes, &rec.RecordingChunkCount,
+		&rec.RecordingFinalizedAt,
 		&rec.StartedAt, &rec.AcceptedAt, &rec.EndedAt, &rec.Notes,
 		&rec.LastActivityAt,
 	)

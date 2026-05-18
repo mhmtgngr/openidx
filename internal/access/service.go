@@ -455,6 +455,20 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 
+		// Recording storage backend. Soft-disabled when no path is
+		// configured — start-session ignores `record: true` and the
+		// upload endpoints respond 503 with a clear error.
+		if svc.config != nil && svc.config.RecordingsStoragePath != "" {
+			if store, storeErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath); storeErr != nil {
+				svc.logger.Warn("recording store init failed; recording disabled",
+					zap.Error(storeErr))
+			} else {
+				remoteSupport.SetRecordingStore(store)
+				svc.logger.Info("Remote-support recording enabled",
+					zap.String("path", svc.config.RecordingsStoragePath))
+			}
+		}
+
 		// Per-session TURN credential minter. Soft-disabled when the
 		// shared secret / URIs aren't configured — callers can still
 		// supply ice_servers explicitly on start-session.

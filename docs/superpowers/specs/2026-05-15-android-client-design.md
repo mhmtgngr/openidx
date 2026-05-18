@@ -400,10 +400,87 @@ is intrinsically short-lived (default TTL 2 h, configurable).
   instance level). Multi-tenant deployments share one TURN server today.
 - STUN-only fallback when TURN isn't configured.
 
+### Session recording (wired)
+
+The admin browser uses `MediaRecorder` to capture the inbound WebRTC
+video stream and streams chunks to OpenIDX every 5 seconds. Each chunk
+is appended byte-for-byte to a per-session WebM file; MediaRecorder's
+timeslice output is a standalone WebM segment, so simple concatenation
+yields a playable file with no remuxing.
+
+**Data model** (migration `202605180001_remote_support_recording`):
+- `recording_enabled` — admin opt-in flag captured at session start
+- `recording_storage_key` — filesystem path (or future object-store key)
+- `recording_size_bytes` — running tally, updated on each chunk
+- `recording_chunk_count` — monotonically increasing chunk index
+- `recording_finalized_at` — set when the recorder stops
+
+`recording_url` (already existing) is set on finalize to the public
+download path.
+
+**Endpoints**:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/access/remote-support/sessions/:id/recording/chunk` | Append one MediaRecorder chunk. `X-Chunk-Index` header carries ordering metadata. 50 MiB body cap per chunk. |
+| `POST` | `/api/v1/access/remote-support/sessions/:id/recording/finalize` | Stamp `recording_finalized_at` and set `recording_url`. |
+| `GET` | `/api/v1/access/remote-support/sessions/:id/recording` | Stream the assembled WebM back to the admin. |
+
+**Code paths**:
+- `internal/access/remote_support_recording.go` — `recordingStore`
+  interface + filesystem implementation, chunk / finalize / download
+  handlers.
+- `internal/access/remote_support_api.go` —
+  `RemoteSupportHandler.recordingStore` field, registered routes,
+  `record` flag plumbed through `HandleStartSession`. Audits
+  `recording=on` on the session-started event and
+  `remote_support.recording_finalized` on stop.
+- `internal/access/service.go` — constructs the filesystem store from
+  `RecordingsStoragePath` config; soft-disabled when unset.
+- `web/admin-console/src/components/remote-support/remote-support-viewer.tsx`
+  — `MediaRecorder` attached to the inbound stream when
+  `recordingEnabled` is true; `ondataavailable` POSTs each blob;
+  `onstop` calls finalize. Red "recording" badge in the viewer header.
+- `web/admin-console/src/pages/remote-support.tsx` — "Record session"
+  checkbox in start-session, "Download recording" button on rows with
+  a `recording_url`. Click → fetches the blob with bearer auth and
+  triggers a browser download.
+
+**Configuration**:
+
+| Setting | Env var | Notes |
+|---|---|---|
+| `recordings_storage_path` | `RECORDINGS_STORAGE_PATH` | Local directory root. Per-session subdir + `recording.webm`. Unset = recording disabled even if admin requests it. |
+
+**Storage backend abstraction**: handlers talk through a
+`recordingStore` interface (`Append` / `Open` / `Key`). A future S3 /
+GCS backend slots in without touching the HTTP surface.
+
+**Codec**: viewer probes `video/webm;codecs=vp8`, `vp9`, plain `webm`,
+then `video/mp4`. Safari (no MediaRecorder VP8 support) falls back to
+mp4; everything else lands on VP8 by default.
+
+**Threat model**:
+
+| Threat | Mitigation |
+|---|---|
+| Recording leaks PII (user's screen) | Recording is opt-in per session; admin must explicitly check the box. Audit records `recording=on`. Future: per-tenant policy that requires recording for compliance flows. |
+| Storage tampering | Filesystem chunks are append-only by API contract but not append-only at the OS level. Object-storage backend with versioning + immutability is the production path. |
+| Admin downloads someone else's recording | Endpoint is behind `middleware.Auth`. Downstream: tenant-scoped check once tenant boundaries are enforced on this surface. |
+| Disk fill / DoS | 50 MiB cap per chunk request, surfaced as `http.MaxBytesReader`. No global cap yet — flagged as deferred work. |
+
+**Deferred**:
+- Object-storage backend (S3 / GCS / Azure Blob) — interface already
+  in place, swap in by implementing `recordingStore`.
+- Per-tenant retention policy + automated purge.
+- Encryption at rest (today the filesystem write is plaintext WebM).
+- Device-side banner updated to read "Remote support session active
+  (recording)" when recording is on — wire signal from server →
+  agent via /agent/config's `remote_support` block.
+- Global disk-usage quota check before each chunk append.
+
 ### Out of scope (deferred)
 
-- Session recording — `recording_url` column is reserved; upload pipeline
-  not yet wired.
 - Clipboard sync between admin and device.
 
 ## Ziti zero-trust transport (wired)

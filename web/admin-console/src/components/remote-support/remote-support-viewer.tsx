@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import { Square, WifiOff } from 'lucide-react'
+import { Circle, Square, WifiOff } from 'lucide-react'
+import { api } from '../../lib/api'
 
 /**
  * Admin-side WebRTC peer for a remote-support session.
@@ -23,20 +24,41 @@ interface Props {
   wsUrl: string
   mode: 'interactive' | 'view'
   iceServers: RTCIceServer[]
+  /** Session UUID — used to address /recording/chunk + /recording/finalize. */
+  sessionId: string
+  /** When true, MediaRecorder captures the inbound stream and chunks
+   *  upload to the server every [recordingTimesliceMs] ms. */
+  recordingEnabled: boolean
+  /** Optional override; defaults to 5 s. */
+  recordingTimesliceMs?: number
   onClose: () => void
   onEnd: () => void
 }
 
 type ConnState = 'connecting' | 'awaiting-offer' | 'negotiating' | 'streaming' | 'closed' | 'error'
+type RecState = 'off' | 'arming' | 'recording' | 'finalizing' | 'failed'
 
-export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose, onEnd }: Props) {
+export function RemoteSupportViewer({
+  wsUrl,
+  mode,
+  iceServers,
+  sessionId,
+  recordingEnabled,
+  recordingTimesliceMs = 5000,
+  onClose: _onClose,
+  onEnd,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const inputChannelRef = useRef<RTCDataChannel | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunkIndexRef = useRef<number>(0)
+  const recordedStreamRef = useRef<MediaStream | null>(null)
   const [state, setState] = useState<ConnState>('connecting')
   const [errorMessage, setErrorMessage] = useState<string>('')
+  const [recState, setRecState] = useState<RecState>('off')
 
   useEffect(() => {
     const ws = openSignalingSocket(wsUrl)
@@ -46,9 +68,18 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
     pcRef.current = pc
 
     pc.ontrack = (e) => {
+      const stream = e.streams[0] ?? new MediaStream([e.track])
       if (videoRef.current) {
-        videoRef.current.srcObject = e.streams[0] ?? new MediaStream([e.track])
+        videoRef.current.srcObject = stream
         setState('streaming')
+      }
+      recordedStreamRef.current = stream
+      if (recordingEnabled && !recorderRef.current) {
+        try { startMediaRecorder(stream) }
+        catch (err) {
+          console.warn('MediaRecorder start failed', err)
+          setRecState('failed')
+        }
       }
     }
     pc.onicecandidate = (e) => {
@@ -126,6 +157,7 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
     }
 
     return () => {
+      try { stopRecording() } catch {}
       try { ws.close() } catch {}
       try { pc.close() } catch {}
       setState('closed')
@@ -137,6 +169,86 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
     const ch = inputChannelRef.current
     if (!ch || ch.readyState !== 'open') return
     ch.send(JSON.stringify(event))
+  }
+
+  /**
+   * Pick a MediaRecorder codec the browser actually supports. Chromium
+   * picks `video/webm;codecs=vp8,opus` by default but Safari only
+   * understands `video/mp4` flavors. We probe in order and bail out if
+   * nothing matches.
+   */
+  function preferredRecorderMime(): string | null {
+    if (typeof MediaRecorder === 'undefined') return null
+    const candidates = [
+      'video/webm;codecs=vp8',
+      'video/webm;codecs=vp9',
+      'video/webm',
+      'video/mp4',
+    ]
+    return candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? null
+  }
+
+  function startMediaRecorder(stream: MediaStream) {
+    const mime = preferredRecorderMime()
+    if (!mime) {
+      setRecState('failed')
+      return
+    }
+    setRecState('arming')
+    chunkIndexRef.current = 0
+    const recorder = new MediaRecorder(stream, { mimeType: mime })
+    recorderRef.current = recorder
+
+    recorder.ondataavailable = async (ev) => {
+      if (!ev.data || ev.data.size === 0) return
+      const index = chunkIndexRef.current++
+      try {
+        await uploadChunk(ev.data, index)
+      } catch (err) {
+        console.warn('recording chunk upload failed', { index, err })
+      }
+    }
+    recorder.onstart = () => setRecState('recording')
+    recorder.onerror = (ev: Event) => {
+      console.warn('MediaRecorder error', ev)
+      setRecState('failed')
+    }
+    recorder.onstop = async () => {
+      setRecState('finalizing')
+      try {
+        await api.post(`/api/v1/access/remote-support/sessions/${sessionId}/recording/finalize`)
+        setRecState('off')
+      } catch (err) {
+        console.warn('finalize failed', err)
+        setRecState('failed')
+      }
+    }
+    recorder.start(recordingTimesliceMs)
+  }
+
+  async function uploadChunk(blob: Blob, index: number) {
+    // axios doesn't handle raw octet-stream uploads as well as fetch does
+    // here, so use fetch directly with the same Bearer header the api
+    // client attaches. baseURL = window.location.origin in dev / prod.
+    const token = localStorage.getItem('token')
+    const url = `/api/v1/access/remote-support/sessions/${sessionId}/recording/chunk`
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Chunk-Index': String(index),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: blob,
+    })
+    if (!resp.ok) throw new Error(`chunk upload ${resp.status}`)
+  }
+
+  function stopRecording() {
+    const rec = recorderRef.current
+    if (rec && rec.state !== 'inactive') {
+      rec.stop() // triggers final ondataavailable + onstop → finalize
+    }
   }
 
   /**
@@ -228,7 +340,10 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <ConnectionStatus state={state} message={errorMessage} />
+        <div className="flex items-center gap-2">
+          <ConnectionStatus state={state} message={errorMessage} />
+          {recordingEnabled && <RecordingIndicator state={recState} />}
+        </div>
         <div className="flex items-center gap-2">
           {mode === 'interactive' && (
             <>
@@ -306,6 +421,23 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
         </div>
       )}
     </div>
+  )
+}
+
+function RecordingIndicator({ state }: { state: RecState }) {
+  if (state === 'off') return null
+  const label = state === 'recording' ? 'recording'
+    : state === 'finalizing' ? 'finalizing recording…'
+    : state === 'arming' ? 'recording (arming)'
+    : state === 'failed' ? 'recording failed'
+    : state
+  const variant = state === 'recording' ? 'destructive'
+    : state === 'failed' ? 'destructive'
+    : 'secondary'
+  return (
+    <Badge variant={variant as any} className="gap-1">
+      <Circle className="h-3 w-3 fill-current" /> {label}
+    </Badge>
   )
 }
 

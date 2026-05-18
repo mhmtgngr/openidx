@@ -156,6 +156,13 @@ type Config struct {
 	TurnStaticSecret         string `mapstructure:"turn_static_secret"`   // matches the TURN server's static-auth-secret
 	TurnRealm                string `mapstructure:"turn_realm"`           // optional
 	TurnCredentialTTLSeconds int    `mapstructure:"turn_credential_ttl_seconds"` // default 7200
+
+	// Remote-support recording (Phase 4 follow-up). When unset, recording
+	// is disabled even if admins request it on start-session. Storage is
+	// filesystem-backed; each session lands in
+	// "<root>/<session_id>/recording.webm" as the admin viewer streams
+	// MediaRecorder chunks.
+	RecordingsStoragePath string `mapstructure:"recordings_storage_path"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

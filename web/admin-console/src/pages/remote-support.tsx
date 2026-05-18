@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Video, Play, Square, MonitorPlay, Eye, MousePointer2, Clock,
-  CheckCircle2, XCircle, AlertCircle,
+  CheckCircle2, XCircle, AlertCircle, Download,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -36,6 +36,10 @@ interface RemoteSession {
   ice_servers: unknown
   end_reason?: string
   recording_url?: string
+  recording_enabled: boolean
+  recording_size_bytes?: number
+  recording_chunk_count?: number
+  recording_finalized_at?: string
   started_at: string
   accepted_at?: string
   ended_at?: string
@@ -51,6 +55,7 @@ interface StartSessionResponse {
   admin_ws: string
   agent_ws: string
   ice_servers: unknown
+  recording_enabled: boolean
 }
 
 export function RemoteSupportPage() {
@@ -63,6 +68,7 @@ export function RemoteSupportPage() {
     mode: 'interactive' | 'view'
     wsPath: string
     iceServers: unknown
+    recordingEnabled: boolean
   } | null>(null)
 
   const { data: sessions = [], isLoading } = useQuery({
@@ -88,6 +94,7 @@ export function RemoteSupportPage() {
       mode: session.mode,
       wsPath,
       iceServers: session.ice_servers,
+      recordingEnabled: session.recording_enabled,
     })
   }
 
@@ -155,6 +162,16 @@ export function RemoteSupportPage() {
                             </Button>
                           </>
                         )}
+                        {s.recording_url && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => downloadRecording(s.id)}
+                            title={`Download recording (${formatBytes(s.recording_size_bytes ?? 0)})`}
+                          >
+                            <Download className="h-3 w-3" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -186,6 +203,7 @@ export function RemoteSupportPage() {
                 status: (resp.status as RemoteSession['status']),
                 mode: (resp.mode === 'view' ? 'view' : 'interactive'),
                 ice_servers: resp.ice_servers,
+                recording_enabled: resp.recording_enabled,
                 started_at: new Date().toISOString(),
                 last_activity_at: new Date().toISOString(),
               },
@@ -213,6 +231,8 @@ export function RemoteSupportPage() {
               wsUrl={(baseURL.replace(/^http/, 'ws') + viewerSession.wsPath)}
               mode={viewerSession.mode}
               iceServers={normalizeIce(viewerSession.iceServers)}
+              sessionId={viewerSession.id}
+              recordingEnabled={viewerSession.recordingEnabled}
               onClose={() => setViewerSession(null)}
               onEnd={() => {
                 endMutation.mutate(viewerSession.id)
@@ -258,6 +278,7 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
   const [agentId, setAgentId] = useState('')
   const [mode, setMode] = useState<'interactive' | 'view'>('interactive')
   const [notes, setNotes] = useState('')
+  const [record, setRecord] = useState(false)
 
   const startMutation = useMutation({
     mutationFn: () =>
@@ -265,6 +286,7 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
         agent_id: agentId,
         mode,
         notes,
+        record,
       }),
     onSuccess: (data) => {
       toast({ title: 'Session created' })
@@ -313,6 +335,16 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
               placeholder="case ID, user-reported issue, etc."
             />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={record}
+              onChange={(e) => setRecord(e.target.checked)}
+            />
+            Record session (browser captures the device screen; chunks
+            upload to OpenIDX. The device banner still says "session
+            active" but the recording itself is server-side audit.)
+          </label>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -327,6 +359,38 @@ function StartSessionDialog({ onClose, onStarted }: StartSessionDialogProps) {
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * Trigger a browser download of the assembled recording. We construct a
+ * link with the OAuth bearer in a query param won't work — the endpoint
+ * requires the Authorization header — so we fetch the blob through the
+ * shared axios client, then create an object URL and click an anchor.
+ */
+async function downloadRecording(sessionId: string) {
+  const token = localStorage.getItem('token')
+  const url = `/api/v1/access/remote-support/sessions/${sessionId}/recording`
+  const resp = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!resp.ok) {
+    console.warn('recording download failed', resp.status)
+    return
+  }
+  const blob = await resp.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = `openidx-recording-${sessionId}.webm`
+  a.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`
 }
 
 function normalizeIce(raw: unknown): RTCIceServer[] {
