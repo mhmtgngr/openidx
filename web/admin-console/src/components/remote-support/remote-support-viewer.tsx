@@ -186,10 +186,43 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
     if (e.key === 'Escape') {
       sendInput({ event: 'global_action', action: 'back' })
       e.preventDefault()
-    } else if (e.key === 'Home') {
+      return
+    }
+    if (e.key === 'Home') {
       sendInput({ event: 'global_action', action: 'home' })
       e.preventDefault()
+      return
     }
+    // Named keys that need to land in the focused text field: forward
+    // as 'key' events. Regular character keys are handled separately
+    // through the dedicated text input below so we don't try to
+    // single-character-spam over the data channel on every keystroke.
+    if (e.key === 'Backspace') {
+      sendInput({ event: 'key', key_name: 'backspace' })
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Enter') {
+      sendInput({ event: 'key', key_name: 'enter' })
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Tab') {
+      sendInput({ event: 'key', key_name: 'tab' })
+      e.preventDefault()
+      return
+    }
+  }
+
+  // Text-input state — kept separate from the overlay so the admin can
+  // compose a longer string and commit it as one message instead of one
+  // keystroke per data-channel frame.
+  const [pendingText, setPendingText] = useState('')
+
+  function sendPendingText() {
+    if (!pendingText) return
+    sendInput({ event: 'text', text: pendingText })
+    setPendingText('')
   }
 
   return (
@@ -240,9 +273,38 @@ export function RemoteSupportViewer({ wsUrl, mode, iceServers, onClose: _onClose
 
       <p className="text-xs text-muted-foreground">
         {mode === 'interactive'
-          ? 'Tap = single press · drag = swipe · Esc = back · Home = home.'
+          ? 'Tap = single press · drag = swipe · Esc = back · Home = home · Backspace / Enter / Tab pass through.'
           : 'View-only — input is disabled for this session.'}
       </p>
+
+      {mode === 'interactive' && (
+        <div className="flex items-center gap-2 pt-1">
+          <input
+            type="text"
+            value={pendingText}
+            onChange={(e) => setPendingText(e.target.value)}
+            onKeyDown={(e) => {
+              // Send on Enter; consume so the overlay's onKeyDown doesn't
+              // also fire an 'enter' key event for the same press.
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                sendPendingText()
+              }
+            }}
+            placeholder="Type and press Enter to inject into the focused field…"
+            className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
+            disabled={state !== 'streaming'}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={sendPendingText}
+            disabled={!pendingText || state !== 'streaming'}
+          >
+            Send text
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

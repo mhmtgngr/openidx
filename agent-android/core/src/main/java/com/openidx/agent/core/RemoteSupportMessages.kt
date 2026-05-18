@@ -42,7 +42,9 @@ data class InputEventMessage(
     val y_end: Double = 0.0,
     val duration_ms: Long = 0,
     val key_code: Int = 0,
+    val key_name: String = "",    // "enter" | "backspace" | "tab" — preferred over key_code
     val text: String = "",
+    val replace: Boolean = false, // text events: when true replace field content instead of append
     val action: String = "",      // "back" | "home" | "recents" | "notifications"
 )
 

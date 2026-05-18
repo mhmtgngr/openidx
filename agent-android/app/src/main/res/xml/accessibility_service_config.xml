@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Accessibility Service config. We do NOT consume any accessibility events
-    when no remote-support session is active — eventTypes is the minimal
-    set needed to keep the service registered. The capability that actually
-    matters here is canPerformGestures, which is what dispatchGesture()
-    requires.
+    Accessibility Service config. canPerformGestures supports the tap /
+    swipe path (dispatchGesture), and canRetrieveWindowContent is what
+    lets findFocus(FOCUS_INPUT) return the currently-editing node so we
+    can route remote text injection (ACTION_SET_TEXT) and named-key
+    events to it. The service still does NOT subscribe to events while
+    idle — eventTypes is permissive so we don't have to re-register on
+    every session start, but the onAccessibilityEvent handler is empty.
 -->
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -13,7 +15,7 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="0"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
     android:summary="@string/accessibility_service_summary"
     tools:ignore="UnusedAttribute" />

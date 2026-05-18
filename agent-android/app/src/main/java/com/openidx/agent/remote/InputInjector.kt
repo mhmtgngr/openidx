@@ -59,13 +59,25 @@ class InputInjector(
                 svc?.globalAction(event.action) ?: warnUnavailable("global_action=${event.action}")
             }
             "key" -> {
-                // Key events via Accessibility need a focused IME; we don't
-                // synthesize keyboard input in Phase 4 MVP. Reserved for a
-                // follow-up with an IME-based injector.
-                warnUnavailable("key_code=${event.key_code}")
+                // Named keys are handled via Accessibility ACTION_IME_ENTER /
+                // SET_TEXT-based emulation. Arbitrary KeyCode injection is
+                // not supported here — that requires a custom InputMethodService,
+                // tracked as future work in the design doc.
+                val s = svc ?: run { warnUnavailable("key (no accessibility)"); return }
+                val ok = when (event.key_name.lowercase()) {
+                    "enter", "return" -> s.pressEnter()
+                    "backspace", "del", "delete" -> s.pressBackspace()
+                    "tab" -> s.pressTab()
+                    "" -> { warnUnavailable("key_code=${event.key_code} (no key_name)"); false }
+                    else -> { warnUnavailable("key_name=${event.key_name} unsupported"); false }
+                }
+                if (!ok) Log.w(TAG, "key event ${event.key_name} produced no effect")
             }
             "text" -> {
-                warnUnavailable("text='${event.text.take(16)}…'")
+                val s = svc ?: run { warnUnavailable("text (no accessibility)"); return }
+                if (!s.injectText(event.text, replace = event.replace)) {
+                    Log.w(TAG, "text inject failed (no focused editable)")
+                }
             }
             else -> warnUnavailable("unknown=${event.event}")
         }

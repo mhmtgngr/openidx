@@ -3,7 +3,9 @@ package com.openidx.agent.remote
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 
 /**
  * Accessibility Service used for the input-injection fallback path. On
@@ -58,6 +60,134 @@ class OpenIDXAccessibilityService : AccessibilityService() {
             else -> return
         }
         performGlobalAction(code)
+    }
+
+    /**
+     * Inject [text] into the currently input-focused editable node.
+     * When [replace] is false (default), append to existing text;
+     * when true, the field's contents are replaced entirely.
+     *
+     * Returns true iff a focused editable node was found and the
+     * ACTION_SET_TEXT call succeeded. Failure is non-fatal — the calling
+     * input dispatcher logs and moves on.
+     *
+     * Caveats:
+     *  - ACTION_SET_TEXT bypasses the IME's composition pipeline, so
+     *    autocomplete / suggestions on the device side won't fire.
+     *  - The focused node must be editable. Read-only labels are skipped.
+     *  - On WebViews and some custom views, the action may silently
+     *    no-op even when a text caret is visible.
+     */
+    fun injectText(text: String, replace: Boolean = false): Boolean {
+        val node = findFocusedEditable() ?: return false
+        val existing = node.text?.toString().orEmpty()
+        val target = if (replace) text else existing + text
+        val args = Bundle().apply {
+            putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE,
+                target,
+            )
+        }
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        node.recycle()
+        return ok
+    }
+
+    /**
+     * Simulates pressing Backspace on the focused editable by trimming
+     * one character from its tail and reassigning. Returns true when a
+     * character was removed.
+     */
+    fun pressBackspace(): Boolean {
+        val node = findFocusedEditable() ?: return false
+        val existing = node.text?.toString().orEmpty()
+        if (existing.isEmpty()) {
+            node.recycle()
+            return false
+        }
+        val args = Bundle().apply {
+            putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE,
+                existing.dropLast(1),
+            )
+        }
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        node.recycle()
+        return ok
+    }
+
+    /**
+     * Best-effort "Enter" key: when the focused editable's IME action
+     * supports it, performAction(ACTION_IME_ENTER) fires the form's
+     * submit affordance. Falls back to appending "\n" so multi-line
+     * fields still get a newline.
+     */
+    fun pressEnter(): Boolean {
+        val node = findFocusedEditable() ?: return false
+        // API 30+: ACTION_IME_ENTER is the documented way to fire the
+        // current IME action (search / go / next / done).
+        val imeOk = runCatching {
+            node.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+        }.getOrDefault(false)
+        if (imeOk) {
+            node.recycle()
+            return true
+        }
+        // Fallback for fields that don't expose an IME action: append \n.
+        val existing = node.text?.toString().orEmpty()
+        val args = Bundle().apply {
+            putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE,
+                existing + "\n",
+            )
+        }
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        node.recycle()
+        return ok
+    }
+
+    /**
+     * Move accessibility focus to the next focusable element. Roughly
+     * equivalent to pressing Tab on a hardware keyboard for navigation
+     * purposes, though it operates on accessibility focus rather than
+     * input focus.
+     */
+    fun pressTab(): Boolean {
+        val node = findFocusedEditable() ?: rootInActiveWindow ?: return false
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) &&
+            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        node.recycle()
+        return ok
+    }
+
+    /**
+     * Walks the active-window node tree and returns the first editable
+     * descendant that holds input focus, or null when there's no
+     * editable field receiving keystrokes right now.
+     *
+     * Caller owns the returned [AccessibilityNodeInfo] and must call
+     * recycle() to release it.
+     */
+    private fun findFocusedEditable(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focused != null && focused.isEditable) return focused
+        focused?.recycle()
+        // Some apps don't propagate FOCUS_INPUT correctly; fall back to a
+        // tree walk for the first editable node.
+        return findFirstEditable(root)
+    }
+
+    private fun findFirstEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val match = findFirstEditable(child)
+            if (match != null) return match
+            child.recycle()
+        }
+        return null
     }
 
     companion object {

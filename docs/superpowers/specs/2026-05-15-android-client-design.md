@@ -283,7 +283,49 @@ encryption for free.
 |---|---|---|
 | Device Owner (QR provisioning) | Accessibility Service (system-pre-granted on DO devices) | No user toggle needed; we still use the AS API so the same code path serves both |
 | BYOD / sideloaded | Accessibility Service (user-toggled) | Requires the user to enable the service in Settings. `accessibility_audit` posture check surfaces non-OpenIDX accessibility services to admins |
-| Key events / text input | Not yet implemented | Reserved for a follow-up with an IME-based injector |
+| Text + named keys (Backspace / Enter / Tab) | Accessibility Service via `ACTION_SET_TEXT` + `ACTION_IME_ENTER` | Writes into the currently input-focused editable node. See "Text + named-key injection" below |
+| Arbitrary KeyCode injection | Not implemented | Would require a custom `InputMethodService`. Deferred — see "Future work" below |
+
+### Text + named-key injection (wired)
+
+The admin viewer carries a text input below the video; whatever the admin
+types and submits with Enter (or "Send text" button) is sent over the
+`openidx-input` data channel as a single `{event: "text", text: "…"}`
+frame. The Android `OpenIDXAccessibilityService` walks the active-window
+node tree, finds the input-focused editable node, and calls
+`AccessibilityNodeInfo.performAction(ACTION_SET_TEXT, …)` to append (or
+replace, via `replace: true`) the supplied string.
+
+The same overlay forwards three named keys without consuming individual
+character presses:
+
+| Browser key | Wire event | Android impl |
+|---|---|---|
+| Backspace | `{event: "key", key_name: "backspace"}` | re-set existing text minus last char |
+| Enter | `{event: "key", key_name: "enter"}` | `performAction(ACTION_IME_ENTER)`; falls back to appending `\n` |
+| Tab | `{event: "key", key_name: "tab"}` | `ACTION_ACCESSIBILITY_FOCUS` + `ACTION_FOCUS` (moves accessibility focus) |
+
+Caveats:
+- `ACTION_SET_TEXT` bypasses the device IME's composition pipeline, so
+  autocomplete / suggestions don't fire. For a "help the user fill out a
+  form" use case this is the right behavior — predictable, atomic.
+- WebViews and some custom views silently no-op on `ACTION_SET_TEXT`
+  even with a visible caret. The injector returns `false` from
+  `injectText` and the admin sees a "no focused editable" log; reflecting
+  that to the viewer UI is on the deferred list.
+- The accessibility config now declares `canRetrieveWindowContent="true"`
+  (previously `"false"`); without it, `findFocus(FOCUS_INPUT)` returns
+  null and ACTION_SET_TEXT has no target.
+
+### Future work
+
+- **Custom InputMethodService** for arbitrary KeyCode injection. Would
+  give the admin a full hardware-keyboard equivalent (modifier keys,
+  arrow keys, function keys). Requires the user (or DPM, on Device
+  Owner devices) to pick it as the default keyboard, which is a
+  significant UX shift — defer until a concrete use case demands it.
+- Reflect `injectText` failures back to the admin viewer so the operator
+  knows when the field they expected isn't actually focused.
 
 ### Consent and audit
 
@@ -362,7 +404,7 @@ is intrinsically short-lived (default TTL 2 h, configurable).
 
 - Session recording — `recording_url` column is reserved; upload pipeline
   not yet wired.
-- IME-based text injection for keyboard and clipboard.
+- Clipboard sync between admin and device.
 
 ## Ziti zero-trust transport (wired)
 
