@@ -158,11 +158,21 @@ type Config struct {
 	TurnCredentialTTLSeconds int    `mapstructure:"turn_credential_ttl_seconds"` // default 7200
 
 	// Remote-support recording (Phase 4 follow-up). When unset, recording
-	// is disabled even if admins request it on start-session. Storage is
-	// filesystem-backed; each session lands in
-	// "<root>/<session_id>/recording.webm" as the admin viewer streams
-	// MediaRecorder chunks.
+	// is disabled even if admins request it on start-session. Storage
+	// preference:
+	//   1. S3 (or S3-compatible: MinIO, R2, Wasabi, B2) when
+	//      RecordingsS3Endpoint and RecordingsS3Bucket are set.
+	//   2. Filesystem when RecordingsStoragePath is set.
+	//   3. Disabled otherwise.
 	RecordingsStoragePath string `mapstructure:"recordings_storage_path"`
+
+	RecordingsS3Endpoint  string `mapstructure:"recordings_s3_endpoint"`     // e.g., "s3.amazonaws.com", "play.min.io", custom host:port
+	RecordingsS3Bucket    string `mapstructure:"recordings_s3_bucket"`
+	RecordingsS3Region    string `mapstructure:"recordings_s3_region"`
+	RecordingsS3Prefix    string `mapstructure:"recordings_s3_prefix"`       // optional key prefix inside the bucket
+	RecordingsS3AccessKey string `mapstructure:"recordings_s3_access_key"`
+	RecordingsS3SecretKey string `mapstructure:"recordings_s3_secret_key"`
+	RecordingsS3UseSSL    bool   `mapstructure:"recordings_s3_use_ssl"`      // default true; set false for local MinIO dev
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

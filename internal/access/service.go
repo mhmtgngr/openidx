@@ -455,17 +455,46 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
 
-		// Recording storage backend. Soft-disabled when no path is
-		// configured — start-session ignores `record: true` and the
-		// upload endpoints respond 503 with a clear error.
-		if svc.config != nil && svc.config.RecordingsStoragePath != "" {
-			if store, storeErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath); storeErr != nil {
-				svc.logger.Warn("recording store init failed; recording disabled",
-					zap.Error(storeErr))
-			} else {
+		// Recording storage backend. Preference: S3 over filesystem so a
+		// production deployment that configures both gets durability
+		// and lifecycle management for free. Soft-disabled when neither
+		// is set — start-session ignores `record: true` and the upload
+		// endpoints respond 503 with a clear error.
+		if svc.config != nil {
+			var store recordingStore
+			if svc.config.RecordingsS3Endpoint != "" && svc.config.RecordingsS3Bucket != "" {
+				s3Store, s3Err := newS3RecordingStore(s3RecordingConfig{
+					Endpoint:        svc.config.RecordingsS3Endpoint,
+					Bucket:          svc.config.RecordingsS3Bucket,
+					Region:          svc.config.RecordingsS3Region,
+					Prefix:          svc.config.RecordingsS3Prefix,
+					AccessKeyID:     svc.config.RecordingsS3AccessKey,
+					SecretAccessKey: svc.config.RecordingsS3SecretKey,
+					UseSSL:          svc.config.RecordingsS3UseSSL,
+				})
+				if s3Err != nil {
+					svc.logger.Warn("S3 recording store init failed; will try filesystem fallback",
+						zap.Error(s3Err))
+				} else {
+					store = s3Store
+					svc.logger.Info("Remote-support recording enabled (S3)",
+						zap.String("endpoint", svc.config.RecordingsS3Endpoint),
+						zap.String("bucket", svc.config.RecordingsS3Bucket))
+				}
+			}
+			if store == nil && svc.config.RecordingsStoragePath != "" {
+				fsStore, fsErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath)
+				if fsErr != nil {
+					svc.logger.Warn("filesystem recording store init failed; recording disabled",
+						zap.Error(fsErr))
+				} else {
+					store = fsStore
+					svc.logger.Info("Remote-support recording enabled (filesystem)",
+						zap.String("path", svc.config.RecordingsStoragePath))
+				}
+			}
+			if store != nil {
 				remoteSupport.SetRecordingStore(store)
-				svc.logger.Info("Remote-support recording enabled",
-					zap.String("path", svc.config.RecordingsStoragePath))
 			}
 		}
 

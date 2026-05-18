@@ -12,17 +12,22 @@
 package access
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
 )
 
@@ -100,6 +105,186 @@ func (s *filesystemRecordingStore) Open(sessionID string) (io.ReadCloser, int64,
 		return nil, 0, err
 	}
 	return f, fi.Size(), nil
+}
+
+// s3RecordingStore stores each MediaRecorder chunk as a discrete S3
+// object under "<prefix>/<session_id>/<NNNNNN>.webm". On Open the
+// store lists the chunks, sorts by their zero-padded numeric prefix,
+// and returns a sequential reader that concatenates them. Because
+// MediaRecorder timeslice output is a valid WebM segment per chunk,
+// the concatenation is byte-for-byte playable without remuxing.
+//
+// We pick per-chunk objects rather than multipart upload because the
+// chunk sizes WebRTC produces (~300 KB – 1.25 MB at typical screen-
+// recording bitrates) are below S3's 5 MB minimum part size. Buffering
+// to hit that minimum would add server-side memory pressure with no
+// downstream benefit — separate objects are cheap on S3.
+type s3RecordingStore struct {
+	client *minio.Client
+	bucket string
+	prefix string // optional path prefix inside the bucket
+}
+
+func newS3RecordingStore(cfg s3RecordingConfig) (*s3RecordingStore, error) {
+	if cfg.Endpoint == "" || cfg.Bucket == "" {
+		return nil, errors.New("s3 recording store requires endpoint and bucket")
+	}
+	if cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
+		return nil, errors.New("s3 recording store requires access key and secret")
+	}
+	client, err := minio.New(cfg.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		Secure: cfg.UseSSL,
+		Region: cfg.Region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("init minio client: %w", err)
+	}
+	prefix := strings.Trim(cfg.Prefix, "/")
+	return &s3RecordingStore{client: client, bucket: cfg.Bucket, prefix: prefix}, nil
+}
+
+// s3RecordingConfig is the parsed configuration for the S3 store, kept
+// separate so the public NewS3RecordingStore stays narrow.
+type s3RecordingConfig struct {
+	Endpoint        string
+	Bucket          string
+	Region          string
+	Prefix          string
+	AccessKeyID     string
+	SecretAccessKey string
+	UseSSL          bool
+}
+
+func (s *s3RecordingStore) objectKey(sessionID string, chunkIndex int) string {
+	// %06d gives us natural sort order up to a million chunks (~ 57
+	// days at one chunk every 5 s — far past any realistic session).
+	name := fmt.Sprintf("%06d.webm", chunkIndex)
+	return path.Join(s.prefix, sanitizeKeyComponent(sessionID), name)
+}
+
+func (s *s3RecordingStore) sessionPrefix(sessionID string) string {
+	return path.Join(s.prefix, sanitizeKeyComponent(sessionID)) + "/"
+}
+
+func (s *s3RecordingStore) Key(sessionID string) string {
+	return path.Join(s.prefix, sessionID) + "/"
+}
+
+func (s *s3RecordingStore) Append(sessionID string, chunkIndex int, body io.Reader) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Stream the chunk directly; -1 size tells minio-go to autodetect
+	// via multipart, which is fine even for sub-5MB chunks because we
+	// only ever upload a single part per object.
+	info, err := s.client.PutObject(
+		ctx, s.bucket, s.objectKey(sessionID, chunkIndex), body, -1,
+		minio.PutObjectOptions{ContentType: "video/webm"},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size, nil
+}
+
+func (s *s3RecordingStore) Open(sessionID string) (io.ReadCloser, int64, error) {
+	ctx := context.Background()
+	objects := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    s.sessionPrefix(sessionID),
+		Recursive: false,
+	})
+	type chunkRef struct {
+		key  string
+		size int64
+	}
+	chunks := make([]chunkRef, 0, 16)
+	for obj := range objects {
+		if obj.Err != nil {
+			return nil, 0, obj.Err
+		}
+		// Filter to chunks belonging to this session (defense in depth
+		// against accidental sibling prefixes).
+		if !strings.HasSuffix(obj.Key, ".webm") {
+			continue
+		}
+		chunks = append(chunks, chunkRef{key: obj.Key, size: obj.Size})
+	}
+	if len(chunks) == 0 {
+		return nil, 0, fmt.Errorf("no recording chunks for session %s", sessionID)
+	}
+	// ListObjects already returns lexically-sorted keys; the %06d
+	// padding makes lex order match numeric order. Sort defensively
+	// in case a future minio-go version changes the iteration guarantee.
+	sort.Slice(chunks, func(i, j int) bool { return chunks[i].key < chunks[j].key })
+
+	total := int64(0)
+	keys := make([]string, len(chunks))
+	for i, c := range chunks {
+		total += c.size
+		keys[i] = c.key
+	}
+
+	return &s3ConcatenatingReader{client: s.client, bucket: s.bucket, keys: keys}, total, nil
+}
+
+// s3ConcatenatingReader streams the per-chunk S3 objects one after the
+// other so the caller sees a single Reader. Closes the underlying GET
+// connection between objects to keep socket use bounded.
+type s3ConcatenatingReader struct {
+	client *minio.Client
+	bucket string
+	keys   []string
+	idx    int
+	cur    *minio.Object
+}
+
+func (r *s3ConcatenatingReader) Read(p []byte) (int, error) {
+	for {
+		if r.cur == nil {
+			if r.idx >= len(r.keys) {
+				return 0, io.EOF
+			}
+			obj, err := r.client.GetObject(context.Background(), r.bucket, r.keys[r.idx], minio.GetObjectOptions{})
+			if err != nil {
+				return 0, err
+			}
+			r.cur = obj
+		}
+		n, err := r.cur.Read(p)
+		if n > 0 {
+			return n, nil
+		}
+		if errors.Is(err, io.EOF) {
+			_ = r.cur.Close()
+			r.cur = nil
+			r.idx++
+			continue
+		}
+		return 0, err
+	}
+}
+
+func (r *s3ConcatenatingReader) Close() error {
+	if r.cur != nil {
+		err := r.cur.Close()
+		r.cur = nil
+		return err
+	}
+	return nil
+}
+
+// sanitizeKeyComponent strips path traversal bait from a string before
+// it becomes part of an object key. Session IDs are UUIDs so this is
+// defense in depth, not the primary protection.
+func sanitizeKeyComponent(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		}
+		return '_'
+	}, s)
 }
 
 // SetRecordingStore installs the storage backend used by the upload /

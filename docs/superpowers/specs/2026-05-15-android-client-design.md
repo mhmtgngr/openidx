@@ -450,11 +450,35 @@ download path.
 
 | Setting | Env var | Notes |
 |---|---|---|
-| `recordings_storage_path` | `RECORDINGS_STORAGE_PATH` | Local directory root. Per-session subdir + `recording.webm`. Unset = recording disabled even if admin requests it. |
+| `recordings_storage_path` | `RECORDINGS_STORAGE_PATH` | Local directory root. Per-session subdir + `recording.webm`. |
+| `recordings_s3_endpoint` | `RECORDINGS_S3_ENDPOINT` | S3 host (e.g. `s3.amazonaws.com`, `play.min.io`, custom MinIO host:port). When set with bucket, S3 backend wins over filesystem. |
+| `recordings_s3_bucket` | `RECORDINGS_S3_BUCKET` | Bucket name. Must exist; we don't create it. |
+| `recordings_s3_region` | `RECORDINGS_S3_REGION` | Region for AWS S3 / required for some compatible providers. |
+| `recordings_s3_prefix` | `RECORDINGS_S3_PREFIX` | Optional key prefix inside the bucket (e.g. `openidx/recordings`). |
+| `recordings_s3_access_key` | `RECORDINGS_S3_ACCESS_KEY` | Static IAM credential. |
+| `recordings_s3_secret_key` | `RECORDINGS_S3_SECRET_KEY` | Static IAM credential. |
+| `recordings_s3_use_ssl` | `RECORDINGS_S3_USE_SSL` | Default true; set false for local MinIO over plain HTTP. |
 
 **Storage backend abstraction**: handlers talk through a
-`recordingStore` interface (`Append` / `Open` / `Key`). A future S3 /
-GCS backend slots in without touching the HTTP surface.
+`recordingStore` interface (`Append` / `Open` / `Key`). Two
+implementations ship:
+
+- **Filesystem** — single per-session `recording.webm` file with
+  append-mode writes. Best for single-instance deployments and dev.
+- **S3 / S3-compatible** (Phase 4 follow-up) — each chunk is its own
+  S3 object under `<prefix>/<session>/<NNNNNN>.webm`. `Open` lists
+  the chunks, sorts by their zero-padded numeric prefix, and returns
+  a sequential reader that concatenates them. Targets: AWS S3,
+  MinIO, Cloudflare R2, Wasabi, Backblaze B2, GCS-via-interop (any
+  S3 v4-compatible endpoint). Built on `github.com/minio/minio-go/v7`
+  for a small dep footprint.
+
+`service.go` picks S3 when configured, falls back to filesystem, and
+disables recording when neither is set. Per-chunk-object layout was
+chosen over multipart upload because the chunks WebRTC produces (~300
+KB – 1.25 MB at typical screen-recording bitrates) are below S3's 5
+MB minimum part size; buffering to hit that minimum would add
+server-side memory pressure with no downstream benefit.
 
 **Codec**: viewer probes `video/webm;codecs=vp8`, `vp9`, plain `webm`,
 then `video/mp4`. Safari (no MediaRecorder VP8 support) falls back to
@@ -480,10 +504,10 @@ right state — no banner-text flicker. Wire path:
 → RemoteSupportInfo.recording → service intent extra → buildBanner`.
 
 **Deferred**:
-- Object-storage backend (S3 / GCS / Azure Blob) — interface already
-  in place, swap in by implementing `recordingStore`.
-- Per-tenant retention policy + automated purge.
-- Encryption at rest (today the filesystem write is plaintext WebM).
+- Per-tenant retention policy + automated purge (rely on S3 lifecycle
+  policies for now when the S3 backend is configured).
+- Encryption at rest for the filesystem backend (S3 backend inherits
+  bucket-level SSE-S3 / SSE-KMS when the bucket policy enables it).
 - Global disk-usage quota check before each chunk append.
 
 ### Out of scope (deferred)
