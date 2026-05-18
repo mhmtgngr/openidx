@@ -590,9 +590,51 @@ a number input + "Set to infinite" affordance for editing. Optimistic
 update via React Query's `setQueryData` so the card reflects the new
 value immediately on save.
 
+**Encryption at rest (filesystem backend)**: when
+`recordings_encryption_key` is set the filesystem store transparently
+encrypts each chunk before it hits disk.
+
+- **Cipher**: AES-256-GCM. Master key is 32 raw bytes (base64-encoded
+  in config) shared across all sessions. Per-session keys are derived
+  via HKDF-SHA256(master, salt=∅, info=`"openidx-recording-v1:<sid>"`)
+  — same master key, different ciphertext per session, no nonce reuse
+  across sessions.
+- **Wire framing on disk**: each Append() call writes one self-
+  contained frame: `[4-byte BE length][12-byte nonce][ciphertext+
+  16-byte GCM tag]`. The length prefix lets the read path detect a
+  crash-truncated final frame and surface it as a clean EOF rather
+  than failing the whole recording.
+- **Tamper detection**: GCM authentication tag catches any
+  modification of the ciphertext or nonce; the read path returns the
+  underlying GCM error so the audit log captures the corruption.
+- **Append's return value**: plaintext byte count, so
+  `recording_size_bytes` continues to reflect what admins actually
+  download, not the (slightly larger) on-disk encrypted size.
+- **Open's Content-Length**: omitted in encrypted mode so HTTP falls
+  back to chunked transfer encoding — the plaintext size isn't known
+  up front without re-decrypting.
+- **Fail-closed startup**: a `recordings_encryption_key` that's set
+  but malformed (bad base64, wrong byte length) refuses to start the
+  store rather than silently degrading to plaintext-on-disk.
+
+**Tests** (`recording_crypto_test.go`): 8 unit tests covering AEAD
+round-trip, key-length validation, tamper detection (single-byte flip
+→ GCM auth fails), per-session key distinctness (cross-session decrypt
+must fail), truncated-tail recovery, the integration round-trip
+through `filesystemRecordingStore`, plaintext-mode back-compat, and
+the on-disk-plaintext-leak guard so a future refactor can't silently
+break the encryption-at-rest claim.
+
+**Configuration**:
+
+| Setting | Env var | Notes |
+|---|---|---|
+| `recordings_encryption_key` | `RECORDINGS_ENCRYPTION_KEY` | base64 of 32 raw bytes. Unset = plaintext on disk. Bad value = filesystem store refuses to start. S3 backend ignores this — use bucket-level SSE-S3 / SSE-KMS for the S3 path. |
+
 **Deferred**:
-- Encryption at rest for the filesystem backend (S3 backend inherits
-  bucket-level SSE-S3 / SSE-KMS when the bucket policy enables it).
+- Master-key rotation: today the master key is single-valued and
+  immutable for the life of a deployment. Rotation would need a
+  key-versioning prefix on each frame and a multi-key reader.
 - Global disk-usage quota check before each chunk append.
 
 ### Out of scope (deferred)

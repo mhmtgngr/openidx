@@ -54,18 +54,32 @@ type recordingStore interface {
 // filesystemRecordingStore writes per-session WebM files under a root
 // directory. Concurrent appends to the same session are serialized via
 // OS append-mode opens.
+//
+// When masterKey is non-nil (length validated by NewFilesystemRecordingStore
+// at construction) the store transparently encrypts each chunk with a
+// per-session HKDF-derived key before write, and decrypts on Open. See
+// recording_crypto.go for the framing details.
 type filesystemRecordingStore struct {
-	root string
+	root      string
+	masterKey []byte
 }
 
-func newFilesystemRecordingStore(root string) (*filesystemRecordingStore, error) {
+// newFilesystemRecordingStore constructs the store with optional
+// encryption-at-rest. masterKey must be either nil (plaintext on disk)
+// or exactly recordingMasterKeyLen bytes. Any other length is a
+// configuration error.
+func newFilesystemRecordingStore(root string, masterKey []byte) (*filesystemRecordingStore, error) {
 	if root == "" {
 		return nil, errors.New("recordings root path required")
+	}
+	if masterKey != nil && len(masterKey) != recordingMasterKeyLen {
+		return nil, fmt.Errorf("recording master key must be %d bytes, got %d",
+			recordingMasterKeyLen, len(masterKey))
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create recordings root: %w", err)
 	}
-	return &filesystemRecordingStore{root: root}, nil
+	return &filesystemRecordingStore{root: root, masterKey: masterKey}, nil
 }
 
 func (s *filesystemRecordingStore) path(sessionID string) string {
@@ -96,7 +110,41 @@ func (s *filesystemRecordingStore) Append(sessionID string, _ int, body io.Reade
 		return 0, err
 	}
 	defer f.Close()
-	return io.Copy(f, body)
+
+	if s.masterKey == nil {
+		// Plaintext mode — back-compat for deployments without an
+		// encryption key configured. Stream the body through unchanged.
+		return io.Copy(f, body)
+	}
+
+	// Encrypted mode: buffer the chunk so we can encrypt it as a single
+	// frame. Cap matches the HTTP-layer 50 MiB chunk limit so a runaway
+	// caller can't OOM us here either.
+	aead, err := newRecordingAEAD(s.masterKey, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	limited := io.LimitReader(body, maxRecordingChunkBytes+1)
+	plaintext, err := io.ReadAll(limited)
+	if err != nil {
+		return 0, err
+	}
+	if int64(len(plaintext)) > maxRecordingChunkBytes {
+		return 0, errors.New("chunk exceeds maxRecordingChunkBytes")
+	}
+	frame, err := aead.encryptChunk(plaintext)
+	if err != nil {
+		return 0, err
+	}
+	written, err := f.Write(frame)
+	if err != nil {
+		return 0, err
+	}
+	// The recorded byte count is the plaintext length so the on-the-wire
+	// recording_size_bytes column reflects what admins actually
+	// downloaded, not the (slightly larger) on-disk encrypted size.
+	_ = written
+	return int64(len(plaintext)), nil
 }
 
 func (s *filesystemRecordingStore) Open(sessionID string) (io.ReadCloser, int64, error) {
@@ -109,8 +157,32 @@ func (s *filesystemRecordingStore) Open(sessionID string) (io.ReadCloser, int64,
 	if err != nil {
 		return nil, 0, err
 	}
-	return f, fi.Size(), nil
+	if s.masterKey == nil {
+		return f, fi.Size(), nil
+	}
+	// In encrypted mode the file's on-disk size includes framing overhead
+	// and ciphertext expansion. Returning fi.Size() to Content-Length
+	// callers would lie about the download. The handler treats a
+	// negative / unknown size as "unset", so return 0 here — chunked
+	// transfer encoding kicks in naturally.
+	aead, err := newRecordingAEAD(s.masterKey, sessionID)
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return &decryptingReadCloser{src: f, reader: newDecryptingReader(f, aead)}, 0, nil
 }
+
+// decryptingReadCloser pairs the decrypting Reader with the underlying
+// file's Close so HTTP handlers can defer reader.Close() without
+// leaking the descriptor.
+type decryptingReadCloser struct {
+	src    *os.File
+	reader *decryptingReader
+}
+
+func (d *decryptingReadCloser) Read(p []byte) (int, error) { return d.reader.Read(p) }
+func (d *decryptingReadCloser) Close() error               { return d.src.Close() }
 
 // Delete drops the per-session directory and everything below it.
 // Idempotent: a missing session-dir is treated as a successful delete
@@ -452,7 +524,13 @@ func (h *RemoteSupportHandler) HandleDownloadRecording(c *gin.Context) {
 	filename := "openidx-recording-" + sessionID + ".webm"
 	c.Header("Content-Type", "video/webm")
 	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
-	c.Header("Content-Length", strconv.FormatInt(size, 10))
+	// Encrypted backend doesn't know the plaintext length up front;
+	// omit Content-Length so the response falls back to chunked transfer
+	// encoding rather than reporting a wrong (encrypted-ciphertext)
+	// length.
+	if size > 0 {
+		c.Header("Content-Length", strconv.FormatInt(size, 10))
+	}
 	if _, err := io.Copy(c.Writer, reader); err != nil {
 		h.logger.Warn("HandleDownloadRecording: copy failed",
 			zap.String("session_id", sessionID), zap.Error(err))

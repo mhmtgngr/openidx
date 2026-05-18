@@ -177,6 +177,14 @@ type Config struct {
 	// Recording retention default. Resolves at the bottom of the lookup
 	// chain — session override → per-org policy → this value → hard 90d.
 	RecordingsDefaultRetentionDays int `mapstructure:"recordings_default_retention_days"`
+
+	// Optional master key for filesystem-backend encryption at rest. When
+	// set, chunks are AES-GCM encrypted with HKDF-derived per-session keys
+	// before they hit disk. Base64-encoded 32 raw bytes (any other length
+	// is rejected at startup). Unset means the filesystem backend writes
+	// plaintext — fine for dev, the S3 backend should rely on bucket-level
+	// SSE-S3 / SSE-KMS instead.
+	RecordingsEncryptionKey string `mapstructure:"recordings_encryption_key"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

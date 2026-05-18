@@ -61,7 +61,7 @@ func TestResolveEffectiveRetention_Layers(t *testing.T) {
 // the directory).
 func TestFilesystemRecordingStore_DeleteRoundTrip(t *testing.T) {
 	root := t.TempDir()
-	store, err := newFilesystemRecordingStore(root)
+	store, err := newFilesystemRecordingStore(root, nil)
 	require.NoError(t, err)
 
 	sessionID := "session-test-1"
@@ -99,7 +99,7 @@ func TestFilesystemRecordingStore_DeleteRoundTrip(t *testing.T) {
 // was already cleaned up by an out-of-band process.
 func TestFilesystemRecordingStore_DeleteMissingIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	store, err := newFilesystemRecordingStore(root)
+	store, err := newFilesystemRecordingStore(root, nil)
 	require.NoError(t, err)
 	assert.NoError(t, store.Delete("never-existed"))
 }

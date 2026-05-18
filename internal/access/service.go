@@ -483,14 +483,41 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 				}
 			}
 			if store == nil && svc.config.RecordingsStoragePath != "" {
-				fsStore, fsErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath)
-				if fsErr != nil {
-					svc.logger.Warn("filesystem recording store init failed; recording disabled",
-						zap.Error(fsErr))
+				// Decode the optional encryption master key. Empty means
+				// plaintext-on-disk. Any other length is an explicit error so
+				// a config typo doesn't silently degrade to plaintext.
+				var masterKey []byte
+				if svc.config.RecordingsEncryptionKey != "" {
+					decoded, decodeErr := base64.StdEncoding.DecodeString(svc.config.RecordingsEncryptionKey)
+					if decodeErr != nil {
+						svc.logger.Warn("recordings_encryption_key not valid base64; filesystem store will NOT be initialized",
+							zap.Error(decodeErr))
+					} else if len(decoded) != recordingMasterKeyLen {
+						svc.logger.Warn("recordings_encryption_key has wrong length; filesystem store will NOT be initialized",
+							zap.Int("got", len(decoded)),
+							zap.Int("want", recordingMasterKeyLen))
+						decoded = nil
+					} else {
+						masterKey = decoded
+					}
+				}
+				// When the user *configured* an encryption key but it didn't
+				// parse, we fail closed: refuse to start the store at all
+				// rather than silently fall back to plaintext-on-disk.
+				if svc.config.RecordingsEncryptionKey != "" && masterKey == nil {
+					svc.logger.Warn("filesystem recording store NOT enabled — fix recordings_encryption_key")
 				} else {
-					store = fsStore
-					svc.logger.Info("Remote-support recording enabled (filesystem)",
-						zap.String("path", svc.config.RecordingsStoragePath))
+					fsStore, fsErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath, masterKey)
+					if fsErr != nil {
+						svc.logger.Warn("filesystem recording store init failed; recording disabled",
+							zap.Error(fsErr))
+					} else {
+						store = fsStore
+						encrypted := masterKey != nil
+						svc.logger.Info("Remote-support recording enabled (filesystem)",
+							zap.String("path", svc.config.RecordingsStoragePath),
+							zap.Bool("encrypted_at_rest", encrypted))
+					}
 				}
 			}
 			if store != nil {
