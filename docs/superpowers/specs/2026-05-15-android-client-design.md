@@ -469,14 +469,21 @@ mp4; everything else lands on VP8 by default.
 | Admin downloads someone else's recording | Endpoint is behind `middleware.Auth`. Downstream: tenant-scoped check once tenant boundaries are enforced on this surface. |
 | Disk fill / DoS | 50 MiB cap per chunk request, surfaced as `http.MaxBytesReader`. No global cap yet — flagged as deferred work. |
 
+**Device-side banner reflects recording state**: `/agent/config`'s
+`remote_support` block carries a `recording: bool` field. When true,
+the agent's `RemoteSupportService` swaps its foreground-notification
+text from "An OpenIDX admin can see and control this device" to "An
+OpenIDX admin is recording this device's screen". Flag is latched
+before `startForeground` so the first display already reflects the
+right state — no banner-text flicker. Wire path:
+`HandleConfig → activeSessionInfo.Recording → agentRemoteSupportInfo
+→ RemoteSupportInfo.recording → service intent extra → buildBanner`.
+
 **Deferred**:
 - Object-storage backend (S3 / GCS / Azure Blob) — interface already
   in place, swap in by implementing `recordingStore`.
 - Per-tenant retention policy + automated purge.
 - Encryption at rest (today the filesystem write is plaintext WebM).
-- Device-side banner updated to read "Remote support session active
-  (recording)" when recording is on — wire signal from server →
-  agent via /agent/config's `remote_support` block.
 - Global disk-usage quota check before each chunk append.
 
 ### Out of scope (deferred)

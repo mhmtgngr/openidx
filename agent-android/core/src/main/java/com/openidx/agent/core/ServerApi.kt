@@ -90,6 +90,10 @@ data class KioskPolicy(
  * an admin has started a session targeting this agent and the agent hasn't
  * connected to signaling yet. ice_servers is left as a raw JsonElement so
  * the agent can pass it through to WebRTC unchanged.
+ *
+ * The `recording` flag drives the device-side consent banner — when true,
+ * the foreground service notification says the admin is *recording* the
+ * device, not just viewing it.
  */
 @Serializable
 data class RemoteSupportInfo(
@@ -97,6 +101,7 @@ data class RemoteSupportInfo(
     val mode: String = "interactive",
     val ws_path: String = "",
     val ice_servers: JsonElement? = null,
+    val recording: Boolean = false,
 )
 
 @Serializable

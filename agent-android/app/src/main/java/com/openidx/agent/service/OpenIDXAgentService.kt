@@ -94,6 +94,7 @@ class OpenIDXAgentService : Service() {
                             wsPath = rs.ws_path,
                             mode = rs.mode,
                             iceServers = rs.ice_servers?.toString().orEmpty(),
+                            recording = rs.recording,
                         )
                     } else if (rs == null) {
                         lastRemoteSessionSeen = null
@@ -104,12 +105,19 @@ class OpenIDXAgentService : Service() {
         }
     }
 
-    private fun launchRemoteSupportTrigger(sessionId: String, wsPath: String, mode: String, iceServers: String) {
+    private fun launchRemoteSupportTrigger(
+        sessionId: String,
+        wsPath: String,
+        mode: String,
+        iceServers: String,
+        recording: Boolean,
+    ) {
         val intent = Intent(this, RemoteSupportTriggerActivity::class.java).apply {
             putExtra(RemoteSupportTriggerActivity.EXTRA_SESSION_ID, sessionId)
             putExtra(RemoteSupportTriggerActivity.EXTRA_WS_PATH, wsPath)
             putExtra(RemoteSupportTriggerActivity.EXTRA_MODE, mode)
             putExtra(RemoteSupportTriggerActivity.EXTRA_ICE_SERVERS, iceServers)
+            putExtra(RemoteSupportTriggerActivity.EXTRA_RECORDING, recording)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)

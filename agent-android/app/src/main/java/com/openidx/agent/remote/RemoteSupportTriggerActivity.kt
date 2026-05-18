@@ -24,6 +24,7 @@ class RemoteSupportTriggerActivity : Activity() {
     private lateinit var wsPath: String
     private lateinit var mode: String
     private lateinit var iceServers: String
+    private var recording: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,6 +32,7 @@ class RemoteSupportTriggerActivity : Activity() {
         wsPath = intent.getStringExtra(EXTRA_WS_PATH).orEmpty()
         mode = intent.getStringExtra(EXTRA_MODE) ?: "interactive"
         iceServers = intent.getStringExtra(EXTRA_ICE_SERVERS).orEmpty()
+        recording = intent.getBooleanExtra(EXTRA_RECORDING, false)
 
         if (sessionId.isBlank() || wsPath.isBlank()) {
             finish()
@@ -48,7 +50,7 @@ class RemoteSupportTriggerActivity : Activity() {
             return
         }
         if (resultCode == RESULT_OK && data != null) {
-            RemoteSupportService.start(this, data, sessionId, wsPath, mode, iceServers)
+            RemoteSupportService.start(this, data, sessionId, wsPath, mode, iceServers, recording)
         }
         // Either way (decline or success) we close the helper activity.
         finish()
@@ -60,5 +62,6 @@ class RemoteSupportTriggerActivity : Activity() {
         const val EXTRA_WS_PATH = "ws_path"
         const val EXTRA_MODE = "mode"
         const val EXTRA_ICE_SERVERS = "ice_servers"
+        const val EXTRA_RECORDING = "recording"
     }
 }

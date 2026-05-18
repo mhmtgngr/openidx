@@ -722,11 +722,16 @@ type agentConfigResponse struct {
 }
 
 // agentRemoteSupportInfo tells an agent how to join an in-flight session.
+// Recording is the wire signal the device uses to upgrade its consent
+// banner: when true, the foreground service shows "OpenIDX admin is
+// recording this device" instead of the standard "viewing / controlling"
+// text.
 type agentRemoteSupportInfo struct {
 	SessionID  string          `json:"session_id"`
 	Mode       string          `json:"mode"`
 	WSPath     string          `json:"ws_path"`
 	ICEServers json.RawMessage `json:"ice_servers,omitempty"`
+	Recording  bool            `json:"recording"`
 }
 
 // defaultAgentConfig returns the built-in fallback configuration used when no
@@ -942,12 +947,13 @@ func (h *AgentAPIHandler) HandleConfig(c *gin.Context) {
 
 		// Phase 4: embed an in-flight remote-support session pointer if one
 		// exists for this agent so the device knows where to dial signaling.
-		if sid, mode, ice, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
+		if info, ok := findActiveSessionForAgent(ctx, h.db, agentID); ok {
 			cfg.RemoteSupport = &agentRemoteSupportInfo{
-				SessionID:  sid,
-				Mode:       mode,
-				WSPath:     "/api/v1/access/agent/remote-support/sessions/" + sid + "/ws",
-				ICEServers: ice,
+				SessionID:  info.SessionID,
+				Mode:       info.Mode,
+				WSPath:     "/api/v1/access/agent/remote-support/sessions/" + info.SessionID + "/ws",
+				ICEServers: info.ICEServers,
+				Recording:  info.Recording,
 			}
 		}
 

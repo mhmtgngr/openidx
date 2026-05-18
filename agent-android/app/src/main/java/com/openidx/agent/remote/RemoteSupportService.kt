@@ -32,11 +32,16 @@ import com.openidx.agent.enrollment.QrEnrollmentBootstrapper
 class RemoteSupportService : Service() {
 
     private var engine: RemoteSupportEngine? = null
+    @Volatile private var recordingActive: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
+        // Latch the recording flag BEFORE starting the foreground service
+        // so buildBanner() — invoked synchronously below — reflects the
+        // right text on first display.
+        recordingActive = intent?.getBooleanExtra(EXTRA_RECORDING, false) == true
         startForeground(NOTIFICATION_ID, buildBanner())
 
         if (intent?.action == ACTION_END) {
@@ -113,10 +118,22 @@ class RemoteSupportService : Service() {
             this, 1, endIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // When recording is active, swap the banner text to the recording
+        // variant so the device user reads "is recording" instead of the
+        // softer "can see and control". Title stays neutral so the channel
+        // remains a single channel users can manage in Settings.
+        val titleRes = if (recordingActive)
+            R.string.remote_support_recording_notification_title
+        else
+            R.string.remote_support_notification_title
+        val textRes = if (recordingActive)
+            R.string.remote_support_recording_notification_text
+        else
+            R.string.remote_support_notification_text
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle(getString(R.string.remote_support_notification_title))
-            .setContentText(getString(R.string.remote_support_notification_text))
+            .setContentTitle(getString(titleRes))
+            .setContentText(getString(textRes))
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -140,6 +157,7 @@ class RemoteSupportService : Service() {
         const val EXTRA_WS_PATH = "ws_path"
         const val EXTRA_MODE = "mode"
         const val EXTRA_ICE_SERVERS = "ice_servers"
+        const val EXTRA_RECORDING = "recording"
 
         fun start(
             context: Context,
@@ -148,6 +166,7 @@ class RemoteSupportService : Service() {
             wsPath: String,
             mode: String,
             iceServers: String,
+            recording: Boolean,
         ) {
             val intent = Intent(context, RemoteSupportService::class.java).apply {
                 putExtra(EXTRA_MP_PERMISSION_RESULT, mpGrant)
@@ -155,6 +174,7 @@ class RemoteSupportService : Service() {
                 putExtra(EXTRA_WS_PATH, wsPath)
                 putExtra(EXTRA_MODE, mode)
                 putExtra(EXTRA_ICE_SERVERS, iceServers)
+                putExtra(EXTRA_RECORDING, recording)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

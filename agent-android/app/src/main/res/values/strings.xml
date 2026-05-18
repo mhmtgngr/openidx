@@ -8,6 +8,8 @@
     <string name="agent_active_notification">OpenIDX agent is active</string>
     <string name="remote_support_notification_title">Remote support session active</string>
     <string name="remote_support_notification_text">An OpenIDX admin can see and control this device.</string>
+    <string name="remote_support_recording_notification_title">Remote support session is recording</string>
+    <string name="remote_support_recording_notification_text">An OpenIDX admin is recording this device\'s screen.</string>
     <string name="remote_support_end_action">End session</string>
     <string name="accessibility_service_description">Used only during remote-support sessions to perform taps, swipes, and global actions on behalf of an authorized OpenIDX administrator.</string>
     <string name="accessibility_service_summary">OpenIDX remote support</string>

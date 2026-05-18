@@ -533,25 +533,38 @@ func (h *RemoteSupportHandler) verifyAgentAuth(ctx context.Context, agentID, tok
 	return sha256Hex(token) == stored
 }
 
+// activeSessionInfo carries the per-agent session pointer that
+// findActiveSessionForAgent returns. Promoted to a struct because the
+// recording flag is a fifth datum and the positional-return signature
+// was already noisy.
+type activeSessionInfo struct {
+	SessionID  string
+	Mode       string
+	ICEServers json.RawMessage
+	Recording  bool
+}
+
 // findActiveSessionForAgent — called from HandleConfig to embed an in-flight
-// session in the agent's config response. Returns the session ID and ICE
-// servers when one is active or pending for this agent.
-func findActiveSessionForAgent(ctx context.Context, db *database.PostgresDB, agentID string) (id, mode string, ice json.RawMessage, ok bool) {
+// session in the agent's config response. Returns the session info when one
+// is active or pending for this agent, or `ok=false` when the agent has
+// no live session.
+func findActiveSessionForAgent(ctx context.Context, db *database.PostgresDB, agentID string) (info activeSessionInfo, ok bool) {
 	if db == nil || db.Pool == nil || agentID == "" {
-		return "", "", nil, false
+		return activeSessionInfo{}, false
 	}
 	var iceBytes []byte
 	err := db.Pool.QueryRow(ctx, `
-        SELECT id, mode, ice_servers
+        SELECT id, mode, ice_servers, recording_enabled
           FROM remote_support_sessions
          WHERE agent_id = $1 AND status IN ('pending','active')
          ORDER BY started_at DESC
          LIMIT 1
-    `, agentID).Scan(&id, &mode, &iceBytes)
+    `, agentID).Scan(&info.SessionID, &info.Mode, &iceBytes, &info.Recording)
 	if err != nil {
-		return "", "", nil, false
+		return activeSessionInfo{}, false
 	}
-	return id, mode, json.RawMessage(iceBytes), true
+	info.ICEServers = json.RawMessage(iceBytes)
+	return info, true
 }
 
 // fetchSession reads the full row by ID for admin handlers.
