@@ -84,7 +84,7 @@ class OpenIDXAccessibilityService : AccessibilityService() {
         val target = if (replace) text else existing + text
         val args = Bundle().apply {
             putCharSequence(
-                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE,
+                ACTION_ARGUMENT_SET_TEXT_KEY,
                 target,
             )
         }
@@ -107,7 +107,7 @@ class OpenIDXAccessibilityService : AccessibilityService() {
         }
         val args = Bundle().apply {
             putCharSequence(
-                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE,
+                ACTION_ARGUMENT_SET_TEXT_KEY,
                 existing.dropLast(1),
             )
         }
@@ -125,9 +125,12 @@ class OpenIDXAccessibilityService : AccessibilityService() {
     fun pressEnter(): Boolean {
         val node = findFocusedEditable() ?: return false
         // API 30+: ACTION_IME_ENTER is the documented way to fire the
-        // current IME action (search / go / next / done).
+        // current IME action (search / go / next / done). The int constant
+        // (0x100000) is inlined here because the symbol on
+        // AccessibilityNodeInfo isn't surfaced by every compileSdk
+        // toolchain combination, but the value is stable platform API.
         val imeOk = runCatching {
-            node.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER)
+            node.performAction(ACTION_IME_ENTER_ID)
         }.getOrDefault(false)
         if (imeOk) {
             node.recycle()
@@ -137,7 +140,7 @@ class OpenIDXAccessibilityService : AccessibilityService() {
         val existing = node.text?.toString().orEmpty()
         val args = Bundle().apply {
             putCharSequence(
-                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE,
+                ACTION_ARGUMENT_SET_TEXT_KEY,
                 existing + "\n",
             )
         }
@@ -193,5 +196,19 @@ class OpenIDXAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile var instance: OpenIDXAccessibilityService? = null
             private set
+
+        // Bundle key the platform consumes for ACTION_SET_TEXT. The
+        // constant is defined on AccessibilityNodeInfo as
+        // ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE, but its symbol
+        // isn't reliably exposed in every Kotlin / android.jar
+        // combination. The string value itself has been stable since
+        // API 21 — inlining is the pragmatic fix.
+        private const val ACTION_ARGUMENT_SET_TEXT_KEY =
+            "ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE_VALUE"
+
+        // AccessibilityNodeInfo.ACTION_IME_ENTER (API 30+). Same story
+        // as the constant above — value is stable, symbol resolution
+        // is finicky. 0x100000 lifted verbatim from the platform source.
+        private const val ACTION_IME_ENTER_ID = 0x100000
     }
 }
