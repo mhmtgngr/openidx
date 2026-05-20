@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <!-- Note: BIND_DEVICE_ADMIN and BIND_ACCESSIBILITY_SERVICE are signature
+         permissions enforced on the receiver / service that holds them; the
+         platform never grants them to a uses-permission declaration. They
+         appear as android:permission="..." on the relevant components below. -->
+
+    <!-- Remote support (Phase 4) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:name=".OpenIDXAgentApplication"
+        android:label="OpenIDX Agent"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light">
+
+        <activity
+            android:name=".ui.EnrollmentActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- AppAuth OIDC redirect — matches the redirect_uri registered with
+                 the OpenIDX OAuth service for this mobile client. -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.openidx.agent"
+                      android:host="oauth"
+                      android:path="/redirect" />
+            </intent-filter>
+        </activity>
+
+        <!-- Multi-app kiosk launcher (Phase 3). Registered as a HOME-category
+             activity so DevicePolicyManager.addPersistentPreferredActivity
+             can promote it to "the" launcher on Device-Owner provisioned
+             devices when policy.mode='multi_app'. On consumer Android the
+             user could pick any other launcher; on a Device-Owner device the
+             policy makes the choice for them. -->
+        <activity
+            android:name=".ui.KioskLauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:screenOrientation="user"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar.Fullscreen">
+            <intent-filter android:priority="0">
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service that owns the Ziti tunnel and runs the posture
+             scheduler. Started by EnrollmentActivity post-enrollment and
+             again on BOOT_COMPLETED via BootReceiver. -->
+        <service
+            android:name=".service.OpenIDXAgentService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Phase 4: remote-support session host. mediaProjection is the
+             only foregroundServiceType that allows MediaProjection.start. -->
+        <service
+            android:name=".remote.RemoteSupportService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- Phase 4: invisible activity that prompts the user for screen-
+             capture consent before starting the foreground service. -->
+        <activity
+            android:name=".remote.RemoteSupportTriggerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Phase 4: Accessibility service used for input-injection fallback
+             when the device isn't Device Owner. The service stays registered
+             but inert outside active sessions. -->
+        <service
+            android:name=".remote.OpenIDXAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Phase 4: headless IME for arbitrary KeyCode injection during
+             remote support. Renders no keyboard; relays injected key
+             events to the focused field's InputConnection. Only effective
+             while selected as the active input method (the user picks it,
+             or DPM forces it on Device-Owner devices). -->
+        <service
+            android:name=".remote.OpenIDXInputMethodService"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/ime_method" />
+        </service>
+
+        <!-- DeviceAdminReceiver — installed by Android Enterprise provisioning
+             so the app becomes Device Owner. Phase 3 (kiosk) and Phase 4
+             (remote control) will hang their privileged hooks here. -->
+        <receiver
+            android:name=".admin.OpenIDXDeviceAdminReceiver"
+            android:label="OpenIDX Agent"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".admin.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>

@@ -102,6 +102,19 @@ type Service struct {
 	auditService         *UnifiedAuditService
 	browzerTargetManager *BrowZerTargetManager
 	apisixConfigPath     string
+	agentHandler         *AgentAPIHandler
+	remoteSupportHandler *RemoteSupportHandler
+}
+
+// handleAgentAPKDownload serves the hosted Android agent APK without auth so
+// Android Enterprise provisioning can fetch it during factory-reset setup.
+// Delegates to AgentAPIHandler so the path constant lives in one place.
+func (s *Service) handleAgentAPKDownload(c *gin.Context) {
+	if s.agentHandler == nil {
+		c.JSON(503, gin.H{"error": "agent handler not initialized"})
+		return
+	}
+	s.agentHandler.HandleAPKDownload(c)
 }
 
 // SetGuacamoleClient sets the Guacamole client for the service
@@ -401,11 +414,158 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/audit/unified/sync", svc.handleSyncExternalAuditEvents)
 		api.GET("/audit/unified/summary", svc.handleGetAuditEventsSummary)
 
-		// Agent API (enrollment, reporting, config)
+		// Agent admin surface (enrollment-token CRUD, agent list / approve /
+		// revoke, OAuth-based mobile enrollment, Android QR helpers). Inherits
+		// the auth middleware applied to `api`.
 		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.zitiManager)
-		agentHandler.RegisterAgentRoutes(api)
+		agentHandler.RegisterAgentAdminRoutes(api)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
+		svc.agentHandler = agentHandler
+
+		// Server-side Play Integrity verification (Phase 1+ Android client).
+		// When unconfigured, NewPlayIntegrityVerifier returns (nil, nil) and
+		// HandleReport persists agent-supplied tokens unverified — fine for
+		// dev, flagged as a production warning by the config validator.
+		if svc.config != nil {
+			verifier, err := NewPlayIntegrityVerifier(
+				context.Background(),
+				svc.logger,
+				[]byte(svc.config.PlayIntegrityServiceAccountJSON),
+				svc.config.PlayIntegrityPackageName,
+			)
+			if err != nil {
+				svc.logger.Warn("play integrity verifier init failed; running unverified",
+					zap.Error(err))
+			} else if verifier != nil {
+				agentHandler.SetPlayIntegrityVerifier(verifier)
+				svc.logger.Info("Play Integrity verifier enabled",
+					zap.String("package", svc.config.PlayIntegrityPackageName))
+			}
+		}
+
+		// Kiosk policy admin surface (Phase 3). Audits ride the agent handler
+		// so kiosk + enrollment events appear together in unified_audit_events.
+		kioskHandler := NewKioskAPIHandler(svc.logger, svc.db, agentHandler)
+		kioskHandler.RegisterKioskAdminRoutes(api)
+
+		// Remote-support session admin + signaling broker (Phase 4). Admin
+		// HTTP + WS endpoints land here behind auth; the agent-side WS is
+		// mounted on the public group below.
+		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
+		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
+		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
+
+		// Recording storage backend. Preference: S3 over filesystem so a
+		// production deployment that configures both gets durability
+		// and lifecycle management for free. Soft-disabled when neither
+		// is set — start-session ignores `record: true` and the upload
+		// endpoints respond 503 with a clear error.
+		if svc.config != nil {
+			var store recordingStore
+			if svc.config.RecordingsS3Endpoint != "" && svc.config.RecordingsS3Bucket != "" {
+				s3Store, s3Err := newS3RecordingStore(s3RecordingConfig{
+					Endpoint:        svc.config.RecordingsS3Endpoint,
+					Bucket:          svc.config.RecordingsS3Bucket,
+					Region:          svc.config.RecordingsS3Region,
+					Prefix:          svc.config.RecordingsS3Prefix,
+					AccessKeyID:     svc.config.RecordingsS3AccessKey,
+					SecretAccessKey: svc.config.RecordingsS3SecretKey,
+					UseSSL:          svc.config.RecordingsS3UseSSL,
+				})
+				if s3Err != nil {
+					svc.logger.Warn("S3 recording store init failed; will try filesystem fallback",
+						zap.Error(s3Err))
+				} else {
+					store = s3Store
+					svc.logger.Info("Remote-support recording enabled (S3)",
+						zap.String("endpoint", svc.config.RecordingsS3Endpoint),
+						zap.String("bucket", svc.config.RecordingsS3Bucket))
+				}
+			}
+			if store == nil && svc.config.RecordingsStoragePath != "" {
+				// Build the encryption keyring from config. Multi-key form
+				// (recordings_encryption_keys) takes precedence for rotation;
+				// the single-key form maps to id 0. Either may be empty for
+				// plaintext-on-disk. A configured-but-malformed key is a
+				// fail-closed error so a typo doesn't silently degrade to
+				// plaintext.
+				ring, ringErr := newRecordingKeyring(
+					svc.config.RecordingsEncryptionKeys,
+					svc.config.RecordingsEncryptionActiveKeyID,
+					svc.config.RecordingsEncryptionKey,
+				)
+				keyConfigured := svc.config.RecordingsEncryptionKeys != "" || svc.config.RecordingsEncryptionKey != ""
+				if ringErr != nil {
+					svc.logger.Warn("recording encryption keyring invalid; filesystem store NOT enabled — fix the key config",
+						zap.Error(ringErr))
+				} else if keyConfigured && (ring == nil || !ring.Enabled()) {
+					svc.logger.Warn("filesystem recording store NOT enabled — encryption key config present but produced an empty keyring")
+				} else {
+					fsStore, fsErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath, ring)
+					if fsErr != nil {
+						svc.logger.Warn("filesystem recording store init failed; recording disabled",
+							zap.Error(fsErr))
+					} else {
+						store = fsStore
+						svc.logger.Info("Remote-support recording enabled (filesystem)",
+							zap.String("path", svc.config.RecordingsStoragePath),
+							zap.Bool("encrypted_at_rest", ring.Enabled()))
+					}
+				}
+			}
+			if store != nil {
+				remoteSupport.SetRecordingStore(store)
+				remoteSupport.SetDefaultRetentionDays(svc.config.RecordingsDefaultRetentionDays)
+				// Sweep every hour. Cheap query — predicate index on
+				// recording_finalized_at WHERE recording_purged_at IS NULL.
+				remoteSupport.StartRecordingRetentionEnforcer(context.Background(), time.Hour)
+			}
+		}
+
+		// Per-session TURN credential minter. Soft-disabled when the
+		// shared secret / URIs aren't configured — callers can still
+		// supply ice_servers explicitly on start-session.
+		if svc.config != nil {
+			var turnURIs []string
+			for _, raw := range strings.Split(svc.config.TurnURIs, ",") {
+				if t := strings.TrimSpace(raw); t != "" {
+					turnURIs = append(turnURIs, t)
+				}
+			}
+			minter := NewTurnMinter(TurnConfig{
+				URIs:         turnURIs,
+				StaticSecret: svc.config.TurnStaticSecret,
+				Realm:        svc.config.TurnRealm,
+				TTL:          time.Duration(svc.config.TurnCredentialTTLSeconds) * time.Second,
+			})
+			if minter != nil {
+				remoteSupport.SetTurnMinter(minter)
+				svc.logger.Info("TURN credential minter enabled",
+					zap.Int("uris", len(turnURIs)),
+					zap.String("realm", minter.Realm()))
+			}
+		}
+
+		svc.remoteSupportHandler = remoteSupport
 	}
+
+	// Public agent surface: enrollment (carries an enrollment token), posture
+	// report (carries X-Agent-ID + auth token), config (same). These run
+	// OUTSIDE the JWT auth middleware because the agent doesn't have a tenant
+	// JWT yet — its own credentials authenticate the request.
+	if svc.agentHandler != nil {
+		publicAgent := router.Group("/api/v1/access")
+		svc.agentHandler.RegisterAgentPublicRoutes(publicAgent)
+		// Agent-side remote-support WebSocket — authenticated via the same
+		// X-Agent-ID + X-Auth-Token pattern as /agent/report.
+		if svc.remoteSupportHandler != nil {
+			svc.remoteSupportHandler.RegisterRemoteSupportPublicRoutes(publicAgent)
+		}
+	}
+
+	// Public APK download for Android Enterprise provisioning. The device
+	// fetches this during factory-reset setup, before any auth context exists.
+	router.GET("/downloads/openidx-agent.apk", svc.handleAgentAPKDownload)
 
 	// Temp access public endpoint (no auth - uses token)
 	router.GET("/temp-access/:token", svc.handleUseTempAccess)

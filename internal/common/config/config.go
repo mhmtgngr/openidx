@@ -139,6 +139,64 @@ type Config struct {
 	ElasticsearchTLS      bool   `mapstructure:"elasticsearch_tls"`
 	ElasticsearchCACert   string `mapstructure:"elasticsearch_ca_cert"`
 	AutoMigrate bool `mapstructure:"auto_migrate"`
+
+	// Play Integrity (Phase 1+ Android agent attestation). When both
+	// PlayIntegrityServiceAccountJSON and PlayIntegrityPackageName are set
+	// the access service verifies Play Integrity tokens server-side via
+	// Google's decodeIntegrityToken API. When unset, agent-reported tokens
+	// are persisted unverified — useful for dev, dangerous in prod.
+	PlayIntegrityServiceAccountJSON string `mapstructure:"play_integrity_service_account_json"`
+	PlayIntegrityPackageName        string `mapstructure:"play_integrity_package_name"`
+
+	// TURN credentials for Phase 4 remote-support. When TurnURIs and
+	// TurnStaticSecret are set the access service mints short-lived TURN
+	// credentials per session (coturn-style use-auth-secret). Unset leaves
+	// admins to supply ICE servers per session via the start-session API.
+	TurnURIs                 string `mapstructure:"turn_uris"`            // comma-separated turn:/turns: URIs
+	TurnStaticSecret         string `mapstructure:"turn_static_secret"`   // matches the TURN server's static-auth-secret
+	TurnRealm                string `mapstructure:"turn_realm"`           // optional
+	TurnCredentialTTLSeconds int    `mapstructure:"turn_credential_ttl_seconds"` // default 7200
+
+	// Remote-support recording (Phase 4 follow-up). When unset, recording
+	// is disabled even if admins request it on start-session. Storage
+	// preference:
+	//   1. S3 (or S3-compatible: MinIO, R2, Wasabi, B2) when
+	//      RecordingsS3Endpoint and RecordingsS3Bucket are set.
+	//   2. Filesystem when RecordingsStoragePath is set.
+	//   3. Disabled otherwise.
+	RecordingsStoragePath string `mapstructure:"recordings_storage_path"`
+
+	RecordingsS3Endpoint  string `mapstructure:"recordings_s3_endpoint"`     // e.g., "s3.amazonaws.com", "play.min.io", custom host:port
+	RecordingsS3Bucket    string `mapstructure:"recordings_s3_bucket"`
+	RecordingsS3Region    string `mapstructure:"recordings_s3_region"`
+	RecordingsS3Prefix    string `mapstructure:"recordings_s3_prefix"`       // optional key prefix inside the bucket
+	RecordingsS3AccessKey string `mapstructure:"recordings_s3_access_key"`
+	RecordingsS3SecretKey string `mapstructure:"recordings_s3_secret_key"`
+	RecordingsS3UseSSL    bool   `mapstructure:"recordings_s3_use_ssl"`      // default true; set false for local MinIO dev
+
+	// Recording retention default. Resolves at the bottom of the lookup
+	// chain — session override → per-org policy → this value → hard 90d.
+	RecordingsDefaultRetentionDays int `mapstructure:"recordings_default_retention_days"`
+
+	// Optional master key for filesystem-backend encryption at rest. When
+	// set, chunks are AES-GCM encrypted with HKDF-derived per-session keys
+	// before they hit disk. Base64-encoded 32 raw bytes (any other length
+	// is rejected at startup). Unset means the filesystem backend writes
+	// plaintext — fine for dev, the S3 backend should rely on bucket-level
+	// SSE-S3 / SSE-KMS instead.
+	//
+	// Single-key form. When RecordingsEncryptionKeys (plural) is unset,
+	// this key is loaded as key-id 0 and used for both reads and writes.
+	RecordingsEncryptionKey string `mapstructure:"recordings_encryption_key"`
+
+	// Multi-key form for key rotation. Comma-separated "id:base64key"
+	// entries, where id is 0-255. New recordings encrypt under
+	// RecordingsEncryptionActiveKeyID; recordings written under any other
+	// listed id still decrypt. Retire an old key by removing its entry
+	// once every recording it protected has been purged.
+	//   e.g. "1:<base64-32B>,2:<base64-32B>" with active_key_id=2
+	RecordingsEncryptionKeys        string `mapstructure:"recordings_encryption_keys"`
+	RecordingsEncryptionActiveKeyID int    `mapstructure:"recordings_encryption_active_key_id"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

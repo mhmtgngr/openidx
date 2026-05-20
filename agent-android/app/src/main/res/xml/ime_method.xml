@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Input-method declaration for the headless OpenIDX remote-injection
+    IME. No subtypes / settings activity — the keyboard renders nothing
+    and exists only to relay injected key events to the focused field's
+    InputConnection during a remote-support session.
+-->
+<input-method xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsSwitchingToNextInputMethod="true" />

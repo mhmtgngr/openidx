@@ -43,6 +43,9 @@ import {
   BrowzerManagement,
   Certificates,
   Devices,
+  AgentFleet,
+  KioskPolicies,
+  RemoteSupport,
   MFAManagement,
   RiskPolicies,
   LoginAnomalies,
@@ -197,6 +200,9 @@ function App() {
         <Route path="app-publish" element={<AppPublish />} />
         <Route path="certificates" element={<Certificates />} />
         <Route path="devices" element={<Devices />} />
+        <Route path="agent-fleet" element={<AgentFleet />} />
+        <Route path="kiosk-policies" element={<KioskPolicies />} />
+        <Route path="remote-support" element={<RemoteSupport />} />
 
         {/* Governance - Admin Protected */}
         <Route path="policies" element={<Policies />} />

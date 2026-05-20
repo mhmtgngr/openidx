@@ -1,0 +1,195 @@
+package com.openidx.agent.core
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+
+/**
+ * Wire types for the OpenIDX `/agent/...` HTTP API. Field names match the Go
+ * structs in /internal/access/agent_api.go verbatim — keep them in sync when
+ * the server protocol changes.
+ */
+@Serializable
+data class EnrollDeviceInfo(
+    val hostname: String = "",
+    val os: String = "android",
+    val arch: String = "",
+    val platform: String = "android",
+    val form_factor: String = "phone",
+    val management_mode: String = "unmanaged", // device_owner | profile_owner | unmanaged
+)
+
+@Serializable
+data class EnrollResponse(
+    val agent_id: String,
+    val device_id: String,
+    val auth_token: String,
+    val status: String,
+    val enrollment_method: String = "",
+    val enrolled_at: String = "",
+    val ziti_jwt: String? = null,
+)
+
+@Serializable
+data class PostureResultDetail(
+    val status: String,
+    val score: Double,
+    val message: String = "",
+    val details: Map<String, JsonElement> = emptyMap(),
+)
+
+@Serializable
+data class PostureCheckResult(
+    val check_type: String,
+    val severity: String,
+    val result: PostureResultDetail,
+    val ran_at: String,
+)
+
+@Serializable
+data class PostureReport(
+    val agent_id: String,
+    val device_id: String,
+    val results: List<PostureCheckResult>,
+)
+
+@Serializable
+data class AgentCheckConfig(
+    val name: String,
+    val enabled: Boolean = true,
+    val check_type: String = "",
+    val severity: String = "medium",
+)
+
+/**
+ * Kiosk policy block (Phase 3). Server-side schema is intentionally
+ * extensible — unknown keys inside branding / allowed_packages /
+ * lock_task_features are ignored on the client.
+ */
+@Serializable
+data class KioskPolicy(
+    val id: String,
+    val name: String = "",
+    val description: String = "",
+    val mode: String = "off",                       // single_app | multi_app | off
+    val allowed_packages: List<String> = emptyList(),
+    val primary_activity: String = "",
+    val lock_task_features: List<String> = emptyList(),
+    val branding: Map<String, JsonElement> = emptyMap(),
+    val has_exit_pin: Boolean = false,
+    val enabled: Boolean = true,
+)
+
+/**
+ * Remote-support session pointer (Phase 4). Populated by /agent/config when
+ * an admin has started a session targeting this agent and the agent hasn't
+ * connected to signaling yet. ice_servers is left as a raw JsonElement so
+ * the agent can pass it through to WebRTC unchanged.
+ *
+ * The `recording` flag drives the device-side consent banner — when true,
+ * the foreground service notification says the admin is *recording* the
+ * device, not just viewing it.
+ */
+@Serializable
+data class RemoteSupportInfo(
+    val session_id: String,
+    val mode: String = "interactive",
+    val ws_path: String = "",
+    val ice_servers: JsonElement? = null,
+    val recording: Boolean = false,
+)
+
+@Serializable
+data class AgentConfigResponse(
+    val checks: List<AgentCheckConfig> = emptyList(),
+    val report_interval: String = "1h",
+    val enforcement_policy: String = "monitor",
+    val kiosk_policy: KioskPolicy? = null,
+    val remote_support: RemoteSupportInfo? = null,
+)
+
+/**
+ * Thin client over the public `/agent` endpoints on the access service. The
+ * underlying [OkHttpClient] is swappable so the foreground service can plug
+ * in a Ziti-tunneled client once enrollment finishes; before that, the
+ * default direct-HTTPS client is used for enrollment-time bootstrapping.
+ */
+class ServerApi(
+    private val baseUrl: String,
+    private val httpClient: OkHttpClient = OkHttpClient(),
+) {
+
+    private val json = Json { ignoreUnknownKeys = true }
+    private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    /** Token-based enrollment (QR / Device-Owner provisioning path). */
+    suspend fun enrollWithToken(token: String, device: EnrollDeviceInfo): EnrollResponse =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(EnrollDeviceInfo.serializer(), device)
+                .toRequestBody(jsonMediaType)
+            val req = Request.Builder()
+                .url("$baseUrl/api/v1/access/agent/enroll")
+                .header("Authorization", "Bearer $token")
+                .post(body)
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                check(resp.isSuccessful) { "enroll failed: ${resp.code} ${resp.message}" }
+                json.decodeFromString(EnrollResponse.serializer(), resp.body!!.string())
+            }
+        }
+
+    /** OAuth-based enrollment (email/login path). Sends a tenant JWT. */
+    suspend fun enrollWithOAuth(accessToken: String, device: EnrollDeviceInfo): EnrollResponse =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(EnrollDeviceInfo.serializer(), device)
+                .toRequestBody(jsonMediaType)
+            val req = Request.Builder()
+                .url("$baseUrl/api/v1/access/agent/enroll/oauth")
+                .header("Authorization", "Bearer $accessToken")
+                .post(body)
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                check(resp.isSuccessful) { "oauth enroll failed: ${resp.code} ${resp.message}" }
+                json.decodeFromString(EnrollResponse.serializer(), resp.body!!.string())
+            }
+        }
+
+    /** Submit a posture report. */
+    suspend fun report(identity: AgentIdentity, report: PostureReport) =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(PostureReport.serializer(), report)
+                .toRequestBody(jsonMediaType)
+            val req = Request.Builder()
+                .url("$baseUrl/api/v1/access/agent/report")
+                .header("X-Agent-ID", identity.agentId)
+                .header("X-Auth-Token", identity.authToken)
+                .post(body)
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                check(resp.code == 202 || resp.isSuccessful) {
+                    "report failed: ${resp.code} ${resp.message}"
+                }
+            }
+        }
+
+    /** Pull the current agent configuration (check list, intervals, policy). */
+    suspend fun fetchConfig(identity: AgentIdentity): AgentConfigResponse =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url("$baseUrl/api/v1/access/agent/config")
+                .header("X-Agent-ID", identity.agentId)
+                .header("X-Auth-Token", identity.authToken)
+                .get()
+                .build()
+            httpClient.newCall(req).execute().use { resp ->
+                check(resp.isSuccessful) { "config fetch failed: ${resp.code}" }
+                json.decodeFromString(AgentConfigResponse.serializer(), resp.body!!.string())
+            }
+        }
+}
