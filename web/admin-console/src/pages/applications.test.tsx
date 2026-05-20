@@ -7,7 +7,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 vi.mock('../lib/api', () => ({
   api: {
     get: vi.fn(() => Promise.resolve([])),
+    getWithHeaders: vi.fn(() => Promise.resolve({ data: [], headers: {} })),
     post: vi.fn(() => Promise.resolve({})),
+    put: vi.fn(() => Promise.resolve({})),
+    delete: vi.fn(() => Promise.resolve({})),
   },
 }))
 
@@ -46,6 +49,7 @@ describe('ApplicationsPage', () => {
     document.body.innerHTML = ''
 
     vi.mocked(api.get).mockResolvedValue(mockApplications)
+    vi.mocked(api.getWithHeaders).mockResolvedValue({ data: mockApplications, headers: {} })
   })
 
   it('renders the applications page heading', async () => {
@@ -74,7 +78,7 @@ describe('ApplicationsPage', () => {
     render(<ApplicationsPage />, { wrapper })
 
     await waitFor(() => {
-      const addButton = screen.queryByRole('button', { name: /add/i })
+      const addButton = screen.queryByRole('button', { name: /register application/i })
       expect(addButton).toBeInTheDocument()
     })
   })

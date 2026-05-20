@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -68,9 +68,27 @@ describe('UserProfilePage', () => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
 
-    // Simple mock that returns the profile for all requests
-    // The page has many different API calls, so we just return a basic response
-    vi.mocked(api.get).mockResolvedValue(mockProfile)
+    // The page issues many GET queries with different expected shapes:
+    // the profile/password-info/mfa-methods endpoints return objects, while the
+    // sessions / trusted-browsers / tokens / consents endpoints return arrays.
+    // Return the right shape per URL so list consumers (.filter/.map) don't crash.
+    vi.mocked(api.get).mockImplementation((url: string) => {
+      if (url === '/api/v1/identity/users/me') return Promise.resolve(mockProfile)
+      if (url.includes('/password-info')) {
+        return Promise.resolve({
+          source: 'local',
+          is_ldap: false,
+          is_azure_ad: false,
+          is_directory_managed: false,
+          password_must_change: false,
+        })
+      }
+      if (url.includes('/mfa/methods')) {
+        return Promise.resolve({ methods: {}, enabled_count: 0, mfa_enabled: false })
+      }
+      // Array-returning endpoints: sessions, trusted-browsers, tokens, consents
+      return Promise.resolve([])
+    })
   })
 
   it('renders without crashing', () => {
@@ -81,12 +99,16 @@ describe('UserProfilePage', () => {
     expect(document.body).toBeInTheDocument()
   })
 
-  it('renders the user profile component', () => {
+  it('renders the user profile component', async () => {
     const wrapper = createWrapper()
 
     render(<UserProfilePage />, { wrapper })
 
-    // Component should render
+    // The profile query resolves asynchronously; once it does the page
+    // renders the "My Profile" heading inside the .space-y-6 container.
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /My Profile/i })).toBeInTheDocument()
+    })
     const container = document.querySelector('.space-y-6')
     expect(container).toBeInTheDocument()
   })
