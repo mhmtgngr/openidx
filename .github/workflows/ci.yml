@@ -26,39 +26,62 @@ jobs:
       go_changed: ${{ steps.changes.outputs.go_changed }}
       frontend_changed: ${{ steps.changes.outputs.frontend_changed }}
     steps:
+      # fetch-depth: 0 is REQUIRED — the change detection below diffs two
+      # arbitrary commits, and the default shallow (depth-1) checkout
+      # doesn't contain the base commit, making `git diff <base> <head>`
+      # fail with exit 128 and red-X the whole pipeline on every PR.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect what changed
         id: changes
         run: |
+          # Resolve the diff base for the current event.
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }})
+            BASE="${{ github.event.pull_request.base.sha }}"
           else
-            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+            BASE="${{ github.event.before }}"
           fi
 
+          # When the base is missing (first push to a branch reports an
+          # all-zero before-SHA), or otherwise unresolvable even with full
+          # history (force-push, etc.), fall back to running the full
+          # pipeline. Over-running CI is always safe; a hard `git diff`
+          # failure here would block every downstream job.
+          ZERO="0000000000000000000000000000000000000000"
+          if [[ -z "$BASE" || "$BASE" == "$ZERO" ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "Diff base '$BASE' is unavailable — running full CI"
+            echo "skip_ci=false" >> "$GITHUB_OUTPUT"
+            echo "go_changed=true" >> "$GITHUB_OUTPUT"
+            echo "frontend_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "$BASE" "${{ github.sha }}")
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
-          # Check if only docs changed
-          if echo "$CHANGED_FILES" | grep -vE "^(\.github/|docs/|\.md$|\.txt$)"; then
-            echo "skip_ci=false" >> $GITHUB_OUTPUT
+          # Run CI unless every changed path is docs-only (.github/, docs/,
+          # or a *.md / *.txt file anywhere). -q so we don't echo matches.
+          if echo "$CHANGED_FILES" | grep -qvE '^(\.github/|docs/)|\.(md|txt)$'; then
+            echo "skip_ci=false" >> "$GITHUB_OUTPUT"
           else
-            echo "skip_ci=true" >> $GITHUB_OUTPUT
+            echo "skip_ci=true" >> "$GITHUB_OUTPUT"
           fi
 
-          # Check if Go code changed
-          if echo "$CHANGED_FILES" | grep -E "\.(go|mod|sum)$"; then
-            echo "go_changed=true" >> $GITHUB_OUTPUT
+          # Go code changed?
+          if echo "$CHANGED_FILES" | grep -qE '\.(go|mod|sum)$'; then
+            echo "go_changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "go_changed=false" >> $GITHUB_OUTPUT
+            echo "go_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # Check if frontend code changed
-          if echo "$CHANGED_FILES" | grep -E "^web/"; then
-            echo "frontend_changed=true" >> $GITHUB_OUTPUT
+          # Frontend code changed?
+          if echo "$CHANGED_FILES" | grep -qE '^web/'; then
+            echo "frontend_changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "frontend_changed=false" >> $GITHUB_OUTPUT
+            echo "frontend_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
   # Build matrix for different Go versions
@@ -513,11 +536,28 @@ jobs:
     steps:
       - name: Check all required jobs passed
         run: |
-          if [[ "${{ needs.build-matrix.result }}" != "success" ]] || \
-             [[ "${{ needs.lint.result }}" != "success" ]] || \
-             [[ "${{ needs.test-unit.result }}" != "success" ]] || \
-             [[ "${{ needs.vulnerability-check.result }}" != "success" ]]; then
+          # A gated job that detect-changes skipped (e.g. a docs-only or
+          # frontend-only PR where go_changed=false) reports result
+          # "skipped", which is a PASS for the gate — not a failure. Only
+          # genuine "failure" / "cancelled" results should block. Treating
+          # "skipped" as failure (the old behavior) made Required Checks
+          # red on every PR that didn't touch Go code, defeating the
+          # change-detection optimization entirely.
+          failed=0
+          for jr in \
+            "build-matrix=${{ needs.build-matrix.result }}" \
+            "lint=${{ needs.lint.result }}" \
+            "test-unit=${{ needs.test-unit.result }}" \
+            "vulnerability-check=${{ needs.vulnerability-check.result }}"; do
+            name="${jr%%=*}"
+            result="${jr#*=}"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "Required check '$name' did not pass: $result"
+              failed=1
+            fi
+          done
+          if [[ "$failed" -ne 0 ]]; then
             echo "Required checks failed"
             exit 1
           fi
-          echo "All required checks passed"
+          echo "All required checks passed (success or skipped)"
