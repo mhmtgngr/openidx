@@ -8,6 +8,10 @@ describe('cn utility', () => {
   })
 
   it('handles conditional classes', () => {
+    // The literal `false &&` is the point of the test — verifying cn()
+    // drops falsy conditional class args — so the constant-expression
+    // lint is intentionally suppressed here.
+    // eslint-disable-next-line no-constant-binary-expression
     const result = cn('base', false && 'hidden', 'visible')
     expect(result).toBe('base visible')
   })

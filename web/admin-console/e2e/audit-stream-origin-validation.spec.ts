@@ -790,7 +790,7 @@ test.describe('WebSocket Origin Security - Edge Cases', () => {
       const allowedOrigins = ['https://example.com']
 
       // Remove default ports for comparison
-      let normalizedOrigin = requestOrigin.replace(':443', '').replace(':80', '')
+      const normalizedOrigin = requestOrigin.replace(':443', '').replace(':80', '')
 
       const isAllowed = allowedOrigins.includes(normalizedOrigin)
 
