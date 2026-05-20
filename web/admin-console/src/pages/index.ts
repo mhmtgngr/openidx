@@ -104,6 +104,7 @@ export { ResetPasswordPage as ResetPassword } from './reset-password'
 export { MagicLinkVerifyPage as MagicLinkVerify } from './magic-link-verify'
 
 // My Pages
+export { UserProfilePage as UserProfile } from './user-profile'
 export { MyAccessPage as MyAccess } from './my-access'
 export { MyDevicesPage as MyDevices } from './my-devices'
 export { TrustedBrowsersPage as TrustedBrowsers } from './trusted-browsers'

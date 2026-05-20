@@ -81,6 +81,7 @@ import {
   ForgotPassword,
   ResetPassword,
   MagicLinkVerify,
+  UserProfile,
   MyAccess,
   MyDevices,
   TrustedBrowsers,
@@ -169,7 +170,7 @@ function App() {
         <Route path="dashboard" element={<Dashboard />} />
 
         {/* My Pages (user-facing) */}
-        <Route path="profile" element={<div className="p-8"><h1 className="text-2xl font-bold">My Profile</h1><p className="text-muted-foreground">Profile management coming soon</p></div>} />
+        <Route path="profile" element={<UserProfile />} />
         <Route path="app-launcher" element={<AppLauncher />} />
         <Route path="my-access" element={<MyAccess />} />
         <Route path="my-devices" element={<MyDevices />} />
