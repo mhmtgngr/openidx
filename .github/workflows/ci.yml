@@ -536,11 +536,28 @@ jobs:
     steps:
       - name: Check all required jobs passed
         run: |
-          if [[ "${{ needs.build-matrix.result }}" != "success" ]] || \
-             [[ "${{ needs.lint.result }}" != "success" ]] || \
-             [[ "${{ needs.test-unit.result }}" != "success" ]] || \
-             [[ "${{ needs.vulnerability-check.result }}" != "success" ]]; then
+          # A gated job that detect-changes skipped (e.g. a docs-only or
+          # frontend-only PR where go_changed=false) reports result
+          # "skipped", which is a PASS for the gate — not a failure. Only
+          # genuine "failure" / "cancelled" results should block. Treating
+          # "skipped" as failure (the old behavior) made Required Checks
+          # red on every PR that didn't touch Go code, defeating the
+          # change-detection optimization entirely.
+          failed=0
+          for jr in \
+            "build-matrix=${{ needs.build-matrix.result }}" \
+            "lint=${{ needs.lint.result }}" \
+            "test-unit=${{ needs.test-unit.result }}" \
+            "vulnerability-check=${{ needs.vulnerability-check.result }}"; do
+            name="${jr%%=*}"
+            result="${jr#*=}"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "Required check '$name' did not pass: $result"
+              failed=1
+            fi
+          done
+          if [[ "$failed" -ne 0 ]]; then
             echo "Required checks failed"
             exit 1
           fi
-          echo "All required checks passed"
+          echo "All required checks passed (success or skipped)"
