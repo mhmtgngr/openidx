@@ -1,8 +1,27 @@
 # OpenIDX Feature Priority Implementation Plan
 
+> **⚠️ Status note (2026-05-20): much of this plan is already implemented.**
+> This was an early competitor-analysis wishlist. As of now, the "critical"
+> features below are **shipped**, not pending:
+> - **Passwordless / WebAuthn-FIDO2** — built (`internal/identity` WebAuthn
+>   handlers, `mfa_webauthn` tables, admin Security Keys page).
+> - **Push notification MFA** — built (`internal/mfa` push, `mfa_push_*`
+>   tables, admin Push Devices page).
+> - **Adaptive / risk-based auth** — built (`internal/risk`, admin Risk
+>   Policies / Risk Dashboard / Login Anomalies pages).
+> - **SCIM provisioning, AD/LDAP directories, JIT provisioning** — built
+>   (`internal/provisioning`, `internal/directory`, provisioning rules).
+>
+> Treat the items below as historical context, not an active backlog. The
+> current near-term priorities are in `docs/PROJECT-STATUS.md` (stabilize +
+> make deployable), not net-new IAM features. Re-derive any real feature-gap
+> analysis against the live code before using this list.
+
 ## Quick Summary
 
-Based on the comprehensive competitor analysis, OpenIDX currently has **65% feature parity** with competitors. Here are the **top 10 critical features** to implement for enterprise readiness:
+Based on the original competitor analysis, OpenIDX was assessed at ~65%
+feature parity. That assessment is now stale — the top features it flagged
+have since been implemented (see the status note above).
 
 ---
 
