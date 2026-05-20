@@ -5,12 +5,16 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // Mock navigator.clipboard
+// Must be configurable so @testing-library/user-event's setup() can attach its
+// own clipboard stub on top of it; otherwise userEvent.setup() throws
+// "Cannot redefine property: clipboard".
 const mockClipboard = {
   writeText: vi.fn(() => Promise.resolve()),
 }
 Object.defineProperty(navigator, 'clipboard', {
   value: mockClipboard,
   writable: true,
+  configurable: true,
 })
 
 // Mock the API module

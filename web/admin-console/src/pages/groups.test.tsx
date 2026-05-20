@@ -106,8 +106,8 @@ describe('GroupsPage', () => {
     render(<GroupsPage />, { wrapper })
 
     await waitFor(() => {
-      expect(screen.getByText(/5/)).toBeInTheDocument()
-      expect(screen.getByText(/15/)).toBeInTheDocument()
+      expect(screen.getByText('5')).toBeInTheDocument()
+      expect(screen.getByText('15')).toBeInTheDocument()
     })
   })
 
@@ -117,7 +117,7 @@ describe('GroupsPage', () => {
     render(<GroupsPage />, { wrapper })
 
     await waitFor(() => {
-      const addButton = screen.queryByRole('button', { name: /add/i })
+      const addButton = screen.queryByRole('button', { name: /create group/i })
       expect(addButton).toBeInTheDocument()
     })
   })

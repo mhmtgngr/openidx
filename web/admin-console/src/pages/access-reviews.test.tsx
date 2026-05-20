@@ -7,7 +7,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 vi.mock('../lib/api', () => ({
   api: {
     get: vi.fn(() => Promise.resolve([])),
+    getWithHeaders: vi.fn(() => Promise.resolve({ data: [], headers: {} })),
     post: vi.fn(() => Promise.resolve({})),
+    put: vi.fn(() => Promise.resolve({})),
+    patch: vi.fn(() => Promise.resolve({})),
   },
 }))
 
@@ -15,6 +18,15 @@ vi.mock('../lib/api', () => ({
 vi.mock('../hooks/use-toast', () => ({
   useToast: () => ({
     toast: vi.fn(),
+  }),
+}))
+
+// Mock auth hook (component reads user.id for reviewer assignment)
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({
+    user: { id: 'reviewer-1', username: 'reviewer', email: 'reviewer@example.com' },
+    isAuthenticated: true,
+    isLoading: false,
   }),
 }))
 
@@ -56,6 +68,7 @@ describe('AccessReviewsPage', () => {
     document.body.innerHTML = ''
 
     vi.mocked(api.get).mockResolvedValue(mockReviews)
+    vi.mocked(api.getWithHeaders).mockResolvedValue({ data: mockReviews, headers: {} })
   })
 
   it('renders the access reviews page heading', async () => {
@@ -64,7 +77,7 @@ describe('AccessReviewsPage', () => {
     render(<AccessReviewsPage />, { wrapper })
 
     await waitFor(() => {
-      expect(screen.getByText(/Access Review/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /Access Reviews/i })).toBeInTheDocument()
     })
   })
 
@@ -103,6 +116,7 @@ describe('AccessReviewsPage', () => {
     const wrapper = createWrapper()
 
     vi.mocked(api.get).mockResolvedValue([])
+    vi.mocked(api.getWithHeaders).mockResolvedValue({ data: [], headers: {} })
 
     render(<AccessReviewsPage />, { wrapper })
 

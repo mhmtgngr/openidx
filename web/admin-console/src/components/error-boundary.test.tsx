@@ -73,17 +73,21 @@ describe('ErrorBoundary', () => {
 
     expect(screen.getByText('Something went wrong')).toBeInTheDocument()
 
-    const resetButton = screen.getByRole('button', { name: 'Try again' })
-    const user = userEvent.setup()
-    await user.click(resetButton)
-
-    // After reset, the error state should be cleared
+    // Swap the children to a non-throwing variant BEFORE resetting. While the
+    // boundary is in its error state it renders the fallback (not children), so
+    // this rerender does not re-trigger the throw. Then clicking "Try again"
+    // clears hasError and the boundary renders the now-safe children.
     rerender(
       <ErrorBoundary>
         <ThrowError shouldThrow={false} />
       </ErrorBoundary>
     )
 
+    const resetButton = screen.getByRole('button', { name: 'Try again' })
+    const user = userEvent.setup()
+    await user.click(resetButton)
+
+    // After reset, the error state should be cleared and children render.
     expect(screen.getByText('Normal content')).toBeInTheDocument()
   })
 
