@@ -59,22 +59,41 @@ class InputInjector(
                 svc?.globalAction(event.action) ?: warnUnavailable("global_action=${event.action}")
             }
             "key" -> {
-                // Named keys are handled via Accessibility ACTION_IME_ENTER /
-                // SET_TEXT-based emulation. Arbitrary KeyCode injection is
-                // not supported here — that requires a custom InputMethodService,
-                // tracked as future work in the design doc.
-                val s = svc ?: run { warnUnavailable("key (no accessibility)"); return }
+                // Arbitrary KeyCode (key_code != 0) goes through the IME when
+                // the OpenIDX keyboard is the active input method — that's the
+                // only path that can inject e.g. arrow keys / page up-down /
+                // modifier combos. Otherwise we handle the three named keys
+                // via the Accessibility emulation, and drop anything else
+                // with a warning.
+                val ime = OpenIDXInputMethodService.instance
+                if (event.key_code != 0 && ime != null &&
+                    OpenIDXInputMethodService.isActiveInputMethod(context)
+                ) {
+                    if (!ime.injectKeyCode(event.key_code)) {
+                        Log.w(TAG, "IME key_code ${event.key_code} produced no effect")
+                    }
+                    return
+                }
+                val s = svc ?: run { warnUnavailable("key (no IME / accessibility)"); return }
                 val ok = when (event.key_name.lowercase()) {
                     "enter", "return" -> s.pressEnter()
                     "backspace", "del", "delete" -> s.pressBackspace()
                     "tab" -> s.pressTab()
-                    "" -> { warnUnavailable("key_code=${event.key_code} (no key_name)"); false }
-                    else -> { warnUnavailable("key_name=${event.key_name} unsupported"); false }
+                    "" -> { warnUnavailable("key_code=${event.key_code} (no active IME, no key_name)"); false }
+                    else -> { warnUnavailable("key_name=${event.key_name} needs the OpenIDX keyboard active"); false }
                 }
-                if (!ok) Log.w(TAG, "key event ${event.key_name} produced no effect")
+                if (!ok) Log.w(TAG, "key event produced no effect")
             }
             "text" -> {
-                val s = svc ?: run { warnUnavailable("text (no accessibility)"); return }
+                // Prefer the IME's commitText (proper composition pipeline)
+                // when the OpenIDX keyboard is active; otherwise fall back to
+                // the Accessibility ACTION_SET_TEXT path.
+                val ime = OpenIDXInputMethodService.instance
+                if (ime != null && OpenIDXInputMethodService.isActiveInputMethod(context)) {
+                    if (ime.injectText(event.text)) return
+                    // commitText failed (no input connection) — fall through.
+                }
+                val s = svc ?: run { warnUnavailable("text (no IME / accessibility)"); return }
                 if (!s.injectText(event.text, replace = event.replace)) {
                     Log.w(TAG, "text inject failed (no focused editable)")
                 }

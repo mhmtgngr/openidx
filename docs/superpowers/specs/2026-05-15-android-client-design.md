@@ -285,7 +285,7 @@ encryption for free.
 | Device Owner (QR provisioning) | Accessibility Service (system-pre-granted on DO devices) | No user toggle needed; we still use the AS API so the same code path serves both |
 | BYOD / sideloaded | Accessibility Service (user-toggled) | Requires the user to enable the service in Settings. `accessibility_audit` posture check surfaces non-OpenIDX accessibility services to admins |
 | Text + named keys (Backspace / Enter / Tab) | Accessibility Service via `ACTION_SET_TEXT` + `ACTION_IME_ENTER` | Writes into the currently input-focused editable node. See "Text + named-key injection" below |
-| Arbitrary KeyCode injection | Not implemented | Would require a custom `InputMethodService`. Deferred — see "Future work" below |
+| Arbitrary KeyCode injection | Headless `OpenIDXInputMethodService` via `InputConnection.sendKeyEvent` | Only effective while the OpenIDX keyboard is the active input method (user-selected or DPM-forced). See "Arbitrary KeyCode injection via headless IME" below |
 
 ### Text + named-key injection (wired)
 
@@ -343,15 +343,42 @@ Wire shape: same `openidx-input` data channel, event `"clipboard"`,
 returns boolean so `InputInjector` can log a warning when the
 ClipboardManager service is unavailable (some restricted profiles).
 
+### Arbitrary KeyCode injection via headless IME (wired)
+
+A headless `OpenIDXInputMethodService` provides the full hardware-
+keyboard equivalent — arrow keys, page up/down, home/end, forward-
+delete, and any other Android `KeyEvent` keycode — by holding an
+`InputConnection` to the focused field and calling `sendKeyEvent`.
+
+- **Headless**: `onCreateInputView` returns an empty view; the IME
+  never renders a keyboard. It exists purely to borrow the IME
+  plumbing for the remote-control data path.
+- **Routing precedence** (`InputInjector`):
+    - `key` with `key_code != 0` → IME `injectKeyCode` **when the
+      OpenIDX keyboard is the active input method**; otherwise the
+      Accessibility named-key emulation (enter / backspace / tab).
+    - `text` → IME `commitText` (proper composition pipeline) when
+      active; otherwise Accessibility `ACTION_SET_TEXT`.
+- **Enablement caveat**: an IME can only inject into a field while it
+  is the *selected* input method for that field. The user picks the
+  OpenIDX keyboard (Settings → Languages & input), or DPM forces it on
+  Device-Owner devices. When it isn't active,
+  `OpenIDXInputMethodService.isActiveInputMethod` returns false and the
+  injector falls back to the Accessibility path automatically.
+- **Admin viewer**: the overlay's `onKeyDown` maps arrow / page / home /
+  end / forward-delete keys to Android keycodes and sends them as `key`
+  events; Enter / Backspace / Tab carry both `key_name` and `key_code`
+  so the device uses whichever path is available; Esc maps to the
+  device Back action; printable characters continue through the
+  dedicated text input.
+
 ### Future work
 
-- **Custom InputMethodService** for arbitrary KeyCode injection. Would
-  give the admin a full hardware-keyboard equivalent (modifier keys,
-  arrow keys, function keys). Requires the user (or DPM, on Device
-  Owner devices) to pick it as the default keyboard, which is a
-  significant UX shift — defer until a concrete use case demands it.
 - Reflect `injectText` failures back to the admin viewer so the operator
   knows when the field they expected isn't actually focused.
+- A DPM helper to force the OpenIDX IME as the active input method for
+  the duration of a session on Device-Owner devices (today the user
+  selects it manually).
 - Audit clipboard pushes at the server level (currently logged only
   client-side; would need a server-side hook that observes the
   data-channel stream or an explicit `POST /clipboard-pushed` call).
@@ -871,4 +898,3 @@ in enrollment metadata + the `enterprise_managed` posture check:
 
 - Push notifications (FCM) so the server can wake the agent on policy changes without polling.
 - iOS / Windows / macOS / Linux unified clients — extend after Android stabilizes.
-- Custom InputMethodService for arbitrary KeyCode injection (remote support).

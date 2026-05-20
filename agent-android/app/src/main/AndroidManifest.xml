@@ -109,6 +109,23 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Phase 4: headless IME for arbitrary KeyCode injection during
+             remote support. Renders no keyboard; relays injected key
+             events to the focused field's InputConnection. Only effective
+             while selected as the active input method (the user picks it,
+             or DPM forces it on Device-Owner devices). -->
+        <service
+            android:name=".remote.OpenIDXInputMethodService"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/ime_method" />
+        </service>
+
         <!-- DeviceAdminReceiver — installed by Android Enterprise provisioning
              so the app becomes Device Owner. Phase 3 (kiosk) and Phase 4
              (remote control) will hang their privileged hooks here. -->

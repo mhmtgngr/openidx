@@ -295,35 +295,31 @@ export function RemoteSupportViewer({
   }
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (mode !== 'interactive') return
+    // Esc maps to the device Back action (most natural for the viewer).
     if (e.key === 'Escape') {
       sendInput({ event: 'global_action', action: 'back' })
       e.preventDefault()
       return
     }
-    if (e.key === 'Home') {
-      sendInput({ event: 'global_action', action: 'home' })
+    // Named keys carry both key_name (Accessibility fallback) and
+    // key_code (IME path) so the device uses whichever is available.
+    const named = NAMED_KEYS[e.key]
+    if (named) {
+      sendInput({ event: 'key', key_name: named.name, key_code: named.code })
       e.preventDefault()
       return
     }
-    // Named keys that need to land in the focused text field: forward
-    // as 'key' events. Regular character keys are handled separately
-    // through the dedicated text input below so we don't try to
-    // single-character-spam over the data channel on every keystroke.
-    if (e.key === 'Backspace') {
-      sendInput({ event: 'key', key_name: 'backspace' })
+    // Special navigation / editing keys that have no Accessibility
+    // emulation — sent with an Android key_code, only effective when the
+    // OpenIDX keyboard is the active input method on the device.
+    const code = ANDROID_KEYCODES[e.key]
+    if (code !== undefined) {
+      sendInput({ event: 'key', key_code: code })
       e.preventDefault()
       return
     }
-    if (e.key === 'Enter') {
-      sendInput({ event: 'key', key_name: 'enter' })
-      e.preventDefault()
-      return
-    }
-    if (e.key === 'Tab') {
-      sendInput({ event: 'key', key_name: 'tab' })
-      e.preventDefault()
-      return
-    }
+    // Printable characters go through the dedicated text input below so
+    // we don't single-character-spam the data channel on every keystroke.
   }
 
   // Text-input state — kept separate from the overlay so the admin can
@@ -398,7 +394,7 @@ export function RemoteSupportViewer({
 
       <p className="text-xs text-muted-foreground">
         {mode === 'interactive'
-          ? 'Tap = single press · drag = swipe · Esc = back · Home = home · Backspace / Enter / Tab pass through.'
+          ? 'Tap = single press · drag = swipe · Esc = back · Enter / Backspace / Tab pass through · arrows + page keys need the OpenIDX keyboard active on the device.'
           : 'View-only — input is disabled for this session.'}
       </p>
 
@@ -520,6 +516,32 @@ function parseEnvelope(raw: unknown): { type: string; payload?: unknown } | null
     if (obj && typeof obj === 'object' && typeof obj.type === 'string') return obj
   } catch { /* ignore */ }
   return null
+}
+
+// NAMED_KEYS carry both a name (Accessibility emulation path) and the
+// Android KeyEvent code (IME path). The device picks whichever path is
+// available — the IME when the OpenIDX keyboard is active, else the
+// Accessibility ACTION_IME_ENTER / SET_TEXT emulation.
+const NAMED_KEYS: Record<string, { name: string; code: number }> = {
+  Enter: { name: 'enter', code: 66 },      // KEYCODE_ENTER
+  Backspace: { name: 'backspace', code: 67 }, // KEYCODE_DEL
+  Tab: { name: 'tab', code: 61 },          // KEYCODE_TAB
+}
+
+// ANDROID_KEYCODES maps browser KeyboardEvent.key values to Android
+// KeyEvent.KEYCODE_* ints for keys that have no Accessibility emulation.
+// These only land when the OpenIDX IME is the active input method on
+// the device.
+const ANDROID_KEYCODES: Record<string, number> = {
+  ArrowUp: 19,     // KEYCODE_DPAD_UP
+  ArrowDown: 20,   // KEYCODE_DPAD_DOWN
+  ArrowLeft: 21,   // KEYCODE_DPAD_LEFT
+  ArrowRight: 22,  // KEYCODE_DPAD_RIGHT
+  Delete: 112,     // KEYCODE_FORWARD_DEL
+  PageUp: 92,      // KEYCODE_PAGE_UP
+  PageDown: 93,    // KEYCODE_PAGE_DOWN
+  Home: 122,       // KEYCODE_MOVE_HOME
+  End: 123,        // KEYCODE_MOVE_END
 }
 
 function openSignalingSocket(url: string): WebSocket {
