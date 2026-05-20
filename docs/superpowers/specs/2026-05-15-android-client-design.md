@@ -622,16 +622,17 @@ value immediately on save.
 `recordings_encryption_key` is set the filesystem store transparently
 encrypts each chunk before it hits disk.
 
-- **Cipher**: AES-256-GCM. Master key is 32 raw bytes (base64-encoded
-  in config) shared across all sessions. Per-session keys are derived
-  via HKDF-SHA256(master, salt=∅, info=`"openidx-recording-v1:<sid>"`)
-  — same master key, different ciphertext per session, no nonce reuse
-  across sessions.
+- **Cipher**: AES-256-GCM. Master keys are 32 raw bytes (base64-encoded
+  in config). Per-session keys are derived via HKDF-SHA256(master,
+  salt=∅, info=`"openidx-recording-v1:<sid>"`) — same master key,
+  different ciphertext per session, no nonce reuse across sessions.
 - **Wire framing on disk**: each Append() call writes one self-
-  contained frame: `[4-byte BE length][12-byte nonce][ciphertext+
-  16-byte GCM tag]`. The length prefix lets the read path detect a
-  crash-truncated final frame and surface it as a clean EOF rather
-  than failing the whole recording.
+  contained frame: `[1-byte key-id][4-byte BE length][12-byte nonce][
+  ciphertext+16-byte GCM tag]`. The key-id identifies which master key
+  in the keyring protected the frame (see Key rotation below). The
+  length prefix lets the read path detect a crash-truncated final frame
+  and surface it as a clean EOF rather than failing the whole
+  recording.
 - **Tamper detection**: GCM authentication tag catches any
   modification of the ciphertext or nonce; the read path returns the
   underlying GCM error so the audit log captures the corruption.
@@ -645,24 +646,50 @@ encrypts each chunk before it hits disk.
   but malformed (bad base64, wrong byte length) refuses to start the
   store rather than silently degrading to plaintext-on-disk.
 
-**Tests** (`recording_crypto_test.go`): 8 unit tests covering AEAD
-round-trip, key-length validation, tamper detection (single-byte flip
-→ GCM auth fails), per-session key distinctness (cross-session decrypt
-must fail), truncated-tail recovery, the integration round-trip
-through `filesystemRecordingStore`, plaintext-mode back-compat, and
-the on-disk-plaintext-leak guard so a future refactor can't silently
-break the encryption-at-rest claim.
+**Key rotation (wired)**: a `recordingKeyring` holds multiple master
+keys indexed by a 1-byte id. New recordings encrypt under the active
+key's id; the read path resolves each frame's key by id, so a
+recording written under a since-rotated key still decrypts as long as
+its key remains in the ring. The decrypting reader caches the derived
+per-session AEAD per key id, so a multi-thousand-frame recording does
+at most one HKDF per distinct key id (one in practice — a file is
+written within a single session, all under one key).
+
+Operational rotate-then-retire flow:
+1. Add a new key with a fresh id to `recordings_encryption_keys` and
+   point `recordings_encryption_active_key_id` at it. New recordings
+   use it; all existing recordings keep their old id and still read.
+2. Once every recording protected by an old key has aged out of
+   retention (or been purged / legal-hold-released), remove that key's
+   entry. Recordings under a retired key then fail to decrypt with an
+   error that names the missing key id.
+
+Single-key config (`recordings_encryption_key`) maps to key-id 0 and
+remains valid — no migration needed when adopting the multi-key form.
+
+**Tests** (`recording_crypto_test.go`): AEAD round-trip, key-length
+validation, tamper detection (single-byte flip → GCM auth fails),
+truncated-tail recovery, keyring construction (disabled-when-empty,
+single-key→id-0, multi-key parse, active-id-must-exist, bad-entry
+rejection), the full rotate-then-retire lifecycle (write under key 1 →
+rotate to key 2 keeping key 1 → both read → retire key 1 → old
+recording fails with the missing-id error), the integration round-trip
+through `filesystemRecordingStore`, plaintext-mode back-compat, and an
+on-disk-plaintext-leak guard so a future refactor can't silently break
+the encryption-at-rest claim.
 
 **Configuration**:
 
 | Setting | Env var | Notes |
 |---|---|---|
-| `recordings_encryption_key` | `RECORDINGS_ENCRYPTION_KEY` | base64 of 32 raw bytes. Unset = plaintext on disk. Bad value = filesystem store refuses to start. S3 backend ignores this — use bucket-level SSE-S3 / SSE-KMS for the S3 path. |
+| `recordings_encryption_key` | `RECORDINGS_ENCRYPTION_KEY` | Single-key form. base64 of 32 raw bytes; loaded as key-id 0. Unset = plaintext on disk. |
+| `recordings_encryption_keys` | `RECORDINGS_ENCRYPTION_KEYS` | Multi-key form for rotation. Comma-separated `id:base64key` (id 0-255). Takes precedence over the single-key form. |
+| `recordings_encryption_active_key_id` | `RECORDINGS_ENCRYPTION_ACTIVE_KEY_ID` | Which id new recordings encrypt under. Must exist in `recordings_encryption_keys`. |
 
-**Deferred**:
-- Master-key rotation: today the master key is single-valued and
-  immutable for the life of a deployment. Rotation would need a
-  key-versioning prefix on each frame and a multi-key reader.
+A configured-but-malformed key (bad base64, wrong length, active id not
+in the set) is fail-closed: the filesystem store refuses to start
+rather than silently degrading to plaintext. S3 backend ignores all of
+this — use bucket-level SSE-S3 / SSE-KMS for the S3 path.
 - Global disk-usage quota check before each chunk append.
 
 ### Out of scope (deferred)

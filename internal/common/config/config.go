@@ -184,7 +184,19 @@ type Config struct {
 	// is rejected at startup). Unset means the filesystem backend writes
 	// plaintext — fine for dev, the S3 backend should rely on bucket-level
 	// SSE-S3 / SSE-KMS instead.
+	//
+	// Single-key form. When RecordingsEncryptionKeys (plural) is unset,
+	// this key is loaded as key-id 0 and used for both reads and writes.
 	RecordingsEncryptionKey string `mapstructure:"recordings_encryption_key"`
+
+	// Multi-key form for key rotation. Comma-separated "id:base64key"
+	// entries, where id is 0-255. New recordings encrypt under
+	// RecordingsEncryptionActiveKeyID; recordings written under any other
+	// listed id still decrypt. Retire an old key by removing its entry
+	// once every recording it protected has been purged.
+	//   e.g. "1:<base64-32B>,2:<base64-32B>" with active_key_id=2
+	RecordingsEncryptionKeys        string `mapstructure:"recordings_encryption_keys"`
+	RecordingsEncryptionActiveKeyID int    `mapstructure:"recordings_encryption_active_key_id"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption

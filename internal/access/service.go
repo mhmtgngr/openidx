@@ -483,40 +483,33 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 				}
 			}
 			if store == nil && svc.config.RecordingsStoragePath != "" {
-				// Decode the optional encryption master key. Empty means
-				// plaintext-on-disk. Any other length is an explicit error so
-				// a config typo doesn't silently degrade to plaintext.
-				var masterKey []byte
-				if svc.config.RecordingsEncryptionKey != "" {
-					decoded, decodeErr := base64.StdEncoding.DecodeString(svc.config.RecordingsEncryptionKey)
-					if decodeErr != nil {
-						svc.logger.Warn("recordings_encryption_key not valid base64; filesystem store will NOT be initialized",
-							zap.Error(decodeErr))
-					} else if len(decoded) != recordingMasterKeyLen {
-						svc.logger.Warn("recordings_encryption_key has wrong length; filesystem store will NOT be initialized",
-							zap.Int("got", len(decoded)),
-							zap.Int("want", recordingMasterKeyLen))
-						decoded = nil
-					} else {
-						masterKey = decoded
-					}
-				}
-				// When the user *configured* an encryption key but it didn't
-				// parse, we fail closed: refuse to start the store at all
-				// rather than silently fall back to plaintext-on-disk.
-				if svc.config.RecordingsEncryptionKey != "" && masterKey == nil {
-					svc.logger.Warn("filesystem recording store NOT enabled — fix recordings_encryption_key")
+				// Build the encryption keyring from config. Multi-key form
+				// (recordings_encryption_keys) takes precedence for rotation;
+				// the single-key form maps to id 0. Either may be empty for
+				// plaintext-on-disk. A configured-but-malformed key is a
+				// fail-closed error so a typo doesn't silently degrade to
+				// plaintext.
+				ring, ringErr := newRecordingKeyring(
+					svc.config.RecordingsEncryptionKeys,
+					svc.config.RecordingsEncryptionActiveKeyID,
+					svc.config.RecordingsEncryptionKey,
+				)
+				keyConfigured := svc.config.RecordingsEncryptionKeys != "" || svc.config.RecordingsEncryptionKey != ""
+				if ringErr != nil {
+					svc.logger.Warn("recording encryption keyring invalid; filesystem store NOT enabled — fix the key config",
+						zap.Error(ringErr))
+				} else if keyConfigured && (ring == nil || !ring.Enabled()) {
+					svc.logger.Warn("filesystem recording store NOT enabled — encryption key config present but produced an empty keyring")
 				} else {
-					fsStore, fsErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath, masterKey)
+					fsStore, fsErr := newFilesystemRecordingStore(svc.config.RecordingsStoragePath, ring)
 					if fsErr != nil {
 						svc.logger.Warn("filesystem recording store init failed; recording disabled",
 							zap.Error(fsErr))
 					} else {
 						store = fsStore
-						encrypted := masterKey != nil
 						svc.logger.Info("Remote-support recording enabled (filesystem)",
 							zap.String("path", svc.config.RecordingsStoragePath),
-							zap.Bool("encrypted_at_rest", encrypted))
+							zap.Bool("encrypted_at_rest", ring.Enabled()))
 					}
 				}
 			}

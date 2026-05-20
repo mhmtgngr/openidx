@@ -55,31 +55,26 @@ type recordingStore interface {
 // directory. Concurrent appends to the same session are serialized via
 // OS append-mode opens.
 //
-// When masterKey is non-nil (length validated by NewFilesystemRecordingStore
-// at construction) the store transparently encrypts each chunk with a
-// per-session HKDF-derived key before write, and decrypts on Open. See
-// recording_crypto.go for the framing details.
+// When ring is non-nil the store transparently encrypts each chunk
+// with the keyring's active key before write, and decrypts on Open by
+// resolving each frame's key id back through the ring. See
+// recording_crypto.go for the framing + rotation details.
 type filesystemRecordingStore struct {
-	root      string
-	masterKey []byte
+	root string
+	ring *recordingKeyring
 }
 
 // newFilesystemRecordingStore constructs the store with optional
-// encryption-at-rest. masterKey must be either nil (plaintext on disk)
-// or exactly recordingMasterKeyLen bytes. Any other length is a
-// configuration error.
-func newFilesystemRecordingStore(root string, masterKey []byte) (*filesystemRecordingStore, error) {
+// encryption-at-rest. ring may be nil (plaintext on disk) or an
+// enabled keyring.
+func newFilesystemRecordingStore(root string, ring *recordingKeyring) (*filesystemRecordingStore, error) {
 	if root == "" {
 		return nil, errors.New("recordings root path required")
-	}
-	if masterKey != nil && len(masterKey) != recordingMasterKeyLen {
-		return nil, fmt.Errorf("recording master key must be %d bytes, got %d",
-			recordingMasterKeyLen, len(masterKey))
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("create recordings root: %w", err)
 	}
-	return &filesystemRecordingStore{root: root, masterKey: masterKey}, nil
+	return &filesystemRecordingStore{root: root, ring: ring}, nil
 }
 
 func (s *filesystemRecordingStore) path(sessionID string) string {
@@ -111,16 +106,21 @@ func (s *filesystemRecordingStore) Append(sessionID string, _ int, body io.Reade
 	}
 	defer f.Close()
 
-	if s.masterKey == nil {
+	if s.ring == nil {
 		// Plaintext mode — back-compat for deployments without an
 		// encryption key configured. Stream the body through unchanged.
 		return io.Copy(f, body)
 	}
 
 	// Encrypted mode: buffer the chunk so we can encrypt it as a single
-	// frame. Cap matches the HTTP-layer 50 MiB chunk limit so a runaway
-	// caller can't OOM us here either.
-	aead, err := newRecordingAEAD(s.masterKey, sessionID)
+	// frame under the keyring's active key. Cap matches the HTTP-layer
+	// 50 MiB chunk limit so a runaway caller can't OOM us here either.
+	activeID := s.ring.ActiveID()
+	master, err := s.ring.masterFor(activeID)
+	if err != nil {
+		return 0, err
+	}
+	aead, err := newRecordingAEAD(master, sessionID)
 	if err != nil {
 		return 0, err
 	}
@@ -132,7 +132,7 @@ func (s *filesystemRecordingStore) Append(sessionID string, _ int, body io.Reade
 	if int64(len(plaintext)) > maxRecordingChunkBytes {
 		return 0, errors.New("chunk exceeds maxRecordingChunkBytes")
 	}
-	frame, err := aead.encryptChunk(plaintext)
+	frame, err := aead.encryptChunk(activeID, plaintext)
 	if err != nil {
 		return 0, err
 	}
@@ -157,20 +157,17 @@ func (s *filesystemRecordingStore) Open(sessionID string) (io.ReadCloser, int64,
 	if err != nil {
 		return nil, 0, err
 	}
-	if s.masterKey == nil {
+	if s.ring == nil {
 		return f, fi.Size(), nil
 	}
 	// In encrypted mode the file's on-disk size includes framing overhead
 	// and ciphertext expansion. Returning fi.Size() to Content-Length
 	// callers would lie about the download. The handler treats a
-	// negative / unknown size as "unset", so return 0 here — chunked
-	// transfer encoding kicks in naturally.
-	aead, err := newRecordingAEAD(s.masterKey, sessionID)
-	if err != nil {
-		f.Close()
-		return nil, 0, err
-	}
-	return &decryptingReadCloser{src: f, reader: newDecryptingReader(f, aead)}, 0, nil
+	// 0 / unknown size as "unset", so return 0 here — chunked transfer
+	// encoding kicks in naturally. The decrypting reader resolves each
+	// frame's key id through the ring, so a recording written under a
+	// since-rotated key still plays as long as that key is retained.
+	return &decryptingReadCloser{src: f, reader: newDecryptingReader(f, s.ring, sessionID)}, 0, nil
 }
 
 // decryptingReadCloser pairs the decrypting Reader with the underlying
