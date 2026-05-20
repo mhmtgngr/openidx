@@ -157,9 +157,10 @@ export function RemoteSupportViewer({
     }
 
     return () => {
-      try { stopRecording() } catch {}
-      try { ws.close() } catch {}
-      try { pc.close() } catch {}
+      // Best-effort teardown — each may already be closed; ignore throws.
+      try { stopRecording() } catch { /* already stopped */ }
+      try { ws.close() } catch { /* already closed */ }
+      try { pc.close() } catch { /* already closed */ }
       setState('closed')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
