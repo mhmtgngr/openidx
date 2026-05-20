@@ -179,7 +179,8 @@ All mounted on the auth-protected `api` group:
 
 ### Edge cases handled
 
-- **Not Device Owner** — `KioskController.apply` early-returns and logs. Posture report's `enterprise_managed` check already surfaces this to admins.
+- **Unmanaged install** — `KioskController.apply` returns `NotManaged` and logs; lock-task needs Device Owner or Profile Owner. Posture report's `enterprise_managed` check surfaces the mode to admins.
+- **Profile Owner (BYOD)** — lock-task is allowed but scoped to the work profile; `single_app` is downgraded to `multi_app` since whole-device pinning is Device-Owner-only.
 - **Network loss** — `KioskState` survives offline cycles; service replays cached policy on every start. Devices stay in kiosk even when /agent/config is unreachable.
 - **Policy churn** — `setLockTaskPackages` is set-replace, so reapplying the same policy is a no-op. `KioskState.differsFromCached` is used to suppress redundant audit events.
 
@@ -823,8 +824,51 @@ audit so admins can see they're trusting unverified attestations.
   attestation) is available in the verdict; we just don't enforce it yet.
   Will be tightened as a policy default once hardware test coverage is in.
 
+## Device management modes (wired)
+
+The agent supports three Android management postures, recorded on
+`enrolled_agents.management_mode` (migration 202605200001) and reported
+in enrollment metadata + the `enterprise_managed` posture check:
+
+| Mode | Provisioning | Scope |
+|---|---|---|
+| `device_owner` | QR / factory-reset (Android Enterprise) | Fully managed device — full kiosk (single + multi-app), full policy control |
+| `profile_owner` | In-app "Set up work profile" (BYOD) | Managed work profile on a personal device — work-container only |
+| `unmanaged` | Plain APK install + OAuth sign-in | No device-admin privileges; posture + reporting only |
+
+### BYOD work-profile flow
+
+1. User installs the APK and taps **"Set up work profile (BYOD)"** in
+   `EnrollmentActivity`.
+2. `WorkProfileProvisioner` fires
+   `DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE` with the admin
+   component + an extras bundle carrying the OpenIDX server URL and
+   `provision_kind=profile_owner`.
+3. The platform creates a separate work profile, copies the APK into it,
+   and makes the copy **Profile Owner**.
+4. The profile-side `OpenIDXDeviceAdminReceiver.onProfileProvisioningComplete`
+   sees no enrollment token + the `profile_owner` kind, calls
+   `setProfileEnabled` / `setProfileName`, and launches the in-profile
+   `EnrollmentActivity` (server URL prefilled) for OAuth enrollment.
+5. From there the agent lives entirely in the work profile; the personal
+   side of the device is untouched.
+
+### Profile Owner capability constraints
+
+- **Kiosk**: `single_app` mode pins the whole device, which is a
+  Device-Owner-only capability. On Profile Owner, `KioskController`
+  downgrades `single_app` → `multi_app` (lock-task scoped to the work
+  profile; the user keeps their personal home screen) and logs the
+  downgrade. `multi_app` works on both modes.
+- **Posture**: `enterprise_managed` reports `profile_owner` rather than
+  `device_owner`; storage-encryption / patch-level / screen-lock checks
+  are device-wide and still meaningful from inside the profile.
+- **Remote support**: `MediaProjection` capture + Accessibility input
+  injection work the same (both are per-session user-consented); the
+  Accessibility Service must be enabled within the work profile.
+
 ## Open items
 
 - Push notifications (FCM) so the server can wake the agent on policy changes without polling.
 - iOS / Windows / macOS / Linux unified clients — extend after Android stabilizes.
-- BYOD work-profile mode (Profile Owner instead of Device Owner) — Phase 3 follow-up.
+- Custom InputMethodService for arbitrary KeyCode injection (remote support).

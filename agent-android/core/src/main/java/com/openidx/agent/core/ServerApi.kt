@@ -22,6 +22,7 @@ data class EnrollDeviceInfo(
     val arch: String = "",
     val platform: String = "android",
     val form_factor: String = "phone",
+    val management_mode: String = "unmanaged", // device_owner | profile_owner | unmanaged
 )
 
 @Serializable

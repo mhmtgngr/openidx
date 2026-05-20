@@ -25,6 +25,7 @@ import androidx.lifecycle.lifecycleScope
 import com.openidx.agent.BuildConfig
 import com.openidx.agent.core.IdentityStore
 import com.openidx.agent.enrollment.OAuthEnrollmentFlow
+import com.openidx.agent.enrollment.WorkProfileProvisioner
 import com.openidx.agent.service.OpenIDXAgentService
 import kotlinx.coroutines.launch
 
@@ -47,7 +48,8 @@ class EnrollmentActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { EnrollmentScreen(::startOAuth) }
+        val prefillServer = intent?.getStringExtra(EXTRA_PREFILL_SERVER_URL)
+        setContent { EnrollmentScreen(prefillServer, ::startOAuth, ::startWorkProfile) }
 
         intent?.data?.let { handleRedirect() }
     }
@@ -58,8 +60,27 @@ class EnrollmentActivity : ComponentActivity() {
         handleRedirect()
     }
 
+    @Deprecated("one-shot provisioning result; Activity Result API would be the modern path")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        // The work-profile provisioning result lands here. Success means
+        // the platform created the profile; the actual enrollment then
+        // happens inside the work profile via the receiver, so there's
+        // nothing more to do on the personal side beyond logging.
+        if (requestCode == WorkProfileProvisioner.REQUEST_CODE) {
+            android.util.Log.i(
+                "EnrollmentActivity",
+                "work-profile provisioning result: $resultCode",
+            )
+        }
+    }
+
     private fun startOAuth(serverUrl: String) {
         oauthFlow = OAuthEnrollmentFlow(this, serverUrl).also { it.launch() }
+    }
+
+    private fun startWorkProfile(serverUrl: String) {
+        WorkProfileProvisioner.launch(this, serverUrl)
     }
 
     private fun handleRedirect() {
@@ -76,13 +97,23 @@ class EnrollmentActivity : ComponentActivity() {
         oauthFlow?.dispose()
         super.onDestroy()
     }
+
+    companion object {
+        const val EXTRA_PREFILL_SERVER_URL = "prefill_server_url"
+    }
 }
 
 @Composable
-private fun EnrollmentScreen(onSignIn: (String) -> Unit) {
+private fun EnrollmentScreen(
+    prefillServer: String?,
+    onSignIn: (String) -> Unit,
+    onSetUpWorkProfile: (String) -> Unit,
+) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val identity = remember { IdentityStore(ctx).load() }
-    var serverUrl by remember { mutableStateOf(BuildConfig.DEFAULT_SERVER_URL) }
+    var serverUrl by remember {
+        mutableStateOf(prefillServer?.takeIf { it.isNotBlank() } ?: BuildConfig.DEFAULT_SERVER_URL)
+    }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.padding(24.dp)) {
@@ -105,6 +136,15 @@ private fun EnrollmentScreen(onSignIn: (String) -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = { onSignIn(serverUrl) }) {
                     Text("Sign in with OpenIDX")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Personal device? Set up a work profile to keep your personal apps separate.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = { onSetUpWorkProfile(serverUrl) }) {
+                    Text("Set up work profile (BYOD)")
                 }
             }
         }

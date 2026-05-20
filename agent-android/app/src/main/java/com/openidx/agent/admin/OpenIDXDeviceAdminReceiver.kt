@@ -1,26 +1,31 @@
 package com.openidx.agent.admin
 
 import android.app.admin.DeviceAdminReceiver
+import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.Intent
 import android.os.PersistableBundle
 import android.util.Log
 import com.openidx.agent.enrollment.QrEnrollmentBootstrapper
 import com.openidx.agent.service.OpenIDXAgentService
+import com.openidx.agent.ui.EnrollmentActivity
 
 /**
- * Receives device-admin lifecycle events. Two flows matter here:
+ * Receives device-admin lifecycle events. Three provisioning flows
+ * converge on [onProfileProvisioningComplete]:
  *
- *  1. **Android Enterprise QR provisioning** — when the device finishes
- *     factory-reset setup with our QR, the platform calls
- *     [onProfileProvisioningComplete] and hands us the admin-extras bundle
- *     embedded in the QR. We extract the OpenIDX server URL + enrollment
- *     token and hand off to [QrEnrollmentBootstrapper] which runs the
- *     /agent/enroll call and persists the resulting identity.
+ *  1. **Device Owner (QR)** — factory-reset provisioning with an
+ *     embedded enrollment token. We run the token-based bootstrapper.
  *
- *  2. **DEVICE_ADMIN_ENABLED** — fired when the user (BYOD) manually
- *     activates the admin app. We just log it; enrollment happens through
- *     [com.openidx.agent.ui.EnrollmentActivity] in the OAuth path.
+ *  2. **Profile Owner (BYOD work profile)** — user-initiated managed-
+ *     profile provisioning. No enrollment token in the bundle (the
+ *     provision_kind extra says "profile_owner"); we enable the
+ *     profile and launch EnrollmentActivity inside it for OAuth
+ *     enrollment.
+ *
+ *  3. **DEVICE_ADMIN_ENABLED** — fired when the user manually activates
+ *     the admin app. We just log it; enrollment happens through
+ *     EnrollmentActivity in the OAuth path.
  */
 class OpenIDXDeviceAdminReceiver : DeviceAdminReceiver() {
 
@@ -47,22 +52,53 @@ class OpenIDXDeviceAdminReceiver : DeviceAdminReceiver() {
 
         val serverUrl = extras?.getString(EXTRA_SERVER_URL).orEmpty()
         val token = extras?.getString(EXTRA_ENROLLMENT_TOKEN).orEmpty()
+        val provisionKind = extras?.getString(EXTRA_PROVISION_KIND).orEmpty()
 
-        if (serverUrl.isBlank() || token.isBlank()) {
-            Log.w(TAG, "Provisioning bundle missing OpenIDX extras — cannot auto-enroll")
+        // Profile-Owner / BYOD path: no enrollment token. Finalize the
+        // work profile and hand off to OAuth enrollment.
+        if (provisionKind == PROVISION_KIND_PROFILE_OWNER || token.isBlank()) {
+            finalizeWorkProfile(context, serverUrl)
             return
         }
 
+        // Device-Owner / QR path: token-based enrollment.
+        if (serverUrl.isBlank()) {
+            Log.w(TAG, "Provisioning bundle missing server URL — cannot auto-enroll")
+            return
+        }
         QrEnrollmentBootstrapper.kickOff(context, serverUrl, token)
-        // Start the foreground service immediately so the user sees the
-        // "agent active" notification while enrollment completes.
         OpenIDXAgentService.start(context)
+    }
+
+    /**
+     * Complete managed-profile provisioning: enable the profile, name it,
+     * and launch the in-profile EnrollmentActivity so the user can sign
+     * in with OAuth. The agent then lives entirely in the work profile.
+     */
+    private fun finalizeWorkProfile(context: Context, serverUrl: String) {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = QrEnrollmentBootstrapper.adminComponent
+        runCatching {
+            dpm.setProfileName(admin, "OpenIDX Work")
+            dpm.setProfileEnabled(admin)
+        }.onFailure { e -> Log.w(TAG, "failed to enable work profile", e) }
+
+        val launch = Intent(context, EnrollmentActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (serverUrl.isNotBlank()) {
+                putExtra(EnrollmentActivity.EXTRA_PREFILL_SERVER_URL, serverUrl)
+            }
+        }
+        runCatching { context.startActivity(launch) }
+            .onFailure { e -> Log.w(TAG, "failed to launch in-profile enrollment", e) }
     }
 
     companion object {
         private const val TAG = "OpenIDXDeviceAdmin"
         const val EXTRA_SERVER_URL = "openidx_server_url"
         const val EXTRA_ENROLLMENT_TOKEN = "openidx_enrollment_token"
+        const val EXTRA_PROVISION_KIND = "openidx_provision_kind"
+        const val PROVISION_KIND_PROFILE_OWNER = "profile_owner"
         private const val EXTRAS_BUNDLE_KEY = "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"
     }
 }

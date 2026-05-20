@@ -124,12 +124,13 @@ func (h *AgentAPIHandler) RegisterAgentAdminRoutes(r *gin.RouterGroup) {
 
 // enrollRequest is the optional JSON body accepted by HandleEnroll.
 type enrollRequest struct {
-	Token      string `json:"token"`
-	Hostname   string `json:"hostname"`
-	OS         string `json:"os"`
-	Arch       string `json:"arch"`
-	Platform   string `json:"platform"`
-	FormFactor string `json:"form_factor"`
+	Token          string `json:"token"`
+	Hostname       string `json:"hostname"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	Platform       string `json:"platform"`
+	FormFactor     string `json:"form_factor"`
+	ManagementMode string `json:"management_mode"` // device_owner | profile_owner | unmanaged
 }
 
 // enrollResponse is returned by HandleEnroll on success.
@@ -166,6 +167,19 @@ func normalizeFormFactor(f string) string {
 	switch strings.ToLower(strings.TrimSpace(f)) {
 	case "desktop", "laptop", "phone", "tablet", "kiosk", "server":
 		return strings.ToLower(strings.TrimSpace(f))
+	default:
+		return ""
+	}
+}
+
+// normalizeManagementMode maps the Android management posture to the
+// canonical enum stored in enrolled_agents.management_mode. Unknown /
+// empty input becomes "" so the column stays NULL rather than holding
+// a garbage value (a legacy Go-agent enroll doesn't send this field).
+func normalizeManagementMode(m string) string {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "device_owner", "profile_owner", "unmanaged":
+		return strings.ToLower(strings.TrimSpace(m))
 	default:
 		return ""
 	}
@@ -208,13 +222,16 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		platform = normalizePlatform(req.OS)
 	}
 	formFactor := normalizeFormFactor(req.FormFactor)
+	managementMode := normalizeManagementMode(req.ManagementMode)
+	isDeviceOwner := managementMode == "device_owner"
 
 	metadata, _ := json.Marshal(map[string]string{
-		"hostname":    req.Hostname,
-		"os":          req.OS,
-		"arch":        req.Arch,
-		"platform":    platform,
-		"form_factor": formFactor,
+		"hostname":        req.Hostname,
+		"os":              req.OS,
+		"arch":            req.Arch,
+		"platform":        platform,
+		"form_factor":     formFactor,
+		"management_mode": managementMode,
 	})
 
 	if h.db != nil && h.db.Pool != nil {
@@ -228,12 +245,15 @@ func (h *AgentAPIHandler) issueAgentCredentials(
             INSERT INTO enrolled_agents (
                 agent_id, device_id, status, auth_token_hash,
                 enrolled_at, compliance_status, metadata,
-                platform, form_factor, enrollment_method, enrolled_by_user_id
+                platform, form_factor, enrollment_method, enrolled_by_user_id,
+                management_mode, is_device_owner
             )
             VALUES ($1,$2,$3,$4, NOW(), 'unknown', $5,
-                    NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9)
+                    NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), $9,
+                    NULLIF($10,''), $11)
         `, agentID, deviceID, status, authTokenHash, metadata,
-			platform, formFactor, method, userIDArg)
+			platform, formFactor, method, userIDArg,
+			managementMode, isDeviceOwner)
 		if err != nil {
 			h.logger.Error("Failed to persist agent enrollment", zap.Error(err))
 		}

@@ -103,6 +103,7 @@ class OAuthEnrollmentFlow(
                 arch = Build.SUPPORTED_ABIS.firstOrNull().orEmpty(),
                 platform = "android",
                 form_factor = if (activity.resources.configuration.smallestScreenWidthDp >= 600) "tablet" else "phone",
+                management_mode = ManagementMode.resolve(activity),
             )
             val enrollResp = api.enrollWithOAuth(accessToken, device)
             val saved = AgentIdentity(

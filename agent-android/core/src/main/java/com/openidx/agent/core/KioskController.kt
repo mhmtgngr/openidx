@@ -37,9 +37,13 @@ class KioskController(
      * "kiosk.applied" audit event after a /agent/config cycle.
      */
     fun apply(policy: KioskPolicy?, currentActivity: Activity? = null): ApplyResult {
-        if (!dpm.isDeviceOwnerApp(context.packageName)) {
-            Log.w(TAG, "kiosk apply skipped: not Device Owner")
-            return ApplyResult.NotDeviceOwner
+        val isDeviceOwner = dpm.isDeviceOwnerApp(context.packageName)
+        val isProfileOwner = dpm.isProfileOwnerApp(context.packageName)
+        // Lock-task requires either Device Owner or Profile Owner. An
+        // unmanaged install can't drive kiosk at all.
+        if (!isDeviceOwner && !isProfileOwner) {
+            Log.w(TAG, "kiosk apply skipped: app is neither Device Owner nor Profile Owner")
+            return ApplyResult.NotManaged
         }
 
         val effective = policy
@@ -54,11 +58,23 @@ class KioskController(
             return ApplyResult.Cleared
         }
 
+        // single_app pins the whole device to one activity — that's a
+        // Device-Owner-only capability. On a Profile Owner (BYOD work
+        // profile) we can't take over the whole device, so downgrade to
+        // multi_app: lock-task is scoped to the work-profile apps and the
+        // user keeps their personal home screen.
+        val effectiveMode = if (effective.mode == "single_app" && !isDeviceOwner) {
+            Log.i(TAG, "single_app kiosk downgraded to multi_app: Profile Owner can't pin the whole device")
+            "multi_app"
+        } else {
+            effective.mode
+        }
+
         // Build the package list. mode=single_app whitelists the primary
         // activity's package only; mode=multi_app accepts the policy's array
         // verbatim. We always include the agent itself so it can launch the
         // kiosk launcher / exit-PIN UI.
-        val packages = when (effective.mode) {
+        val packages = when (effectiveMode) {
             "single_app" -> {
                 val primaryPkg = effective.primary_activity
                     .substringBefore('/')
@@ -71,16 +87,19 @@ class KioskController(
         dpm.setLockTaskPackages(adminComponent, packages)
         dpm.setLockTaskFeatures(adminComponent, packLockTaskFeatures(effective.lock_task_features))
 
-        // For single_app mode, pin the configured activity. multi_app mode
-        // hands off to the agent's own KioskLauncherActivity which lives in
-        // the app module.
-        currentActivity?.let { startLockTaskIfNeeded(it, effective) }
+        // For single_app mode (Device Owner only), pin the configured
+        // activity. multi_app mode hands off to the agent's own
+        // KioskLauncherActivity which lives in the app module.
+        if (effectiveMode == "single_app") {
+            currentActivity?.let { startLockTaskIfNeeded(it, effective) }
+        }
         return ApplyResult.Applied(packages.toList())
     }
 
     /** Result of a single apply() call; opaque to the caller beyond logging. */
     sealed class ApplyResult {
-        data object NotDeviceOwner : ApplyResult()
+        /** App is neither Device Owner nor Profile Owner — kiosk impossible. */
+        data object NotManaged : ApplyResult()
         data object Cleared : ApplyResult()
         data class Applied(val allowedPackages: List<String>) : ApplyResult()
     }

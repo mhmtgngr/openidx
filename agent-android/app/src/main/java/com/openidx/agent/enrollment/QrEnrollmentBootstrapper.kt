@@ -37,6 +37,7 @@ object QrEnrollmentBootstrapper {
                     arch = Build.SUPPORTED_ABIS.firstOrNull().orEmpty(),
                     platform = "android",
                     form_factor = inferFormFactor(context),
+                    management_mode = ManagementMode.resolve(context),
                 )
                 val resp = api.enrollWithToken(enrollmentToken, device)
 
