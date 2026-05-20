@@ -1237,6 +1237,104 @@ services:
     networks:
       - openidx-network
 
+  #---------------------------------------------------------------------------
+  # Observability: metrics (Prometheus/Alertmanager/Grafana), logs
+  # (Loki/Promtail), traces (Jaeger). Each service exposes /metrics and
+  # ships OTLP traces to jaeger:4317 (set TRACING_ENABLED=true to enable).
+  # Configs live under deployments/docker/{prometheus,alertmanager,grafana,promtail}.
+  #---------------------------------------------------------------------------
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: openidx-alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - openidx-network
+
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: openidx-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    depends_on:
+      - alertmanager
+    networks:
+      - openidx-network
+
+  grafana:
+    image: grafana/grafana:10.3.1
+    container_name: openidx-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - openidx-network
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: openidx-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - openidx-network
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: openidx-promtail
+    restart: unless-stopped
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - openidx-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    container_name: openidx-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    networks:
+      - openidx-network
+
 #---------------------------------------------------------------------------
 # Networks
 #---------------------------------------------------------------------------
@@ -1262,3 +1360,6 @@ volumes:
   browzer_certs:
   browzer_config:
   apisix_config:
+  prometheus_data:
+  grafana_data:
+  loki_data:

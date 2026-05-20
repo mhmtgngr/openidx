@@ -53,10 +53,17 @@ scrape_configs:
         labels:
           service: oauth-service
 
+  - job_name: 'access-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['access-service:8007']
+        labels:
+          service: access-service
+
   - job_name: 'gateway-service'
     metrics_path: /metrics
     static_configs:
-      - targets: ['gateway-service:8080']
+      - targets: ['gateway-service:8008']
         labels:
           service: gateway-service
 
