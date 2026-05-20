@@ -315,16 +315,23 @@ jobs:
           output-format: sarif
           generate-sarif: '1'
 
+      # The deprecated Semgrep action may not produce a SARIF file, and
+      # SARIF upload needs GitHub code scanning enabled (not guaranteed on
+      # forks/personal repos). Keep these non-blocking so a missing report
+      # doesn't turn the workflow red — the findings still surface in the
+      # step summary / artifact when present.
       - name: Upload Semgrep results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        continue-on-error: true
+        if: always() && hashFiles('semgrep-report.sarif') != ''
         with:
           sarif_file: semgrep-report.sarif
           category: 'semgrep-sast'
 
       - name: Upload Semgrep report artifact
         uses: actions/upload-artifact@v4
-        if: always()
+        continue-on-error: true
+        if: always() && hashFiles('semgrep-report.json') != ''
         with:
           name: semgrep-report
           path: semgrep-report.json
