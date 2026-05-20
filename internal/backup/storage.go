@@ -646,37 +646,19 @@ func fileExistsOS(path string) (bool, error) {
 	return osStat(path)
 }
 
-// These will be linked to actual os functions
+// OS function indirection. These are vars (rather than calling os.*
+// inline) so tests can substitute them with fakes. They are initialized
+// directly with the real implementations — there is no uninitialized
+// window. (Previously these started as panic("not initialized") and were
+// reassigned in init(), which made the package look broken even though
+// init() always ran first.)
 var (
-	osWriteFile = func(path string, data []byte, perm int) error {
-		panic("not initialized")
-	}
-	osReadFile = func(path string) ([]byte, error) {
-		panic("not initialized")
-	}
-	osRemove = func(path string) error {
-		panic("not initialized")
-	}
-	osReadDir = func(path string) ([]DirEntry, error) {
-		panic("not initialized")
-	}
-	osStat = func(path string) (bool, error) {
-		panic("not initialized")
-	}
-)
-
-func init() {
-	// Initialize OS functions
 	osWriteFile = func(path string, data []byte, perm int) error {
 		return os.WriteFile(path, data, os.FileMode(perm))
 	}
-	osReadFile = func(path string) ([]byte, error) {
-		return os.ReadFile(path)
-	}
-	osRemove = func(path string) error {
-		return os.Remove(path)
-	}
-	osReadDir = func(path string) ([]DirEntry, error) {
+	osReadFile = os.ReadFile
+	osRemove   = os.Remove
+	osReadDir  = func(path string) ([]DirEntry, error) {
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return nil, err
@@ -697,7 +679,7 @@ func init() {
 		}
 		return false, err
 	}
-}
+)
 
 type dirEntry struct {
 	e os.DirEntry
