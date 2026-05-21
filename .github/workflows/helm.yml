@@ -1,0 +1,46 @@
+name: Helm Chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deployments/kubernetes/helm/**'
+      - '.github/workflows/helm.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deployments/kubernetes/helm/**'
+      - '.github/workflows/helm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-template:
+    name: Lint & Template
+    runs-on: ubuntu-latest
+    env:
+      CHART: deployments/kubernetes/helm/openidx
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Add chart repos
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Build chart dependencies
+        run: helm dependency build "$CHART"
+
+      - name: Lint
+        run: helm lint "$CHART"
+
+      - name: Template (default values)
+        run: helm template openidx "$CHART" > /tmp/render-default.yaml
+
+      - name: Template (production values)
+        run: helm template openidx "$CHART" -f "$CHART/values-prod.yaml" > /tmp/render-prod.yaml

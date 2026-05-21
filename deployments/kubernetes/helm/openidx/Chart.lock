@@ -1,0 +1,15 @@
+dependencies:
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 14.3.3
+- name: redis
+  repository: https://charts.bitnami.com/bitnami
+  version: 18.19.4
+- name: elasticsearch
+  repository: https://charts.bitnami.com/bitnami
+  version: 19.21.2
+- name: keycloak
+  repository: https://charts.bitnami.com/bitnami
+  version: 18.7.1
+digest: sha256:80b866a1e6735a4b8bcd5e756796a485efda6cb534bf67a1d8c5734622e335a2
+generated: "2026-05-21T05:18:04.665375024Z"
