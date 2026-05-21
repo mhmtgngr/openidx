@@ -2,7 +2,7 @@
 
 terraform {
   required_version = ">= 1.5.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -17,7 +17,7 @@ terraform {
       version = "~> 2.12"
     }
   }
-  
+
   backend "s3" {
     bucket         = "openidx-terraform-state"
     key            = "infrastructure/terraform.tfstate"
@@ -29,7 +29,7 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
-  
+
   default_tags {
     tags = {
       Project     = "OpenIDX"
@@ -119,7 +119,7 @@ module "rds" {
   identifier     = "openidx-${var.environment}"
   engine_version = "16.1"
   instance_class = var.environment == "prod" ? "db.r6g.large" : "db.t3.medium"
-  
+
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.private_subnets
   security_groups = [module.eks.cluster_security_group_id]
@@ -132,7 +132,7 @@ module "redis" {
   cluster_id      = "openidx-${var.environment}"
   node_type       = var.environment == "prod" ? "cache.r6g.large" : "cache.t3.medium"
   num_cache_nodes = var.environment == "prod" ? 3 : 1
-  
+
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.private_subnets
   security_groups = [module.eks.cluster_security_group_id]

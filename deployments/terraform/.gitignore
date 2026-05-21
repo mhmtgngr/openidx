@@ -1,0 +1,23 @@
+# Local Terraform working dirs and plugin caches
+**/.terraform/*
+.terraform/
+
+# State files — never commit (they contain secrets and are environment state)
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Variable files that may carry secrets
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+# CLI override / plan output
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfplan
+
+# The provider lock file (.terraform.lock.hcl) IS committed for reproducibility
