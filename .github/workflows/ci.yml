@@ -297,13 +297,17 @@ jobs:
           go build -o /tmp/identity-service ./cmd/identity-service
           go build -o /tmp/oauth-service ./cmd/oauth-service
 
-      - name: Start services
+      # Services are started, health-checked, and tested in ONE step:
+      # processes backgrounded in a separate `run:` step are killed when that
+      # step's shell exits, so they must stay within the step that uses them.
+      - name: Run integration tests
+        env:
+          OAUTH_URL: http://localhost:8006
+          IDENTITY_URL: http://localhost:8001
         run: |
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           /tmp/oauth-service > /tmp/oauth.log 2>&1 &
 
-      - name: Wait for services to be healthy
-        run: |
           ok=0
           for url in http://localhost:8001/health http://localhost:8006/health; do
             for i in $(seq 1 30); do
@@ -318,17 +322,13 @@ jobs:
             exit 1
           fi
 
-      - name: Run integration tests
-        env:
-          OAUTH_URL: http://localhost:8006
-          IDENTITY_URL: http://localhost:8001
-        run: go test -v -tags=integration -timeout=20m ./test/integration/...
-
-      - name: Service logs on failure
-        if: failure()
-        run: |
-          echo "--- identity.log ---"; tail -200 /tmp/identity.log
-          echo "--- oauth.log ---";    tail -200 /tmp/oauth.log
+          set +e
+          go test -v -tags=integration -timeout=20m ./test/integration/...
+          rc=$?
+          set -e
+          echo "--- identity.log (tail) ---"; tail -50 /tmp/identity.log
+          echo "--- oauth.log (tail) ---";    tail -50 /tmp/oauth.log
+          exit $rc
 
   # Benchmark regression detection
   benchmark:
