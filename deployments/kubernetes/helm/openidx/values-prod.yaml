@@ -1,0 +1,151 @@
+# OpenIDX — production value overrides
+#
+#   helm upgrade --install openidx deployments/kubernetes/helm/openidx \
+#     -f deployments/kubernetes/helm/openidx/values-prod.yaml
+#
+# This layers production posture on top of values.yaml: pinned image tags,
+# autoscaling, network policies, secrets pulled from an external store, and
+# managed datastores (RDS/ElastiCache/managed Elasticsearch) instead of the
+# in-cluster bitnami subcharts. Replace the placeholder hostnames and the
+# secretStoreRef name with your environment's values before deploying.
+
+global:
+  environment: "production"
+  logLevel: "info"
+  # Pin to an immutable release tag in production — never run :latest.
+  # Override per service below; this is a documentation anchor.
+
+# ----- Secrets come from an external store (AWS Secrets Manager / Vault) -----
+# This disables the in-chart plaintext Secret and the in-cluster DATABASE_URL/
+# REDIS_URL builder; both are pulled from the store instead. Store the full
+# connection strings (pointing at managed RDS/ElastiCache) under
+# <remoteKeyPrefix>/database-url and <remoteKeyPrefix>/redis-url.
+externalSecrets:
+  enabled: true
+  refreshInterval: "1h"
+  secretStoreRef:
+    name: "openidx-secret-store"   # <-- your ClusterSecretStore
+    kind: ClusterSecretStore
+  remoteKeyPrefix: "openidx/prod"
+
+# ----- Managed datastores: disable the in-cluster subcharts -----
+postgresql:
+  enabled: false
+redis:
+  enabled: false
+elasticsearch:
+  enabled: false
+
+# Point the services at managed endpoints (Elasticsearch via config; Postgres
+# and Redis via the DATABASE_URL/REDIS_URL external secret above).
+config:
+  elasticsearchUrl: "https://opensearch.prod.internal:9200"
+  oauthIssuer: "https://auth.openidx.example.com"
+  oauthJwksUrl: "https://auth.openidx.example.com/.well-known/jwks.json"
+  viteApiUrl: "https://api.openidx.example.com"
+  viteOauthUrl: "https://auth.openidx.example.com"
+
+# ----- Production hardening -----
+networkPolicy:
+  enabled: true
+
+serviceTLS:
+  enabled: false   # set true + provide certSecret/caSecret for inter-service mTLS
+
+# Spread replicas and allow horizontal scaling under load. Pin every image to
+# the release being deployed.
+identityService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 12 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+governanceService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 10 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+provisioningService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 2
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 8 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+auditService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 10 }
+  # Restrict who may open the real-time audit WebSocket stream (CSWSH defense).
+  allowedOrigins:
+    - https://admin.openidx.example.com
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+adminApi:
+  image: { tag: "v0.1.0" }
+  replicaCount: 2
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 8 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+oauthService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 12 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+gatewayService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 3
+  autoscaling: { enabled: true, minReplicas: 3, maxReplicas: 12 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+accessService:
+  image: { tag: "v0.1.0" }
+  replicaCount: 2
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 8 }
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+adminConsole:
+  image: { tag: "v0.1.0" }
+  replicaCount: 2
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 6 }
+  ingress:
+    enabled: true
+    hosts:
+      - host: admin.openidx.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: admin-console-tls
+        hosts:
+          - admin.openidx.example.com
+
+# Public API ingress
+ingress:
+  enabled: true
+  hosts:
+    - host: api.openidx.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: api-tls
+      hosts:
+        - api.openidx.example.com

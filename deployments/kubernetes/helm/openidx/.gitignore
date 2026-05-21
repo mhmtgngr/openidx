@@ -1,0 +1,3 @@
+# Vendored subchart archives fetched by `helm dependency build`.
+# Chart.lock is committed for reproducibility; the archives are not.
+charts/*.tgz

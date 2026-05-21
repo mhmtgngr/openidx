@@ -25,7 +25,9 @@ externalSecrets:
   remoteKeyPrefix: "openidx"
 
 global:
-  imageRegistry: ghcr.io/openidx
+  # Image namespace. Matches the GHCR pipeline in .github/workflows/docker.yml
+  # which publishes ghcr.io/mhmtgngr/openidx/<service>.
+  imageRegistry: ghcr.io/mhmtgngr/openidx
   imagePullSecrets: []
   storageClass: ""
   environment: "production"
@@ -320,9 +322,11 @@ adminConsole:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
-# Keycloak
+# Keycloak (legacy/optional). OpenIDX ships its own oauthService as the
+# default OIDC provider, so this subchart is disabled by default. Enable it
+# only if you want to front OpenIDX with an external Keycloak.
 keycloak:
-  enabled: true
+  enabled: false
   auth:
     adminUser: admin
     adminPassword: ""  # Set via secret
