@@ -1,11 +1,13 @@
 # Optimized multi-stage Dockerfile for OpenIDX Admin Console
-# Supports both build contexts: repo root (.) and web/admin-console
 #
-# Usage from repo root:
-#   docker build -t admin-console -f deployments/docker/Dockerfile.admin-console .
+# The `production` target serves the built SPA via nginx and copies the
+# nginx config from deployments/, so it MUST be built from the repo root:
+#   docker build --target production -t admin-console \
+#     -f deployments/docker/Dockerfile.admin-console .
 #
-# Usage from web/admin-console:
-#   docker build -t admin-console -f ../deployments/docker/Dockerfile.admin-console .
+# The `development` target only needs the frontend sources, so it can also
+# be built from web/admin-console with --build-arg SRC_DIR=. (used by the
+# docker-compose dev stack).
 
 # ============================================
 # Stage 1: Dependencies (cached separately)
@@ -91,8 +93,12 @@ RUN apk upgrade --no-cache && \
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy production nginx config (path relative to build context: web/admin-console)
-COPY ../../deployments/docker/nginx/admin-console.conf /etc/nginx/conf.d/default.conf
+# Copy production nginx config. The `production` target must be built with
+# the repo root as the build context (the default SRC_DIR=web/admin-console
+# already assumes this), so this path is relative to the repo root. COPY
+# sources cannot escape the build context with `..`, so a repo-root context
+# is required here.
+COPY deployments/docker/nginx/admin-console.conf /etc/nginx/conf.d/default.conf
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nginx-app && \

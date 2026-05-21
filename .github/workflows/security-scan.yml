@@ -41,7 +41,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/openidx
+  IMAGE_PREFIX: ghcr.io/mhmtgngr/openidx
   TRIVY_SEVERITY: 'CRITICAL,HIGH'
   TRIVY_EXIT_CODE: '0'  # Don't fail on nightly scans
 
