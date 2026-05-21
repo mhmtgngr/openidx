@@ -23,4 +23,12 @@ var (
 		},
 		[]string{"scope"},
 	)
+
+	rlFailClosedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "openidx",
+			Name:      "rate_limit_fail_closed_total",
+			Help:      "Total number of auth requests rejected because the rate-limit backend was unavailable (fail-closed)",
+		},
+	)
 )
