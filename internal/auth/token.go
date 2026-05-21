@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -70,6 +71,12 @@ type TokenService struct {
 	redis      *redis.Client
 	config     TokenConfig
 	logger     *zap.Logger
+
+	// revocationRequired makes revocation authoritative: when true, a token is
+	// rejected if its revocation status cannot be determined (Redis error, or no
+	// revocation store configured). When false (default, dev), an unavailable
+	// revocation store is logged and validation proceeds. Set true in production.
+	revocationRequired bool
 }
 
 // NewTokenService creates a new TokenService with the given RSA keys and Redis client
@@ -89,6 +96,15 @@ func NewTokenService(privateKey *rsa.PrivateKey, publicKey *rsa.PublicKey, redis
 // WithConfig sets a custom token configuration
 func (ts *TokenService) WithConfig(config TokenConfig) *TokenService {
 	ts.config = config
+	return ts
+}
+
+// WithRevocationRequired controls fail-closed behavior. Call with true in
+// production so that a revoked token (or an unverifiable revocation state) is
+// never accepted. Pair with short access-token TTLs to bound the availability
+// impact of the per-request revocation check.
+func (ts *TokenService) WithRevocationRequired(required bool) *TokenService {
+	ts.revocationRequired = required
 	return ts
 }
 
@@ -154,23 +170,21 @@ func (ts *TokenService) generateToken(ctx context.Context, subject, tenantID str
 	return tokenString, nil
 }
 
-// ValidateToken validates a JWT token and returns the claims if valid
+// ValidateToken validates a JWT token and returns the claims if valid.
+//
+// The signature and expiry are verified first, then revocation is enforced
+// against both the per-token blacklist (RevokeToken) and the per-user
+// revocation marker (RevokeUserTokens). When revocationRequired is set, an
+// error checking revocation — or the absence of a revocation store — causes
+// the token to be rejected (fail closed) rather than silently accepted.
 func (ts *TokenService) ValidateToken(ctx context.Context, tokenString string) (*Claims, error) {
 	if ts.publicKey == nil {
 		return nil, ErrMissingPublicKey
 	}
 
-	// First check if token is revoked
-	if ts.redis != nil {
-		revoked, err := ts.isTokenRevoked(ctx, tokenString)
-		if err != nil {
-			ts.logger.Warn("failed to check token revocation status", zap.Error(err))
-			// Continue with validation even if Redis check fails
-		} else if revoked {
-			return nil, ErrTokenRevoked
-		}
-	}
-
+	// Verify signature and expiry before touching Redis: no point checking
+	// revocation for a forged or expired token, and the per-user check needs
+	// the parsed claims.
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		// Verify signing method is RS256
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -191,7 +205,56 @@ func (ts *TokenService) ValidateToken(ctx context.Context, tokenString string) (
 		return nil, ErrTokenInvalid
 	}
 
+	if err := ts.checkRevocation(ctx, tokenString, claims); err != nil {
+		return nil, err
+	}
+
 	return claims, nil
+}
+
+// checkRevocation enforces both per-token and per-user revocation. It returns
+// ErrTokenRevoked for a revoked token. When the revocation store is
+// unavailable, it fails closed (returns an error) if revocationRequired,
+// otherwise it logs and allows the token through.
+func (ts *TokenService) checkRevocation(ctx context.Context, tokenString string, claims *Claims) error {
+	if ts.redis == nil {
+		if ts.revocationRequired {
+			return fmt.Errorf("%w: revocation store not configured", ErrTokenInvalid)
+		}
+		return nil
+	}
+
+	// Per-token blacklist (single-token logout / RevokeToken).
+	revoked, err := ts.isTokenRevoked(ctx, tokenString)
+	if err != nil {
+		if ts.revocationRequired {
+			return fmt.Errorf("%w: revocation check failed: %v", ErrTokenInvalid, err)
+		}
+		ts.logger.Warn("failed to check token revocation status", zap.Error(err))
+		return nil
+	}
+	if revoked {
+		return ErrTokenRevoked
+	}
+
+	// Per-user revocation marker (logout-all / credential compromise via
+	// RevokeUserTokens). A token is revoked if it was issued at or before the
+	// marker timestamp.
+	if claims != nil && claims.Subject != "" {
+		userRevoked, err := ts.isUserRevoked(ctx, claims.Subject, claims.IssuedAt)
+		if err != nil {
+			if ts.revocationRequired {
+				return fmt.Errorf("%w: user revocation check failed: %v", ErrTokenInvalid, err)
+			}
+			ts.logger.Warn("failed to check user revocation status", zap.Error(err))
+			return nil
+		}
+		if userRevoked {
+			return ErrTokenRevoked
+		}
+	}
+
+	return nil
 }
 
 // ValidateAccessToken validates an access token and returns the claims
@@ -297,6 +360,29 @@ func (ts *TokenService) isTokenRevoked(ctx context.Context, tokenString string) 
 		return false, err
 	}
 	return exists > 0, nil
+}
+
+// isUserRevoked reports whether a token is covered by a user-wide revocation
+// marker set by RevokeUserTokens. The marker stores the unix time of the
+// revocation; any token issued at or before that time is considered revoked,
+// so a user who re-authenticates afterwards gets valid tokens again.
+func (ts *TokenService) isUserRevoked(ctx context.Context, userID string, issuedAt *jwt.NumericDate) (bool, error) {
+	val, err := ts.redis.Get(ctx, ts.userRevocationKey(userID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return false, nil // no marker -> not revoked
+		}
+		return false, err
+	}
+	revokedAtUnix, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("parse user revocation marker: %w", err)
+	}
+	// Without an issued-at we cannot compare; treat as revoked to be safe.
+	if issuedAt == nil {
+		return true, nil
+	}
+	return issuedAt.Time.Unix() <= revokedAtUnix, nil
 }
 
 // RefreshAccessToken generates a new access token using a valid refresh token

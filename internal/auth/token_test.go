@@ -414,12 +414,59 @@ func TestTokenService_RevokeUserTokens(t *testing.T) {
 	err := ts.RevokeUserTokens(ctx, "user123")
 	assert.NoError(t, err)
 
-	// Verify token1 is still valid (individual revocation check not implemented in this version)
-	// The user revocation is stored but would need to be checked in ValidateToken
-	_ = token1
-	_, _ = ts.ValidateToken(ctx, token1)
-	// This will pass because we haven't implemented full user revocation checking
-	// In production, you'd want to check the user revocation marker
+	// Tokens issued before the revocation marker must now be rejected.
+	_, err = ts.ValidateToken(ctx, token1)
+	assert.ErrorIs(t, err, ErrTokenRevoked, "tokens issued before RevokeUserTokens must be revoked")
+
+	// A token for a different user is unaffected.
+	otherToken, _ := ts.GenerateAccessToken(ctx, "other-user", "tenant456", nil)
+	_, err = ts.ValidateToken(ctx, otherToken)
+	assert.NoError(t, err)
+
+	// Tokens issued after the revocation cutoff are valid again. Pin the marker
+	// to the past so a freshly issued token (iat = now) is unambiguously newer.
+	client.Set(ctx, ts.userRevocationKey("user123"), time.Now().Add(-10*time.Second).Unix(), time.Hour)
+	freshToken, _ := ts.GenerateAccessToken(ctx, "user123", "tenant456", []string{"admin"})
+	_, err = ts.ValidateToken(ctx, freshToken)
+	assert.NoError(t, err, "tokens issued after RevokeUserTokens must be valid")
+}
+
+func TestTokenService_RevocationRequired_FailsClosed(t *testing.T) {
+	privateKey, publicKey := mustGenerateRSAKeys(t)
+	s, client := mustCreateTestRedis(t)
+	logger := zap.NewNop()
+	ctx := context.Background()
+
+	ts := NewTokenService(privateKey, publicKey, client, logger).WithRevocationRequired(true)
+	token, _ := ts.GenerateAccessToken(ctx, "user123", "tenant456", []string{"admin"})
+
+	// While Redis is up the token validates.
+	_, err := ts.ValidateToken(ctx, token)
+	assert.NoError(t, err)
+
+	// Simulate Redis being down: revocation can't be confirmed, so a
+	// revocation-required service must reject the token (fail closed).
+	s.Close()
+	_, err = ts.ValidateToken(ctx, token)
+	assert.Error(t, err, "fail-closed service must reject when revocation cannot be checked")
+}
+
+func TestTokenService_RevocationRequired_NoRedis(t *testing.T) {
+	privateKey, publicKey := mustGenerateRSAKeys(t)
+	logger := zap.NewNop()
+	ctx := context.Background()
+
+	// No revocation store + revocation required -> cannot enforce -> reject.
+	ts := NewTokenService(privateKey, publicKey, nil, logger).WithRevocationRequired(true)
+	token, _ := ts.GenerateAccessToken(ctx, "user123", "tenant456", nil)
+	_, err := ts.ValidateToken(ctx, token)
+	assert.Error(t, err)
+
+	// Default (not required) tolerates a missing store.
+	tsDev := NewTokenService(privateKey, publicKey, nil, logger)
+	tokenDev, _ := tsDev.GenerateAccessToken(ctx, "user123", "tenant456", nil)
+	_, err = tsDev.ValidateToken(ctx, tokenDev)
+	assert.NoError(t, err)
 }
 
 func TestTokenService_IsTokenRevoked(t *testing.T) {
