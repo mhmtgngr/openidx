@@ -33,7 +33,7 @@ var (
 
 // Claims represents the JWT claims structure for OpenIDX tokens
 type Claims struct {
-	Subject   string   `json:"sub"`              // User ID
+	Subject   string   `json:"sub"`             // User ID
 	TenantID  string   `json:"tid,omitempty"`   // Tenant ID (multi-tenant)
 	Roles     []string `json:"roles,omitempty"` // User roles
 	TokenType string   `json:"token_type"`      // "access" or "refresh"
