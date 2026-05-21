@@ -127,20 +127,30 @@ func (m *Migrator) unregisterMigration(ctx context.Context, version int) error {
 	return err
 }
 
-// acquireLock attempts to acquire the migration lock
+// lockStaleAfter is how long a held migration lock may persist before it is
+// treated as abandoned (e.g. the holding process crashed mid-migration).
+// After this, another migrator may reclaim it. Kept well above any realistic
+// migration runtime so a healthy in-progress migration is never stolen.
+const lockStaleAfter = 15 * time.Minute
+
+// acquireLock attempts to acquire the migration lock. It succeeds if the lock
+// is free or if the current holder's lock has gone stale (older than
+// lockStaleAfter), which lets a fresh migrator recover after a crashed holder
+// instead of deadlocking forever.
 func (m *Migrator) acquireLock(ctx context.Context, identifier string) error {
 	sql := `
 		UPDATE schema_migration_lock
 		SET locked = true, locked_at = $1, locked_by = $2
-		WHERE id = 1 AND locked = false
+		WHERE id = 1 AND (locked = false OR locked_at < $3)
 	`
-	result, err := m.db.Exec(ctx, sql, time.Now(), identifier)
+	staleBefore := time.Now().Add(-lockStaleAfter)
+	result, err := m.db.Exec(ctx, sql, time.Now(), identifier, staleBefore)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	rows := result.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("migration lock is already held by another process")
+		return fmt.Errorf("migration lock is already held by another process (held within the last %s)", lockStaleAfter)
 	}
 	return nil
 }
