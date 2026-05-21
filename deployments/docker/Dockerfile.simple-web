@@ -20,7 +20,7 @@ COPY cmd/simple-web/index.html /static/index.html
 # ============================================
 # Stage 2: Runtime
 # ============================================
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 
 # Install security updates and required tools in a single layer
 RUN apk upgrade --no-cache && \
