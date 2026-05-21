@@ -305,8 +305,10 @@ jobs:
           OAUTH_URL: http://localhost:8006
           IDENTITY_URL: http://localhost:8001
         run: |
-          /tmp/identity-service > /tmp/identity.log 2>&1 &
-          /tmp/oauth-service > /tmp/oauth.log 2>&1 &
+          # Pin ports explicitly: the config port map omits oauth-service, so
+          # it would otherwise default to 8080 instead of 8006.
+          PORT=8001 /tmp/identity-service > /tmp/identity.log 2>&1 &
+          PORT=8006 /tmp/oauth-service > /tmp/oauth.log 2>&1 &
 
           ok=0
           for url in http://localhost:8001/health http://localhost:8006/health; do
