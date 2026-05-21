@@ -219,6 +219,10 @@ func loginAndGetToken(t *testing.T, username, password string) string {
 		oauthURL, clientID, url.QueryEscape(redirectURI), challenge)
 
 	req, _ := http.NewRequest("GET", authURL, nil)
+	// For public clients the authorize endpoint renders an HTML login page
+	// unless the caller asks for JSON; request JSON to get the SPA 302 flow
+	// (302 -> redirect_uri?login_session=...) that this helper consumes.
+	req.Header.Set("Accept", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("Authorization request failed: %v", err)
