@@ -6,7 +6,7 @@
 # ============================================================================
 
 resource "helm_release" "audit_service" {
-  count       = var.enabled ? 1 : 0
+  count      = var.enabled ? 1 : 0
   name       = "openidx-audit-service"
   repository = "oci://ghcr.io/openidx/helm"
   chart      = "openidx"
@@ -169,19 +169,19 @@ resource "kubernetes_config_map" "audit_service_config" {
     name      = "openidx-audit-service-config"
     namespace = "openidx"
     labels = {
-      app.kubernetes.io/name     = "audit-service"
-      app.kubernetes.io/instance = "openidx"
-      app.kubernetes.io/part-of  = "openidx"
-      app.kubernetes.io/managed-by = "terraform"
+      app.kubernetes.io / name       = "audit-service"
+      app.kubernetes.io / instance   = "openidx"
+      app.kubernetes.io / part-of    = "openidx"
+      app.kubernetes.io / managed-by = "terraform"
     }
   }
 
   data = {
     # Audit stream configuration
-    "AUDIT_STREAM_ALLOWED_ORIGINS" = join(",", var.audit_stream_allowed_origins)
+    "AUDIT_STREAM_ALLOWED_ORIGINS"         = join(",", var.audit_stream_allowed_origins)
     "AUDIT_STREAM_ENABLE_SECURITY_LOGGING" = tostring(var.audit_stream_enable_security_logging)
-    "AUDIT_STREAM_MAX_CLIENTS" = tostring(var.audit_stream_max_clients)
-    "AUDIT_STREAM_MAX_MESSAGE_SIZE" = tostring(var.audit_stream_max_message_size)
+    "AUDIT_STREAM_MAX_CLIENTS"             = tostring(var.audit_stream_max_clients)
+    "AUDIT_STREAM_MAX_MESSAGE_SIZE"        = tostring(var.audit_stream_max_message_size)
   }
 }
 
@@ -211,8 +211,8 @@ output "production_safe" {
     safe = !(
       # Production is unsafe if:
       (var.environment == "prod" && contains(var.audit_stream_allowed_origins, "*")) || # Wildcard in production
-      (var.environment == "prod" && var.tls_enabled == false) || # TLS disabled in production
-      (var.environment == "prod" && var.audit_stream_enable_security_logging == false) # Logging disabled in production
+      (var.environment == "prod" && var.tls_enabled == false) ||                        # TLS disabled in production
+      (var.environment == "prod" && var.audit_stream_enable_security_logging == false)  # Logging disabled in production
     )
     warnings = concat(
       var.environment == "prod" && contains(var.audit_stream_allowed_origins, "*") ? ["Wildcard origin '*' is not safe for production"] : [],

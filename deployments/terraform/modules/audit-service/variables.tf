@@ -196,11 +196,11 @@ variable "tls_cert_secret" {
 variable "pod_security_context" {
   description = "Pod security context for the audit service"
   type = map(object({
-    run_as_user        = optional(number)
-    run_as_group       = optional(number)
-    fs_group           = optional(number)
-    run_as_non_root    = optional(bool)
-    read_only_root_filesystem = optional(bool)
+    run_as_user                = optional(number)
+    run_as_group               = optional(number)
+    fs_group                   = optional(number)
+    run_as_non_root            = optional(bool)
+    read_only_root_filesystem  = optional(bool)
     allow_privilege_escalation = optional(bool)
   }))
   default = {}
