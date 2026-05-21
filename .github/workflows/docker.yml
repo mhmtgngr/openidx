@@ -12,41 +12,55 @@ permissions:
   contents: read
   packages: write
   security-events: write
-  actions: read
-  id-token: write
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/openidx
+  # Images publish under the repo owner's GHCR namespace, e.g.
+  # ghcr.io/mhmtgngr/openidx/identity-service
+  IMAGE_PREFIX: ghcr.io/mhmtgngr/openidx
 
 jobs:
   build:
+    name: build (${{ matrix.service }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - identity-service
-          - governance-service
-          - provisioning-service
-          - audit-service
-          - admin-api
-          - oauth-service
-          - gateway-service
-          - access-service
-        platform:
-          - linux/amd64
-          - linux/arm64
+        include:
+          - service: identity-service
+            dockerfile: deployments/docker/Dockerfile.identity-service
+          - service: governance-service
+            dockerfile: deployments/docker/Dockerfile.governance-service
+          - service: provisioning-service
+            dockerfile: deployments/docker/Dockerfile.provisioning-service
+          - service: audit-service
+            dockerfile: deployments/docker/Dockerfile.audit-service
+          - service: admin-api
+            dockerfile: deployments/docker/Dockerfile.admin-api
+          - service: oauth-service
+            dockerfile: deployments/docker/Dockerfile.oauth-service
+          - service: gateway-service
+            dockerfile: deployments/docker/Dockerfile.gateway-service
+          - service: access-service
+            dockerfile: deployments/docker/Dockerfile.access-service
+          # The admin-console image builds the `production` (nginx) stage and
+          # needs the repo root as context to copy the nginx config.
+          - service: admin-console
+            dockerfile: deployments/docker/Dockerfile.admin-console
+            target: production
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU (for multi-arch)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Only authenticate (and therefore push) for non-PR events. PRs from
+      # forks can't access packages:write, so PR runs build-only to validate
+      # the Dockerfile without publishing.
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -65,175 +79,64 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha,prefix=
+            type=sha,prefix=,format=long
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
           labels: |
             org.opencontainers.image.title=${{ matrix.service }}
             org.opencontainers.image.description=OpenIDX ${{ matrix.service }}
-            org.opencontainers.image.vendor=OpenIDX
-            org.opencontainers.image.source=https://github.com/openidx/openidx
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
 
+      # Multi-arch (amd64+arm64) on push so the published manifest serves both
+      # platforms from one tag. On PRs build a single arch and load it locally
+      # so Trivy can scan it without publishing.
       - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: deployments/docker/Dockerfile.${{ matrix.service }}
-          platforms: ${{ matrix.platform }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.platform }}
-          cache-to: type=gha,scope=${{ matrix.service }}-${{ matrix.platform }},mode=max
-          outputs: type=registry,push=true
-          provenance: true
-          sbom: true
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          provenance: ${{ github.event_name != 'pull_request' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
 
-      - name: Trivy vulnerability scan
+      # Image vulnerability scan. Reported to the Security tab; non-blocking so
+      # unfixable upstream CVEs don't turn the build red (gating happens in the
+      # nightly Security Scanning workflow).
+      - name: Trivy image scan
         uses: aquasecurity/trivy-action@master
+        continue-on-error: true
         with:
           image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
-          exit-code: '1'
-          ignore-unfixed: false
+          exit-code: '0'
+          ignore-unfixed: true
 
-      - name: Upload Trivy scan results to GitHub Security
+      - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        continue-on-error: true
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: 'trivy-results.sarif'
-          category: 'docker-image-${{ matrix.service }}-${{ matrix.platform }}'
+          category: 'docker-image-${{ matrix.service }}'
 
-  build-frontend:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU (for multi-arch)
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_PREFIX }}/admin-console
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: web/admin-console
-          file: deployments/docker/Dockerfile.admin-console
-          platforms: ${{ matrix.platform }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=admin-console-${{ matrix.platform }}
-          cache-to: type=gha,scope=admin-console-${{ matrix.platform }},mode=max
-          outputs: type=registry,push=true
-          provenance: true
-          sbom: true
-
-      - name: Trivy vulnerability scan for admin-console
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.IMAGE_PREFIX }}/admin-console:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'
-          ignore-unfixed: false
-
-      - name: Upload Trivy scan results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'docker-image-admin-console-${{ matrix.platform }}'
-
-  # Create multi-arch manifest and push
-  push-manifests:
-    name: Push Multi-Arch Manifests
-    runs-on: ubuntu-latest
-    needs: [build, build-frontend]
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push service manifests
-        run: |
-          for service in identity-service governance-service provisioning-service audit-service admin-api oauth-service gateway-service access-service; do
-            echo "Creating manifest for $service..."
-            docker buildx imagetools create \
-              --tag ${{ env.IMAGE_PREFIX }}/$service:${{ github.sha }} \
-              --tag ${{ env.IMAGE_PREFIX }}/$service:latest \
-              ${{ env.IMAGE_PREFIX }}/$service:linux-amd64-${{ github.sha }} \
-              ${{ env.IMAGE_PREFIX }}/$service:linux-arm64-${{ github.sha }} || true
-          done
-
-      - name: Create and push frontend manifest
-        run: |
-          echo "Creating manifest for admin-console..."
-          docker buildx imagetools create \
-            --tag ${{ env.IMAGE_PREFIX }}/admin-console:${{ github.sha }} \
-            --tag ${{ env.IMAGE_PREFIX }}/admin-console:latest \
-            ${{ env.IMAGE_PREFIX }}/admin-console:linux-amd64-${{ github.sha }} \
-            ${{ env.IMAGE_PREFIX }}/admin-console:linux-arm64-${{ github.sha }} || true
-
-  # Tag and push versioned images on release
+  # Re-tag the pushed :<sha> manifests with semver tags on a vX.Y.Z release.
   release-tag:
     name: Tag Release Images
     runs-on: ubuntu-latest
-    needs: [build, build-frontend, push-manifests]
+    needs: [build]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 10
-
     steps:
-      - uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -248,82 +151,34 @@ jobs:
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "major_minor=$(echo $VERSION | cut -d. -f1,2)" >> $GITHUB_OUTPUT
-          echo "major=$(echo $VERSION | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Tag and push service images with version
+      - name: Re-tag images with version
         run: |
-          for service in identity-service governance-service provisioning-service audit-service admin-api oauth-service gateway-service access-service; do
-            echo "Tagging $service with version ${{ steps.version.outputs.version }}..."
+          for service in identity-service governance-service provisioning-service \
+                         audit-service admin-api oauth-service gateway-service \
+                         access-service admin-console; do
+            echo "Tagging $service ${{ steps.version.outputs.version }}..."
             docker buildx imagetools create \
-              --tag ${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.version }} \
-              --tag ${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.major_minor }} \
-              --tag ${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.major }} \
-              --tag ${{ env.IMAGE_PREFIX }}/$service:stable \
-              ${{ env.IMAGE_PREFIX }}/$service:${{ github.sha }}
+              --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.version }}" \
+              --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.major_minor }}" \
+              --tag "${{ env.IMAGE_PREFIX }}/$service:${{ steps.version.outputs.major }}" \
+              --tag "${{ env.IMAGE_PREFIX }}/$service:stable" \
+              "${{ env.IMAGE_PREFIX }}/$service:${{ github.sha }}"
           done
 
-      - name: Tag and push frontend image with version
-        run: |
-          echo "Tagging admin-console with version ${{ steps.version.outputs.version }}..."
-          docker buildx imagetools create \
-            --tag ${{ env.IMAGE_PREFIX }}/admin-console:${{ steps.version.outputs.version }} \
-            --tag ${{ env.IMAGE_PREFIX }}/admin-console:${{ steps.version.outputs.major_minor }} \
-            --tag ${{ env.IMAGE_PREFIX }}/admin-console:${{ steps.version.outputs.major }} \
-            --tag ${{ env.IMAGE_PREFIX }}/admin-console:stable \
-            ${{ env.IMAGE_PREFIX }}/admin-console:${{ github.sha }}
-
-  # Generate and attach SBOMs to releases
-  attach-sbom:
-    name: Attach SBOM to Release
-    needs: [build, build-frontend]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download SBOMs from previous jobs
-        uses: actions/download-artifact@v4
-        with:
-          pattern: '*-sbom'
-          path: ./sboms
-          merge-multiple: true
-
-      - name: Rename and organize SBOM files
-        run: |
-          mkdir -p release-sboms
-          mv sboms/identity-service-sbom.spdx.json release-sboms/openidx-identity-service-${{ github.ref_name }}.spdx.json || true
-          mv sboms/governance-service-sbom.spdx.json release-sboms/openidx-governance-service-${{ github.ref_name }}.spdx.json || true
-          mv sboms/provisioning-service-sbom.spdx.json release-sboms/openidx-provisioning-service-${{ github.ref_name }}.spdx.json || true
-          mv sboms/audit-service-sbom.spdx.json release-sboms/openidx-audit-service-${{ github.ref_name }}.spdx.json || true
-          mv sboms/admin-api-sbom.spdx.json release-sboms/openidx-admin-api-${{ github.ref_name }}.spdx.json || true
-          mv sboms/oauth-service-sbom.spdx.json release-sboms/openidx-oauth-service-${{ github.ref_name }}.spdx.json || true
-          mv sboms/admin-console-sbom.spdx.json release-sboms/openidx-admin-console-${{ github.ref_name }}.spdx.json || true
-          ls -la release-sboms/
-
-      - name: Attach SBOMs to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ./release-sboms/*.spdx.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Required status check for Docker builds
   docker-status-check:
     name: Docker Build Status
     runs-on: ubuntu-latest
-    needs: [build, build-frontend]
+    needs: [build]
     if: always()
     timeout-minutes: 5
-
     steps:
-      - name: Check Docker builds succeeded
+      - name: Check build result
         run: |
-          if [[ "${{ needs.build.result }}" != "success" ]] || \
-             [[ "${{ needs.build-frontend.result }}" != "success" ]]; then
+          if [[ "${{ needs.build.result }}" != "success" ]]; then
             echo "Docker builds failed"
             exit 1
           fi
