@@ -676,9 +676,9 @@ func TestSearchResult(t *testing.T) {
 				Outcome:   OutcomeSuccess,
 			},
 		},
-		NextCursor:  "cursor-123",
-		HasMore:     true,
-		TotalCount:  100,
+		NextCursor: "cursor-123",
+		HasMore:    true,
+		TotalCount: 100,
 	}
 
 	data, err := json.Marshal(result)
@@ -793,17 +793,17 @@ func TestActorType_String(t *testing.T) {
 // TestAuditEvent_JSONRoundTrip tests JSON serialization/deserialization
 func TestAuditEvent_JSONRoundTrip(t *testing.T) {
 	original := &AuditEvent{
-		ID:           uuid.New().String(),
-		Timestamp:    time.Now().UTC(),
-		TenantID:     "tenant-1",
-		ActorID:      "user-1",
-		ActorType:    ActorTypeAPI,
-		Action:       "data.export",
-		ResourceType: "report",
-		ResourceID:   "report-123",
-		Outcome:      OutcomeSuccess,
-		IP:           "10.1.2.3",
-		UserAgent:    "ExportBot/1.0",
+		ID:            uuid.New().String(),
+		Timestamp:     time.Now().UTC(),
+		TenantID:      "tenant-1",
+		ActorID:       "user-1",
+		ActorType:     ActorTypeAPI,
+		Action:        "data.export",
+		ResourceType:  "report",
+		ResourceID:    "report-123",
+		Outcome:       OutcomeSuccess,
+		IP:            "10.1.2.3",
+		UserAgent:     "ExportBot/1.0",
 		CorrelationID: "export-correlation-456",
 		Metadata: map[string]interface{}{
 			"records":    1000,

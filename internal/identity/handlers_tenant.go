@@ -14,18 +14,18 @@ func (s *Service) handleGetLoginBranding(c *gin.Context) {
 	org := c.Query("org")
 
 	defaults := gin.H{
-		"logo_url":           "",
-		"favicon_url":        "",
-		"primary_color":      "#1e40af",
-		"secondary_color":    "#3b82f6",
-		"background_color":   "#f8fafc",
+		"logo_url":             "",
+		"favicon_url":          "",
+		"primary_color":        "#1e40af",
+		"secondary_color":      "#3b82f6",
+		"background_color":     "#f8fafc",
 		"background_image_url": "",
-		"login_page_title":   "Sign In",
-		"login_page_message": "",
-		"portal_title":       "OpenIDX Portal",
-		"custom_css":         "",
-		"custom_footer":      "",
-		"powered_by_visible": true,
+		"login_page_title":     "Sign In",
+		"login_page_message":   "",
+		"portal_title":         "OpenIDX Portal",
+		"custom_css":           "",
+		"custom_footer":        "",
+		"powered_by_visible":   true,
 	}
 
 	var query string

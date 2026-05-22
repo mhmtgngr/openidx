@@ -223,11 +223,11 @@ func BenchmarkValidateTokenSimple(b *testing.B) {
 	// Create a simple JWT for testing
 	now := time.Now()
 	claims := jwt.MapClaims{
-		"sub":  "user123",
-		"aud":  "client123",
-		"iss":  svc.issuer,
-		"iat":  now.Unix(),
-		"exp":  now.Add(time.Hour).Unix(),
+		"sub":   "user123",
+		"aud":   "client123",
+		"iss":   svc.issuer,
+		"iat":   now.Unix(),
+		"exp":   now.Add(time.Hour).Unix(),
 		"email": "test@example.com",
 	}
 
@@ -305,13 +305,13 @@ func BenchmarkAuthorizeFlow(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req := &FlowAuthorizeRequest{
-			ClientID:             clientID,
-			RedirectURI:          "http://localhost:3000/callback",
-			ResponseType:         "code",
-			Scope:                "openid profile email",
-			State:                state,
-			CodeChallenge:        codeChallenge,
-			CodeChallengeMethod:  "S256",
+			ClientID:            clientID,
+			RedirectURI:         "http://localhost:3000/callback",
+			ResponseType:        "code",
+			Scope:               "openid profile email",
+			State:               state,
+			CodeChallenge:       codeChallenge,
+			CodeChallengeMethod: "S256",
 		}
 
 		// Validate client

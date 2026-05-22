@@ -184,12 +184,12 @@ func newMockUserEntry(dn, username, email, firstName, lastName string) *ldap.Ent
 	return &ldap.Entry{
 		DN: dn,
 		Attributes: []*ldap.EntryAttribute{
-			{ Name: "uid", Values: []string{username} },
-			{ Name: "mail", Values: []string{email} },
-			{ Name: "givenName", Values: []string{firstName} },
-			{ Name: "sn", Values: []string{lastName} },
-			{ Name: "cn", Values: []string{firstName + " " + lastName} },
-			{ Name: "objectClass", Values: []string{"inetOrgPerson"} },
+			{Name: "uid", Values: []string{username}},
+			{Name: "mail", Values: []string{email}},
+			{Name: "givenName", Values: []string{firstName}},
+			{Name: "sn", Values: []string{lastName}},
+			{Name: "cn", Values: []string{firstName + " " + lastName}},
+			{Name: "objectClass", Values: []string{"inetOrgPerson"}},
 		},
 	}
 }
@@ -199,10 +199,10 @@ func newMockGroupEntry(dn, name, description string, members []string) *ldap.Ent
 	return &ldap.Entry{
 		DN: dn,
 		Attributes: []*ldap.EntryAttribute{
-			{ Name: "cn", Values: []string{name} },
-			{ Name: "description", Values: []string{description} },
-			{ Name: "member", Values: members },
-			{ Name: "objectClass", Values: []string{"groupOfNames"} },
+			{Name: "cn", Values: []string{name}},
+			{Name: "description", Values: []string{description}},
+			{Name: "member", Values: members},
+			{Name: "objectClass", Values: []string{"groupOfNames"}},
 		},
 	}
 }
@@ -246,9 +246,9 @@ func TestLDAPConfig(t *testing.T) {
 		{
 			name: "Minimal LDAP config",
 			config: LDAPConfig{
-				Host:     "localhost",
-				Port:     389,
-				BaseDN:   "dc=example,dc=com",
+				Host:   "localhost",
+				Port:   389,
+				BaseDN: "dc=example,dc=com",
 			},
 			wantErr: false,
 		},
@@ -455,11 +455,11 @@ func TestMapUserEntry(t *testing.T) {
 			entry: &ldap.Entry{
 				DN: "CN=John Doe,CN=Users,DC=example,DC=com",
 				Attributes: []*ldap.EntryAttribute{
-					{ Name: "sAMAccountName", Values: []string{"jdoe"} },
-					{ Name: "mail", Values: []string{"john.doe@example.com"} },
-					{ Name: "givenName", Values: []string{"John"} },
-					{ Name: "sn", Values: []string{"Doe"} },
-					{ Name: "displayName", Values: []string{"John Doe"} },
+					{Name: "sAMAccountName", Values: []string{"jdoe"}},
+					{Name: "mail", Values: []string{"john.doe@example.com"}},
+					{Name: "givenName", Values: []string{"John"}},
+					{Name: "sn", Values: []string{"Doe"}},
+					{Name: "displayName", Values: []string{"John Doe"}},
 				},
 			},
 			mapping: AttributeMapping{
@@ -483,11 +483,11 @@ func TestMapUserEntry(t *testing.T) {
 			entry: &ldap.Entry{
 				DN: "uid=jsmith,ou=users,dc=example,dc=com",
 				Attributes: []*ldap.EntryAttribute{
-					{ Name: "uid", Values: []string{"jsmith"} },
-					{ Name: "mail", Values: []string{"jsmith@example.com"} },
-					{ Name: "givenName", Values: []string{"Jane"} },
-					{ Name: "sn", Values: []string{"Smith"} },
-					{ Name: "cn", Values: []string{"Jane Smith"} },
+					{Name: "uid", Values: []string{"jsmith"}},
+					{Name: "mail", Values: []string{"jsmith@example.com"}},
+					{Name: "givenName", Values: []string{"Jane"}},
+					{Name: "sn", Values: []string{"Smith"}},
+					{Name: "cn", Values: []string{"Jane Smith"}},
 				},
 			},
 			mapping: AttributeMapping{
@@ -511,11 +511,11 @@ func TestMapUserEntry(t *testing.T) {
 			entry: &ldap.Entry{
 				DN: "uid=buser,ou=users,dc=example,dc=com",
 				Attributes: []*ldap.EntryAttribute{
-					{ Name: "uid", Values: []string{"buser"} },
-					{ Name: "mail", Values: []string{} },
-					{ Name: "givenName", Values: []string{} },
-					{ Name: "sn", Values: []string{} },
-					{ Name: "cn", Values: []string{} },
+					{Name: "uid", Values: []string{"buser"}},
+					{Name: "mail", Values: []string{}},
+					{Name: "givenName", Values: []string{}},
+					{Name: "sn", Values: []string{}},
+					{Name: "cn", Values: []string{}},
 				},
 			},
 			mapping: AttributeMapping{
@@ -558,9 +558,9 @@ func TestMapGroupEntry(t *testing.T) {
 			entry: &ldap.Entry{
 				DN: "cn=developers,ou=groups,dc=example,dc=com",
 				Attributes: []*ldap.EntryAttribute{
-					{ Name: "cn", Values: []string{"developers"} },
-					{ Name: "description", Values: []string{"Development team"} },
-					{ Name: "member", Values: []string{
+					{Name: "cn", Values: []string{"developers"}},
+					{Name: "description", Values: []string{"Development team"}},
+					{Name: "member", Values: []string{
 						"cn=John Doe,ou=users,dc=example,dc=com",
 						"cn=Jane Smith,ou=users,dc=example,dc=com",
 					}},
@@ -583,9 +583,9 @@ func TestMapGroupEntry(t *testing.T) {
 			entry: &ldap.Entry{
 				DN: "cn=admins,ou=groups,dc=example,dc=com",
 				Attributes: []*ldap.EntryAttribute{
-					{ Name: "cn", Values: []string{"admins"} },
-					{ Name: "description", Values: []string{"Administrator group"} },
-					{ Name: "uniqueMember", Values: []string{
+					{Name: "cn", Values: []string{"admins"}},
+					{Name: "description", Values: []string{"Administrator group"}},
+					{Name: "uniqueMember", Values: []string{
 						"uid=admin,ou=users,dc=example,dc=com",
 					}},
 				},
@@ -815,7 +815,7 @@ func TestSyncState(t *testing.T) {
 // TestUserRecord tests user record structure
 func TestUserRecord(t *testing.T) {
 	tests := []struct {
-		name  string
+		name   string
 		record UserRecord
 	}{
 		{
@@ -999,9 +999,9 @@ func TestLDAPConnector_UserAttributes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := LDAPConfig{
-				Host:            "localhost",
-				Port:            389,
-				BaseDN:          "dc=example,dc=com",
+				Host:             "localhost",
+				Port:             389,
+				BaseDN:           "dc=example,dc=com",
 				AttributeMapping: tt.mapping,
 			}
 			connector := NewLDAPConnector(cfg, newTestLogger())
@@ -1531,9 +1531,9 @@ func TestService_StartStop(t *testing.T) {
 	logger := newTestLogger()
 	engine := &SyncEngine{logger: logger}
 	scheduler := &Scheduler{
-		logger: logger,
-		engine: engine,
-		stopCh: make(chan struct{}),
+		logger:  logger,
+		engine:  engine,
+		stopCh:  make(chan struct{}),
 		running: make(map[string]bool),
 	}
 
@@ -1565,9 +1565,9 @@ func TestService_StartStop(t *testing.T) {
 // TestSyncConfig tests sync configuration structure
 func TestSyncConfig(t *testing.T) {
 	tests := []struct {
-		name     string
-		config   syncConfig
-		wantErr  bool
+		name    string
+		config  syncConfig
+		wantErr bool
 	}{
 		{
 			name: "Enabled sync with interval",
@@ -1746,32 +1746,32 @@ func TestLDAPConnector_Connect(t *testing.T) {
 		{
 			name: "LDAP with TLS",
 			config: LDAPConfig{
-				Host:        "ldap.example.com",
-				Port:        636,
-				UseTLS:      true,
-				BaseDN:      "dc=example,dc=com",
-				BindDN:      "cn=admin,dc=example,dc=com",
+				Host:         "ldap.example.com",
+				Port:         636,
+				UseTLS:       true,
+				BaseDN:       "dc=example,dc=com",
+				BindDN:       "cn=admin,dc=example,dc=com",
 				BindPassword: "secret",
 			},
 		},
 		{
 			name: "LDAP with StartTLS",
 			config: LDAPConfig{
-				Host:        "ldap.example.com",
-				Port:        389,
-				StartTLS:    true,
-				BaseDN:      "dc=example,dc=com",
-				BindDN:      "cn=admin,dc=example,dc=com",
+				Host:         "ldap.example.com",
+				Port:         389,
+				StartTLS:     true,
+				BaseDN:       "dc=example,dc=com",
+				BindDN:       "cn=admin,dc=example,dc=com",
 				BindPassword: "secret",
 			},
 		},
 		{
 			name: "LDAP without TLS",
 			config: LDAPConfig{
-				Host:        "localhost",
-				Port:        389,
-				BaseDN:      "dc=example,dc=com",
-				BindDN:      "cn=admin,dc=example,dc=com",
+				Host:         "localhost",
+				Port:         389,
+				BaseDN:       "dc=example,dc=com",
+				BindDN:       "cn=admin,dc=example,dc=com",
 				BindPassword: "secret",
 			},
 		},
@@ -1817,10 +1817,10 @@ func TestLDAPConnector_SearchUsers(t *testing.T) {
 		{
 			name: "Custom page size",
 			config: LDAPConfig{
-				Host:       "ldap.example.com",
-				Port:       389,
-				BaseDN:     "dc=example,dc=com",
-				PageSize:   100,
+				Host:     "ldap.example.com",
+				Port:     389,
+				BaseDN:   "dc=example,dc=com",
+				PageSize: 100,
 			},
 		},
 	}
@@ -1845,11 +1845,11 @@ func TestLDAPConnector_SearchGroups(t *testing.T) {
 		{
 			name: "Custom group base DN",
 			config: LDAPConfig{
-				Host:        "ldap.example.com",
-				Port:        389,
-				BaseDN:      "dc=example,dc=com",
-				GroupBaseDN: "ou=groups,dc=example,dc=com",
-				GroupFilter: "(objectClass=groupOfNames)",
+				Host:            "ldap.example.com",
+				Port:            389,
+				BaseDN:          "dc=example,dc=com",
+				GroupBaseDN:     "ou=groups,dc=example,dc=com",
+				GroupFilter:     "(objectClass=groupOfNames)",
 				MemberAttribute: "member",
 			},
 		},
@@ -1980,10 +1980,10 @@ func TestSyncEnabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := LDAPConfig{
-				Host:        "ldap.example.com",
-				Port:        389,
-				BaseDN:      "dc=example,dc=com",
-				SyncEnabled: tt.syncEnabled,
+				Host:         "ldap.example.com",
+				Port:         389,
+				BaseDN:       "dc=example,dc=com",
+				SyncEnabled:  tt.syncEnabled,
 				SyncInterval: tt.interval,
 			}
 			connector := NewLDAPConnector(cfg, newTestLogger())
@@ -2021,8 +2021,8 @@ func TestSkipTLSVerify(t *testing.T) {
 // TestAzureADSyncConfig tests Azure AD sync configuration
 func TestAzureADSyncConfig(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  AzureADConfig
+		name   string
+		config AzureADConfig
 	}{
 		{
 			name: "Full sync configuration",
@@ -2066,9 +2066,9 @@ func TestAzureADSyncConfig(t *testing.T) {
 // TestUserRecord_Validation tests user record validation
 func TestUserRecord_Validation(t *testing.T) {
 	tests := []struct {
-		name        string
-		record      UserRecord
-		shouldSkip  bool
+		name       string
+		record     UserRecord
+		shouldSkip bool
 	}{
 		{
 			name: "Valid user record",
@@ -2193,10 +2193,10 @@ func TestSyncType(t *testing.T) {
 // TestSyncStatus tests sync status determination
 func TestSyncStatus(t *testing.T) {
 	tests := []struct {
-		name        string
-		syncErr     error
-		hasErrors   bool
-		expected    string
+		name      string
+		syncErr   error
+		hasErrors bool
+		expected  string
 	}{
 		{name: "Success", syncErr: nil, hasErrors: false, expected: "success"},
 		{name: "Failed", syncErr: errors.New("sync error"), hasErrors: false, expected: "failed"},
@@ -2335,32 +2335,32 @@ func TestErrorAccumulation(t *testing.T) {
 // TestDeprovisionThreshold tests deprovision threshold warning
 func TestDeprovisionThreshold(t *testing.T) {
 	tests := []struct {
-		name            string
-		totalLdap       int
+		name             string
+		totalLdap        int
 		deprovisionCount int
-		shouldWarn      bool
-		expectedPercent float64
+		shouldWarn       bool
+		expectedPercent  float64
 	}{
 		{
-			name:            "Below threshold",
-			totalLdap:       100,
+			name:             "Below threshold",
+			totalLdap:        100,
 			deprovisionCount: 10,
-			shouldWarn:      false,
-			expectedPercent: 9.09,
+			shouldWarn:       false,
+			expectedPercent:  9.09,
 		},
 		{
-			name:            "At threshold",
-			totalLdap:       100,
+			name:             "At threshold",
+			totalLdap:        100,
 			deprovisionCount: 34,
-			shouldWarn:      true,
-			expectedPercent: 25.37,
+			shouldWarn:       true,
+			expectedPercent:  25.37,
 		},
 		{
-			name:            "Above threshold",
-			totalLdap:       100,
+			name:             "Above threshold",
+			totalLdap:        100,
 			deprovisionCount: 50,
-			shouldWarn:      true,
-			expectedPercent: 33.33,
+			shouldWarn:       true,
+			expectedPercent:  33.33,
 		},
 	}
 
@@ -2413,7 +2413,7 @@ func TestMemberDNHandling(t *testing.T) {
 			count:     0,
 		},
 		{
-			name: "Single member",
+			name:      "Single member",
 			memberDNs: []string{"cn=user1,ou=users,dc=example,dc=com"},
 			count:     1,
 		},
@@ -2575,7 +2575,7 @@ func TestLDAPErrorCodes(t *testing.T) {
 	tests := []struct {
 		name     string
 		errCode  int
-	 errMsg   string
+		errMsg   string
 		expected string
 	}{
 		{
@@ -2660,43 +2660,43 @@ func TestPageSizeConfiguration(t *testing.T) {
 // TestBaseDNDefaults tests base DN defaulting behavior
 func TestBaseDNDefaults(t *testing.T) {
 	tests := []struct {
-		name         string
-		baseDN       string
-		userBaseDN   string
-		groupBaseDN  string
-		expectedUser string
+		name          string
+		baseDN        string
+		userBaseDN    string
+		groupBaseDN   string
+		expectedUser  string
 		expectedGroup string
 	}{
 		{
-			name:         "All base DNs specified",
-			baseDN:       "dc=example,dc=com",
-			userBaseDN:   "ou=users,dc=example,dc=com",
-			groupBaseDN:  "ou=groups,dc=example,dc=com",
-			expectedUser: "ou=users,dc=example,dc=com",
+			name:          "All base DNs specified",
+			baseDN:        "dc=example,dc=com",
+			userBaseDN:    "ou=users,dc=example,dc=com",
+			groupBaseDN:   "ou=groups,dc=example,dc=com",
+			expectedUser:  "ou=users,dc=example,dc=com",
 			expectedGroup: "ou=groups,dc=example,dc=com",
 		},
 		{
-			name:         "Only base DN specified (user)",
-			baseDN:       "dc=example,dc=com",
-			userBaseDN:   "",
-			groupBaseDN:  "ou=groups,dc=example,dc=com",
-			expectedUser: "dc=example,dc=com",
+			name:          "Only base DN specified (user)",
+			baseDN:        "dc=example,dc=com",
+			userBaseDN:    "",
+			groupBaseDN:   "ou=groups,dc=example,dc=com",
+			expectedUser:  "dc=example,dc=com",
 			expectedGroup: "ou=groups,dc=example,dc=com",
 		},
 		{
-			name:         "Only base DN specified (group)",
-			baseDN:       "dc=example,dc=com",
-			userBaseDN:   "ou=users,dc=example,dc=com",
-			groupBaseDN:  "",
-			expectedUser: "ou=users,dc=example,dc=com",
+			name:          "Only base DN specified (group)",
+			baseDN:        "dc=example,dc=com",
+			userBaseDN:    "ou=users,dc=example,dc=com",
+			groupBaseDN:   "",
+			expectedUser:  "ou=users,dc=example,dc=com",
 			expectedGroup: "dc=example,dc=com",
 		},
 		{
-			name:         "Only base DN specified (both)",
-			baseDN:       "dc=example,dc=com",
-			userBaseDN:   "",
-			groupBaseDN:  "",
-			expectedUser: "dc=example,dc=com",
+			name:          "Only base DN specified (both)",
+			baseDN:        "dc=example,dc=com",
+			userBaseDN:    "",
+			groupBaseDN:   "",
+			expectedUser:  "dc=example,dc=com",
 			expectedGroup: "dc=example,dc=com",
 		},
 	}
@@ -2814,10 +2814,10 @@ func TestSyncIntervalConfiguration(t *testing.T) {
 // TestTLSConfiguration tests TLS configuration combinations
 func TestTLSConfiguration(t *testing.T) {
 	tests := []struct {
-		name    string
-		useTLS  bool
+		name     string
+		useTLS   bool
 		startTLS bool
-		valid   bool
+		valid    bool
 	}{
 		{name: "LDAPS (UseTLS)", useTLS: true, startTLS: false, valid: true},
 		{name: "StartTLS", useTLS: false, startTLS: true, valid: true},
@@ -2993,11 +2993,11 @@ func TestExternalIDHandling(t *testing.T) {
 // TestFullSyncVsIncrementalLogic tests the logic for determining full vs incremental sync
 func TestFullSyncVsIncrementalLogic(t *testing.T) {
 	type testCase struct {
-		name           string
-		lastSyncAt     *time.Time
-		syncInterval   time.Duration
-		expectedFull   bool
-		expectedSync   bool
+		name         string
+		lastSyncAt   *time.Time
+		syncInterval time.Duration
+		expectedFull bool
+		expectedSync bool
 	}
 
 	now := time.Now()
@@ -3054,8 +3054,8 @@ func TestFullSyncVsIncrementalLogic(t *testing.T) {
 // TestPagedSearchCookieHandling tests paged search cookie handling
 func TestPagedSearchCookieHandling(t *testing.T) {
 	tests := []struct {
-		name        string
-		cookieLen   int
+		name           string
+		cookieLen      int
 		shouldContinue bool
 	}{
 		{name: "Empty cookie (no more pages)", cookieLen: 0, shouldContinue: false},
@@ -3074,9 +3074,9 @@ func TestPagedSearchCookieHandling(t *testing.T) {
 // TestMapGroupEntry_MemberAttributeDefaults tests member attribute defaults in group mapping
 func TestMapGroupEntry_MemberAttributeDefaults(t *testing.T) {
 	tests := []struct {
-		name           string
-		memberAttr     string
-		expectedAttr   string
+		name         string
+		memberAttr   string
+		expectedAttr string
 	}{
 		{name: "Custom member attribute", memberAttr: "uniqueMember", expectedAttr: "uniqueMember"},
 		{name: "Default member attribute (empty)", memberAttr: "", expectedAttr: "member"},
@@ -3096,9 +3096,9 @@ func TestMapGroupEntry_MemberAttributeDefaults(t *testing.T) {
 // TestMapGroupEntry_GroupNameDefaults tests group name attribute defaults
 func TestMapGroupEntry_GroupNameDefaults(t *testing.T) {
 	tests := []struct {
-		name         string
+		name          string
 		groupNameAttr string
-		expectedAttr string
+		expectedAttr  string
 	}{
 		{name: "Custom group name attribute", groupNameAttr: "ou", expectedAttr: "ou"},
 		{name: "Default group name attribute (empty)", groupNameAttr: "", expectedAttr: "cn"},
@@ -3343,11 +3343,11 @@ func TestSyncLog_NilCompletedAt(t *testing.T) {
 // TestSyncState_NullTimestamps tests sync state with null timestamps
 func TestSyncState_NullTimestamps(t *testing.T) {
 	state := &SyncState{
-		DirectoryID: "dir-1",
-		LastSyncAt:  nil,
-		LastUSNChanged: nil,
+		DirectoryID:         "dir-1",
+		LastSyncAt:          nil,
+		LastUSNChanged:      nil,
 		LastModifyTimestamp: nil,
-		LastDeltaLink: nil,
+		LastDeltaLink:       nil,
 	}
 
 	assert.Nil(t, state.LastSyncAt)
@@ -3452,9 +3452,9 @@ func TestIsActiveDirectory_EdgeCases(t *testing.T) {
 // TestUserAttributes_AllDefaults tests user attributes with all defaults
 func TestUserAttributes_AllDefaults(t *testing.T) {
 	cfg := LDAPConfig{
-		Host: "localhost",
-		Port: 389,
-		BaseDN: "dc=example,dc=com",
+		Host:             "localhost",
+		Port:             389,
+		BaseDN:           "dc=example,dc=com",
 		AttributeMapping: AttributeMapping{},
 	}
 
@@ -3479,9 +3479,9 @@ func TestUserAttributes_CustomMapping(t *testing.T) {
 	}
 
 	cfg := LDAPConfig{
-		Host: "localhost",
-		Port: 389,
-		BaseDN: "dc=example,dc=com",
+		Host:             "localhost",
+		Port:             389,
+		BaseDN:           "dc=example,dc=com",
 		AttributeMapping: customMapping,
 	}
 
@@ -3499,33 +3499,33 @@ func TestUserAttributes_CustomMapping(t *testing.T) {
 // TestParseLDAPPasswordError_AllErrorCodes tests all LDAP error code paths
 func TestParseLDAPPasswordError_AllErrorCodes(t *testing.T) {
 	tests := []struct {
-		name       string
+		name      string
 		errCode   uint16
 		errMsg    string
 		expectErr error
 	}{
 		{
-			name:     "Nil error",
-			errCode:  0,
-			errMsg:   "",
+			name:      "Nil error",
+			errCode:   0,
+			errMsg:    "",
 			expectErr: nil,
 		},
 		{
-			name:     "Constraint violation without sub-code",
-			errCode:  ldap.LDAPResultConstraintViolation,
-			errMsg:   "constraint violation",
+			name:      "Constraint violation without sub-code",
+			errCode:   ldap.LDAPResultConstraintViolation,
+			errMsg:    "constraint violation",
 			expectErr: errors.New("password policy violation"),
 		},
 		{
-			name:     "Unwilling to perform",
-			errCode:  ldap.LDAPResultUnwillingToPerform,
-			errMsg:   "unwilling to perform",
+			name:      "Unwilling to perform",
+			errCode:   ldap.LDAPResultUnwillingToPerform,
+			errMsg:    "unwilling to perform",
 			expectErr: errors.New("server refused"),
 		},
 		{
-			name:     "Other error code",
-			errCode:  50, // LDAP result code 50
-			errMsg:   "some other error",
+			name:      "Other error code",
+			errCode:   50, // LDAP result code 50
+			errMsg:    "some other error",
 			expectErr: errors.New("password change failed"),
 		},
 	}
@@ -3638,8 +3638,8 @@ func TestConfigAddressFormatting(t *testing.T) {
 // TestSyncDurationParsing tests sync duration parsing
 func TestSyncDurationParsing(t *testing.T) {
 	tests := []struct {
-		interval    int
-		expected    time.Duration
+		interval int
+		expected time.Duration
 	}{
 		{0, 0},
 		{1, time.Minute},

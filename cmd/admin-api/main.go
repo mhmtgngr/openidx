@@ -21,11 +21,11 @@ import (
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/opa"
-	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
+	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/notifications"
 	"github.com/openidx/openidx/internal/organization"
@@ -242,9 +242,9 @@ func main() {
 
 	// Create graceful manager
 	graceful := server.New(server.Config{
-		Server:         httpServer,
-		Logger:         log,
-		Shutdownables:  shutdownables,
+		Server:          httpServer,
+		Logger:          log,
+		Shutdownables:   shutdownables,
 		ShutdownTimeout: 30 * time.Second,
 	})
 

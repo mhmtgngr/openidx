@@ -33,7 +33,7 @@ type AlertType string
 const (
 	AlertTypeImpossibleTravel     AlertType = "impossible_travel"
 	AlertTypeBruteForce           AlertType = "brute_force"
-	AlertTypeCredentialStuffing    AlertType = "credential_stuffing"
+	AlertTypeCredentialStuffing   AlertType = "credential_stuffing"
 	AlertTypeNewDevice            AlertType = "new_device"
 	AlertTypeAnomalousLocation    AlertType = "anomalous_location"
 	AlertTypeHighRiskLoginBlocked AlertType = "high_risk_login_blocked"
@@ -46,9 +46,9 @@ const (
 type AlertStatus string
 
 const (
-	AlertStatusOpen       AlertStatus = "open"
-	AlertStatusAcknowledged AlertStatus = "acknowledged"
-	AlertStatusResolved    AlertStatus = "resolved"
+	AlertStatusOpen          AlertStatus = "open"
+	AlertStatusAcknowledged  AlertStatus = "acknowledged"
+	AlertStatusResolved      AlertStatus = "resolved"
 	AlertStatusFalsePositive AlertStatus = "false_positive"
 )
 
@@ -94,12 +94,12 @@ type AlertConfig struct {
 	WebhookHeaders map[string]string
 
 	// Email configuration
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUsername string
-	SMTPPassword string
-	SMTPUseTLS   bool
-	EmailFrom    string
+	SMTPHost          string
+	SMTPPort          int
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPUseTLS        bool
+	EmailFrom         string
 	SecurityTeamEmail []string
 
 	// Retry configuration
@@ -113,13 +113,13 @@ type AlertConfig struct {
 // DefaultAlertConfig returns default alert configuration
 func DefaultAlertConfig() AlertConfig {
 	return AlertConfig{
-		WebhookTimeout:  10 * time.Second,
-		WebhookHeaders:  make(map[string]string),
-		SMTPPort:        587,
-		SMTPUseTLS:      true,
-		MaxRetries:      3,
-		RetryInterval:   5 * time.Minute,
-		RetentionDays:   90,
+		WebhookTimeout:    10 * time.Second,
+		WebhookHeaders:    make(map[string]string),
+		SMTPPort:          587,
+		SMTPUseTLS:        true,
+		MaxRetries:        3,
+		RetryInterval:     5 * time.Minute,
+		RetentionDays:     90,
 		SecurityTeamEmail: []string{},
 	}
 }
@@ -191,7 +191,13 @@ func (a *AlertManager) GenerateAlert(ctx context.Context, alert *Alert) error {
 		zap.String("alert_id", alert.ID),
 		zap.String("type", string(alert.Type)),
 		zap.String("severity", string(alert.Severity)),
-		zap.String("user_id", func() string { if alert.UserID != nil { return *alert.UserID } else { return "" } }()),
+		zap.String("user_id", func() string {
+			if alert.UserID != nil {
+				return *alert.UserID
+			} else {
+				return ""
+			}
+		}()),
 	)
 
 	return nil

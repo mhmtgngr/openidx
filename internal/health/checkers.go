@@ -45,10 +45,10 @@ func (p *PostgresChecker) Check(ctx context.Context) ComponentStatus {
 
 	if err != nil {
 		return ComponentStatus{
-			Status:     "down",
-			LatencyMS:  float64(latency.Milliseconds()),
-			Details:    err.Error(),
-			CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+			Status:    "down",
+			LatencyMS: float64(latency.Milliseconds()),
+			Details:   err.Error(),
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 	}
 
@@ -60,10 +60,10 @@ func (p *PostgresChecker) Check(ctx context.Context) ComponentStatus {
 	}
 
 	return ComponentStatus{
-		Status:     status,
-		LatencyMS:  float64(latency.Milliseconds()),
-		Details:    details,
-		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Status:    status,
+		LatencyMS: float64(latency.Milliseconds()),
+		Details:   details,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
@@ -102,10 +102,10 @@ func (r *RedisChecker) Check(ctx context.Context) ComponentStatus {
 
 	if err != nil {
 		return ComponentStatus{
-			Status:     "down",
-			LatencyMS:  float64(latency.Milliseconds()),
-			Details:    err.Error(),
-			CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+			Status:    "down",
+			LatencyMS: float64(latency.Milliseconds()),
+			Details:   err.Error(),
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 	}
 
@@ -117,19 +117,19 @@ func (r *RedisChecker) Check(ctx context.Context) ComponentStatus {
 	}
 
 	return ComponentStatus{
-		Status:     status,
-		LatencyMS:  float64(latency.Milliseconds()),
-		Details:    details,
-		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Status:    status,
+		LatencyMS: float64(latency.Milliseconds()),
+		Details:   details,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
 // StaticChecker allows creating a simple static health checker
 type StaticChecker struct {
-	name      string
-	status    string
-	details   string
-	critical  bool
+	name     string
+	status   string
+	details  string
+	critical bool
 }
 
 // NewStaticChecker creates a checker that always returns the same status
@@ -155,10 +155,10 @@ func (s *StaticChecker) IsCritical() bool {
 // Check returns the static status
 func (s *StaticChecker) Check(ctx context.Context) ComponentStatus {
 	return ComponentStatus{
-		Status:     s.status,
-		LatencyMS:  0,
-		Details:    s.details,
-		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Status:    s.status,
+		LatencyMS: 0,
+		Details:   s.details,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 

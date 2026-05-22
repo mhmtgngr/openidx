@@ -25,9 +25,9 @@ func (s *Service) handleBrowZerStatus(c *gin.Context) {
 	cfg, err := s.zitiManager.GetBrowZerConfig(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"enabled":           false,
-			"configured":        false,
-			"bootstrapper_url":  "http://localhost:1408",
+			"enabled":          false,
+			"configured":       false,
+			"bootstrapper_url": "http://localhost:1408",
 		})
 		return
 	}

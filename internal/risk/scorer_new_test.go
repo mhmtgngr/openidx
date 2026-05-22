@@ -20,12 +20,12 @@ func TestCalculateRiskScore_VariousSignalCombinations(t *testing.T) {
 	baseTime := time.Now()
 
 	tests := []struct {
-		name           string
-		loginCtx       LoginContext
-		expectedMin    int // Minimum expected score
-		expectedMax    int // Maximum expected score
-		expectedLevel  RiskLevel
-		expectedRec    Recommendation
+		name          string
+		loginCtx      LoginContext
+		expectedMin   int // Minimum expected score
+		expectedMax   int // Maximum expected score
+		expectedLevel RiskLevel
+		expectedRec   Recommendation
 	}{
 		{
 			name: "all_safe_signals",
@@ -104,7 +104,7 @@ func TestCalculateRiskScore_VariousSignalCombinations(t *testing.T) {
 				IPAddress:         "1.2.3.4",
 				DeviceTrustLevel:  TrustLevelSuspicious,
 				LoginTime:         baseTime,
-				Latitude:          51.5074,  // London
+				Latitude:          51.5074, // London
 				Longitude:         -0.1278,
 				FailedCount:       10,
 				LoginCount:        30,
@@ -125,7 +125,7 @@ func TestCalculateRiskScore_VariousSignalCombinations(t *testing.T) {
 				IPAddress:         "1.2.3.4",
 				DeviceTrustLevel:  TrustLevelTrusted,
 				LoginTime:         time.Date(2024, 1, 1, 3, 0, 0, 0, time.UTC), // 3 AM
-				TypicalLoginHours: []int{9, 10, 11, 14, 15, 16}, // Business hours
+				TypicalLoginHours: []int{9, 10, 11, 14, 15, 16},                // Business hours
 				FailedCount:       0,
 				LoginCount:        1,
 				IsVPN:             false,
@@ -226,13 +226,13 @@ func TestSignalWeights(t *testing.T) {
 	assessment := scorer.CalculateRiskScore(ctx, loginCtx)
 
 	expectedWeights := map[string]float64{
-		"ip_reputation":    WeightIPReputation,
-		"device_trust":     WeightDeviceTrust,
-		"geo_distance":     WeightGeoDistance,
-		"login_velocity":   WeightLoginVelocity,
-		"time_pattern":     WeightTimePattern,
-		"failed_attempts":  WeightFailedAttempts,
-		"vpn_tor":          WeightVPNTor,
+		"ip_reputation":   WeightIPReputation,
+		"device_trust":    WeightDeviceTrust,
+		"geo_distance":    WeightGeoDistance,
+		"login_velocity":  WeightLoginVelocity,
+		"time_pattern":    WeightTimePattern,
+		"failed_attempts": WeightFailedAttempts,
+		"vpn_tor":         WeightVPNTor,
 	}
 
 	for _, signal := range assessment.Signals {
@@ -288,9 +288,9 @@ func TestDetermineRecommendation(t *testing.T) {
 	scorer := NewScorer(config, zap.NewNop())
 
 	tests := []struct {
-		score          int
-		level          RiskLevel
-		expected       Recommendation
+		score    int
+		level    RiskLevel
+		expected Recommendation
 	}{
 		{10, RiskLevelLow, RecommendationAllow},
 		{30, RiskLevelLow, RecommendationAllow},
@@ -315,10 +315,10 @@ func TestDetermineRecommendation(t *testing.T) {
 // TestCalculateSpeed tests speed calculation
 func TestCalculateSpeed(t *testing.T) {
 	tests := []struct {
-		name         string
-		distanceKm   float64
-		timeDelta    time.Duration
-		expectedKmh  float64
+		name        string
+		distanceKm  float64
+		timeDelta   time.Duration
+		expectedKmh float64
 	}{
 		{
 			name:        "100km in 1 hour",
@@ -360,8 +360,8 @@ func TestCalculateSpeed(t *testing.T) {
 // TestRiskAssessment_GetSignalSummary tests signal summary generation
 func TestRiskAssessment_GetSignalSummary(t *testing.T) {
 	assessment := &RiskAssessment{
-		Score:      65,
-		Level:      RiskLevelHigh,
+		Score: 65,
+		Level: RiskLevelHigh,
 		Signals: []Signal{
 			{Name: "ip_reputation", Weight: 0.20, Score: 0, Description: "IP not on blocklist"},
 			{Name: "device_trust", Weight: 0.20, Score: 40, Description: "Unknown device"},

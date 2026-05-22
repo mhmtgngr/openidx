@@ -130,7 +130,9 @@ func (s *Service) handleListAllSessions(c *gin.Context) {
 
 // handleAdminRevokeSession revokes a single session by ID
 func (s *Service) handleAdminRevokeSession(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	sessionID := c.Param("id")
 	ctx := c.Request.Context()
 
@@ -167,7 +169,9 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 
 // handleAdminRevokeAllUserSessions revokes all active sessions for a user
 func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	userID := c.Param("id")
 	ctx := c.Request.Context()
 

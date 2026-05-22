@@ -170,11 +170,11 @@ func TestGenerateGDPRReport(t *testing.T) {
 
 func TestDetermineComplianceStatus(t *testing.T) {
 	tests := []struct {
-		name                  string
-		value                 float64
-		compliantThreshold    float64
-		partialThreshold      float64
-		expectedStatus        string
+		name               string
+		value              float64
+		compliantThreshold float64
+		partialThreshold   float64
+		expectedStatus     string
 	}{
 		{
 			name:               "fully compliant",
@@ -255,23 +255,23 @@ func TestSOC2ReportSerialization(t *testing.T) {
 			ComplianceStatus: "compliant",
 		},
 		PasswordPolicy: PasswordPolicyMetrics{
-			MinLength:            8,
-			RequireUppercase:     true,
-			RequireLowercase:     true,
-			RequireNumbers:       true,
-			RequireSpecialChars:  true,
-			MaxAgeDays:           90,
+			MinLength:              8,
+			RequireUppercase:       true,
+			RequireLowercase:       true,
+			RequireNumbers:         true,
+			RequireSpecialChars:    true,
+			MaxAgeDays:             90,
 			UsersWithWeakPasswords: 2,
-			ComplianceStatus:     "compliant",
+			ComplianceStatus:       "compliant",
 		},
 		MFAAdoption: MFAAdoptionMetrics{
-			TotalUsers:      500,
-			UsersWithMFA:    450,
-			UsersWithTOTP:   300,
+			TotalUsers:        500,
+			UsersWithMFA:      450,
+			UsersWithTOTP:     300,
 			UsersWithWebAuthn: 150,
-			AdoptionRate:    90.0,
-			LastUpdated:     time.Now().UTC(),
-			ComplianceStatus: "compliant",
+			AdoptionRate:      90.0,
+			LastUpdated:       time.Now().UTC(),
+			ComplianceStatus:  "compliant",
 		},
 		SessionMgmt: SessionManagementMetrics{
 			ActiveSessions:      125,

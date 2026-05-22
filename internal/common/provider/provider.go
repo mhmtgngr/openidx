@@ -100,11 +100,11 @@ type MFAProvider interface {
 
 // MFAEnrollment represents MFA enrollment data
 type MFAEnrollment struct {
-	Method     MFAMethod              `json:"method"`
-	Secret     string                 `json:"secret,omitempty"`
-	QRCode     string                 `json:"qr_code,omitempty"`
-	RecoveryCodes []string            `json:"recovery_codes,omitempty"`
-	Data       map[string]interface{} `json:"data,omitempty"`
+	Method        MFAMethod              `json:"method"`
+	Secret        string                 `json:"secret,omitempty"`
+	QRCode        string                 `json:"qr_code,omitempty"`
+	RecoveryCodes []string               `json:"recovery_codes,omitempty"`
+	Data          map[string]interface{} `json:"data,omitempty"`
 }
 
 // ============================================================================
@@ -235,12 +235,12 @@ type PushProvider interface {
 
 // StorageObject represents a stored object
 type StorageObject struct {
-	Key         string            `json:"key"`
-	ContentType string            `json:"content_type"`
-	Size        int64             `json:"size"`
-	ETag        string            `json:"etag,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	LastModified time.Time        `json:"last_modified"`
+	Key          string            `json:"key"`
+	ContentType  string            `json:"content_type"`
+	Size         int64             `json:"size"`
+	ETag         string            `json:"etag,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	LastModified time.Time         `json:"last_modified"`
 }
 
 // StorageProvider interface for storage implementations

@@ -23,18 +23,18 @@ const (
 
 // JITGrant represents a temporary elevation of privilege
 type JITGrant struct {
-	ID           string    `json:"id"`
-	UserID       string    `json:"user_id"`
-	RoleID       string    `json:"role_id"`
-	RoleName     string    `json:"role_name"`
-	GrantedBy    string    `json:"granted_by"`
-	Justification string   `json:"justification"`
-	Duration     time.Duration `json:"duration"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	CreatedAt    time.Time `json:"created_at"`
-	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
-	RevokedBy    *string   `json:"revoked_by,omitempty"`
-	Status       string    `json:"status"` // active, expired, revoked
+	ID            string        `json:"id"`
+	UserID        string        `json:"user_id"`
+	RoleID        string        `json:"role_id"`
+	RoleName      string        `json:"role_name"`
+	GrantedBy     string        `json:"granted_by"`
+	Justification string        `json:"justification"`
+	Duration      time.Duration `json:"duration"`
+	ExpiresAt     time.Time     `json:"expires_at"`
+	CreatedAt     time.Time     `json:"created_at"`
+	RevokedAt     *time.Time    `json:"revoked_at,omitempty"`
+	RevokedBy     *string       `json:"revoked_by,omitempty"`
+	Status        string        `json:"status"` // active, expired, revoked
 }
 
 // JITRequest represents a request for JIT access elevation

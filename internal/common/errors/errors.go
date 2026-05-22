@@ -13,24 +13,24 @@ type ErrorCode string
 
 const (
 	// General errors
-	ErrInternal      ErrorCode = "INTERNAL_ERROR"
-	ErrNotFound      ErrorCode = "NOT_FOUND"
-	ErrBadRequest    ErrorCode = "BAD_REQUEST"
-	ErrUnauthorized  ErrorCode = "UNAUTHORIZED"
-	ErrForbidden     ErrorCode = "FORBIDDEN"
-	ErrConflict      ErrorCode = "CONFLICT"
-	ErrValidation    ErrorCode = "VALIDATION_ERROR"
-	ErrTimeout       ErrorCode = "TIMEOUT"
-	ErrRateLimit     ErrorCode = "RATE_LIMIT_EXCEEDED"
+	ErrInternal     ErrorCode = "INTERNAL_ERROR"
+	ErrNotFound     ErrorCode = "NOT_FOUND"
+	ErrBadRequest   ErrorCode = "BAD_REQUEST"
+	ErrUnauthorized ErrorCode = "UNAUTHORIZED"
+	ErrForbidden    ErrorCode = "FORBIDDEN"
+	ErrConflict     ErrorCode = "CONFLICT"
+	ErrValidation   ErrorCode = "VALIDATION_ERROR"
+	ErrTimeout      ErrorCode = "TIMEOUT"
+	ErrRateLimit    ErrorCode = "RATE_LIMIT_EXCEEDED"
 
 	// Resource errors
-	ErrUserNotFound      ErrorCode = "USER_NOT_FOUND"
-	ErrUserAlreadyExists ErrorCode = "USER_ALREADY_EXISTS"
-	ErrUserDisabled      ErrorCode = "USER_DISABLED"
-	ErrGroupNotFound     ErrorCode = "GROUP_NOT_FOUND"
+	ErrUserNotFound       ErrorCode = "USER_NOT_FOUND"
+	ErrUserAlreadyExists  ErrorCode = "USER_ALREADY_EXISTS"
+	ErrUserDisabled       ErrorCode = "USER_DISABLED"
+	ErrGroupNotFound      ErrorCode = "GROUP_NOT_FOUND"
 	ErrGroupAlreadyExists ErrorCode = "GROUP_ALREADY_EXISTS"
-	ErrSessionNotFound   ErrorCode = "SESSION_NOT_FOUND"
-	ErrSessionExpired    ErrorCode = "SESSION_EXPIRED"
+	ErrSessionNotFound    ErrorCode = "SESSION_NOT_FOUND"
+	ErrSessionExpired     ErrorCode = "SESSION_EXPIRED"
 
 	// Authentication & Authorization errors
 	ErrInvalidCredentials ErrorCode = "INVALID_CREDENTIALS"
@@ -49,12 +49,12 @@ const (
 	ErrInvalidDecision   ErrorCode = "INVALID_DECISION"
 
 	// Database errors
-	ErrDatabase        ErrorCode = "DATABASE_ERROR"
-	ErrDuplicateKey    ErrorCode = "DUPLICATE_KEY"
+	ErrDatabase            ErrorCode = "DATABASE_ERROR"
+	ErrDuplicateKey        ErrorCode = "DUPLICATE_KEY"
 	ErrConstraintViolation ErrorCode = "CONSTRAINT_VIOLATION"
 
 	// External service errors
-	ErrRedisError    ErrorCode = "REDIS_ERROR"
+	ErrRedisError         ErrorCode = "REDIS_ERROR"
 	ErrElasticsearchError ErrorCode = "ELASTICSEARCH_ERROR"
 )
 
@@ -342,12 +342,12 @@ func DuplicateKey(key string) *AppError {
 
 // ErrorResponse is the JSON response structure for errors
 type ErrorResponse struct {
-	Error      ErrorCode              `json:"error"`
-	Message    string                 `json:"message"`
-	Details    string                 `json:"details,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	RequestID  string                 `json:"request_id,omitempty"`
-	Timestamp  string                 `json:"timestamp,omitempty"`
+	Error     ErrorCode              `json:"error"`
+	Message   string                 `json:"message"`
+	Details   string                 `json:"details,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	RequestID string                 `json:"request_id,omitempty"`
+	Timestamp string                 `json:"timestamp,omitempty"`
 }
 
 // HandleError sends an error response to the client

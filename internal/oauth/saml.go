@@ -32,72 +32,72 @@ var (
 	ErrSAMLSignatureFailed = errors.New("saml signature verification failed")
 	ErrSPNotFound          = errors.New("service provider not found")
 	ErrSPDisabled          = errors.New("service provider is disabled")
-	ErrNameIDNotSupported   = errors.New("requested name id format not supported")
+	ErrNameIDNotSupported  = errors.New("requested name id format not supported")
 )
 
 // NameIDFormat constants
 const (
-	NameIDFormatEmail      = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
-	NameIDFormatPersistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
-	NameIDFormatTransient  = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+	NameIDFormatEmail       = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+	NameIDFormatPersistent  = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	NameIDFormatTransient   = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 	NameIDFormatUnspecified = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
 )
 
 // SAML binding constants
 const (
-	SAMLBindingHTTPRedirect  = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
-	SAMLBindingHTTPPost      = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+	SAMLBindingHTTPRedirect = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+	SAMLBindingHTTPPost     = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 	SAMLBindingSOAP         = "urn:oasis:names:tc:SAML:2.0:bindings:SOAP"
 )
 
 // SAML protocol constants
 const (
-	SAMLProtocolNamespace = "urn:oasis:names:tc:SAML:2.0:protocol"
+	SAMLProtocolNamespace  = "urn:oasis:names:tc:SAML:2.0:protocol"
 	SAMLAssertionNamespace = "urn:oasis:names:tc:SAML:2.0:assertion"
-	SAMLMetadataNamespace = "urn:oasis:names:tc:SAML:2.0:metadata"
-	XMLDSigNamespace = "http://www.w3.org/2000/09/xmldsig#"
+	SAMLMetadataNamespace  = "urn:oasis:names:tc:SAML:2.0:metadata"
+	XMLDSigNamespace       = "http://www.w3.org/2000/09/xmldsig#"
 )
 
 // AuthnRequest represents an incoming SAML Authentication Request from an SP
 type AuthnRequest struct {
-	XMLName                     xml.Name `xml:"AuthnRequest"`
-	ID                          string   `xml:"ID,attr"`
-	Version                     string   `xml:"Version,attr"`
-	IssueInstant                string   `xml:"IssueInstant,attr"`
-	Destination                 string   `xml:"Destination,attr,omitempty"`
-	ProtocolBinding             string   `xml:"ProtocolBinding,attr,omitempty"`
-	AssertionConsumerServiceURL string   `xml:"AssertionConsumerServiceURL,attr,omitempty"`
-	Issuer                      string   `xml:"Issuer"`
-	NameIDPolicy                *NameIDPolicy `xml:"NameIDPolicy,omitempty"`
+	XMLName                     xml.Name               `xml:"AuthnRequest"`
+	ID                          string                 `xml:"ID,attr"`
+	Version                     string                 `xml:"Version,attr"`
+	IssueInstant                string                 `xml:"IssueInstant,attr"`
+	Destination                 string                 `xml:"Destination,attr,omitempty"`
+	ProtocolBinding             string                 `xml:"ProtocolBinding,attr,omitempty"`
+	AssertionConsumerServiceURL string                 `xml:"AssertionConsumerServiceURL,attr,omitempty"`
+	Issuer                      string                 `xml:"Issuer"`
+	NameIDPolicy                *NameIDPolicy          `xml:"NameIDPolicy,omitempty"`
 	RequestedAuthnContext       *RequestedAuthnContext `xml:"RequestedAuthnContext,omitempty"`
-	ForceAuthn                  bool     `xml:"ForceAuthn,attr,omitempty"`
-	IsPassive                   bool     `xml:"IsPassive,attr,omitempty"`
+	ForceAuthn                  bool                   `xml:"ForceAuthn,attr,omitempty"`
+	IsPassive                   bool                   `xml:"IsPassive,attr,omitempty"`
 }
 
 // NameIDPolicy specifies the NameID format requested by the SP
 type NameIDPolicy struct {
-	Format      string `xml:"Format,attr,omitempty"`
-	AllowCreate bool   `xml:"AllowCreate,attr,omitempty"`
+	Format          string `xml:"Format,attr,omitempty"`
+	AllowCreate     bool   `xml:"AllowCreate,attr,omitempty"`
 	SPNameQualifier string `xml:"SPNameQualifier,attr,omitempty"`
 }
 
 // RequestedAuthnContext specifies authentication context requirements
 type RequestedAuthnContext struct {
-	Comparison string `xml:"Comparison,attr,omitempty"`
+	Comparison            string   `xml:"Comparison,attr,omitempty"`
 	AuthnContextClassRefs []string `xml:"AuthnContextClassRef"`
 }
 
 // SAMLUser represents user information for SAML assertion
 type SAMLUser struct {
-	ID              string
-	Email           string
-	FirstName       string
-	LastName        string
-	DisplayName     string
-	Groups          []string
-	Roles           []string
-	SessionIndex    string
-	AuthnInstant    time.Time
+	ID           string
+	Email        string
+	FirstName    string
+	LastName     string
+	DisplayName  string
+	Groups       []string
+	Roles        []string
+	SessionIndex string
+	AuthnInstant time.Time
 }
 
 // SAMLResponseBuilder constructs SAML Response assertions
@@ -131,15 +131,15 @@ type SAMLAttribute struct {
 func (s *Service) NewSAMLResponseBuilder() *SAMLResponseBuilder {
 	now := time.Now().UTC()
 	return &SAMLResponseBuilder{
-		idp:          s,
-		responseID:   "_" + uuid.New().String(),
-		assertionID:  "_" + uuid.New().String(),
-		issueInstant: now,
-		notBefore:    now.Add(-5 * time.Minute), // Allow for clock skew
-		notOnOrAfter: now.Add(5 * time.Minute),  // Short validity window
-		authnInstant: now,
-		sessionIndex: "_" + uuid.New().String(),
-		nameIDFormat: NameIDFormatEmail,
+		idp:           s,
+		responseID:    "_" + uuid.New().String(),
+		assertionID:   "_" + uuid.New().String(),
+		issueInstant:  now,
+		notBefore:     now.Add(-5 * time.Minute), // Allow for clock skew
+		notOnOrAfter:  now.Add(5 * time.Minute),  // Short validity window
+		authnInstant:  now,
+		sessionIndex:  "_" + uuid.New().String(),
+		nameIDFormat:  NameIDFormatEmail,
 		signAssertion: true,
 	}
 }
@@ -362,11 +362,11 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		// User not authenticated - store request context and redirect to login
 		ssoSession := generateRandomToken(32)
 		ssoData := map[string]interface{}{
-			"sp_id":        sp.ID,
-			"entity_id":    authnReq.Issuer,
-			"request_id":   authnReq.ID,
-			"acs_url":      sp.ACSURL,
-			"relay_state":  relayState,
+			"sp_id":          sp.ID,
+			"entity_id":      authnReq.Issuer,
+			"request_id":     authnReq.ID,
+			"acs_url":        sp.ACSURL,
+			"relay_state":    relayState,
 			"name_id_format": getNameIDFormat(authnReq.NameIDPolicy),
 		}
 		ssoDataJSON, _ := json.Marshal(ssoData)
@@ -399,8 +399,8 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 			user.ID, c.ClientIP(), sp.EntityID, "service_provider",
 			map[string]interface{}{
 				"sp_entity_id": sp.EntityID,
-				"sp_name": sp.Name,
-				"request_id": authnReq.ID,
+				"sp_name":      sp.Name,
+				"request_id":   authnReq.ID,
 			})
 	}()
 
@@ -519,13 +519,13 @@ func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
 	roles := s.getUserRoles(ctx, userID)
 
 	return &SAMLUser{
-		ID:          userID,
-		Email:       email,
-		FirstName:   firstName,
-		LastName:    lastName,
-		DisplayName: name,
-		Groups:      groups,
-		Roles:       roles,
+		ID:           userID,
+		Email:        email,
+		FirstName:    firstName,
+		LastName:     lastName,
+		DisplayName:  name,
+		Groups:       groups,
+		Roles:        roles,
 		AuthnInstant: time.Now(),
 	}, nil
 }
@@ -557,13 +557,13 @@ func (s *Service) extractSAMLUserFromSession(ctx context.Context, sessionID stri
 	roles := s.getUserRoles(ctx, userID)
 
 	return &SAMLUser{
-		ID:          userID,
-		Email:       email,
-		FirstName:   firstName,
-		LastName:    lastName,
-		DisplayName: displayName,
-		Groups:      groups,
-		Roles:       roles,
+		ID:           userID,
+		Email:        email,
+		FirstName:    firstName,
+		LastName:     lastName,
+		DisplayName:  displayName,
+		Groups:       groups,
+		Roles:        roles,
 		AuthnInstant: time.Now(),
 	}, nil
 }
@@ -884,17 +884,17 @@ func (s *Service) getBaseURL(c *gin.Context) string {
 
 // IdPSAMLResponse represents a SAML Response issued by the IdP
 type IdPSAMLResponse struct {
-	XMLName      xml.Name         `xml:"samlp:Response"`
-	XMLNS        string           `xml:"xmlns:samlp,attr"`
-	XMLNSSAML    string           `xml:"xmlns:saml,attr"`
-	ID           string           `xml:"ID,attr"`
-	Version      string           `xml:"Version,attr"`
-	IssueInstant string           `xml:"IssueInstant,attr"`
-	Destination  string           `xml:"Destination,attr"`
-	InResponseTo string           `xml:"InResponseTo,attr,omitempty"`
-	Issuer       IdPIssuer        `xml:"saml:Issuer"`
-	Status       IdPStatus        `xml:"samlp:Status"`
-	Assertion    IdPAssertion     `xml:"saml:Assertion"`
+	XMLName      xml.Name     `xml:"samlp:Response"`
+	XMLNS        string       `xml:"xmlns:samlp,attr"`
+	XMLNSSAML    string       `xml:"xmlns:saml,attr"`
+	ID           string       `xml:"ID,attr"`
+	Version      string       `xml:"Version,attr"`
+	IssueInstant string       `xml:"IssueInstant,attr"`
+	Destination  string       `xml:"Destination,attr"`
+	InResponseTo string       `xml:"InResponseTo,attr,omitempty"`
+	Issuer       IdPIssuer    `xml:"saml:Issuer"`
+	Status       IdPStatus    `xml:"samlp:Status"`
+	Assertion    IdPAssertion `xml:"saml:Assertion"`
 }
 
 // IdPIssuer is the Issuer element
@@ -905,7 +905,7 @@ type IdPIssuer struct {
 
 // IdPStatus is the SAML response status
 type IdPStatus struct {
-	XMLName    xml.Name     `xml:"samlp:Status"`
+	XMLName    xml.Name      `xml:"samlp:Status"`
 	StatusCode IdPStatusCode `xml:"samlp:StatusCode"`
 }
 
@@ -931,9 +931,9 @@ type IdPAssertion struct {
 
 // IdPSubject contains subject details
 type IdPSubject struct {
-	XMLName             xml.Name                   `xml:"saml:Subject"`
-	NameID              IdPNameID                  `xml:"saml:NameID"`
-	SubjectConfirmation IdPSubjectConfirmation      `xml:"saml:SubjectConfirmation"`
+	XMLName             xml.Name               `xml:"saml:Subject"`
+	NameID              IdPNameID              `xml:"saml:NameID"`
+	SubjectConfirmation IdPSubjectConfirmation `xml:"saml:SubjectConfirmation"`
 }
 
 // IdPNameID is the NameID element
@@ -945,9 +945,9 @@ type IdPNameID struct {
 
 // IdPSubjectConfirmation specifies confirmation method
 type IdPSubjectConfirmation struct {
-	XMLName                 xml.Name                     `xml:"saml:SubjectConfirmation"`
-	Method                  string                       `xml:"Method,attr"`
-	SubjectConfirmationData IdPSubjectConfirmationData   `xml:"saml:SubjectConfirmationData"`
+	XMLName                 xml.Name                   `xml:"saml:SubjectConfirmation"`
+	Method                  string                     `xml:"Method,attr"`
+	SubjectConfirmationData IdPSubjectConfirmationData `xml:"saml:SubjectConfirmationData"`
 }
 
 // IdPSubjectConfirmationData has confirmation data
@@ -960,10 +960,10 @@ type IdPSubjectConfirmationData struct {
 
 // IdPConditions contains assertion conditions
 type IdPConditions struct {
-	XMLName             xml.Name                 `xml:"saml:Conditions"`
-	NotBefore           string                   `xml:"NotBefore,attr"`
-	NotOnOrAfter        string                   `xml:"NotOnOrAfter,attr"`
-	AudienceRestriction IdPAudienceRestriction   `xml:"saml:AudienceRestriction"`
+	XMLName             xml.Name               `xml:"saml:Conditions"`
+	NotBefore           string                 `xml:"NotBefore,attr"`
+	NotOnOrAfter        string                 `xml:"NotOnOrAfter,attr"`
+	AudienceRestriction IdPAudienceRestriction `xml:"saml:AudienceRestriction"`
 }
 
 // IdPAudienceRestriction restricts audience
@@ -977,7 +977,7 @@ type IdPAuthnStatement struct {
 	XMLName      xml.Name        `xml:"saml:AuthnStatement"`
 	AuthnInstant string          `xml:"AuthnInstant,attr"`
 	SessionIndex string          `xml:"SessionIndex,attr"`
-	AuthnContext IdPAuthnContext  `xml:"saml:AuthnContext"`
+	AuthnContext IdPAuthnContext `xml:"saml:AuthnContext"`
 }
 
 // IdPAuthnContext describes authn context class
@@ -994,10 +994,10 @@ type IdPAttributeStatement struct {
 
 // IdPAttribute is a single SAML attribute
 type IdPAttribute struct {
-	XMLName    xml.Name             `xml:"saml:Attribute"`
-	Name       string               `xml:"Name,attr"`
-	NameFormat string               `xml:"NameFormat,attr"`
-	Values     []IdPAttributeValue  `xml:"saml:AttributeValue"`
+	XMLName    xml.Name            `xml:"saml:Attribute"`
+	Name       string              `xml:"Name,attr"`
+	NameFormat string              `xml:"NameFormat,attr"`
+	Values     []IdPAttributeValue `xml:"saml:AttributeValue"`
 }
 
 // IdPAttributeValue is an attribute value
@@ -1009,47 +1009,47 @@ type IdPAttributeValue struct {
 
 // IdPSignatureXML represents an XML Signature (for SAML signature validation)
 type IdPSignatureXML struct {
-	XMLName      xml.Name          `xml:"ds:Signature"`
-	XMLNS        string            `xml:"xmlns:ds,attr"`
-	ID           string            `xml:"ID,attr,omitempty"`
-	SignedInfo   IdPSignedInfo     `xml:"ds:SignedInfo"`
-	SignatureValue string          `xml:"ds:SignatureValue"`
-	KeyInfo      *IdPKeyInfo       `xml:"ds:KeyInfo,omitempty"`
+	XMLName        xml.Name      `xml:"ds:Signature"`
+	XMLNS          string        `xml:"xmlns:ds,attr"`
+	ID             string        `xml:"ID,attr,omitempty"`
+	SignedInfo     IdPSignedInfo `xml:"ds:SignedInfo"`
+	SignatureValue string        `xml:"ds:SignatureValue"`
+	KeyInfo        *IdPKeyInfo   `xml:"ds:KeyInfo,omitempty"`
 }
 
 // IdPSignedInfo contains the signed information
 type IdPSignedInfo struct {
-	XMLName                 xml.Name             `xml:"ds:SignedInfo"`
-	CanonicalizationMethod  IdPAlgorithm          `xml:"ds:CanonicalizationMethod"`
-	SignatureMethod         IdPAlgorithm          `xml:"ds:SignatureMethod"`
-	Reference               IdPReference          `xml:"ds:Reference"`
+	XMLName                xml.Name     `xml:"ds:SignedInfo"`
+	CanonicalizationMethod IdPAlgorithm `xml:"ds:CanonicalizationMethod"`
+	SignatureMethod        IdPAlgorithm `xml:"ds:SignatureMethod"`
+	Reference              IdPReference `xml:"ds:Reference"`
 }
 
 // IdPAlgorithm represents a signature algorithm
 type IdPAlgorithm struct {
-	XMLName    xml.Name `xml:"ds:CanonicalizationMethod"`
-	Algorithm  string   `xml:"Algorithm,attr"`
+	XMLName   xml.Name `xml:"ds:CanonicalizationMethod"`
+	Algorithm string   `xml:"Algorithm,attr"`
 }
 
 // IdPReference represents a signature reference
 type IdPReference struct {
-	XMLName     xml.Name        `xml:"ds:Reference"`
-	URI         string          `xml:"URI,attr"`
-	Transforms  IdPTransforms   `xml:"ds:Transforms"`
-	DigestMethod IdPAlgorithm   `xml:"ds:DigestMethod"`
-	DigestValue string          `xml:"ds:DigestValue"`
+	XMLName      xml.Name      `xml:"ds:Reference"`
+	URI          string        `xml:"URI,attr"`
+	Transforms   IdPTransforms `xml:"ds:Transforms"`
+	DigestMethod IdPAlgorithm  `xml:"ds:DigestMethod"`
+	DigestValue  string        `xml:"ds:DigestValue"`
 }
 
 // IdPTransforms contains transformation steps
 type IdPTransforms struct {
-	XMLName  xml.Name          `xml:"ds:Transforms"`
-	Transform []IdPTransform   `xml:"ds:Transform"`
+	XMLName   xml.Name       `xml:"ds:Transforms"`
+	Transform []IdPTransform `xml:"ds:Transform"`
 }
 
 // IdPTransform represents a single transform
 type IdPTransform struct {
-	XMLName    xml.Name `xml:"ds:Transform"`
-	Algorithm  string   `xml:"Algorithm,attr"`
+	XMLName   xml.Name `xml:"ds:Transform"`
+	Algorithm string   `xml:"Algorithm,attr"`
 }
 
 // logAuditEvent logs an audit event (placeholder - should integrate with audit service)

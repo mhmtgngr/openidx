@@ -1909,7 +1909,7 @@ func TestSessionDurationCalculations(t *testing.T) {
 	testCases := []struct {
 		name            string
 		sessionDuration time.Duration
-		expectedExpiry   time.Duration
+		expectedExpiry  time.Duration
 	}{
 		{
 			name:            "1 hour session",
@@ -2108,17 +2108,17 @@ func TestUserDBConversionExtended(t *testing.T) {
 		directoryID := "dir-123"
 
 		dbUser := UserDB{
-			ID:            "user-123",
-			Username:      "testuser",
-			Email:         "test@example.com",
-			FirstName:     "Test",
-			LastName:      "User",
-			Enabled:       true,
-			EmailVerified: true,
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			ID:             "user-123",
+			Username:       "testuser",
+			Email:          "test@example.com",
+			FirstName:      "Test",
+			LastName:       "User",
+			Enabled:        true,
+			EmailVerified:  true,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 			OrganizationID: &orgID,
-			Source:        &source,
+			Source:         &source,
 			DirectoryID:    &directoryID,
 		}
 
@@ -2176,12 +2176,12 @@ func TestFromUserExtended(t *testing.T) {
 		primary := true
 
 		user := User{
-			ID:            "user-123",
-			UserName:      "testuser",
-			Enabled:       true,
-			EmailVerified: true,
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			ID:             "user-123",
+			UserName:       "testuser",
+			Enabled:        true,
+			EmailVerified:  true,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 			OrganizationID: &orgID,
 			Name: &Name{
 				GivenName:  &given,
@@ -2210,8 +2210,8 @@ func TestFromUserExtended(t *testing.T) {
 		secondary := false
 
 		user := User{
-			ID:       "user-123",
-			UserName: "testuser",
+			ID:        "user-123",
+			UserName:  "testuser",
 			CreatedAt: now,
 			UpdatedAt: now,
 			Emails: []Email{
@@ -2233,8 +2233,8 @@ func TestFromUserExtended(t *testing.T) {
 	t.Run("FromUser with no primary email uses first", func(t *testing.T) {
 		now := time.Now()
 		user := User{
-			ID:       "user-123",
-			UserName: "testuser",
+			ID:        "user-123",
+			UserName:  "testuser",
 			CreatedAt: now,
 			UpdatedAt: now,
 			Emails: []Email{
@@ -2258,16 +2258,16 @@ func TestGroupDBConversionExtended(t *testing.T) {
 		orgID := "org-123"
 
 		dbGroup := GroupDB{
-			ID:             "group-123",
-			DisplayName:    "TestGroup",
-			Description:    &description,
-			ParentID:       &parentID,
-			OrganizationID: &orgID,
-			AllowSelfJoin:  true,
+			ID:              "group-123",
+			DisplayName:     "TestGroup",
+			Description:     &description,
+			ParentID:        &parentID,
+			OrganizationID:  &orgID,
+			AllowSelfJoin:   true,
 			RequireApproval: false,
-			MemberCount:    5,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			MemberCount:     5,
+			CreatedAt:       now,
+			UpdatedAt:       now,
 		}
 
 		group := dbGroup.ToGroup()
@@ -2304,11 +2304,11 @@ func TestGroupDBConversionExtended(t *testing.T) {
 			CreatedAt:   now,
 			UpdatedAt:   now,
 			Attributes: map[string]string{
-				"description":       "Test description",
-				"parentId":          "parent-123",
-				"allowSelfJoin":     "true",
-				"requireApproval":   "false",
-				"maxMembers":        maxMembers,
+				"description":     "Test description",
+				"parentId":        "parent-123",
+				"allowSelfJoin":   "true",
+				"requireApproval": "false",
+				"maxMembers":      maxMembers,
 			},
 			OrganizationID: &orgID,
 		}

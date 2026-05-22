@@ -414,8 +414,8 @@ func FilterToSQL(expr *FilterExpression, validFields map[string]string) (*SQLFil
 
 	builder := &sqlFilterBuilder{
 		validFields: validFields,
-		args:       make([]interface{}, 0),
-		paramIndex: 1,
+		args:        make([]interface{}, 0),
+		paramIndex:  1,
 	}
 
 	where, err := builder.buildFilter(expr)
@@ -612,22 +612,22 @@ func (b *sqlFilterBuilder) addArg(arg interface{}) (string, error) {
 // GetUserFieldMapping returns the standard SCIM to SQL field mapping for users
 func GetUserFieldMapping() map[string]string {
 	return map[string]string{
-		"id":          "id",
-		"userName":    "username",
-		"username":    "username",
-		"displayName": "display_name",
-		"name":        "name",
-		"active":      "active",
-		"emails":      "emails",
+		"id":           "id",
+		"userName":     "username",
+		"username":     "username",
+		"displayName":  "display_name",
+		"name":         "name",
+		"active":       "active",
+		"emails":       "emails",
 		"phoneNumbers": "phone_numbers",
-		"addresses":   "addresses",
-		"groups":      "groups",
-		"roles":       "roles",
+		"addresses":    "addresses",
+		"groups":       "groups",
+		"roles":        "roles",
 		"entitlements": "entitlements",
-		"photos":      "photos",
-		"externalId":  "external_id",
-		"created":     "created_at",
-		"updated":     "updated_at",
+		"photos":       "photos",
+		"externalId":   "external_id",
+		"created":      "created_at",
+		"updated":      "updated_at",
 	}
 }
 

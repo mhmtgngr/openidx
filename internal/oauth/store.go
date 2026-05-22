@@ -42,53 +42,53 @@ const (
 
 // StoredAuthorizationCode represents a stored authorization code with its metadata
 type StoredAuthorizationCode struct {
-	Code              string    `json:"code"`
-	ClientID          string    `json:"client_id"`
-	UserID            string    `json:"user_id"`
-	RedirectURI       string    `json:"redirect_uri"`
-	Scope             string    `json:"scope"`
-	State             string    `json:"state,omitempty"`
-	Nonce             string    `json:"nonce,omitempty"`
-	CodeChallenge     string    `json:"code_challenge,omitempty"`
-	CodeChallengeMethod string  `json:"code_challenge_method,omitempty"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	CreatedAt         time.Time `json:"created_at"`
-	Used              bool      `json:"used"`
+	Code                string    `json:"code"`
+	ClientID            string    `json:"client_id"`
+	UserID              string    `json:"user_id"`
+	RedirectURI         string    `json:"redirect_uri"`
+	Scope               string    `json:"scope"`
+	State               string    `json:"state,omitempty"`
+	Nonce               string    `json:"nonce,omitempty"`
+	CodeChallenge       string    `json:"code_challenge,omitempty"`
+	CodeChallengeMethod string    `json:"code_challenge_method,omitempty"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	CreatedAt           time.Time `json:"created_at"`
+	Used                bool      `json:"used"`
 }
 
 // RefreshTokenFamily tracks a family of refresh tokens for rotation
 type RefreshTokenFamily struct {
-	FamilyID     string    `json:"family_id"`
-	ClientID     string    `json:"client_id"`
-	UserID       string    `json:"user_id"`
-	Scope        string    `json:"scope"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastRotated  time.Time `json:"last_rotated"`
-	TokenCount   int       `json:"token_count"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	FamilyID    string    `json:"family_id"`
+	ClientID    string    `json:"client_id"`
+	UserID      string    `json:"user_id"`
+	Scope       string    `json:"scope"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastRotated time.Time `json:"last_rotated"`
+	TokenCount  int       `json:"token_count"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // StoredRefreshToken represents a stored refresh token
 type StoredRefreshToken struct {
-	Token      string    `json:"token"`
-	FamilyID   string    `json:"family_id"`
-	ClientID   string    `json:"client_id"`
-	UserID     string    `json:"user_id"`
-	Scope      string    `json:"scope"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt  time.Time `json:"created_at"`
-	Revoked    bool      `json:"revoked"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	Token     string     `json:"token"`
+	FamilyID  string     `json:"family_id"`
+	ClientID  string     `json:"client_id"`
+	UserID    string     `json:"user_id"`
+	Scope     string     `json:"scope"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	Revoked   bool       `json:"revoked"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
 // AccessTokenData represents stored access token metadata
 type AccessTokenData struct {
-	Token      string    `json:"token"`
-	ClientID   string    `json:"client_id"`
-	UserID     string    `json:"user_id"`
-	Scope      string    `json:"scope"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt  time.Time `json:"created_at"`
+	Token     string    `json:"token"`
+	ClientID  string    `json:"client_id"`
+	UserID    string    `json:"user_id"`
+	Scope     string    `json:"scope"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Store provides Redis-backed storage for OAuth 2.0 tokens

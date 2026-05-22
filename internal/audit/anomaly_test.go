@@ -37,14 +37,14 @@ func TestBruteForceDetection(t *testing.T) {
 
 	actorID := "attacker-123"
 	baseEvent := &ServiceAuditEvent{
-		Timestamp:  time.Now().UTC(),
-		EventType:  EventTypeAuthentication,
-		Category:   CategorySecurity,
-		Action:     "auth.login.failed",
-		Outcome:    ServiceOutcomeFailure,
-		ActorID:    actorID,
-		ActorIP:    "192.168.1.100",
-		ActorType:  "user",
+		Timestamp: time.Now().UTC(),
+		EventType: EventTypeAuthentication,
+		Category:  CategorySecurity,
+		Action:    "auth.login.failed",
+		Outcome:   ServiceOutcomeFailure,
+		ActorID:   actorID,
+		ActorIP:   "192.168.1.100",
+		ActorType: "user",
 	}
 
 	var alerts []*AnomalyAlert
@@ -97,11 +97,11 @@ func TestBruteForceDetection_WindowExpiry(t *testing.T) {
 			ID:        generateUUID(),
 			Timestamp: oldTime,
 			EventType: EventTypeAuthentication,
-			Category:   CategorySecurity,
-			Action:     "auth.login.failed",
-			Outcome:    ServiceOutcomeFailure,
-			ActorID:    actorID,
-			ActorIP:    "192.168.1.101",
+			Category:  CategorySecurity,
+			Action:    "auth.login.failed",
+			Outcome:   ServiceOutcomeFailure,
+			ActorID:   actorID,
+			ActorIP:   "192.168.1.101",
 		}
 		detector.AnalyzeEvent(ctx, event)
 	}
@@ -111,11 +111,11 @@ func TestBruteForceDetection_WindowExpiry(t *testing.T) {
 		ID:        generateUUID(),
 		Timestamp: time.Now().UTC(),
 		EventType: EventTypeAuthentication,
-		Category:   CategorySecurity,
-		Action:     "auth.login.failed",
-		Outcome:    ServiceOutcomeFailure,
-		ActorID:    actorID,
-		ActorIP:    "192.168.1.101",
+		Category:  CategorySecurity,
+		Action:    "auth.login.failed",
+		Outcome:   ServiceOutcomeFailure,
+		ActorID:   actorID,
+		ActorIP:   "192.168.1.101",
 	}
 	alerts := detector.AnalyzeEvent(ctx, newEvent)
 	assert.Empty(t, alerts, "Old attempts should be expired")
@@ -141,16 +141,16 @@ func TestPrivilegeEscalationDetection(t *testing.T) {
 
 	// This test requires database queries, so we'll test the logic structure
 	roleChangeEvent := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeRoleManagement,
-		Category:    CategorySecurity,
-		Action:      "role.assign",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "admin-123",
-		ActorType:   "admin",
-		TargetID:    "user-456",
-		TargetType:  "user",
+		ID:         generateUUID(),
+		Timestamp:  time.Now().UTC(),
+		EventType:  EventTypeRoleManagement,
+		Category:   CategorySecurity,
+		Action:     "role.assign",
+		Outcome:    ServiceOutcomeSuccess,
+		ActorID:    "admin-123",
+		ActorType:  "admin",
+		TargetID:   "user-456",
+		TargetType: "user",
 		Details: map[string]interface{}{
 			"new_role": "administrator",
 		},
@@ -171,14 +171,14 @@ func TestBulkAccessDetection(t *testing.T) {
 
 	// This requires database queries to count events
 	event := &ServiceAuditEvent{
-		ID:        generateUUID(),
-		Timestamp: time.Now().UTC(),
-		EventType: EventTypeAuthorization,
-		Category:  CategoryAccess,
-		Action:    "resource.read",
-		Outcome:   ServiceOutcomeSuccess,
-		ActorID:   "bulk-user-123",
-		ActorIP:   "192.168.1.102",
+		ID:         generateUUID(),
+		Timestamp:  time.Now().UTC(),
+		EventType:  EventTypeAuthorization,
+		Category:   CategoryAccess,
+		Action:     "resource.read",
+		Outcome:    ServiceOutcomeSuccess,
+		ActorID:    "bulk-user-123",
+		ActorIP:    "192.168.1.102",
 		ResourceID: "resource-456",
 	}
 
@@ -198,17 +198,17 @@ func TestOffHoursAdminDetection(t *testing.T) {
 	earlyMorning := time.Date(2024, 1, 1, 2, 30, 0, 0, time.UTC)
 
 	event := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   earlyMorning,
-		EventType:   EventTypeUserManagement,
-		Category:    CategorySecurity,
-		Action:      "user.delete",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "admin-123",
-		ActorType:   "admin",
-		ActorIP:     "192.168.1.103",
-		TargetID:    "user-789",
-		TargetType:  "user",
+		ID:         generateUUID(),
+		Timestamp:  earlyMorning,
+		EventType:  EventTypeUserManagement,
+		Category:   CategorySecurity,
+		Action:     "user.delete",
+		Outcome:    ServiceOutcomeSuccess,
+		ActorID:    "admin-123",
+		ActorType:  "admin",
+		ActorIP:    "192.168.1.103",
+		TargetID:   "user-789",
+		TargetType: "user",
 	}
 
 	alerts := detector.AnalyzeEvent(ctx, event)
@@ -233,14 +233,14 @@ func TestOffHoursDetection_BusinessHours(t *testing.T) {
 	businessHour := time.Date(2024, 1, 1, 10, 30, 0, 0, time.UTC)
 
 	event := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   businessHour,
-		EventType:   EventTypeUserManagement,
-		Category:    CategorySecurity,
-		Action:      "user.delete",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "admin-123",
-		ActorType:   "admin",
+		ID:        generateUUID(),
+		Timestamp: businessHour,
+		EventType: EventTypeUserManagement,
+		Category:  CategorySecurity,
+		Action:    "user.delete",
+		Outcome:   ServiceOutcomeSuccess,
+		ActorID:   "admin-123",
+		ActorType: "admin",
 	}
 
 	alerts := detector.AnalyzeEvent(ctx, event)
@@ -449,14 +449,14 @@ func TestAnalyzeEvent_NonMatchingEvent(t *testing.T) {
 
 	// Event that doesn't match any detection rule
 	event := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeSystem,
-		Category:    CategoryOperational,
-		Action:      "system.ping",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "system-123",
-		ActorType:   "system",
+		ID:        generateUUID(),
+		Timestamp: time.Now().UTC(),
+		EventType: EventTypeSystem,
+		Category:  CategoryOperational,
+		Action:    "system.ping",
+		Outcome:   ServiceOutcomeSuccess,
+		ActorID:   "system-123",
+		ActorType: "system",
 	}
 
 	alerts := detector.AnalyzeEvent(ctx, event)
@@ -481,14 +481,14 @@ func TestSensitiveActions(t *testing.T) {
 
 	for _, action := range sensitiveActions {
 		event := &ServiceAuditEvent{
-			ID:          generateUUID(),
-			Timestamp:   offHour,
-			EventType:   EventTypeUserManagement,
-			Category:    CategorySecurity,
-			Action:      action,
-			Outcome:     ServiceOutcomeSuccess,
-			ActorID:     "admin-123",
-			ActorType:   "admin",
+			ID:        generateUUID(),
+			Timestamp: offHour,
+			EventType: EventTypeUserManagement,
+			Category:  CategorySecurity,
+			Action:    action,
+			Outcome:   ServiceOutcomeSuccess,
+			ActorID:   "admin-123",
+			ActorType: "admin",
 		}
 
 		alerts := detector.AnalyzeEvent(ctx, event)
@@ -497,14 +497,14 @@ func TestSensitiveActions(t *testing.T) {
 
 	// Non-sensitive action should not trigger
 	nonSensitiveEvent := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   offHour,
-		EventType:   EventTypeUserManagement,
-		Category:    CategorySecurity,
-		Action:      "user.view",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "admin-123",
-		ActorType:   "admin",
+		ID:        generateUUID(),
+		Timestamp: offHour,
+		EventType: EventTypeUserManagement,
+		Category:  CategorySecurity,
+		Action:    "user.view",
+		Outcome:   ServiceOutcomeSuccess,
+		ActorID:   "admin-123",
+		ActorType: "admin",
 	}
 
 	alerts := detector.AnalyzeEvent(ctx, nonSensitiveEvent)
@@ -519,15 +519,15 @@ func BenchmarkAnalyzeEvent(b *testing.B) {
 	ctx := context.Background()
 
 	event := &ServiceAuditEvent{
-		ID:          generateUUID(),
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeAuthentication,
-		Category:    CategorySecurity,
-		Action:      "auth.login.failed",
-		Outcome:     ServiceOutcomeFailure,
-		ActorID:     "user-123",
-		ActorIP:     "192.168.1.1",
-		ActorType:   "user",
+		ID:        generateUUID(),
+		Timestamp: time.Now().UTC(),
+		EventType: EventTypeAuthentication,
+		Category:  CategorySecurity,
+		Action:    "auth.login.failed",
+		Outcome:   ServiceOutcomeFailure,
+		ActorID:   "user-123",
+		ActorIP:   "192.168.1.1",
+		ActorType: "user",
 	}
 
 	b.ResetTimer()

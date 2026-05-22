@@ -43,8 +43,8 @@ type AuthSignal struct {
 	UserID          uuid.UUID `json:"user_id"`
 	IPAddress       string    `json:"ip_address"`
 	UserAgent       string    `json:"user_agent"`
-	DeviceID        string    `json:"device_id"`        // Browser/device fingerprint
-	Location        string    `json:"location"`         // Country/City
+	DeviceID        string    `json:"device_id"` // Browser/device fingerprint
+	Location        string    `json:"location"`  // Country/City
 	Timestamp       time.Time `json:"timestamp"`
 	LoginTimeNormal bool      `json:"login_time_normal"` // Within normal login hours
 	IsNewDevice     bool      `json:"is_new_device"`
@@ -54,50 +54,50 @@ type AuthSignal struct {
 
 // RiskScore represents the result of a risk evaluation
 type RiskScore struct {
-	Score        int       `json:"score"`         // 0-100
-	Level        RiskLevel `json:"level"`         // LOW, MEDIUM, HIGH, CRITICAL
-	RequiredMFA  MFAType   `json:"required_mfa"`  // NONE, TOTP, WEBAUTHN, BLOCK
-	Reasons      []string  `json:"reasons"`       // Human-readable explanations
-	EvaluatedAt  time.Time `json:"evaluated_at"`
+	Score       int       `json:"score"`        // 0-100
+	Level       RiskLevel `json:"level"`        // LOW, MEDIUM, HIGH, CRITICAL
+	RequiredMFA MFAType   `json:"required_mfa"` // NONE, TOTP, WEBAUTHN, BLOCK
+	Reasons     []string  `json:"reasons"`      // Human-readable explanations
+	EvaluatedAt time.Time `json:"evaluated_at"`
 }
 
 // RiskLevel represents the risk category
 type RiskLevel string
 
 const (
-	RiskLevelLow       RiskLevel = "LOW"
-	RiskLevelMedium    RiskLevel = "MEDIUM"
-	RiskLevelHigh      RiskLevel = "HIGH"
-	RiskLevelCritical  RiskLevel = "CRITICAL"
+	RiskLevelLow      RiskLevel = "LOW"
+	RiskLevelMedium   RiskLevel = "MEDIUM"
+	RiskLevelHigh     RiskLevel = "HIGH"
+	RiskLevelCritical RiskLevel = "CRITICAL"
 )
 
 // MFAType represents the type of MFA required
 type MFAType string
 
 const (
-	MFANone     MFAType = "NONE"      // Skip MFA
-	MFATOTP     MFAType = "TOTP"      // Require TOTP
-	MFAWebAuthn MFAType = "WEBAUTHN"  // Require WebAuthn/hardware key
-	MFABlock    MFAType = "BLOCK"     // Block and alert admin
+	MFANone     MFAType = "NONE"     // Skip MFA
+	MFATOTP     MFAType = "TOTP"     // Require TOTP
+	MFAWebAuthn MFAType = "WEBAUTHN" // Require WebAuthn/hardware key
+	MFABlock    MFAType = "BLOCK"    // Block and alert admin
 )
 
 // AdaptivePolicyConfig holds configuration for adaptive MFA
 type AdaptivePolicyConfig struct {
-	LowRiskThreshold      int  // Below this: skip MFA (default: 30)
-	MediumRiskThreshold   int  // Below this: standard MFA (default: 70) - TOTP
-	HighRiskThreshold     int  // Below this: strong MFA (default: 90) - WebAuthn
+	LowRiskThreshold    int // Below this: skip MFA (default: 30)
+	MediumRiskThreshold int // Below this: standard MFA (default: 70) - TOTP
+	HighRiskThreshold   int // Below this: strong MFA (default: 90) - WebAuthn
 	// At or above high_risk_threshold: block + admin notification
 
-	NewDeviceRiskScore       int // Risk score for new device (default: 30)
-	NewLocationRiskScore     int // Risk score for new location (default: 20)
-	NewIPRiskScore           int // Risk score for new IP (default: 15)
-	FailedLoginRiskScore     int // Risk score per recent failed login (default: 10)
-	ImpossibleTravelScore    int // Risk score for impossible travel (default: 50)
-	BlockedIPRiskScore       int // Risk score for blocked IP (default: 40)
-	AbnormalTimeRiskScore    int // Risk score for abnormal login time (default: 15)
+	NewDeviceRiskScore    int // Risk score for new device (default: 30)
+	NewLocationRiskScore  int // Risk score for new location (default: 20)
+	NewIPRiskScore        int // Risk score for new IP (default: 15)
+	FailedLoginRiskScore  int // Risk score per recent failed login (default: 10)
+	ImpossibleTravelScore int // Risk score for impossible travel (default: 50)
+	BlockedIPRiskScore    int // Risk score for blocked IP (default: 40)
+	AbnormalTimeRiskScore int // Risk score for abnormal login time (default: 15)
 
-	FailedLoginWindow    time.Duration // Time window to count failed logins (default: 1 hour)
-	MaxFailedLogins      int           // Max failed logins before adding risk (default: 3)
+	FailedLoginWindow time.Duration // Time window to count failed logins (default: 1 hour)
+	MaxFailedLogins   int           // Max failed logins before adding risk (default: 3)
 
 	NormalLoginHourStart int // Start of normal login hours (24h format, default: 6)
 	NormalLoginHourEnd   int // End of normal login hours (24h format, default: 22)

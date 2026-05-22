@@ -7,11 +7,10 @@ version: "2"
 #   - ineffassign (~18, low severity)
 #   - misspell (mostly British "cancelled"/"behaviour" which are pervasive and
 #     used as status enum values — auto-"fixing" would be a breaking change)
-#   - gofmt / goimports (the golangci-lint binary is built with a newer Go than
-#     the repo targets, so its formatter rewrites ~250 files; formatting stays
-#     enforced by the repo's own gofmt)
-# This curated set keeps lint green and meaningful (vet correctness, HTTP body
-# leaks, redundant conversions) in the meantime.
+#   - goimports (import-grouping churn; separate cleanup)
+# gofmt IS enforced (the whole tree was formatted; go1.25 and the
+# golangci-lint binary's gofmt agree). This curated set keeps lint green and
+# meaningful (vet correctness, HTTP body leaks, redundant conversions, gofmt).
 run:
   modules-download-mode: readonly
 
@@ -34,3 +33,10 @@ linters:
         linters:
           - bodyclose
           - unconvert
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - node_modules

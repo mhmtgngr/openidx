@@ -15,10 +15,10 @@ import (
 
 // ComponentStatus represents the health status of a single component
 type ComponentStatus struct {
-	Status     string  `json:"status"`     // up, degraded, down
-	LatencyMS  float64 `json:"latency_ms"` // Latency in milliseconds
-	Details    string  `json:"details,omitempty"`
-	CheckedAt  string  `json:"checked_at"`
+	Status    string  `json:"status"`     // up, degraded, down
+	LatencyMS float64 `json:"latency_ms"` // Latency in milliseconds
+	Details   string  `json:"details,omitempty"`
+	CheckedAt string  `json:"checked_at"`
 }
 
 // DependencyInfo represents information about an external dependency
@@ -29,12 +29,12 @@ type DependencyInfo struct {
 
 // HealthResponse is the response structure for health checks
 type HealthResponse struct {
-	Status       string                       `json:"status"`       // up, degraded, down
-	Components   map[string]ComponentStatus   `json:"components"`
-	Dependencies []DependencyInfo            `json:"dependencies,omitempty"`
-	Version      string                      `json:"version,omitempty"`
-	Uptime       string                      `json:"uptime,omitempty"`
-	CheckedAt    string                      `json:"checked_at"`
+	Status       string                     `json:"status"` // up, degraded, down
+	Components   map[string]ComponentStatus `json:"components"`
+	Dependencies []DependencyInfo           `json:"dependencies,omitempty"`
+	Version      string                     `json:"version,omitempty"`
+	Uptime       string                     `json:"uptime,omitempty"`
+	CheckedAt    string                     `json:"checked_at"`
 }
 
 // HealthChecker is the interface that dependency health checks must implement
@@ -92,8 +92,8 @@ func (h *HealthService) Check(ctx context.Context) *HealthResponse {
 
 	// Run checks concurrently
 	type result struct {
-		name  string
-		check ComponentStatus
+		name     string
+		check    ComponentStatus
 		critical bool
 	}
 	results := make(chan result, len(checkers))

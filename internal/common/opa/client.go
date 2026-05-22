@@ -20,8 +20,8 @@ import (
 type Input struct {
 	User     UserContext     `json:"user"`
 	Resource ResourceContext `json:"resource"`
-	Method   string         `json:"method"`
-	Path     string         `json:"path"`
+	Method   string          `json:"method"`
+	Path     string          `json:"path"`
 }
 
 // UserContext contains the authenticated user's identity info
@@ -52,10 +52,10 @@ type opaResponse struct {
 
 // Client communicates with an OPA server for policy decisions
 type Client struct {
-	baseURL      string
-	httpClient   *resilience.ResilientHTTPClient
-	logger       *zap.Logger
-	policyPath   string
+	baseURL       string
+	httpClient    *resilience.ResilientHTTPClient
+	logger        *zap.Logger
+	policyPath    string
 	ssrfValidator *netutil.SSRFProtectedClient
 }
 
@@ -81,17 +81,17 @@ func NewClient(baseURL string, logger *zap.Logger) *Client {
 	// but we still validate to prevent SSRF via config manipulation
 	ssrfValidator := &netutil.SSRFProtectedClient{
 		BlockPrivateIPs: false, // OPA often runs on private IPs in same network
-		BlockLocalhost:  false,  // OPA may run on localhost for dev
+		BlockLocalhost:  false, // OPA may run on localhost for dev
 	}
 	if parsedURL != nil && parsedURL.Hostname() != "" {
 		ssrfValidator.AllowedDomains = []string{parsedURL.Hostname()}
 	}
 
 	return &Client{
-		baseURL:      baseURL,
-		httpClient:   resilience.NewResilientHTTPClient(rawClient, cb),
-		logger:       logger,
-		policyPath:   "/v1/data/openidx/authz",
+		baseURL:       baseURL,
+		httpClient:    resilience.NewResilientHTTPClient(rawClient, cb),
+		logger:        logger,
+		policyPath:    "/v1/data/openidx/authz",
 		ssrfValidator: ssrfValidator,
 	}
 }

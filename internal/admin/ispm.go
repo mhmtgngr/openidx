@@ -26,23 +26,23 @@ type PostureScore struct {
 
 // PostureFinding represents an individual security finding
 type PostureFinding struct {
-	ID                  string          `json:"id"`
-	RuleID              *string         `json:"rule_id"`
-	CheckType           string          `json:"check_type"`
-	Severity            string          `json:"severity"`
-	Category            string          `json:"category"`
-	Title               string          `json:"title"`
-	Description         string          `json:"description"`
-	AffectedEntityType  string          `json:"affected_entity_type"`
-	AffectedEntityID    string          `json:"affected_entity_id"`
-	AffectedEntityName  string          `json:"affected_entity_name"`
-	Status              string          `json:"status"`
-	RemediationAction   string          `json:"remediation_action"`
-	RemediationDetails  json.RawMessage `json:"remediation_details"`
-	DismissedBy         *string         `json:"dismissed_by"`
-	DismissedReason     string          `json:"dismissed_reason"`
-	RemediatedAt        *time.Time      `json:"remediated_at"`
-	CreatedAt           time.Time       `json:"created_at"`
+	ID                 string          `json:"id"`
+	RuleID             *string         `json:"rule_id"`
+	CheckType          string          `json:"check_type"`
+	Severity           string          `json:"severity"`
+	Category           string          `json:"category"`
+	Title              string          `json:"title"`
+	Description        string          `json:"description"`
+	AffectedEntityType string          `json:"affected_entity_type"`
+	AffectedEntityID   string          `json:"affected_entity_id"`
+	AffectedEntityName string          `json:"affected_entity_name"`
+	Status             string          `json:"status"`
+	RemediationAction  string          `json:"remediation_action"`
+	RemediationDetails json.RawMessage `json:"remediation_details"`
+	DismissedBy        *string         `json:"dismissed_by"`
+	DismissedReason    string          `json:"dismissed_reason"`
+	RemediatedAt       *time.Time      `json:"remediated_at"`
+	CreatedAt          time.Time       `json:"created_at"`
 }
 
 // PostureRule represents a configurable ISPM check

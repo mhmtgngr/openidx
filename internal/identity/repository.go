@@ -53,14 +53,14 @@ type Repository interface {
 
 // PostgreSQLRepository implements Repository using PostgreSQL
 type PostgreSQLRepository struct {
-	pool   *pgxpool.Pool
+	pool    *pgxpool.Pool
 	baseURL string // Base URL for generating meta.location URLs
 }
 
 // NewPostgreSQLRepository creates a new PostgreSQL repository
 func NewPostgreSQLRepository(pool *pgxpool.Pool, baseURL string) *PostgreSQLRepository {
 	return &PostgreSQLRepository{
-		pool:   pool,
+		pool:    pool,
 		baseURL: baseURL,
 	}
 }
@@ -408,19 +408,19 @@ func (r *PostgreSQLRepository) ListUsers(ctx context.Context, filter UserFilter)
 		}
 		// Prevent SQL injection in sort
 		// Validate sort column against allowlist to prevent SQL injection
-	// SECURITY: filter.SortBy is validated against the validSortFields allowlist
-	validSortFields := map[string]bool{
-		"username": true, "display_name": true, "created_at": true,
-		"updated_at": true, "last_login_at": true, "email": true,
-	}
-	if validSortFields[filter.SortBy] {
-		// SECURITY: filter.SortBy is validated against the allowlist above, and filter.SortOrder is checked to be "asc" or "desc"
-		if filter.SortBy == "email" {
-			orderBy = fmt.Sprintf("emails->0->>'value' %s", order)
-		} else {
-			orderBy = fmt.Sprintf("%s %s", filter.SortBy, order)
+		// SECURITY: filter.SortBy is validated against the validSortFields allowlist
+		validSortFields := map[string]bool{
+			"username": true, "display_name": true, "created_at": true,
+			"updated_at": true, "last_login_at": true, "email": true,
 		}
-	}
+		if validSortFields[filter.SortBy] {
+			// SECURITY: filter.SortBy is validated against the allowlist above, and filter.SortOrder is checked to be "asc" or "desc"
+			if filter.SortBy == "email" {
+				orderBy = fmt.Sprintf("emails->0->>'value' %s", order)
+			} else {
+				orderBy = fmt.Sprintf("%s %s", filter.SortBy, order)
+			}
+		}
 	}
 
 	// SECURITY: whereClause is built from hardcoded string literals and validated user input only through parameterized queries

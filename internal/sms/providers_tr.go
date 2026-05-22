@@ -186,11 +186,11 @@ func netgsmErrorMessage(code string) string {
 
 // IletiMerkeziProvider implements SMS sending via İleti Merkezi
 type IletiMerkeziProvider struct {
-	apiKey   string
-	secret   string
-	sender   string
-	client   *http.Client
-	logger   *zap.Logger
+	apiKey string
+	secret string
+	sender string
+	client *http.Client
+	logger *zap.Logger
 }
 
 // NewIletiMerkeziProvider creates a new İleti Merkezi SMS provider
@@ -223,11 +223,11 @@ func (im *IletiMerkeziProvider) SendMessage(ctx context.Context, phoneNumber, me
 	payload := map[string]interface{}{
 		"request": map[string]interface{}{
 			"authentication": map[string]string{
-				"key":    im.apiKey,
-				"hash":   im.secret,
+				"key":  im.apiKey,
+				"hash": im.secret,
 			},
 			"order": map[string]interface{}{
-				"sender":  im.sender,
+				"sender":       im.sender,
 				"sendDateTime": []string{},
 				"message": map[string]interface{}{
 					"text": message,
@@ -862,12 +862,12 @@ func (m *MutlucellProvider) SendOTP(ctx context.Context, phoneNumber, code strin
 }
 
 type mutlucellRequest struct {
-	XMLName  xml.Name `xml:"smspack"`
-	Ka       string   `xml:"ka,attr"`
-	Pwd      string   `xml:"pwd,attr"`
-	Org      string   `xml:"org,attr"`
-	APIKey   string   `xml:"apiKey,attr,omitempty"`
-	Mesaj    mutlucellMessage
+	XMLName xml.Name `xml:"smspack"`
+	Ka      string   `xml:"ka,attr"`
+	Pwd     string   `xml:"pwd,attr"`
+	Org     string   `xml:"org,attr"`
+	APIKey  string   `xml:"apiKey,attr,omitempty"`
+	Mesaj   mutlucellMessage
 }
 
 type mutlucellMessage struct {

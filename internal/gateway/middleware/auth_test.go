@@ -588,9 +588,9 @@ func TestSetUserContext(t *testing.T) {
 		middleware := NewJWTAuthMiddleware("http://localhost:8080/jwks.json", logger)
 
 		claims := jwt.MapClaims{
-			"sub":     "user-123",
-			"custom":  "value",
-			"exp":     float64(time.Now().Add(1 * time.Hour).Unix()),
+			"sub":    "user-123",
+			"custom": "value",
+			"exp":    float64(time.Now().Add(1 * time.Hour).Unix()),
 		}
 
 		w := httptest.NewRecorder()
@@ -618,7 +618,7 @@ func TestGetSigningKey(t *testing.T) {
 		errMsg := err.Error()
 		assert.True(t,
 			strings.Contains(errMsg, "failed to fetch JWKS") ||
-			strings.Contains(errMsg, "JWKS endpoint returned status"),
+				strings.Contains(errMsg, "JWKS endpoint returned status"),
 			"expected error to contain JWKS failure message, got: %s", errMsg)
 	})
 }

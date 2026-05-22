@@ -97,18 +97,18 @@ func TestIdentityService_ProductionConfigValidation(t *testing.T) {
 		{
 			name: "Valid production config",
 			cfg: &config.Config{
-				Environment:              "production",
-				DatabaseURL:              "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:                 "redis://localhost:6379",
-				Port:                     8001,
-				JWTSecret:                "secure-32-byte-secret-key-1234567890",
-				EncryptionKey:            "secure-32-byte-encryption-key-123456",
-				CORSAllowedOrigins:       "https://example.com",
-				CSRFEnabled:              true,
-				DatabaseSSLMode:          "verify-full",
-				RedisTLSEnabled:          true,
-				TLS:                      config.TLSConfig{Enabled: true},
-				AccessSessionSecret:      "secure-32-byte-session-secret-12345",
+				Environment:               "production",
+				DatabaseURL:               "postgres://test@localhost:5432/test?sslmode=verify-full",
+				RedisURL:                  "redis://localhost:6379",
+				Port:                      8001,
+				JWTSecret:                 "secure-32-byte-secret-key-1234567890",
+				EncryptionKey:             "secure-32-byte-encryption-key-123456",
+				CORSAllowedOrigins:        "https://example.com",
+				CSRFEnabled:               true,
+				DatabaseSSLMode:           "verify-full",
+				RedisTLSEnabled:           true,
+				TLS:                       config.TLSConfig{Enabled: true},
+				AccessSessionSecret:       "secure-32-byte-session-secret-12345",
 				AuditStreamAllowedOrigins: "https://example.com",
 			},
 			wantErr: false,
@@ -426,9 +426,9 @@ func TestIdentityService_SMSConfiguration(t *testing.T) {
 		provider string
 	}{
 		{
-			name: "SMS disabled",
-			cfg:  config.SMSConfig{Enabled: false},
-			enabled: false,
+			name:     "SMS disabled",
+			cfg:      config.SMSConfig{Enabled: false},
+			enabled:  false,
 			provider: "",
 		},
 		{
@@ -475,10 +475,10 @@ func TestIdentityService_SMSConfiguration(t *testing.T) {
 // TestIdentityService_WebAuthnConfiguration tests WebAuthn configuration
 func TestIdentityService_WebAuthnConfiguration(t *testing.T) {
 	tests := []struct {
-		name     string
-		cfg      config.WebAuthnConfig
-		rpID     string
-		origins  []string
+		name    string
+		cfg     config.WebAuthnConfig
+		rpID    string
+		origins []string
 	}{
 		{
 			name: "Default WebAuthn config",

@@ -79,13 +79,13 @@ func TestEventStreamer_Broadcast(t *testing.T) {
 
 func TestStreamClient_MatchesFilters(t *testing.T) {
 	tests := []struct {
-		name      string
-		filters   *StreamFilters
-		event     *ServiceAuditEvent
-		expected  bool
+		name     string
+		filters  *StreamFilters
+		event    *ServiceAuditEvent
+		expected bool
 	}{
 		{
-			name: "no filters - match all",
+			name:    "no filters - match all",
 			filters: nil,
 			event: &ServiceAuditEvent{
 				EventType: EventTypeAuthentication,
@@ -264,9 +264,9 @@ func TestWebhookSubscription_Serialization(t *testing.T) {
 			EventTypes: []EventType{EventTypeAuthentication, EventTypeAuthorization},
 			Categories: []EventCategory{CategorySecurity},
 		},
-		CreatedAt:     time.Now().UTC(),
-		LastDelivery:  time.Now().UTC(),
-		FailureCount:  0,
+		CreatedAt:    time.Now().UTC(),
+		LastDelivery: time.Now().UTC(),
+		FailureCount: 0,
 	}
 
 	data, err := json.Marshal(subscription)
@@ -396,44 +396,44 @@ func TestEventStreamer_RemoveClient(t *testing.T) {
 
 func TestWebhookDelivery_RetryDelay(t *testing.T) {
 	tests := []struct {
-		name            string
-		retryCount      int
-		baseDelay       time.Duration
+		name             string
+		retryCount       int
+		baseDelay        time.Duration
 		expectedMinDelay time.Duration
 		expectedMaxDelay time.Duration
 	}{
 		{
-			name:            "first retry",
-			retryCount:      0,
-			baseDelay:       time.Second,
+			name:             "first retry",
+			retryCount:       0,
+			baseDelay:        time.Second,
 			expectedMinDelay: 0,
 			expectedMaxDelay: time.Second,
 		},
 		{
-			name:            "second retry",
-			retryCount:      1,
-			baseDelay:       time.Second,
+			name:             "second retry",
+			retryCount:       1,
+			baseDelay:        time.Second,
 			expectedMinDelay: time.Second,
 			expectedMaxDelay: 2 * time.Second,
 		},
 		{
-			name:            "third retry",
-			retryCount:      2,
-			baseDelay:       time.Second,
+			name:             "third retry",
+			retryCount:       2,
+			baseDelay:        time.Second,
 			expectedMinDelay: 2 * time.Second,
 			expectedMaxDelay: 4 * time.Second,
 		},
 		{
-			name:            "fourth retry",
-			retryCount:      3,
-			baseDelay:       time.Second,
+			name:             "fourth retry",
+			retryCount:       3,
+			baseDelay:        time.Second,
 			expectedMinDelay: 4 * time.Second,
 			expectedMaxDelay: 8 * time.Second,
 		},
 		{
-			name:            "fifth retry",
-			retryCount:      4,
-			baseDelay:       time.Second,
+			name:             "fifth retry",
+			retryCount:       4,
+			baseDelay:        time.Second,
 			expectedMinDelay: 8 * time.Second,
 			expectedMaxDelay: 16 * time.Second,
 		},

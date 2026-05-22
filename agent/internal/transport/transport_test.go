@@ -1,8 +1,8 @@
 package transport
 
 import (
-	"testing"
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func TestClient_ImplementsTransport(t *testing.T) {

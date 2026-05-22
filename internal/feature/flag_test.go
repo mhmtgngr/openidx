@@ -111,10 +111,10 @@ func TestService_IsEnabledForPercentage(t *testing.T) {
 
 	// Create flags with different percentages
 	testCases := []struct {
-		name     string
-		flag     string
-		userID   string
-		enabled  bool
+		name    string
+		flag    string
+		userID  string
+		enabled bool
 	}{
 		{"0 percent should be disabled", "0pct-flag", "user1", false},
 		{"100 percent should be enabled", "100pct-flag", "user1", true},
@@ -215,29 +215,29 @@ func TestService_ValidateFlag(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid flag",
-			flag: &Flag{Name: "valid", Enabled: true, Percentage: 50},
+			name:    "valid flag",
+			flag:    &Flag{Name: "valid", Enabled: true, Percentage: 50},
 			wantErr: false,
 		},
 		{
-			name: "empty name",
-			flag: &Flag{Name: "", Enabled: true},
+			name:    "empty name",
+			flag:    &Flag{Name: "", Enabled: true},
 			wantErr: true,
 		},
 		{
-			name: "percentage too high",
-			flag: &Flag{Name: "test", Enabled: true, Percentage: 150},
+			name:    "percentage too high",
+			flag:    &Flag{Name: "test", Enabled: true, Percentage: 150},
 			wantErr: true,
 		},
 		{
-			name: "percentage negative",
-			flag: &Flag{Name: "test", Enabled: true, Percentage: -10},
+			name:    "percentage negative",
+			flag:    &Flag{Name: "test", Enabled: true, Percentage: -10},
 			wantErr: true,
 		},
 		{
 			name: "invalid variant percentage",
 			flag: &Flag{
-				Name: "test",
+				Name:    "test",
 				Enabled: true,
 				Variants: []Variant{
 					{Name: "control", Percentage: 60},

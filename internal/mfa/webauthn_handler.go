@@ -66,10 +66,10 @@ func (h *WebAuthnHandlers) RegisterProtectedRoutes(router gin.IRouter, authMiddl
 
 // RegisterBeginRequest is the request for beginning registration
 type RegisterBeginRequest struct {
-	UserID      uuid.UUID `json:"user_id" binding:"required"`
-	Username    string    `json:"username" binding:"required"`
-	DisplayName string    `json:"display_name"`
-	FriendlyName string   `json:"friendly_name"` // Optional name for the credential
+	UserID       uuid.UUID `json:"user_id" binding:"required"`
+	Username     string    `json:"username" binding:"required"`
+	DisplayName  string    `json:"display_name"`
+	FriendlyName string    `json:"friendly_name"` // Optional name for the credential
 }
 
 // RegisterFinishRequest is the request for finishing registration
@@ -137,15 +137,15 @@ type CredentialsResponse struct {
 
 // CredentialInfo represents information about a credential
 type CredentialInfo struct {
-	ID            uuid.UUID  `json:"id"`
-	CredentialID  string     `json:"credential_id"`
-	FriendlyName  string     `json:"friendly_name"`
-	Authenticator string     `json:"authenticator"`
-	IsPasskey     bool       `json:"is_passkey"`
-	BackupEligible bool      `json:"backup_eligible"`
-	BackupState   bool       `json:"backup_state"`
-	CreatedAt     time.Time  `json:"created_at"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
+	ID             uuid.UUID  `json:"id"`
+	CredentialID   string     `json:"credential_id"`
+	FriendlyName   string     `json:"friendly_name"`
+	Authenticator  string     `json:"authenticator"`
+	IsPasskey      bool       `json:"is_passkey"`
+	BackupEligible bool       `json:"backup_eligible"`
+	BackupState    bool       `json:"backup_state"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
 }
 
 // RenameCredentialRequest is the request for renaming a credential

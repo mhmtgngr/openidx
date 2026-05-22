@@ -361,11 +361,11 @@ func CopyResponse(dst io.Writer, src io.Reader) error {
 
 // ProxyStats holds statistics for proxy requests
 type ProxyStats struct {
-	TotalRequests    int64
+	TotalRequests      int64
 	SuccessfulRequests int64
-	FailedRequests   int64
-	TotalLatency     time.Duration
-	AvgLatency       time.Duration
+	FailedRequests     int64
+	TotalLatency       time.Duration
+	AvgLatency         time.Duration
 }
 
 // StatsTracker tracks proxy statistics
@@ -423,4 +423,3 @@ func (t *StatsTracker) GetAllStats() map[string]ProxyStats {
 	}
 	return result
 }
-

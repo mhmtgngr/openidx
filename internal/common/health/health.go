@@ -151,8 +151,8 @@ func (h *HealthService) ReadyHandler() gin.HandlerFunc {
 		for _, dep := range status.Dependencies {
 			if dep.Status == "down" {
 				c.JSON(http.StatusServiceUnavailable, gin.H{
-					"status": "not ready",
-					"reason": "one or more dependencies are down",
+					"status":  "not ready",
+					"reason":  "one or more dependencies are down",
 					"details": status.Dependencies,
 				})
 				return

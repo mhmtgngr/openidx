@@ -11,42 +11,42 @@ import (
 // User represents a user in the system with SCIM-compatible fields
 type User struct {
 	// SCIM Core Fields
-	ID          string    `json:"id" db:"id"`
-	ExternalID  *string   `json:"externalId,omitempty" db:"external_id"`
-	UserName    string    `json:"userName" db:"username"` // Required by SCIM
-	DisplayName *string   `json:"displayName,omitempty" db:"display_name"`
-	Active      bool      `json:"active" db:"active"`
-	Name        *Name     `json:"name,omitempty" db:"name"`
-	Emails      []Email   `json:"emails,omitempty" db:"emails"`
+	ID           string        `json:"id" db:"id"`
+	ExternalID   *string       `json:"externalId,omitempty" db:"external_id"`
+	UserName     string        `json:"userName" db:"username"` // Required by SCIM
+	DisplayName  *string       `json:"displayName,omitempty" db:"display_name"`
+	Active       bool          `json:"active" db:"active"`
+	Name         *Name         `json:"name,omitempty" db:"name"`
+	Emails       []Email       `json:"emails,omitempty" db:"emails"`
 	PhoneNumbers []PhoneNumber `json:"phoneNumbers,omitempty" db:"phone_numbers"`
-	Photos      []Photo   `json:"photos,omitempty" db:"photos"`
-	Addresses   []Address `json:"addresses,omitempty" db:"addresses"`
-	Groups      []string  `json:"groups,omitempty" db:"groups"` // Group IDs
-	Entitlements []string `json:"entitlements,omitempty" db:"entitlements"`
-	Roles       []string  `json:"roles,omitempty" db:"roles"`
+	Photos       []Photo       `json:"photos,omitempty" db:"photos"`
+	Addresses    []Address     `json:"addresses,omitempty" db:"addresses"`
+	Groups       []string      `json:"groups,omitempty" db:"groups"` // Group IDs
+	Entitlements []string      `json:"entitlements,omitempty" db:"entitlements"`
+	Roles        []string      `json:"roles,omitempty" db:"roles"`
 
 	// OpenIDX Extension Fields
-	Enabled       bool              `json:"enabled" db:"enabled"`
-	EmailVerified bool              `json:"emailVerified" db:"email_verified"`
-	Attributes    map[string]string `json:"attributes,omitempty" db:"attributes"`
-	OrganizationID *string          `json:"organizationId,omitempty" db:"organization_id"`
-	DirectoryID   *string           `json:"directoryId,omitempty" db:"directory_id"` // For external sync
-	LdapDN        *string           `json:"ldapDN,omitempty" db:"ldap_dn"`
-	Source        *string           `json:"source,omitempty" db:"source"` // e.g., "ldap", "scim", "manual"
+	Enabled        bool              `json:"enabled" db:"enabled"`
+	EmailVerified  bool              `json:"emailVerified" db:"email_verified"`
+	Attributes     map[string]string `json:"attributes,omitempty" db:"attributes"`
+	OrganizationID *string           `json:"organizationId,omitempty" db:"organization_id"`
+	DirectoryID    *string           `json:"directoryId,omitempty" db:"directory_id"` // For external sync
+	LdapDN         *string           `json:"ldapDN,omitempty" db:"ldap_dn"`
+	Source         *string           `json:"source,omitempty" db:"source"` // e.g., "ldap", "scim", "manual"
 
 	// Password & Security Fields
-	PasswordHash         *string    `json:"-" db:"password_hash"` // Never expose in JSON
-	PasswordChangedAt    *time.Time `json:"passwordChangedAt,omitempty" db:"password_changed_at"`
-	PasswordMustChange   bool       `json:"passwordMustChange" db:"password_must_change"`
-	FailedLoginCount     int        `json:"failedLoginCount" db:"failed_login_count"`
-	LastFailedLoginAt    *time.Time `json:"lastFailedLoginAt,omitempty" db:"last_failed_login_at"`
-	LockedUntil          *time.Time `json:"lockedUntil,omitempty" db:"locked_until"`
+	PasswordHash       *string    `json:"-" db:"password_hash"` // Never expose in JSON
+	PasswordChangedAt  *time.Time `json:"passwordChangedAt,omitempty" db:"password_changed_at"`
+	PasswordMustChange bool       `json:"passwordMustChange" db:"password_must_change"`
+	FailedLoginCount   int        `json:"failedLoginCount" db:"failed_login_count"`
+	LastFailedLoginAt  *time.Time `json:"lastFailedLoginAt,omitempty" db:"last_failed_login_at"`
+	LockedUntil        *time.Time `json:"lockedUntil,omitempty" db:"locked_until"`
 
 	// Timestamps
-	CreatedAt     time.Time  `json:"createdAt" db:"created_at"`
-	UpdatedAt     time.Time  `json:"updatedAt" db:"updated_at"`
-	DeletedAt     *time.Time `json:"deletedAt,omitempty" db:"deleted_at"` // Soft delete
-	LastLoginAt   *time.Time `json:"lastLoginAt,omitempty" db:"last_login_at"`
+	CreatedAt   time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt   time.Time  `json:"updatedAt" db:"updated_at"`
+	DeletedAt   *time.Time `json:"deletedAt,omitempty" db:"deleted_at"` // Soft delete
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty" db:"last_login_at"`
 
 	// SCIM Meta
 	Meta *Meta `json:"meta,omitempty" db:"meta"`
@@ -134,21 +134,21 @@ func stringPtr(s string) *string {
 
 // Name represents a user's name with SCIM-compatible structure
 type Name struct {
-	GivenName     *string `json:"givenName,omitempty" db:"given_name"`
-	MiddleName    *string `json:"middleName,omitempty" db:"middle_name"`
-	FamilyName    *string `json:"familyName,omitempty" db:"family_name"`
+	GivenName       *string `json:"givenName,omitempty" db:"given_name"`
+	MiddleName      *string `json:"middleName,omitempty" db:"middle_name"`
+	FamilyName      *string `json:"familyName,omitempty" db:"family_name"`
 	HonorificPrefix *string `json:"honorificPrefix,omitempty" db:"honorific_prefix"`
 	HonorificSuffix *string `json:"honorificSuffix,omitempty" db:"honorific_suffix"`
-	Formatted      *string `json:"formatted,omitempty" db:"formatted"`
+	Formatted       *string `json:"formatted,omitempty" db:"formatted"`
 }
 
 // Email represents an email address with SCIM-compatible structure
 type Email struct {
-	Value      string  `json:"value" db:"value"`
-	Type       *string `json:"type,omitempty" db:"type"` // work, home, other
-	Primary    *bool   `json:"primary,omitempty" db:"primary"`
-	Display    *string `json:"display,omitempty" db:"display"`
-	Verified   *bool   `json:"verified,omitempty" db:"verified"`
+	Value    string  `json:"value" db:"value"`
+	Type     *string `json:"type,omitempty" db:"type"` // work, home, other
+	Primary  *bool   `json:"primary,omitempty" db:"primary"`
+	Display  *string `json:"display,omitempty" db:"display"`
+	Verified *bool   `json:"verified,omitempty" db:"verified"`
 }
 
 // PhoneNumber represents a phone number with SCIM-compatible structure
@@ -160,43 +160,43 @@ type PhoneNumber struct {
 
 // Photo represents a user photo
 type Photo struct {
-	Value string `json:"value" db:"value"` // URL
+	Value string  `json:"value" db:"value"`         // URL
 	Type  *string `json:"type,omitempty" db:"type"` // photo, thumbnail
 }
 
 // Address represents a postal address
 type Address struct {
-	StreetAddress  *string `json:"streetAddress,omitempty" db:"street_address"`
-	Locality       *string `json:"locality,omitempty" db:"locality"`
-	Region         *string `json:"region,omitempty" db:"region"`
-	PostalCode     *string `json:"postalCode,omitempty" db:"postal_code"`
-	Country        *string `json:"country,omitempty" db:"country"`
-	Formatted      *string `json:"formatted,omitempty" db:"formatted"`
-	Type           *string `json:"type,omitempty" db:"type"`
-	Primary        *bool   `json:"primary,omitempty" db:"primary"`
+	StreetAddress *string `json:"streetAddress,omitempty" db:"street_address"`
+	Locality      *string `json:"locality,omitempty" db:"locality"`
+	Region        *string `json:"region,omitempty" db:"region"`
+	PostalCode    *string `json:"postalCode,omitempty" db:"postal_code"`
+	Country       *string `json:"country,omitempty" db:"country"`
+	Formatted     *string `json:"formatted,omitempty" db:"formatted"`
+	Type          *string `json:"type,omitempty" db:"type"`
+	Primary       *bool   `json:"primary,omitempty" db:"primary"`
 }
 
 // Meta contains SCIM metadata
 type Meta struct {
-	ResourceType string     `json:"resourceType" db:"resource_type"` // User, Group
-	Location     string     `json:"location" db:"location"` // URI to resource
-	Created      time.Time  `json:"created" db:"created"`
-	LastModified time.Time  `json:"lastModified" db:"last_modified"`
-	Version      string     `json:"version" db:"version"` // ETag version
+	ResourceType string    `json:"resourceType" db:"resource_type"` // User, Group
+	Location     string    `json:"location" db:"location"`          // URI to resource
+	Created      time.Time `json:"created" db:"created"`
+	LastModified time.Time `json:"lastModified" db:"last_modified"`
+	Version      string    `json:"version" db:"version"` // ETag version
 }
 
 // Group represents a group in the system with SCIM-compatible fields
 type Group struct {
-	ID          string     `json:"id" db:"id"`
-	ExternalID  *string    `json:"externalId,omitempty" db:"external_id"`
-	DisplayName string     `json:"displayName" db:"display_name"` // Required by SCIM
-	Members     []Member   `json:"members,omitempty" db:"members"`
+	ID          string   `json:"id" db:"id"`
+	ExternalID  *string  `json:"externalId,omitempty" db:"external_id"`
+	DisplayName string   `json:"displayName" db:"display_name"` // Required by SCIM
+	Members     []Member `json:"members,omitempty" db:"members"`
 
 	// OpenIDX Extension Fields
-	OrganizationID *string          `json:"organizationId,omitempty" db:"organization_id"`
+	OrganizationID *string           `json:"organizationId,omitempty" db:"organization_id"`
 	Attributes     map[string]string `json:"attributes,omitempty" db:"attributes"`
-	DirectoryID    *string          `json:"directoryId,omitempty" db:"directory_id"` // For external sync
-	Source         *string          `json:"source,omitempty" db:"source"`
+	DirectoryID    *string           `json:"directoryId,omitempty" db:"directory_id"` // For external sync
+	Source         *string           `json:"source,omitempty" db:"source"`
 
 	// Timestamps
 	CreatedAt time.Time  `json:"createdAt" db:"created_at"`
@@ -209,10 +209,10 @@ type Group struct {
 
 // Member represents a group member reference
 type Member struct {
-	Value   string `json:"value" db:"value"` // User ID
+	Value   string  `json:"value" db:"value"`               // User ID
 	Display *string `json:"display,omitempty" db:"display"` // User display name
-	Type    string `json:"type" db:"type"` // User or Group
-	Ref     *string `json:"$ref,omitempty" db:"ref"` // URI to member
+	Type    string  `json:"type" db:"type"`                 // User or Group
+	Ref     *string `json:"$ref,omitempty" db:"ref"`        // URI to member
 }
 
 // Helper methods for Group to access legacy flat fields from Attributes map
@@ -334,25 +334,25 @@ func (g *Group) SetMaxMembers(max int) {
 
 // Organization represents an organization/tenant
 type Organization struct {
-	ID          string             `json:"id" db:"id"`
-	ExternalID  *string            `json:"externalId,omitempty" db:"external_id"`
-	Name        string             `json:"name" db:"name"`
-	DisplayName string             `json:"displayName" db:"display_name"`
-	Description *string            `json:"description,omitempty" db:"description"`
-	Active      bool               `json:"active" db:"active"`
+	ID          string  `json:"id" db:"id"`
+	ExternalID  *string `json:"externalId,omitempty" db:"external_id"`
+	Name        string  `json:"name" db:"name"`
+	DisplayName string  `json:"displayName" db:"display_name"`
+	Description *string `json:"description,omitempty" db:"description"`
+	Active      bool    `json:"active" db:"active"`
 
 	// Domain & Branding
-	Domain      *string            `json:"domain,omitempty" db:"domain"` // Primary domain
-	Branding    *OrganizationBranding `json:"branding,omitempty" db:"branding"`
+	Domain   *string               `json:"domain,omitempty" db:"domain"` // Primary domain
+	Branding *OrganizationBranding `json:"branding,omitempty" db:"branding"`
 
 	// Settings
-	Attributes  map[string]string  `json:"attributes,omitempty" db:"attributes"`
-	Settings    map[string]interface{} `json:"settings,omitempty" db:"settings"`
+	Attributes map[string]string      `json:"attributes,omitempty" db:"attributes"`
+	Settings   map[string]interface{} `json:"settings,omitempty" db:"settings"`
 
 	// Timestamps
-	CreatedAt   time.Time          `json:"createdAt" db:"created_at"`
-	UpdatedAt   time.Time          `json:"updatedAt" db:"updated_at"`
-	DeletedAt   *time.Time         `json:"deletedAt,omitempty" db:"deleted_at"` // Soft delete
+	CreatedAt time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time  `json:"updatedAt" db:"updated_at"`
+	DeletedAt *time.Time `json:"deletedAt,omitempty" db:"deleted_at"` // Soft delete
 
 	// SCIM Meta
 	Meta *Meta `json:"meta,omitempty" db:"meta"`
@@ -360,42 +360,42 @@ type Organization struct {
 
 // OrganizationBranding contains branding settings for an organization
 type OrganizationBranding struct {
-	LogoURL      *string `json:"logoUrl,omitempty" db:"logo_url"`
-	PrimaryColor *string `json:"primaryColor,omitempty" db:"primary_color"`
+	LogoURL        *string `json:"logoUrl,omitempty" db:"logo_url"`
+	PrimaryColor   *string `json:"primaryColor,omitempty" db:"primary_color"`
 	SecondaryColor *string `json:"secondaryColor,omitempty" db:"secondary_color"`
-	Theme        *string `json:"theme,omitempty" db:"theme"` // light, dark, auto
-	CustomCSS    *string `json:"customCSS,omitempty" db:"custom_css"`
+	Theme          *string `json:"theme,omitempty" db:"theme"` // light, dark, auto
+	CustomCSS      *string `json:"customCSS,omitempty" db:"custom_css"`
 }
 
 // PaginationParams contains pagination parameters
 type PaginationParams struct {
-	Offset      int    `json:"offset,omitempty"` // Offset for pagination
-	Limit       int    `json:"limit,omitempty"`  // Limit for pagination (max 100)
-	SortBy      string `json:"sortBy,omitempty"` // Field to sort by
-	SortOrder   string `json:"sortOrder,omitempty"` // asc or desc
+	Offset    int    `json:"offset,omitempty"`    // Offset for pagination
+	Limit     int    `json:"limit,omitempty"`     // Limit for pagination (max 100)
+	SortBy    string `json:"sortBy,omitempty"`    // Field to sort by
+	SortOrder string `json:"sortOrder,omitempty"` // asc or desc
 }
 
 // UserFilter contains filter parameters for listing users
 type UserFilter struct {
 	PaginationParams
-	Query         *string  `json:"query,omitempty"` // Search in username, email, display name
-	Active        *bool    `json:"active,omitempty"`
+	Query          *string `json:"query,omitempty"` // Search in username, email, display name
+	Active         *bool   `json:"active,omitempty"`
 	OrganizationID *string `json:"organizationId,omitempty"`
-	DirectoryID   *string  `json:"directoryId,omitempty"`
-	Source        *string  `json:"source,omitempty"`
-	GroupID       *string  `json:"groupId,omitempty"` // Filter by group membership
-	Email         *string  `json:"email,omitempty"`
-	UserName      *string  `json:"userName,omitempty"`
+	DirectoryID    *string `json:"directoryId,omitempty"`
+	Source         *string `json:"source,omitempty"`
+	GroupID        *string `json:"groupId,omitempty"` // Filter by group membership
+	Email          *string `json:"email,omitempty"`
+	UserName       *string `json:"userName,omitempty"`
 }
 
 // GroupFilter contains filter parameters for listing groups
 type GroupFilter struct {
 	PaginationParams
-	Query         *string `json:"query,omitempty"` // Search in display name
-	Active        *bool   `json:"active,omitempty"`
+	Query          *string `json:"query,omitempty"` // Search in display name
+	Active         *bool   `json:"active,omitempty"`
 	OrganizationID *string `json:"organizationId,omitempty"`
-	DirectoryID   *string `json:"directoryId,omitempty"`
-	Source        *string `json:"source,omitempty"`
+	DirectoryID    *string `json:"directoryId,omitempty"`
+	Source         *string `json:"source,omitempty"`
 }
 
 // OrganizationFilter contains filter parameters for listing organizations
@@ -408,10 +408,10 @@ type OrganizationFilter struct {
 
 // ListResponse is a generic paginated list response with SCIM formatting
 type ListResponse struct {
-	TotalResults int           `json:"totalResults"`
-	ItemsPerPage int           `json:"itemsPerPage"`
-	StartIndex   int           `json:"startIndex"`
-	Resources    interface{}   `json:"resources"` // []User, []Group, or []Organization
+	TotalResults int         `json:"totalResults"`
+	ItemsPerPage int         `json:"itemsPerPage"`
+	StartIndex   int         `json:"startIndex"`
+	Resources    interface{} `json:"resources"` // []User, []Group, or []Organization
 }
 
 // NewUser creates a new User instance with a generated ID

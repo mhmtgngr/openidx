@@ -47,78 +47,78 @@ const (
 
 // GenAIAttackRequest represents an incoming AI request to be analyzed
 type GenAIAttackRequest struct {
-	RequestID    string            `json:"request_id"`
-	UserID       string            `json:"user_id"`
-	SessionID    string            `json:"session_id"`
-	Prompt       string            `json:"prompt"`
-	AgentID      string            `json:"agent_id"`
-	Context      string            `json:"context"`
-	Metadata     map[string]string `json:"metadata"`
-	Timestamp    time.Time         `json:"timestamp"`
-	IPAddress    string            `json:"ip_address"`
-	UserAgent    string            `json:"user_agent"`
-	PreviousTurns int              `json:"previous_turns"`
+	RequestID     string            `json:"request_id"`
+	UserID        string            `json:"user_id"`
+	SessionID     string            `json:"session_id"`
+	Prompt        string            `json:"prompt"`
+	AgentID       string            `json:"agent_id"`
+	Context       string            `json:"context"`
+	Metadata      map[string]string `json:"metadata"`
+	Timestamp     time.Time         `json:"timestamp"`
+	IPAddress     string            `json:"ip_address"`
+	UserAgent     string            `json:"user_agent"`
+	PreviousTurns int               `json:"previous_turns"`
 }
 
 // GenAIAttackDetectionResult represents the result of an attack analysis
 type GenAIAttackDetectionResult struct {
-	RequestID        string               `json:"request_id"`
-	AttackDetected   bool                 `json:"attack_detected"`
-	AttackTypes      []GenAIAttackType    `json:"attack_types"`
-	Severity         GenAIAttackSeverity  `json:"severity"`
-	Confidence       float64              `json:"confidence"`
-	Reasons          []string             `json:"reasons"`
-	MatchedPatterns  []string             `json:"matched_patterns"`
-	SuggestedActions []string             `json:"suggested_actions"`
-	AnalyzedAt       time.Time            `json:"analyzed_at"`
-	RiskScore        float64              `json:"risk_score"`
+	RequestID        string              `json:"request_id"`
+	AttackDetected   bool                `json:"attack_detected"`
+	AttackTypes      []GenAIAttackType   `json:"attack_types"`
+	Severity         GenAIAttackSeverity `json:"severity"`
+	Confidence       float64             `json:"confidence"`
+	Reasons          []string            `json:"reasons"`
+	MatchedPatterns  []string            `json:"matched_patterns"`
+	SuggestedActions []string            `json:"suggested_actions"`
+	AnalyzedAt       time.Time           `json:"analyzed_at"`
+	RiskScore        float64             `json:"risk_score"`
 }
 
 // GenAISecurityRule represents a custom security rule for attack detection
 type GenAISecurityRule struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	AttackType      GenAIAttackType `json:"attack_type"`
-	Enabled         bool            `json:"enabled"`
-	Patterns        []string        `json:"patterns"`
-	Keywords        []string        `json:"keywords"`
-	Action          string          `json:"action"`
-	Severity        GenAIAttackSeverity `json:"severity"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	AttackType  GenAIAttackType     `json:"attack_type"`
+	Enabled     bool                `json:"enabled"`
+	Patterns    []string            `json:"patterns"`
+	Keywords    []string            `json:"keywords"`
+	Action      string              `json:"action"`
+	Severity    GenAIAttackSeverity `json:"severity"`
+	CreatedAt   time.Time           `json:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
 // GenAIAttackMetrics represents attack detection metrics
 type GenAIAttackMetrics struct {
-	TotalRequests        int64                    `json:"total_requests"`
-	AttacksDetected      int64                    `json:"attacks_detected"`
-	AttacksByType        map[GenAIAttackType]int64 `json:"attacks_by_type"`
-	AttacksBySeverity    map[GenAIAttackSeverity]int64 `json:"attacks_by_severity"`
-	TopAttackSources     []AttackSource           `json:"top_attack_sources"`
-	AverageResponseTime  float64                  `json:"average_response_time_ms"`
-	FalsePositiveRate    float64                  `json:"false_positive_rate"`
-	TimeRange            string                   `json:"time_range"`
-	GeneratedAt          time.Time                `json:"generated_at"`
+	TotalRequests       int64                         `json:"total_requests"`
+	AttacksDetected     int64                         `json:"attacks_detected"`
+	AttacksByType       map[GenAIAttackType]int64     `json:"attacks_by_type"`
+	AttacksBySeverity   map[GenAIAttackSeverity]int64 `json:"attacks_by_severity"`
+	TopAttackSources    []AttackSource                `json:"top_attack_sources"`
+	AverageResponseTime float64                       `json:"average_response_time_ms"`
+	FalsePositiveRate   float64                       `json:"false_positive_rate"`
+	TimeRange           string                        `json:"time_range"`
+	GeneratedAt         time.Time                     `json:"generated_at"`
 }
 
 // AttackSource represents a source of attacks
 type AttackSource struct {
-	UserID    string `json:"user_id"`
-	IPAddress string `json:"ip_address"`
-	Count     int64  `json:"count"`
+	UserID    string    `json:"user_id"`
+	IPAddress string    `json:"ip_address"`
+	Count     int64     `json:"count"`
 	LastSeen  time.Time `json:"last_seen"`
 }
 
 // GenAIRequestPattern represents an analyzed request pattern
 type GenAIRequestPattern struct {
-	UserID           string    `json:"user_id"`
-	AgentID          string    `json:"agent_id"`
-	RequestFrequency int       `json:"request_frequency"`
-	AveragePromptLength float64 `json:"average_prompt_length"`
-	CommonPatterns   []string  `json:"common_patterns"`
-	RiskScore        float64   `json:"risk_score"`
-	LastAnalyzed     time.Time `json:"last_analyzed"`
+	UserID              string    `json:"user_id"`
+	AgentID             string    `json:"agent_id"`
+	RequestFrequency    int       `json:"request_frequency"`
+	AveragePromptLength float64   `json:"average_prompt_length"`
+	CommonPatterns      []string  `json:"common_patterns"`
+	RiskScore           float64   `json:"risk_score"`
+	LastAnalyzed        time.Time `json:"last_analyzed"`
 }
 
 // genaiAttackDetectionService handles GenAI attack detection
@@ -130,16 +130,16 @@ type genaiAttackDetectionService struct {
 // DetectPromptInjection analyzes a prompt for injection attempts
 func (s *genaiAttackDetectionService) DetectPromptInjection(ctx context.Context, req *GenAIAttackRequest) *GenAIAttackDetectionResult {
 	result := &GenAIAttackDetectionResult{
-		RequestID:      req.RequestID,
-		AttackDetected: false,
-		AttackTypes:    []GenAIAttackType{},
-		Severity:       SeverityLow,
-		Confidence:     0,
-		Reasons:        []string{},
-		MatchedPatterns: []string{},
+		RequestID:        req.RequestID,
+		AttackDetected:   false,
+		AttackTypes:      []GenAIAttackType{},
+		Severity:         SeverityLow,
+		Confidence:       0,
+		Reasons:          []string{},
+		MatchedPatterns:  []string{},
 		SuggestedActions: []string{},
-		AnalyzedAt:     time.Now(),
-		RiskScore:      0,
+		AnalyzedAt:       time.Now(),
+		RiskScore:        0,
 	}
 
 	riskScore := 0.0

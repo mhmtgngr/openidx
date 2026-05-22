@@ -329,10 +329,10 @@ func TestOrganization_MemberRoles(t *testing.T) {
 func TestOrganization_SettingsHandling(t *testing.T) {
 	t.Run("marshal settings to JSON", func(t *testing.T) {
 		settings := map[string]interface{}{
-			"mfa_required":     true,
-			"session_timeout":  3600,
-			"allowed_domains":  []string{"example.com", "test.com"},
-			"custom_field":     "value",
+			"mfa_required":    true,
+			"session_timeout": 3600,
+			"allowed_domains": []string{"example.com", "test.com"},
+			"custom_field":    "value",
 		}
 
 		data, err := json.Marshal(settings)

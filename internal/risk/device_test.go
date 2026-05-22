@@ -22,22 +22,22 @@ func TestComputeFingerprint(t *testing.T) {
 		{
 			name: "full desktop fingerprint",
 			req: DeviceFingerprintRequest{
-				UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-				ScreenRes:  "1920x1080",
-				Timezone:   "America/New_York",
-				Language:   "en-US",
-				Platform:   "Win32",
+				UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+				ScreenRes: "1920x1080",
+				Timezone:  "America/New_York",
+				Language:  "en-US",
+				Platform:  "Win32",
 			},
 			checkLen: true,
 		},
 		{
 			name: "mobile device",
 			req: DeviceFingerprintRequest{
-				UserAgent:  "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)",
-				ScreenRes:  "390x844",
-				Timezone:   "America/Los_Angeles",
-				Language:   "en-US",
-				Platform:   "iPhone",
+				UserAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)",
+				ScreenRes: "390x844",
+				Timezone:  "America/Los_Angeles",
+				Language:  "en-US",
+				Platform:  "iPhone",
 			},
 			checkLen: true,
 		},
@@ -185,9 +185,9 @@ func TestCalculateTrustLevel(t *testing.T) {
 	fingerprinter := NewDeviceFingerprinter(nil, nil, config, zap.NewNop())
 
 	tests := []struct {
-		name         string
-		seenCount    int
-		expected     TrustLevel
+		name      string
+		seenCount int
+		expected  TrustLevel
 	}{
 		{
 			name:      "first time seen",

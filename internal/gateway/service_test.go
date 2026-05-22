@@ -94,9 +94,9 @@ func TestService_RegisterRoutes(t *testing.T) {
 		mockRedis := &mockRedisClient{getError: errors.New("redis unavailable")}
 
 		cfg := Config{
-			Logger:           &zapLoggerWrapper{logger: logger},
-			Redis:            mockRedis,
-			EnableRateLimit:  true,
+			Logger:          &zapLoggerWrapper{logger: logger},
+			Redis:           mockRedis,
+			EnableRateLimit: true,
 		}
 
 		svc, err := NewService(cfg)
@@ -194,9 +194,9 @@ func TestService_HealthCheck(t *testing.T) {
 		mockRedis := &mockRedisClient{}
 
 		cfg := Config{
-			Logger:           &zapLoggerWrapper{logger: logger},
-			Redis:            mockRedis,
-			EnableRateLimit:  true,
+			Logger:          &zapLoggerWrapper{logger: logger},
+			Redis:           mockRedis,
+			EnableRateLimit: true,
 		}
 
 		svc, err := NewService(cfg)
@@ -212,9 +212,9 @@ func TestService_HealthCheck(t *testing.T) {
 		mockRedis := &mockRedisClient{getError: errors.New("connection failed")}
 
 		cfg := Config{
-			Logger:           &zapLoggerWrapper{logger: logger},
-			Redis:            mockRedis,
-			EnableRateLimit:  true,
+			Logger:          &zapLoggerWrapper{logger: logger},
+			Redis:           mockRedis,
+			EnableRateLimit: true,
 		}
 
 		svc, err := NewService(cfg)

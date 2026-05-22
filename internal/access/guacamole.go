@@ -57,13 +57,13 @@ type ConnectionPool struct {
 
 // PooledConnection represents a pooled Guacamole connection token
 type PooledConnection struct {
-	Token      string    `json:"token"`
-	ConnectionID string  `json:"connection_id"`
-	UserID     string    `json:"user_id"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at"`
-	UseCount   int       `json:"use_count"`
-	ExpiresAt  time.Time `json:"expires_at"`
+	Token        string    `json:"token"`
+	ConnectionID string    `json:"connection_id"`
+	UserID       string    `json:"user_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastUsedAt   time.Time `json:"last_used_at"`
+	UseCount     int       `json:"use_count"`
+	ExpiresAt    time.Time `json:"expires_at"`
 }
 
 // NewConnectionPool creates a new connection pool

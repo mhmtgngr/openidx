@@ -19,21 +19,21 @@ import (
 
 // ServiceAuditEvent represents an audit log entry for the service layer
 type ServiceAuditEvent struct {
-	ID          string                 `json:"id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	EventType   EventType              `json:"event_type"`
-	Category    EventCategory          `json:"category"`
-	Action      string                 `json:"action"`
-	Outcome     ServiceEventOutcome           `json:"outcome"`
-	ActorID     string                 `json:"actor_id,omitempty"`
-	ActorType   string                 `json:"actor_type,omitempty"`
-	ActorIP     string                 `json:"actor_ip,omitempty"`
-	TargetID    string                 `json:"target_id,omitempty"`
-	TargetType  string                 `json:"target_type,omitempty"`
-	ResourceID  string                 `json:"resource_id,omitempty"`
-	Details     map[string]interface{} `json:"details,omitempty"`
-	SessionID   string                 `json:"session_id,omitempty"`
-	RequestID   string                 `json:"request_id,omitempty"`
+	ID         string                 `json:"id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	EventType  EventType              `json:"event_type"`
+	Category   EventCategory          `json:"category"`
+	Action     string                 `json:"action"`
+	Outcome    ServiceEventOutcome    `json:"outcome"`
+	ActorID    string                 `json:"actor_id,omitempty"`
+	ActorType  string                 `json:"actor_type,omitempty"`
+	ActorIP    string                 `json:"actor_ip,omitempty"`
+	TargetID   string                 `json:"target_id,omitempty"`
+	TargetType string                 `json:"target_type,omitempty"`
+	ResourceID string                 `json:"resource_id,omitempty"`
+	Details    map[string]interface{} `json:"details,omitempty"`
+	SessionID  string                 `json:"session_id,omitempty"`
+	RequestID  string                 `json:"request_id,omitempty"`
 }
 
 // EventType defines the type of audit event
@@ -71,42 +71,42 @@ const (
 
 // AuditQuery defines parameters for querying audit logs
 type AuditQuery struct {
-	StartTime  *time.Time            `json:"start_time,omitempty"`
-	EndTime    *time.Time            `json:"end_time,omitempty"`
-	EventType  EventType             `json:"event_type,omitempty"`
-	Category   EventCategory         `json:"category,omitempty"`
-	ActorID    string                `json:"actor_id,omitempty"`
-	TargetID   string                `json:"target_id,omitempty"`
-	Outcome    ServiceEventOutcome   `json:"outcome,omitempty"`
-	Offset     int                   `json:"offset"`
-	Limit      int                   `json:"limit"`
+	StartTime *time.Time          `json:"start_time,omitempty"`
+	EndTime   *time.Time          `json:"end_time,omitempty"`
+	EventType EventType           `json:"event_type,omitempty"`
+	Category  EventCategory       `json:"category,omitempty"`
+	ActorID   string              `json:"actor_id,omitempty"`
+	TargetID  string              `json:"target_id,omitempty"`
+	Outcome   ServiceEventOutcome `json:"outcome,omitempty"`
+	Offset    int                 `json:"offset"`
+	Limit     int                 `json:"limit"`
 }
 
 // ComplianceReport represents a compliance report
 type ComplianceReport struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Type         ReportType        `json:"type"`
-	Framework    string            `json:"framework"`
-	Status       ReportStatus      `json:"status"`
-	StartDate    time.Time         `json:"start_date"`
-	EndDate      time.Time         `json:"end_date"`
-	GeneratedAt  time.Time         `json:"generated_at"`
-	GeneratedBy  string            `json:"generated_by"`
-	Summary      ReportSummary     `json:"summary"`
-	Findings     []ReportFinding   `json:"findings,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Type        ReportType      `json:"type"`
+	Framework   string          `json:"framework"`
+	Status      ReportStatus    `json:"status"`
+	StartDate   time.Time       `json:"start_date"`
+	EndDate     time.Time       `json:"end_date"`
+	GeneratedAt time.Time       `json:"generated_at"`
+	GeneratedBy string          `json:"generated_by"`
+	Summary     ReportSummary   `json:"summary"`
+	Findings    []ReportFinding `json:"findings,omitempty"`
 }
 
 // ReportType defines the type of compliance report
 type ReportType string
 
 const (
-	ReportTypeSOC2      ReportType = "soc2"
-	ReportTypeISO27001  ReportType = "iso27001"
-	ReportTypeGDPR      ReportType = "gdpr"
-	ReportTypeHIPAA     ReportType = "hipaa"
-	ReportTypePCI       ReportType = "pci_dss"
-	ReportTypeCustom    ReportType = "custom"
+	ReportTypeSOC2     ReportType = "soc2"
+	ReportTypeISO27001 ReportType = "iso27001"
+	ReportTypeGDPR     ReportType = "gdpr"
+	ReportTypeHIPAA    ReportType = "hipaa"
+	ReportTypePCI      ReportType = "pci_dss"
+	ReportTypeCustom   ReportType = "custom"
 )
 
 // ReportStatus defines the status of a report
@@ -415,28 +415,48 @@ func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate t
 			ControlName: "Logical and Physical Access Controls",
 			Status:      cc61Status,
 			Evidence:    fmt.Sprintf("RBAC implemented; %d/%d users have MFA enabled; %d failed auth attempts in period", mfaUsers, totalUsers, failedAuth),
-			Remediation: func() string { if cc61Status != "passed" { return "Review and remediate excessive failed access attempts" }; return "" }(),
+			Remediation: func() string {
+				if cc61Status != "passed" {
+					return "Review and remediate excessive failed access attempts"
+				}
+				return ""
+			}(),
 		},
 		{
 			ControlID:   "CC6.2",
 			ControlName: "Prior to Access Authentication and Authorization",
 			Status:      cc62Status,
 			Evidence:    fmt.Sprintf("%d authentication events logged in period; %d failures detected", totalEvents, failedAuth),
-			Remediation: func() string { if cc62Status != "passed" { return "Investigate high authentication failure rate" }; return "" }(),
+			Remediation: func() string {
+				if cc62Status != "passed" {
+					return "Investigate high authentication failure rate"
+				}
+				return ""
+			}(),
 		},
 		{
 			ControlID:   "CC6.3",
 			ControlName: "Access Removal",
 			Status:      cc63Status,
 			Evidence:    "User deprovisioning workflow active; access reviews conducted",
-			Remediation: func() string { if cc63Status != "passed" { return "Ensure deprovisioning workflows are active for terminated users" }; return "" }(),
+			Remediation: func() string {
+				if cc63Status != "passed" {
+					return "Ensure deprovisioning workflows are active for terminated users"
+				}
+				return ""
+			}(),
 		},
 		{
 			ControlID:   "CC7.2",
 			ControlName: "System Monitoring Activities",
 			Status:      cc72Status,
 			Evidence:    fmt.Sprintf("Audit logging active; %d events recorded in period", totalEvents),
-			Remediation: func() string { if cc72Status != "passed" { return "Ensure audit logging is enabled and capturing events" }; return "" }(),
+			Remediation: func() string {
+				if cc72Status != "passed" {
+					return "Ensure audit logging is enabled and capturing events"
+				}
+				return ""
+			}(),
 		},
 		{
 			ControlID:   "CC7.3",
@@ -739,13 +759,13 @@ func generateUUID() string {
 // GetEventStatistics returns statistics about audit events
 func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]interface{}, error) {
 	stats := map[string]interface{}{
-		"total_events":       0,
-		"by_type":            map[string]int{},
-		"by_outcome":         map[string]int{},
-		"by_category":        map[string]int{},
-		"events_per_day":     []map[string]interface{}{},
-		"failed_auth_count":  0,
-		"success_rate":       0.0,
+		"total_events":      0,
+		"by_type":           map[string]int{},
+		"by_outcome":        map[string]int{},
+		"by_category":       map[string]int{},
+		"events_per_day":    []map[string]interface{}{},
+		"failed_auth_count": 0,
+		"success_rate":      0.0,
 	}
 
 	// Get total events in time range
@@ -1288,12 +1308,12 @@ func (s *Service) handleDownloadReport(c *gin.Context) {
 
 func (s *Service) handleExportEvents(c *gin.Context) {
 	var req struct {
-		StartTime *time.Time    `json:"start_time"`
-		EndTime   *time.Time    `json:"end_time"`
-		EventType EventType     `json:"event_type"`
-		Category  EventCategory `json:"category"`
-		Outcome   ServiceEventOutcome  `json:"outcome"`
-		Format    string        `json:"format"`
+		StartTime *time.Time          `json:"start_time"`
+		EndTime   *time.Time          `json:"end_time"`
+		EventType EventType           `json:"event_type"`
+		Category  EventCategory       `json:"category"`
+		Outcome   ServiceEventOutcome `json:"outcome"`
+		Format    string              `json:"format"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {

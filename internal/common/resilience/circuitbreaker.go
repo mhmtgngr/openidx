@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -120,8 +120,8 @@ type CircuitBreaker struct {
 	failures         int
 	threshold        int
 	resetTimeout     time.Duration
-	halfOpenAttempts int           // max attempts in half-open
-	halfOpenCount    int           // current attempts in half-open
+	halfOpenAttempts int // max attempts in half-open
+	halfOpenCount    int // current attempts in half-open
 	lastFailure      time.Time
 	state            CircuitState
 	logger           *zap.Logger

@@ -1682,10 +1682,10 @@ func TestEventTypes(t *testing.T) {
 
 func TestRetryDelayCalculation(t *testing.T) {
 	tests := []struct {
-		name         string
-		attempt      int
-		expectDelay  time.Duration
-		shouldRetry  bool
+		name        string
+		attempt     int
+		expectDelay time.Duration
+		shouldRetry bool
 	}{
 		{
 			name:        "attempt 0 -> 1st retry",
@@ -1757,9 +1757,9 @@ func TestRetryDelayCalculation(t *testing.T) {
 func TestWebhookPayloadHandling(t *testing.T) {
 	t.Run("valid JSON payload", func(t *testing.T) {
 		payload := map[string]interface{}{
-			"event": "user.created",
-			"user_id": "12345",
-			"email": "test@example.com",
+			"event":     "user.created",
+			"user_id":   "12345",
+			"email":     "test@example.com",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 
@@ -1781,7 +1781,7 @@ func TestWebhookPayloadHandling(t *testing.T) {
 				"id": "12345",
 				"profile": map[string]interface{}{
 					"firstName": "John",
-					"lastName": "Doe",
+					"lastName":  "Doe",
 				},
 			},
 			"metadata": []string{"tag1", "tag2"},
@@ -2185,10 +2185,10 @@ func TestDeliveryStatus(t *testing.T) {
 
 func TestEventTypeConstantsValues(t *testing.T) {
 	tests := []struct {
-		constant   string
-		value      string
-		category   string
-		action     string
+		constant string
+		value    string
+		category string
+		action   string
 	}{
 		{EventUserCreated, "user.created", "user", "created"},
 		{EventUserUpdated, "user.updated", "user", "updated"},

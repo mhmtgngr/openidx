@@ -34,11 +34,11 @@ func DefaultRecoveryConfig(logger *zap.Logger) RecoveryConfig {
 
 // ErrorResponse represents the JSON error response returned on panic
 type ErrorResponse struct {
-	Error          string `json:"error"`
-	Message        string `json:"message,omitempty"`
-	CorrelationID  string `json:"correlation_id"`
-	StackTrace     string `json:"stack_trace,omitempty"`
-	Timestamp      string `json:"timestamp"`
+	Error         string `json:"error"`
+	Message       string `json:"message,omitempty"`
+	CorrelationID string `json:"correlation_id"`
+	StackTrace    string `json:"stack_trace,omitempty"`
+	Timestamp     string `json:"timestamp"`
 }
 
 // Recovery returns a middleware that recovers from panics.
@@ -160,17 +160,17 @@ func contains(s, substr string) bool {
 
 // PanicReport represents detailed information about a panic for reporting
 type PanicReport struct {
-	CorrelationID  string    `json:"correlation_id"`
-	Panic          string    `json:"panic"`
-	StackTrace     string    `json:"stack_trace"`
-	Method         string    `json:"method"`
-	Path           string    `json:"path"`
-	Query          string    `json:"query,omitempty"`
-	UserID         string    `json:"user_id,omitempty"`
-	ClientIP       string    `json:"client_ip"`
-	UserAgent      string    `json:"user_agent,omitempty"`
-	Timestamp      time.Time `json:"timestamp"`
-	Headers        map[string]string `json:"headers,omitempty"`
+	CorrelationID string            `json:"correlation_id"`
+	Panic         string            `json:"panic"`
+	StackTrace    string            `json:"stack_trace"`
+	Method        string            `json:"method"`
+	Path          string            `json:"path"`
+	Query         string            `json:"query,omitempty"`
+	UserID        string            `json:"user_id,omitempty"`
+	ClientIP      string            `json:"client_ip"`
+	UserAgent     string            `json:"user_agent,omitempty"`
+	Timestamp     time.Time         `json:"timestamp"`
+	Headers       map[string]string `json:"headers,omitempty"`
 }
 
 // CapturePanic captures the current panic and returns a report

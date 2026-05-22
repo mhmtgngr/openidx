@@ -35,42 +35,42 @@ type AuthContext struct {
 
 // RiskFactor represents a specific risk factor in the authentication context
 type RiskFactor struct {
-	ID          string    `json:"id"`
-	Type        string    `json:"type"`
-	Severity    float64   `json:"severity"` // 0-1
-	Description string    `json:"description"`
-	DetectedAt  time.Time `json:"detected_at"`
-	Resolved    bool      `json:"resolved"`
+	ID          string     `json:"id"`
+	Type        string     `json:"type"`
+	Severity    float64    `json:"severity"` // 0-1
+	Description string     `json:"description"`
+	DetectedAt  time.Time  `json:"detected_at"`
+	Resolved    bool       `json:"resolved"`
 	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
 }
 
 // SessionRisk represents the calculated risk for a session
 type SessionRisk struct {
-	SessionID        string                 `json:"session_id"`
-	OverallRisk      float64                `json:"overall_risk"`      // 0-100
-	RiskLevel        string                 `json:"risk_level"`        // low, medium, high, critical
-	RiskFactors      []RiskFactor           `json:"risk_factors"`
-	ActionRequired   string                 `json:"action_required"`   // none, monitor, step_up, terminate
-	RecommendedAuth  string                 `json:"recommended_auth"`  // mfa, reauth, password
-	CalculatedAt     time.Time              `json:"calculated_at"`
-	PreviousRisk     float64                `json:"previous_risk"`
-	RiskDelta        float64                `json:"risk_delta"`        // change in risk
-	Context          map[string]interface{} `json:"context"`
+	SessionID       string                 `json:"session_id"`
+	OverallRisk     float64                `json:"overall_risk"` // 0-100
+	RiskLevel       string                 `json:"risk_level"`   // low, medium, high, critical
+	RiskFactors     []RiskFactor           `json:"risk_factors"`
+	ActionRequired  string                 `json:"action_required"`  // none, monitor, step_up, terminate
+	RecommendedAuth string                 `json:"recommended_auth"` // mfa, reauth, password
+	CalculatedAt    time.Time              `json:"calculated_at"`
+	PreviousRisk    float64                `json:"previous_risk"`
+	RiskDelta       float64                `json:"risk_delta"` // change in risk
+	Context         map[string]interface{} `json:"context"`
 }
 
 // ContinuousAuthConfig represents configuration for continuous auth
 type ContinuousAuthConfig struct {
-	Enabled                   bool              `json:"enabled"`
-	RiskEvaluationInterval    time.Duration     `json:"risk_evaluation_interval"`
-	HighRiskThreshold         float64           `json:"high_risk_threshold"`          // default 70
-	MediumRiskThreshold       float64           `json:"medium_risk_threshold"`        // default 40
-	CriticalRiskThreshold     float64           `json:"critical_risk_threshold"`       // default 90
-	SessionMaxLifetime        time.Duration     `json:"session_max_lifetime"`
-	IdleTimeout              time.Duration     `json:"idle_timeout"`
-	StepUpAuthRequired       bool              `json:"step_up_auth_required"`
-	DeviceFingerprintEnabled bool              `json:"device_fingerprint_enabled"`
-	GeoAnomalyEnabled        bool              `json:"geo_anomaly_enabled"`
-	BehavioralAnalysis       bool              `json:"behavioral_analysis"`
+	Enabled                  bool               `json:"enabled"`
+	RiskEvaluationInterval   time.Duration      `json:"risk_evaluation_interval"`
+	HighRiskThreshold        float64            `json:"high_risk_threshold"`     // default 70
+	MediumRiskThreshold      float64            `json:"medium_risk_threshold"`   // default 40
+	CriticalRiskThreshold    float64            `json:"critical_risk_threshold"` // default 90
+	SessionMaxLifetime       time.Duration      `json:"session_max_lifetime"`
+	IdleTimeout              time.Duration      `json:"idle_timeout"`
+	StepUpAuthRequired       bool               `json:"step_up_auth_required"`
+	DeviceFingerprintEnabled bool               `json:"device_fingerprint_enabled"`
+	GeoAnomalyEnabled        bool               `json:"geo_anomaly_enabled"`
+	BehavioralAnalysis       bool               `json:"behavioral_analysis"`
 	RiskFactors              map[string]float64 `json:"risk_factors"` // weight for each factor
 }
 
@@ -398,18 +398,18 @@ func (s *Service) handleContinuousAuthGetRisk(c *gin.Context) {
 
 	config := &ContinuousAuthConfig{
 		Enabled:                true,
-		RiskEvaluationInterval:  5 * time.Minute,
-		HighRiskThreshold:       70,
-		MediumRiskThreshold:     40,
-		CriticalRiskThreshold:   90,
-		SessionMaxLifetime:      8 * time.Hour,
-		IdleTimeout:             30 * time.Minute,
+		RiskEvaluationInterval: 5 * time.Minute,
+		HighRiskThreshold:      70,
+		MediumRiskThreshold:    40,
+		CriticalRiskThreshold:  90,
+		SessionMaxLifetime:     8 * time.Hour,
+		IdleTimeout:            30 * time.Minute,
 		RiskFactors: map[string]float64{
-			"session_age":       0.3,
-			"geo_anomaly":       0.25,
-			"device_anomaly":    0.2,
+			"session_age":        0.3,
+			"geo_anomaly":        0.25,
+			"device_anomaly":     0.2,
 			"behavioral_anomaly": 0.15,
-			"velocity":          0.1,
+			"velocity":           0.1,
 		},
 	}
 
@@ -447,7 +447,7 @@ func (s *Service) handleContinuousAuthCheck(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"reauth_required": required,
-		"reason":         reason,
+		"reason":          reason,
 	})
 }
 

@@ -82,7 +82,7 @@ func TestScorer_HighRiskScenario(t *testing.T) {
 		Longitude:        -0.1278,
 		CountryCode:      "GB",
 		City:             "London",
-		FailedCount:      5, // Multiple failed attempts
+		FailedCount:      5,  // Multiple failed attempts
 		LoginCount:       25, // High login velocity
 		IsVPN:            true,
 		IsTor:            false,
@@ -306,8 +306,8 @@ func TestScorer_UnusualTime(t *testing.T) {
 // TestRiskAssessment_ToJSON tests JSON serialization
 func TestRiskAssessment_ToJSON(t *testing.T) {
 	assessment := &RiskAssessment{
-		Score:          65,
-		Level:          RiskLevelHigh,
+		Score: 65,
+		Level: RiskLevelHigh,
 		Signals: []Signal{
 			{Name: "test", Weight: 0.5, Score: 32.5, Description: "test signal"},
 		},

@@ -12,10 +12,10 @@
 //
 // Wire framing on disk, per MediaRecorder chunk Append() receives:
 //
-//   [1-byte key-id]
-//   [4-byte big-endian uint32 ciphertext length C]
-//   [12-byte AES-GCM nonce]
-//   [C-byte AES-GCM ciphertext + 16-byte tag]
+//	[1-byte key-id]
+//	[4-byte big-endian uint32 ciphertext length C]
+//	[12-byte AES-GCM nonce]
+//	[C-byte AES-GCM ciphertext + 16-byte tag]
 //
 // The key-id identifies which master key in the keyring protected the
 // frame, so rotation works: new writes use the active key's id, old

@@ -158,8 +158,8 @@ func DefaultCSRFCookieConfig() CookieConfig {
 	return CookieConfig{
 		Name:     "_openidx_mfa_csrf",
 		Path:     "/",
-		MaxAge:   3600, // 1 hour
-		Secure:   true, // Use HTTPS in production
+		MaxAge:   3600,  // 1 hour
+		Secure:   true,  // Use HTTPS in production
 		HttpOnly: false, // CSRF token needs to be accessible by JavaScript
 		SameSite: http.SameSiteStrictMode,
 	}
@@ -184,7 +184,7 @@ func SameSiteFromString(sameSite string) http.SameSite {
 // It includes the MFA session cookie in the list of cookies to check
 func MFACSRFConfig(trustedDomain string) CSRFConfig {
 	return CSRFConfig{
-		Enabled: true,
+		Enabled:       true,
 		TrustedDomain: trustedDomain,
 		SessionCookieNames: []string{
 			"_openidx_mfa_session",

@@ -284,11 +284,11 @@ func TestLifecycleManager_TransitionState_ValidTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &MockLifecycleRepository{
 				user: &User{
-					ID:        uuid.New().String(),
-					UserName:  "testuser",
-					Active:    true,
-					Enabled:   true,
-					Emails:    []Email{{Value: "test@example.com"}},
+					ID:         uuid.New().String(),
+					UserName:   "testuser",
+					Active:     true,
+					Enabled:    true,
+					Emails:     []Email{{Value: "test@example.com"}},
 					Attributes: make(map[string]string),
 				},
 			}
@@ -367,10 +367,10 @@ func TestLifecycleManager_TransitionState_InvalidTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &MockLifecycleRepository{
 				user: &User{
-					ID:        uuid.New().String(),
-					UserName:  "testuser",
-					Active:    true,
-					Enabled:   true,
+					ID:         uuid.New().String(),
+					UserName:   "testuser",
+					Active:     true,
+					Enabled:    true,
 					Attributes: make(map[string]string),
 				},
 			}
@@ -407,60 +407,60 @@ func TestLifecycleManager_TransitionState_UserNotFound(t *testing.T) {
 
 func TestLifecycleManager_AnonymizeUser(t *testing.T) {
 	tests := []struct {
-		name               string
-		userState          IdentityState
+		name                 string
+		userState            IdentityState
 		deprovisionedDaysAgo int
-		retentionDays      int
-		expectError        bool
-		errorMsg           string
-		verifyAnonymized   bool
+		retentionDays        int
+		expectError          bool
+		errorMsg             string
+		verifyAnonymized     bool
 	}{
 		{
-			name:               "Successfully anonymize after retention period",
-			userState:          StateDeprovisioned,
+			name:                 "Successfully anonymize after retention period",
+			userState:            StateDeprovisioned,
 			deprovisionedDaysAgo: 90,
-			retentionDays:      90,
-			expectError:        false,
-			verifyAnonymized:   true,
+			retentionDays:        90,
+			expectError:          false,
+			verifyAnonymized:     true,
 		},
 		{
-			name:               "Retention period not yet expired",
-			userState:          StateDeprovisioned,
+			name:                 "Retention period not yet expired",
+			userState:            StateDeprovisioned,
 			deprovisionedDaysAgo: 30,
-			retentionDays:      90,
-			expectError:        true,
-			errorMsg:           "retention period not expired",
-			verifyAnonymized:   false,
+			retentionDays:        90,
+			expectError:          true,
+			errorMsg:             "retention period not expired",
+			verifyAnonymized:     false,
 		},
 		{
-			name:               "Cannot anonymize active user",
-			userState:          StateActive,
+			name:                 "Cannot anonymize active user",
+			userState:            StateActive,
 			deprovisionedDaysAgo: 0,
-			retentionDays:      90,
-			expectError:        true,
-			errorMsg:           "must be deprovisioned",
-			verifyAnonymized:   false,
+			retentionDays:        90,
+			expectError:          true,
+			errorMsg:             "must be deprovisioned",
+			verifyAnonymized:     false,
 		},
 		{
-			name:               "Cannot anonymize suspended user",
-			userState:          StateSuspended,
+			name:                 "Cannot anonymize suspended user",
+			userState:            StateSuspended,
 			deprovisionedDaysAgo: 0,
-			retentionDays:      90,
-			expectError:        true,
-			errorMsg:           "must be deprovisioned",
-			verifyAnonymized:   false,
+			retentionDays:        90,
+			expectError:          true,
+			errorMsg:             "must be deprovisioned",
+			verifyAnonymized:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			user := &User{
-				ID:        uuid.New().String(),
-				UserName:  "realuser",
-				Emails:    []Email{{Value: "real@example.com"}},
-				Name:      &Name{GivenName: stringPtr("Real"), FamilyName: stringPtr("User")},
+				ID:           uuid.New().String(),
+				UserName:     "realuser",
+				Emails:       []Email{{Value: "real@example.com"}},
+				Name:         &Name{GivenName: stringPtr("Real"), FamilyName: stringPtr("User")},
 				PhoneNumbers: []PhoneNumber{{Value: "+1234567890"}},
-				Attributes: make(map[string]string),
+				Attributes:   make(map[string]string),
 			}
 			user.SetState(tt.userState)
 
@@ -501,28 +501,28 @@ func TestLifecycleManager_AnonymizeUser(t *testing.T) {
 func TestLifecycleManager_BatchTransition(t *testing.T) {
 	// Create test users
 	user1 := &User{
-		ID:        uuid.New().String(),
-		UserName:  "user1",
-		Emails:    []Email{{Value: "user1@example.com"}},
-		Active:    true,
+		ID:         uuid.New().String(),
+		UserName:   "user1",
+		Emails:     []Email{{Value: "user1@example.com"}},
+		Active:     true,
 		Attributes: make(map[string]string),
 	}
 	user1.SetState(StateActive)
 
 	user2 := &User{
-		ID:        uuid.New().String(),
-		UserName:  "user2",
-		Emails:    []Email{{Value: "user2@example.com"}},
-		Active:    true,
+		ID:         uuid.New().String(),
+		UserName:   "user2",
+		Emails:     []Email{{Value: "user2@example.com"}},
+		Active:     true,
 		Attributes: make(map[string]string),
 	}
 	user2.SetState(StateActive)
 
 	user3 := &User{
-		ID:        uuid.New().String(),
-		UserName:  "user3",
-		Emails:    []Email{{Value: "user3@example.com"}},
-		Active:    true,
+		ID:         uuid.New().String(),
+		UserName:   "user3",
+		Emails:     []Email{{Value: "user3@example.com"}},
+		Active:     true,
 		Attributes: make(map[string]string),
 	}
 	user3.SetState(StateDeprovisioned) // This one should fail
@@ -565,60 +565,60 @@ func TestLifecycleManager_CanLogin(t *testing.T) {
 		canLogin    bool
 	}{
 		{
-			name:     "Active user can login",
+			name:      "Active user can login",
 			userState: StateActive,
-			active:   true,
-			enabled:  true,
-			canLogin: true,
+			active:    true,
+			enabled:   true,
+			canLogin:  true,
 		},
 		{
-			name:     "Suspended user cannot login",
+			name:      "Suspended user cannot login",
 			userState: StateSuspended,
-			active:   false,
-			enabled:  false,
-			canLogin: false,
+			active:    false,
+			enabled:   false,
+			canLogin:  false,
 		},
 		{
-			name:     "Deprovisioned user cannot login",
+			name:      "Deprovisioned user cannot login",
 			userState: StateDeprovisioned,
-			active:   false,
-			enabled:  false,
-			canLogin: false,
+			active:    false,
+			enabled:   false,
+			canLogin:  false,
 		},
 		{
-			name:     "Created user cannot login (not activated)",
+			name:      "Created user cannot login (not activated)",
 			userState: StateCreated,
-			active:   true,
-			enabled:  true,
-			canLogin: false, // Created users must transition to Active before login
+			active:    true,
+			enabled:   true,
+			canLogin:  false, // Created users must transition to Active before login
 		},
 		{
-			name:     "Locked user cannot login",
-			userState: StateActive,
-			active:   true,
-			enabled:  true,
+			name:        "Locked user cannot login",
+			userState:   StateActive,
+			active:      true,
+			enabled:     true,
 			lockedUntil: timePtr(time.Now().Add(1 * time.Hour)),
-			canLogin: false,
+			canLogin:    false,
 		},
 		{
-			name:     "Expired lock user can login",
-			userState: StateActive,
-			active:   true,
-			enabled:  true,
+			name:        "Expired lock user can login",
+			userState:   StateActive,
+			active:      true,
+			enabled:     true,
 			lockedUntil: timePtr(time.Now().Add(-1 * time.Hour)),
-			canLogin: true,
+			canLogin:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			user := &User{
-				ID:        uuid.New().String(),
-				UserName:  "testuser",
-				Active:    tt.active,
-				Enabled:   tt.enabled,
+				ID:          uuid.New().String(),
+				UserName:    "testuser",
+				Active:      tt.active,
+				Enabled:     tt.enabled,
 				LockedUntil: tt.lockedUntil,
-				Attributes: make(map[string]string),
+				Attributes:  make(map[string]string),
 			}
 			user.SetState(tt.userState)
 
@@ -636,9 +636,9 @@ func TestLifecycleManager_CanLogin(t *testing.T) {
 
 func TestLifecycleManager_EvaluatePolicy(t *testing.T) {
 	tests := []struct {
-		name               string
-		policy             *LifecyclePolicy
-		user               *User
+		name                string
+		policy              *LifecyclePolicy
+		user                *User
 		expectedTransitions []IdentityState
 	}{
 		{

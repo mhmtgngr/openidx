@@ -16,18 +16,18 @@ import (
 
 // WebAuthnCredential represents a registered WebAuthn credential
 type WebAuthnCredential struct {
-	ID                string    `json:"id"`
-	UserID            string    `json:"user_id"`
-	CredentialID      string    `json:"credential_id"` // Base64URL encoded
-	PublicKey         string    `json:"-"`             // COSE encoded public key (sensitive)
-	SignCount         uint32    `json:"sign_count"`
-	AAGUID            string    `json:"aaguid,omitempty"`
-	Transports        []string  `json:"transports,omitempty"`
-	Name              string    `json:"name"`
-	BackupEligible    bool      `json:"backup_eligible"`
-	BackupState       bool      `json:"backup_state"`
-	AttestationFormat string    `json:"attestation_format,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string     `json:"id"`
+	UserID            string     `json:"user_id"`
+	CredentialID      string     `json:"credential_id"` // Base64URL encoded
+	PublicKey         string     `json:"-"`             // COSE encoded public key (sensitive)
+	SignCount         uint32     `json:"sign_count"`
+	AAGUID            string     `json:"aaguid,omitempty"`
+	Transports        []string   `json:"transports,omitempty"`
+	Name              string     `json:"name"`
+	BackupEligible    bool       `json:"backup_eligible"`
+	BackupState       bool       `json:"backup_state"`
+	AttestationFormat string     `json:"attestation_format,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
 }
 

@@ -145,7 +145,7 @@ func NewPruneCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "prune",
 		Short: "Prune unused Docker resources",
-		Long: `Remove unused Docker containers, networks, and images.`,
+		Long:  `Remove unused Docker containers, networks, and images.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := NewCommandContext(cmd)
 			success, _, warning, _, _ := ctx.GetColors()
@@ -244,7 +244,7 @@ func NewCacheClearCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cache-clear",
 		Short: "Clear various caches",
-		Long: `Clear Go build cache, module cache, npm cache, etc.`,
+		Long:  `Clear Go build cache, module cache, npm cache, etc.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := NewCommandContext(cmd)
 			success, _, _, _, _ := ctx.GetColors()

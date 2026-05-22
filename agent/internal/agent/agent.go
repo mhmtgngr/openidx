@@ -123,10 +123,10 @@ func (a *Agent) SyncConfig(ctx context.Context) error {
 
 // reportPayload is the JSON body sent to the report endpoint.
 type reportPayload struct {
-	AgentID  string          `json:"agent_id"`
-	DeviceID string          `json:"device_id"`
-	Results  []engineResult  `json:"results"`
-	ReportedAt time.Time     `json:"reported_at"`
+	AgentID    string         `json:"agent_id"`
+	DeviceID   string         `json:"device_id"`
+	Results    []engineResult `json:"results"`
+	ReportedAt time.Time      `json:"reported_at"`
 }
 
 type engineResult struct {

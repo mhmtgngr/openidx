@@ -192,7 +192,7 @@ func TestCheckHTTPHealthTimeout(t *testing.T) {
 
 	config := Config{
 		Services: []ServiceConfig{},
-		Timeout:   100 * time.Millisecond,
+		Timeout:  100 * time.Millisecond,
 	}
 	hm := NewHealthMonitor(config)
 
@@ -631,7 +631,7 @@ func TestSendSlackAlert(t *testing.T) {
 func TestSendEmailAlert(t *testing.T) {
 	config := Config{
 		Services: []ServiceConfig{},
-		EmailTo:   "alert@example.com",
+		EmailTo:  "alert@example.com",
 	}
 	hm := NewHealthMonitor(config)
 
@@ -939,7 +939,7 @@ func TestContextCancellation(t *testing.T) {
 func TestHTTPClientConfiguration(t *testing.T) {
 	config := Config{
 		Services: []ServiceConfig{},
-		Timeout:   5 * time.Second,
+		Timeout:  5 * time.Second,
 	}
 	hm := NewHealthMonitor(config)
 

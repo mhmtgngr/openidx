@@ -28,7 +28,7 @@ type PostureCheck struct {
 // PostureCheckResult represents the outcome of a posture check evaluation for an identity
 type PostureCheckResult struct {
 	ID         string                 `json:"id"`
-	IdentityID string                `json:"identity_id"`
+	IdentityID string                 `json:"identity_id"`
 	CheckID    string                 `json:"check_id"`
 	Passed     bool                   `json:"passed"`
 	Details    map[string]interface{} `json:"details"`
@@ -71,9 +71,9 @@ func mapCheckTypeToZiti(checkType string) string {
 // buildZitiPostureCheckBody builds the Ziti management API request body for a posture check
 func buildZitiPostureCheckBody(check *PostureCheck) map[string]interface{} {
 	body := map[string]interface{}{
-		"name":    check.Name,
-		"typeId":  mapCheckTypeToZiti(check.CheckType),
-		"tags":    map[string]interface{}{"openidx_id": check.ID},
+		"name":   check.Name,
+		"typeId": mapCheckTypeToZiti(check.CheckType),
+		"tags":   map[string]interface{}{"openidx_id": check.ID},
 	}
 
 	switch check.CheckType {
@@ -790,8 +790,8 @@ func (zm *ZitiManager) FetchGovernancePolicy(ctx context.Context, policyID strin
 // identity_roles, service_roles, and metadata attributes.
 func TransformGovernancePolicyToZiti(policy *GovernancePolicy) map[string]interface{} {
 	config := map[string]interface{}{
-		"policy_type": "Dial",
-		"policy_name": policy.Name,
+		"policy_type":     "Dial",
+		"policy_name":     policy.Name,
 		"governance_type": policy.Type,
 	}
 

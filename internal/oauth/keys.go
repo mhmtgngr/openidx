@@ -53,27 +53,27 @@ const (
 
 // KeyMetadata stores metadata about a cryptographic key
 type KeyMetadata struct {
-	KeyID        string    `json:"key_id" db:"key_id"`
-	KeyType      string    `json:"key_type" db:"key_type"`      // RSA, EC, etc.
-	Algorithm    string    `json:"algorithm" db:"algorithm"`    // RS256, RS384, RS512, etc.
-	Use          string    `json:"use" db:"use"`                // sig (signature) or enc (encryption)
-	PublicKey    string    `json:"public_key,omitempty" db:"public_key"`
-	PrivateKey   string    `json:"-" db:"private_key"`          // Never expose in JSON
-	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at" db:"expires_at"`
-	RotatedAt    *time.Time `json:"rotated_at,omitempty" db:"rotated_at"`
-	Status       string    `json:"status" db:"status"`          // active, rotated, expired
-	KeyVersion   int       `json:"key_version" db:"key_version"`
+	KeyID      string     `json:"key_id" db:"key_id"`
+	KeyType    string     `json:"key_type" db:"key_type"`   // RSA, EC, etc.
+	Algorithm  string     `json:"algorithm" db:"algorithm"` // RS256, RS384, RS512, etc.
+	Use        string     `json:"use" db:"use"`             // sig (signature) or enc (encryption)
+	PublicKey  string     `json:"public_key,omitempty" db:"public_key"`
+	PrivateKey string     `json:"-" db:"private_key"` // Never expose in JSON
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	ExpiresAt  time.Time  `json:"expires_at" db:"expires_at"`
+	RotatedAt  *time.Time `json:"rotated_at,omitempty" db:"rotated_at"`
+	Status     string     `json:"status" db:"status"` // active, rotated, expired
+	KeyVersion int        `json:"key_version" db:"key_version"`
 }
 
 // JWK represents a JSON Web Key per RFC 7517
 type JWK struct {
-	Kty string `json:"kty"` // Key type
-	Use string `json:"use"` // Public key use - "sig" or "enc"
-	Kid string `json:"kid"` // Key ID
-	Alg string `json:"alg"` // Algorithm
-	N   string `json:"n"`   // Modulus (for RSA)
-	E   string `json:"e"`   // Exponent (for RSA)
+	Kty string `json:"kty"`           // Key type
+	Use string `json:"use"`           // Public key use - "sig" or "enc"
+	Kid string `json:"kid"`           // Key ID
+	Alg string `json:"alg"`           // Algorithm
+	N   string `json:"n"`             // Modulus (for RSA)
+	E   string `json:"e"`             // Exponent (for RSA)
 	Crv string `json:"crv,omitempty"` // Curve (for EC)
 	X   string `json:"x,omitempty"`   // X coordinate (for EC)
 	Y   string `json:"y,omitempty"`   // Y coordinate (for EC)
@@ -644,8 +644,8 @@ type KeyRotationStatus struct {
 // GetRotationStatus returns the current key rotation status
 func (km *KeyManager) GetRotationStatus(ctx context.Context) (*KeyRotationStatus, error) {
 	status := &KeyRotationStatus{
-		CurrentKeyID:   km.currentKeyID,
-		ShouldRotate:   km.ShouldRotateKey(),
+		CurrentKeyID: km.currentKeyID,
+		ShouldRotate: km.ShouldRotateKey(),
 	}
 
 	// Get current key metadata

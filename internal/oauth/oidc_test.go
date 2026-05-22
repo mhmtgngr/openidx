@@ -423,9 +423,9 @@ func TestGetUserInfo(t *testing.T) {
 
 func TestExtractBearerToken(t *testing.T) {
 	tests := []struct {
-		name      string
+		name       string
 		authHeader string
-		expectErr bool
+		expectErr  bool
 		checkToken func(*testing.T, string)
 	}{
 		{
@@ -521,18 +521,18 @@ func TestOIDCAuthorizationCodeFlow(t *testing.T) {
 
 	t.Run("Store and retrieve authorization code", func(t *testing.T) {
 		code := &StoredAuthorizationCode{
-			Code:              "test-auth-code-123",
-			ClientID:          "test-client",
-			UserID:            "test-user-123",
-			RedirectURI:       "https://example.com/callback",
-			Scope:             "openid profile email",
-			State:             "test-state",
-			Nonce:             "test-nonce",
-			CodeChallenge:     "test-challenge",
+			Code:                "test-auth-code-123",
+			ClientID:            "test-client",
+			UserID:              "test-user-123",
+			RedirectURI:         "https://example.com/callback",
+			Scope:               "openid profile email",
+			State:               "test-state",
+			Nonce:               "test-nonce",
+			CodeChallenge:       "test-challenge",
 			CodeChallengeMethod: "S256",
-			ExpiresAt:         time.Now().Add(10 * time.Minute),
-			CreatedAt:         time.Now(),
-			Used:              false,
+			ExpiresAt:           time.Now().Add(10 * time.Minute),
+			CreatedAt:           time.Now(),
+			Used:                false,
 		}
 
 		// Store the authorization code

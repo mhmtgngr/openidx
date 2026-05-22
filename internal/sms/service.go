@@ -35,9 +35,9 @@ type Config struct {
 	Enabled       bool   `mapstructure:"enabled"`        // Enable/disable SMS sending
 
 	// Turkish SMS gateway providers
-	NetGSMUserCode string `mapstructure:"netgsm_usercode"`  // NetGSM user code
-	NetGSMPassword string `mapstructure:"netgsm_password"`  // NetGSM password
-	NetGSMHeader   string `mapstructure:"netgsm_header"`    // NetGSM sender header
+	NetGSMUserCode string `mapstructure:"netgsm_usercode"` // NetGSM user code
+	NetGSMPassword string `mapstructure:"netgsm_password"` // NetGSM password
+	NetGSMHeader   string `mapstructure:"netgsm_header"`   // NetGSM sender header
 
 	IletiMerkeziKey    string `mapstructure:"iletimerkezi_key"`    // İleti Merkezi API key
 	IletiMerkeziSecret string `mapstructure:"iletimerkezi_secret"` // İleti Merkezi API secret
@@ -51,9 +51,9 @@ type Config struct {
 	TurkcellPassword string `mapstructure:"turkcell_password"` // Turkcell Mesajüssü password
 	TurkcellSender   string `mapstructure:"turkcell_sender"`   // Turkcell sender name
 
-	VodafoneAPIKey   string `mapstructure:"vodafone_api_key"`   // Vodafone API key
-	VodafoneSecret   string `mapstructure:"vodafone_secret"`    // Vodafone API secret
-	VodafoneSender   string `mapstructure:"vodafone_sender"`    // Vodafone sender address
+	VodafoneAPIKey string `mapstructure:"vodafone_api_key"` // Vodafone API key
+	VodafoneSecret string `mapstructure:"vodafone_secret"`  // Vodafone API secret
+	VodafoneSender string `mapstructure:"vodafone_sender"`  // Vodafone sender address
 
 	TurkTelekomAPIKey string `mapstructure:"turktelekom_api_key"` // Türk Telekom API key
 	TurkTelekomSecret string `mapstructure:"turktelekom_secret"`  // Türk Telekom API secret

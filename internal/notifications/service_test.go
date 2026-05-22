@@ -29,16 +29,16 @@ func TestNotification_Structure(t *testing.T) {
 		now := time.Now().UTC()
 
 		notif := Notification{
-			ID:       "notif-123",
-			UserID:   "user-456",
-			OrgID:    "org-789",
-			Channel:  "in_app",
-			Type:     "security_alert",
-			Title:    "New login detected",
-			Body:     "A new login was detected from IP 192.168.1.1",
-			Link:     &link,
-			Read:     false,
-			Metadata: map[string]interface{}{"ip": "192.168.1.1", "location": "New York"},
+			ID:        "notif-123",
+			UserID:    "user-456",
+			OrgID:     "org-789",
+			Channel:   "in_app",
+			Type:      "security_alert",
+			Title:     "New login detected",
+			Body:      "A new login was detected from IP 192.168.1.1",
+			Link:      &link,
+			Read:      false,
+			Metadata:  map[string]interface{}{"ip": "192.168.1.1", "location": "New York"},
 			CreatedAt: now,
 		}
 
@@ -114,16 +114,16 @@ func TestNotification_JSONSerialization(t *testing.T) {
 		link := "https://example.com"
 
 		notif := Notification{
-			ID:       "notif-123",
-			UserID:   "user-456",
-			OrgID:    "org-789",
-			Channel:  "in_app",
-			Type:     "alert",
-			Title:    "Test Notification",
-			Body:     "Test Body",
-			Link:     &link,
-			Read:     false,
-			Metadata: map[string]interface{}{"key": "value"},
+			ID:        "notif-123",
+			UserID:    "user-456",
+			OrgID:     "org-789",
+			Channel:   "in_app",
+			Type:      "alert",
+			Title:     "Test Notification",
+			Body:      "Test Body",
+			Link:      &link,
+			Read:      false,
+			Metadata:  map[string]interface{}{"key": "value"},
 			CreatedAt: time.Now(),
 		}
 

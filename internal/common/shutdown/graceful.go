@@ -76,11 +76,11 @@ type ShutdownConfig struct {
 
 // GracefulShutdown handles signal-driven graceful shutdown of services.
 // It listens for SIGTERM and SIGINT signals, then executes the shutdown sequence:
-//   1. Run pre-stop hook if configured
-//   2. Stop accepting new requests
-//   3. Wait for active requests to complete (with timeout)
-//   4. Run cleanup functions in order
-//   5. Flush logs and terminate
+//  1. Run pre-stop hook if configured
+//  2. Stop accepting new requests
+//  3. Wait for active requests to complete (with timeout)
+//  4. Run cleanup functions in order
+//  5. Flush logs and terminate
 //
 // The function blocks until shutdown is complete. It should typically be called
 // as the last statement in main(), after starting the server in a goroutine.
@@ -100,7 +100,7 @@ type ShutdownConfig struct {
 //	}
 func GracefulShutdown(ctx context.Context, timeout time.Duration, cleaners ...CleanupFunc) error {
 	cfg := ShutdownConfig{
-		Timeout:     timeout,
+		Timeout:      timeout,
 		DrainTimeout: timeout / 2, // Use half the timeout for draining
 	}
 	return GracefulShutdownWithConfig(ctx, cfg, cleaners...)

@@ -74,7 +74,7 @@ func NewHealthMonitor(config Config) *HealthMonitor {
 			MaxIdleConns:        10,
 			IdleConnTimeout:     30 * time.Second,
 			DisableCompression:  true,
-			DisableKeepAlives:    false,
+			DisableKeepAlives:   false,
 			MaxIdleConnsPerHost: 10,
 		},
 	}

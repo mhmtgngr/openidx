@@ -96,7 +96,9 @@ func (s *Service) RecordAdminAction(
 
 // handleGetAdminAuditLog returns paginated admin audit log entries with optional filters
 func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	ctx := c.Request.Context()
 
 	// Parse pagination
@@ -223,7 +225,9 @@ func (s *Service) handleGetAdminAuditLog(c *gin.Context) {
 
 // handleGetAdminAuditEntry returns a single admin audit log entry by ID
 func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
@@ -263,7 +267,9 @@ func (s *Service) handleGetAdminAuditEntry(c *gin.Context) {
 
 // handleGetSettingsHistory returns admin audit entries for settings changes
 func (s *Service) handleGetSettingsHistory(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	ctx := c.Request.Context()
 
 	limit := 20
@@ -354,10 +360,10 @@ func (s *Service) handleGetSettingsHistory(c *gin.Context) {
 // AuditStreamConfig represents the configuration for audit stream WebSocket
 type AuditStreamConfig struct {
 	AllowedOrigins []string `json:"allowed_origins"`
-	EnableLogging bool     `json:"enable_logging"`
-	MaxClients    int      `json:"max_clients"`
-	UpdatedAt     string   `json:"updated_at"`
-	UpdatedBy     string   `json:"updated_by,omitempty"`
+	EnableLogging  bool     `json:"enable_logging"`
+	MaxClients     int      `json:"max_clients"`
+	UpdatedAt      string   `json:"updated_at"`
+	UpdatedBy      string   `json:"updated_by,omitempty"`
 }
 
 // handleGetAuditStreamConfig returns the current audit stream configuration
@@ -373,8 +379,8 @@ func (s *Service) handleGetAuditStreamConfig(c *gin.Context) {
 		config = &AuditStreamConfig{
 			AllowedOrigins: []string{},
 			EnableLogging:  true,
-			MaxClients:    100,
-			UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+			MaxClients:     100,
+			UpdatedAt:      time.Now().UTC().Format(time.RFC3339),
 		}
 	}
 
@@ -555,10 +561,10 @@ func (s *Service) handleGetAuditStreamStats(c *gin.Context) {
 		Scan(&rejectedConnections)
 
 	c.JSON(http.StatusOK, gin.H{
-		"connected_clients":       connectedClients,
-		"recent_attempts_1h":      recentAttempts,
+		"connected_clients":        connectedClients,
+		"recent_attempts_1h":       recentAttempts,
 		"rejected_connections_24h": rejectedConnections,
-		"timestamp":               time.Now().UTC().Format(time.RFC3339),
+		"timestamp":                time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

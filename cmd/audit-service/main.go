@@ -19,9 +19,9 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
-	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/server"
 )
@@ -198,9 +198,9 @@ func main() {
 
 	// Create graceful manager
 	graceful := server.New(server.Config{
-		Server:         httpServer,
-		Logger:         log,
-		Shutdownables:  shutdownables,
+		Server:          httpServer,
+		Logger:          log,
+		Shutdownables:   shutdownables,
 		ShutdownTimeout: 30 * time.Second,
 	})
 
@@ -237,10 +237,10 @@ func (e *elasticsearchChecker) Check(ctx context.Context) newhealth.ComponentSta
 
 	if err != nil {
 		return newhealth.ComponentStatus{
-			Status:     "down",
-			LatencyMS:  float64(latency.Milliseconds()),
-			Details:    fmt.Sprintf("ping failed: %v", err),
-			CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+			Status:    "down",
+			LatencyMS: float64(latency.Milliseconds()),
+			Details:   fmt.Sprintf("ping failed: %v", err),
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 	}
 
@@ -252,9 +252,9 @@ func (e *elasticsearchChecker) Check(ctx context.Context) newhealth.ComponentSta
 	}
 
 	return newhealth.ComponentStatus{
-		Status:     status,
-		LatencyMS:  float64(latency.Milliseconds()),
-		Details:    details,
-		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Status:    status,
+		LatencyMS: float64(latency.Milliseconds()),
+		Details:   details,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }

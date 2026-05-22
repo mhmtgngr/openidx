@@ -155,9 +155,9 @@ func main() {
 	}
 
 	graceful := server.New(server.Config{
-		Server:         httpServer,
-		Logger:         log,
-		Shutdownables:  shutdownables,
+		Server:          httpServer,
+		Logger:          log,
+		Shutdownables:   shutdownables,
 		ShutdownTimeout: 30 * time.Second,
 	})
 

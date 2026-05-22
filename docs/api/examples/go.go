@@ -70,8 +70,8 @@ func (e *APIError) Error() string {
 type PaginatedResponse struct {
 	Data []json.RawMessage `json:"data"`
 	Meta struct {
-		Total  int `json:"total"`
-		Page   int `json:"page"`
+		Total   int `json:"total"`
+		Page    int `json:"page"`
 		PerPage int `json:"per_page"`
 	} `json:"meta"`
 }
@@ -146,7 +146,7 @@ func (c *OAuthClient) RefreshAccessToken(ctx context.Context) (string, error) {
 
 // GetValidToken returns a valid access token, refreshing if necessary
 func (c *OAuthClient) GetValidToken(ctx context.Context) (string, error) {
-	c.mu <- struct{}{}         // acquire
+	c.mu <- struct{}{}        // acquire
 	defer func() { <-c.mu }() // release
 
 	if c.tokenResp == nil || time.Now().After(c.tokenExpiry.Add(-60*time.Second)) {
@@ -458,10 +458,10 @@ func NewAuditClient(clientID, clientSecret string) *AuditClient {
 
 // QueryEventsParams represents query parameters for audit events
 type QueryEventsParams struct {
-	Limit    int
-	Offset   int
-	Sort     string
-	Filter   string
+	Limit     int
+	Offset    int
+	Sort      string
+	Filter    string
 	StartDate string
 	EndDate   string
 }

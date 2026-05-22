@@ -688,8 +688,8 @@ func TestCSRFProtection_Scenarios(t *testing.T) {
 
 		// Create CSRF middleware with session cookie checking
 		csrfConfig := middleware.CSRFConfig{
-			Enabled:           true,
-			TrustedDomain:     "localhost",
+			Enabled:            true,
+			TrustedDomain:      "localhost",
 			SessionCookieNames: []string{"_openidx_mfa_session"},
 		}
 		csrfMiddleware := middleware.CSRFProtection(csrfConfig, logger)
@@ -967,8 +967,8 @@ func TestCSRFProtection_Scenarios(t *testing.T) {
 		})
 
 		csrfConfig := middleware.CSRFConfig{
-			Enabled:           true,
-			TrustedDomain:     "localhost",
+			Enabled:            true,
+			TrustedDomain:      "localhost",
 			SessionCookieNames: []string{"_openidx_mfa_session"},
 		}
 		csrfMiddleware := middleware.CSRFProtection(csrfConfig, logger)

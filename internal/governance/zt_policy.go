@@ -15,18 +15,18 @@ import (
 // This prevents injection attacks via arbitrary field access
 var allowedFields = map[string]bool{
 	// Subject/User fields
-	"subject.id":          true,
-	"subject.type":        true,
+	"subject.id":            true,
+	"subject.type":          true,
 	"subject.authenticated": true,
-	"subject.roles":       true,
-	"subject.groups":      true,
-	"subject.attributes":  true,
-	"user.id":             true,
-	"user.type":           true,
-	"user.authenticated":  true,
-	"user.roles":          true,
-	"user.groups":         true,
-	"user.attributes":     true,
+	"subject.roles":         true,
+	"subject.groups":        true,
+	"subject.attributes":    true,
+	"user.id":               true,
+	"user.type":             true,
+	"user.authenticated":    true,
+	"user.roles":            true,
+	"user.groups":           true,
+	"user.attributes":       true,
 
 	// Resource fields
 	"resource.id":         true,
@@ -50,7 +50,7 @@ var allowedFields = map[string]bool{
 	"context.attributes":  true,
 
 	// Action field
-	"action":              true,
+	"action": true,
 }
 
 // allowedAttributePrefixes defines allowed prefixes for dynamic attribute access
@@ -119,8 +119,8 @@ const (
 
 // ConditionGroup represents a group of conditions with logical operators
 type ConditionGroup struct {
-	Operator LogicalOperator `json:"operator"` // and, or, not
-	Conditions []Condition    `json:"conditions,omitempty"`
+	Operator   LogicalOperator  `json:"operator"` // and, or, not
+	Conditions []Condition      `json:"conditions,omitempty"`
 	Groups     []ConditionGroup `json:"groups,omitempty"` // Nested groups
 }
 
@@ -135,10 +135,10 @@ const (
 
 // Condition represents a single condition to evaluate
 type Condition struct {
-	Field    string      `json:"field"`     // user.role, resource.type, context.ip, etc.
-	Operator string      `json:"operator"`  // equals, contains, in, regex, etc.
-	Value    interface{} `json:"value"`     // The value to compare against
-	Negated  bool        `json:"negated"`   // If true, negates the condition
+	Field    string      `json:"field"`    // user.role, resource.type, context.ip, etc.
+	Operator string      `json:"operator"` // equals, contains, in, regex, etc.
+	Value    interface{} `json:"value"`    // The value to compare against
+	Negated  bool        `json:"negated"`  // If true, negates the condition
 }
 
 // Supported condition operators
@@ -166,20 +166,20 @@ const (
 
 // ZTPolicyInput represents input for policy evaluation
 type ZTPolicyInput struct {
-	Subject  Subject         `json:"subject"`
-	Resource Resource        `json:"resource"`
-	Action   string          `json:"action"`
+	Subject  Subject           `json:"subject"`
+	Resource Resource          `json:"resource"`
+	Action   string            `json:"action"`
 	Context  EvaluationContext `json:"context"`
 }
 
 // Subject represents the entity requesting access
 type Subject struct {
-	ID         string            `json:"id"`
-	Type       string            `json:"type"` // user, service, api_key
-	Attributes map[string]string `json:"attributes"`
-	Roles      []string          `json:"roles"`
-	Groups     []string          `json:"groups"`
-	Authenticated bool           `json:"authenticated"`
+	ID            string            `json:"id"`
+	Type          string            `json:"type"` // user, service, api_key
+	Attributes    map[string]string `json:"attributes"`
+	Roles         []string          `json:"roles"`
+	Groups        []string          `json:"groups"`
+	Authenticated bool              `json:"authenticated"`
 }
 
 // Resource represents the target resource
@@ -195,35 +195,35 @@ type Resource struct {
 
 // EvaluationContext provides additional context for evaluation
 type EvaluationContext struct {
-	IPAddress     string            `json:"ip_address,omitempty"`
-	UserAgent     string            `json:"user_agent,omitempty"`
-	Time          time.Time         `json:"time,omitempty"`
-	Environment   string            `json:"environment,omitempty"` // dev, staging, prod
-	DeviceID      string            `json:"device_id,omitempty"`
-	SessionID     string            `json:"session_id,omitempty"`
-	RequestID     string            `json:"request_id,omitempty"`
-	Location      string            `json:"location,omitempty"`
-	Attributes    map[string]string `json:"attributes,omitempty"`
+	IPAddress   string            `json:"ip_address,omitempty"`
+	UserAgent   string            `json:"user_agent,omitempty"`
+	Time        time.Time         `json:"time,omitempty"`
+	Environment string            `json:"environment,omitempty"` // dev, staging, prod
+	DeviceID    string            `json:"device_id,omitempty"`
+	SessionID   string            `json:"session_id,omitempty"`
+	RequestID   string            `json:"request_id,omitempty"`
+	Location    string            `json:"location,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
 }
 
 // ZTPolicyResult is the result of policy evaluation
 type ZTPolicyResult struct {
-	Allowed     bool              `json:"allowed"`
-	Effect      PolicyEffect      `json:"effect"`
+	Allowed         bool            `json:"allowed"`
+	Effect          PolicyEffect    `json:"effect"`
 	MatchedPolicies []MatchedPolicy `json:"matched_policies,omitempty"`
-	DeniedBy    []string          `json:"denied_by,omitempty"`
-	Reason      string            `json:"reason,omitempty"`
-	EvaluatedAt time.Time         `json:"evaluated_at"`
-	Duration    time.Duration     `json:"duration"`
+	DeniedBy        []string        `json:"denied_by,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+	EvaluatedAt     time.Time       `json:"evaluated_at"`
+	Duration        time.Duration   `json:"duration"`
 }
 
 // MatchedPolicy represents a policy that matched during evaluation
 type MatchedPolicy struct {
-	PolicyID   string `json:"policy_id"`
-	PolicyName string `json:"policy_name"`
-	Version    int    `json:"version"`
+	PolicyID   string       `json:"policy_id"`
+	PolicyName string       `json:"policy_name"`
+	Version    int          `json:"version"`
 	Effect     PolicyEffect `json:"effect"`
-	Priority   int    `json:"priority"`
+	Priority   int          `json:"priority"`
 }
 
 // ZTPolicyEvaluator evaluates Zero Trust policies
@@ -326,8 +326,8 @@ func (e *ZTPolicyEvaluator) EvaluateSingle(policyID string, input ZTPolicyInput)
 			matched := e.evaluateConditions(policy.Conditions, input)
 
 			return &ZTPolicyResult{
-				Allowed:     matched && policy.Effect == EffectAllow,
-				Effect:      policy.Effect,
+				Allowed: matched && policy.Effect == EffectAllow,
+				Effect:  policy.Effect,
 				MatchedPolicies: []MatchedPolicy{{
 					PolicyID:   policy.ID,
 					PolicyName: policy.Name,
@@ -707,8 +707,8 @@ func (e *ZTPolicyEvaluator) compareTimeInRange(fieldValue, conditionValue interf
 	}
 
 	var timeRange struct {
-		Start string `json:"start"`
-		End   string `json:"end"`
+		Start    string `json:"start"`
+		End      string `json:"end"`
 		Timezone string `json:"timezone,omitempty"`
 	}
 	if err := json.Unmarshal(data, &timeRange); err != nil {
@@ -878,16 +878,16 @@ func (e *ZTPolicyEvaluator) sortByPriority(policies []ZTPolicy) []ZTPolicy {
 // NewZTPolicy creates a new policy with generated ID
 func NewZTPolicy(name, description string, effect PolicyEffect, conditions ConditionGroup, priority int) ZTPolicy {
 	return ZTPolicy{
-		ID:         uuid.New().String(),
-		Name:       name,
+		ID:          uuid.New().String(),
+		Name:        name,
 		Description: description,
-		Effect:     effect,
-		Conditions: conditions,
-		Priority:   priority,
-		Enabled:    true,
-		Version:    1,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		Effect:      effect,
+		Conditions:  conditions,
+		Priority:    priority,
+		Enabled:     true,
+		Version:     1,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 }
 

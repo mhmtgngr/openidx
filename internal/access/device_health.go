@@ -38,24 +38,24 @@ type DeviceHealthReport struct {
 
 // DevicePostureData represents device posture information reported by the client
 type DevicePostureData struct {
-	OS              string  `json:"os"`
-	OSVersion       string  `json:"os_version"`
-	OSBuild         string  `json:"os_build,omitempty"`
-	PatchDate       string  `json:"patch_date,omitempty"` // YYYY-MM-DD
-	Jailbroken      *bool   `json:"jailbroken,omitempty"`
-	Rooted          *bool   `json:"rooted,omitempty"`
-	DiskEncrypted   *bool   `json:"disk_encrypted,omitempty"`
-	ScreenLockEnabled *bool `json:"screen_lock_enabled,omitempty"`
-	ScreenLockTimeout *int  `json:"screen_lock_timeout,omitempty"` // seconds
-	FirewallEnabled *bool   `json:"firewall_enabled,omitempty"`
-	AntivirusActive *bool   `json:"antivirus_active,omitempty"`
-	AntivirusName   string  `json:"antivirus_name,omitempty"`
-	DeviceName      string  `json:"device_name,omitempty"`
-	DeviceModel     string  `json:"device_model,omitempty"`
-	SerialNumber    string  `json:"serial_number,omitempty"`
-	Domain          string  `json:"domain,omitempty"`
-	MACAddresses    []string `json:"mac_addresses,omitempty"`
-	RunningProcesses []string `json:"running_processes,omitempty"`
+	OS                string   `json:"os"`
+	OSVersion         string   `json:"os_version"`
+	OSBuild           string   `json:"os_build,omitempty"`
+	PatchDate         string   `json:"patch_date,omitempty"` // YYYY-MM-DD
+	Jailbroken        *bool    `json:"jailbroken,omitempty"`
+	Rooted            *bool    `json:"rooted,omitempty"`
+	DiskEncrypted     *bool    `json:"disk_encrypted,omitempty"`
+	ScreenLockEnabled *bool    `json:"screen_lock_enabled,omitempty"`
+	ScreenLockTimeout *int     `json:"screen_lock_timeout,omitempty"` // seconds
+	FirewallEnabled   *bool    `json:"firewall_enabled,omitempty"`
+	AntivirusActive   *bool    `json:"antivirus_active,omitempty"`
+	AntivirusName     string   `json:"antivirus_name,omitempty"`
+	DeviceName        string   `json:"device_name,omitempty"`
+	DeviceModel       string   `json:"device_model,omitempty"`
+	SerialNumber      string   `json:"serial_number,omitempty"`
+	Domain            string   `json:"domain,omitempty"`
+	MACAddresses      []string `json:"mac_addresses,omitempty"`
+	RunningProcesses  []string `json:"running_processes,omitempty"`
 }
 
 // OSVersionRequirement defines minimum OS version requirements
@@ -66,17 +66,17 @@ type OSVersionRequirement struct {
 
 // Enhanced check types that Duo supports but basic posture checks don't
 const (
-	CheckTypeOSVersion   = "OS_VERSION"
-	CheckTypePatchLevel  = "PATCH_LEVEL"
-	CheckTypeIntegrity   = "INTEGRITY"     // Jailbreak/root detection
-	CheckTypeEncryption  = "ENCRYPTION"    // Disk encryption
-	CheckTypeScreenLock  = "SCREEN_LOCK"   // Screen lock settings
-	CheckTypeFirewall    = "FIREWALL"      // Firewall status
-	CheckTypeAntivirus   = "ANTIVIRUS"     // Antivirus status
-	CheckTypeDomain      = "DOMAIN"        // Domain membership
-	CheckTypeMAC         = "MAC"           // MAC address whitelist
-	CheckTypeProcess     = "PROCESS"       // Required running processes
-	CheckTypeMFA         = "MFA"           // MFA status
+	CheckTypeOSVersion  = "OS_VERSION"
+	CheckTypePatchLevel = "PATCH_LEVEL"
+	CheckTypeIntegrity  = "INTEGRITY"   // Jailbreak/root detection
+	CheckTypeEncryption = "ENCRYPTION"  // Disk encryption
+	CheckTypeScreenLock = "SCREEN_LOCK" // Screen lock settings
+	CheckTypeFirewall   = "FIREWALL"    // Firewall status
+	CheckTypeAntivirus  = "ANTIVIRUS"   // Antivirus status
+	CheckTypeDomain     = "DOMAIN"      // Domain membership
+	CheckTypeMAC        = "MAC"         // MAC address whitelist
+	CheckTypeProcess    = "PROCESS"     // Required running processes
+	CheckTypeMFA        = "MFA"         // MFA status
 )
 
 // EvaluateDeviceHealth runs all enabled posture checks against device data
@@ -195,8 +195,8 @@ func (zm *ZitiManager) evaluateCheck(check *PostureCheck, posture *DevicePosture
 func (zm *ZitiManager) evaluateOSVersion(check *PostureCheck, posture *DevicePostureData) DeviceHealthCheck {
 	result := DeviceHealthCheck{
 		Details: map[string]interface{}{
-			"os":            posture.OS,
-			"os_version":    posture.OSVersion,
+			"os":         posture.OS,
+			"os_version": posture.OSVersion,
 		},
 	}
 

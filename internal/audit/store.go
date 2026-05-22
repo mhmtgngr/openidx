@@ -25,7 +25,7 @@ type Store struct {
 	secret     string
 
 	// Batch configuration
-	batchSize int
+	batchSize     int
 	flushInterval time.Duration
 }
 
@@ -459,11 +459,11 @@ func (s *Store) ReadChain(ctx context.Context, tenantID string, limit int) ([]*A
 // VerifyIntegrity verifies the integrity of the audit chain for a tenant
 func (s *Store) VerifyIntegrity(ctx context.Context, tenantID string) (*IntegrityReport, error) {
 	report := &IntegrityReport{
-		TenantID:    tenantID,
-		VerifiedAt:  time.Now().UTC(),
-		IsIntact:    true,
-		Issues:      []string{},
-		EventCount:  0,
+		TenantID:   tenantID,
+		VerifiedAt: time.Now().UTC(),
+		IsIntact:   true,
+		Issues:     []string{},
+		EventCount: 0,
 	}
 
 	// Get chain state for tenant

@@ -22,11 +22,11 @@ import (
 
 // compiledPolicy represents a compiled Rego policy ready for evaluation
 type compiledPolicy struct {
-	name      string
-	module    *ast.Module
-	compiler  *ast.Compiler
+	name       string
+	module     *ast.Module
+	compiler   *ast.Compiler
 	policyRego string
-	createdAt time.Time
+	createdAt  time.Time
 }
 
 // PolicyInput represents the input data for policy evaluation
@@ -62,36 +62,36 @@ type PolicyResource struct {
 
 // PolicyContext represents additional context for policy evaluation
 type PolicyContext struct {
-	IPAddress     string            `json:"ip_address,omitempty"`
-	UserAgent     string            `json:"user_agent,omitempty"`
-	Time          time.Time         `json:"time,omitempty"`
-	Environment   string            `json:"environment,omitempty"`
-	RequestID     string            `json:"request_id,omitempty"`
-	Attributes    map[string]string `json:"attributes,omitempty"`
-	SessionID     string            `json:"session_id,omitempty"`
-	DeviceID      string            `json:"device_id,omitempty"`
-	Location      string            `json:"location,omitempty"`
+	IPAddress   string            `json:"ip_address,omitempty"`
+	UserAgent   string            `json:"user_agent,omitempty"`
+	Time        time.Time         `json:"time,omitempty"`
+	Environment string            `json:"environment,omitempty"`
+	RequestID   string            `json:"request_id,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+	SessionID   string            `json:"session_id,omitempty"`
+	DeviceID    string            `json:"device_id,omitempty"`
+	Location    string            `json:"location,omitempty"`
 }
 
 // PolicyResult represents the result of policy evaluation
 type PolicyResult struct {
-	Allow     bool     `json:"allow"`
-	Denials   []string `json:"denials,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
-	Score     float64  `json:"score,omitempty"`
-	EvaluatedAt time.Time `json:"evaluated_at"`
-	Duration  time.Duration `json:"duration"`
+	Allow       bool          `json:"allow"`
+	Denials     []string      `json:"denials,omitempty"`
+	Warnings    []string      `json:"warnings,omitempty"`
+	Reason      string        `json:"reason,omitempty"`
+	Score       float64       `json:"score,omitempty"`
+	EvaluatedAt time.Time     `json:"evaluated_at"`
+	Duration    time.Duration `json:"duration"`
 }
 
 // PolicyEvaluator evaluates access policies using OPA (Open Policy Agent)
 type PolicyEvaluator struct {
-	opaClient    *opa.Client
-	logger       *zap.Logger
-	policyCache  map[string]*compiledPolicy
-	cacheMutex   sync.RWMutex
-	store        storage.Store
-	compiler     *ast.Compiler
+	opaClient   *opa.Client
+	logger      *zap.Logger
+	policyCache map[string]*compiledPolicy
+	cacheMutex  sync.RWMutex
+	store       storage.Store
+	compiler    *ast.Compiler
 
 	// Metrics
 	evaluationDurationHist *metricHistogram
@@ -366,11 +366,11 @@ func (pe *PolicyEvaluator) LoadPolicyFromBytes(policyName string, regoContent []
 	defer pe.cacheMutex.Unlock()
 
 	pe.policyCache[policyName] = &compiledPolicy{
-		name:      policyName,
-		module:    module,
-		compiler:  compiler,
+		name:       policyName,
+		module:     module,
+		compiler:   compiler,
 		policyRego: string(regoContent),
-		createdAt: time.Now(),
+		createdAt:  time.Now(),
 	}
 
 	pe.logger.Info("Policy loaded successfully",
@@ -581,10 +581,10 @@ func (pe *PolicyEvaluator) GetMetrics() map[string]interface{} {
 	defer pe.cacheMutex.RUnlock()
 
 	metrics := map[string]interface{}{
-		"policy_count":      len(pe.policyCache),
-		"policy_names":      pe.GetPolicyNames(),
-		"enabled":           pe.enabled,
-		"default_timeout":   pe.defaultPolicyTimeout.String(),
+		"policy_count":    len(pe.policyCache),
+		"policy_names":    pe.GetPolicyNames(),
+		"enabled":         pe.enabled,
+		"default_timeout": pe.defaultPolicyTimeout.String(),
 	}
 
 	if pe.evaluationTotalCounter != nil {

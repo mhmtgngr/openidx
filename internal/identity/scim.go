@@ -647,13 +647,13 @@ func (s *Service) HandleSCIMDeleteGroup(c *gin.Context) {
 
 // SCIMServiceProviderConfig represents the service provider configuration per RFC 7644
 type SCIMServiceProviderConfig struct {
-	Schemas            []string `json:"schemas"`
-	Patch              *SCIMPatchSupport `json:"patch"`
-	Bulk               *SCIMBulkSupport `json:"bulk"`
-	Filter             *SCIMFilterSupport `json:"filter"`
-	ChangePassword     *SCIMChangePasswordSupport `json:"changePassword"`
-	Sort               *SCIMSortSupport `json:"sort"`
-	ETag               *SCIMETagSupport `json:"etag"`
+	Schemas               []string                    `json:"schemas"`
+	Patch                 *SCIMPatchSupport           `json:"patch"`
+	Bulk                  *SCIMBulkSupport            `json:"bulk"`
+	Filter                *SCIMFilterSupport          `json:"filter"`
+	ChangePassword        *SCIMChangePasswordSupport  `json:"changePassword"`
+	Sort                  *SCIMSortSupport            `json:"sort"`
+	ETag                  *SCIMETagSupport            `json:"etag"`
 	AuthenticationSchemes *[]SCIMAuthenticationScheme `json:"authenticationSchemes,omitempty"`
 }
 
@@ -671,8 +671,8 @@ type SCIMBulkSupport struct {
 
 // SCIMFilterSupport describes filter support
 type SCIMFilterSupport struct {
-	Supported bool     `json:"supported"`
-	MaxResults int     `json:"maxResults"`
+	Supported  bool `json:"supported"`
+	MaxResults int  `json:"maxResults"`
 }
 
 // SCIMChangePasswordSupport describes password change support
@@ -692,20 +692,20 @@ type SCIMETagSupport struct {
 
 // SCIMAuthenticationScheme describes an authentication scheme
 type SCIMAuthenticationScheme struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	SpecURI     string `json:"specUri,omitempty"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	SpecURI          string `json:"specUri,omitempty"`
 	DocumentationURI string `json:"documentationUri,omitempty"`
 }
 
 // SCIMResourceType represents a SCIM resource type
 type SCIMResourceType struct {
-	Schemas         []string              `json:"schemas"`
-	ID              string                `json:"id"`
-	Name            string                `json:"name"`
-	Endpoint        string                `json:"endpoint"`
-	Description     string                `json:"description"`
-	Schema          string                `json:"schema"`
+	Schemas          []string              `json:"schemas"`
+	ID               string                `json:"id"`
+	Name             string                `json:"name"`
+	Endpoint         string                `json:"endpoint"`
+	Description      string                `json:"description"`
+	Schema           string                `json:"schema"`
 	SchemaExtensions []SCIMSchemaExtension `json:"schemaExtensions,omitempty"`
 }
 
@@ -717,24 +717,24 @@ type SCIMSchemaExtension struct {
 
 // SCIMSchema represents a SCIM schema definition
 type SCIMSchema struct {
-	Schemas    []string           `json:"schemas"`
-	ID         string             `json:"id"`
-	Name       string             `json:"name"`
-	Description string            `json:"description"`
-	Attributes []SCIMSchemaAttr   `json:"attributes"`
+	Schemas     []string         `json:"schemas"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Attributes  []SCIMSchemaAttr `json:"attributes"`
 }
 
 // SCIMSchemaAttr represents a schema attribute
 type SCIMSchemaAttr struct {
-	Name          string   `json:"name"`
-	Type          string   `json:"type"`
-	MultiValued   bool     `json:"multiValued"`
-	Description   string   `json:"description"`
-	Required      bool     `json:"required"`
-	CaseExact     bool     `json:"caseExact"`
-	Mutability    string   `json:"mutability"`
-	Returned      string   `json:"returned"`
-	Uniqueness    string   `json:"uniqueness"`
+	Name          string           `json:"name"`
+	Type          string           `json:"type"`
+	MultiValued   bool             `json:"multiValued"`
+	Description   string           `json:"description"`
+	Required      bool             `json:"required"`
+	CaseExact     bool             `json:"caseExact"`
+	Mutability    string           `json:"mutability"`
+	Returned      string           `json:"returned"`
+	Uniqueness    string           `json:"uniqueness"`
 	SubAttributes []SCIMSchemaAttr `json:"subAttributes,omitempty"`
 }
 
@@ -784,25 +784,25 @@ func (s *Service) HandleSCIMResourceTypes(c *gin.Context) {
 
 	resourceTypes := []map[string]interface{}{
 		{
-			"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
-			"id":         "User",
-			"name":       "User",
-			"endpoint":   baseURL + "/scim/v2/Users",
+			"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
+			"id":          "User",
+			"name":        "User",
+			"endpoint":    baseURL + "/scim/v2/Users",
 			"description": "User Account",
-			"schema":     "urn:ietf:params:scim:schemas:core:2.0:User",
+			"schema":      "urn:ietf:params:scim:schemas:core:2.0:User",
 		},
 		{
-			"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
-			"id":         "Group",
-			"name":       "Group",
-			"endpoint":   baseURL + "/scim/v2/Groups",
+			"schemas":     []string{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"},
+			"id":          "Group",
+			"name":        "Group",
+			"endpoint":    baseURL + "/scim/v2/Groups",
 			"description": "Group",
-			"schema":     "urn:ietf:params:scim:schemas:core:2.0:Group",
+			"schema":      "urn:ietf:params:scim:schemas:core:2.0:Group",
 		},
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"schemas":     []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
+		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
 		"totalResults": len(resourceTypes),
 		"itemsPerPage": len(resourceTypes),
 		"startIndex":   1,
@@ -828,7 +828,7 @@ func (s *Service) HandleSCIMSchemas(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"schemas":     []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
+		"schemas":      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
 		"totalResults": len(schemas),
 		"itemsPerPage": len(schemas),
 		"startIndex":   1,

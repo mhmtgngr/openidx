@@ -31,12 +31,12 @@ const (
 
 // Flag represents a feature flag configuration
 type Flag struct {
-	Name          string   `json:"name"`
-	Enabled       bool     `json:"enabled"`
-	Percentage    int      `json:"percentage"`    // 0-100 for percentage rollouts
-	UserWhitelist []string `json:"userWhitelist"` // Users always included
-	UserBlacklist []string `json:"userBlacklist"` // Users always excluded
-	Description   string   `json:"description"`
+	Name          string    `json:"name"`
+	Enabled       bool      `json:"enabled"`
+	Percentage    int       `json:"percentage"`    // 0-100 for percentage rollouts
+	UserWhitelist []string  `json:"userWhitelist"` // Users always included
+	UserBlacklist []string  `json:"userBlacklist"` // Users always excluded
+	Description   string    `json:"description"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 	UpdatedBy     string    `json:"updatedBy"` // User who last updated the flag
@@ -49,9 +49,9 @@ type Flag struct {
 
 // Variant represents an A/B test variant
 type Variant struct {
-	Name        string  `json:"name"`
-	Percentage  float64 `json:"percentage"` // 0-100
-	Description string  `json:"description,omitempty"`
+	Name        string                 `json:"name"`
+	Percentage  float64                `json:"percentage"` // 0-100
+	Description string                 `json:"description,omitempty"`
 	Config      map[string]interface{} `json:"config,omitempty"`
 }
 
@@ -70,16 +70,16 @@ type FlagConfig struct {
 
 // FlagChange represents a change to a feature flag for auditing
 type FlagChange struct {
-	FlagName    string                 `json:"flag_name"`
-	Action      string                 `json:"action"` // created, updated, deleted, enabled, disabled
-	Actor       string                 `json:"actor"`
-	ActorEmail  string                 `json:"actor_email,omitempty"`
-	OldValue    *Flag                  `json:"old_value,omitempty"`
-	NewValue    *Flag                  `json:"new_value,omitempty"`
-	ChangedAt   time.Time              `json:"changed_at"`
-	IPAddress   string                 `json:"ip_address,omitempty"`
-	UserAgent   string                 `json:"user_agent,omitempty"`
-	Changes     map[string]interface{} `json:"changes,omitempty"`
+	FlagName   string                 `json:"flag_name"`
+	Action     string                 `json:"action"` // created, updated, deleted, enabled, disabled
+	Actor      string                 `json:"actor"`
+	ActorEmail string                 `json:"actor_email,omitempty"`
+	OldValue   *Flag                  `json:"old_value,omitempty"`
+	NewValue   *Flag                  `json:"new_value,omitempty"`
+	ChangedAt  time.Time              `json:"changed_at"`
+	IPAddress  string                 `json:"ip_address,omitempty"`
+	UserAgent  string                 `json:"user_agent,omitempty"`
+	Changes    map[string]interface{} `json:"changes,omitempty"`
 }
 
 // Store defines the interface for feature flag storage
@@ -150,14 +150,14 @@ func (m *MemoryStore) List(ctx context.Context) ([]*Flag, error) {
 
 // RedisStore implements Redis-backed flag storage
 type RedisStore struct {
-	client *redis.Client
+	client    *redis.Client
 	keyPrefix string
 }
 
 // NewRedisStore creates a new Redis-backed flag store
 func NewRedisStore(client *redis.Client) *RedisStore {
 	return &RedisStore{
-		client: client,
+		client:    client,
 		keyPrefix: "feature_flag:",
 	}
 }
@@ -259,15 +259,15 @@ func (r *RedisStore) List(ctx context.Context) ([]*Flag, error) {
 
 // Service provides the main feature flag functionality
 type Service struct {
-	store      Store
-	logger     *zap.Logger
-	audit      AuditLogger
+	store       Store
+	logger      *zap.Logger
+	audit       AuditLogger
 	storageType StorageType
 
 	// Local cache for faster reads
-	localCache   map[string]*Flag
-	localCacheMu sync.RWMutex
-	cacheTTL     time.Duration
+	localCache    map[string]*Flag
+	localCacheMu  sync.RWMutex
+	cacheTTL      time.Duration
 	lastCacheSync time.Time
 }
 
@@ -402,13 +402,13 @@ func (s *Service) SetFlag(ctx context.Context, flag string, config *FlagConfig, 
 	if s.audit != nil {
 		changes := s.detectChanges(oldFlag, newFlag)
 		s.audit.LogFeatureFlagChange(&FlagChange{
-			FlagName:   flag,
-			Action:     s.getChangeAction(oldFlag),
-			Actor:      actor,
-			OldValue:   oldFlag,
-			NewValue:   newFlag,
-			ChangedAt:  time.Now(),
-			Changes:    changes,
+			FlagName:  flag,
+			Action:    s.getChangeAction(oldFlag),
+			Actor:     actor,
+			OldValue:  oldFlag,
+			NewValue:  newFlag,
+			ChangedAt: time.Now(),
+			Changes:   changes,
 		})
 	}
 
@@ -669,17 +669,17 @@ func (s *Service) InitializeDefaultFlags(ctx context.Context) error {
 	defaultFlags := map[string]*FlagConfig{
 		"new-auth-flow": {
 			Enabled:     false,
-			Percentage: 0,
+			Percentage:  0,
 			Description: "New authentication flow with improved UX",
 		},
 		"enhanced-mfa": {
 			Enabled:     true,
-			Percentage: 100,
+			Percentage:  100,
 			Description: "Enhanced multi-factor authentication with push notifications",
 		},
 		"beta-dashboard": {
 			Enabled:     false,
-			Percentage: 50,
+			Percentage:  50,
 			Description: "Beta version of the admin dashboard with new features",
 		},
 	}
@@ -743,12 +743,12 @@ func (s *Service) GetMetrics(ctx context.Context) (map[string]interface{}, error
 	}
 
 	return map[string]interface{}{
-		"total_flags":      len(flags),
-		"enabled_flags":    enabledCount,
-		"disabled_flags":   disabledCount,
-		"avg_percentage":   float64(totalPercentage) / float64(len(flags)),
-		"storage_type":     s.storageType.String(),
-		"last_cache_sync":  s.lastCacheSync,
+		"total_flags":     len(flags),
+		"enabled_flags":   enabledCount,
+		"disabled_flags":  disabledCount,
+		"avg_percentage":  float64(totalPercentage) / float64(len(flags)),
+		"storage_type":    s.storageType.String(),
+		"last_cache_sync": s.lastCacheSync,
 	}, nil
 }
 
@@ -768,9 +768,9 @@ func (s StorageType) String() string {
 
 // Error definitions
 var (
-	ErrFlagNotFound     = fmt.Errorf("feature flag not found")
-	ErrStoreUnavailable = fmt.Errorf("flag store unavailable")
-	ErrInvalidFlagName  = fmt.Errorf("invalid flag name")
+	ErrFlagNotFound      = fmt.Errorf("feature flag not found")
+	ErrStoreUnavailable  = fmt.Errorf("flag store unavailable")
+	ErrInvalidFlagName   = fmt.Errorf("invalid flag name")
 	ErrInvalidPercentage = fmt.Errorf("percentage must be between 0 and 100")
 	ErrVariantNotFound   = fmt.Errorf("variant not found")
 )

@@ -15,21 +15,21 @@ import (
 
 // RateLimitMiddleware provides sliding window rate limiting using Redis
 type RateLimitMiddleware struct {
-	redis           *redis.Client
-	logger          gateway.Logger
-	requestsPerMin  int
+	redis              *redis.Client
+	logger             gateway.Logger
+	requestsPerMin     int
 	authRequestsPerMin int
-	windowSeconds   int
+	windowSeconds      int
 }
 
 // NewRateLimitMiddleware creates a new rate limiting middleware
 func NewRateLimitMiddleware(redisClient *redis.Client, logger gateway.Logger, config gateway.RateLimitConfig) *RateLimitMiddleware {
 	return &RateLimitMiddleware{
-		redis:           redisClient,
-		logger:          logger,
-		requestsPerMin:  config.RequestsPerMinute,
+		redis:              redisClient,
+		logger:             logger,
+		requestsPerMin:     config.RequestsPerMinute,
 		authRequestsPerMin: config.AuthRequestsPerMinute,
-		windowSeconds:   config.WindowSeconds,
+		windowSeconds:      config.WindowSeconds,
 	}
 }
 
@@ -87,10 +87,10 @@ func (m *RateLimitMiddleware) getIdentifier(c *gin.Context) string {
 func (m *RateLimitMiddleware) isAuthRequest(c *gin.Context) bool {
 	path := c.Request.URL.Path
 	return path == "/api/v1/oauth/token" ||
-		   path == "/api/v1/oauth/authorize" ||
-		   path == "/api/v1/identity/login" ||
-		   path == "/api/v1/identity/logout" ||
-		   path == "/api/v1/identity/mfa/verify"
+		path == "/api/v1/oauth/authorize" ||
+		path == "/api/v1/identity/login" ||
+		path == "/api/v1/identity/logout" ||
+		path == "/api/v1/identity/mfa/verify"
 }
 
 // checkRateLimit performs a sliding window rate limit check
@@ -230,9 +230,9 @@ func (sw *SlidingWindowRateLimit) Check(ctx context.Context, identifier string) 
 // GetRateLimitHeaders returns the rate limit headers for a response
 func GetRateLimitHeaders(limit, remaining int, resetAt time.Time) map[string]string {
 	return map[string]string{
-		"X-RateLimit-Limit":      strconv.Itoa(limit),
-		"X-RateLimit-Remaining":  strconv.Itoa(remaining),
-		"X-RateLimit-Reset":      strconv.FormatInt(resetAt.Unix(), 10),
+		"X-RateLimit-Limit":       strconv.Itoa(limit),
+		"X-RateLimit-Remaining":   strconv.Itoa(remaining),
+		"X-RateLimit-Reset":       strconv.FormatInt(resetAt.Unix(), 10),
 		"X-RateLimit-Reset-After": strconv.FormatInt(int64(resetAt.Sub(time.Now()).Seconds()), 10),
 	}
 }

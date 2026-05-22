@@ -45,11 +45,11 @@ func MockConfig(t *testing.T) *config.Config {
 // TestParseHostPort tests the parseHostPort function
 func TestParseHostPort(t *testing.T) {
 	tests := []struct {
-		name          string
-		rawURL        string
-		expectedHost  string
-		expectedPort  int
-		expectError   bool
+		name         string
+		rawURL       string
+		expectedHost string
+		expectedPort int
+		expectError  bool
 	}{
 		{
 			name:         "Valid HTTP URL with port",
@@ -172,8 +172,8 @@ func TestConfigTypeFallback(t *testing.T) {
 func TestResolveConfigTypeID(t *testing.T) {
 	t.Run("Cache hit returns cached value", func(t *testing.T) {
 		zm := &ZitiManager{
-			logger:           MockLogger(t),
-			configTypeCache:  make(map[string]string),
+			logger:            MockLogger(t),
+			configTypeCache:   make(map[string]string),
 			configTypeCacheMu: sync.RWMutex{},
 		}
 		// Pre-populate cache
@@ -194,12 +194,12 @@ func TestResolveConfigTypeID(t *testing.T) {
 
 		// Create a mock manager with fake auth token
 		zm := &ZitiManager{
-			cfg:              cfg,
-			logger:           MockLogger(t),
-			mgmtToken:        "fake-token",
-			configTypeCache:  make(map[string]string),
+			cfg:               cfg,
+			logger:            MockLogger(t),
+			mgmtToken:         "fake-token",
+			configTypeCache:   make(map[string]string),
 			configTypeCacheMu: sync.RWMutex{},
-			mgmtClient:       server.Client(),
+			mgmtClient:        server.Client(),
 		}
 
 		result := zm.resolveConfigTypeID("host.v1")
@@ -300,11 +300,11 @@ func TestZitiManagerClose(t *testing.T) {
 		cancelCalled1 := false
 		cancelCalled2 := false
 		zm.hostedServices["service1"] = &hostedService{
-			cancel: func() { cancelCalled1 = true },
+			cancel:   func() { cancelCalled1 = true },
 			listener: &mockListener{closed: false, id: 1},
 		}
 		zm.hostedServices["service2"] = &hostedService{
-			cancel: func() { cancelCalled2 = true },
+			cancel:   func() { cancelCalled2 = true },
 			listener: &mockListener{closed: false, id: 2},
 		}
 
@@ -434,11 +434,11 @@ func TestHostServiceErrorCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			zm := &ZitiManager{
-				logger:      MockLogger(t),
-				initialized: tt.initialized,
-				mu:          sync.RWMutex{},
+				logger:         MockLogger(t),
+				initialized:    tt.initialized,
+				mu:             sync.RWMutex{},
 				hostedServices: make(map[string]*hostedService),
-				hostedMu:    sync.Mutex{},
+				hostedMu:       sync.Mutex{},
 			}
 
 			err := zm.HostService("test-service", "localhost", 8080)
@@ -512,7 +512,7 @@ func TestCreateService(t *testing.T) {
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]string{
-						"id": "service-123",
+						"id":   "service-123",
 						"name": "test-service",
 					},
 				})
@@ -681,7 +681,7 @@ func TestCreateIdentity(t *testing.T) {
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]interface{}{
-						"id": "identity-123",
+						"id":   "identity-123",
 						"name": "test-identity",
 						"enrollment": map[string]interface{}{
 							"ott": map[string]string{
@@ -723,7 +723,7 @@ func TestCreateIdentity(t *testing.T) {
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]interface{}{
-						"id": "identity-123",
+						"id":         "identity-123",
 						"enrollment": map[string]interface{}{},
 					},
 				})
@@ -760,7 +760,7 @@ func TestCreateIdentity(t *testing.T) {
 				w.WriteHeader(http.StatusCreated)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]interface{}{
-						"id": "identity-123",
+						"id":         "identity-123",
 						"enrollment": map[string]interface{}{},
 					},
 				})
@@ -901,7 +901,7 @@ func TestIdentityRoleAttributes(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]interface{}{
-						"id": "identity-123",
+						"id":             "identity-123",
 						"roleAttributes": expectedAttrs,
 					},
 				})
@@ -1028,7 +1028,7 @@ func TestGetIdentityEnrollmentJWT(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"data": map[string]interface{}{
-						"id": "identity-123",
+						"id":         "identity-123",
 						"enrollment": map[string]interface{}{},
 					},
 				})

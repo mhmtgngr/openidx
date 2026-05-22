@@ -37,57 +37,57 @@ const (
 
 // ConsentRecord represents a user's consent for a specific client and scopes
 type ConsentRecord struct {
-	ID           string     `json:"id" db:"id"`
-	UserID       string     `json:"user_id" db:"user_id"`
-	ClientID     string     `json:"client_id" db:"client_id"`
-	Scopes       []string   `json:"scopes" db:"scopes"`
-	Claims       []string   `json:"claims,omitempty" db:"claims"`
-	Status       string     `json:"status" db:"status"` // granted, denied, revoked
-	GrantedAt    time.Time  `json:"granted_at" db:"granted_at"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty" db:"expires_at"`
-	RevokedAt    *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
-	LastUsedAt   *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty" db:"metadata"`
-	ClientName   string     `json:"client_name,omitempty"` // Not stored, populated from client
+	ID         string                 `json:"id" db:"id"`
+	UserID     string                 `json:"user_id" db:"user_id"`
+	ClientID   string                 `json:"client_id" db:"client_id"`
+	Scopes     []string               `json:"scopes" db:"scopes"`
+	Claims     []string               `json:"claims,omitempty" db:"claims"`
+	Status     string                 `json:"status" db:"status"` // granted, denied, revoked
+	GrantedAt  time.Time              `json:"granted_at" db:"granted_at"`
+	ExpiresAt  *time.Time             `json:"expires_at,omitempty" db:"expires_at"`
+	RevokedAt  *time.Time             `json:"revoked_at,omitempty" db:"revoked_at"`
+	LastUsedAt *time.Time             `json:"last_used_at,omitempty" db:"last_used_at"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty" db:"metadata"`
+	ClientName string                 `json:"client_name,omitempty"` // Not stored, populated from client
 }
 
 // ConsentRequest represents a consent request from the authorization endpoint
 type ConsentRequest struct {
-	SessionID    string    `json:"session_id"`
-	UserID       string    `json:"user_id"`
-	ClientID     string    `json:"client_id"`
-	RedirectURI  string    `json:"redirect_uri"`
-	RequestedScopes []string `json:"requested_scopes"`
-	GrantedScopes []string `json:"granted_scopes"`
-	DeniedScopes []string `json:"denied_scopes"`
-	Nonce        string    `json:"nonce,omitempty"`
-	State        string    `json:"state,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	SessionID       string    `json:"session_id"`
+	UserID          string    `json:"user_id"`
+	ClientID        string    `json:"client_id"`
+	RedirectURI     string    `json:"redirect_uri"`
+	RequestedScopes []string  `json:"requested_scopes"`
+	GrantedScopes   []string  `json:"granted_scopes"`
+	DeniedScopes    []string  `json:"denied_scopes"`
+	Nonce           string    `json:"nonce,omitempty"`
+	State           string    `json:"state,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
 }
 
 // ConsentUIResponse represents the data needed for the consent UI
 type ConsentUIResponse struct {
-	SessionID        string                 `json:"session_id"`
-	ClientID         string                 `json:"client_id"`
-	ClientName       string                 `json:"client_name"`
-	ClientLogoURI    string                 `json:"client_logo_uri,omitempty"`
-	ClientPolicyURI  string                 `json:"client_policy_uri,omitempty"`
-	ClientTOSURI     string                 `json:"client_tos_uri,omitempty"`
-	RedirectURI      string                 `json:"redirect_uri"`
-	RequestedScopes  []ScopeDisplay         `json:"requested_scopes"`
-	PreviousConsent  *ConsentRecord         `json:"previous_consent,omitempty"`
-	UserInfo         map[string]interface{} `json:"user_info,omitempty"`
-	State            string                 `json:"state,omitempty"`
+	SessionID       string                 `json:"session_id"`
+	ClientID        string                 `json:"client_id"`
+	ClientName      string                 `json:"client_name"`
+	ClientLogoURI   string                 `json:"client_logo_uri,omitempty"`
+	ClientPolicyURI string                 `json:"client_policy_uri,omitempty"`
+	ClientTOSURI    string                 `json:"client_tos_uri,omitempty"`
+	RedirectURI     string                 `json:"redirect_uri"`
+	RequestedScopes []ScopeDisplay         `json:"requested_scopes"`
+	PreviousConsent *ConsentRecord         `json:"previous_consent,omitempty"`
+	UserInfo        map[string]interface{} `json:"user_info,omitempty"`
+	State           string                 `json:"state,omitempty"`
 }
 
 // ScopeDisplay represents a scope for display in the consent UI
 type ScopeDisplay struct {
-	Scope        string `json:"scope"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Required     bool   `json:"required"`
-	PreviouslyGranted bool `json:"previously_granted,omitempty"`
+	Scope             string `json:"scope"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	Required          bool   `json:"required"`
+	PreviouslyGranted bool   `json:"previously_granted,omitempty"`
 }
 
 // ScopeDefinitions defines the display information for supported scopes

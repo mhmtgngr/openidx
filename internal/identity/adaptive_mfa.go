@@ -42,8 +42,8 @@ type TrustedBrowser struct {
 // RiskAssessment represents the risk assessment result for a login attempt
 type RiskAssessment struct {
 	Score            int      `json:"score"`
-	Level            string   `json:"level"`       // low, medium, high, critical
-	Factors          []string `json:"factors"`     // Contributing factors
+	Level            string   `json:"level"`   // low, medium, high, critical
+	Factors          []string `json:"factors"` // Contributing factors
 	RequiresMFA      bool     `json:"requires_mfa"`
 	AllowedMethods   []string `json:"allowed_methods,omitempty"` // Allowed MFA methods
 	StepUpRequired   bool     `json:"step_up_required"`
@@ -54,21 +54,21 @@ type RiskAssessment struct {
 
 // LoginContext contains all context information for a login attempt
 type LoginContext struct {
-	UserID          string
-	Username        string
-	IPAddress       string
-	UserAgent       string
-	Latitude        float64
-	Longitude       float64
-	DeviceID        string
-	BrowserHash     string
-	FailedAttempts  int
-	LastLoginIP     string
-	LastLoginLat    float64
-	LastLoginLon    float64
-	LastLoginTime   *time.Time
-	KnownDevice     bool
-	TrustedBrowser  bool
+	UserID         string
+	Username       string
+	IPAddress      string
+	UserAgent      string
+	Latitude       float64
+	Longitude      float64
+	DeviceID       string
+	BrowserHash    string
+	FailedAttempts int
+	LastLoginIP    string
+	LastLoginLat   float64
+	LastLoginLon   float64
+	LastLoginTime  *time.Time
+	KnownDevice    bool
+	TrustedBrowser bool
 }
 
 // AssessLoginRisk evaluates the risk level of a login attempt

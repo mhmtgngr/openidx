@@ -17,9 +17,9 @@ func TestPolicyConfig(t *testing.T) {
 	config := DefaultPolicyConfig()
 
 	tests := []struct {
-		field      string
-		expected   interface{}
-		actual     interface{}
+		field    string
+		expected interface{}
+		actual   interface{}
 	}{
 		{"LowThreshold", 30, config.DefaultLowThreshold},
 		{"MediumThreshold", 50, config.DefaultMediumThreshold},
@@ -56,17 +56,17 @@ func TestPolicyEngine_determineRiskLevel(t *testing.T) {
 	engine := NewPolicyEngine(nil, redisClient, config, zap.NewNop())
 
 	policy := &TenantPolicy{
-		TenantID:           "tenant1",
-		LowThreshold:       30,
-		MediumThreshold:    50,
-		HighThreshold:      70,
-		CriticalThreshold:  90,
-		Enabled:            true,
+		TenantID:          "tenant1",
+		LowThreshold:      30,
+		MediumThreshold:   50,
+		HighThreshold:     70,
+		CriticalThreshold: 90,
+		Enabled:           true,
 	}
 
 	tests := []struct {
-		score     int
-		expected  RiskLevel
+		score    int
+		expected RiskLevel
 	}{
 		{0, RiskLevelLow},
 		{15, RiskLevelLow},
@@ -103,17 +103,17 @@ func TestPolicyEngine_determineAction(t *testing.T) {
 	engine := NewPolicyEngine(nil, redisClient, config, zap.NewNop())
 
 	policy := &TenantPolicy{
-		TenantID:           "tenant1",
-		LowThreshold:       30,
-		MediumThreshold:    50,
-		HighThreshold:      70,
-		CriticalThreshold:  90,
-		Enabled:            true,
+		TenantID:          "tenant1",
+		LowThreshold:      30,
+		MediumThreshold:   50,
+		HighThreshold:     70,
+		CriticalThreshold: 90,
+		Enabled:           true,
 	}
 
 	tests := []struct {
-		score     int
-		expected  AuthAction
+		score    int
+		expected AuthAction
 	}{
 		{0, AuthActionAllow},
 		{20, AuthActionAllow},
@@ -173,15 +173,15 @@ func TestPolicyEngine_checkFailedAttempts(t *testing.T) {
 // TestEvaluateRequest_ResponseStructure tests the evaluate response structure
 func TestEvaluateRequest_ResponseStructure(t *testing.T) {
 	req := EvaluateRequest{
-		TenantID:      "tenant1",
-		UserID:        "user1",
-		IPAddress:     "192.168.1.1",
-		UserAgent:     "Chrome",
+		TenantID:          "tenant1",
+		UserID:            "user1",
+		IPAddress:         "192.168.1.1",
+		UserAgent:         "Chrome",
 		DeviceFingerprint: "fp123",
-		Latitude:      40.7128,
-		Longitude:     -74.0060,
-		LoginHour:     9,
-		Resource:      "/api/v1/resource",
+		Latitude:          40.7128,
+		Longitude:         -74.0060,
+		LoginHour:         9,
+		Resource:          "/api/v1/resource",
 	}
 
 	// Verify required fields are set
@@ -196,8 +196,8 @@ func TestEvaluateRequest_ResponseStructure(t *testing.T) {
 // TestEvaluateResponse_ActionFields tests response action field consistency
 func TestEvaluateResponse_ActionFields(t *testing.T) {
 	tests := []struct {
-		action          AuthAction
-		expectedAllowed bool
+		action             AuthAction
+		expectedAllowed    bool
 		expectedRequireMFA bool
 	}{
 		{AuthActionAllow, true, false},
@@ -230,9 +230,9 @@ func TestEvaluateResponse_ActionFields(t *testing.T) {
 // TestTenantPolicy_Validation tests tenant policy validation
 func TestTenantPolicy_Validation(t *testing.T) {
 	tests := []struct {
-		name     string
-		policy   TenantPolicy
-		valid    bool
+		name   string
+		policy TenantPolicy
+		valid  bool
 	}{
 		{
 			name: "valid policy",

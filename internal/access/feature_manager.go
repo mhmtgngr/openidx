@@ -37,38 +37,38 @@ const (
 type HealthStatus string
 
 const (
-	HealthStatusUnknown  HealthStatus = "unknown"
-	HealthStatusHealthy  HealthStatus = "healthy"
-	HealthStatusDegraded HealthStatus = "degraded"
+	HealthStatusUnknown   HealthStatus = "unknown"
+	HealthStatusHealthy   HealthStatus = "healthy"
+	HealthStatusDegraded  HealthStatus = "degraded"
 	HealthStatusUnhealthy HealthStatus = "unhealthy"
 )
 
 // ServiceFeature represents a feature attached to a service/route
 type ServiceFeature struct {
-	ID              string            `json:"id"`
-	RouteID         string            `json:"route_id"`
-	FeatureName     FeatureName       `json:"feature_name"`
-	Enabled         bool              `json:"enabled"`
+	ID              string                 `json:"id"`
+	RouteID         string                 `json:"route_id"`
+	FeatureName     FeatureName            `json:"feature_name"`
+	Enabled         bool                   `json:"enabled"`
 	Config          map[string]interface{} `json:"config"`
-	ResourceIDs     map[string]string `json:"resource_ids"`
-	Status          FeatureStatus     `json:"status"`
-	ErrorMessage    string            `json:"error_message,omitempty"`
-	LastHealthCheck *time.Time        `json:"last_health_check,omitempty"`
-	HealthStatus    HealthStatus      `json:"health_status"`
-	EnabledAt       *time.Time        `json:"enabled_at,omitempty"`
-	EnabledBy       string            `json:"enabled_by,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	ResourceIDs     map[string]string      `json:"resource_ids"`
+	Status          FeatureStatus          `json:"status"`
+	ErrorMessage    string                 `json:"error_message,omitempty"`
+	LastHealthCheck *time.Time             `json:"last_health_check,omitempty"`
+	HealthStatus    HealthStatus           `json:"health_status"`
+	EnabledAt       *time.Time             `json:"enabled_at,omitempty"`
+	EnabledBy       string                 `json:"enabled_by,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 // ServiceStatus represents the complete status of a service with all features
 type ServiceStatus struct {
-	RouteID     string                        `json:"route_id"`
-	RouteName   string                        `json:"route_name"`
-	RouteType   string                        `json:"route_type"`
-	Features    map[FeatureName]*ServiceFeature `json:"features"`
-	OverallHealth HealthStatus                `json:"overall_health"`
-	LastUpdated time.Time                     `json:"last_updated"`
+	RouteID       string                          `json:"route_id"`
+	RouteName     string                          `json:"route_name"`
+	RouteType     string                          `json:"route_type"`
+	Features      map[FeatureName]*ServiceFeature `json:"features"`
+	OverallHealth HealthStatus                    `json:"overall_health"`
+	LastUpdated   time.Time                       `json:"last_updated"`
 }
 
 // FeatureConfig contains configuration for enabling a feature
@@ -266,12 +266,12 @@ func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) 
 	}
 
 	status := &ServiceStatus{
-		RouteID:     routeID,
-		RouteName:   routeName,
-		RouteType:   routeType,
-		Features:    make(map[FeatureName]*ServiceFeature),
+		RouteID:       routeID,
+		RouteName:     routeName,
+		RouteType:     routeType,
+		Features:      make(map[FeatureName]*ServiceFeature),
 		OverallHealth: HealthStatusHealthy,
-		LastUpdated: time.Now(),
+		LastUpdated:   time.Now(),
 	}
 
 	// Get all features for this route
@@ -372,11 +372,11 @@ func (fm *FeatureManager) getOrCreateFeature(ctx context.Context, routeID string
 	}
 
 	return &ServiceFeature{
-		ID:          id,
-		RouteID:     routeID,
-		FeatureName: feature,
-		Enabled:     false,
-		Status:      FeatureStatusDisabled,
+		ID:           id,
+		RouteID:      routeID,
+		FeatureName:  feature,
+		Enabled:      false,
+		Status:       FeatureStatusDisabled,
 		HealthStatus: HealthStatusUnknown,
 	}, nil
 }

@@ -97,18 +97,18 @@ func TestGovernanceService_ProductionConfigValidation(t *testing.T) {
 		{
 			name: "Valid production config",
 			cfg: &config.Config{
-				Environment:              "production",
-				DatabaseURL:              "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:                 "redis://localhost:6379",
-				Port:                     8002,
-				JWTSecret:                "secure-32-byte-secret-key-1234567890",
-				EncryptionKey:            "secure-32-byte-encryption-key-123456",
-				CORSAllowedOrigins:       "https://example.com",
-				CSRFEnabled:              true,
-				DatabaseSSLMode:          "verify-full",
-				RedisTLSEnabled:          true,
-				TLS:                      config.TLSConfig{Enabled: true},
-				AccessSessionSecret:      "secure-32-byte-session-secret-12345",
+				Environment:               "production",
+				DatabaseURL:               "postgres://test@localhost:5432/test?sslmode=verify-full",
+				RedisURL:                  "redis://localhost:6379",
+				Port:                      8002,
+				JWTSecret:                 "secure-32-byte-secret-key-1234567890",
+				EncryptionKey:             "secure-32-byte-encryption-key-123456",
+				CORSAllowedOrigins:        "https://example.com",
+				CSRFEnabled:               true,
+				DatabaseSSLMode:           "verify-full",
+				RedisTLSEnabled:           true,
+				TLS:                       config.TLSConfig{Enabled: true},
+				AccessSessionSecret:       "secure-32-byte-session-secret-12345",
 				AuditStreamAllowedOrigins: "https://example.com",
 			},
 			wantErr: false,
@@ -479,11 +479,11 @@ func TestGovernanceService_AccessReviewsConfiguration(t *testing.T) {
 	t.Run("Access review features are properly configured", func(t *testing.T) {
 		// Governance service handles access reviews and certifications
 		cfg := &config.Config{
-			Environment:        "development",
-			Port:               8002,
-			DatabaseURL:        "postgres://test:test@localhost:5432/test?sslmode=disable",
-			RedisURL:           "redis://:test@localhost:6379",
-			EnableOPAAuthz:     false,
+			Environment:    "development",
+			Port:           8002,
+			DatabaseURL:    "postgres://test:test@localhost:5432/test?sslmode=disable",
+			RedisURL:       "redis://:test@localhost:6379",
+			EnableOPAAuthz: false,
 		}
 
 		// Basic config should be valid

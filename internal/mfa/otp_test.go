@@ -457,9 +457,9 @@ func TestOTPService_GetRemainingAttempts(t *testing.T) {
 // Test maskDestination for various inputs
 func TestMaskDestination(t *testing.T) {
 	tests := []struct {
-		input      string
-		otpType    OTPType
-		expected   string
+		input    string
+		otpType  OTPType
+		expected string
 	}{
 		{"user@example.com", OTPTypeEmail, "use***@example.com"},
 		{"a@b.co", OTPTypeEmail, "***@b.co"},
@@ -506,9 +506,9 @@ func TestOTPService_FormatEmailMessage(t *testing.T) {
 	service := NewOTPServiceWithPrefix(zap.NewNop(), newMockOTPRedisClient(), NewMockProvider(zap.NewNop()), DefaultOTPConfig(), "TestApp")
 
 	otp := &OTPCode{
-		Code:        "123456",
-		Type:        OTPTypeEmail,
-		ExpiresAt:   time.Now().Add(5 * time.Minute),
+		Code:      "123456",
+		Type:      OTPTypeEmail,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 
 	message := service.formatEmailMessage(otp)
@@ -522,9 +522,9 @@ func TestOTPService_FormatSMSMessage(t *testing.T) {
 	service := NewOTPServiceWithPrefix(zap.NewNop(), newMockOTPRedisClient(), NewMockProvider(zap.NewNop()), DefaultOTPConfig(), "TestApp")
 
 	otp := &OTPCode{
-		Code:        "654321",
-		Type:        OTPTypeSMS,
-		ExpiresAt:   time.Now().Add(5 * time.Minute),
+		Code:      "654321",
+		Type:      OTPTypeSMS,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 
 	message := service.formatSMSMessage(otp)

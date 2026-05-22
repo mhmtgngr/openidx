@@ -184,12 +184,12 @@ func TestValidatePKCEVerifier(t *testing.T) {
 	challengeS256 := calculateCodeChallenge(verifier, "S256")
 
 	tests := []struct {
-		name                   string
-		codeVerifier           string
-		codeChallenge          string
-		codeChallengeMethod    string
-		expectError            bool
-		errorContains          string
+		name                string
+		codeVerifier        string
+		codeChallenge       string
+		codeChallengeMethod string
+		expectError         bool
+		errorContains       string
 	}{
 		{
 			name:                "Valid S256 verification",
@@ -216,7 +216,7 @@ func TestValidatePKCEVerifier(t *testing.T) {
 		{
 			name:                "Invalid plain verification",
 			codeVerifier:        generateClientSecret(), // will be different from challenge
-			codeChallenge:       verifier, // use original verifier as challenge
+			codeChallenge:       verifier,               // use original verifier as challenge
 			codeChallengeMethod: "plain",
 			expectError:         true,
 			errorContains:       "does not match",
@@ -465,7 +465,7 @@ func TestParseAuthorizeRequest(t *testing.T) {
 				assert.Equal(t, "test-client", req.ClientID)
 				assert.Equal(t, "https://example.com/callback", req.RedirectURI)
 				assert.Equal(t, "code", req.ResponseType)
-				assert.Equal(t, "openid profile", req.Scope)  // Gin decodes + to space
+				assert.Equal(t, "openid profile", req.Scope) // Gin decodes + to space
 				assert.Equal(t, "test-state", req.State)
 			},
 		},
@@ -545,7 +545,7 @@ func TestParseTokenRequest(t *testing.T) {
 			name: "Valid authorization code grant",
 			formData: url.Values{
 				"grant_type":    []string{"authorization_code"},
-				"code":         []string{"test-code"},
+				"code":          []string{"test-code"},
 				"redirect_uri":  []string{"https://example.com/callback"},
 				"client_id":     []string{"test-client"},
 				"client_secret": []string{"test-secret"},
@@ -621,18 +621,18 @@ func TestParseTokenRequest(t *testing.T) {
 
 func TestExtractBasicAuth(t *testing.T) {
 	tests := []struct {
-		name            string
-		authHeader      string
-		expectOK        bool
+		name             string
+		authHeader       string
+		expectOK         bool
 		expectedClientID string
-		expectedSecret  string
+		expectedSecret   string
 	}{
 		{
-			name:            "Valid Basic Auth",
-			authHeader:      "Basic " + base64.StdEncoding.EncodeToString([]byte("client-id:client-secret")),
-			expectOK:        true,
+			name:             "Valid Basic Auth",
+			authHeader:       "Basic " + base64.StdEncoding.EncodeToString([]byte("client-id:client-secret")),
+			expectOK:         true,
 			expectedClientID: "client-id",
-			expectedSecret:  "client-secret",
+			expectedSecret:   "client-secret",
 		},
 		{
 			name:       "Missing header",

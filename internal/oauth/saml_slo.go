@@ -18,51 +18,51 @@ import (
 
 // SAML Single Logout constants
 const (
-	SAMLLogoutStatusSuccess    = "urn:oasis:names:tc:SAML:2.0:status:Success"
-	SAMLLogoutStatusRequester  = "urn:oasis:names:tc:SAML:2.0:status:Requester"
-	SAMLLogoutStatusResponder  = "urn:oasis:names:tc:SAML:2.0:status:Responder"
+	SAMLLogoutStatusSuccess         = "urn:oasis:names:tc:SAML:2.0:status:Success"
+	SAMLLogoutStatusRequester       = "urn:oasis:names:tc:SAML:2.0:status:Requester"
+	SAMLLogoutStatusResponder       = "urn:oasis:names:tc:SAML:2.0:status:Responder"
 	SAMLLogoutStatusVersionMismatch = "urn:oasis:names:tc:SAML:2.0:status:VersionMismatch"
 )
 
 // LogoutRequest represents a SAML LogoutRequest
 type LogoutRequest struct {
-	XMLName      xml.Name `xml:"samlp:LogoutRequest"`
-	XMLNS        string   `xml:"xmlns:samlp,attr"`
-	XMLNSSAML    string   `xml:"xmlns:saml,attr"`
-	ID           string   `xml:"ID,attr"`
-	Version      string   `xml:"Version,attr"`
-	IssueInstant string   `xml:"IssueInstant,attr"`
-	Destination  string   `xml:"Destination,attr,omitempty"`
-	Issuer       string   `xml:"saml:Issuer"`
-	NotOnOrAfter string   `xml:"NotOnOrAfter,attr,omitempty"`
-	SessionIndex string   `xml:"SessionIndex,omitempty"`
-	NameID       *LogoutNameID `xml:"saml:NameID,omitempty"`
-	SessionIndexes []string `xml:"saml:SessionIndex,omitempty"`
+	XMLName        xml.Name      `xml:"samlp:LogoutRequest"`
+	XMLNS          string        `xml:"xmlns:samlp,attr"`
+	XMLNSSAML      string        `xml:"xmlns:saml,attr"`
+	ID             string        `xml:"ID,attr"`
+	Version        string        `xml:"Version,attr"`
+	IssueInstant   string        `xml:"IssueInstant,attr"`
+	Destination    string        `xml:"Destination,attr,omitempty"`
+	Issuer         string        `xml:"saml:Issuer"`
+	NotOnOrAfter   string        `xml:"NotOnOrAfter,attr,omitempty"`
+	SessionIndex   string        `xml:"SessionIndex,omitempty"`
+	NameID         *LogoutNameID `xml:"saml:NameID,omitempty"`
+	SessionIndexes []string      `xml:"saml:SessionIndex,omitempty"`
 }
 
 // LogoutNameID represents the NameID in a LogoutRequest
 type LogoutNameID struct {
-	Format  string   `xml:"Format,attr,omitempty"`
-	Value   string   `xml:",chardata"`
+	Format string `xml:"Format,attr,omitempty"`
+	Value  string `xml:",chardata"`
 }
 
 // LogoutResponse represents a SAML LogoutResponse
 type LogoutResponse struct {
-	XMLName      xml.Name `xml:"samlp:LogoutResponse"`
-	XMLNS        string   `xml:"xmlns:samlp,attr"`
-	XMLNSSAML    string   `xml:"xmlns:saml,attr"`
-	ID           string   `xml:"ID,attr"`
-	Version      string   `xml:"Version,attr"`
-	IssueInstant string   `xml:"IssueInstant,attr"`
-	Destination  string   `xml:"Destination,attr"`
-	InResponseTo string   `xml:"InResponseTo,attr,omitempty"`
-	Issuer       string   `xml:"saml:Issuer"`
+	XMLName      xml.Name             `xml:"samlp:LogoutResponse"`
+	XMLNS        string               `xml:"xmlns:samlp,attr"`
+	XMLNSSAML    string               `xml:"xmlns:saml,attr"`
+	ID           string               `xml:"ID,attr"`
+	Version      string               `xml:"Version,attr"`
+	IssueInstant string               `xml:"IssueInstant,attr"`
+	Destination  string               `xml:"Destination,attr"`
+	InResponseTo string               `xml:"InResponseTo,attr,omitempty"`
+	Issuer       string               `xml:"saml:Issuer"`
 	Status       LogoutResponseStatus `xml:"samlp:Status"`
 }
 
 // LogoutResponseStatus represents the status in a LogoutResponse
 type LogoutResponseStatus struct {
-	StatusCode    LogoutStatusCode    `xml:"StatusCode"`
+	StatusCode    LogoutStatusCode     `xml:"StatusCode"`
 	StatusMessage *LogoutStatusMessage `xml:"StatusMessage,omitempty"`
 }
 
@@ -91,14 +91,14 @@ type SAMLSession struct {
 
 // LogoutSession tracks an in-progress logout operation
 type LogoutSession struct {
-	ID            string
-	UserID        string
-	RequestID     string
-	RequestingSP  string
-	SPSessions    []string // SP session IDs to logout
-	Status        string
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
+	ID           string
+	UserID       string
+	RequestID    string
+	RequestingSP string
+	SPSessions   []string // SP session IDs to logout
+	Status       string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
 }
 
 // handleIdPSLO handles Single Logout requests at the IdP
@@ -204,8 +204,8 @@ func (s *Service) handleSPInitiatedSLO(c *gin.Context, samlRequest, relayState, 
 			userID, c.ClientIP(), sp.EntityID, "service_provider",
 			map[string]interface{}{
 				"sp_entity_id": sp.EntityID,
-				"sp_name": sp.Name,
-				"request_id": logoutReq.ID,
+				"sp_name":      sp.Name,
+				"request_id":   logoutReq.ID,
 			})
 	}()
 

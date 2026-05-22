@@ -100,11 +100,11 @@ func TestTenantConfigSerialization(t *testing.T) {
 func TestTenantSerialization(t *testing.T) {
 	now := time.Now()
 	tenant := &Tenant{
-		ID:     "tenant-123",
-		Name:   "Acme Corp",
-		Domain: "acme.example.com",
-		Plan:   "enterprise",
-		Config: DefaultTenantConfig(),
+		ID:        "tenant-123",
+		Name:      "Acme Corp",
+		Domain:    "acme.example.com",
+		Plan:      "enterprise",
+		Config:    DefaultTenantConfig(),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -163,9 +163,9 @@ func TestPasswordValidation(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name      string
-		password  string
-		wantErr   bool
+		name        string
+		password    string
+		wantErr     bool
 		errContains string
 	}{
 		{
@@ -174,39 +174,39 @@ func TestPasswordValidation(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:      "too short",
-			password:  "Short1!",
-			wantErr:   true,
+			name:        "too short",
+			password:    "Short1!",
+			wantErr:     true,
 			errContains: "at least",
 		},
 		{
-			name:      "missing uppercase",
-			password:  "lowercase123!",
-			wantErr:   true,
+			name:        "missing uppercase",
+			password:    "lowercase123!",
+			wantErr:     true,
 			errContains: "uppercase",
 		},
 		{
-			name:      "missing lowercase",
-			password:  "UPPERCASE123!",
-			wantErr:   true,
+			name:        "missing lowercase",
+			password:    "UPPERCASE123!",
+			wantErr:     true,
 			errContains: "lowercase",
 		},
 		{
-			name:      "missing digit",
-			password:  "NoDigitsHere!!",
-			wantErr:   true,
+			name:        "missing digit",
+			password:    "NoDigitsHere!!",
+			wantErr:     true,
 			errContains: "digit",
 		},
 		{
-			name:      "missing special",
-			password:  "NoSpecial123",
-			wantErr:   true,
+			name:        "missing special",
+			password:    "NoSpecial123",
+			wantErr:     true,
 			errContains: "special",
 		},
 		{
-			name:      "contains forbidden word",
-			password:  "Password123!",
-			wantErr:   true,
+			name:        "contains forbidden word",
+			password:    "Password123!",
+			wantErr:     true,
 			errContains: "password",
 		},
 	}
@@ -379,9 +379,9 @@ func TestMFAMethodValidation(t *testing.T) {
 func TestTenantIsolationLogic(t *testing.T) {
 	// Test tenant domain extraction
 	tests := []struct {
-		name     string
-		domain   string
-		wantID   string
+		name   string
+		domain string
+		wantID string
 	}{
 		{
 			name:   "acme domain",
@@ -591,9 +591,9 @@ func TestCSVReadWrite(t *testing.T) {
 // TestUserImportResultSerialization tests import result serialization
 func TestUserImportResultSerialization(t *testing.T) {
 	result := &UserImportResult{
-		SuccessCount:  10,
-		ErrorCount:    2,
-		TotalRows:     12,
+		SuccessCount: 10,
+		ErrorCount:   2,
+		TotalRows:    12,
 		Errors: []UserImportError{
 			{LineNumber: 3, Username: "bad.user", Error: "invalid email"},
 		},

@@ -14,11 +14,11 @@ import (
 
 // EnrollmentService combines TOTP and recovery services for enrollment operations
 type EnrollmentService struct {
-	totp       *Service
-	recovery   *RecoveryService
-	repo       Repository
+	totp         *Service
+	recovery     *RecoveryService
+	repo         Repository
 	recoveryRepo RecoveryCodeRepository
-	logger     *zap.Logger
+	logger       *zap.Logger
 }
 
 // NewEnrollmentService creates a new enrollment service
@@ -30,11 +30,11 @@ func NewEnrollmentService(
 	logger *zap.Logger,
 ) *EnrollmentService {
 	return &EnrollmentService{
-		totp:        totpService,
-		recovery:    recoveryService,
-		repo:        repo,
+		totp:         totpService,
+		recovery:     recoveryService,
+		repo:         repo,
 		recoveryRepo: recoveryRepo,
-		logger:      logger,
+		logger:       logger,
 	}
 }
 
@@ -84,7 +84,7 @@ type TOTPEnrollRequest struct {
 
 // TOTPEnrollResponse represents a TOTP enrollment response
 type TOTPEnrollResponse struct {
-	Secret    string `json:"secret"`     // Base32-encoded secret
+	Secret    string `json:"secret"` // Base32-encoded secret
 	QRCodeURL string `json:"qr_code_url"`
 	Message   string `json:"message"`
 }
@@ -103,25 +103,25 @@ type TOTPVerifyResponse struct {
 
 // MFAVerifyRequest represents an MFA verification request at login time
 type MFAVerifyRequest struct {
-	UserID         string `json:"user_id" binding:"required,uuid"`
-	Code           string `json:"code" binding:"required"`
-	RecoveryCode   string `json:"recovery_code"`
-	Method         string `json:"method"` // "totp" or "recovery"
+	UserID       string `json:"user_id" binding:"required,uuid"`
+	Code         string `json:"code" binding:"required"`
+	RecoveryCode string `json:"recovery_code"`
+	Method       string `json:"method"` // "totp" or "recovery"
 }
 
 // MFAVerifyResponse represents an MFA verification response
 type MFAVerifyResponse struct {
-	Success       bool   `json:"success"`
-	Message       string `json:"message"`
-	RemainingCodes int   `json:"remaining_codes,omitempty"`
+	Success        bool   `json:"success"`
+	Message        string `json:"message"`
+	RemainingCodes int    `json:"remaining_codes,omitempty"`
 }
 
 // RecoveryGenerateResponse represents recovery code generation response
 type RecoveryGenerateResponse struct {
-	Codes          []string `json:"codes"`           // Plaintext codes (only shown once)
-	Remaining      int      `json:"remaining"`
-	Message        string   `json:"message"`
-	Warning        string   `json:"warning"`
+	Codes     []string `json:"codes"` // Plaintext codes (only shown once)
+	Remaining int      `json:"remaining"`
+	Message   string   `json:"message"`
+	Warning   string   `json:"warning"`
 }
 
 // RecoveryVerifyRequest represents recovery code verification request
@@ -132,9 +132,9 @@ type RecoveryVerifyRequest struct {
 
 // RecoveryVerifyResponse represents recovery code verification response
 type RecoveryVerifyResponse struct {
-	Success       bool   `json:"success"`
-	Message       string `json:"message"`
-	Remaining     int    `json:"remaining"`
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	Remaining int    `json:"remaining"`
 }
 
 // RecoveryStatusResponse represents recovery code status response
@@ -344,8 +344,8 @@ func (h *Handlers) HandleMFAVerify(c *gin.Context) {
 		)
 
 		c.JSON(http.StatusOK, MFAVerifyResponse{
-			Success:       true,
-			Message:       "MFA verified using recovery code",
+			Success:        true,
+			Message:        "MFA verified using recovery code",
 			RemainingCodes: remaining,
 		})
 		return
@@ -499,8 +499,8 @@ func (h *Handlers) HandleRecoveryVerify(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusOK, RecoveryVerifyResponse{
-		Success: true,
-		Message: "Recovery code accepted",
+		Success:   true,
+		Message:   "Recovery code accepted",
 		Remaining: remaining,
 	})
 }

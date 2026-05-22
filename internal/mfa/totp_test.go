@@ -143,7 +143,7 @@ func TestTOTPService_ValidateCode(t *testing.T) {
 			secret:  secret.Secret,
 			code:    "123",
 			window:  0,
-			wantErr: true,  // TOTP validation returns error for invalid length codes
+			wantErr: true, // TOTP validation returns error for invalid length codes
 			wantVal: false,
 		},
 		{
@@ -151,7 +151,7 @@ func TestTOTPService_ValidateCode(t *testing.T) {
 			secret:  secret.Secret,
 			code:    "123456789",
 			window:  0,
-			wantErr: true,  // TOTP validation returns error for invalid length codes
+			wantErr: true, // TOTP validation returns error for invalid length codes
 			wantVal: false,
 		},
 	}

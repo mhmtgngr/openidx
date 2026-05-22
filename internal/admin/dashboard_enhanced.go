@@ -20,26 +20,26 @@ const (
 
 // EnhancedDashboardStats contains aggregated dashboard statistics with the required fields
 type EnhancedDashboardStats struct {
-	TotalUsers        int64           `json:"total_users"`
-	ActiveUsers24h    int64           `json:"active_users_24h"`
-	MFAAdoptionPct    float64         `json:"mfa_adoption_pct"`
-	ActiveSessions    int64           `json:"active_sessions"`
-	FailedLogins24h   int64           `json:"failed_logins_24h"`
-	AvgRiskScore      float64         `json:"avg_risk_score"`
-	TopRiskEvents     []RiskEvent     `json:"top_risk_events"`
-	LoginSuccessRate  float64         `json:"login_success_rate"`
-	CachedAt          *time.Time      `json:"cached_at,omitempty"`
+	TotalUsers       int64       `json:"total_users"`
+	ActiveUsers24h   int64       `json:"active_users_24h"`
+	MFAAdoptionPct   float64     `json:"mfa_adoption_pct"`
+	ActiveSessions   int64       `json:"active_sessions"`
+	FailedLogins24h  int64       `json:"failed_logins_24h"`
+	AvgRiskScore     float64     `json:"avg_risk_score"`
+	TopRiskEvents    []RiskEvent `json:"top_risk_events"`
+	LoginSuccessRate float64     `json:"login_success_rate"`
+	CachedAt         *time.Time  `json:"cached_at,omitempty"`
 }
 
 // RiskEvent represents a high-risk security event
 type RiskEvent struct {
-	ID            string    `json:"id"`
-	Timestamp     time.Time `json:"timestamp"`
-	EventType     string    `json:"event_type"`
-	RiskScore     int       `json:"risk_score"`
-	ActorID       string    `json:"actor_id,omitempty"`
-	ActorIP       string    `json:"actor_ip,omitempty"`
-	Reason        string    `json:"reason"`
+	ID        string    `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	EventType string    `json:"event_type"`
+	RiskScore int       `json:"risk_score"`
+	ActorID   string    `json:"actor_id,omitempty"`
+	ActorIP   string    `json:"actor_ip,omitempty"`
+	Reason    string    `json:"reason"`
 }
 
 // GetEnhancedDashboardStats retrieves enhanced dashboard statistics with caching.

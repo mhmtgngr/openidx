@@ -266,7 +266,7 @@ func (s *Service) handleSocialLoginCallback(c *gin.Context) {
 
 	// Fallback: generate tokens directly using the SAML token flow
 	samlUser := &SAMLUser{
-		ID:        userID,
+		ID:          userID,
 		Email:       userInfo.Email,
 		FirstName:   userInfo.FirstName,
 		LastName:    userInfo.LastName,

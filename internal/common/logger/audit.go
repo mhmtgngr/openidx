@@ -10,7 +10,7 @@ import (
 // AuditEvent represents an audit log event
 type AuditEvent struct {
 	EventType  string                 `json:"event_type"`
-	Actor      string                 `json:"actor"`       // User ID who performed the action
+	Actor      string                 `json:"actor"` // User ID who performed the action
 	ActorEmail string                 `json:"actor_email,omitempty"`
 	Action     string                 `json:"action"`      // What action was performed
 	Resource   string                 `json:"resource"`    // What resource was affected

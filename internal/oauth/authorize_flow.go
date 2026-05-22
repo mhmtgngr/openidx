@@ -17,38 +17,38 @@ import (
 
 // OAuth 2.0 Error Codes (RFC 6749 Section 4.1.2.1)
 const (
-	ErrorInvalidRequest        = "invalid_request"
-	ErrorUnauthorizedClient    = "unauthorized_client"
-	ErrorAccessDenied          = "access_denied"
+	ErrorInvalidRequest          = "invalid_request"
+	ErrorUnauthorizedClient      = "unauthorized_client"
+	ErrorAccessDenied            = "access_denied"
 	ErrorUnsupportedResponseType = "unsupported_response_type"
-	ErrorInvalidScope          = "invalid_scope"
-	ErrorServerError           = "server_error"
-	ErrorTemporarilyUnavailable = "temporarily_unavailable"
+	ErrorInvalidScope            = "invalid_scope"
+	ErrorServerError             = "server_error"
+	ErrorTemporarilyUnavailable  = "temporarily_unavailable"
 	// Additional error codes for token endpoint
-	ErrorInvalidClient         = "invalid_client"
-	ErrorInvalidGrant          = "invalid_grant"
-	ErrorUnsupportedGrantType  = "unsupported_grant_type"
+	ErrorInvalidClient        = "invalid_client"
+	ErrorInvalidGrant         = "invalid_grant"
+	ErrorUnsupportedGrantType = "unsupported_grant_type"
 )
 
 // FlowAuthorizeRequest represents a parsed OAuth 2.0 authorization request
 type FlowAuthorizeRequest struct {
-	ClientID             string
-	RedirectURI          string
-	ResponseType         string
-	Scope                string
-	State                string
-	Nonce                string // For OIDC
-	CodeChallenge        string
-	CodeChallengeMethod  string
-	ResponseMode         string
-	Display              string
-	Prompt               string
-	MaxAge               *int
-	UILocales            string
-	IDTokenHint          string
-	LoginHint            string
-	ACRValues            string
-	Claims               string
+	ClientID            string
+	RedirectURI         string
+	ResponseType        string
+	Scope               string
+	State               string
+	Nonce               string // For OIDC
+	CodeChallenge       string
+	CodeChallengeMethod string
+	ResponseMode        string
+	Display             string
+	Prompt              string
+	MaxAge              *int
+	UILocales           string
+	IDTokenHint         string
+	LoginHint           string
+	ACRValues           string
+	Claims              string
 }
 
 // AuthorizationResponse represents a successful authorization response

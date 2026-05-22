@@ -104,8 +104,8 @@ func APIVersionWithConfig(cfg *VersionConfig) gin.HandlerFunc {
 				} else {
 					// Unsupported version requested
 					c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
-						"error":   "unsupported_api_version",
-						"message": fmt.Sprintf("API version %s is not supported", headerVersion),
+						"error":              "unsupported_api_version",
+						"message":            fmt.Sprintf("API version %s is not supported", headerVersion),
 						"supported_versions": cfg.Supported,
 						"default_version":    cfg.Default,
 					})
@@ -125,8 +125,8 @@ func APIVersionWithConfig(cfg *VersionConfig) gin.HandlerFunc {
 		normalizedVersion := normalizeVersion(version)
 		if !supportedSet[normalizedVersion] {
 			c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
-				"error":   "unsupported_api_version",
-				"message": fmt.Sprintf("API version %s is not supported", version),
+				"error":              "unsupported_api_version",
+				"message":            fmt.Sprintf("API version %s is not supported", version),
 				"supported_versions": cfg.Supported,
 				"default_version":    cfg.Default,
 			})
@@ -264,8 +264,8 @@ func VersionConstraint(constraint string) gin.HandlerFunc {
 		// Support constraints like ">=v1", "v2", "!v1"
 		if !matchesConstraint(version, constraint) {
 			c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
-				"error":   "version_constraint_not_met",
-				"message": fmt.Sprintf("API version %s does not match constraint: %s", version, constraint),
+				"error":           "version_constraint_not_met",
+				"message":         fmt.Sprintf("API version %s does not match constraint: %s", version, constraint),
 				"current_version": version,
 				"constraint":      constraint,
 			})
@@ -347,24 +347,24 @@ func extractVersionNumber(version string) int {
 
 // VersionResponse wraps response data with version metadata
 type VersionResponse struct {
-	Data     interface{} `json:"data"`
-	Meta     Meta        `json:"meta,omitempty"`
-	Links    Links       `json:"links,omitempty"`
+	Data  interface{} `json:"data"`
+	Meta  Meta        `json:"meta,omitempty"`
+	Links Links       `json:"links,omitempty"`
 }
 
 // Meta contains response metadata
 type Meta struct {
-	Version      string `json:"api_version"`
-	Deprecated   bool   `json:"deprecated,omitempty"`
-	SunsetDate   string `json:"sunset_date,omitempty"`
-	Latest       string `json:"latest_version,omitempty"`
+	Version    string `json:"api_version"`
+	Deprecated bool   `json:"deprecated,omitempty"`
+	SunsetDate string `json:"sunset_date,omitempty"`
+	Latest     string `json:"latest_version,omitempty"`
 }
 
 // Links contains related links
 type Links struct {
-	Self         string `json:"self,omitempty"`
-	Current      string `json:"current_version,omitempty"`
-	NextVersion  string `json:"next_version,omitempty"`
+	Self        string `json:"self,omitempty"`
+	Current     string `json:"current_version,omitempty"`
+	NextVersion string `json:"next_version,omitempty"`
 }
 
 // WrapVersionedResponse wraps response data with version metadata
@@ -403,9 +403,9 @@ func VersionedRoute(versions ...string) gin.HandlerFunc {
 		currentVersion := ParseAPIVersion(c)
 		if !normalizedVersions[currentVersion] {
 			c.AbortWithStatusJSON(http.StatusNotAcceptable, gin.H{
-				"error":   "unsupported_version_for_endpoint",
-				"message": fmt.Sprintf("This endpoint is available in API versions: %v", versions),
-				"current_version": currentVersion,
+				"error":              "unsupported_version_for_endpoint",
+				"message":            fmt.Sprintf("This endpoint is available in API versions: %v", versions),
+				"current_version":    currentVersion,
 				"supported_versions": versions,
 			})
 			return

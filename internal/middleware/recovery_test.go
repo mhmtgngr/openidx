@@ -9,11 +9,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -292,7 +292,7 @@ func TestRecovery_GeneratesCorrelationID(t *testing.T) {
 	logger := zap.New(observedZapCore)
 
 	router := gin.New()
-	router.Use(Recovery(logger)) // No RequestID middleware
+	router.Use(Recovery(logger))                    // No RequestID middleware
 	router.GET("/api/panic", func(c *gin.Context) { // Use /api prefix to trigger JSON response
 		panic("no request id test")
 	})

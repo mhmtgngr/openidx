@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/events"
 )
@@ -83,11 +83,11 @@ func TestLDAPEntryToUser(t *testing.T) {
 			entry: LDAPEntry{
 				DN: "CN=John Doe,CN=Users,DC=example,DC=com",
 				Attributes: map[string][]string{
-					"sAMAccountName": {"jdoe"},
+					"sAMAccountName":    {"jdoe"},
 					"userPrincipalName": {"jdoe@example.com"},
-					"givenName":      {"John"},
-					"sn":             {"Doe"},
-					"displayName":    {"John Doe"},
+					"givenName":         {"John"},
+					"sn":                {"Doe"},
+					"displayName":       {"John Doe"},
 				},
 			},
 			wantUser: func(u *User) {
@@ -115,10 +115,10 @@ func TestLDAPEntryToUser(t *testing.T) {
 			entry: LDAPEntry{
 				DN: "uid=custom,ou=users,dc=example,dc=com",
 				Attributes: map[string][]string{
-					"uid":           {"custom"},
-					"mail":          {"custom@example.com"},
-					"givenName":     {"Custom"},
-					"sn":            {"User"},
+					"uid":            {"custom"},
+					"mail":           {"custom@example.com"},
+					"givenName":      {"Custom"},
+					"sn":             {"User"},
 					"employeeNumber": {"12345"},
 				},
 			},
@@ -184,16 +184,16 @@ func TestLDAPEntryToGroup(t *testing.T) {
 					"member": {"uid=user1,ou=users,dc=example,dc=com"},
 				},
 			},
-			wantGroup: nil,
+			wantGroup:   nil,
 			expectError: true, // CN not in attributes, and implementation doesn't parse DN
 		},
 		{
-			name:        "Group with no attributes",
+			name: "Group with no attributes",
 			entry: LDAPEntry{
-				DN: "cn=empty,ou=groups,dc=example,dc=com",
+				DN:         "cn=empty,ou=groups,dc=example,dc=com",
 				Attributes: map[string][]string{},
 			},
-			wantGroup: nil,
+			wantGroup:   nil,
 			expectError: true, // CN not in attributes, and implementation doesn't parse DN
 		},
 	}
@@ -482,8 +482,8 @@ func TestBuildUserAttributeList(t *testing.T) {
 	dir := NewDirectory("Test", "ldap")
 	dir.AttributeMap = DefaultAttributeMapping()
 	dir.AttributeMap.CustomAttributes = map[string]string{
-		"employeeId":   "employeeId",
-		"costCenter":   "costCenter",
+		"employeeId": "employeeId",
+		"costCenter": "costCenter",
 	}
 
 	client := &MockLDAPClient{}

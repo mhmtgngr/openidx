@@ -592,10 +592,10 @@ func TestTLSConfigCreationForServers(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		cfg          config.TLSConfig
-		wantErr      bool
-		checkServer  bool
+		name        string
+		cfg         config.TLSConfig
+		wantErr     bool
+		checkServer bool
 	}{
 		{
 			name: "server with TLS enabled",
@@ -765,10 +765,10 @@ func TestMutualTLSConfiguration(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		cfg        config.TLSConfig
-		wantErr    bool
-		checkMtls  bool
+		name      string
+		cfg       config.TLSConfig
+		wantErr   bool
+		checkMtls bool
 	}{
 		{
 			name: "mTLS enabled with CA",
@@ -829,14 +829,14 @@ func TestMutualTLSConfiguration(t *testing.T) {
 // TestCipherSuiteSelection tests cipher suite selection in TLS config.
 func TestCipherSuiteSelection(t *testing.T) {
 	tests := []struct {
-		name        string
+		name         string
 		cipherSuites []uint16
-		wantDefault bool
+		wantDefault  bool
 	}{
 		{
-			name:        "default cipher suites",
+			name:         "default cipher suites",
 			cipherSuites: nil,
-			wantDefault: true,
+			wantDefault:  true,
 		},
 		{
 			name: "specific cipher suites",
@@ -1350,29 +1350,29 @@ func TestParseCertificateFromPEM(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
+		name     string
 		certFile string
-		wantErr bool
+		wantErr  bool
 	}{
 		{
-			name:    "valid PEM file",
+			name:     "valid PEM file",
 			certFile: validCertFile,
-			wantErr: false,
+			wantErr:  false,
 		},
 		{
-			name:    "non-existent file",
+			name:     "non-existent file",
 			certFile: filepath.Join(tmpDir, "nonexistent.pem"),
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
-			name:    "empty file",
+			name:     "empty file",
 			certFile: emptyFile,
-			wantErr: true,
+			wantErr:  true,
 		},
 		{
-			name:    "invalid PEM content",
+			name:     "invalid PEM content",
 			certFile: invalidPEMFile,
-			wantErr: true,
+			wantErr:  true,
 		},
 	}
 
@@ -1568,7 +1568,7 @@ func TestCreateTestTLSConfig(t *testing.T) {
 			clientAuth:   tls.NoClientCert,
 		},
 		{
-			name: "TLS 1.2 with specific ciphers and mTLS",
+			name:       "TLS 1.2 with specific ciphers and mTLS",
 			minVersion: tls.VersionTLS12,
 			cipherSuites: []uint16{
 				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,

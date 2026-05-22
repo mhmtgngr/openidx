@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/common/config"
@@ -20,11 +20,11 @@ import (
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/gateway"
+	"github.com/openidx/openidx/internal/gateway/routes"
 	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/server"
-	"github.com/openidx/openidx/internal/gateway"
-	"github.com/openidx/openidx/internal/gateway/routes"
 )
 
 var (
@@ -189,20 +189,20 @@ func createGatewayConfig(cfg *config.Config, redis *redis.Client, log *zap.Logge
 	}
 
 	return gateway.Config{
-		Services:            services,
-		JWKSURL:             cfg.OAuthJWKSURL,
-		EnableRateLimit:     cfg.EnableRateLimit,
-		RateLimitConfig:     gateway.RateLimitConfig{
+		Services:        services,
+		JWKSURL:         cfg.OAuthJWKSURL,
+		EnableRateLimit: cfg.EnableRateLimit,
+		RateLimitConfig: gateway.RateLimitConfig{
 			RequestsPerMinute:     100,
 			AuthRequestsPerMinute: 20,
 			WindowSeconds:         60,
 		},
-		AllowedOrigins:      cfg.GetCORSOrigins(),
-		RequestTimeout:      30 * time.Second,
-		ShutdownTimeout:     30 * time.Second,
-		Redis:              &redisClientWrapper{client: redis},
-		Logger:             &zapLoggerWrapper{logger: log},
-		TracerShutdown:     shutdownTracer,
+		AllowedOrigins:  cfg.GetCORSOrigins(),
+		RequestTimeout:  30 * time.Second,
+		ShutdownTimeout: 30 * time.Second,
+		Redis:           &redisClientWrapper{client: redis},
+		Logger:          &zapLoggerWrapper{logger: log},
+		TracerShutdown:  shutdownTracer,
 	}
 }
 

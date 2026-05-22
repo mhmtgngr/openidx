@@ -560,13 +560,13 @@ func TestServicePortMappings(t *testing.T) {
 
 	// Expected internal service ports
 	expectedPorts := map[string]string{
-		"identity-service":    "8001:8001",
-		"governance-service":  "8002:8002",
+		"identity-service":     "8001:8001",
+		"governance-service":   "8002:8002",
 		"provisioning-service": "8003:8003",
-		"audit-service":       "8004:8004",
-		"admin-api":           "8005:8005",
-		"oauth-service":       "8006:8006",
-		"access-service":      "8007:8007",
+		"audit-service":        "8004:8004",
+		"admin-api":            "8005:8005",
+		"oauth-service":        "8006:8006",
+		"access-service":       "8007:8007",
 	}
 
 	for service, port := range expectedPorts {
@@ -1023,9 +1023,9 @@ func TestDemoAppsDisabled(t *testing.T) {
 		// Find the app section and check restart policy or profile
 		appIndex := strings.Index(contentStr, app)
 		if appIndex > 0 {
-			section := contentStr[appIndex:appIndex+200]
+			section := contentStr[appIndex : appIndex+200]
 			if !strings.Contains(section, "restart: \"no\"") &&
-			   !strings.Contains(section, "profiles:") {
+				!strings.Contains(section, "profiles:") {
 				t.Errorf("Demo app %s should be disabled in production", app)
 			}
 		}

@@ -43,19 +43,19 @@ func (s *ShutdownFunc) Shutdown(ctx context.Context) error {
 
 // GracefulShutdown manages graceful shutdown of HTTP servers and dependencies
 type GracefulShutdown struct {
-	server         *http.Server
-	logger         *zap.Logger
-	shutdownables  []Shutdownable
+	server          *http.Server
+	logger          *zap.Logger
+	shutdownables   []Shutdownable
 	shutdownTimeout time.Duration
-	signalChan     chan os.Signal
-	mu             sync.Mutex
+	signalChan      chan os.Signal
+	mu              sync.Mutex
 }
 
 // Config holds configuration for graceful shutdown
 type Config struct {
-	Server         *http.Server
-	Logger         *zap.Logger
-	Shutdownables  []Shutdownable
+	Server          *http.Server
+	Logger          *zap.Logger
+	Shutdownables   []Shutdownable
 	ShutdownTimeout time.Duration
 }
 
@@ -66,11 +66,11 @@ func New(cfg Config) *GracefulShutdown {
 	}
 
 	return &GracefulShutdown{
-		server:         cfg.Server,
-		logger:         cfg.Logger,
-		shutdownables:  cfg.Shutdownables,
+		server:          cfg.Server,
+		logger:          cfg.Logger,
+		shutdownables:   cfg.Shutdownables,
 		shutdownTimeout: cfg.ShutdownTimeout,
-		signalChan:     make(chan os.Signal, 1),
+		signalChan:      make(chan os.Signal, 1),
 	}
 }
 

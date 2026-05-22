@@ -32,15 +32,15 @@ type DeviceTrustRequest struct {
 
 // DeviceTrustSettings represents organization settings for device trust
 type DeviceTrustSettings struct {
-	ID                        string    `json:"id"`
-	OrgID                     *string   `json:"org_id,omitempty"`
-	RequireApproval           bool      `json:"require_approval"`
-	AutoApproveKnownIPs       bool      `json:"auto_approve_known_ips"`
-	AutoApproveCorporateDevs  bool      `json:"auto_approve_corporate_devices"`
-	RequestExpiryHours        int       `json:"request_expiry_hours"`
-	NotifyAdmins              bool      `json:"notify_admins"`
-	NotifyUserOnDecision      bool      `json:"notify_user_on_decision"`
-	UpdatedAt                 time.Time `json:"updated_at"`
+	ID                       string    `json:"id"`
+	OrgID                    *string   `json:"org_id,omitempty"`
+	RequireApproval          bool      `json:"require_approval"`
+	AutoApproveKnownIPs      bool      `json:"auto_approve_known_ips"`
+	AutoApproveCorporateDevs bool      `json:"auto_approve_corporate_devices"`
+	RequestExpiryHours       int       `json:"request_expiry_hours"`
+	NotifyAdmins             bool      `json:"notify_admins"`
+	NotifyUserOnDecision     bool      `json:"notify_user_on_decision"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 // CreateDeviceTrustRequest creates a new trust request

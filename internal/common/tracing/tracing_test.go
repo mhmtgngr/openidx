@@ -650,7 +650,7 @@ func TestBaggagePropagation(t *testing.T) {
 	// Create baggage
 	baggage := propagation.MapCarrier{
 		"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-		"baggage":      "user.id=12345,tenant.id=tenant-001,request.id=req-123",
+		"baggage":     "user.id=12345,tenant.id=tenant-001,request.id=req-123",
 	}
 
 	ctx = propagator.Extract(ctx, baggage)

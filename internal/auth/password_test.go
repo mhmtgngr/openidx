@@ -13,10 +13,10 @@ func TestPasswordService_Validate(t *testing.T) {
 	ps := NewPasswordService()
 
 	tests := []struct {
-		name      string
-		password  string
-		wantErr   error
-		policy    PasswordPolicy
+		name     string
+		password string
+		wantErr  error
+		policy   PasswordPolicy
 	}{
 		{
 			name:     "strong password - meets all requirements",
@@ -121,9 +121,9 @@ func TestPasswordService_Hash(t *testing.T) {
 	ps := NewPasswordService()
 
 	tests := []struct {
-		name     string
-		password string
-		wantErr  error
+		name      string
+		password  string
+		wantErr   error
 		checkHash func(*testing.T, string)
 	}{
 		{
@@ -529,32 +529,32 @@ func TestPasswordService_SpecialCharacters(t *testing.T) {
 	// Test various special characters - each password is at least 12 chars
 	// with uppercase, lowercase, digit, and the special character being tested
 	specialPasswords := []string{
-		"Password123!",  // Basic special
-		"Password123@",  // At symbol
-		"Password123#",  // Hash
-		"Password123$",  // Dollar
-		"Password123%",  // Percent
-		"Password123^",  // Caret
-		"Password123&",  // Ampersand
-		"Password123*",  // Asterisk
-		"Password123(",  // Open paren
-		"Password123)",  // Close paren
-		"Password123_",  // Underscore
-		"Password123+",  // Plus
-		"Password123-",  // Minus
-		"Password123=",  // Equals
-		"Password123[",  // Open bracket
-		"Password123]",  // Close bracket
-		"Password123{",  // Open brace
-		"Password123}",  // Close brace
-		"Password123|",  // Pipe
-		"Password123;",  // Semicolon
-		"Password123:",  // Colon
-		"Password123,",  // Comma
-		"Password123.",  // Period
-		"Password123<",  // Less than
-		"Password123>",  // Greater than
-		"Password123?",  // Question mark
+		"Password123!", // Basic special
+		"Password123@", // At symbol
+		"Password123#", // Hash
+		"Password123$", // Dollar
+		"Password123%", // Percent
+		"Password123^", // Caret
+		"Password123&", // Ampersand
+		"Password123*", // Asterisk
+		"Password123(", // Open paren
+		"Password123)", // Close paren
+		"Password123_", // Underscore
+		"Password123+", // Plus
+		"Password123-", // Minus
+		"Password123=", // Equals
+		"Password123[", // Open bracket
+		"Password123]", // Close bracket
+		"Password123{", // Open brace
+		"Password123}", // Close brace
+		"Password123|", // Pipe
+		"Password123;", // Semicolon
+		"Password123:", // Colon
+		"Password123,", // Comma
+		"Password123.", // Period
+		"Password123<", // Less than
+		"Password123>", // Greater than
+		"Password123?", // Question mark
 	}
 
 	for _, password := range specialPasswords {

@@ -22,23 +22,23 @@ import (
 
 // EnhancedHealthResponse provides comprehensive health status with all system checks
 type EnhancedHealthResponse struct {
-	Status       string                    `json:"status"`       // healthy, degraded, unhealthy
-	Timestamp    string                    `json:"timestamp"`
-	Version      string                    `json:"version,omitempty"`
-	Uptime       string                    `json:"uptime"`
-	Checks       map[string]CheckResult    `json:"checks"`
-	System       *SystemInfo               `json:"system,omitempty"`
-	CheckedAt    string                    `json:"checked_at"`
+	Status    string                 `json:"status"` // healthy, degraded, unhealthy
+	Timestamp string                 `json:"timestamp"`
+	Version   string                 `json:"version,omitempty"`
+	Uptime    string                 `json:"uptime"`
+	Checks    map[string]CheckResult `json:"checks"`
+	System    *SystemInfo            `json:"system,omitempty"`
+	CheckedAt string                 `json:"checked_at"`
 }
 
 // CheckResult represents the result of a single health check
 type CheckResult struct {
-	Status      string                 `json:"status"`      // ok, warning, critical
-	LatencyMs   float64                `json:"latency_ms"`
-	Message     string                 `json:"message,omitempty"`
-	Details     map[string]interface{} `json:"details,omitempty"`
-	Critical    bool                   `json:"critical"`
-	CheckedAt   string                 `json:"checked_at"`
+	Status    string                 `json:"status"` // ok, warning, critical
+	LatencyMs float64                `json:"latency_ms"`
+	Message   string                 `json:"message,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+	Critical  bool                   `json:"critical"`
+	CheckedAt string                 `json:"checked_at"`
 }
 
 // SystemInfo provides system resource information
@@ -51,20 +51,20 @@ type SystemInfo struct {
 
 // MemInfo provides memory usage information
 type MemInfo struct {
-	AllocMB       uint64  `json:"alloc_mb"`
-	TotalAllocMB  uint64  `json:"total_alloc_mb"`
-	SysMB         uint64  `json:"sys_mb"`
-	NumGC         uint32  `json:"num_gc"`
-	HeapObjects   uint64  `json:"heap_objects"`
-	StackInUseMB  uint64  `json:"stack_in_use_mb"`
+	AllocMB        uint64 `json:"alloc_mb"`
+	TotalAllocMB   uint64 `json:"total_alloc_mb"`
+	SysMB          uint64 `json:"sys_mb"`
+	NumGC          uint32 `json:"num_gc"`
+	HeapObjects    uint64 `json:"heap_objects"`
+	StackInUseMB   uint64 `json:"stack_in_use_mb"`
 	GCPauseTotalMs uint64 `json:"gc_pause_total_ms"`
 }
 
 // ConnInfo provides database connection information
 type ConnInfo struct {
-	DBTotal      int32   `json:"db_total"`
-	DBIdle       int32   `json:"db_idle"`
-	DBAcquired   int64   `json:"db_acquired"`
+	DBTotal        int32 `json:"db_total"`
+	DBIdle         int32 `json:"db_idle"`
+	DBAcquired     int64 `json:"db_acquired"`
 	RedisConnected bool  `json:"redis_connected"`
 }
 
@@ -80,15 +80,15 @@ type CertInfo struct {
 
 // EnhancedHealthService provides comprehensive health monitoring
 type EnhancedHealthService struct {
-	checkers     []HealthChecker
-	logger       *zap.Logger
-	startTime    time.Time
-	version      string
-	db           *pgxpool.Pool
-	redis        *redis.Client
+	checkers      []HealthChecker
+	logger        *zap.Logger
+	startTime     time.Time
+	version       string
+	db            *pgxpool.Pool
+	redis         *redis.Client
 	elasticsearch *database.ElasticsearchClient
-	certPaths    []string
-	mu           sync.RWMutex
+	certPaths     []string
+	mu            sync.RWMutex
 }
 
 // NewEnhancedHealthService creates a new enhanced health service
@@ -200,8 +200,8 @@ func (h *EnhancedHealthService) Check(ctx context.Context) *EnhancedHealthRespon
 
 	// Run registered custom checkers
 	type result struct {
-		name  string
-		check ComponentStatus
+		name     string
+		check    ComponentStatus
 		critical bool
 	}
 	results := make(chan result, len(checkers))
@@ -284,11 +284,11 @@ func (h *EnhancedHealthService) checkDatabase(ctx context.Context) CheckResult {
 	// Get connection pool stats
 	stats := h.db.Stat()
 	details := map[string]interface{}{
-		"total_connections": int(stats.TotalConns()),
-		"idle_connections":  int(stats.IdleConns()),
-		"acquire_count":     int(stats.AcquireCount()),
+		"total_connections":   int(stats.TotalConns()),
+		"idle_connections":    int(stats.IdleConns()),
+		"acquire_count":       int(stats.AcquireCount()),
 		"acquire_duration_ms": stats.AcquireDuration().Milliseconds(),
-		"max_connections":    int(stats.MaxConns()),
+		"max_connections":     int(stats.MaxConns()),
 	}
 
 	// Check for connection pool exhaustion
@@ -488,12 +488,12 @@ func gatherMemoryInfo() *MemInfo {
 	runtime.ReadMemStats(&m)
 
 	info := &MemInfo{
-		AllocMB:       m.Alloc / 1024 / 1024,
-		TotalAllocMB:  m.TotalAlloc / 1024 / 1024,
-		SysMB:         m.Sys / 1024 / 1024,
-		NumGC:         m.NumGC,
-		HeapObjects:   m.HeapObjects,
-		StackInUseMB:  m.StackInuse / 1024 / 1024,
+		AllocMB:        m.Alloc / 1024 / 1024,
+		TotalAllocMB:   m.TotalAlloc / 1024 / 1024,
+		SysMB:          m.Sys / 1024 / 1024,
+		NumGC:          m.NumGC,
+		HeapObjects:    m.HeapObjects,
+		StackInUseMB:   m.StackInuse / 1024 / 1024,
 		GCPauseTotalMs: m.PauseTotalNs / 1000000,
 	}
 

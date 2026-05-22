@@ -335,10 +335,10 @@ func (p *MockProvider) GetSMSTo(to string) []SentMessage {
 
 // WebhookProvider sends OTP codes via a custom webhook
 type WebhookProvider struct {
-	url     string
-	apiKey  string
-	logger  *zap.Logger
-	client  *http.Client
+	url    string
+	apiKey string
+	logger *zap.Logger
+	client *http.Client
 }
 
 // NewWebhookProvider creates a new webhook provider

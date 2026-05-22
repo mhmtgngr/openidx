@@ -195,7 +195,7 @@ func (m *RBACMiddleware) RequireRole(roles ...string) gin.HandlerFunc {
 		)
 
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error":   ErrInsufficientRole.Error(),
+			"error":    ErrInsufficientRole.Error(),
 			"required": roles,
 		})
 	}
@@ -268,8 +268,8 @@ func (m *RBACMiddleware) RequirePermission(perms ...string) gin.HandlerFunc {
 		)
 
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error":      ErrInsufficientPermission.Error(),
-			"required":   perms,
+			"error":    ErrInsufficientPermission.Error(),
+			"required": perms,
 		})
 	}
 }
@@ -331,7 +331,7 @@ func (m *RBACMiddleware) RequireAny(roles ...string) gin.HandlerFunc {
 		)
 
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error":   ErrInsufficientRole.Error(),
+			"error":  ErrInsufficientRole.Error(),
 			"any_of": roles,
 		})
 	}
@@ -396,7 +396,7 @@ func (m *RBACMiddleware) RequireAnyPermission(perms ...string) gin.HandlerFunc {
 		)
 
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error":   ErrInsufficientPermission.Error(),
+			"error":  ErrInsufficientPermission.Error(),
 			"any_of": perms,
 		})
 	}
@@ -446,7 +446,7 @@ func (m *RBACMiddleware) RequireAllRoles(roles ...string) gin.HandlerFunc {
 					zap.Strings("required_roles", roles),
 				)
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-					"error":   ErrInsufficientRole.Error(),
+					"error":    ErrInsufficientRole.Error(),
 					"required": roles,
 				})
 				return

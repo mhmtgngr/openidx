@@ -16,13 +16,13 @@ import (
 
 const (
 	// Redis key prefixes for OTP tracking
-	redisOTPPrefix        = "mfa:otp:"
+	redisOTPPrefix          = "mfa:otp:"
 	redisOTPRateLimitPrefix = "mfa:otp:ratelimit:"
 	redisOTPAttemptsPrefix  = "mfa:otp:attempts:"
 
 	// Default OTP configuration
-	DefaultOTPLength  = 6                 // 6-digit code
-	DefaultOTPExpiry  = 5 * time.Minute   // 5 minutes
+	DefaultOTPLength   = 6                // 6-digit code
+	DefaultOTPExpiry   = 5 * time.Minute  // 5 minutes
 	DefaultMaxAttempts = 3                // Max verification attempts
 	OTPRateLimitWindow = 60 * time.Second // 1 OTP per 60 seconds
 )
@@ -45,38 +45,38 @@ const (
 
 // OTPConfig holds configuration for OTP generation and validation
 type OTPConfig struct {
-	Length    int           // Number of digits (default: 6)
-	Expiry    time.Duration // TTL in seconds (default: 300)
-	MaxAttempts int         // Max verification attempts (default: 3)
-	RateLimit time.Duration // Min time between OTPs (default: 60s)
+	Length      int           // Number of digits (default: 6)
+	Expiry      time.Duration // TTL in seconds (default: 300)
+	MaxAttempts int           // Max verification attempts (default: 3)
+	RateLimit   time.Duration // Min time between OTPs (default: 60s)
 }
 
 // DefaultOTPConfig returns the default OTP configuration
 func DefaultOTPConfig() *OTPConfig {
 	return &OTPConfig{
-		Length:     DefaultOTPLength,
-		Expiry:     DefaultOTPExpiry,
+		Length:      DefaultOTPLength,
+		Expiry:      DefaultOTPExpiry,
 		MaxAttempts: DefaultMaxAttempts,
-		RateLimit:  OTPRateLimitWindow,
+		RateLimit:   OTPRateLimitWindow,
 	}
 }
 
 // OTPCode represents a generated OTP code
 type OTPCode struct {
-	Code      string    `json:"code"`       // The OTP code (only exposed during generation)
-	UserID    uuid.UUID `json:"user_id"`
-	Type      OTPType   `json:"type"`       // EMAIL or SMS
-	Destination string  `json:"destination"` // Email address or phone number
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	Code        string    `json:"code"` // The OTP code (only exposed during generation)
+	UserID      uuid.UUID `json:"user_id"`
+	Type        OTPType   `json:"type"`        // EMAIL or SMS
+	Destination string    `json:"destination"` // Email address or phone number
+	ExpiresAt   time.Time `json:"expires_at"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // OTPService provides one-time password functionality for email and SMS
 type OTPService struct {
-	config       *OTPConfig
-	redis        OTPRedisClient
-	logger       *zap.Logger
-	provider     Provider
+	config        *OTPConfig
+	redis         OTPRedisClient
+	logger        *zap.Logger
+	provider      Provider
 	messagePrefix string
 }
 

@@ -112,7 +112,7 @@ warnings[msg] {
 				},
 				Resource: PolicyResource{
 					Type: "sensitive",
-					ID:    "res1",
+					ID:   "res1",
 				},
 				Action: "write",
 			},
@@ -130,7 +130,7 @@ warnings[msg] {
 				},
 				Resource: PolicyResource{
 					Type: "public",
-					ID:    "res2",
+					ID:   "res2",
 				},
 				Action: "read",
 			},
@@ -148,7 +148,7 @@ warnings[msg] {
 				},
 				Resource: PolicyResource{
 					Type: "sensitive",
-					ID:    "res1",
+					ID:   "res1",
 				},
 				Action: "write",
 			},

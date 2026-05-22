@@ -13,7 +13,7 @@ import (
 type mockChecker struct {
 	name      string
 	status    string
-	latencyMS  float64
+	latencyMS float64
 	details   string
 	critical  bool
 }
@@ -24,10 +24,10 @@ func (m *mockChecker) Name() string {
 
 func (m *mockChecker) Check(ctx context.Context) ComponentStatus {
 	return ComponentStatus{
-		Status:     m.status,
-		LatencyMS:  m.latencyMS,
-		Details:    m.details,
-		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Status:    m.status,
+		LatencyMS: m.latencyMS,
+		Details:   m.details,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
@@ -152,9 +152,9 @@ func TestHealthService_ReadyHandler(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	tests := []struct {
-		name           string
-		checkers       []HealthChecker
-		expectReady    bool
+		name        string
+		checkers    []HealthChecker
+		expectReady bool
 	}{
 		{
 			name: "all critical components up - ready",
@@ -250,16 +250,16 @@ func TestHealthService_ConcurrentCheck(t *testing.T) {
 
 	// Add a slow checker
 	slowChecker := &mockChecker{
-		name: "slow",
-		status: "up",
+		name:     "slow",
+		status:   "up",
 		critical: true,
 	}
 	hs.RegisterCheck(slowChecker)
 
 	// Add a fast checker
 	fastChecker := &mockChecker{
-		name: "fast",
-		status: "up",
+		name:     "fast",
+		status:   "up",
 		critical: true,
 	}
 	hs.RegisterCheck(fastChecker)
@@ -359,10 +359,10 @@ func TestFuncChecker(t *testing.T) {
 	funcChecker := NewFuncChecker("func", func(ctx context.Context) ComponentStatus {
 		callCount++
 		return ComponentStatus{
-			Status:     "up",
-			LatencyMS:  10,
-			Details:    "func check",
-			CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+			Status:    "up",
+			LatencyMS: 10,
+			Details:   "func check",
+			CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 	}, true)
 	hs.RegisterCheck(funcChecker)

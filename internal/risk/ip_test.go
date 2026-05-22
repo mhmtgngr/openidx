@@ -100,17 +100,17 @@ func TestIPBlocklistEntry(t *testing.T) {
 	blockedUntil := now.Add(24 * time.Hour)
 
 	entry := IPBlocklistEntry{
-		ID:         "test-id-1",
-		IPAddress:  "192.0.2.1",
-		CIDR:       "192.0.2.0/24",
-		Reason:     "Test block",
-		ThreatType: "malware",
-		Source:     "manual",
-		Permanent:  false,
+		ID:           "test-id-1",
+		IPAddress:    "192.0.2.1",
+		CIDR:         "192.0.2.0/24",
+		Reason:       "Test block",
+		ThreatType:   "malware",
+		Source:       "manual",
+		Permanent:    false,
 		BlockedUntil: &blockedUntil,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		ReportCount: 5,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		ReportCount:  5,
 	}
 
 	if entry.ID == "" {
@@ -285,11 +285,11 @@ func TestImpossibleTravelResultStructure(t *testing.T) {
 	prevTime := now.Add(-2 * time.Hour)
 
 	result := ImpossibleTravelResult{
-		IsImpossible:   true,
-		DistanceKm:     5000,
-		TimeDelta:      2 * time.Hour,
-		RequiredTime:   6 * time.Hour,
-		SpeedKmh:       2500,
+		IsImpossible: true,
+		DistanceKm:   5000,
+		TimeDelta:    2 * time.Hour,
+		RequiredTime: 6 * time.Hour,
+		SpeedKmh:     2500,
 		PreviousLocation: &GeoPoint{
 			Latitude:  40.7128,
 			Longitude: -74.0060,
@@ -412,9 +412,9 @@ func TestHaversineDistance_EdgeCases(t *testing.T) {
 // TestMinAndMaxHelpers tests the min and max helper functions
 func TestMinAndMaxHelpers(t *testing.T) {
 	tests := []struct {
-		name     string
-		a        int
-		b        int
+		name        string
+		a           int
+		b           int
 		minExpected int
 		maxExpected int
 	}{
@@ -515,47 +515,47 @@ func TestIPValidation(t *testing.T) {
 // TestGeoPointValidation tests GeoPoint validation
 func TestGeoPointValidation(t *testing.T) {
 	tests := []struct {
-		name    string
-		point   GeoPoint
-		valid   bool
+		name  string
+		point GeoPoint
+		valid bool
 	}{
 		{
-			name: "valid SF",
+			name:  "valid SF",
 			point: GeoPoint{Latitude: 37.7749, Longitude: -122.4194},
 			valid: true,
 		},
 		{
-			name: "valid London",
+			name:  "valid London",
 			point: GeoPoint{Latitude: 51.5074, Longitude: -0.1278},
 			valid: true,
 		},
 		{
-			name: "north pole",
+			name:  "north pole",
 			point: GeoPoint{Latitude: 90, Longitude: 0},
 			valid: true,
 		},
 		{
-			name: "south pole",
+			name:  "south pole",
 			point: GeoPoint{Latitude: -90, Longitude: 0},
 			valid: true,
 		},
 		{
-			name: "invalid latitude too high",
+			name:  "invalid latitude too high",
 			point: GeoPoint{Latitude: 91, Longitude: 0},
 			valid: false,
 		},
 		{
-			name: "invalid latitude too low",
+			name:  "invalid latitude too low",
 			point: GeoPoint{Latitude: -91, Longitude: 0},
 			valid: false,
 		},
 		{
-			name: "invalid longitude too high",
+			name:  "invalid longitude too high",
 			point: GeoPoint{Latitude: 0, Longitude: 181},
 			valid: false,
 		},
 		{
-			name: "invalid longitude too low",
+			name:  "invalid longitude too low",
 			point: GeoPoint{Latitude: 0, Longitude: -181},
 			valid: false,
 		},

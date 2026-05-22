@@ -21,136 +21,136 @@ func TestCheckImpossibleTravel(t *testing.T) {
 	// In production, these would use a mock database
 
 	tests := []struct {
-		name              string
-		lastLat           float64
-		lastLon           float64
-		lastTime          time.Time
-		currentLat        float64
-		currentLon        float64
-		currentTime       time.Time
+		name               string
+		lastLat            float64
+		lastLon            float64
+		lastTime           time.Time
+		currentLat         float64
+		currentLon         float64
+		currentTime        time.Time
 		expectedImpossible bool
-		expectedDistance  float64 // Approximate km
-		checkReason       string
+		expectedDistance   float64 // Approximate km
+		checkReason        string
 	}{
 		{
-			name:              "SF to LA - normal travel (2 hours)",
-			lastLat:           37.7749,  // San Francisco
-			lastLon:           -122.4194,
-			lastTime:          now.Add(-2 * time.Hour),
-			currentLat:        34.0522,  // Los Angeles
-			currentLon:        -118.2437,
-			currentTime:       now,
+			name:               "SF to LA - normal travel (2 hours)",
+			lastLat:            37.7749, // San Francisco
+			lastLon:            -122.4194,
+			lastTime:           now.Add(-2 * time.Hour),
+			currentLat:         34.0522, // Los Angeles
+			currentLon:         -118.2437,
+			currentTime:        now,
 			expectedImpossible: false,
-			expectedDistance:  559,
-			checkReason:       "~560km in 2 hours is possible (280 km/h)",
+			expectedDistance:   559,
+			checkReason:        "~560km in 2 hours is possible (280 km/h)",
 		},
 		{
-			name:              "SF to LA - impossible travel (30 minutes)",
-			lastLat:           37.7749,
-			lastLon:           -122.4194,
-			lastTime:          now.Add(-30 * time.Minute),
-			currentLat:        34.0522,
-			currentLon:        -118.2437,
-			currentTime:       now,
+			name:               "SF to LA - impossible travel (30 minutes)",
+			lastLat:            37.7749,
+			lastLon:            -122.4194,
+			lastTime:           now.Add(-30 * time.Minute),
+			currentLat:         34.0522,
+			currentLon:         -118.2437,
+			currentTime:        now,
 			expectedImpossible: true,
-			expectedDistance:  559,
-			checkReason:       "~560km in 30 minutes is impossible (>900 km/h required)",
+			expectedDistance:   559,
+			checkReason:        "~560km in 30 minutes is impossible (>900 km/h required)",
 		},
 		{
-			name:              "NYC to London - impossible (1 hour)",
-			lastLat:           40.7128,  // New York
-			lastLon:           -74.0060,
-			lastTime:          now.Add(-1 * time.Hour),
-			currentLat:        51.5074,  // London
-			currentLon:        -0.1278,
-			currentTime:       now,
+			name:               "NYC to London - impossible (1 hour)",
+			lastLat:            40.7128, // New York
+			lastLon:            -74.0060,
+			lastTime:           now.Add(-1 * time.Hour),
+			currentLat:         51.5074, // London
+			currentLon:         -0.1278,
+			currentTime:        now,
 			expectedImpossible: true,
-			expectedDistance:  5570,
-			checkReason:       "~5570km in 1 hour is impossible",
+			expectedDistance:   5570,
+			checkReason:        "~5570km in 1 hour is impossible",
 		},
 		{
-			name:              "NYC to London - possible (8 hours)",
-			lastLat:           40.7128,
-			lastLon:           -74.0060,
-			lastTime:          now.Add(-8 * time.Hour),
-			currentLat:        51.5074,
-			currentLon:        -0.1278,
-			currentTime:       now,
+			name:               "NYC to London - possible (8 hours)",
+			lastLat:            40.7128,
+			lastLon:            -74.0060,
+			lastTime:           now.Add(-8 * time.Hour),
+			currentLat:         51.5074,
+			currentLon:         -0.1278,
+			currentTime:        now,
 			expectedImpossible: false,
-			expectedDistance:  5570,
-			checkReason:       "~5570km in 8 hours is possible (~700 km/h)",
+			expectedDistance:   5570,
+			checkReason:        "~5570km in 8 hours is possible (~700 km/h)",
 		},
 		{
-			name:              "SF to Tokyo - impossible (2 hours)",
-			lastLat:           37.7749,
-			lastLon:           -122.4194,
-			lastTime:          now.Add(-2 * time.Hour),
-			currentLat:        35.6762,  // Tokyo
-			currentLon:        139.6503,
-			currentTime:       now,
+			name:               "SF to Tokyo - impossible (2 hours)",
+			lastLat:            37.7749,
+			lastLon:            -122.4194,
+			lastTime:           now.Add(-2 * time.Hour),
+			currentLat:         35.6762, // Tokyo
+			currentLon:         139.6503,
+			currentTime:        now,
 			expectedImpossible: true,
-			expectedDistance:  8270,
-			checkReason:       "~8270km in 2 hours is impossible",
+			expectedDistance:   8270,
+			checkReason:        "~8270km in 2 hours is impossible",
 		},
 		{
-			name:              "Short distance within SF - always possible",
-			lastLat:           37.7749,
-			lastLon:           -122.4194,
-			lastTime:          now.Add(-5 * time.Minute),
-			currentLat:        37.8044,
-			currentLon:        -122.2711,
-			currentTime:       now,
+			name:               "Short distance within SF - always possible",
+			lastLat:            37.7749,
+			lastLon:            -122.4194,
+			lastTime:           now.Add(-5 * time.Minute),
+			currentLat:         37.8044,
+			currentLon:         -122.2711,
+			currentTime:        now,
 			expectedImpossible: false,
-			expectedDistance:  15,
-			checkReason:       "~15km is always possible",
+			expectedDistance:   15,
+			checkReason:        "~15km is always possible",
 		},
 		{
-			name:              "Same location - not impossible",
-			lastLat:           37.7749,
-			lastLon:           -122.4194,
-			lastTime:          now.Add(-1 * time.Hour),
-			currentLat:        37.7749,
-			currentLon:        -122.4194,
-			currentTime:       now,
+			name:               "Same location - not impossible",
+			lastLat:            37.7749,
+			lastLon:            -122.4194,
+			lastTime:           now.Add(-1 * time.Hour),
+			currentLat:         37.7749,
+			currentLon:         -122.4194,
+			currentTime:        now,
 			expectedImpossible: false,
-			expectedDistance:  0,
-			checkReason:       "0km distance",
+			expectedDistance:   0,
+			checkReason:        "0km distance",
 		},
 		{
-			name:              "Distance below threshold - not checked",
-			lastLat:           37.7749,
-			lastLon:           -122.4194,
-			lastTime:          now.Add(-10 * time.Minute),
-			currentLat:        37.8500,
-			currentLon:        -122.3000,
-			currentTime:       now,
+			name:               "Distance below threshold - not checked",
+			lastLat:            37.7749,
+			lastLon:            -122.4194,
+			lastTime:           now.Add(-10 * time.Minute),
+			currentLat:         37.8500,
+			currentLon:         -122.3000,
+			currentTime:        now,
 			expectedImpossible: false,
-			expectedDistance:  80,
-			checkReason:       "~80km is below minimum check threshold",
+			expectedDistance:   80,
+			checkReason:        "~80km is below minimum check threshold",
 		},
 		{
-			name:              "Paris to Singapore - impossible (3 hours)",
-			lastLat:           48.8566,  // Paris
-			lastLon:           2.3522,
-			lastTime:          now.Add(-3 * time.Hour),
-			currentLat:        1.3521,   // Singapore
-			currentLon:        103.8198,
-			currentTime:       now,
+			name:               "Paris to Singapore - impossible (3 hours)",
+			lastLat:            48.8566, // Paris
+			lastLon:            2.3522,
+			lastTime:           now.Add(-3 * time.Hour),
+			currentLat:         1.3521, // Singapore
+			currentLon:         103.8198,
+			currentTime:        now,
 			expectedImpossible: true,
-			expectedDistance:  10750,
-			checkReason:       "~10750km in 3 hours is impossible",
+			expectedDistance:   10750,
+			checkReason:        "~10750km in 3 hours is impossible",
 		},
 		{
-			name:              "Sydney to Los Angeles - impossible (4 hours)",
-			lastLat:           -33.8688, // Sydney
-			lastLon:           151.2093,
-			lastTime:          now.Add(-4 * time.Hour),
-			currentLat:        34.0522,  // LA
-			currentLon:        -118.2437,
-			currentTime:       now,
+			name:               "Sydney to Los Angeles - impossible (4 hours)",
+			lastLat:            -33.8688, // Sydney
+			lastLon:            151.2093,
+			lastTime:           now.Add(-4 * time.Hour),
+			currentLat:         34.0522, // LA
+			currentLon:         -118.2437,
+			currentTime:        now,
 			expectedImpossible: true,
-			expectedDistance:  12080,
-			checkReason:       "~12080km in 4 hours is impossible",
+			expectedDistance:   12080,
+			checkReason:        "~12080km in 4 hours is impossible",
 		},
 	}
 

@@ -21,10 +21,10 @@ type SecurityConfig struct {
 // DefaultSecurityConfig returns a SecurityConfig with secure defaults
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
-		HSTSEnabled:   true,
-		CSPEnabled:    true,
-		FrameOptions:  "DENY",
-		CSPCustom:     "",
+		HSTSEnabled:  true,
+		CSPEnabled:   true,
+		FrameOptions: "DENY",
+		CSPCustom:    "",
 	}
 }
 

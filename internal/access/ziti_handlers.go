@@ -16,9 +16,9 @@ import (
 func (s *Service) handleZitiStatus(c *gin.Context) {
 	if s.zitiManager == nil {
 		c.JSON(http.StatusOK, gin.H{
-			"enabled":     false,
-			"message":     "OpenZiti integration is not configured",
-			"sdk_ready":   false,
+			"enabled":   false,
+			"message":   "OpenZiti integration is not configured",
+			"sdk_ready": false,
 		})
 		return
 	}

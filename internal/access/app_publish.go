@@ -91,11 +91,11 @@ type PublishPathsRequest struct {
 }
 
 type PublishResult struct {
-	TotalRequested int             `json:"total_requested"`
-	TotalPublished int             `json:"total_published"`
-	TotalFailed    int             `json:"total_failed"`
+	TotalRequested int                  `json:"total_requested"`
+	TotalPublished int                  `json:"total_published"`
+	TotalFailed    int                  `json:"total_failed"`
 	Published      []PublishedPathRoute `json:"published"`
-	Errors         []string        `json:"errors,omitempty"`
+	Errors         []string             `json:"errors,omitempty"`
 }
 
 type PublishedPathRoute struct {

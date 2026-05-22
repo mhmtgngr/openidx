@@ -115,12 +115,12 @@ func TestBehaviorTracker_DetectAnomalies(t *testing.T) {
 	redisClient := &database.RedisClient{Client: client}
 
 	config := BehaviorConfig{
-		MinLoginsForProfile:  5,
-		StdDevThreshold:      2.0,
-		LocationThresholdKm:  500,
-		MaxLocations:         10,
-		MaxDevices:           5,
-		MaxResources:         20,
+		MinLoginsForProfile: 5,
+		StdDevThreshold:     2.0,
+		LocationThresholdKm: 500,
+		MaxLocations:        10,
+		MaxDevices:          5,
+		MaxResources:        20,
 	}
 	tracker := NewBehaviorTracker(nil, redisClient, config, zap.NewNop())
 
@@ -177,7 +177,7 @@ func TestBehaviorTracker_DetectAnomalies(t *testing.T) {
 		{
 			name:          "new location - far away",
 			hour:          9,
-			lat:           51.5074,  // London
+			lat:           51.5074, // London
 			lon:           -0.1278,
 			ip:            "192.168.1.1",
 			userAgent:     "Chrome",
@@ -231,38 +231,38 @@ func TestBehaviorTracker_isAnomalousHour(t *testing.T) {
 	tracker := NewBehaviorTracker(nil, nil, config, zap.NewNop())
 
 	tests := []struct {
-		name       string
-		hour       int
-		mean       float64
-		stdDev     float64
+		name        string
+		hour        int
+		mean        float64
+		stdDev      float64
 		isAnomalous bool
 	}{
 		{
-			name:       "within 1 std dev",
-			hour:       10,
-			mean:       9,
-			stdDev:     2,
+			name:        "within 1 std dev",
+			hour:        10,
+			mean:        9,
+			stdDev:      2,
 			isAnomalous: false, // |10-9|/2 = 0.5 < 2
 		},
 		{
-			name:       "within 2 std dev",
-			hour:       13,
-			mean:       9,
-			stdDev:     2,
+			name:        "within 2 std dev",
+			hour:        13,
+			mean:        9,
+			stdDev:      2,
 			isAnomalous: false, // |13-9|/2 = 2.0, not > 2
 		},
 		{
-			name:       "beyond 2 std dev",
-			hour:       14,
-			mean:       9,
-			stdDev:     2,
+			name:        "beyond 2 std dev",
+			hour:        14,
+			mean:        9,
+			stdDev:      2,
 			isAnomalous: true, // |14-9|/2 = 2.5 > 2
 		},
 		{
-			name:       "zero std dev - no variance",
-			hour:       10,
-			mean:       9,
-			stdDev:     0,
+			name:        "zero std dev - no variance",
+			hour:        10,
+			mean:        9,
+			stdDev:      0,
 			isAnomalous: false, // Should return false when stdDev is 0
 		},
 	}
@@ -284,17 +284,17 @@ func TestBehaviorTracker_isNewLocation(t *testing.T) {
 	tracker := NewBehaviorTracker(nil, nil, config, zap.NewNop())
 
 	knownLocations := []GeoPoint{
-		{Latitude: 40.7128, Longitude: -74.0060}, // New York
+		{Latitude: 40.7128, Longitude: -74.0060},  // New York
 		{Latitude: 34.0522, Longitude: -118.2437}, // Los Angeles
 		{Latitude: 51.5074, Longitude: -0.1278},   // London
 	}
 
 	tests := []struct {
-		name          string
-		lat           float64
-		lon           float64
-		expectNew     bool
-		minDistance   float64
+		name        string
+		lat         float64
+		lon         float64
+		expectNew   bool
+		minDistance float64
 	}{
 		{
 			name:        "same as known location",
@@ -515,48 +515,48 @@ func TestBehaviorConfig(t *testing.T) {
 // TestHaversineDistance tests the haversine distance calculation
 func TestHaversineDistance(t *testing.T) {
 	tests := []struct {
-		name     string
-		lat1     float64
-		lon1     float64
-		lat2     float64
-		lon2     float64
-		expected float64 // Approximate distance in km
+		name      string
+		lat1      float64
+		lon1      float64
+		lat2      float64
+		lon2      float64
+		expected  float64 // Approximate distance in km
 		tolerance float64
 	}{
 		{
-			name:     "NYC to London",
-			lat1:     40.7128,
-			lon1:     -74.0060,
-			lat2:     51.5074,
-			lon2:     -0.1278,
-			expected: 5570,
+			name:      "NYC to London",
+			lat1:      40.7128,
+			lon1:      -74.0060,
+			lat2:      51.5074,
+			lon2:      -0.1278,
+			expected:  5570,
 			tolerance: 50,
 		},
 		{
-			name:     "NYC to LA",
-			lat1:     40.7128,
-			lon1:     -74.0060,
-			lat2:     34.0522,
-			lon2:     -118.2437,
-			expected: 3944,
+			name:      "NYC to LA",
+			lat1:      40.7128,
+			lon1:      -74.0060,
+			lat2:      34.0522,
+			lon2:      -118.2437,
+			expected:  3944,
 			tolerance: 50,
 		},
 		{
-			name:     "same location",
-			lat1:     40.7128,
-			lon1:     -74.0060,
-			lat2:     40.7128,
-			lon2:     -74.0060,
-			expected: 0,
+			name:      "same location",
+			lat1:      40.7128,
+			lon1:      -74.0060,
+			lat2:      40.7128,
+			lon2:      -74.0060,
+			expected:  0,
 			tolerance: 1,
 		},
 		{
-			name:     "short distance",
-			lat1:     40.7128,
-			lon1:     -74.0060,
-			lat2:     40.73,
-			lon2:     -73.99,
-			expected: 2,
+			name:      "short distance",
+			lat1:      40.7128,
+			lon1:      -74.0060,
+			lat2:      40.73,
+			lon2:      -73.99,
+			expected:  2,
 			tolerance: 1,
 		},
 	}
@@ -572,4 +572,3 @@ func TestHaversineDistance(t *testing.T) {
 		})
 	}
 }
-

@@ -16,12 +16,12 @@ import (
 
 // ZitiEdgeRouterInfo represents a Ziti edge router from the management API
 type ZitiEdgeRouterInfo struct {
-	ID             string                `json:"id"`
-	Name           string                `json:"name"`
-	Hostname       string                `json:"hostname"`
-	IsOnline       bool                  `json:"isOnline"`
-	IsVerified     bool                  `json:"isVerified"`
-	RoleAttributes []string              `json:"roleAttributes"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Hostname       string                 `json:"hostname"`
+	IsOnline       bool                   `json:"isOnline"`
+	IsVerified     bool                   `json:"isVerified"`
+	RoleAttributes []string               `json:"roleAttributes"`
 	VersionInfo    *ZitiEdgeRouterVersion `json:"versionInfo,omitempty"`
 	// Computed fields for DB sync / display
 	Os      string `json:"-"`

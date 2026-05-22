@@ -209,7 +209,7 @@ func WithRateLimit(limiter RateLimiter) Decorator {
 			if !limiter.Allow(key) {
 				c.Header("X-RateLimit-Remaining", "0")
 				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error": "rate_limit_exceeded",
+					"error":   "rate_limit_exceeded",
 					"message": "Too many requests, please try again later",
 				})
 				c.Abort()
@@ -367,7 +367,7 @@ func WithTimeout(timeout time.Duration) Decorator {
 				// Handler completed
 			case <-time.After(timeout):
 				c.JSON(http.StatusGatewayTimeout, gin.H{
-					"error": "timeout",
+					"error":   "timeout",
 					"message": "Request timed out",
 				})
 				c.Abort()
@@ -415,7 +415,7 @@ func WithValidation(validator ValidatorFunc) Decorator {
 		return func(c *gin.Context) {
 			if err := validator(c); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "validation_error",
+					"error":   "validation_error",
 					"message": err.Error(),
 				})
 				c.Abort()
@@ -439,7 +439,7 @@ func WithAuthorization(authorizer AuthorizerFunc) Decorator {
 		return func(c *gin.Context) {
 			if !authorizer(c) {
 				c.JSON(http.StatusForbidden, gin.H{
-					"error": "forbidden",
+					"error":   "forbidden",
 					"message": "You don't have permission to access this resource",
 				})
 				c.Abort()

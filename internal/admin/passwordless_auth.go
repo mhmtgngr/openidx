@@ -39,17 +39,17 @@ const (
 
 // PasswordlessChallenge represents an active passwordless authentication challenge
 type PasswordlessChallenge struct {
-	ID           string               `json:"id"`
-	UserID       string               `json:"user_id"`
-	Method       PasswordlessMethod   `json:"method"`
-	Challenge    string               `json:"challenge"`
-	ExpiresAt    time.Time            `json:"expires_at"`
-	Status       string               `json:"status"` // pending, verified, expired, failed
-	Metadata     json.RawMessage      `json:"metadata"`
-	CreatedAt    time.Time            `json:"created_at"`
-	VerifiedAt   *time.Time           `json:"verified_at,omitempty"`
-	IPAddress    string               `json:"ip_address,omitempty"`
-	UserAgent    string               `json:"user_agent,omitempty"`
+	ID         string             `json:"id"`
+	UserID     string             `json:"user_id"`
+	Method     PasswordlessMethod `json:"method"`
+	Challenge  string             `json:"challenge"`
+	ExpiresAt  time.Time          `json:"expires_at"`
+	Status     string             `json:"status"` // pending, verified, expired, failed
+	Metadata   json.RawMessage    `json:"metadata"`
+	CreatedAt  time.Time          `json:"created_at"`
+	VerifiedAt *time.Time         `json:"verified_at,omitempty"`
+	IPAddress  string             `json:"ip_address,omitempty"`
+	UserAgent  string             `json:"user_agent,omitempty"`
 }
 
 // PasskeyCredential represents a registered WebAuthn passkey
@@ -71,53 +71,53 @@ type PasskeyCredential struct {
 
 // MagicLink represents a generated magic link for passwordless auth
 type MagicLink struct {
-	ID           string     `json:"id"`
-	UserID       string     `json:"user_id"`
-	Token        string     `json:"token"`
-	RedirectURL  string     `json:"redirect_url"`
-	ExpiresAt    time.Time  `json:"expires_at"`
-	Used         bool       `json:"used"`
-	UsedAt       *time.Time `json:"used_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	IPAddress    string     `json:"ip_address,omitempty"`
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id"`
+	Token       string     `json:"token"`
+	RedirectURL string     `json:"redirect_url"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	Used        bool       `json:"used"`
+	UsedAt      *time.Time `json:"used_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	IPAddress   string     `json:"ip_address,omitempty"`
 }
 
 // SMSOTP represents an SMS one-time password for passwordless auth
 type SMSOTP struct {
-	ID           string     `json:"id"`
-	UserID       string     `json:"user_id"`
-	PhoneNumber  string     `json:"phone_number"`
-	Code         string     `json:"code"`
-	ExpiresAt    time.Time  `json:"expires_at"`
-	Used         bool       `json:"used"`
-	UsedAt       *time.Time `json:"used_at,omitempty"`
-	Attempts     int        `json:"attempts"`
-	MaxAttempts  int        `json:"max_attempts"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id"`
+	PhoneNumber string     `json:"phone_number"`
+	Code        string     `json:"code"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	Used        bool       `json:"used"`
+	UsedAt      *time.Time `json:"used_at,omitempty"`
+	Attempts    int        `json:"attempts"`
+	MaxAttempts int        `json:"max_attempts"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // PasswordlessSession represents a passwordless authentication session
 type PasswordlessSession struct {
-	ID              string               `json:"id"`
-	UserID          string               `json:"user_id"`
-	ChallengeID     string               `json:"challenge_id"`
-	Method          PasswordlessMethod   `json:"method"`
-	Status          string               `json:"status"` // initiated, verified, completed, failed
-	VerifiedAt      *time.Time           `json:"verified_at,omitempty"`
-	CompletedAt     *time.Time           `json:"completed_at,omitempty"`
-	DeviceTrust     string               `json:"device_trust"` // trusted, unknown, untrusted
-	RememberDevice  bool                 `json:"remember_device"`
-	Metadata        json.RawMessage      `json:"metadata"`
-	CreatedAt       time.Time            `json:"created_at"`
-	ExpiresAt       time.Time            `json:"expires_at"`
+	ID             string             `json:"id"`
+	UserID         string             `json:"user_id"`
+	ChallengeID    string             `json:"challenge_id"`
+	Method         PasswordlessMethod `json:"method"`
+	Status         string             `json:"status"` // initiated, verified, completed, failed
+	VerifiedAt     *time.Time         `json:"verified_at,omitempty"`
+	CompletedAt    *time.Time         `json:"completed_at,omitempty"`
+	DeviceTrust    string             `json:"device_trust"` // trusted, unknown, untrusted
+	RememberDevice bool               `json:"remember_device"`
+	Metadata       json.RawMessage    `json:"metadata"`
+	CreatedAt      time.Time          `json:"created_at"`
+	ExpiresAt      time.Time          `json:"expires_at"`
 }
 
 // PasswordlessConfig represents passwordless authentication configuration
 type PasswordlessConfig struct {
-	Enabled              bool                 `json:"enabled"`
-	AvailableMethods     []PasswordlessMethod `json:"available_methods"`
-	DefaultMethod        PasswordlessMethod   `json:"default_method"`
-	MagicLinkTTL         time.Duration        `json:"magic_link_ttl"`
+	Enabled             bool                 `json:"enabled"`
+	AvailableMethods    []PasswordlessMethod `json:"available_methods"`
+	DefaultMethod       PasswordlessMethod   `json:"default_method"`
+	MagicLinkTTL        time.Duration        `json:"magic_link_ttl"`
 	SMSOTPTTL           time.Duration        `json:"sms_otp_ttl"`
 	ChallengeTTL        time.Duration        `json:"challenge_ttl"`
 	MaxAttempts         int                  `json:"max_attempts"`
@@ -580,7 +580,7 @@ func (s *Service) handlePasswordlessInitiate(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var req struct {
-		UserID string            `json:"user_id" binding:"required"`
+		UserID string             `json:"user_id" binding:"required"`
 		Method PasswordlessMethod `json:"method" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -589,16 +589,16 @@ func (s *Service) handlePasswordlessInitiate(c *gin.Context) {
 	}
 
 	config := &PasswordlessConfig{
-		Enabled:              true,
-		AvailableMethods:     []PasswordlessMethod{MethodMagicLink, MethodSMSOTP, MethodWebAuthn},
-		DefaultMethod:        MethodMagicLink,
-		MagicLinkTTL:         15 * time.Minute,
-		SMSOTPTTL:            5 * time.Minute,
-		ChallengeTTL:         5 * time.Minute,
-		MaxAttempts:          3,
-		RequireDeviceTrust:   false,
-		AllowRememberDevice:  true,
-		RiskBasedChallenge:   true,
+		Enabled:             true,
+		AvailableMethods:    []PasswordlessMethod{MethodMagicLink, MethodSMSOTP, MethodWebAuthn},
+		DefaultMethod:       MethodMagicLink,
+		MagicLinkTTL:        15 * time.Minute,
+		SMSOTPTTL:           5 * time.Minute,
+		ChallengeTTL:        5 * time.Minute,
+		MaxAttempts:         3,
+		RequireDeviceTrust:  false,
+		AllowRememberDevice: true,
+		RiskBasedChallenge:  true,
 	}
 
 	authService := &passwordlessAuthService{db: s.db, logger: s.logger, config: config}

@@ -9,9 +9,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -20,12 +20,12 @@ import (
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -36,9 +36,9 @@ type Config struct {
 	Environment string
 
 	// Exporter configuration
-	ExporterType      string // "otlp", "jaeger", "stdout", "none"
-	OTLPEndpoint      string // OTLP gRPC endpoint (e.g., "localhost:4317")
-	JaegerEndpoint    string // Jaeger agent endpoint (e.g., "localhost:6831")
+	ExporterType   string // "otlp", "jaeger", "stdout", "none"
+	OTLPEndpoint   string // OTLP gRPC endpoint (e.g., "localhost:4317")
+	JaegerEndpoint string // Jaeger agent endpoint (e.g., "localhost:6831")
 
 	// Sampling configuration
 	SampleRatio float64 // 0.0 to 1.0; default 1.0 (100%)
@@ -58,14 +58,14 @@ type Config struct {
 // - OTEL_RESOURCE_ATTRIBUTES
 func ConfigFromEnv(serviceName, environment string) Config {
 	cfg := Config{
-		Enabled:          true,
-		ServiceName:      serviceName,
-		Environment:      environment,
-		ExporterType:     "otlp",
-		OTLPEndpoint:     "localhost:4317",
-		JaegerEndpoint:   "localhost:6831",
-		SampleRatio:      1.0,
-		SamplerType:      "ratio",
+		Enabled:            true,
+		ServiceName:        serviceName,
+		Environment:        environment,
+		ExporterType:       "otlp",
+		OTLPEndpoint:       "localhost:4317",
+		JaegerEndpoint:     "localhost:6831",
+		SampleRatio:        1.0,
+		SamplerType:        "ratio",
 		ResourceAttributes: make(map[string]string),
 	}
 
@@ -279,11 +279,11 @@ func (f spanOptionFunc) apply(o *spanOptions) { f(o) }
 
 // SpanOptions provides common span configuration options
 var (
-	WithSpanKindServer     = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindServer })
-	WithSpanKindClient     = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindClient })
-	WithSpanKindProducer   = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindProducer })
-	WithSpanKindConsumer   = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindConsumer })
-	WithSpanKindInternal   = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindInternal })
+	WithSpanKindServer   = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindServer })
+	WithSpanKindClient   = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindClient })
+	WithSpanKindProducer = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindProducer })
+	WithSpanKindConsumer = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindConsumer })
+	WithSpanKindInternal = spanOptionFunc(func(o *spanOptions) { o.spanKind = oteltrace.SpanKindInternal })
 )
 
 // WithAttributes adds attributes to the span

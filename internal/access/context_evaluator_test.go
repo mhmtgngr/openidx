@@ -15,10 +15,10 @@ func newTestService() *Service {
 
 func baseRoute() *ProxyRoute {
 	return &ProxyRoute{
-		ID:          "route-1",
-		Name:        "test-route",
-		RequireAuth: true,
-		Enabled:     true,
+		ID:           "route-1",
+		Name:         "test-route",
+		RequireAuth:  true,
+		Enabled:      true,
 		MaxRiskScore: 100,
 	}
 }
@@ -36,13 +36,13 @@ func baseSession() *ProxySession {
 func TestEvaluateAccessContext_IPThreatBlock(t *testing.T) {
 	svc := newTestService()
 	ac := &AccessContext{
-		Session:    baseSession(),
-		Route:      baseRoute(),
-		ClientIP:   "1.2.3.4",
-		UserAgent:  baseSession().UserAgent,
-		IPBlocked:  true,
+		Session:      baseSession(),
+		Route:        baseRoute(),
+		ClientIP:     "1.2.3.4",
+		UserAgent:    baseSession().UserAgent,
+		IPBlocked:    true,
 		IPThreatType: "brute_force",
-		Timestamp:  time.Now(),
+		Timestamp:    time.Now(),
 	}
 
 	decision := svc.evaluateAccessContext(ac)
@@ -54,14 +54,14 @@ func TestEvaluateAccessContext_IPThreatBlock(t *testing.T) {
 func TestEvaluateAccessContext_IPThreatNotBlocked(t *testing.T) {
 	svc := newTestService()
 	ac := &AccessContext{
-		Session:      baseSession(),
-		Route:        baseRoute(),
-		ClientIP:     "1.2.3.4",
-		UserAgent:    baseSession().UserAgent,
-		IPThreatType: "suspicious",
-		IPBlocked:    false,
+		Session:       baseSession(),
+		Route:         baseRoute(),
+		ClientIP:      "1.2.3.4",
+		UserAgent:     baseSession().UserAgent,
+		IPThreatType:  "suspicious",
+		IPBlocked:     false,
 		DeviceTrusted: true,
-		Timestamp:    time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	decision := svc.evaluateAccessContext(ac)
@@ -290,14 +290,14 @@ func TestEvaluateAccessContext_RiskScoreThreshold(t *testing.T) {
 	route.MaxRiskScore = 20
 
 	ac := &AccessContext{
-		Session:      baseSession(),
-		Route:        route,
-		ClientIP:     "1.2.3.4",
-		UserAgent:    baseSession().UserAgent,
-		IPThreatType: "suspicious", // +30 risk
-		IPBlocked:    false,
+		Session:       baseSession(),
+		Route:         route,
+		ClientIP:      "1.2.3.4",
+		UserAgent:     baseSession().UserAgent,
+		IPThreatType:  "suspicious", // +30 risk
+		IPBlocked:     false,
 		DeviceTrusted: true,
-		Timestamp:    time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	decision := svc.evaluateAccessContext(ac)
@@ -316,15 +316,15 @@ func TestEvaluateAccessContext_RiskScoreCapping(t *testing.T) {
 	session.UserAgent = "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0 Safari/537.36"
 
 	ac := &AccessContext{
-		Session:      session,
-		Route:        route,
-		ClientIP:     "1.2.3.4",
-		UserAgent:    "Mozilla/5.0 (Macintosh; Intel Mac OS X) Firefox/121.0", // major change +35
-		IPThreatType: "suspicious", // +30
-		IPBlocked:    false,
-		DeviceTrusted: false,  // +15
-		PostureScore:  0.3,    // +25
-		Timestamp:    time.Now(),
+		Session:       session,
+		Route:         route,
+		ClientIP:      "1.2.3.4",
+		UserAgent:     "Mozilla/5.0 (Macintosh; Intel Mac OS X) Firefox/121.0", // major change +35
+		IPThreatType:  "suspicious",                                            // +30
+		IPBlocked:     false,
+		DeviceTrusted: false, // +15
+		PostureScore:  0.3,   // +25
+		Timestamp:     time.Now(),
 	}
 
 	decision := svc.evaluateAccessContext(ac)

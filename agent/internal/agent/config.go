@@ -11,10 +11,10 @@ import (
 
 // AgentConfig holds the persisted configuration for a registered agent.
 type AgentConfig struct {
-	ServerURL  string `json:"server_url"`
-	AgentID    string `json:"agent_id"`
-	DeviceID   string `json:"device_id"`
-	EnrolledAt string `json:"enrolled_at"`
+	ServerURL        string `json:"server_url"`
+	AgentID          string `json:"agent_id"`
+	DeviceID         string `json:"device_id"`
+	EnrolledAt       string `json:"enrolled_at"`
 	AuthToken        string `json:"auth_token,omitempty"`
 	ZitiIdentityFile string `json:"ziti_identity_file,omitempty"`
 	ZitiServiceName  string `json:"ziti_service_name,omitempty"`

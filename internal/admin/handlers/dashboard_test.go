@@ -235,7 +235,7 @@ func TestGetDashboardStatsResponseStructure(t *testing.T) {
 		ActiveUsers:    80,
 		ActiveSessions: 25,
 		PendingReviews: 3,
-		RecentEvents:    []RecentEvent{},
+		RecentEvents:   []RecentEvent{},
 		SystemMetrics: SystemMetrics{
 			Uptime: 86400,
 		},

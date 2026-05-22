@@ -532,8 +532,8 @@ func (s *Service) handleValidatePolicy(c *gin.Context) {
 
 	if err := ValidatePolicy(req.Policy); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"valid":   false,
-			"error":   err.Error(),
+			"valid": false,
+			"error": err.Error(),
 		})
 		return
 	}

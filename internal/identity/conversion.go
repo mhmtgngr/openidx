@@ -34,22 +34,22 @@ type UserDB struct {
 // ToUser converts UserDB to SCIM-compatible User model
 func (u *UserDB) ToUser() User {
 	user := User{
-		ID:            u.ID,
-		UserName:      u.Username,
-		Enabled:       u.Enabled,
-		EmailVerified: u.EmailVerified,
-		Active:        u.Enabled, // SCIM uses Active for enabled status
-		CreatedAt:     u.CreatedAt,
-		UpdatedAt:     u.UpdatedAt,
-		LastLoginAt:   u.LastLoginAt,
-		PasswordChangedAt: u.PasswordChangedAt,
+		ID:                 u.ID,
+		UserName:           u.Username,
+		Enabled:            u.Enabled,
+		EmailVerified:      u.EmailVerified,
+		Active:             u.Enabled, // SCIM uses Active for enabled status
+		CreatedAt:          u.CreatedAt,
+		UpdatedAt:          u.UpdatedAt,
+		LastLoginAt:        u.LastLoginAt,
+		PasswordChangedAt:  u.PasswordChangedAt,
 		PasswordMustChange: u.PasswordMustChange,
-		FailedLoginCount: u.FailedLoginCount,
-		LastFailedLoginAt: u.LastFailedLoginAt,
-		LockedUntil: u.LockedUntil,
-		Source: u.Source,
-		DirectoryID: u.DirectoryID,
-		LdapDN: u.LdapDN,
+		FailedLoginCount:   u.FailedLoginCount,
+		LastFailedLoginAt:  u.LastFailedLoginAt,
+		LockedUntil:        u.LockedUntil,
+		Source:             u.Source,
+		DirectoryID:        u.DirectoryID,
+		LdapDN:             u.LdapDN,
 	}
 
 	// Set OrganizationID if present
@@ -72,7 +72,7 @@ func (u *UserDB) ToUser() User {
 	if u.Email != "" {
 		primary := true
 		user.Emails = []Email{{
-			Value: u.Email,
+			Value:   u.Email,
 			Primary: &primary,
 		}}
 	}
@@ -153,17 +153,17 @@ func (u *UserDB) GetLastName() string {
 
 // GroupDB represents a group with flat database-compatible fields
 type GroupDB struct {
-	ID             string     `db:"id"`
-	DisplayName    string     `db:"display_name"`
-	Description    *string    `db:"description"`
-	ParentID       *string    `db:"parent_id"`
-	OrganizationID *string    `db:"organization_id"`
-	AllowSelfJoin  bool       `db:"allow_self_join"`
+	ID              string    `db:"id"`
+	DisplayName     string    `db:"display_name"`
+	Description     *string   `db:"description"`
+	ParentID        *string   `db:"parent_id"`
+	OrganizationID  *string   `db:"organization_id"`
+	AllowSelfJoin   bool      `db:"allow_self_join"`
 	RequireApproval bool      `db:"require_approval"`
-	MaxMembers     *int       `db:"max_members"`
-	MemberCount    int        `db:"member_count"`
-	CreatedAt      time.Time  `db:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at"`
+	MaxMembers      *int      `db:"max_members"`
+	MemberCount     int       `db:"member_count"`
+	CreatedAt       time.Time `db:"created_at"`
+	UpdatedAt       time.Time `db:"updated_at"`
 }
 
 // ToGroup converts GroupDB to SCIM Group

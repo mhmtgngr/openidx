@@ -21,21 +21,21 @@ const reportDir = "/tmp/openidx-reports"
 
 // ReportExport represents an exported report file
 type ReportExport struct {
-	ID                 string     `json:"id"`
-	OrgID              string     `json:"org_id"`
-	ScheduledReportID  *string    `json:"scheduled_report_id,omitempty"`
-	Name               string     `json:"name"`
-	ReportType         string     `json:"report_type"`
-	Framework          string     `json:"framework"`
-	Format             string     `json:"format"`
-	Status             string     `json:"status"`
-	FilePath           string     `json:"file_path"`
-	FileSize           int64      `json:"file_size"`
-	RowCount           int        `json:"row_count"`
-	ErrorMessage       string     `json:"error_message,omitempty"`
-	GeneratedBy        string     `json:"generated_by"`
-	CreatedAt          time.Time  `json:"created_at"`
-	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	ID                string     `json:"id"`
+	OrgID             string     `json:"org_id"`
+	ScheduledReportID *string    `json:"scheduled_report_id,omitempty"`
+	Name              string     `json:"name"`
+	ReportType        string     `json:"report_type"`
+	Framework         string     `json:"framework"`
+	Format            string     `json:"format"`
+	Status            string     `json:"status"`
+	FilePath          string     `json:"file_path"`
+	FileSize          int64      `json:"file_size"`
+	RowCount          int        `json:"row_count"`
+	ErrorMessage      string     `json:"error_message,omitempty"`
+	GeneratedBy       string     `json:"generated_by"`
+	CreatedAt         time.Time  `json:"created_at"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 }
 
 // ScheduledReport represents a scheduled report configuration

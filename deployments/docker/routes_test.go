@@ -251,7 +251,7 @@ func TestRoutesOAuthService(t *testing.T) {
 
 	// Validate .well-known path (uses wildcard in uris array)
 	if !strings.Contains(contentStr, `"uris": ["/.well-known/"`) &&
-	   !strings.Contains(contentStr, `"uris": ["/.well-known/*"`) {
+		!strings.Contains(contentStr, `"uris": ["/.well-known/*"`) {
 		t.Error("Missing .well-known route pattern")
 	}
 }

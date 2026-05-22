@@ -85,7 +85,7 @@ func (s *Service) registerUtilityRoutes() {
 			if result.Err != nil && result.Err.Error() != "redis: nil" {
 				c.JSON(http.StatusServiceUnavailable, gin.H{
 					"status": "not_ready",
-					"error": "redis unavailable",
+					"error":  "redis unavailable",
 				})
 				return
 			}

@@ -47,12 +47,12 @@ type LoggingConfig struct {
 // DefaultLoggingConfig returns a LoggingConfig with sensible defaults
 func DefaultLoggingConfig(logger *zap.Logger) LoggingConfig {
 	return LoggingConfig{
-		LogBody:         false,
-		LogQueryParams:  true,
-		SanitizeFields:  DefaultSanitizedFields,
-		MinDuration:     0,
-		EnableTracing:   false,
-		Logger:          logger,
+		LogBody:        false,
+		LogQueryParams: true,
+		SanitizeFields: DefaultSanitizedFields,
+		MinDuration:    0,
+		EnableTracing:  false,
+		Logger:         logger,
 	}
 }
 

@@ -561,8 +561,8 @@ func TestResponseCache_ResponseWriter(t *testing.T) {
 	router.GET("/test", func(c *gin.Context) {
 		w := &responseWriter{
 			ResponseWriter: c.Writer,
-			body:          &bytes.Buffer{},
-			headers:       make(http.Header),
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
 		}
 		c.Writer = w
 
@@ -780,9 +780,9 @@ func BenchmarkResponseCache_GenerateCacheKey(b *testing.B) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &cacheConfig{
-		duration:    time.Minute,
-		staleTTL:    time.Minute * 2,
-		varyHeaders: []string{"Accept-Encoding"},
+		duration:      time.Minute,
+		staleTTL:      time.Minute * 2,
+		varyHeaders:   []string{"Accept-Encoding"},
 		keyGenerators: []KeyGenerator{ByUser, ByOrg},
 	}
 

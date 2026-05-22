@@ -27,8 +27,8 @@ import (
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/migrations"
 	"github.com/openidx/openidx/internal/notifications"
-	"github.com/openidx/openidx/internal/profiling"
 	"github.com/openidx/openidx/internal/portal"
+	"github.com/openidx/openidx/internal/profiling"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/server"
 	"github.com/openidx/openidx/internal/sms"
@@ -173,22 +173,22 @@ func main() {
 		IletiMerkeziKey:    cfg.SMS.IletiMerkeziKey,
 		IletiMerkeziSecret: cfg.SMS.IletiMerkeziSecret,
 		IletiMerkeziSender: cfg.SMS.IletiMerkeziSender,
-		VerimorUsername:     cfg.SMS.VerimorUsername,
-		VerimorPassword:     cfg.SMS.VerimorPassword,
-		VerimorSourceAddr:   cfg.SMS.VerimorSourceAddr,
-		TurkcellUsername:    cfg.SMS.TurkcellUsername,
-		TurkcellPassword:    cfg.SMS.TurkcellPassword,
-		TurkcellSender:      cfg.SMS.TurkcellSender,
-		VodafoneAPIKey:      cfg.SMS.VodafoneAPIKey,
-		VodafoneSecret:      cfg.SMS.VodafoneSecret,
-		VodafoneSender:      cfg.SMS.VodafoneSender,
-		TurkTelekomAPIKey:   cfg.SMS.TurkTelekomAPIKey,
-		TurkTelekomSecret:   cfg.SMS.TurkTelekomSecret,
-		TurkTelekomSender:   cfg.SMS.TurkTelekomSender,
-		MutlucellUsername:   cfg.SMS.MutlucellUsername,
-		MutlucellPassword:   cfg.SMS.MutlucellPassword,
-		MutlucellAPIKey:     cfg.SMS.MutlucellAPIKey,
-		MutlucellSender:     cfg.SMS.MutlucellSender,
+		VerimorUsername:    cfg.SMS.VerimorUsername,
+		VerimorPassword:    cfg.SMS.VerimorPassword,
+		VerimorSourceAddr:  cfg.SMS.VerimorSourceAddr,
+		TurkcellUsername:   cfg.SMS.TurkcellUsername,
+		TurkcellPassword:   cfg.SMS.TurkcellPassword,
+		TurkcellSender:     cfg.SMS.TurkcellSender,
+		VodafoneAPIKey:     cfg.SMS.VodafoneAPIKey,
+		VodafoneSecret:     cfg.SMS.VodafoneSecret,
+		VodafoneSender:     cfg.SMS.VodafoneSender,
+		TurkTelekomAPIKey:  cfg.SMS.TurkTelekomAPIKey,
+		TurkTelekomSecret:  cfg.SMS.TurkTelekomSecret,
+		TurkTelekomSender:  cfg.SMS.TurkTelekomSender,
+		MutlucellUsername:  cfg.SMS.MutlucellUsername,
+		MutlucellPassword:  cfg.SMS.MutlucellPassword,
+		MutlucellAPIKey:    cfg.SMS.MutlucellAPIKey,
+		MutlucellSender:    cfg.SMS.MutlucellSender,
 	}
 	smsService, err := sms.NewService(smsConfig, log)
 	if err != nil {
@@ -271,9 +271,9 @@ func main() {
 	}
 
 	graceful := server.New(server.Config{
-		Server:         httpServer,
-		Logger:         log,
-		Shutdownables:  shutdownables,
+		Server:          httpServer,
+		Logger:          log,
+		Shutdownables:   shutdownables,
 		ShutdownTimeout: 30 * time.Second,
 	})
 

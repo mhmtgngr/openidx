@@ -95,19 +95,19 @@ func createBackupManager(cfg *config.Config, log *zap.Logger) *backup.Manager {
 	s3SecretKey := os.Getenv("BACKUP_S3_SECRET_KEY")
 
 	backupCfg := &backup.BackupConfig{
-		StorageDir:      storageDir,
-		S3Bucket:        s3Bucket,
-		S3Region:        s3Region,
-		S3Endpoint:      s3Endpoint,
-		S3AccessKey:     s3AccessKey,
-		S3SecretKey:     s3SecretKey,
+		StorageDir:       storageDir,
+		S3Bucket:         s3Bucket,
+		S3Region:         s3Region,
+		S3Endpoint:       s3Endpoint,
+		S3AccessKey:      s3AccessKey,
+		S3SecretKey:      s3SecretKey,
 		CompressionLevel: 6,
-		RetentionCount:  retentionCount,
-		EncryptionKey:   encryptionKey,
-		DatabaseURL:     cfg.DatabaseURL,
-		DatabaseName:    dbName,
-		ScheduleEnabled: false,
-		ScheduleCron:    "0 2 * * *", // Default: 2 AM daily
+		RetentionCount:   retentionCount,
+		EncryptionKey:    encryptionKey,
+		DatabaseURL:      cfg.DatabaseURL,
+		DatabaseName:     dbName,
+		ScheduleEnabled:  false,
+		ScheduleCron:     "0 2 * * *", // Default: 2 AM daily
 	}
 
 	return backup.NewManager(backupCfg, log)

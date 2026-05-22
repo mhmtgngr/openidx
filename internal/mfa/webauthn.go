@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -25,11 +25,11 @@ type WebAuthnService struct {
 
 // WebAuthnConfig holds WebAuthn configuration
 type WebAuthnConfig struct {
-	RPDisplayName string   // Display name for the relying party
-	RPID          string   // Relying party ID (typically the domain)
-	RPOrigins     []string // Allowed origins for WebAuthn (e.g., https://example.com)
-	Timeout       int      // Timeout in milliseconds for ceremonies
-	UserVerification string // User verification requirement ("required", "preferred", "discouraged")
+	RPDisplayName          string   // Display name for the relying party
+	RPID                   string   // Relying party ID (typically the domain)
+	RPOrigins              []string // Allowed origins for WebAuthn (e.g., https://example.com)
+	Timeout                int      // Timeout in milliseconds for ceremonies
+	UserVerification       string   // User verification requirement ("required", "preferred", "discouraged")
 	AuthenticatorSelection protocol.AuthenticatorSelection
 }
 
@@ -37,14 +37,14 @@ type WebAuthnConfig struct {
 func DefaultWebAuthnConfig(rpID string, origins []string) *WebAuthnConfig {
 	discouraged := protocol.ResidentKeyRequirementDiscouraged
 	return &WebAuthnConfig{
-		RPDisplayName: "OpenIDX",
-		RPID:          rpID,
-		RPOrigins:     origins,
-		Timeout:       60000, // 60 seconds
+		RPDisplayName:    "OpenIDX",
+		RPID:             rpID,
+		RPOrigins:        origins,
+		Timeout:          60000, // 60 seconds
 		UserVerification: "preferred",
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
-			ResidentKey:        discouraged,
-			UserVerification:   protocol.VerificationPreferred,
+			ResidentKey:      discouraged,
+			UserVerification: protocol.VerificationPreferred,
 		},
 	}
 }
@@ -61,10 +61,10 @@ func NewWebAuthnService(
 
 	// Create WebAuthn instance
 	wconfig := &webauthn.Config{
-		RPDisplayName:         config.RPDisplayName,
-		RPID:                  config.RPID,
-		RPOrigins:             config.RPOrigins,
-		AttestationPreference: protocol.PreferNoAttestation,
+		RPDisplayName:          config.RPDisplayName,
+		RPID:                   config.RPID,
+		RPOrigins:              config.RPOrigins,
+		AttestationPreference:  protocol.PreferNoAttestation,
 		AuthenticatorSelection: config.AuthenticatorSelection,
 	}
 
@@ -93,20 +93,20 @@ type WebAuthnUserID interface {
 
 // WebAuthnCredential represents a stored WebAuthn credential
 type WebAuthnCredential struct {
-	ID              uuid.UUID   `json:"id"`
-	CredentialID    string      `json:"credential_id"`    // Base64URL-encoded credential ID
-	PublicKey       []byte      `json:"public_key"`       // Marshal'd public key
-	AttestationType string      `json:"attestation_type"` // Attestation type (e.g., "none", "packed")
-	AAGUID          []byte      `json:"aaguid"`           // Authenticator AAGUID
-	SignCount       uint32      `json:"sign_count"`       // Signature counter
-	Transports      []string    `json:"transports"`       // Transport types (usb, nfc, ble, internal)
-	UserID          uuid.UUID   `json:"user_id"`          // User ID
-	UserHandle      []byte      `json:"user_handle"`      // User handle for WebAuthn
-	FriendlyName    string      `json:"friendly_name"`    // User-friendly name for the credential
-	BackupEligible  bool        `json:"backup_eligible"`  // Whether the credential is backup eligible
-	BackupState     bool        `json:"backup_state"`     // Whether the credential is backed up
-	CreatedAt       time.Time   `json:"created_at"`
-	LastUsedAt      *time.Time  `json:"last_used_at"`
+	ID              uuid.UUID  `json:"id"`
+	CredentialID    string     `json:"credential_id"`    // Base64URL-encoded credential ID
+	PublicKey       []byte     `json:"public_key"`       // Marshal'd public key
+	AttestationType string     `json:"attestation_type"` // Attestation type (e.g., "none", "packed")
+	AAGUID          []byte     `json:"aaguid"`           // Authenticator AAGUID
+	SignCount       uint32     `json:"sign_count"`       // Signature counter
+	Transports      []string   `json:"transports"`       // Transport types (usb, nfc, ble, internal)
+	UserID          uuid.UUID  `json:"user_id"`          // User ID
+	UserHandle      []byte     `json:"user_handle"`      // User handle for WebAuthn
+	FriendlyName    string     `json:"friendly_name"`    // User-friendly name for the credential
+	BackupEligible  bool       `json:"backup_eligible"`  // Whether the credential is backup eligible
+	BackupState     bool       `json:"backup_state"`     // Whether the credential is backed up
+	CreatedAt       time.Time  `json:"created_at"`
+	LastUsedAt      *time.Time `json:"last_used_at"`
 }
 
 // CredentialCreationOptions is the response for BeginRegistration
@@ -125,19 +125,18 @@ type CredentialAssertionOptions struct {
 
 // RegistrationBeginRequest initiates WebAuthn registration
 type RegistrationBeginRequest struct {
-	UserID      uuid.UUID `json:"user_id" binding:"required"`
-	Username    string    `json:"username" binding:"required"`
-	DisplayName string    `json:"display_name"`
-	FriendlyName string   `json:"friendly_name"` // Optional name for the credential
+	UserID       uuid.UUID `json:"user_id" binding:"required"`
+	Username     string    `json:"username" binding:"required"`
+	DisplayName  string    `json:"display_name"`
+	FriendlyName string    `json:"friendly_name"` // Optional name for the credential
 }
 
 // RegistrationFinishRequest completes WebAuthn registration
 type RegistrationFinishRequest struct {
-	UserID    uuid.UUID              `json:"user_id" binding:"required"`
+	UserID    uuid.UUID                           `json:"user_id" binding:"required"`
 	Response  protocol.CredentialCreationResponse `json:"response"`
-	SessionID string                 `json:"session_id"`
+	SessionID string                              `json:"session_id"`
 }
-
 
 // BeginRegistration starts the WebAuthn registration ceremony
 // Generates a challenge and credential creation options for the client
@@ -732,9 +731,9 @@ func ParseRPID(origin string) (string, error) {
 
 // AuthenticatorInfo provides information about an authenticator
 type AuthenticatorInfo struct {
-	AAGUID       string `json:"aaguid"`
-	Name         string `json:"name,omitempty"`
-	IsPasskey    bool   `json:"is_passkey"`
+	AAGUID    string `json:"aaguid"`
+	Name      string `json:"name,omitempty"`
+	IsPasskey bool   `json:"is_passkey"`
 }
 
 // GetAuthenticatorInfo returns information about an authenticator based on its AAGUID

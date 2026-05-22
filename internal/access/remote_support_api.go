@@ -6,16 +6,16 @@
 //
 // Wire flow:
 //
-//   1. Admin POSTs /api/v1/access/remote-support/sessions {agent_id, mode}
-//      → row inserted with status='pending', returns session_id.
-//   2. /agent/config for that agent_id now embeds a remote_support block
-//      pointing at the agent-side WS path (signed with the agent's auth
-//      token so only the targeted device can join).
-//   3. Agent connects to WS /agent/remote-support/sessions/:id.
-//   4. Admin connects to WS /api/v1/access/remote-support/sessions/:id/ws.
-//   5. Broker relays SDP offer / answer / ICE candidates. status flips to
-//      'active' when both sides are connected.
-//   6. Either side POSTs .../end OR closes its WS → status='ended'.
+//  1. Admin POSTs /api/v1/access/remote-support/sessions {agent_id, mode}
+//     → row inserted with status='pending', returns session_id.
+//  2. /agent/config for that agent_id now embeds a remote_support block
+//     pointing at the agent-side WS path (signed with the agent's auth
+//     token so only the targeted device can join).
+//  3. Agent connects to WS /agent/remote-support/sessions/:id.
+//  4. Admin connects to WS /api/v1/access/remote-support/sessions/:id/ws.
+//  5. Broker relays SDP offer / answer / ICE candidates. status flips to
+//     'active' when both sides are connected.
+//  6. Either side POSTs .../end OR closes its WS → status='ended'.
 //
 // Audit events ride the agent handler's logger so all device lifecycle
 // activity sits in one unified_audit_events stream.
@@ -133,10 +133,10 @@ func (h *RemoteSupportHandler) RegisterRemoteSupportPublicRoutes(r *gin.RouterGr
 // startSessionRequest is the body accepted by HandleStartSession.
 type startSessionRequest struct {
 	AgentID    string          `json:"agent_id" binding:"required"`
-	Mode       string          `json:"mode"`               // "view" | "interactive" (default)
-	ICEServers json.RawMessage `json:"ice_servers"`        // optional override
+	Mode       string          `json:"mode"`        // "view" | "interactive" (default)
+	ICEServers json.RawMessage `json:"ice_servers"` // optional override
 	Notes      string          `json:"notes"`
-	Record     bool            `json:"record"`             // opt-in MediaRecorder capture
+	Record     bool            `json:"record"` // opt-in MediaRecorder capture
 	// RecordingRetentionDays: per-session retention override. nil means
 	// "use the per-org policy or default". 0 means "infinite". Positive
 	// values cap the recording lifetime to that many days.
@@ -145,28 +145,28 @@ type startSessionRequest struct {
 
 // remoteSessionRow is what we return to admins (list + get + start).
 type remoteSessionRow struct {
-	ID                  string          `json:"id"`
-	AgentID             string          `json:"agent_id"`
-	AdminUserID         string          `json:"admin_user_id,omitempty"`
-	Status              string          `json:"status"`
-	Mode                string          `json:"mode"`
-	ICEServers          json.RawMessage `json:"ice_servers"`
-	EndReason           string          `json:"end_reason,omitempty"`
-	RecordingURL        string          `json:"recording_url,omitempty"`
-	RecordingEnabled    bool            `json:"recording_enabled"`
-	RecordingSizeBytes  int64           `json:"recording_size_bytes,omitempty"`
-	RecordingChunkCount int             `json:"recording_chunk_count,omitempty"`
-	RecordingFinalizedAt *time.Time     `json:"recording_finalized_at,omitempty"`
-	StartedAt           time.Time       `json:"started_at"`
-	AcceptedAt          *time.Time      `json:"accepted_at,omitempty"`
-	EndedAt             *time.Time      `json:"ended_at,omitempty"`
-	Notes               string          `json:"notes,omitempty"`
-	LastActivityAt      time.Time       `json:"last_activity_at"`
+	ID                   string          `json:"id"`
+	AgentID              string          `json:"agent_id"`
+	AdminUserID          string          `json:"admin_user_id,omitempty"`
+	Status               string          `json:"status"`
+	Mode                 string          `json:"mode"`
+	ICEServers           json.RawMessage `json:"ice_servers"`
+	EndReason            string          `json:"end_reason,omitempty"`
+	RecordingURL         string          `json:"recording_url,omitempty"`
+	RecordingEnabled     bool            `json:"recording_enabled"`
+	RecordingSizeBytes   int64           `json:"recording_size_bytes,omitempty"`
+	RecordingChunkCount  int             `json:"recording_chunk_count,omitempty"`
+	RecordingFinalizedAt *time.Time      `json:"recording_finalized_at,omitempty"`
+	StartedAt            time.Time       `json:"started_at"`
+	AcceptedAt           *time.Time      `json:"accepted_at,omitempty"`
+	EndedAt              *time.Time      `json:"ended_at,omitempty"`
+	Notes                string          `json:"notes,omitempty"`
+	LastActivityAt       time.Time       `json:"last_activity_at"`
 	// IsOnLegalHold derives from a LEFT JOIN against recording_legal_holds
 	// — true when at least one row exists with released_at IS NULL for
 	// this session. The admin UI uses this to render a lock icon next to
 	// the recording link.
-	IsOnLegalHold       bool            `json:"is_on_legal_hold"`
+	IsOnLegalHold bool `json:"is_on_legal_hold"`
 }
 
 // HandleStartSession creates a new session targeting an enrolled agent.

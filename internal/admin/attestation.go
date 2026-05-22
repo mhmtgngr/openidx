@@ -27,10 +27,10 @@ type AttestationCampaign struct {
 	CreatedAt           time.Time       `json:"created_at"`
 	CompletedAt         *time.Time      `json:"completed_at"`
 	// Computed fields
-	TotalItems    int `json:"total_items,omitempty"`
+	TotalItems     int `json:"total_items,omitempty"`
 	CertifiedCount int `json:"certified_count,omitempty"`
-	RevokedCount  int `json:"revoked_count,omitempty"`
-	PendingCount  int `json:"pending_count,omitempty"`
+	RevokedCount   int `json:"revoked_count,omitempty"`
+	PendingCount   int `json:"pending_count,omitempty"`
 }
 
 // AttestationItem represents an individual item in an attestation campaign

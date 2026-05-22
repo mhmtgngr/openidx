@@ -48,13 +48,13 @@ func TestAlertManager_GenerateAlert(t *testing.T) {
 	userID := "user123"
 
 	alert := &Alert{
-		TenantID:    "tenant1",
-		UserID:      &userID,
-		Type:        AlertTypeNewDevice,
-		Severity:    SeverityWarning,
-		Title:       "New Device Detected",
-		Description: "A login from a new device was detected",
-		IPAddress:   "192.168.1.1",
+		TenantID:           "tenant1",
+		UserID:             &userID,
+		Type:               AlertTypeNewDevice,
+		Severity:           SeverityWarning,
+		Title:              "New Device Detected",
+		Description:        "A login from a new device was detected",
+		IPAddress:          "192.168.1.1",
 		RemediationActions: []string{"verify_identity", "require_mfa"},
 	}
 
@@ -199,16 +199,16 @@ func TestAlertManager_formatEmailBody(t *testing.T) {
 
 	userID := "user123"
 	alert := &Alert{
-		ID:          uuid.New().String(),
-		TenantID:    "tenant1",
-		UserID:      &userID,
-		Type:        AlertTypeNewDevice,
-		Severity:    SeverityWarning,
-		Title:       "New Device Detected",
-		Description: "A login from a new device was detected",
-		IPAddress:   "192.168.1.1",
+		ID:                 uuid.New().String(),
+		TenantID:           "tenant1",
+		UserID:             &userID,
+		Type:               AlertTypeNewDevice,
+		Severity:           SeverityWarning,
+		Title:              "New Device Detected",
+		Description:        "A login from a new device was detected",
+		IPAddress:          "192.168.1.1",
 		RemediationActions: []string{"verify_identity", "require_mfa"},
-		CreatedAt:   time.Now(),
+		CreatedAt:          time.Now(),
 	}
 
 	body := manager.formatEmailBody(alert)
@@ -376,7 +376,7 @@ func TestAlert_RemediationActions(t *testing.T) {
 		Type:               AlertTypeNewDevice,
 		Severity:           SeverityWarning,
 		Title:              "Test Alert",
-		RemediationActions:  actions,
+		RemediationActions: actions,
 		CreatedAt:          time.Now(),
 	}
 
@@ -450,14 +450,14 @@ func TestAlert_Deliveries(t *testing.T) {
 
 	userID := "user123"
 	alert := &Alert{
-		ID:                 uuid.New().String(),
-		TenantID:           "tenant1",
-		UserID:             &userID,
-		Type:               AlertTypeNewDevice,
-		Severity:           SeverityWarning,
-		Title:              "Test Alert",
-		Deliveries:         deliveries,
-		CreatedAt:          time.Now(),
+		ID:         uuid.New().String(),
+		TenantID:   "tenant1",
+		UserID:     &userID,
+		Type:       AlertTypeNewDevice,
+		Severity:   SeverityWarning,
+		Title:      "Test Alert",
+		Deliveries: deliveries,
+		CreatedAt:  time.Now(),
 	}
 
 	if len(alert.Deliveries) != 2 {
@@ -515,22 +515,22 @@ func TestAlert_VariousTypes(t *testing.T) {
 func TestAlert_NewDeviceComboAlert(t *testing.T) {
 	userID := "user123"
 	alert := &Alert{
-		ID:        uuid.New().String(),
-		TenantID:  "tenant1",
-		UserID:    &userID,
-		Type:      AlertTypeNewDevice,
-		Severity:  SeverityCritical,
-		Title:     "New Device from New Location",
+		ID:          uuid.New().String(),
+		TenantID:    "tenant1",
+		UserID:      &userID,
+		Type:        AlertTypeNewDevice,
+		Severity:    SeverityCritical,
+		Title:       "New Device from New Location",
 		Description: "Login from new device at unusual location",
 		Details: map[string]interface{}{
-			"new_device":          true,
-			"new_location":        true,
-			"distance_km":         1200,
-			"device_fingerprint":  "fp12345",
-			"previous_location":   "New York, US",
-			"current_location":    "London, UK",
+			"new_device":         true,
+			"new_location":       true,
+			"distance_km":        1200,
+			"device_fingerprint": "fp12345",
+			"previous_location":  "New York, US",
+			"current_location":   "London, UK",
 		},
-		IPAddress:  "203.0.113.1",
+		IPAddress: "203.0.113.1",
 		RemediationActions: []string{
 			"verify_identity",
 			"require_mfa",

@@ -46,7 +46,7 @@ func TestPostgresTLSConfig(t *testing.T) {
 			expectedSSL: "postgres://localhost/db?sslmode=verify-full",
 		},
 		{
-			name: "SSL with root cert",
+			name:       "SSL with root cert",
 			connString: "postgres://localhost/db",
 			tlsCfg: PostgresTLSConfig{
 				SSLMode:     "verify-ca",
@@ -55,17 +55,17 @@ func TestPostgresTLSConfig(t *testing.T) {
 			expectedSSL: "postgres://localhost/db?sslmode=verify-ca&sslrootcert=%2Fpath%2Fto%2Fca.crt",
 		},
 		{
-			name: "SSL with client certificates",
+			name:       "SSL with client certificates",
 			connString: "postgres://localhost/db",
 			tlsCfg: PostgresTLSConfig{
-				SSLMode:     "verify-full",
-				SSLCert:     "/path/to/client.crt",
-				SSLKey:      "/path/to/client.key",
+				SSLMode: "verify-full",
+				SSLCert: "/path/to/client.crt",
+				SSLKey:  "/path/to/client.key",
 			},
 			expectedSSL: "postgres://localhost/db?sslmode=verify-full&sslcert=%2Fpath%2Fto%2Fclient.crt&sslkey=%2Fpath%2Fto%2Fclient.key",
 		},
 		{
-			name: "Existing query params preserved",
+			name:       "Existing query params preserved",
 			connString: "postgres://localhost/db?application_name=myapp",
 			tlsCfg: PostgresTLSConfig{
 				SSLMode: "require",
@@ -176,11 +176,11 @@ func TestRedisConfig(t *testing.T) {
 
 	t.Run("TLS configuration", func(t *testing.T) {
 		cfg := RedisConfig{
-			URL:         "redis://localhost:6379",
-			TLSEnabled:  true,
-			TLSCACert:   "/path/to/ca.crt",
-			TLSCert:     "/path/to/client.crt",
-			TLSKey:      "/path/to/client.key",
+			URL:           "redis://localhost:6379",
+			TLSEnabled:    true,
+			TLSCACert:     "/path/to/ca.crt",
+			TLSCert:       "/path/to/client.crt",
+			TLSKey:        "/path/to/client.key",
 			TLSSkipVerify: true,
 		}
 		assert.True(t, cfg.TLSEnabled)
@@ -270,10 +270,10 @@ func TestPostgresDB_ParseAndApplyTLS(t *testing.T) {
 		expectedSSLKey string
 	}{
 		{
-			name:           "No TLS",
-			connString:     "postgres://localhost/db",
-			tlsCfg:         PostgresTLSConfig{},
-			shouldHaveSSL:  false,
+			name:          "No TLS",
+			connString:    "postgres://localhost/db",
+			tlsCfg:        PostgresTLSConfig{},
+			shouldHaveSSL: false,
 		},
 		{
 			name:           "SSL require",
@@ -283,10 +283,10 @@ func TestPostgresDB_ParseAndApplyTLS(t *testing.T) {
 			expectedSSLKey: "require",
 		},
 		{
-			name:       "Existing params with SSL",
-			connString: "postgres://user:pass@localhost:5432/db?application_name=myapp",
-			tlsCfg:     PostgresTLSConfig{SSLMode: "verify-full"},
-			shouldHaveSSL: true,
+			name:           "Existing params with SSL",
+			connString:     "postgres://user:pass@localhost:5432/db?application_name=myapp",
+			tlsCfg:         PostgresTLSConfig{SSLMode: "verify-full"},
+			shouldHaveSSL:  true,
 			expectedSSLKey: "verify-full",
 		},
 	}
@@ -383,7 +383,7 @@ func TestNewRedisInvalidInputs(t *testing.T) {
 func TestNewRedisFromConfig(t *testing.T) {
 	t.Run("Sentinel without addresses", func(t *testing.T) {
 		cfg := RedisConfig{
-			SentinelEnabled: true,
+			SentinelEnabled:   true,
 			SentinelAddresses: []string{},
 		}
 		_, err := NewRedisFromConfig(cfg)
@@ -393,7 +393,7 @@ func TestNewRedisFromConfig(t *testing.T) {
 
 	t.Run("Invalid URL without sentinel", func(t *testing.T) {
 		cfg := RedisConfig{
-			URL: "invalid-url",
+			URL:             "invalid-url",
 			SentinelEnabled: false,
 		}
 		_, err := NewRedisFromConfig(cfg)

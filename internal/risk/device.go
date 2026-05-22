@@ -30,30 +30,30 @@ const (
 
 // DeviceFingerprintRequest contains device attributes for fingerprinting
 type DeviceFingerprintRequest struct {
-	UserAgent   string `json:"user_agent"`
-	ScreenRes   string `json:"screen_resolution"`   // e.g., "1920x1080"
-	Timezone    string `json:"timezone"`            // e.g., "America/New_York"
-	Language    string `json:"language"`            // e.g., "en-US"
-	Platform    string `json:"platform"`            // e.g., "Win32", "MacIntel"
-	IP          string `json:"ip_address"`
-	CanvasHash  string `json:"canvas_hash,omitempty"`  // Optional: canvas fingerprint hash
-	WebGLHash   string `json:"webgl_hash,omitempty"`   // Optional: WebGL fingerprint hash
-	AudioHash   string `json:"audio_hash,omitempty"`   // Optional: audio fingerprint hash
+	UserAgent  string `json:"user_agent"`
+	ScreenRes  string `json:"screen_resolution"` // e.g., "1920x1080"
+	Timezone   string `json:"timezone"`          // e.g., "America/New_York"
+	Language   string `json:"language"`          // e.g., "en-US"
+	Platform   string `json:"platform"`          // e.g., "Win32", "MacIntel"
+	IP         string `json:"ip_address"`
+	CanvasHash string `json:"canvas_hash,omitempty"` // Optional: canvas fingerprint hash
+	WebGLHash  string `json:"webgl_hash,omitempty"`  // Optional: WebGL fingerprint hash
+	AudioHash  string `json:"audio_hash,omitempty"`  // Optional: audio fingerprint hash
 }
 
 // DeviceFingerprint represents a computed device fingerprint
 type DeviceFingerprint struct {
-	Hash         string    `json:"hash"`
-	TrustLevel   TrustLevel `json:"trust_level"`
-	FirstSeen    time.Time `json:"first_seen"`
-	LastSeen     time.Time `json:"last_seen"`
-	SeenCount    int       `json:"seen_count"`
-	UserID       string    `json:"user_id,omitempty"`
-	IPAddress    string    `json:"ip_address,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
-	IsTrusted    bool      `json:"is_trusted"`
+	Hash         string                   `json:"hash"`
+	TrustLevel   TrustLevel               `json:"trust_level"`
+	FirstSeen    time.Time                `json:"first_seen"`
+	LastSeen     time.Time                `json:"last_seen"`
+	SeenCount    int                      `json:"seen_count"`
+	UserID       string                   `json:"user_id,omitempty"`
+	IPAddress    string                   `json:"ip_address,omitempty"`
+	UserAgent    string                   `json:"user_agent,omitempty"`
+	IsTrusted    bool                     `json:"is_trusted"`
 	Attributes   DeviceFingerprintRequest `json:"attributes,omitempty"`
-	PreviousHash string    `json:"previous_hash,omitempty"` // If fingerprint changed
+	PreviousHash string                   `json:"previous_hash,omitempty"` // If fingerprint changed
 }
 
 // DeviceRecord represents a stored device record

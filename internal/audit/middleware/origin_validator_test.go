@@ -318,10 +318,10 @@ func TestWebSocketOriginValidator(t *testing.T) {
 	validator := WebSocketOriginValidator(logger, cfg)
 
 	tests := []struct {
-		name          string
-		origin        string
-		host          string
-		expected      bool
+		name     string
+		origin   string
+		host     string
+		expected bool
 	}{
 		{
 			name:     "allowed origin",
@@ -555,7 +555,7 @@ func TestOriginValidatorMiddleware_MultipleOrigins(t *testing.T) {
 func TestNormalizeOriginUsedInMiddleware(t *testing.T) {
 	// Verify that the audit.NormalizeOrigin function is used correctly
 	testCases := []struct {
-		origin    string
+		origin     string
 		normalized string
 	}{
 		{"  HTTP://EXAMPLE.COM  ", "http://example.com"},

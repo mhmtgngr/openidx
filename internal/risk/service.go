@@ -786,7 +786,9 @@ func (s *Service) ToggleRiskPolicy(ctx context.Context, policyID string, enabled
 }
 
 // scanRiskPolicy scans a risk policy row from a pgx.Rows iterator
-func scanRiskPolicy(rows interface{ Scan(dest ...interface{}) error }) (*RiskPolicy, error) {
+func scanRiskPolicy(rows interface {
+	Scan(dest ...interface{}) error
+}) (*RiskPolicy, error) {
 	var p RiskPolicy
 	var priority int
 	var conditionsJSON, actionsJSON []byte

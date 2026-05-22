@@ -22,19 +22,19 @@ type ConnectionTestRequest struct {
 
 // ConnectionTestResult represents the result of a connection test
 type ConnectionTestResult struct {
-	Success         bool                   `json:"success"`
-	Tests           map[string]*TestResult `json:"tests"`
-	OverallLatencyMs int64                 `json:"overall_latency_ms"`
-	TestedAt        time.Time              `json:"tested_at"`
+	Success          bool                   `json:"success"`
+	Tests            map[string]*TestResult `json:"tests"`
+	OverallLatencyMs int64                  `json:"overall_latency_ms"`
+	TestedAt         time.Time              `json:"tested_at"`
 }
 
 // TestResult represents the result of a single test
 type TestResult struct {
-	Success       bool                   `json:"success"`
-	LatencyMs     int64                  `json:"latency_ms"`
-	StatusCode    int                    `json:"status_code,omitempty"`
-	ErrorMessage  string                 `json:"error_message,omitempty"`
-	Details       map[string]interface{} `json:"details,omitempty"`
+	Success      bool                   `json:"success"`
+	LatencyMs    int64                  `json:"latency_ms"`
+	StatusCode   int                    `json:"status_code,omitempty"`
+	ErrorMessage string                 `json:"error_message,omitempty"`
+	Details      map[string]interface{} `json:"details,omitempty"`
 }
 
 // handleTestConnection tests connectivity for a specific route

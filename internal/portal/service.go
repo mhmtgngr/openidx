@@ -509,18 +509,18 @@ func (s *Service) handleReviewGroupRequest(c *gin.Context) {
 
 // UserDevice represents a user's registered device
 type UserDevice struct {
-	ID              string     `json:"id"`
-	UserID          string     `json:"user_id"`
-	Fingerprint     string     `json:"fingerprint,omitempty"`
-	Name            string     `json:"name"`
-	DeviceType      string     `json:"device_type"` // desktop, mobile, tablet
-	IPAddress       string     `json:"ip_address"`
-	UserAgent       string     `json:"user_agent,omitempty"`
-	Location        string     `json:"location,omitempty"`
-	Trusted         bool       `json:"trusted"`
-	TrustRequested  bool       `json:"trust_requested"`
-	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	UserID         string     `json:"user_id"`
+	Fingerprint    string     `json:"fingerprint,omitempty"`
+	Name           string     `json:"name"`
+	DeviceType     string     `json:"device_type"` // desktop, mobile, tablet
+	IPAddress      string     `json:"ip_address"`
+	UserAgent      string     `json:"user_agent,omitempty"`
+	Location       string     `json:"location,omitempty"`
+	Trusted        bool       `json:"trusted"`
+	TrustRequested bool       `json:"trust_requested"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // GetMyDevices returns all devices for a user

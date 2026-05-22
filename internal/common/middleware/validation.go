@@ -22,7 +22,7 @@ type Validator func(string) error
 
 // ValidationRule defines a validation rule for query or path parameters
 type ValidationRule struct {
-	Required bool
+	Required   bool
 	Validators []Validator
 }
 
@@ -44,8 +44,8 @@ type JSONSchema struct {
 
 // ValidationError represents a single validation error
 type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
+	Field   string      `json:"field"`
+	Message string      `json:"message"`
 	Value   interface{} `json:"value,omitempty"`
 }
 

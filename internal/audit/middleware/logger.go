@@ -196,7 +196,7 @@ func RejectOriginHandler(logger *zap.Logger, allowedOrigins []string) gin.Handle
 			})
 
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "origin_not_allowed",
+				"error":   "origin_not_allowed",
 				"message": "WebSocket connections from your origin are not allowed",
 			})
 			return

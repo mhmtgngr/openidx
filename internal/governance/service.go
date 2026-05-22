@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -26,29 +26,29 @@ import (
 
 // AccessReview represents an access certification review
 type AccessReview struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Description  string            `json:"description"`
-	Type         ReviewType        `json:"type"`
-	Status       ReviewStatus      `json:"status"`
-	ReviewerID   string            `json:"reviewer_id"`
-	Scope        ReviewScope       `json:"scope"`
-	StartDate    time.Time         `json:"start_date"`
-	EndDate      time.Time         `json:"end_date"`
-	CreatedAt    time.Time         `json:"created_at"`
-	CompletedAt  *time.Time        `json:"completed_at,omitempty"`
-	TotalItems   int               `json:"total_items"`
-	ReviewedItems int              `json:"reviewed_items"`
+	ID            string       `json:"id"`
+	Name          string       `json:"name"`
+	Description   string       `json:"description"`
+	Type          ReviewType   `json:"type"`
+	Status        ReviewStatus `json:"status"`
+	ReviewerID    string       `json:"reviewer_id"`
+	Scope         ReviewScope  `json:"scope"`
+	StartDate     time.Time    `json:"start_date"`
+	EndDate       time.Time    `json:"end_date"`
+	CreatedAt     time.Time    `json:"created_at"`
+	CompletedAt   *time.Time   `json:"completed_at,omitempty"`
+	TotalItems    int          `json:"total_items"`
+	ReviewedItems int          `json:"reviewed_items"`
 }
 
 // ReviewType defines the type of access review
 type ReviewType string
 
 const (
-	ReviewTypeUserAccess      ReviewType = "user_access"
-	ReviewTypeRoleAssignment  ReviewType = "role_assignment"
+	ReviewTypeUserAccess        ReviewType = "user_access"
+	ReviewTypeRoleAssignment    ReviewType = "role_assignment"
 	ReviewTypeApplicationAccess ReviewType = "application_access"
-	ReviewTypePrivilegedAccess ReviewType = "privileged_access"
+	ReviewTypePrivilegedAccess  ReviewType = "privileged_access"
 )
 
 // ReviewStatus defines the status of an access review
@@ -72,16 +72,16 @@ type ReviewScope struct {
 
 // ReviewItem represents a single item to be reviewed
 type ReviewItem struct {
-	ID           string           `json:"id"`
-	ReviewID     string           `json:"review_id"`
-	UserID       string           `json:"user_id"`
-	ResourceType string           `json:"resource_type"`
-	ResourceID   string           `json:"resource_id"`
-	ResourceName string           `json:"resource_name"`
-	Decision     ReviewDecision   `json:"decision"`
-	DecidedBy    string           `json:"decided_by,omitempty"`
-	DecidedAt    *time.Time       `json:"decided_at,omitempty"`
-	Comments     string           `json:"comments,omitempty"`
+	ID           string         `json:"id"`
+	ReviewID     string         `json:"review_id"`
+	UserID       string         `json:"user_id"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   string         `json:"resource_id"`
+	ResourceName string         `json:"resource_name"`
+	Decision     ReviewDecision `json:"decision"`
+	DecidedBy    string         `json:"decided_by,omitempty"`
+	DecidedAt    *time.Time     `json:"decided_at,omitempty"`
+	Comments     string         `json:"comments,omitempty"`
 }
 
 // ReviewDecision represents the decision made on a review item
@@ -96,34 +96,34 @@ const (
 
 // Policy represents an access policy
 type Policy struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Type        PolicyType      `json:"type"`
-	Rules       []PolicyRule    `json:"rules"`
-	Enabled     bool            `json:"enabled"`
-	Priority    int             `json:"priority"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Type        PolicyType   `json:"type"`
+	Rules       []PolicyRule `json:"rules"`
+	Enabled     bool         `json:"enabled"`
+	Priority    int          `json:"priority"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 // PolicyType defines the type of policy
 type PolicyType string
 
 const (
-	PolicyTypeSoD              PolicyType = "separation_of_duty"
-	PolicyTypeRiskBased        PolicyType = "risk_based"
-	PolicyTypeTimebound        PolicyType = "timebound"
-	PolicyTypeLocation         PolicyType = "location"
+	PolicyTypeSoD               PolicyType = "separation_of_duty"
+	PolicyTypeRiskBased         PolicyType = "risk_based"
+	PolicyTypeTimebound         PolicyType = "timebound"
+	PolicyTypeLocation          PolicyType = "location"
 	PolicyTypeConditionalAccess PolicyType = "conditional_access"
 )
 
 // PolicyRule defines a rule within a policy
 type PolicyRule struct {
-	ID         string                 `json:"id"`
-	Condition  map[string]interface{} `json:"condition"`
-	Effect     string                 `json:"effect"`
-	Priority   int                    `json:"priority"`
+	ID        string                 `json:"id"`
+	Condition map[string]interface{} `json:"condition"`
+	Effect    string                 `json:"effect"`
+	Priority  int                    `json:"priority"`
 }
 
 // Service provides governance operations
@@ -409,14 +409,14 @@ func (s *Service) CreateAccessReview(ctx context.Context, review *AccessReview) 
 	now := time.Now()
 	review.CreatedAt = now
 	review.Status = ReviewStatusPending
-	
+
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO access_reviews (id, name, description, type, status, reviewer_id,
 		                           start_date, end_date, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, review.ID, review.Name, review.Description, review.Type, review.Status,
 		review.ReviewerID, review.StartDate, review.EndDate, review.CreatedAt)
-	
+
 	return err
 }
 
@@ -502,14 +502,14 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 	s.logger.Info("Submitting review decision",
 		zap.String("item_id", itemID),
 		zap.String("decision", string(decision)))
-	
+
 	now := time.Now()
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE review_items
 		SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
 		WHERE id = $1
 	`, itemID, decision, comments, decidedBy, now)
-	
+
 	return err
 }
 
@@ -1649,7 +1649,7 @@ func (s *Service) handleEvaluatePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	allowed, err := s.EvaluatePolicy(c.Request.Context(), c.Param("id"), req)
 	if err != nil {
 		s.logger.Error("failed to evaluate policy", zap.String("id", c.Param("id")), zap.Error(err))

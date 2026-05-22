@@ -18,55 +18,55 @@ import (
 
 // SAMLServiceProvider represents a registered Service Provider
 type SAMLServiceProvider struct {
-	ID                string            `json:"id" db:"id"`
-	Name              string            `json:"name" db:"name"`
-	Description       string            `json:"description" db:"description"`
-	EntityID          string            `json:"entity_id" db:"entity_id"`
-	ACSURL            string            `json:"acs_url" db:"acs_url"`
-	SLOURL            string            `json:"slo_url,omitempty" db:"slo_url"`
-	MetadataURL       string            `json:"metadata_url,omitempty" db:"metadata_url"`
-	Certificate       string            `json:"certificate,omitempty" db:"certificate"`
-	NameIDFormat      string            `json:"name_id_format" db:"name_id_format"`
-	AttributeMappings map[string]string `json:"attribute_mappings,omitempty" db:"attribute_mappings"`
-	WantAssertionsSigned bool           `json:"want_assertions_signed" db:"want_assertions_signed"`
-	EncryptionEnabled bool              `json:"encryption_enabled" db:"encryption_enabled"`
-	Enabled           bool              `json:"enabled" db:"enabled"`
-	CreatedAt         time.Time         `json:"created_at" db:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at" db:"updated_at"`
-	LastUsedAt        *time.Time        `json:"last_used_at,omitempty" db:"last_used_at"`
+	ID                   string            `json:"id" db:"id"`
+	Name                 string            `json:"name" db:"name"`
+	Description          string            `json:"description" db:"description"`
+	EntityID             string            `json:"entity_id" db:"entity_id"`
+	ACSURL               string            `json:"acs_url" db:"acs_url"`
+	SLOURL               string            `json:"slo_url,omitempty" db:"slo_url"`
+	MetadataURL          string            `json:"metadata_url,omitempty" db:"metadata_url"`
+	Certificate          string            `json:"certificate,omitempty" db:"certificate"`
+	NameIDFormat         string            `json:"name_id_format" db:"name_id_format"`
+	AttributeMappings    map[string]string `json:"attribute_mappings,omitempty" db:"attribute_mappings"`
+	WantAssertionsSigned bool              `json:"want_assertions_signed" db:"want_assertions_signed"`
+	EncryptionEnabled    bool              `json:"encryption_enabled" db:"encryption_enabled"`
+	Enabled              bool              `json:"enabled" db:"enabled"`
+	CreatedAt            time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at" db:"updated_at"`
+	LastUsedAt           *time.Time        `json:"last_used_at,omitempty" db:"last_used_at"`
 }
 
 // CreateSAMLServiceProviderRequest is the request to create a new SP
 type CreateSAMLServiceProviderRequest struct {
-	Name                  string            `json:"name" binding:"required"`
-	Description           string            `json:"description"`
-	EntityID              string            `json:"entity_id" binding:"required"`
-	ACSURL                string            `json:"acs_url" binding:"required"`
-	SLOURL                string            `json:"slo_url"`
-	MetadataURL           string            `json:"metadata_url"`
-	Certificate           string            `json:"certificate"`
-	NameIDFormat          string            `json:"name_id_format"`
-	AttributeMappings     map[string]string `json:"attribute_mappings"`
-	WantAssertionsSigned  bool              `json:"want_assertions_signed"`
-	EncryptionEnabled     bool              `json:"encryption_enabled"`
-	Enabled               bool              `json:"enabled"`
-	MetadataXML           string            `json:"metadata_xml"` // For uploading metadata directly
+	Name                 string            `json:"name" binding:"required"`
+	Description          string            `json:"description"`
+	EntityID             string            `json:"entity_id" binding:"required"`
+	ACSURL               string            `json:"acs_url" binding:"required"`
+	SLOURL               string            `json:"slo_url"`
+	MetadataURL          string            `json:"metadata_url"`
+	Certificate          string            `json:"certificate"`
+	NameIDFormat         string            `json:"name_id_format"`
+	AttributeMappings    map[string]string `json:"attribute_mappings"`
+	WantAssertionsSigned bool              `json:"want_assertions_signed"`
+	EncryptionEnabled    bool              `json:"encryption_enabled"`
+	Enabled              bool              `json:"enabled"`
+	MetadataXML          string            `json:"metadata_xml"` // For uploading metadata directly
 }
 
 // UpdateSAMLServiceProviderRequest is the request to update an SP
 type UpdateSAMLServiceProviderRequest struct {
-	Name                  *string            `json:"name"`
-	Description           *string            `json:"description"`
-	EntityID              *string            `json:"entity_id"`
-	ACSURL                *string            `json:"acs_url"`
-	SLOURL                *string            `json:"slo_url"`
-	MetadataURL           *string            `json:"metadata_url"`
-	Certificate           *string            `json:"certificate"`
-	NameIDFormat          *string            `json:"name_id_format"`
-	AttributeMappings     map[string]string  `json:"attribute_mappings"`
-	WantAssertionsSigned  *bool              `json:"want_assertions_signed"`
-	EncryptionEnabled     *bool              `json:"encryption_enabled"`
-	Enabled               *bool              `json:"enabled"`
+	Name                 *string           `json:"name"`
+	Description          *string           `json:"description"`
+	EntityID             *string           `json:"entity_id"`
+	ACSURL               *string           `json:"acs_url"`
+	SLOURL               *string           `json:"slo_url"`
+	MetadataURL          *string           `json:"metadata_url"`
+	Certificate          *string           `json:"certificate"`
+	NameIDFormat         *string           `json:"name_id_format"`
+	AttributeMappings    map[string]string `json:"attribute_mappings"`
+	WantAssertionsSigned *bool             `json:"want_assertions_signed"`
+	EncryptionEnabled    *bool             `json:"encryption_enabled"`
+	Enabled              *bool             `json:"enabled"`
 }
 
 // SAMLServiceProviderListResponse is the paginated list response
@@ -393,15 +393,15 @@ func (s *Service) handleImportSAMLMetadata(c *gin.Context) {
 
 	// Create SP from metadata
 	createReq := &CreateSAMLServiceProviderRequest{
-		Name:              req.Name,
-		Description:       "Imported from SAML metadata",
-		EntityID:          metadata.EntityID,
-		ACSURL:            metadata.SPSSODescriptor.AssertionConsumerServices[0].Location,
-		MetadataURL:       req.MetadataURL,
-		Certificate:       certificate,
+		Name:                 req.Name,
+		Description:          "Imported from SAML metadata",
+		EntityID:             metadata.EntityID,
+		ACSURL:               metadata.SPSSODescriptor.AssertionConsumerServices[0].Location,
+		MetadataURL:          req.MetadataURL,
+		Certificate:          certificate,
 		WantAssertionsSigned: metadata.SPSSODescriptor.WantAssertionsSigned,
-		Enabled:           true,
-		MetadataXML:       req.MetadataXML,
+		Enabled:              true,
+		MetadataXML:          req.MetadataXML,
 	}
 
 	// Use entity ID as name if not provided

@@ -15,35 +15,35 @@ import (
 
 // Tenant represents a multi-tenant organization
 type Tenant struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Domain    string          `json:"domain"`
-	Plan      string          `json:"plan"` // free, pro, enterprise
-	Config    TenantConfig    `json:"config"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Domain    string       `json:"domain"`
+	Plan      string       `json:"plan"` // free, pro, enterprise
+	Config    TenantConfig `json:"config"`
+	CreatedAt time.Time    `json:"created_at"`
+	UpdatedAt time.Time    `json:"updated_at"`
 }
 
 // TenantConfig contains tenant-specific configuration
 type TenantConfig struct {
-	Branding           TenantBranding       `json:"branding"`
-	Security           TenantSecurity       `json:"security"`
-	Features           TenantFeatures       `json:"features"`
-	Limits             TenantLimits         `json:"limits"`
-	PasswordPolicy     PasswordPolicy       `json:"password_policy"`
-	SessionPolicy      SessionPolicy        `json:"session_policy"`
-	MFAPolicy          TenantMFAPolicy      `json:"mfa_policy"`
-	RateLimit          RateLimitConfig      `json:"rate_limit"`
+	Branding       TenantBranding  `json:"branding"`
+	Security       TenantSecurity  `json:"security"`
+	Features       TenantFeatures  `json:"features"`
+	Limits         TenantLimits    `json:"limits"`
+	PasswordPolicy PasswordPolicy  `json:"password_policy"`
+	SessionPolicy  SessionPolicy   `json:"session_policy"`
+	MFAPolicy      TenantMFAPolicy `json:"mfa_policy"`
+	RateLimit      RateLimitConfig `json:"rate_limit"`
 }
 
 // TenantBranding contains branding customization for a tenant
 type TenantBranding struct {
-	LogoURL         string `json:"logo_url,omitempty"`
-	FaviconURL      string `json:"favicon_url,omitempty"`
-	PrimaryColor    string `json:"primary_color"`
-	SecondaryColor  string `json:"secondary_color"`
-	LoginTitle      string `json:"login_title"`
-	LoginMessage    string `json:"login_message,omitempty"`
+	LogoURL        string `json:"logo_url,omitempty"`
+	FaviconURL     string `json:"favicon_url,omitempty"`
+	PrimaryColor   string `json:"primary_color"`
+	SecondaryColor string `json:"secondary_color"`
+	LoginTitle     string `json:"login_title"`
+	LoginMessage   string `json:"login_message,omitempty"`
 }
 
 // TenantSecurity contains security settings for a tenant
@@ -54,25 +54,25 @@ type TenantSecurity struct {
 
 // TenantFeatures contains feature flags for a tenant
 type TenantFeatures struct {
-	SCIMProvisioning bool `json:"scim_provisioning"`
-	SAMLSSO          bool `json:"saml_sso"`
-	APIAccess        bool `json:"api_access"`
+	SCIMProvisioning  bool `json:"scim_provisioning"`
+	SAMLSSO           bool `json:"saml_sso"`
+	APIAccess         bool `json:"api_access"`
 	AuditLogRetention int  `json:"audit_log_retention_days"`
 }
 
 // TenantLimits contains resource limits for a tenant
 type TenantLimits struct {
-	MaxUsers      int `json:"max_users"`
-	MaxGroups     int `json:"max_groups"`
-	MaxApps       int `json:"max_apps"`
-	MaxAdmins     int `json:"max_admins"`
-	MaxAPIKeys    int `json:"max_api_keys"`
+	MaxUsers   int `json:"max_users"`
+	MaxGroups  int `json:"max_groups"`
+	MaxApps    int `json:"max_apps"`
+	MaxAdmins  int `json:"max_admins"`
+	MaxAPIKeys int `json:"max_api_keys"`
 }
 
 // SessionPolicy defines session management rules
 type SessionPolicy struct {
-	TimeoutMinutes  int `json:"timeout_minutes"`
-	MaxConcurrent   int `json:"max_concurrent"`
+	TimeoutMinutes int `json:"timeout_minutes"`
+	MaxConcurrent  int `json:"max_concurrent"`
 }
 
 // TenantMFAPolicy defines MFA requirements for a tenant
@@ -83,16 +83,16 @@ type TenantMFAPolicy struct {
 
 // RateLimitConfig defines rate limiting rules
 type RateLimitConfig struct {
-	PerIP  int `json:"per_ip"`
+	PerIP   int `json:"per_ip"`
 	PerUser int `json:"per_user"`
 }
 
 // TenantResponse is the response format for tenant queries
 type TenantResponse struct {
-	Data       []Tenant `json:"data"`
-	Total      int      `json:"total"`
-	Page       int      `json:"page"`
-	PageSize   int      `json:"page_size"`
+	Data     []Tenant `json:"data"`
+	Total    int      `json:"total"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"page_size"`
 }
 
 // CreateTenantRequest is the request format for creating a tenant
@@ -332,9 +332,9 @@ func DefaultTenantConfig() TenantConfig {
 		},
 		Security: TenantSecurity{},
 		Features: TenantFeatures{
-			SCIMProvisioning: false,
-			SAMLSSO:          false,
-			APIAccess:        true,
+			SCIMProvisioning:  false,
+			SAMLSSO:           false,
+			APIAccess:         true,
 			AuditLogRetention: 90,
 		},
 		Limits: TenantLimits{

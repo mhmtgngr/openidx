@@ -79,9 +79,9 @@ func TestSettingsSerialization(t *testing.T) {
 			SocialLoginEnabled: true,
 			SocialProviders:    []string{"google", "microsoft"},
 			LockoutPolicy: LockoutPolicy{
-				Enabled:          true,
+				Enabled:           true,
 				MaxFailedAttempts: 5,
-				LockoutDuration:  30,
+				LockoutDuration:   30,
 			},
 		},
 		Branding: BrandingSection{
@@ -171,7 +171,7 @@ func TestGeneralSectionValidation(t *testing.T) {
 						AllowedMethods: []string{"totp"},
 					},
 					Session: SessionSettings{
-						IdleTimeoutMinutes: 30,
+						IdleTimeoutMinutes:    30,
 						MaxConcurrentSessions: 5,
 					},
 				},
@@ -401,10 +401,10 @@ func TestBrandingColorValidation(t *testing.T) {
 	handler := newTestSettingsHandler()
 
 	tests := []struct {
-		name          string
-		primaryColor  string
+		name           string
+		primaryColor   string
 		secondaryColor string
-		wantErr       bool
+		wantErr        bool
 	}{
 		{
 			name:           "valid hex colors",
@@ -726,9 +726,9 @@ func TestSessionSettingsSerialization(t *testing.T) {
 // TestLockoutPolicySerialization tests lockout policy serialization
 func TestLockoutPolicySerialization(t *testing.T) {
 	lockout := LockoutPolicy{
-		Enabled:          true,
+		Enabled:           true,
 		MaxFailedAttempts: 5,
-		LockoutDuration:  30,
+		LockoutDuration:   30,
 	}
 
 	data, err := json.Marshal(lockout)

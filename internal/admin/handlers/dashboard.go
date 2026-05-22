@@ -26,13 +26,13 @@ func NewDashboardHandler(logger *zap.Logger, db *pgxpool.Pool) *DashboardHandler
 
 // DashboardStats represents dashboard statistics
 type DashboardStats struct {
-	TotalUsers        int64             `json:"total_users"`
-	ActiveUsers       int64             `json:"active_users"`
-	ActiveSessions    int64             `json:"active_sessions"`
-	PendingReviews    int64             `json:"pending_reviews"`
-	RecentEvents      []RecentEvent     `json:"recent_events"`
-	SystemMetrics     SystemMetrics     `json:"system_metrics"`
-	SecurityAlerts    SecurityAlerts    `json:"security_alerts"`
+	TotalUsers     int64          `json:"total_users"`
+	ActiveUsers    int64          `json:"active_users"`
+	ActiveSessions int64          `json:"active_sessions"`
+	PendingReviews int64          `json:"pending_reviews"`
+	RecentEvents   []RecentEvent  `json:"recent_events"`
+	SystemMetrics  SystemMetrics  `json:"system_metrics"`
+	SecurityAlerts SecurityAlerts `json:"security_alerts"`
 }
 
 // RecentEvent represents a recent audit event
