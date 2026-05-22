@@ -99,7 +99,6 @@ func (s *Service) handleListAIAgents(c *gin.Context) {
 	if agentType != "" {
 		query += fmt.Sprintf(" AND a.agent_type = $%d", argIdx)
 		args = append(args, agentType)
-		argIdx++
 	}
 	query += " ORDER BY a.created_at DESC"
 

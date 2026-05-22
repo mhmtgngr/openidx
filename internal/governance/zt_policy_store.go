@@ -254,7 +254,6 @@ func (s *ZTPolicyStore) List(ctx context.Context, filter *PolicyFilter) ([]ZTPol
 		if filter.Effect != "" {
 			query += fmt.Sprintf(" AND effect = $%d", argPos)
 			args = append(args, filter.Effect)
-			argPos++
 		}
 	}
 
@@ -577,7 +576,6 @@ func (s *ZTPolicyStore) Count(ctx context.Context, filter *PolicyFilter) (int, e
 		if filter.Effect != "" {
 			query += fmt.Sprintf(" AND effect = $%d", argPos)
 			args = append(args, filter.Effect)
-			argPos++
 		}
 	}
 

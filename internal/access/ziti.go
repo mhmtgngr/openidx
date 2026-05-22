@@ -1100,8 +1100,10 @@ func (zm *ZitiManager) configTypeFallback(typeName string) string {
 
 // SetupZitiForRoute creates all Ziti resources needed for a proxy route
 func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceName, host string, port int) error {
-	// 1. Create the Ziti service with host.v1 config so the tunneler knows where to forward
-	body, _ := json.Marshal(map[string]interface{}{
+	// 1. Create the Ziti service with host.v1 config so the tunneler knows where to forward.
+	// NOTE: this initial marshal is overwritten by svcPayload below before use; the dead
+	// literal is kept for now and should be removed in a focused cleanup.
+	body, _ := json.Marshal(map[string]interface{}{ //nolint:ineffassign // overwritten by svcPayload below; see note
 		"name":               serviceName,
 		"roleAttributes":     []string{serviceName},
 		"encryptionRequired": true,

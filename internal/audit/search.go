@@ -217,7 +217,6 @@ func (s *Searcher) buildWhereClause(query *SearchQuery) (string, []interface{}) 
 		// Use subquery to get the timestamp of the cursor event
 		conditions = append(conditions, fmt.Sprintf("(timestamp, id) < (SELECT timestamp, id FROM audit_events_tamper_evident WHERE id = $%d)", argIdx))
 		args = append(args, query.AfterID)
-		argIdx++
 	}
 
 	if len(conditions) == 0 {

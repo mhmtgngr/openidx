@@ -572,7 +572,6 @@ func (a *AlertManager) ListAlerts(ctx context.Context, tenantID string, filter A
 	if filter.Type != "" {
 		countQuery += fmt.Sprintf(" AND alert_type = $%d", countArgIdx)
 		countArgs = append(countArgs, filter.Type)
-		countArgIdx++
 	}
 
 	err := a.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
