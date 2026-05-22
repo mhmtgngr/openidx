@@ -135,14 +135,6 @@ jobs:
           path: bin/
           retention-days: 7
 
-      - name: Upload binaries to release (on tag)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: bin/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   # Parallel test execution by package
   test-unit:
     name: Unit Tests (${{ matrix.package }})
