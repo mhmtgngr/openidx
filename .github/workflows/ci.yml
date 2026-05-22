@@ -518,11 +518,32 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # Race detector — enforces that `go test -race ./...` is clean. The test-unit
+  # job runs -race per package but swallows failures with `|| true` (it exists
+  # for coverage collection), so it can't catch races; this job does.
+  test-race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run race detector
+        run: go test -race ./...
+
   # Required status checks
   status-check:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [build-matrix, lint, test-unit, vulnerability-check]
+    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check]
     if: always()
     timeout-minutes: 5
 
@@ -541,6 +562,7 @@ jobs:
             "build-matrix=${{ needs.build-matrix.result }}" \
             "lint=${{ needs.lint.result }}" \
             "test-unit=${{ needs.test-unit.result }}" \
+            "test-race=${{ needs.test-race.result }}" \
             "vulnerability-check=${{ needs.vulnerability-check.result }}"; do
             name="${jr%%=*}"
             result="${jr#*=}"
