@@ -13,52 +13,52 @@ import (
 
 // IntegrationHealth represents the health of a single integration
 type IntegrationHealth struct {
-	Status            string    `json:"status"`
-	Available         bool      `json:"available"`
-	LastCheck         time.Time `json:"last_check"`
-	ErrorMessage      string    `json:"error_message,omitempty"`
-	Details           map[string]interface{} `json:"details,omitempty"`
+	Status       string                 `json:"status"`
+	Available    bool                   `json:"available"`
+	LastCheck    time.Time              `json:"last_check"`
+	ErrorMessage string                 `json:"error_message,omitempty"`
+	Details      map[string]interface{} `json:"details,omitempty"`
 }
 
 // ZitiHealth represents detailed Ziti health
 type ZitiHealth struct {
-	Status            string `json:"status"`
-	ControllerReachable bool `json:"controller_reachable"`
-	RoutersOnline     int    `json:"routers_online"`
-	RoutersTotal      int    `json:"routers_total"`
-	ServicesCount     int    `json:"services_count"`
-	IdentitiesCount   int    `json:"identities_count"`
-	LastCheck         time.Time `json:"last_check"`
-	ErrorMessage      string `json:"error_message,omitempty"`
-	Version           string `json:"version,omitempty"`
+	Status              string    `json:"status"`
+	ControllerReachable bool      `json:"controller_reachable"`
+	RoutersOnline       int       `json:"routers_online"`
+	RoutersTotal        int       `json:"routers_total"`
+	ServicesCount       int       `json:"services_count"`
+	IdentitiesCount     int       `json:"identities_count"`
+	LastCheck           time.Time `json:"last_check"`
+	ErrorMessage        string    `json:"error_message,omitempty"`
+	Version             string    `json:"version,omitempty"`
 }
 
 // GuacamoleHealth represents detailed Guacamole health
 type GuacamoleHealth struct {
-	Status           string `json:"status"`
-	ServerReachable  bool   `json:"server_reachable"`
-	Authenticated    bool   `json:"authenticated"`
-	ConnectionsCount int    `json:"connections_count"`
-	ActiveSessions   int    `json:"active_sessions"`
+	Status           string    `json:"status"`
+	ServerReachable  bool      `json:"server_reachable"`
+	Authenticated    bool      `json:"authenticated"`
+	ConnectionsCount int       `json:"connections_count"`
+	ActiveSessions   int       `json:"active_sessions"`
 	LastCheck        time.Time `json:"last_check"`
-	ErrorMessage     string `json:"error_message,omitempty"`
-	Version          string `json:"version,omitempty"`
+	ErrorMessage     string    `json:"error_message,omitempty"`
+	Version          string    `json:"version,omitempty"`
 }
 
 // BrowZerHealth represents detailed BrowZer health
 type BrowZerHealth struct {
-	Status          string `json:"status"`
-	Bootstrapped    bool   `json:"bootstrapped"`
-	JWTSignerValid  bool   `json:"jwt_signer_valid"`
-	AuthPolicyValid bool   `json:"auth_policy_valid"`
+	Status          string    `json:"status"`
+	Bootstrapped    bool      `json:"bootstrapped"`
+	JWTSignerValid  bool      `json:"jwt_signer_valid"`
+	AuthPolicyValid bool      `json:"auth_policy_valid"`
 	LastCheck       time.Time `json:"last_check"`
-	ErrorMessage    string `json:"error_message,omitempty"`
+	ErrorMessage    string    `json:"error_message,omitempty"`
 }
 
 // IntegrationsHealthResponse represents the overall health response
 type IntegrationsHealthResponse struct {
-	Status       string                      `json:"status"`
-	Timestamp    time.Time                   `json:"timestamp"`
+	Status       string                        `json:"status"`
+	Timestamp    time.Time                     `json:"timestamp"`
 	Integrations map[string]*IntegrationHealth `json:"integrations"`
 }
 
@@ -80,10 +80,10 @@ func (s *Service) handleHealthIntegrations(c *gin.Context) {
 		LastCheck:    zitiHealth.LastCheck,
 		ErrorMessage: zitiHealth.ErrorMessage,
 		Details: map[string]interface{}{
-			"routers_online":    zitiHealth.RoutersOnline,
-			"routers_total":     zitiHealth.RoutersTotal,
-			"services_count":    zitiHealth.ServicesCount,
-			"identities_count":  zitiHealth.IdentitiesCount,
+			"routers_online":   zitiHealth.RoutersOnline,
+			"routers_total":    zitiHealth.RoutersTotal,
+			"services_count":   zitiHealth.ServicesCount,
+			"identities_count": zitiHealth.IdentitiesCount,
 		},
 	}
 	if zitiHealth.Status != "healthy" && zitiHealth.Status != "unavailable" {
@@ -176,11 +176,11 @@ func (s *Service) handleHealthService(c *gin.Context) {
 	}
 
 	health := &ServiceHealthResponse{
-		RouteID:     routeID,
-		RouteName:   route.Name,
-		Status:      "healthy",
-		Timestamp:   time.Now(),
-		Features:    make(map[string]*FeatureHealth),
+		RouteID:   routeID,
+		RouteName: route.Name,
+		Status:    "healthy",
+		Timestamp: time.Now(),
+		Features:  make(map[string]*FeatureHealth),
 	}
 
 	// Check upstream connectivity
@@ -232,9 +232,9 @@ type UpstreamHealth struct {
 
 // FeatureHealth represents health of a specific feature
 type FeatureHealth struct {
-	Status       string `json:"status"`
-	Operational  bool   `json:"operational"`
-	ErrorMessage string `json:"error_message,omitempty"`
+	Status       string                 `json:"status"`
+	Operational  bool                   `json:"operational"`
+	ErrorMessage string                 `json:"error_message,omitempty"`
 	Details      map[string]interface{} `json:"details,omitempty"`
 }
 

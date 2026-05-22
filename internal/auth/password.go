@@ -48,11 +48,11 @@ const (
 
 // PasswordPolicy defines password requirements
 type PasswordPolicy struct {
-	MinLength          int  // Minimum password length (default: 12)
-	RequireUppercase   bool // Require at least one uppercase letter
-	RequireLowercase   bool // Require at least one lowercase letter
-	RequireDigit       bool // Require at least one digit
-	RequireSpecialChar bool // Require at least one special character
+	MinLength          int    // Minimum password length (default: 12)
+	RequireUppercase   bool   // Require at least one uppercase letter
+	RequireLowercase   bool   // Require at least one lowercase letter
+	RequireDigit       bool   // Require at least one digit
+	RequireSpecialChar bool   // Require at least one special character
 	SpecialChars       string // Allowed special characters (default: "!@#$%^&*()_+-=[]{}|;:,.<>?")
 }
 
@@ -70,21 +70,21 @@ func DefaultPasswordPolicy() PasswordPolicy {
 
 // PasswordService handles password hashing and validation
 type PasswordService struct {
-	policy              PasswordPolicy
-	argon2Time         uint32
-	argon2Memory       uint32
-	argon2Parallelism  uint8
-	argon2KeyLength    uint32
+	policy            PasswordPolicy
+	argon2Time        uint32
+	argon2Memory      uint32
+	argon2Parallelism uint8
+	argon2KeyLength   uint32
 }
 
 // NewPasswordService creates a new PasswordService with default settings
 func NewPasswordService() *PasswordService {
 	return &PasswordService{
-		policy:             DefaultPasswordPolicy(),
-		argon2Time:        3,    // 3 iterations
+		policy:            DefaultPasswordPolicy(),
+		argon2Time:        3,         // 3 iterations
 		argon2Memory:      64 * 1024, // 64 MB
-		argon2Parallelism: 4,    // 4 threads
-		argon2KeyLength:   32,   // 32 bytes
+		argon2Parallelism: 4,         // 4 threads
+		argon2KeyLength:   32,        // 32 bytes
 	}
 }
 
@@ -330,11 +330,11 @@ func (ps *PasswordService) GenerateRandomPassword(length int) (string, error) {
 	}
 
 	const (
-		lowerChars     = "abcdefghijklmnopqrstuvwxyz"
-		upperChars     = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-		digitChars     = "0123456789"
-		specialChars   = "!@#$%^&*()_+-=[]{}|;:,.<>?"
-		allChars       = lowerChars + upperChars + digitChars + specialChars
+		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		digitChars   = "0123456789"
+		specialChars = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+		allChars     = lowerChars + upperChars + digitChars + specialChars
 	)
 
 	password := make([]byte, length)

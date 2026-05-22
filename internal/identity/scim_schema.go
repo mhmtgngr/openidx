@@ -22,29 +22,29 @@ type SCIMResource interface {
 
 // SCIMUser represents a SCIM 2.0 User resource (RFC 7643 4.1)
 type SCIMUser struct {
-	Schemas    []string     `json:"schemas"`
-	ID         string       `json:"id"`
-	ExternalID *string      `json:"externalId,omitempty"`
-	UserName   string       `json:"userName"`
-	Name       *SCIMName    `json:"name,omitempty"`
-	DisplayName *string     `json:"displayName,omitempty"`
-	NickName   *string      `json:"nickName,omitempty"`
-	ProfileURL *string      `json:"profileUrl,omitempty"`
-	Title      *string      `json:"title,omitempty"`
-	UserType   *string      `json:"userType,omitempty"`
-	PreferredLanguage *string `json:"preferredLanguage,omitempty"`
-	Locale     *string      `json:"locale,omitempty"`
-	Timezone   *string      `json:"timezone,omitempty"`
-	Active     *bool        `json:"active,omitempty"`
-	Password   *string      `json:"password,omitempty"`
-	Emails     []SCIMEmail  `json:"emails,omitempty"`
-	PhoneNumbers []SCIMPhoneNumber `json:"phoneNumbers,omitempty"`
-	Addresses  []SCIMAddress `json:"addresses,omitempty"`
-	Groups     []SCIMGroupRef `json:"groups,omitempty"`
-	Photos     []SCIMPhoto   `json:"photos,omitempty"`
-	Entitlements []SCIMEntitlement `json:"entitlements,omitempty"`
-	Roles      []SCIMRole    `json:"roles,omitempty"`
-	Meta       *SCIMMeta     `json:"meta,omitempty"`
+	Schemas           []string          `json:"schemas"`
+	ID                string            `json:"id"`
+	ExternalID        *string           `json:"externalId,omitempty"`
+	UserName          string            `json:"userName"`
+	Name              *SCIMName         `json:"name,omitempty"`
+	DisplayName       *string           `json:"displayName,omitempty"`
+	NickName          *string           `json:"nickName,omitempty"`
+	ProfileURL        *string           `json:"profileUrl,omitempty"`
+	Title             *string           `json:"title,omitempty"`
+	UserType          *string           `json:"userType,omitempty"`
+	PreferredLanguage *string           `json:"preferredLanguage,omitempty"`
+	Locale            *string           `json:"locale,omitempty"`
+	Timezone          *string           `json:"timezone,omitempty"`
+	Active            *bool             `json:"active,omitempty"`
+	Password          *string           `json:"password,omitempty"`
+	Emails            []SCIMEmail       `json:"emails,omitempty"`
+	PhoneNumbers      []SCIMPhoneNumber `json:"phoneNumbers,omitempty"`
+	Addresses         []SCIMAddress     `json:"addresses,omitempty"`
+	Groups            []SCIMGroupRef    `json:"groups,omitempty"`
+	Photos            []SCIMPhoto       `json:"photos,omitempty"`
+	Entitlements      []SCIMEntitlement `json:"entitlements,omitempty"`
+	Roles             []SCIMRole        `json:"roles,omitempty"`
+	Meta              *SCIMMeta         `json:"meta,omitempty"`
 }
 
 // GetSchemas returns the schemas for this SCIM user
@@ -72,11 +72,11 @@ type SCIMName struct {
 
 // SCIMEmail represents an email address in SCIM format
 type SCIMEmail struct {
-	Value      string  `json:"value"`
-	Type       *string `json:"type,omitempty"`
-	Primary    *bool   `json:"primary,omitempty"`
-	Display    *string `json:"display,omitempty"`
-	Verified   *bool   `json:"verified,omitempty"`
+	Value    string  `json:"value"`
+	Type     *string `json:"type,omitempty"`
+	Primary  *bool   `json:"primary,omitempty"`
+	Display  *string `json:"display,omitempty"`
+	Verified *bool   `json:"verified,omitempty"`
 }
 
 // SCIMPhoneNumber represents a phone number in SCIM format
@@ -89,14 +89,14 @@ type SCIMPhoneNumber struct {
 
 // SCIMAddress represents an address in SCIM format
 type SCIMAddress struct {
-	StreetAddress   *string `json:"streetAddress,omitempty"`
-	Locality        *string `json:"locality,omitempty"`
-	Region          *string `json:"region,omitempty"`
-	PostalCode      *string `json:"postalCode,omitempty"`
-	Country         *string `json:"country,omitempty"`
-	Formatted       *string `json:"formatted,omitempty"`
-	Type            *string `json:"type,omitempty"`
-	Primary         *bool   `json:"primary,omitempty"`
+	StreetAddress *string `json:"streetAddress,omitempty"`
+	Locality      *string `json:"locality,omitempty"`
+	Region        *string `json:"region,omitempty"`
+	PostalCode    *string `json:"postalCode,omitempty"`
+	Country       *string `json:"country,omitempty"`
+	Formatted     *string `json:"formatted,omitempty"`
+	Type          *string `json:"type,omitempty"`
+	Primary       *bool   `json:"primary,omitempty"`
 }
 
 // SCIMPhoto represents a photo URL in SCIM format
@@ -107,21 +107,21 @@ type SCIMPhoto struct {
 
 // SCIMGroupRef represents a group reference in a user resource
 type SCIMGroupRef struct {
-	Value    string  `json:"value"`
-	Display  *string `json:"display,omitempty"`
-	Type     string  `json:"type"`
-	Ref      *string `json:"$ref,omitempty"`
+	Value   string  `json:"value"`
+	Display *string `json:"display,omitempty"`
+	Type    string  `json:"type"`
+	Ref     *string `json:"$ref,omitempty"`
 }
 
 // SCIMEntitlement represents an entitlement in SCIM format
 type SCIMEntitlement struct {
-	Value string `json:"value"`
+	Value string  `json:"value"`
 	Type  *string `json:"type,omitempty"`
 }
 
 // SCIMRole represents a role in SCIM format
 type SCIMRole struct {
-	Value string `json:"value"`
+	Value string  `json:"value"`
 	Type  *string `json:"type,omitempty"`
 }
 
@@ -136,12 +136,12 @@ type SCIMMeta struct {
 
 // SCIMGroup represents a SCIM 2.0 Group resource (RFC 7643 4.2)
 type SCIMGroup struct {
-	Schemas    []string      `json:"schemas"`
-	ID         string        `json:"id"`
-	ExternalID *string       `json:"externalId,omitempty"`
+	Schemas     []string     `json:"schemas"`
+	ID          string       `json:"id"`
+	ExternalID  *string      `json:"externalId,omitempty"`
 	DisplayName string       `json:"displayName"`
-	Members    []SCIMMember  `json:"members,omitempty"`
-	Meta       *SCIMMeta     `json:"meta,omitempty"`
+	Members     []SCIMMember `json:"members,omitempty"`
+	Meta        *SCIMMeta    `json:"meta,omitempty"`
 }
 
 // GetSchemas returns the schemas for this SCIM group
@@ -159,8 +159,8 @@ func (g *SCIMGroup) GetID() string {
 
 // SCIMMember represents a group member in SCIM format
 type SCIMMember struct {
-	Value   string `json:"value"`
-	Type    string `json:"type"` // "User" or "Group"
+	Value   string  `json:"value"`
+	Type    string  `json:"type"` // "User" or "Group"
 	Display *string `json:"display,omitempty"`
 	Ref     *string `json:"$ref,omitempty"`
 }
@@ -200,14 +200,14 @@ func (e *SCIMError) GetSchemas() []string {
 
 // SCIMPatchOp represents a single patch operation per RFC 7644 3.5.2
 type SCIMPatchOp struct {
-	Op    string      `json:"op"`    // "add", "replace", "remove"
+	Op    string      `json:"op"`             // "add", "replace", "remove"
 	Path  *string     `json:"path,omitempty"` // Optional path for multi-valued attributes
 	Value interface{} `json:"value,omitempty"`
 }
 
 // SCIMPatchRequest represents a SCIM patch request
 type SCIMPatchRequest struct {
-	Schemas []string    `json:"schemas"`
+	Schemas []string      `json:"schemas"`
 	Ops     []SCIMPatchOp `json:"Operations"`
 }
 
@@ -222,10 +222,10 @@ func UserToSCIM(user *User, baseURL string) *SCIMUser {
 	}
 
 	scimUser := &SCIMUser{
-		Schemas: []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
-		ID:      user.ID,
+		Schemas:  []string{"urn:ietf:params:scim:schemas:core:2.0:User"},
+		ID:       user.ID,
 		UserName: user.UserName,
-		Active:  &user.Active,
+		Active:   &user.Active,
 	}
 
 	// External ID
@@ -499,8 +499,8 @@ func GroupToSCIM(group *Group, baseURL string) *SCIMGroup {
 	}
 
 	scimGroup := &SCIMGroup{
-		Schemas:    []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
-		ID:         group.ID,
+		Schemas:     []string{"urn:ietf:params:scim:schemas:core:2.0:Group"},
+		ID:          group.ID,
 		DisplayName: group.DisplayName,
 	}
 

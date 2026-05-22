@@ -75,13 +75,13 @@ func TestCache_WithConfig(t *testing.T) {
 
 func TestCache_SetWithTTL(t *testing.T) {
 	tests := []struct {
-		name      string
-		key       string
-		value     interface{}
-		ttl       time.Duration
-		wantErr   error
-		checkKey  bool
-		checkTTL  bool
+		name     string
+		key      string
+		value    interface{}
+		ttl      time.Duration
+		wantErr  error
+		checkKey bool
+		checkTTL bool
 	}{
 		{
 			name:     "set string value",
@@ -250,20 +250,26 @@ func TestCache_Get(t *testing.T) {
 				}
 				return c.Set(ctx, "struct_key", TestStruct{Name: "test", Value: 42})
 			},
-			key:     "struct_key",
-			dest:    &struct{ Name string; Value int }{},
+			key: "struct_key",
+			dest: &struct {
+				Name  string
+				Value int
+			}{},
 			wantErr: nil,
 			checkResult: func(t *testing.T, v interface{}) {
-				s := v.(*struct{ Name string; Value int })
+				s := v.(*struct {
+					Name  string
+					Value int
+				})
 				assert.Equal(t, "test", s.Name)
 				assert.Equal(t, 42, s.Value)
 			},
 		},
 		{
-			name:  "get non-existent key",
-			setup: func(c *Cache, ctx context.Context) error { return nil },
-			key:   "non_existent_key",
-			dest:  new(string),
+			name:    "get non-existent key",
+			setup:   func(c *Cache, ctx context.Context) error { return nil },
+			key:     "non_existent_key",
+			dest:    new(string),
 			wantErr: ErrCacheMiss,
 		},
 		{
@@ -551,10 +557,10 @@ func TestCache_Exists(t *testing.T) {
 
 func TestCache_TTL(t *testing.T) {
 	tests := []struct {
-		name      string
-		setup     func(*Cache, context.Context) string
-		checkTTL  func(*testing.T, time.Duration)
-		wantErr   error
+		name     string
+		setup    func(*Cache, context.Context) string
+		checkTTL func(*testing.T, time.Duration)
+		wantErr  error
 	}{
 		{
 			name: "TTL of existing key",
@@ -756,9 +762,9 @@ func TestCache_SetInt_GetInt(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name    string
-		key     string
-		value   int64
+		name  string
+		key   string
+		value int64
 	}{
 		{
 			name:  "zero",
@@ -1020,7 +1026,7 @@ func TestCache_Metrics(t *testing.T) {
 	cache.Set(ctx, "key2", "value2")
 
 	var result string
-	cache.Get(ctx, "key1", &result) // Hit
+	cache.Get(ctx, "key1", &result)         // Hit
 	cache.Get(ctx, "non_existent", &result) // Miss
 
 	cache.Delete(ctx, "key1")
@@ -1456,14 +1462,14 @@ func TestCache_SetVariousTypes(t *testing.T) {
 	}
 
 	type ComplexStruct struct {
-		String   string
-		Int      int
-		Float    float64
-		Bool     bool
-		Nil      *string
-		Slice    []int
-		Map      map[string]interface{}
-		Nested   NestedStruct
+		String string
+		Int    int
+		Float  float64
+		Bool   bool
+		Nil    *string
+		Slice  []int
+		Map    map[string]interface{}
+		Nested NestedStruct
 	}
 
 	complexValue := ComplexStruct{

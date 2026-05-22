@@ -19,14 +19,14 @@ import (
 
 // UserImportRow represents a single row in the user import CSV
 type UserImportRow struct {
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	FirstName   string `json:"first_name"`
-	LastName    string `json:"last_name"`
-	Enabled     string `json:"enabled"` // "true" or "false"
-	Roles       string `json:"roles"`   // comma-separated
-	Groups      string `json:"groups"`  // comma-separated
-	LineNumber  int    `json:"line_number"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	FirstName  string `json:"first_name"`
+	LastName   string `json:"last_name"`
+	Enabled    string `json:"enabled"` // "true" or "false"
+	Roles      string `json:"roles"`   // comma-separated
+	Groups     string `json:"groups"`  // comma-separated
+	LineNumber int    `json:"line_number"`
 }
 
 // UserImportResult represents the result of a bulk user import

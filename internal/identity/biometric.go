@@ -10,28 +10,28 @@ import (
 
 // BiometricPreferences represents user's biometric authentication preferences
 type BiometricPreferences struct {
-	ID                           string    `json:"id"`
-	UserID                       string    `json:"user_id"`
-	PlatformAuthenticatorPreferred bool    `json:"platform_authenticator_preferred"`
-	AllowCrossPlatform           bool      `json:"allow_cross_platform"`
-	RequireUserVerification      bool      `json:"require_user_verification"`
-	BiometricOnlyEnabled         bool      `json:"biometric_only_enabled"`
-	ResidentKeyRequired          bool      `json:"resident_key_required"`
-	CreatedAt                    time.Time `json:"created_at"`
-	UpdatedAt                    time.Time `json:"updated_at"`
+	ID                             string    `json:"id"`
+	UserID                         string    `json:"user_id"`
+	PlatformAuthenticatorPreferred bool      `json:"platform_authenticator_preferred"`
+	AllowCrossPlatform             bool      `json:"allow_cross_platform"`
+	RequireUserVerification        bool      `json:"require_user_verification"`
+	BiometricOnlyEnabled           bool      `json:"biometric_only_enabled"`
+	ResidentKeyRequired            bool      `json:"resident_key_required"`
+	CreatedAt                      time.Time `json:"created_at"`
+	UpdatedAt                      time.Time `json:"updated_at"`
 }
 
 // BiometricPolicy defines organization-wide biometric authentication requirements
 type BiometricPolicy struct {
-	ID                           string   `json:"id"`
-	Name                         string   `json:"name"`
-	Description                  string   `json:"description,omitempty"`
-	Enabled                      bool     `json:"enabled"`
-	AppliesToGroups              []string `json:"applies_to_groups,omitempty"`
-	AppliesToRoles               []string `json:"applies_to_roles,omitempty"`
-	RequirePlatformAuthenticator bool     `json:"require_platform_authenticator"`
-	AllowedAuthenticatorTypes    []string `json:"allowed_authenticator_types"` // platform, cross-platform
-	MinAuthenticatorLevel        string   `json:"min_authenticator_level"`     // any, single, multi
+	ID                           string    `json:"id"`
+	Name                         string    `json:"name"`
+	Description                  string    `json:"description,omitempty"`
+	Enabled                      bool      `json:"enabled"`
+	AppliesToGroups              []string  `json:"applies_to_groups,omitempty"`
+	AppliesToRoles               []string  `json:"applies_to_roles,omitempty"`
+	RequirePlatformAuthenticator bool      `json:"require_platform_authenticator"`
+	AllowedAuthenticatorTypes    []string  `json:"allowed_authenticator_types"` // platform, cross-platform
+	MinAuthenticatorLevel        string    `json:"min_authenticator_level"`     // any, single, multi
 	CreatedAt                    time.Time `json:"created_at"`
 }
 
@@ -55,12 +55,12 @@ func (s *Service) GetBiometricPreferences(ctx context.Context, userID string) (*
 	if err != nil {
 		// Return defaults
 		return &BiometricPreferences{
-			UserID:                       userID,
+			UserID:                         userID,
 			PlatformAuthenticatorPreferred: true,
-			AllowCrossPlatform:           true,
-			RequireUserVerification:      true,
-			BiometricOnlyEnabled:         false,
-			ResidentKeyRequired:          false,
+			AllowCrossPlatform:             true,
+			RequireUserVerification:        true,
+			BiometricOnlyEnabled:           false,
+			ResidentKeyRequired:            false,
 		}, nil
 	}
 

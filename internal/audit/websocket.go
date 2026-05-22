@@ -10,17 +10,17 @@ import (
 
 // OriginValidator provides origin validation for WebSocket connections
 type OriginValidator struct {
-	logger        *zap.Logger
+	logger         *zap.Logger
 	allowedOrigins []string
-	enableLogging bool
+	enableLogging  bool
 }
 
 // NewOriginValidator creates a new origin validator
 func NewOriginValidator(logger *zap.Logger, allowedOrigins []string, enableLogging bool) *OriginValidator {
 	return &OriginValidator{
-		logger:        logger,
+		logger:         logger,
 		allowedOrigins: allowedOrigins,
-		enableLogging: enableLogging,
+		enableLogging:  enableLogging,
 	}
 }
 

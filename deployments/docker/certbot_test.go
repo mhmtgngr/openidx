@@ -317,7 +317,7 @@ func TestCertbotEntrypointMount(t *testing.T) {
 	}
 
 	// Extract certbot service section (next 1000 chars should be enough)
-	certbotSection := contentStr[certbotIndex:certbotIndex+1000]
+	certbotSection := contentStr[certbotIndex : certbotIndex+1000]
 
 	// Validate entrypoint script is mounted
 	if !strings.Contains(certbotSection, "/scripts/certbot-entrypoint.sh") {

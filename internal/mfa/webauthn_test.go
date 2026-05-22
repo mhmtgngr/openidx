@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestWebAuthnServiceCreation tests creating a WebAuthn service

@@ -15,22 +15,22 @@ import (
 
 // DiscoveredService represents a Ziti service that can be imported
 type DiscoveredService struct {
-	ZitiID          string   `json:"ziti_id"`
-	Name            string   `json:"name"`
-	Protocol        string   `json:"protocol"`
-	Host            string   `json:"host,omitempty"`
-	Port            int      `json:"port,omitempty"`
-	ManagedByOpenIDX bool    `json:"managed_by_openidx"`
-	CanImport       bool     `json:"can_import"`
-	RoleAttributes  []string `json:"role_attributes,omitempty"`
+	ZitiID           string   `json:"ziti_id"`
+	Name             string   `json:"name"`
+	Protocol         string   `json:"protocol"`
+	Host             string   `json:"host,omitempty"`
+	Port             int      `json:"port,omitempty"`
+	ManagedByOpenIDX bool     `json:"managed_by_openidx"`
+	CanImport        bool     `json:"can_import"`
+	RoleAttributes   []string `json:"role_attributes,omitempty"`
 }
 
 // DiscoveryResult contains the results of a service discovery
 type DiscoveryResult struct {
-	DiscoveredServices   []DiscoveredService `json:"discovered_services"`
-	AlreadyManaged       int                 `json:"already_managed"`
-	AvailableForImport   int                 `json:"available_for_import"`
-	DiscoveredAt         time.Time           `json:"discovered_at"`
+	DiscoveredServices []DiscoveredService `json:"discovered_services"`
+	AlreadyManaged     int                 `json:"already_managed"`
+	AvailableForImport int                 `json:"available_for_import"`
+	DiscoveredAt       time.Time           `json:"discovered_at"`
 }
 
 // ImportServiceRequest represents a request to import a discovered service
@@ -126,8 +126,8 @@ func (s *Service) handleBulkImportZitiServices(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"imported": results,
-		"errors":   errors,
+		"imported":        results,
+		"errors":          errors,
 		"total_requested": len(req.ZitiIDs),
 		"total_imported":  len(results),
 		"total_failed":    len(errors),

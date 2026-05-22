@@ -11,10 +11,10 @@ import (
 
 // SessionPolicy defines the effective session policy for a client
 type SessionPolicy struct {
-	IdleTimeout               int    `json:"idle_timeout"`                // seconds, 0 = disabled
-	AbsoluteTimeout           int    `json:"absolute_timeout"`            // seconds, 0 = disabled
-	RememberMeDuration        int    `json:"remember_me_duration"`        // seconds
-	ReauthInterval            int    `json:"reauth_interval"`             // seconds, 0 = disabled
+	IdleTimeout               int    `json:"idle_timeout"`         // seconds, 0 = disabled
+	AbsoluteTimeout           int    `json:"absolute_timeout"`     // seconds, 0 = disabled
+	RememberMeDuration        int    `json:"remember_me_duration"` // seconds
+	ReauthInterval            int    `json:"reauth_interval"`      // seconds, 0 = disabled
 	BindSessionToIP           bool   `json:"bind_session_to_ip"`
 	ForceLogoutOnPwdChange    bool   `json:"force_logout_on_password_change"`
 	MaxConcurrentSessions     int    `json:"max_concurrent_sessions"`     // 0 = unlimited

@@ -3,11 +3,11 @@
 //
 // Effective retention for a session resolves through four layers:
 //
-//   1. recording_retention_days on the session row (admin per-session override)
-//   2. retention_days on recording_retention_policies for the session's org
-//   3. RecordingsDefaultRetentionDays config (global default)
-//   4. retentionHardFallbackDays (90) — last-ditch so a misconfigured
-//      deployment doesn't keep recordings forever.
+//  1. recording_retention_days on the session row (admin per-session override)
+//  2. retention_days on recording_retention_policies for the session's org
+//  3. RecordingsDefaultRetentionDays config (global default)
+//  4. retentionHardFallbackDays (90) — last-ditch so a misconfigured
+//     deployment doesn't keep recordings forever.
 //
 // A retention_days of 0 anywhere in the chain means "infinite retention" —
 // useful for compliance regimes that need indefinite hold under a separate
@@ -176,12 +176,12 @@ func (h *RemoteSupportHandler) resolveEffectiveRetention(
 //
 // The sweep:
 //
-//   1. Selects every finalized, not-yet-purged recording.
-//   2. Resolves each session's effective retention through the four-layer
-//      chain.
-//   3. Deletes the storage blob and stamps recording_purged_at +
-//      nulls recording_storage_key / recording_url.
-//   4. Audits remote_support.recording_purged per session.
+//  1. Selects every finalized, not-yet-purged recording.
+//  2. Resolves each session's effective retention through the four-layer
+//     chain.
+//  3. Deletes the storage blob and stamps recording_purged_at +
+//     nulls recording_storage_key / recording_url.
+//  4. Audits remote_support.recording_purged per session.
 //
 // A retention of 0 (infinite) is skipped — those rows stay until something
 // upstream changes their policy.

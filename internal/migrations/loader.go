@@ -246,7 +246,7 @@ func parseMigrationVersion(filename string) (int, string, string, error) {
 
 	// Extract name (remove direction and extension)
 	name := strings.Join(parts[1:len(parts)-1], "_")
-	name = strings.ReplaceAll(name, "_" + direction, "")
+	name = strings.ReplaceAll(name, "_"+direction, "")
 
 	return version, name, direction, nil
 }

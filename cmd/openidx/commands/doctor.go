@@ -383,8 +383,8 @@ func checkPorts(ctx *CommandContext) CheckResult {
 	}
 
 	return CheckResult{
-		Name:   "Port Availability",
-		Status: true,
+		Name:    "Port Availability",
+		Status:  true,
 		Details: "All required ports available",
 	}
 }
@@ -420,7 +420,7 @@ func NewFixCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "fix",
 		Short: "Attempt to fix common issues",
-		Long: `Automatically fix common development environment issues.`,
+		Long:  `Automatically fix common development environment issues.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := NewCommandContext(cmd)
 			success, errColor, _, _, _ := ctx.GetColors()

@@ -259,8 +259,8 @@ func (s *FileAppendOnlyStore) Compact(newPath string) error {
 // MemoryAppendOnlyStore implements AppendOnlyStore using in-memory storage
 // Useful for testing and development
 type MemoryAppendOnlyStore struct {
-	mu     sync.RWMutex
-	entries [][]byte
+	mu       sync.RWMutex
+	entries  [][]byte
 	lastHash string
 }
 

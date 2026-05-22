@@ -55,18 +55,18 @@ func (h *KioskAPIHandler) RegisterKioskAdminRoutes(r *gin.RouterGroup) {
 // JSON-passthrough so the agent doesn't need to track schema drift on every
 // field; the Android side defines its own ignoring-unknown-keys parser.
 type kioskPolicyRow struct {
-	ID                 string          `json:"id"`
-	Name               string          `json:"name"`
-	Description        string          `json:"description"`
-	Mode               string          `json:"mode"`
-	AllowedPackages    json.RawMessage `json:"allowed_packages"`
-	PrimaryActivity    string          `json:"primary_activity,omitempty"`
-	LockTaskFeatures   json.RawMessage `json:"lock_task_features"`
-	Branding           json.RawMessage `json:"branding"`
-	HasExitPIN         bool            `json:"has_exit_pin"`
-	Enabled            bool            `json:"enabled"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Description      string          `json:"description"`
+	Mode             string          `json:"mode"`
+	AllowedPackages  json.RawMessage `json:"allowed_packages"`
+	PrimaryActivity  string          `json:"primary_activity,omitempty"`
+	LockTaskFeatures json.RawMessage `json:"lock_task_features"`
+	Branding         json.RawMessage `json:"branding"`
+	HasExitPIN       bool            `json:"has_exit_pin"`
+	Enabled          bool            `json:"enabled"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 type kioskPolicyAssignmentRow struct {
@@ -369,8 +369,8 @@ func (h *KioskAPIHandler) HandleUnassignPolicy(c *gin.Context) {
 // then omit the kiosk_policy block from /agent/config.
 //
 // Lookup order (priority DESC, then created_at DESC):
-//   1. assignment.target_kind='agent'  AND target_id = agentID
-//   2. assignment.target_kind='tag'    AND target_id IN (agent's metadata.tags)
+//  1. assignment.target_kind='agent'  AND target_id = agentID
+//  2. assignment.target_kind='tag'    AND target_id IN (agent's metadata.tags)
 //
 // Group support is reserved for future identity-service integration; we
 // query for it so the schema is exercised, but no rows ever match today.

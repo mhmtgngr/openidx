@@ -19,16 +19,16 @@ import (
 
 // UnifiedAuditEvent represents an audit event from any source
 type UnifiedAuditEvent struct {
-	ID         string                 `json:"id"`
-	Source     string                 `json:"source"` // openidx, ziti, guacamole
-	EventType  string                 `json:"event_type"`
-	RouteID    string                 `json:"route_id,omitempty"`
-	RouteName  string                 `json:"route_name,omitempty"`
-	UserID     string                 `json:"user_id,omitempty"`
-	UserEmail  string                 `json:"user_email,omitempty"`
-	ActorIP    string                 `json:"actor_ip,omitempty"`
-	Details    map[string]interface{} `json:"details,omitempty"`
-	CreatedAt  time.Time              `json:"created_at"`
+	ID        string                 `json:"id"`
+	Source    string                 `json:"source"` // openidx, ziti, guacamole
+	EventType string                 `json:"event_type"`
+	RouteID   string                 `json:"route_id,omitempty"`
+	RouteName string                 `json:"route_name,omitempty"`
+	UserID    string                 `json:"user_id,omitempty"`
+	UserEmail string                 `json:"user_email,omitempty"`
+	ActorIP   string                 `json:"actor_ip,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
 }
 
 // UnifiedAuditService handles unified audit log operations
@@ -531,9 +531,9 @@ func (s *Service) handleGetAuditEventsSummary(c *gin.Context) {
 		Scan(&total)
 
 	c.JSON(http.StatusOK, gin.H{
-		"total_last_24h":   total,
-		"by_source":        countsBySource,
-		"by_event_type":    countsByType,
-		"timestamp":        time.Now(),
+		"total_last_24h": total,
+		"by_source":      countsBySource,
+		"by_event_type":  countsByType,
+		"timestamp":      time.Now(),
 	})
 }

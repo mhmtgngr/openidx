@@ -144,9 +144,9 @@ func isPrivateIP(ip net.IP) bool {
 
 	// IPv6 private ranges (RFC 4193, etc.)
 	privateIPv6Ranges := []string{
-		"fc00::/7",   // Unique local addresses
-		"fe80::/10",  // Link-local
-		"fd00::/8",   // Unique local (commonly used)
+		"fc00::/7",  // Unique local addresses
+		"fe80::/10", // Link-local
+		"fd00::/8",  // Unique local (commonly used)
 	}
 	for _, cidr := range privateIPv6Ranges {
 		_, network, _ := net.ParseCIDR(cidr)
@@ -174,35 +174,35 @@ func IsPrivateURL(rawURL string) bool {
 // KnownPublicAPIs returns pre-configured SSRF clients for known public APIs.
 // Use these instead of creating custom configurations for well-known services.
 var KnownPublicAPIs = struct {
-	HIBP      *SSRFProtectedClient
+	HIBP       *SSRFProtectedClient
 	Cloudflare *SSRFProtectedClient
-	AWS       *SSRFProtectedClient
-	Azure     *SSRFProtectedClient
-	GCP       *SSRFProtectedClient
+	AWS        *SSRFProtectedClient
+	Azure      *SSRFProtectedClient
+	GCP        *SSRFProtectedClient
 }{
 	HIBP: &SSRFProtectedClient{
-		AllowedDomains:   []string{"api.pwnedpasswords.com", "pwnedpasswords.com"},
-		BlockPrivateIPs:  true,
-		BlockLocalhost:   true,
+		AllowedDomains:  []string{"api.pwnedpasswords.com", "pwnedpasswords.com"},
+		BlockPrivateIPs: true,
+		BlockLocalhost:  true,
 	},
 	Cloudflare: &SSRFProtectedClient{
-		AllowedDomains:   []string{"*.cloudflare.com", "cloudflare.com"},
-		BlockPrivateIPs:  true,
-		BlockLocalhost:   true,
+		AllowedDomains:  []string{"*.cloudflare.com", "cloudflare.com"},
+		BlockPrivateIPs: true,
+		BlockLocalhost:  true,
 	},
 	AWS: &SSRFProtectedClient{
-		AllowedDomains:   []string{"*.amazonaws.com", "amazonaws.com"},
-		BlockPrivateIPs:  true,
-		BlockLocalhost:   true,
+		AllowedDomains:  []string{"*.amazonaws.com", "amazonaws.com"},
+		BlockPrivateIPs: true,
+		BlockLocalhost:  true,
 	},
 	Azure: &SSRFProtectedClient{
-		AllowedDomains:   []string{"*.azure.com", "*.azure.net", "azure.com", "azure.net"},
-		BlockPrivateIPs:  true,
-		BlockLocalhost:   true,
+		AllowedDomains:  []string{"*.azure.com", "*.azure.net", "azure.com", "azure.net"},
+		BlockPrivateIPs: true,
+		BlockLocalhost:  true,
 	},
 	GCP: &SSRFProtectedClient{
-		AllowedDomains:   []string{"*.googleapis.com", "googleapis.com", "*.gcp.com", "gcp.com"},
-		BlockPrivateIPs:  true,
-		BlockLocalhost:   true,
+		AllowedDomains:  []string{"*.googleapis.com", "googleapis.com", "*.gcp.com", "gcp.com"},
+		BlockPrivateIPs: true,
+		BlockLocalhost:  true,
 	},
 }

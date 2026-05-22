@@ -264,11 +264,11 @@ const (
 	EventUserUnlocked        = "user.unlocked"
 
 	// MFA events
-	EventMFAEnabled    = "mfa.enabled"
-	EventMFADisabled   = "mfa.disabled"
-	EventMFAChallenge  = "mfa.challenge"
-	EventMFAVerified   = "mfa.verified"
-	EventMFAFailed     = "mfa.failed"
+	EventMFAEnabled   = "mfa.enabled"
+	EventMFADisabled  = "mfa.disabled"
+	EventMFAChallenge = "mfa.challenge"
+	EventMFAVerified  = "mfa.verified"
+	EventMFAFailed    = "mfa.failed"
 
 	// Session events
 	EventSessionCreated = "session.created"
@@ -276,10 +276,10 @@ const (
 	EventSessionExpired = "session.expired"
 
 	// Group events
-	EventGroupCreated     = "group.created"
-	EventGroupUpdated     = "group.updated"
-	EventGroupDeleted     = "group.deleted"
-	EventGroupMemberAdded = "group.member.added"
+	EventGroupCreated       = "group.created"
+	EventGroupUpdated       = "group.updated"
+	EventGroupDeleted       = "group.deleted"
+	EventGroupMemberAdded   = "group.member.added"
 	EventGroupMemberRemoved = "group.member.removed"
 
 	// Role events
@@ -301,10 +301,10 @@ const (
 	EventAccessRevoked = "access.revoked"
 
 	// Security events
-	EventSecurityAlert       = "security.alert"
-	EventSuspiciousActivity  = "security.suspicious"
-	EventImpossibleTravel    = "security.impossible_travel"
-	EventBruteForceDetected  = "security.brute_force"
+	EventSecurityAlert      = "security.alert"
+	EventSuspiciousActivity = "security.suspicious"
+	EventImpossibleTravel   = "security.impossible_travel"
+	EventBruteForceDetected = "security.brute_force"
 
 	// System events
 	EventSystemStartup  = "system.startup"

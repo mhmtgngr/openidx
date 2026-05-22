@@ -55,11 +55,11 @@ const (
 type BreachStatus string
 
 const (
-	StatusDetected    BreachStatus = "detected"
+	StatusDetected      BreachStatus = "detected"
 	StatusInvestigating BreachStatus = "investigating"
-	StatusConfirmed   BreachStatus = "confirmed"
-	StatusContained   BreachStatus = "contained"
-	StatusResolved    BreachStatus = "resolved"
+	StatusConfirmed     BreachStatus = "confirmed"
+	StatusContained     BreachStatus = "contained"
+	StatusResolved      BreachStatus = "resolved"
 	StatusFalsePositive BreachStatus = "false_positive"
 )
 
@@ -91,18 +91,18 @@ type BreachIncident struct {
 
 // BreachAlert represents a real-time breach alert
 type BreachAlert struct {
-	ID          string        `json:"id"`
-	IncidentID  string        `json:"incident_id"`
-	Type        BreachType    `json:"type"`
-	Severity    BreachSeverity `json:"severity"`
-	Message     string        `json:"message"`
-	UserID      string        `json:"user_id"`
-	SessionID   string        `json:"session_id"`
-	IPAddress   string        `json:"ip_address"`
-	CreatedAt   time.Time     `json:"created_at"`
-	Acknowledged bool         `json:"acknowledged"`
-	AckedAt     *time.Time    `json:"acked_at,omitempty"`
-	AckedBy     *string       `json:"acked_by,omitempty"`
+	ID           string         `json:"id"`
+	IncidentID   string         `json:"incident_id"`
+	Type         BreachType     `json:"type"`
+	Severity     BreachSeverity `json:"severity"`
+	Message      string         `json:"message"`
+	UserID       string         `json:"user_id"`
+	SessionID    string         `json:"session_id"`
+	IPAddress    string         `json:"ip_address"`
+	CreatedAt    time.Time      `json:"created_at"`
+	Acknowledged bool           `json:"acknowledged"`
+	AckedAt      *time.Time     `json:"acked_at,omitempty"`
+	AckedBy      *string        `json:"acked_by,omitempty"`
 }
 
 // BreachIndicator represents a specific indicator of compromise
@@ -118,32 +118,32 @@ type BreachIndicator struct {
 
 // QuarantineAction represents actions taken during quarantine
 type QuarantineAction struct {
-	ID            string    `json:"id"`
-	IncidentID    string    `json:"incident_id"`
-	UserID        string    `json:"user_id"`
-	ActionType    string    `json:"action_type"` // revoke_sessions, reset_password, disable_account, block_ip
-	Description   string    `json:"description"`
-	ExecutedAt    time.Time `json:"executed_at"`
-	ExecutedBy    string    `json:"executed_by"`
-	Reversible    bool      `json:"reversible"`
-	ReversedAt    *time.Time `json:"reversed_at,omitempty"`
+	ID          string     `json:"id"`
+	IncidentID  string     `json:"incident_id"`
+	UserID      string     `json:"user_id"`
+	ActionType  string     `json:"action_type"` // revoke_sessions, reset_password, disable_account, block_ip
+	Description string     `json:"description"`
+	ExecutedAt  time.Time  `json:"executed_at"`
+	ExecutedBy  string     `json:"executed_by"`
+	Reversible  bool       `json:"reversible"`
+	ReversedAt  *time.Time `json:"reversed_at,omitempty"`
 }
 
 // IBDRConfig represents configuration for IBDR system
 type IBDRConfig struct {
-	Enabled                     bool               `json:"enabled"`
-	AutoQuarantineThreshold     float64            `json:"auto_quarantine_threshold"`     // confidence threshold
-	AutoContainment             bool               `json:"auto_containment"`
-	NotificationChannels        []string           `json:"notification_channels"`
-	RetentionDays               int                `json:"retention_days"`
-	EscalationRules             map[BreachSeverity]EscalationRule `json:"escalation_rules"`
+	Enabled                 bool                              `json:"enabled"`
+	AutoQuarantineThreshold float64                           `json:"auto_quarantine_threshold"` // confidence threshold
+	AutoContainment         bool                              `json:"auto_containment"`
+	NotificationChannels    []string                          `json:"notification_channels"`
+	RetentionDays           int                               `json:"retention_days"`
+	EscalationRules         map[BreachSeverity]EscalationRule `json:"escalation_rules"`
 }
 
 // EscalationRule defines how to escalate breaches by severity
 type EscalationRule struct {
-	NotifyChannels []string        `json:"notify_channels"`
-	EscalateAfter  time.Duration   `json:"escalate_after"`
-	RequireApproval bool           `json:"require_approval"`
+	NotifyChannels  []string      `json:"notify_channels"`
+	EscalateAfter   time.Duration `json:"escalate_after"`
+	RequireApproval bool          `json:"require_approval"`
 }
 
 // ibdrService handles Identity Breach Detection & Response
@@ -170,22 +170,22 @@ func (s *ibdrService) DetectBreachAttempt(ctx context.Context, userID, ipAddress
 
 	// Create breach incident
 	incident := &BreachIncident{
-		ID:                uuid.New().String(),
-		Type:              breachType,
-		Severity:          severity,
-		Status:            StatusDetected,
-		Title:             fmt.Sprintf("Potential %s detected for user %s", breachType, userID),
-		Description:       s.generateDescription(breachType, indicators),
-		AffectedUserIDs:   []string{userID},
-		AffectedSessions:  []string{sessionID},
-		DetectionMethod:   "automated",
-		FirstDetectedAt:   time.Now(),
-		LastActivityAt:    time.Now(),
-		Confidence:        confidence,
-		QuarantineAction:  "none",
-		ContainmentSteps:  []string{},
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
+		ID:               uuid.New().String(),
+		Type:             breachType,
+		Severity:         severity,
+		Status:           StatusDetected,
+		Title:            fmt.Sprintf("Potential %s detected for user %s", breachType, userID),
+		Description:      s.generateDescription(breachType, indicators),
+		AffectedUserIDs:  []string{userID},
+		AffectedSessions: []string{sessionID},
+		DetectionMethod:  "automated",
+		FirstDetectedAt:  time.Now(),
+		LastActivityAt:   time.Now(),
+		Confidence:       confidence,
+		QuarantineAction: "none",
+		ContainmentSteps: []string{},
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
 	}
 
 	indicatorsJSON, _ := json.Marshal(indicators)
@@ -322,9 +322,9 @@ func (s *ibdrService) AnalyzeBreachPatterns(ctx context.Context, timeWindow time
 	}
 
 	return map[string]interface{}{
-		"by_type":     byType,
-		"by_severity": bySeverity,
-		"time_window": timeWindow.String(),
+		"by_type":      byType,
+		"by_severity":  bySeverity,
+		"time_window":  timeWindow.String(),
 		"generated_at": time.Now(),
 	}, nil
 }

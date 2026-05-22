@@ -48,9 +48,9 @@ func ParsePermission(perm string) (Permission, error) {
 // Permission constants - all available permissions in the system
 const (
 	// User permissions
-	PermUsersRead    = "users:read"
-	PermUsersWrite   = "users:write"
-	PermUsersDelete  = "users:delete"
+	PermUsersRead   = "users:read"
+	PermUsersWrite  = "users:write"
+	PermUsersDelete = "users:delete"
 
 	// Group permissions
 	PermGroupsManage = "groups:manage"
@@ -59,8 +59,8 @@ const (
 	PermConfigManage = "config:manage"
 
 	// Audit permissions
-	PermAuditRead    = "audit:read"
-	PermAuditExport  = "audit:export"
+	PermAuditRead   = "audit:read"
+	PermAuditExport = "audit:export"
 
 	// Policy permissions
 	PermPoliciesManage = "policies:manage"

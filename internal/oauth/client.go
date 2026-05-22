@@ -35,7 +35,7 @@ var (
 type Client struct {
 	ID                   string    `json:"id"`
 	ClientID             string    `json:"client_id"`
-	ClientSecretHash     string    `json:"-"` // bcrypt hash, never exposed in JSON
+	ClientSecretHash     string    `json:"-"`                       // bcrypt hash, never exposed in JSON
 	ClientSecretPlain    string    `json:"client_secret,omitempty"` // Only shown on creation
 	Name                 string    `json:"name"`
 	Description          string    `json:"description,omitempty"`
@@ -48,7 +48,7 @@ type Client struct {
 	AccessTokenLifetime  int       `json:"access_token_lifetime"`  // seconds, 0 = default
 	RefreshTokenLifetime int       `json:"refresh_token_lifetime"` // seconds, 0 = default
 	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // CreateClientRequest represents a request to create a new OAuth client
@@ -148,7 +148,7 @@ func (r *ClientRepository) Create(ctx context.Context, req *CreateClientRequest)
 		AccessTokenLifetime:  req.AccessTokenLifetime,
 		RefreshTokenLifetime: req.RefreshTokenLifetime,
 		CreatedAt:            now,
-		UpdatedAt:           now,
+		UpdatedAt:            now,
 	}
 
 	// Insert into database

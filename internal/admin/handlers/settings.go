@@ -30,12 +30,12 @@ func NewSettingsHandler(logger *zap.Logger, db *pgxpool.Pool) *SettingsHandler {
 
 // Settings represents system configuration settings
 type Settings struct {
-	ID        string         `json:"id"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	UpdatedBy string         `json:"updated_by"`
-	General   GeneralSection `json:"general"`
+	ID        string          `json:"id"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	UpdatedBy string          `json:"updated_by"`
+	General   GeneralSection  `json:"general"`
 	Security  SecuritySection `json:"security"`
-	Auth      AuthSection    `json:"auth"`
+	Auth      AuthSection     `json:"auth"`
 	Branding  BrandingSection `json:"branding"`
 }
 
@@ -69,64 +69,64 @@ type PasswordPolicySettings struct {
 
 // MFASettings defines multi-factor authentication settings
 type MFASettings struct {
-	Enabled        bool     `json:"enabled"`
-	Required       bool     `json:"required"`
-	AllowedMethods []string `json:"allowed_methods"`
-	TOTP           TOTPSettings `json:"totp"`
-	SMS            SMSSettings  `json:"sms"`
+	Enabled        bool             `json:"enabled"`
+	Required       bool             `json:"required"`
+	AllowedMethods []string         `json:"allowed_methods"`
+	TOTP           TOTPSettings     `json:"totp"`
+	SMS            SMSSettings      `json:"sms"`
 	WebAuthn       WebAuthnSettings `json:"webauthn"`
 }
 
 // TOTPSettings defines TOTP-specific settings
 type TOTPSettings struct {
-	Enabled         bool `json:"enabled"`
-	Issuer          string `json:"issuer"`
-	Algorithm       string `json:"algorithm"`
-	CodeLength      int    `json:"code_length"`
-	Period          int    `json:"period"`
-	Window          int    `json:"window"`
+	Enabled    bool   `json:"enabled"`
+	Issuer     string `json:"issuer"`
+	Algorithm  string `json:"algorithm"`
+	CodeLength int    `json:"code_length"`
+	Period     int    `json:"period"`
+	Window     int    `json:"window"`
 }
 
 // SMSSettings defines SMS-specific settings
 type SMSSettings struct {
-	Enabled  bool `json:"enabled"`
+	Enabled  bool   `json:"enabled"`
 	Provider string `json:"provider"`
 }
 
 // WebAuthnSettings defines WebAuthn-specific settings
 type WebAuthnSettings struct {
-	Enabled             bool   `json:"enabled"`
-	RelyingPartyID      string `json:"relying_party_id"`
-	RelyingPartyName    string `json:"relying_party_name"`
-	RelyingPartyOrigin  string `json:"relying_party_origin"`
+	Enabled              bool   `json:"enabled"`
+	RelyingPartyID       string `json:"relying_party_id"`
+	RelyingPartyName     string `json:"relying_party_name"`
+	RelyingPartyOrigin   string `json:"relying_party_origin"`
 	AuthenticatorTimeout int    `json:"authenticator_timeout"`
-	RequireResidentKey  bool   `json:"require_resident_key"`
-	UserVerification    string `json:"user_verification"`
+	RequireResidentKey   bool   `json:"require_resident_key"`
+	UserVerification     string `json:"user_verification"`
 }
 
 // SessionSettings defines session-related settings
 type SessionSettings struct {
-	IdleTimeoutMinutes     int  `json:"idle_timeout_minutes" binding:"min=1,max=1440"`
-	AbsoluteTimeoutMinutes int  `json:"absolute_timeout_minutes" binding:"min=1,max=43200"`
-	MaxConcurrentSessions  int  `json:"max_concurrent_sessions" binding:"min=1,max=100"`
-	RememberMeDays         int  `json:"remember_me_days" binding:"min=0,max=365"`
+	IdleTimeoutMinutes     int `json:"idle_timeout_minutes" binding:"min=1,max=1440"`
+	AbsoluteTimeoutMinutes int `json:"absolute_timeout_minutes" binding:"min=1,max=43200"`
+	MaxConcurrentSessions  int `json:"max_concurrent_sessions" binding:"min=1,max=100"`
+	RememberMeDays         int `json:"remember_me_days" binding:"min=0,max=365"`
 }
 
 // AuthSection contains authentication settings
 type AuthSection struct {
-	AllowRegistration    bool     `json:"allow_registration"`
-	RequireEmailVerify   bool     `json:"require_email_verify"`
-	AllowedDomains       []string `json:"allowed_domains"`
-	SocialLoginEnabled   bool     `json:"social_login_enabled"`
-	SocialProviders      []string `json:"social_providers"`
-	LockoutPolicy        LockoutPolicy `json:"lockout_policy"`
+	AllowRegistration  bool          `json:"allow_registration"`
+	RequireEmailVerify bool          `json:"require_email_verify"`
+	AllowedDomains     []string      `json:"allowed_domains"`
+	SocialLoginEnabled bool          `json:"social_login_enabled"`
+	SocialProviders    []string      `json:"social_providers"`
+	LockoutPolicy      LockoutPolicy `json:"lockout_policy"`
 }
 
 // LockoutPolicy defines account lockout settings
 type LockoutPolicy struct {
-	Enabled          bool `json:"enabled"`
+	Enabled           bool `json:"enabled"`
 	MaxFailedAttempts int  `json:"max_failed_attempts" binding:"min=1,max=20"`
-	LockoutDuration  int  `json:"lockout_duration_minutes" binding:"min=1,max=1440"`
+	LockoutDuration   int  `json:"lockout_duration_minutes" binding:"min=1,max=1440"`
 }
 
 // BrandingSection contains branding customization settings
@@ -631,9 +631,9 @@ func (h *SettingsHandler) getDefaultSettings() Settings {
 			SocialLoginEnabled: false,
 			SocialProviders:    []string{"google", "microsoft", "github"},
 			LockoutPolicy: LockoutPolicy{
-				Enabled:          true,
+				Enabled:           true,
 				MaxFailedAttempts: 5,
-				LockoutDuration:  15,
+				LockoutDuration:   15,
 			},
 		},
 		Branding: BrandingSection{
@@ -804,9 +804,9 @@ func (h *SettingsHandler) getDefaultAuthSection() AuthSection {
 		SocialLoginEnabled: false,
 		SocialProviders:    []string{"google", "microsoft", "github"},
 		LockoutPolicy: LockoutPolicy{
-			Enabled:          true,
+			Enabled:           true,
 			MaxFailedAttempts: 5,
-			LockoutDuration:  15,
+			LockoutDuration:   15,
 		},
 	}
 }

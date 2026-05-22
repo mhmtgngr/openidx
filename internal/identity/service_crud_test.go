@@ -286,8 +286,8 @@ func TestUserCreateValidation(t *testing.T) {
 		errorMsg    string
 	}{
 		{
-			name: "Valid user",
-			user: createTestUser("validuser", "valid@example.com"),
+			name:        "Valid user",
+			user:        createTestUser("validuser", "valid@example.com"),
 			expectError: false,
 		},
 		{
@@ -741,11 +741,11 @@ func TestGroupDBToGroupConversion(t *testing.T) {
 // TestPaginationDefaults tests default pagination values
 func TestPaginationDefaults(t *testing.T) {
 	testCases := []struct {
-		name            string
-		inputLimit      int
-		inputOffset     int
-		expectedLimit   int
-		expectedOffset  int
+		name           string
+		inputLimit     int
+		inputOffset    int
+		expectedLimit  int
+		expectedOffset int
 	}{
 		{
 			name:           "Default values",

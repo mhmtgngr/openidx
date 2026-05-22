@@ -24,40 +24,40 @@ func TestDefaultStreamConfig(t *testing.T) {
 
 func TestStreamConfigFromAppConfig(t *testing.T) {
 	tests := []struct {
-		name             string
+		name               string
 		auditStreamOrigins string
-		expectedOrigins  []string
-		expectNil        bool
+		expectedOrigins    []string
+		expectNil          bool
 	}{
 		{
-			name:             "empty config returns same-origin (nil)",
+			name:               "empty config returns same-origin (nil)",
 			auditStreamOrigins: "",
-			expectNil:        true,
+			expectNil:          true,
 		},
 		{
-			name:             "wildcard origin",
+			name:               "wildcard origin",
 			auditStreamOrigins: "*",
-			expectedOrigins:  []string{"*"},
+			expectedOrigins:    []string{"*"},
 		},
 		{
-			name:             "single origin",
+			name:               "single origin",
 			auditStreamOrigins: "https://example.com",
-			expectedOrigins:  []string{"https://example.com"},
+			expectedOrigins:    []string{"https://example.com"},
 		},
 		{
-			name:             "multiple origins comma-separated",
+			name:               "multiple origins comma-separated",
 			auditStreamOrigins: "https://example.com,https://app.example.com,http://localhost:3000",
-			expectedOrigins:  []string{"https://example.com", "https://app.example.com", "http://localhost:3000"},
+			expectedOrigins:    []string{"https://example.com", "https://app.example.com", "http://localhost:3000"},
 		},
 		{
-			name:             "origins with spaces",
+			name:               "origins with spaces",
 			auditStreamOrigins: "https://example.com, https://app.example.com , http://localhost:3000",
-			expectedOrigins:  []string{"https://example.com", "https://app.example.com", "http://localhost:3000"},
+			expectedOrigins:    []string{"https://example.com", "https://app.example.com", "http://localhost:3000"},
 		},
 		{
-			name:             "wildcard subdomain",
+			name:               "wildcard subdomain",
 			auditStreamOrigins: "*.example.com",
-			expectedOrigins:  []string{"*.example.com"},
+			expectedOrigins:    []string{"*.example.com"},
 		},
 	}
 
@@ -137,106 +137,106 @@ func TestNormalizeOrigin(t *testing.T) {
 
 func TestIsOriginAllowed(t *testing.T) {
 	tests := []struct {
-		name          string
-		origin        string
+		name           string
+		origin         string
 		allowedOrigins []string
-		expected      bool
+		expected       bool
 	}{
 		{
-			name:          "empty allowed list denies all (except empty origin)",
-			origin:        "https://example.com",
+			name:           "empty allowed list denies all (except empty origin)",
+			origin:         "https://example.com",
 			allowedOrigins: []string{},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "nil allowed list denies all",
-			origin:        "https://example.com",
+			name:           "nil allowed list denies all",
+			origin:         "https://example.com",
 			allowedOrigins: nil,
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "wildcard allows all",
-			origin:        "https://example.com",
+			name:           "wildcard allows all",
+			origin:         "https://example.com",
 			allowedOrigins: []string{"*"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "exact match allowed",
-			origin:        "https://example.com",
+			name:           "exact match allowed",
+			origin:         "https://example.com",
 			allowedOrigins: []string{"https://example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "case insensitive match",
-			origin:        "HTTPS://EXAMPLE.COM",
+			name:           "case insensitive match",
+			origin:         "HTTPS://EXAMPLE.COM",
 			allowedOrigins: []string{"https://example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "port normalized for match",
-			origin:        "https://example.com:443",
+			name:           "port normalized for match",
+			origin:         "https://example.com:443",
 			allowedOrigins: []string{"https://example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "subdomain wildcard match",
-			origin:        "https://app.example.com",
+			name:           "subdomain wildcard match",
+			origin:         "https://app.example.com",
 			allowedOrigins: []string{"*.example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "nested subdomain wildcard match",
-			origin:        "https://api.v1.example.com",
+			name:           "nested subdomain wildcard match",
+			origin:         "https://api.v1.example.com",
 			allowedOrigins: []string{"*.example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "bare domain not matched by wildcard subdomain",
-			origin:        "https://example.com",
+			name:           "bare domain not matched by wildcard subdomain",
+			origin:         "https://example.com",
 			allowedOrigins: []string{"*.example.com"},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "different subdomain not matched",
-			origin:        "https://evil.com",
+			name:           "different subdomain not matched",
+			origin:         "https://evil.com",
 			allowedOrigins: []string{"*.example.com"},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "prevention of example.com.evil.com",
-			origin:        "https://example.com.evil.com",
+			name:           "prevention of example.com.evil.com",
+			origin:         "https://example.com.evil.com",
 			allowedOrigins: []string{"*.example.com"},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "multiple allowed origins - match first",
-			origin:        "https://example.com",
+			name:           "multiple allowed origins - match first",
+			origin:         "https://example.com",
 			allowedOrigins: []string{"https://example.com", "https://app.example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "multiple allowed origins - match second",
-			origin:        "https://app.example.com",
+			name:           "multiple allowed origins - match second",
+			origin:         "https://app.example.com",
 			allowedOrigins: []string{"https://example.com", "https://app.example.com"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "multiple allowed origins - no match",
-			origin:        "https://evil.com",
+			name:           "multiple allowed origins - no match",
+			origin:         "https://evil.com",
 			allowedOrigins: []string{"https://example.com", "https://app.example.com"},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "localhost with port",
-			origin:        "http://localhost:3000",
+			name:           "localhost with port",
+			origin:         "http://localhost:3000",
 			allowedOrigins: []string{"http://localhost:3000"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "127.0.0.1 with port",
-			origin:        "http://127.0.0.1:5173",
+			name:           "127.0.0.1 with port",
+			origin:         "http://127.0.0.1:5173",
 			allowedOrigins: []string{"http://127.0.0.1:5173"},
-			expected:      true,
+			expected:       true,
 		},
 	}
 

@@ -20,10 +20,10 @@ import (
 
 const (
 	// Test client configuration
-	pkceClientID        = "admin-console"
-	pkceRedirectURI     = "http://localhost:3000/login"
+	pkceClientID         = "admin-console"
+	pkceRedirectURI      = "http://localhost:3000/login"
 	confidentialClientID = "confidential-client"
-	confidentialSecret  = "test-secret"
+	confidentialSecret   = "test-secret"
 )
 
 // generateCodeVerifier creates a cryptographically random code verifier for PKCE

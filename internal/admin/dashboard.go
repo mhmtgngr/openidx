@@ -20,11 +20,11 @@ const (
 
 // DashboardStats contains aggregated dashboard statistics
 type DashboardStats struct {
-	UserCount       int64          `json:"user_count"`
-	ActiveSessions  int64          `json:"active_sessions"`
-	MFAAdoptionRate float64        `json:"mfa_adoption_rate"`
+	UserCount       int64           `json:"user_count"`
+	ActiveSessions  int64           `json:"active_sessions"`
+	MFAAdoptionRate float64         `json:"mfa_adoption_rate"`
 	RecentEvents    []SecurityEvent `json:"recent_events"`
-	CachedAt        *time.Time     `json:"cached_at,omitempty"`
+	CachedAt        *time.Time      `json:"cached_at,omitempty"`
 }
 
 // SecurityEvent represents a recent security event from the audit log

@@ -15,21 +15,21 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
-	"github.com/openidx/openidx/internal/sms"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/sms"
 )
 
 // Dashboard contains overview statistics
 type Dashboard struct {
-	TotalUsers       int                 `json:"total_users"`
-	ActiveUsers      int                 `json:"active_users"`
-	TotalGroups      int                 `json:"total_groups"`
-	TotalApplications int                `json:"total_applications"`
-	ActiveSessions   int                 `json:"active_sessions"`
-	PendingReviews   int                 `json:"pending_reviews"`
-	SecurityAlerts   int                 `json:"security_alerts"`
-	RecentActivity       []ActivityItem       `json:"recent_activity"`
-	AuthStats            AuthStatistics       `json:"auth_stats"`
+	TotalUsers           int                   `json:"total_users"`
+	ActiveUsers          int                   `json:"active_users"`
+	TotalGroups          int                   `json:"total_groups"`
+	TotalApplications    int                   `json:"total_applications"`
+	ActiveSessions       int                   `json:"active_sessions"`
+	PendingReviews       int                   `json:"pending_reviews"`
+	SecurityAlerts       int                   `json:"security_alerts"`
+	RecentActivity       []ActivityItem        `json:"recent_activity"`
+	AuthStats            AuthStatistics        `json:"auth_stats"`
 	SecurityAlertDetails []SecurityAlertDetail `json:"security_alert_details"`
 }
 
@@ -55,8 +55,8 @@ type AuthStatistics struct {
 
 // DayStats contains statistics for a single day
 type DayStats struct {
-	Date   string `json:"date"`
-	Count  int    `json:"count"`
+	Date  string `json:"date"`
+	Count int    `json:"count"`
 }
 
 // SecurityAlertDetail represents a security alert detail
@@ -68,30 +68,30 @@ type SecurityAlertDetail struct {
 
 // Application represents a registered application/client
 type Application struct {
-	ID            string    `json:"id"`
-	ClientID      string    `json:"client_id"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description,omitempty"`
-	Type          string    `json:"type"`
-	Protocol      string    `json:"protocol"`
-	BaseURL       string    `json:"base_url,omitempty"`
-	RedirectURIs  []string  `json:"redirect_uris"`
-	Enabled       bool      `json:"enabled"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	ClientID     string    `json:"client_id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	Type         string    `json:"type"`
+	Protocol     string    `json:"protocol"`
+	BaseURL      string    `json:"base_url,omitempty"`
+	RedirectURIs []string  `json:"redirect_uris"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // ApplicationSSOSettings represents SSO settings for an application
 type ApplicationSSOSettings struct {
-	ID                     string    `json:"id"`
-	ApplicationID          string    `json:"application_id"`
-	Enabled                bool      `json:"enabled"`
-	UseRefreshTokens       bool      `json:"use_refresh_tokens"`
-	AccessTokenLifetime    int       `json:"access_token_lifetime"`
-	RefreshTokenLifetime   int       `json:"refresh_token_lifetime"`
-	RequireConsent         bool      `json:"require_consent"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	ID                   string    `json:"id"`
+	ApplicationID        string    `json:"application_id"`
+	Enabled              bool      `json:"enabled"`
+	UseRefreshTokens     bool      `json:"use_refresh_tokens"`
+	AccessTokenLifetime  int       `json:"access_token_lifetime"`
+	RefreshTokenLifetime int       `json:"refresh_token_lifetime"`
+	RequireConsent       bool      `json:"require_consent"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // DirectoryIntegration represents an external directory sync configuration
@@ -109,10 +109,10 @@ type DirectoryIntegration struct {
 
 // Settings represents system settings
 type Settings struct {
-	General       GeneralSettings       `json:"general"`
-	Security      SecuritySettings      `json:"security"`
+	General        GeneralSettings        `json:"general"`
+	Security       SecuritySettings       `json:"security"`
 	Authentication AuthenticationSettings `json:"authentication"`
-	Branding      BrandingSettings      `json:"branding"`
+	Branding       BrandingSettings       `json:"branding"`
 }
 
 // GeneralSettings contains general system settings
@@ -164,13 +164,13 @@ type AuthenticationSettings struct {
 
 // BrandingSettings contains branding customization
 type BrandingSettings struct {
-	LogoURL         string            `json:"logo_url,omitempty"`
-	FaviconURL      string            `json:"favicon_url,omitempty"`
-	PrimaryColor    string            `json:"primary_color"`
-	SecondaryColor  string            `json:"secondary_color"`
-	CustomCSS       string            `json:"custom_css,omitempty"`
-	LoginPageTitle  string            `json:"login_page_title"`
-	LoginPageMessage string           `json:"login_page_message,omitempty"`
+	LogoURL          string `json:"logo_url,omitempty"`
+	FaviconURL       string `json:"favicon_url,omitempty"`
+	PrimaryColor     string `json:"primary_color"`
+	SecondaryColor   string `json:"secondary_color"`
+	CustomCSS        string `json:"custom_css,omitempty"`
+	LoginPageTitle   string `json:"login_page_title"`
+	LoginPageMessage string `json:"login_page_message,omitempty"`
 }
 
 // AdminDelegation represents a delegated admin permission assignment
@@ -353,7 +353,7 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 		PendingReviews:    pendingReviews,
 		SecurityAlerts:    securityAlerts,
 		RecentActivity:    recentActivity,
-		AuthStats: s.getAuthStatistics(ctx),
+		AuthStats:         s.getAuthStatistics(ctx),
 	}
 
 	// Get top 5 failed auth attempts grouped by actor
@@ -612,7 +612,7 @@ func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 			LoginPageTitle: "Welcome to OpenIDX",
 		},
 	}
-	
+
 	return settings, nil
 }
 
@@ -798,12 +798,12 @@ func (s *Service) GetApplicationSSOSettings(ctx context.Context, applicationID s
 	if err != nil {
 		// Return default settings if none exist
 		settings = ApplicationSSOSettings{
-			ApplicationID:          applicationID,
-			Enabled:                true,
-			UseRefreshTokens:       true,
-			AccessTokenLifetime:    3600,
-			RefreshTokenLifetime:   86400,
-			RequireConsent:         false,
+			ApplicationID:        applicationID,
+			Enabled:              true,
+			UseRefreshTokens:     true,
+			AccessTokenLifetime:  3600,
+			RefreshTokenLifetime: 86400,
+			RequireConsent:       false,
 		}
 		return &settings, nil
 	}
@@ -861,7 +861,7 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/settings/sms", svc.handleGetSMSSettings)
 	router.PUT("/settings/sms", svc.handleUpdateSMSSettings)
 	router.POST("/settings/sms/test", svc.handleTestSMS)
-	
+
 	// Applications
 	router.GET("/applications", svc.handleListApplications)
 	router.POST("/applications", svc.handleCreateApplication)
@@ -872,7 +872,7 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	// Application SSO Settings
 	router.GET("/applications/:id/sso-settings", svc.handleGetApplicationSSOSettings)
 	router.PUT("/applications/:id/sso-settings", svc.handleUpdateApplicationSSOSettings)
-	
+
 	// Directory integrations
 	router.GET("/directories", svc.handleListDirectories)
 	router.POST("/directories", svc.handleCreateDirectory)
@@ -883,7 +883,7 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/directories/:id/test", svc.handleTestConnection)
 	router.GET("/directories/:id/sync-logs", svc.handleGetSyncLogs)
 	router.GET("/directories/:id/sync-state", svc.handleGetSyncState)
-	
+
 	// MFA configuration
 	router.GET("/mfa/methods", svc.handleListMFAMethods)
 	router.PUT("/mfa/methods", svc.handleUpdateMFAMethods)
@@ -1319,8 +1319,8 @@ func (s *Service) handleUpdateSMSSettings(c *gin.Context) {
 
 func (s *Service) handleTestSMS(c *gin.Context) {
 	var req struct {
-		PhoneNumber string              `json:"phone_number"`
-		Settings    sms.DBSMSSettings   `json:"settings"`
+		PhoneNumber string            `json:"phone_number"`
+		Settings    sms.DBSMSSettings `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -1982,8 +1982,8 @@ func (s *Service) handleCreateServiceAccountAPIKey(c *gin.Context) {
 
 	saID := c.Param("id")
 	var req struct {
-		Name      string    `json:"name"`
-		Scopes    []string  `json:"scopes"`
+		Name      string     `json:"name"`
+		Scopes    []string   `json:"scopes"`
 		ExpiresAt *time.Time `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2007,8 +2007,8 @@ func (s *Service) handleCreateUserAPIKey(c *gin.Context) {
 	}
 
 	var req struct {
-		Name      string    `json:"name"`
-		Scopes    []string  `json:"scopes"`
+		Name      string     `json:"name"`
+		Scopes    []string   `json:"scopes"`
 		ExpiresAt *time.Time `json:"expires_at"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -18,7 +18,7 @@ import (
 // Config holds tracing configuration
 type Config struct {
 	Enabled     bool
-	Endpoint    string  // OTLP gRPC endpoint (e.g., "localhost:4317")
+	Endpoint    string // OTLP gRPC endpoint (e.g., "localhost:4317")
 	ServiceName string
 	Environment string
 	SampleRate  float64 // 0.0 to 1.0; default 1.0

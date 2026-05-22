@@ -19,9 +19,9 @@ func TestNew(t *testing.T) {
 	server := &http.Server{Addr: ":8080"}
 
 	gs := New(Config{
-		Server:         server,
-		Logger:         logger,
-		Shutdownables:  nil,
+		Server:          server,
+		Logger:          logger,
+		Shutdownables:   nil,
 		ShutdownTimeout: 10 * time.Second,
 	})
 
@@ -108,9 +108,9 @@ func TestGracefulShutdown_MultipleComponents(t *testing.T) {
 	})
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  []Shutdownable{component1, component2, component3},
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   []Shutdownable{component1, component2, component3},
 		ShutdownTimeout: 5 * time.Second,
 	})
 
@@ -155,9 +155,9 @@ func TestGracefulShutdown_ContextTimeout(t *testing.T) {
 	})
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  []Shutdownable{slowComponent},
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   []Shutdownable{slowComponent},
 		ShutdownTimeout: 100 * time.Millisecond,
 	})
 
@@ -180,9 +180,9 @@ func TestGracefulShutdown_ComponentError(t *testing.T) {
 	})
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  []Shutdownable{errorComponent, okComponent},
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   []Shutdownable{errorComponent, okComponent},
 		ShutdownTimeout: 1 * time.Second,
 	})
 
@@ -281,9 +281,9 @@ func TestGracefulShutdown_HTTPServer(t *testing.T) {
 	resp.Body.Close()
 
 	gs := New(Config{
-		Server:         server,
-		Logger:         logger,
-		Shutdownables:  nil,
+		Server:          server,
+		Logger:          logger,
+		Shutdownables:   nil,
 		ShutdownTimeout: 5 * time.Second,
 	})
 
@@ -307,9 +307,9 @@ func TestGracefulShutdown_ConcurrentShutdownCalls(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  nil,
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   nil,
 		ShutdownTimeout: 5 * time.Second,
 	})
 
@@ -355,9 +355,9 @@ func TestGracefulShutdown_ServerShutdown(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	gs := New(Config{
-		Server:         server,
-		Logger:         logger,
-		Shutdownables:  nil,
+		Server:          server,
+		Logger:          logger,
+		Shutdownables:   nil,
 		ShutdownTimeout: 1 * time.Second,
 	})
 
@@ -403,9 +403,9 @@ func TestGracefulShutdown_ComponentOrder(t *testing.T) {
 	})
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  []Shutdownable{c1, c2, c3},
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   []Shutdownable{c1, c2, c3},
 		ShutdownTimeout: 5 * time.Second,
 	})
 
@@ -442,9 +442,9 @@ func TestGracefulShutdown_EmptyShutdownables(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  []Shutdownable{},
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   []Shutdownable{},
 		ShutdownTimeout: 1 * time.Second,
 	})
 
@@ -457,9 +457,9 @@ func TestShutdownWithContext(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	gs := New(Config{
-		Server:         &http.Server{Addr: ":8080"},
-		Logger:         logger,
-		Shutdownables:  nil,
+		Server:          &http.Server{Addr: ":8080"},
+		Logger:          logger,
+		Shutdownables:   nil,
 		ShutdownTimeout: 5 * time.Second,
 	})
 
@@ -495,9 +495,9 @@ func TestListenAndServe(t *testing.T) {
 	}
 
 	gs := New(Config{
-		Server:         server,
-		Logger:         logger,
-		Shutdownables:  nil,
+		Server:          server,
+		Logger:          logger,
+		Shutdownables:   nil,
 		ShutdownTimeout: 5 * time.Second,
 	})
 
@@ -517,9 +517,9 @@ func BenchmarkShutdown(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		gs := New(Config{
-			Server:         &http.Server{Addr: ":8080"},
-			Logger:         logger,
-			Shutdownables:  []Shutdownable{component},
+			Server:          &http.Server{Addr: ":8080"},
+			Logger:          logger,
+			Shutdownables:   []Shutdownable{component},
 			ShutdownTimeout: 5 * time.Second,
 		})
 		gs.Shutdown()

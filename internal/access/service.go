@@ -86,16 +86,16 @@ type ProxySession struct {
 
 // Service provides access proxy operations
 type Service struct {
-	db              *database.PostgresDB
-	redis           *database.RedisClient
-	config          *config.Config
-	logger          *zap.Logger
-	governanceURL   string
-	auditURL        string
-	sessionSecret   []byte
-	oauthIssuer      string
-	oauthInternalURL string // Docker-internal URL for server-to-server calls
-	oauthJWKSURL     string
+	db                   *database.PostgresDB
+	redis                *database.RedisClient
+	config               *config.Config
+	logger               *zap.Logger
+	governanceURL        string
+	auditURL             string
+	sessionSecret        []byte
+	oauthIssuer          string
+	oauthInternalURL     string // Docker-internal URL for server-to-server calls
+	oauthJWKSURL         string
 	zitiManager          *ZitiManager
 	guacamoleClient      *GuacamoleClient
 	featureManager       *FeatureManager
@@ -840,31 +840,31 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 	id := c.Param("id")
 
 	var req struct {
-		Name               *string            `json:"name"`
-		Description        *string            `json:"description"`
-		FromURL            *string            `json:"from_url"`
-		ToURL              *string            `json:"to_url"`
-		PreserveHost       *bool              `json:"preserve_host"`
-		RequireAuth        *bool              `json:"require_auth"`
-		AllowedRoles       []string           `json:"allowed_roles"`
-		AllowedGroups      []string           `json:"allowed_groups"`
-		PolicyIDs          []string           `json:"policy_ids"`
-		IdleTimeout        *int               `json:"idle_timeout"`
-		AbsoluteTimeout    *int               `json:"absolute_timeout"`
-		CORSAllowedOrigins []string           `json:"cors_allowed_origins"`
-		CustomHeaders      map[string]string  `json:"custom_headers"`
-		Enabled            *bool              `json:"enabled"`
-		Priority           *int               `json:"priority"`
-		IDPId              *string            `json:"idp_id"`
-		RouteType          *string            `json:"route_type"`
-		RemoteHost         *string            `json:"remote_host"`
-		RemotePort         *int               `json:"remote_port"`
-		ReverifyInterval   *int               `json:"reverify_interval"`
-		PostureCheckIDs    []string           `json:"posture_check_ids"`
-		InlinePolicy       *string            `json:"inline_policy"`
-		RequireDeviceTrust *bool              `json:"require_device_trust"`
-		AllowedCountries   []string           `json:"allowed_countries"`
-		MaxRiskScore       *int               `json:"max_risk_score"`
+		Name               *string           `json:"name"`
+		Description        *string           `json:"description"`
+		FromURL            *string           `json:"from_url"`
+		ToURL              *string           `json:"to_url"`
+		PreserveHost       *bool             `json:"preserve_host"`
+		RequireAuth        *bool             `json:"require_auth"`
+		AllowedRoles       []string          `json:"allowed_roles"`
+		AllowedGroups      []string          `json:"allowed_groups"`
+		PolicyIDs          []string          `json:"policy_ids"`
+		IdleTimeout        *int              `json:"idle_timeout"`
+		AbsoluteTimeout    *int              `json:"absolute_timeout"`
+		CORSAllowedOrigins []string          `json:"cors_allowed_origins"`
+		CustomHeaders      map[string]string `json:"custom_headers"`
+		Enabled            *bool             `json:"enabled"`
+		Priority           *int              `json:"priority"`
+		IDPId              *string           `json:"idp_id"`
+		RouteType          *string           `json:"route_type"`
+		RemoteHost         *string           `json:"remote_host"`
+		RemotePort         *int              `json:"remote_port"`
+		ReverifyInterval   *int              `json:"reverify_interval"`
+		PostureCheckIDs    []string          `json:"posture_check_ids"`
+		InlinePolicy       *string           `json:"inline_policy"`
+		RequireDeviceTrust *bool             `json:"require_device_trust"`
+		AllowedCountries   []string          `json:"allowed_countries"`
+		MaxRiskScore       *int              `json:"max_risk_score"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1379,10 +1379,10 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":   session.UserID,
-		"email":     session.Email,
-		"name":      session.Name,
-		"roles":     session.Roles,
+		"user_id":    session.UserID,
+		"email":      session.Email,
+		"name":       session.Name,
+		"roles":      session.Roles,
 		"expires_at": session.ExpiresAt,
 	})
 }
@@ -1534,9 +1534,9 @@ func (s *Service) handleProxy(c *gin.Context) {
 	// Log successful proxy
 	if session != nil {
 		s.logAuditEvent(c, "proxy_access_allowed", route.ID, "proxy_route", map[string]interface{}{
-			"user_id": session.UserID,
-			"path":    c.Request.URL.Path,
-			"method":  c.Request.Method,
+			"user_id":  session.UserID,
+			"path":     c.Request.URL.Path,
+			"method":   c.Request.Method,
 			"upstream": route.ToURL,
 		})
 	}
@@ -2089,13 +2089,13 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 
 	// Store session data in Redis for fast access
 	sessionData, _ := json.Marshal(map[string]interface{}{
-		"id":       id,
-		"user_id":  userID,
-		"email":    email,
-		"name":     name,
-		"roles":    roles,
-		"token":    accessToken,
-		"expires":  expiresAt.Unix(),
+		"id":      id,
+		"user_id": userID,
+		"email":   email,
+		"name":    name,
+		"roles":   roles,
+		"token":   accessToken,
+		"expires": expiresAt.Unix(),
 	})
 	s.redis.Client.Set(c.Request.Context(), "proxy_session:"+tokenHash, sessionData, 12*time.Hour)
 
@@ -2149,11 +2149,11 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 	}
 
 	return &ProxySession{
-		ID:      fmt.Sprint(sessionData["id"]),
-		UserID:  fmt.Sprint(sessionData["user_id"]),
-		Email:   fmt.Sprint(sessionData["email"]),
-		Name:    fmt.Sprint(sessionData["name"]),
-		Roles:   roles,
+		ID:     fmt.Sprint(sessionData["id"]),
+		UserID: fmt.Sprint(sessionData["user_id"]),
+		Email:  fmt.Sprint(sessionData["email"]),
+		Name:   fmt.Sprint(sessionData["name"]),
+		Roles:  roles,
 	}
 }
 

@@ -38,20 +38,20 @@ type RiskForecast struct {
 type CapacityForecast struct {
 	PeakConcurrentSessions int     `json:"peak_concurrent_sessions"`
 	AvgConcurrentSessions  int     `json:"avg_concurrent_sessions"`
-	PeakHour              int     `json:"peak_hour"`
-	PeakDayOfWeek         string  `json:"peak_day_of_week"`
-	SessionGrowthRate     float64 `json:"session_growth_rate_pct"`
-	RecommendedCapacity   int     `json:"recommended_capacity"`
-	LicenseUtilization    float64 `json:"license_utilization_pct"`
+	PeakHour               int     `json:"peak_hour"`
+	PeakDayOfWeek          string  `json:"peak_day_of_week"`
+	SessionGrowthRate      float64 `json:"session_growth_rate_pct"`
+	RecommendedCapacity    int     `json:"recommended_capacity"`
+	LicenseUtilization     float64 `json:"license_utilization_pct"`
 }
 
 // AccountGrowth projects user count growth
 type AccountGrowth struct {
-	CurrentUsers    int           `json:"current_users"`
-	GrowthRate      float64       `json:"growth_rate_monthly_pct"`
-	Projected30d    int           `json:"projected_30d"`
-	Projected90d    int           `json:"projected_90d"`
-	Historical      []DailyMetric `json:"historical"`
+	CurrentUsers int           `json:"current_users"`
+	GrowthRate   float64       `json:"growth_rate_monthly_pct"`
+	Projected30d int           `json:"projected_30d"`
+	Projected90d int           `json:"projected_90d"`
+	Historical   []DailyMetric `json:"historical"`
 }
 
 // ChurnRiskUser is a user at risk of departing
@@ -190,11 +190,11 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 		monthlyRate = float64(totalNew30d) / float64(activeUsers) * 100
 	}
 	summary.AccountGrowth = &AccountGrowth{
-		CurrentUsers:   activeUsers,
-		GrowthRate:     math.Round(monthlyRate*10) / 10,
-		Projected30d:   activeUsers + totalNew30d,
-		Projected90d:   activeUsers + totalNew30d*3,
-		Historical:     growthHist,
+		CurrentUsers: activeUsers,
+		GrowthRate:   math.Round(monthlyRate*10) / 10,
+		Projected30d: activeUsers + totalNew30d,
+		Projected90d: activeUsers + totalNew30d*3,
+		Historical:   growthHist,
 	}
 
 	// Churn risk - users with declining login frequency

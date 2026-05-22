@@ -21,10 +21,10 @@ import (
 	"github.com/openidx/openidx/internal/common/opa"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/governance"
 	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/server"
-	"github.com/openidx/openidx/internal/governance"
 )
 
 var (
@@ -169,9 +169,9 @@ func main() {
 	}
 
 	graceful := server.New(server.Config{
-		Server:         httpServer,
-		Logger:         log,
-		Shutdownables:  shutdownables,
+		Server:          httpServer,
+		Logger:          log,
+		Shutdownables:   shutdownables,
 		ShutdownTimeout: 30 * time.Second,
 	})
 

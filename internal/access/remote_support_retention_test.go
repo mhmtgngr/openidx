@@ -18,10 +18,14 @@ import (
 //
 // Layer 1: per-session override — wins over everything below.
 // Layer 2: per-org policy in the DB — skipped here (no DB in the unit
-//          test), exercised indirectly via the integration test that
-//          inserts a row. We assert the fallthrough behavior instead.
+//
+//	test), exercised indirectly via the integration test that
+//	inserts a row. We assert the fallthrough behavior instead.
+//
 // Layer 3: configured default — used when neither session nor policy
-//          contribute.
+//
+//	contribute.
+//
 // Layer 4: hard fallback (90) — when default is zero.
 func TestResolveEffectiveRetention_Layers(t *testing.T) {
 	h := &RemoteSupportHandler{logger: zap.NewNop()}

@@ -744,4 +744,3 @@ func (s *Service) handleDeleteCustomClaim(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Custom claim deleted"})
 }
-

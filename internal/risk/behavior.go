@@ -17,11 +17,11 @@ import (
 // Redis key prefixes for behavioral tracking
 const (
 	// User behavior profiles
-	behaviorKeyPrefix      = "behavior:user:"
-	loginHoursKey          = "behavior:hours:"
-	locationKey            = "behavior:location:"
-	deviceKey              = "behavior:device:"
-	resourceKey            = "behavior:resource:"
+	behaviorKeyPrefix = "behavior:user:"
+	loginHoursKey     = "behavior:hours:"
+	locationKey       = "behavior:location:"
+	deviceKey         = "behavior:device:"
+	resourceKey       = "behavior:resource:"
 
 	// TTL for behavior data
 	behaviorTTL = 30 * 24 * time.Hour // 30 days
@@ -29,16 +29,16 @@ const (
 
 // BehaviorProfile represents a user's behavioral baseline
 type BehaviorProfile struct {
-	UserID              string      `json:"user_id"`
-	TypicalLoginHours   []int       `json:"typical_login_hours"`   // Hour 0-23
-	TypicalLocations    []GeoPoint  `json:"typical_locations"`      // Known lat/lon
-	TypicalDevices      []string    `json:"typical_devices"`        // Device fingerprints
-	TypicalResources    []string    `json:"typical_resources"`      // Resources accessed
-	LoginCount          int         `json:"login_count"`
-	AverageLoginHour    float64     `json:"average_login_hour"`
-	LoginHourStdDev     float64     `json:"login_hour_std_dev"`
-	LastLoginTime       time.Time   `json:"last_login_time"`
-	ProfileEstablished   bool        `json:"profile_established"`   // True if enough data collected
+	UserID             string     `json:"user_id"`
+	TypicalLoginHours  []int      `json:"typical_login_hours"` // Hour 0-23
+	TypicalLocations   []GeoPoint `json:"typical_locations"`   // Known lat/lon
+	TypicalDevices     []string   `json:"typical_devices"`     // Device fingerprints
+	TypicalResources   []string   `json:"typical_resources"`   // Resources accessed
+	LoginCount         int        `json:"login_count"`
+	AverageLoginHour   float64    `json:"average_login_hour"`
+	LoginHourStdDev    float64    `json:"login_hour_std_dev"`
+	LastLoginTime      time.Time  `json:"last_login_time"`
+	ProfileEstablished bool       `json:"profile_established"` // True if enough data collected
 }
 
 // GeoPoint is defined in scorer.go to avoid duplication
@@ -67,12 +67,12 @@ type BehaviorConfig struct {
 // DefaultBehaviorConfig returns default behavioral analytics configuration
 func DefaultBehaviorConfig() BehaviorConfig {
 	return BehaviorConfig{
-		MinLoginsForProfile:  5,
-		StdDevThreshold:      2.0, // 2 standard deviations
-		LocationThresholdKm:  500,
-		MaxLocations:         10,
-		MaxDevices:           5,
-		MaxResources:         20,
+		MinLoginsForProfile: 5,
+		StdDevThreshold:     2.0, // 2 standard deviations
+		LocationThresholdKm: 500,
+		MaxLocations:        10,
+		MaxDevices:          5,
+		MaxResources:        20,
 	}
 }
 
@@ -469,15 +469,15 @@ func (b *BehaviorTracker) GetUserBehaviorSummary(ctx context.Context, userID str
 	}
 
 	summary := map[string]interface{}{
-		"user_id":           profile.UserID,
-		"login_count":       profile.LoginCount,
+		"user_id":             profile.UserID,
+		"login_count":         profile.LoginCount,
 		"profile_established": profile.ProfileEstablished,
-		"typical_hours":     profile.TypicalLoginHours,
-		"avg_hour":          int(profile.AverageLoginHour),
-		"location_count":    len(profile.TypicalLocations),
-		"device_count":      len(profile.TypicalDevices),
-		"resource_count":    len(profile.TypicalResources),
-		"last_login":        profile.LastLoginTime,
+		"typical_hours":       profile.TypicalLoginHours,
+		"avg_hour":            int(profile.AverageLoginHour),
+		"location_count":      len(profile.TypicalLocations),
+		"device_count":        len(profile.TypicalDevices),
+		"resource_count":      len(profile.TypicalResources),
+		"last_login":          profile.LastLoginTime,
 	}
 
 	return summary, nil

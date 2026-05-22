@@ -129,24 +129,24 @@ type LifecycleTransition struct {
 
 // LifecycleTransitionResult contains the result of a state transition
 type LifecycleTransitionResult struct {
-	UserID      string        `json:"user_id"`
-	FromState   IdentityState `json:"from_state"`
-	ToState     IdentityState `json:"to_state"`
-	Success     bool          `json:"success"`
-	Error       *string       `json:"error,omitempty"`
-	TransitionedAt time.Time  `json:"transitioned_at"`
-	Actions     []string      `json:"actions,omitempty"`
+	UserID         string        `json:"user_id"`
+	FromState      IdentityState `json:"from_state"`
+	ToState        IdentityState `json:"to_state"`
+	Success        bool          `json:"success"`
+	Error          *string       `json:"error,omitempty"`
+	TransitionedAt time.Time     `json:"transitioned_at"`
+	Actions        []string      `json:"actions,omitempty"`
 }
 
 // LifecycleManager handles identity lifecycle state transitions
 type LifecycleManager struct {
-	repo          Repository
-	logger        *zap.Logger
-	eventBus      events.Bus
-	webhookURL    *string
-	emailService  WelcomeEmailSender
+	repo           Repository
+	logger         *zap.Logger
+	eventBus       events.Bus
+	webhookURL     *string
+	emailService   WelcomeEmailSender
 	sessionRevoker SessionRevoker
-	retentionDays int
+	retentionDays  int
 }
 
 // SessionRevoker is an interface for revoking user sessions
@@ -169,13 +169,13 @@ func NewLifecycleManager(
 	sessionRevoker SessionRevoker,
 ) *LifecycleManager {
 	return &LifecycleManager{
-		repo:          repo,
-		logger:        logger.With(zap.String("component", "lifecycle")),
-		eventBus:      eventBus,
-		webhookURL:    webhookURL,
-		emailService:  emailService,
+		repo:           repo,
+		logger:         logger.With(zap.String("component", "lifecycle")),
+		eventBus:       eventBus,
+		webhookURL:     webhookURL,
+		emailService:   emailService,
 		sessionRevoker: sessionRevoker,
-		retentionDays: 90, // Default 90-day retention
+		retentionDays:  90, // Default 90-day retention
 	}
 }
 
@@ -196,10 +196,10 @@ func (m *LifecycleManager) TransitionState(
 	user, err := m.repo.GetUser(ctx, userID)
 	if err != nil {
 		return &LifecycleTransitionResult{
-			UserID:    userID,
-			ToState:   toState,
-			Success:   false,
-			Error:     stringPtr(fmt.Sprintf("user not found: %v", err)),
+			UserID:  userID,
+			ToState: toState,
+			Success: false,
+			Error:   stringPtr(fmt.Sprintf("user not found: %v", err)),
 		}, fmt.Errorf("user not found: %w", err)
 	}
 
@@ -632,14 +632,14 @@ func (m *LifecycleManager) CanLogin(ctx context.Context, userID string) (bool, e
 
 // LifecycleAuditLog represents an audit log entry for lifecycle operations
 type LifecycleAuditLog struct {
-	ID            string        `json:"id"`
-	UserID        string        `json:"user_id"`
-	Transition    StateTransition `json:"transition"`
-	Reason        *string       `json:"reason,omitempty"`
-	PerformedBy   string        `json:"performed_by"`
-	IPAddress     *string       `json:"ip_address,omitempty"`
-	UserAgent     *string       `json:"user_agent,omitempty"`
-	Timestamp     time.Time     `json:"timestamp"`
+	ID          string          `json:"id"`
+	UserID      string          `json:"user_id"`
+	Transition  StateTransition `json:"transition"`
+	Reason      *string         `json:"reason,omitempty"`
+	PerformedBy string          `json:"performed_by"`
+	IPAddress   *string         `json:"ip_address,omitempty"`
+	UserAgent   *string         `json:"user_agent,omitempty"`
+	Timestamp   time.Time       `json:"timestamp"`
 }
 
 // NewLifecycleAuditLog creates an audit log entry
@@ -668,14 +668,14 @@ type LifecyclePolicy struct {
 
 // AutoSuspendPolicy defines when to auto-suspend users
 type AutoSuspendPolicy struct {
-	Enabled              bool          `json:"enabled"`
-	InactiveDays         int           `json:"inactive_days"`          // Suspend after N days of inactivity
-	FailedLoginThreshold int           `json:"failed_login_threshold"` // Suspend after N failed logins
+	Enabled              bool `json:"enabled"`
+	InactiveDays         int  `json:"inactive_days"`          // Suspend after N days of inactivity
+	FailedLoginThreshold int  `json:"failed_login_threshold"` // Suspend after N failed logins
 }
 
 // AutoDeprovisionPolicy defines when to auto-deprovision users
 type AutoDeprovisionPolicy struct {
-	Enabled      bool `json:"enabled"`
+	Enabled       bool `json:"enabled"`
 	SuspendedDays int  `json:"suspended_days"` // Deprovision after N days in suspended state
 }
 

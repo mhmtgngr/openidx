@@ -98,7 +98,7 @@ type ListGroupsResponse struct {
 func (s *Service) HandleCreateUser(c *gin.Context) {
 	var req CreateOrUpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: " + err.Error()))
+		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: "+err.Error()))
 		return
 	}
 
@@ -186,7 +186,7 @@ func (s *Service) HandleUpdateUser(c *gin.Context) {
 
 	var req CreateOrUpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: " + err.Error()))
+		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: "+err.Error()))
 		return
 	}
 
@@ -411,7 +411,7 @@ func (s *Service) HandleSearchUsers(c *gin.Context) {
 func (s *Service) HandleCreateGroup(c *gin.Context) {
 	var req CreateOrUpdateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: " + err.Error()))
+		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: "+err.Error()))
 		return
 	}
 
@@ -485,7 +485,7 @@ func (s *Service) HandleUpdateGroup(c *gin.Context) {
 
 	var req CreateOrUpdateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: " + err.Error()))
+		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: "+err.Error()))
 		return
 	}
 
@@ -677,9 +677,9 @@ func (s *Service) HandleGetGroupMembers(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"groupId":  groupID,
-		"members":  members,
-		"total":    len(members),
+		"groupId": groupID,
+		"members": members,
+		"total":   len(members),
 	})
 }
 
@@ -691,7 +691,7 @@ func (s *Service) HandleAddGroupMember(c *gin.Context) {
 		UserID string `json:"userId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: " + err.Error()))
+		apperrors.HandleError(c, apperrors.ValidationError("invalid request body: "+err.Error()))
 		return
 	}
 

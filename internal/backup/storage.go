@@ -21,19 +21,19 @@ import (
 type Storage interface {
 	// Save stores a backup and returns its location
 	Save(ctx context.Context, name string, data []byte) (string, error)
-	
+
 	// Load retrieves a backup by name
 	Load(ctx context.Context, name string) ([]byte, error)
-	
+
 	// Delete removes a backup
 	Delete(ctx context.Context, name string) error
-	
+
 	// List returns all available backups
 	List(ctx context.Context) ([]*Backup, error)
-	
+
 	// Exists checks if a backup exists
 	Exists(ctx context.Context, name string) (bool, error)
-	
+
 	// URL returns a URL for accessing the backup (for S3)
 	URL(name string) string
 }
@@ -234,8 +234,8 @@ func (s *S3Storage) Delete(ctx context.Context, name string) error {
 
 // listBucketResult represents the XML response from S3 ListObjectsV2
 type listBucketResult struct {
-	XMLName  xml.Name       `xml:"ListBucketResult"`
-	Contents []s3Object     `xml:"Contents"`
+	XMLName  xml.Name   `xml:"ListBucketResult"`
+	Contents []s3Object `xml:"Contents"`
 }
 
 type s3Object struct {
@@ -495,10 +495,10 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 
 // Progress tracks backup operation progress
 type Progress struct {
-	BytesRead     int64
-	TotalBytes    int64
-	StartTime     time.Time
-	LastUpdate    time.Time
+	BytesRead  int64
+	TotalBytes int64
+	StartTime  time.Time
+	LastUpdate time.Time
 }
 
 // BytesPerSecond returns the current throughput
@@ -685,8 +685,8 @@ type dirEntry struct {
 	e os.DirEntry
 }
 
-func (d *dirEntry) Name() string    { return d.e.Name() }
-func (d *dirEntry) IsDir() bool      { return d.e.IsDir() }
+func (d *dirEntry) Name() string { return d.e.Name() }
+func (d *dirEntry) IsDir() bool  { return d.e.IsDir() }
 func (d *dirEntry) Info() (FileInfo, error) {
 	info, err := d.e.Info()
 	if err != nil {
@@ -699,9 +699,9 @@ type fileInfo struct {
 	info os.FileInfo
 }
 
-func (f *fileInfo) Name() string      { return f.info.Name() }
-func (f *fileInfo) Size() int64       { return f.info.Size() }
-func (f *fileInfo) Mode() int64       { return int64(f.info.Mode()) }
+func (f *fileInfo) Name() string       { return f.info.Name() }
+func (f *fileInfo) Size() int64        { return f.info.Size() }
+func (f *fileInfo) Mode() int64        { return int64(f.info.Mode()) }
 func (f *fileInfo) ModTime() time.Time { return f.info.ModTime() }
-func (f *fileInfo) IsDir() bool       { return f.info.IsDir() }
-func (f *fileInfo) Sys() interface{}  { return f.info.Sys() }
+func (f *fileInfo) IsDir() bool        { return f.info.IsDir() }
+func (f *fileInfo) Sys() interface{}   { return f.info.Sys() }

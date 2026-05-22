@@ -15,16 +15,16 @@ import (
 
 // TOTPEnrollment represents a user's TOTP enrollment
 type TOTPEnrollment struct {
-	ID            uuid.UUID `json:"id"`
-	UserID        uuid.UUID `json:"user_id" db:"user_id"`
-	Secret        string    `json:"-"` // Encrypted secret, never expose in JSON
-	AccountName   string    `json:"account_name" db:"account_name"`
-	Verified      bool      `json:"verified" db:"verified"`
-	Enabled       bool      `json:"enabled" db:"enabled"`
-	BackupCodes   []string  `json:"backup_codes,omitempty" db:"backup_codes"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-	VerifiedAt    *time.Time `json:"verified_at,omitempty" db:"verified_at"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
+	ID          uuid.UUID  `json:"id"`
+	UserID      uuid.UUID  `json:"user_id" db:"user_id"`
+	Secret      string     `json:"-"` // Encrypted secret, never expose in JSON
+	AccountName string     `json:"account_name" db:"account_name"`
+	Verified    bool       `json:"verified" db:"verified"`
+	Enabled     bool       `json:"enabled" db:"enabled"`
+	BackupCodes []string   `json:"backup_codes,omitempty" db:"backup_codes"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	VerifiedAt  *time.Time `json:"verified_at,omitempty" db:"verified_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
 }
 
 // Repository defines the interface for MFA data operations

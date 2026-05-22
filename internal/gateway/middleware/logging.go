@@ -33,11 +33,11 @@ type LoggingMiddlewareConfig struct {
 // DefaultLoggingConfig returns default logging configuration
 func DefaultLoggingConfig() LoggingMiddlewareConfig {
 	return LoggingMiddlewareConfig{
-		LogRequestBody:   false,
-		LogResponseBody:  false,
-		MaxBodySize:      1024 * 64, // 64KB
-		SkipHealthCheck:  true,
-		LogAsJSON:        true,
+		LogRequestBody:  false,
+		LogResponseBody: false,
+		MaxBodySize:     1024 * 64, // 64KB
+		SkipHealthCheck: true,
+		LogAsJSON:       true,
 	}
 }
 
@@ -74,7 +74,7 @@ func RequestLogger(logger gateway.Logger, config LoggingMiddlewareConfig) gin.Ha
 		if config.LogResponseBody {
 			writer := &responseBodyCapture{
 				ResponseWriter: c.Writer,
-				body:          &bytes.Buffer{},
+				body:           &bytes.Buffer{},
 			}
 			c.Writer = writer
 		}
@@ -177,17 +177,17 @@ func GetLogger(c *gin.Context) (gateway.Logger, bool) {
 func WithLogger(logger gateway.Logger, c *gin.Context) gateway.Logger {
 	// Create a context-aware logger wrapper
 	return &contextLogger{
-		logger:       logger,
+		logger:        logger,
 		correlationID: GetCorrelationID(c),
-		path:         c.Request.URL.Path,
+		path:          c.Request.URL.Path,
 	}
 }
 
 // contextLogger wraps gateway.Logger with context fields
 type contextLogger struct {
-	logger       gateway.Logger
+	logger        gateway.Logger
 	correlationID string
-	path         string
+	path          string
 }
 
 func (l *contextLogger) Debug(msg string, fields ...interface{}) {

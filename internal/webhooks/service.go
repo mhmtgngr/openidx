@@ -717,12 +717,12 @@ func (s *Service) GetDeliveryStats(ctx context.Context, subscriptionID string) (
 	}
 
 	stats := map[string]interface{}{
-		"subscription_id":      subscriptionID,
-		"total_deliveries":     totalDeliveries,
+		"subscription_id":       subscriptionID,
+		"total_deliveries":      totalDeliveries,
 		"successful_deliveries": successful,
-		"failed_deliveries":    failed,
-		"avg_response_time_ms": int64(avgResponseTime),
-		"last_delivery_at":     lastDeliveryAt,
+		"failed_deliveries":     failed,
+		"avg_response_time_ms":  int64(avgResponseTime),
+		"last_delivery_at":      lastDeliveryAt,
 	}
 
 	// Calculate success rate

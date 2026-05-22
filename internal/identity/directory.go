@@ -29,9 +29,9 @@ const (
 
 // ValidStateTransitions defines allowed state transitions
 var ValidStateTransitions = map[IdentityState][]IdentityState{
-	StateCreated:        {StateActive, StateDeprovisioned},
-	StateActive:         {StateSuspended, StateDeprovisioned},
-	StateSuspended:      {StateActive, StateDeprovisioned},
+	StateCreated:       {StateActive, StateDeprovisioned},
+	StateActive:        {StateSuspended, StateDeprovisioned},
+	StateSuspended:     {StateActive, StateDeprovisioned},
 	StateDeprovisioned: {}, // Terminal state - no transitions out
 }
 
@@ -60,26 +60,26 @@ type LDAPConfig struct {
 	BindPassword string `json:"bind_password"`
 
 	// Search configuration
-	BaseDN          string   `json:"base_dn"`
-	UserSearchBase  string   `json:"user_search_base,omitempty"`  // Falls back to BaseDN
-	GroupSearchBase string   `json:"group_search_base,omitempty"` // Falls back to BaseDN
-	UserFilter      string   `json:"user_filter"`                  // e.g., "(objectClass=person)"
-	GroupFilter     string   `json:"group_filter"`                 // e.g., "(objectClass=group)"
-	UserObjectClass []string `json:"user_object_class,omitempty"`
+	BaseDN           string   `json:"base_dn"`
+	UserSearchBase   string   `json:"user_search_base,omitempty"`  // Falls back to BaseDN
+	GroupSearchBase  string   `json:"group_search_base,omitempty"` // Falls back to BaseDN
+	UserFilter       string   `json:"user_filter"`                 // e.g., "(objectClass=person)"
+	GroupFilter      string   `json:"group_filter"`                // e.g., "(objectClass=group)"
+	UserObjectClass  []string `json:"user_object_class,omitempty"`
 	GroupObjectClass []string `json:"group_object_class,omitempty"`
 }
 
 // DefaultLDAPConfig returns a config with sensible defaults
 func DefaultLDAPConfig() *LDAPConfig {
 	return &LDAPConfig{
-		Port:           389,
-		UseTLS:         false,
-		UseStartTLS:    false,
-		InsecureSkip:   false,
-		Timeout:        30 * time.Second,
-		UserFilter:     "(objectClass=person)",
-		GroupFilter:    "(objectClass=group)",
-		UserObjectClass: []string{"person", "organizationalPerson", "inetOrgPerson", "user"},
+		Port:             389,
+		UseTLS:           false,
+		UseStartTLS:      false,
+		InsecureSkip:     false,
+		Timeout:          30 * time.Second,
+		UserFilter:       "(objectClass=person)",
+		GroupFilter:      "(objectClass=group)",
+		UserObjectClass:  []string{"person", "organizationalPerson", "inetOrgPerson", "user"},
 		GroupObjectClass: []string{"group", "groupOfNames", "groupOfUniqueNames"},
 	}
 }
@@ -87,19 +87,19 @@ func DefaultLDAPConfig() *LDAPConfig {
 // AttributeMapping defines how LDAP attributes map to OpenIDX User fields
 type AttributeMapping struct {
 	// User attribute mappings
-	Username        string `json:"username"`         // e.g., "uid" or "sAMAccountName"
-	Email           string `json:"email"`            // e.g., "mail"
-	FirstName       string `json:"first_name"`       // e.g., "givenName"
-	LastName        string `json:"last_name"`        // e.g., "sn"
-	DisplayName     string `json:"display_name"`     // e.g., "cn" or "displayName"
-	Phone           string `json:"phone,omitempty"`  // e.g., "telephoneNumber"
-	Department      string `json:"department,omitempty"` // e.g., "department"
-	Title           string `json:"title,omitempty"`  // e.g., "title"
+	Username    string `json:"username"`             // e.g., "uid" or "sAMAccountName"
+	Email       string `json:"email"`                // e.g., "mail"
+	FirstName   string `json:"first_name"`           // e.g., "givenName"
+	LastName    string `json:"last_name"`            // e.g., "sn"
+	DisplayName string `json:"display_name"`         // e.g., "cn" or "displayName"
+	Phone       string `json:"phone,omitempty"`      // e.g., "telephoneNumber"
+	Department  string `json:"department,omitempty"` // e.g., "department"
+	Title       string `json:"title,omitempty"`      // e.g., "title"
 
 	// Group attribute mappings
-	GroupName       string `json:"group_name"`       // e.g., "cn"
-	GroupMember     string `json:"group_member"`     // e.g., "member" or "uniqueMember"
-	GroupMemberDN   string `json:"group_member_dn"`  // Whether member is a full DN
+	GroupName     string `json:"group_name"`      // e.g., "cn"
+	GroupMember   string `json:"group_member"`    // e.g., "member" or "uniqueMember"
+	GroupMemberDN string `json:"group_member_dn"` // Whether member is a full DN
 
 	// Custom attribute mappings to User.Attributes
 	CustomAttributes map[string]string `json:"custom_attributes,omitempty"`
@@ -108,16 +108,16 @@ type AttributeMapping struct {
 // DefaultAttributeMapping returns the default LDAP attribute mappings
 func DefaultAttributeMapping() *AttributeMapping {
 	return &AttributeMapping{
-		Username:     "uid",
-		Email:        "mail",
-		FirstName:    "givenName",
-		LastName:     "sn",
-		DisplayName:  "cn",
-		Phone:        "telephoneNumber",
-		Department:   "departmentNumber",
-		Title:        "title",
-		GroupName:    "cn",
-		GroupMember:  "member",
+		Username:      "uid",
+		Email:         "mail",
+		FirstName:     "givenName",
+		LastName:      "sn",
+		DisplayName:   "cn",
+		Phone:         "telephoneNumber",
+		Department:    "departmentNumber",
+		Title:         "title",
+		GroupName:     "cn",
+		GroupMember:   "member",
 		GroupMemberDN: "true", // String value indicating member is DN
 		CustomAttributes: map[string]string{
 			"employeeNumber": "employeeNumber",
@@ -128,44 +128,44 @@ func DefaultAttributeMapping() *AttributeMapping {
 
 // Directory represents an external directory for synchronization
 type Directory struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Type            string            `json:"type"` // ldap, active_directory, okta
-	Enabled         bool              `json:"enabled"`
-	Config          *LDAPConfig       `json:"config,omitempty"`
-	AttributeMap    *AttributeMapping `json:"attribute_map,omitempty"`
-	OrganizationID  *string           `json:"organization_id,omitempty"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Type           string            `json:"type"` // ldap, active_directory, okta
+	Enabled        bool              `json:"enabled"`
+	Config         *LDAPConfig       `json:"config,omitempty"`
+	AttributeMap   *AttributeMapping `json:"attribute_map,omitempty"`
+	OrganizationID *string           `json:"organization_id,omitempty"`
 
 	// Sync settings
-	SyncInterval    time.Duration     `json:"sync_interval"`
-	LastSyncAt      *time.Time        `json:"last_sync_at,omitempty"`
-	LastSyncStatus  DirectorySyncStatus `json:"last_sync_status,omitempty"`
-	LastSyncError   *string           `json:"last_sync_error,omitempty"`
+	SyncInterval   time.Duration       `json:"sync_interval"`
+	LastSyncAt     *time.Time          `json:"last_sync_at,omitempty"`
+	LastSyncStatus DirectorySyncStatus `json:"last_sync_status,omitempty"`
+	LastSyncError  *string             `json:"last_sync_error,omitempty"`
 
 	// Timestamps
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // DirectorySyncResult contains the results of a directory synchronization
 type DirectorySyncResult struct {
-	DirectoryID     string            `json:"directory_id"`
-	StartedAt       time.Time         `json:"started_at"`
-	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
-	Status          DirectorySyncStatus `json:"status"`
-	Error           *string           `json:"error,omitempty"`
+	DirectoryID string              `json:"directory_id"`
+	StartedAt   time.Time           `json:"started_at"`
+	CompletedAt *time.Time          `json:"completed_at,omitempty"`
+	Status      DirectorySyncStatus `json:"status"`
+	Error       *string             `json:"error,omitempty"`
 
-	UsersCreated    int               `json:"users_created"`
-	UsersUpdated    int               `json:"users_updated"`
-	UsersDeleted    int               `json:"users_deleted"`
-	UsersFailed     int               `json:"users_failed"`
+	UsersCreated int `json:"users_created"`
+	UsersUpdated int `json:"users_updated"`
+	UsersDeleted int `json:"users_deleted"`
+	UsersFailed  int `json:"users_failed"`
 
-	GroupsCreated   int               `json:"groups_created"`
-	GroupsUpdated   int               `json:"groups_updated"`
-	GroupsDeleted   int               `json:"groups_deleted"`
-	GroupsFailed    int               `json:"groups_failed"`
+	GroupsCreated int `json:"groups_created"`
+	GroupsUpdated int `json:"groups_updated"`
+	GroupsDeleted int `json:"groups_deleted"`
+	GroupsFailed  int `json:"groups_failed"`
 
-	Timestamp       time.Time         `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // LDAPEntry represents a generic LDAP entry
@@ -212,13 +212,13 @@ type SyncableDirectory interface {
 
 // LDAPSyncer implements directory synchronization for LDAP/AD
 type LDAPSyncer struct {
-	directory      *Directory
-	client         LDAPClient
-	repo           Repository
-	logger         *zap.Logger
-	eventBus       events.Bus
-	webhookURL     *string
-	retentionDays  int // Days before anonymizing deprovisioned users
+	directory     *Directory
+	client        LDAPClient
+	repo          Repository
+	logger        *zap.Logger
+	eventBus      events.Bus
+	webhookURL    *string
+	retentionDays int // Days before anonymizing deprovisioned users
 }
 
 // NewLDAPSyncer creates a new LDAP directory syncer
@@ -547,19 +547,19 @@ func (s *LDAPSyncer) SyncAll(ctx context.Context) (*DirectorySyncResult, error) 
 
 	// Combine results
 	result := &DirectorySyncResult{
-		DirectoryID:  s.directory.ID,
-		StartedAt:    usersResult.StartedAt,
-		CompletedAt:  groupsResult.CompletedAt,
-		Status:       SyncStatusCompleted,
-		UsersCreated: usersResult.UsersCreated,
-		UsersUpdated: usersResult.UsersUpdated,
-		UsersDeleted: usersResult.UsersDeleted,
-		UsersFailed:  usersResult.UsersFailed,
+		DirectoryID:   s.directory.ID,
+		StartedAt:     usersResult.StartedAt,
+		CompletedAt:   groupsResult.CompletedAt,
+		Status:        SyncStatusCompleted,
+		UsersCreated:  usersResult.UsersCreated,
+		UsersUpdated:  usersResult.UsersUpdated,
+		UsersDeleted:  usersResult.UsersDeleted,
+		UsersFailed:   usersResult.UsersFailed,
 		GroupsCreated: groupsResult.GroupsCreated,
 		GroupsUpdated: groupsResult.GroupsUpdated,
 		GroupsDeleted: groupsResult.GroupsDeleted,
 		GroupsFailed:  groupsResult.GroupsFailed,
-		Timestamp:    time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	s.logger.Info("Full directory sync completed",
@@ -735,16 +735,16 @@ func (s *LDAPSyncer) sendWebhook(ctx context.Context, eventType string, event ev
 
 // MockLDAPClient is a mock implementation for testing
 type MockLDAPClient struct {
-	Entries         []LDAPEntry
-	ConnectError    error
-	SearchError     error
-	ShouldDelay     bool
-	DelayDuration   time.Duration
-	Connected       bool
+	Entries       []LDAPEntry
+	ConnectError  error
+	SearchError   error
+	ShouldDelay   bool
+	DelayDuration time.Duration
+	Connected     bool
 	// SearchGroupsFunc allows overriding the SearchGroups behavior for testing
 	SearchGroupsFunc func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error)
 	// SearchUsersFunc allows overriding the SearchUsers behavior for testing
-	SearchUsersFunc   func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error)
+	SearchUsersFunc func(ctx context.Context, baseDN, filter string, attrs []string) ([]LDAPEntry, error)
 }
 
 // Connect establishes a connection
@@ -808,14 +808,14 @@ func TLSConfig(insecureSkipVerify bool) *tls.Config {
 func NewDirectory(name, dirType string) *Directory {
 	now := time.Now()
 	return &Directory{
-		ID:            uuid.New().String(),
-		Name:          name,
-		Type:          dirType,
-		Enabled:       true,
-		Config:        DefaultLDAPConfig(),
-		AttributeMap:  DefaultAttributeMapping(),
-		SyncInterval:  15 * time.Minute,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:           uuid.New().String(),
+		Name:         name,
+		Type:         dirType,
+		Enabled:      true,
+		Config:       DefaultLDAPConfig(),
+		AttributeMap: DefaultAttributeMapping(),
+		SyncInterval: 15 * time.Minute,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 }

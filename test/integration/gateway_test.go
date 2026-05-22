@@ -407,13 +407,13 @@ type mockBackendServer struct {
 }
 
 type mockRequest struct {
-	Method    string
-	Path      string
-	Headers   http.Header
-	Body      string
-	Response  interface{}
-	Status    int
-	delay     time.Duration
+	Method   string
+	Path     string
+	Headers  http.Header
+	Body     string
+	Response interface{}
+	Status   int
+	delay    time.Duration
 }
 
 func newMockBackendServer(serviceName string) *mockBackendServer {

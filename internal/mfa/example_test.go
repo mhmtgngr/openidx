@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/openidx/openidx/internal/mfa"
-	"go.uber.org/zap"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // ExampleTOTPEnrollment demonstrates how to enroll a user in TOTP
@@ -173,10 +173,10 @@ func demoCustomConfig() {
 	// Create custom configuration
 	config := &mfa.TOTPConfig{
 		Issuer:       "MyApp",
-		Period:       30,  // 30-second time step
-		Digits:       8,   // 8-digit codes (more secure)
+		Period:       30, // 30-second time step
+		Digits:       8,  // 8-digit codes (more secure)
 		Algorithm:    mfa.DefaultTOTPAlgorithm,
-		SecretLength: 32,  // 256-bit secret (more secure)
+		SecretLength: 32, // 256-bit secret (more secure)
 	}
 
 	// Create service with custom config

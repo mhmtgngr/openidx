@@ -51,17 +51,17 @@ func TestAccessReviewSerialization_Extended(t *testing.T) {
 		{
 			name: "review with completed timestamp",
 			review: &AccessReview{
-				ID:           "rev-002",
-				Name:         "Completed Review",
-				Description:  "Finished review",
-				Type:         ReviewTypeRoleAssignment,
-				Status:       ReviewStatusCompleted,
-				ReviewerID:   "reviewer-001",
-				StartDate:    time.Now().Add(-30 * 24 * time.Hour),
-				EndDate:      time.Now().Add(-7 * 24 * time.Hour),
-				CreatedAt:    time.Now().Add(-40 * 24 * time.Hour),
-				CompletedAt:  timePtr(time.Now().Add(-1 * time.Hour)),
-				TotalItems:   50,
+				ID:            "rev-002",
+				Name:          "Completed Review",
+				Description:   "Finished review",
+				Type:          ReviewTypeRoleAssignment,
+				Status:        ReviewStatusCompleted,
+				ReviewerID:    "reviewer-001",
+				StartDate:     time.Now().Add(-30 * 24 * time.Hour),
+				EndDate:       time.Now().Add(-7 * 24 * time.Hour),
+				CreatedAt:     time.Now().Add(-40 * 24 * time.Hour),
+				CompletedAt:   timePtr(time.Now().Add(-1 * time.Hour)),
+				TotalItems:    50,
 				ReviewedItems: 50,
 			},
 		},
@@ -97,7 +97,7 @@ func TestAccessReviewSerialization_Extended(t *testing.T) {
 			// Test status transitions are valid
 			switch tt.review.Status {
 			case ReviewStatusPending, ReviewStatusInProgress, ReviewStatusCompleted,
-			     ReviewStatusExpired, ReviewStatusCanceled:
+				ReviewStatusExpired, ReviewStatusCanceled:
 				// Valid status
 			default:
 				t.Errorf("invalid review status: %s", tt.review.Status)
@@ -193,8 +193,8 @@ func TestPolicyModelValidation(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		policy      *Policy
+		name          string
+		policy        *Policy
 		shouldBeValid bool
 	}{
 		{
@@ -206,7 +206,7 @@ func TestPolicyModelValidation(t *testing.T) {
 				Type:        PolicyTypeSoD,
 				Rules: []PolicyRule{
 					{
-						ID:        "rule-1",
+						ID: "rule-1",
 						Condition: map[string]interface{}{
 							"conflicting_roles": []interface{}{"admin", "auditor"},
 						},
@@ -228,7 +228,7 @@ func TestPolicyModelValidation(t *testing.T) {
 				Type:        PolicyTypeRiskBased,
 				Rules: []PolicyRule{
 					{
-						ID:        "rule-1",
+						ID: "rule-1",
 						Condition: map[string]interface{}{
 							"risk_threshold": float64(50),
 						},
@@ -256,9 +256,9 @@ func TestPolicyModelValidation(t *testing.T) {
 		{
 			name: "policy with multiple rules",
 			policy: &Policy{
-				ID:          "pol-004",
-				Name:        "Complex Policy",
-				Type:        PolicyTypeConditionalAccess,
+				ID:   "pol-004",
+				Name: "Complex Policy",
+				Type: PolicyTypeConditionalAccess,
 				Rules: []PolicyRule{
 					{
 						ID:        "rule-1",
@@ -324,8 +324,8 @@ func TestReviewScopeCombinations(t *testing.T) {
 			scope: ReviewScope{},
 			want:  0,
 		},
-			{
-			name: "users only",
+		{
+			name:  "users only",
 			scope: ReviewScope{Users: []string{"user-1", "user-2"}},
 			want:  1,
 		},
@@ -460,60 +460,60 @@ func TestPolicyEvaluation_RiskScore(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                 string
-		threshold            int
-		isNewDevice          bool
-		isUnusualLocation    bool
-		failedAttempts       float64
-		wantDeny             bool
+		name              string
+		threshold         int
+		isNewDevice       bool
+		isUnusualLocation bool
+		failedAttempts    float64
+		wantDeny          bool
 	}{
 		{
 			name:              "zero risk - below threshold",
-			threshold:        50,
+			threshold:         50,
 			isNewDevice:       false,
 			isUnusualLocation: false,
 			failedAttempts:    0,
-			wantDeny:           false,
+			wantDeny:          false,
 		},
 		{
 			name:              "new device only",
-			threshold:        50,
+			threshold:         50,
 			isNewDevice:       true,
 			isUnusualLocation: false,
 			failedAttempts:    0,
-			wantDeny:           false, // 30 < 50
+			wantDeny:          false, // 30 < 50
 		},
 		{
 			name:              "new device + unusual location",
-			threshold:        50,
+			threshold:         50,
 			isNewDevice:       true,
 			isUnusualLocation: true,
 			failedAttempts:    0,
-			wantDeny:           true, // 30 + 25 = 55 >= 50
+			wantDeny:          true, // 30 + 25 = 55 >= 50
 		},
 		{
 			name:              "all risk factors",
-			threshold:        50,
+			threshold:         50,
 			isNewDevice:       true,
 			isUnusualLocation: true,
 			failedAttempts:    3,
-			wantDeny:           true, // 30 + 25 + 30 = 85 >= 50
+			wantDeny:          true, // 30 + 25 + 30 = 85 >= 50
 		},
 		{
 			name:              "many failed attempts",
-			threshold:        50,
+			threshold:         50,
 			isNewDevice:       false,
 			isUnusualLocation: false,
 			failedAttempts:    6,
-			wantDeny:           true, // 60 >= 50
+			wantDeny:          true, // 60 >= 50
 		},
 		{
 			name:              "exactly at threshold",
-			threshold:        50,
+			threshold:         50,
 			isNewDevice:       true,
 			isUnusualLocation: true,
 			failedAttempts:    0,
-			wantDeny:           true, // 30 + 25 = 55 >= 50
+			wantDeny:          true, // 30 + 25 = 55 >= 50
 		},
 	}
 
@@ -543,46 +543,46 @@ func TestPolicyEvaluation_Location(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
+		name            string
 		allowedPrefixes []string
-		requestIP      string
-		wantAllowed    bool
+		requestIP       string
+		wantAllowed     bool
 	}{
 		{
-			name:           "default private network ranges",
+			name:            "default private network ranges",
 			allowedPrefixes: []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"},
-			requestIP:      "10.0.0.5",
-			wantAllowed:    true,
+			requestIP:       "10.0.0.5",
+			wantAllowed:     true,
 		},
 		{
-			name:           "192.168 private network",
+			name:            "192.168 private network",
 			allowedPrefixes: []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"},
-			requestIP:      "192.168.1.100",
-			wantAllowed:    true,
+			requestIP:       "192.168.1.100",
+			wantAllowed:     true,
 		},
 		{
-			name:           "localhost",
+			name:            "localhost",
 			allowedPrefixes: []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"},
-			requestIP:      "127.0.0.1",
-			wantAllowed:    true,
+			requestIP:       "127.0.0.1",
+			wantAllowed:     true,
 		},
 		{
-			name:           "public IP - denied",
+			name:            "public IP - denied",
 			allowedPrefixes: []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"},
-			requestIP:      "8.8.8.8",
-			wantAllowed:    false,
+			requestIP:       "8.8.8.8",
+			wantAllowed:     false,
 		},
 		{
-			name:           "another public IP - denied",
+			name:            "another public IP - denied",
 			allowedPrefixes: []string{"10.", "192.168.", "172.16.", "172.17.", "172.18.", "127.0.0.1"},
-			requestIP:      "1.1.1.1",
-			wantAllowed:    false,
+			requestIP:       "1.1.1.1",
+			wantAllowed:     false,
 		},
 		{
-			name:           "custom allowed prefix",
+			name:            "custom allowed prefix",
 			allowedPrefixes: []string{"172.20.", "172.21."},
-			requestIP:      "172.20.0.10",
-			wantAllowed:    true,
+			requestIP:       "172.20.0.10",
+			wantAllowed:     true,
 		},
 	}
 
@@ -606,73 +606,73 @@ func TestPolicyEvaluation_Timebound(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		startHour    int
-		endHour      int
-		allowedDays  map[time.Weekday]bool
-		currentHour   int
+		name           string
+		startHour      int
+		endHour        int
+		allowedDays    map[time.Weekday]bool
+		currentHour    int
 		currentWeekday time.Weekday
-		wantAllowed  bool
+		wantAllowed    bool
 	}{
 		{
-			name:        "business hours during weekday",
-			startHour:   9,
-			endHour:     17,
+			name:      "business hours during weekday",
+			startHour: 9,
+			endHour:   17,
 			allowedDays: map[time.Weekday]bool{
 				time.Monday: true, time.Tuesday: true, time.Wednesday: true,
 				time.Thursday: true, time.Friday: true,
 			},
-			currentHour:  14,
+			currentHour:    14,
 			currentWeekday: time.Wednesday,
-			wantAllowed: true,
+			wantAllowed:    true,
 		},
 		{
-			name:        "early morning before business hours",
-			startHour:   9,
-			endHour:     17,
+			name:      "early morning before business hours",
+			startHour: 9,
+			endHour:   17,
 			allowedDays: map[time.Weekday]bool{
 				time.Monday: true, time.Tuesday: true, time.Wednesday: true,
 				time.Thursday: true, time.Friday: true,
 			},
-			currentHour:  7,
+			currentHour:    7,
 			currentWeekday: time.Monday,
-			wantAllowed: false,
+			wantAllowed:    false,
 		},
 		{
-			name:        "late evening after business hours",
-			startHour:   9,
-			endHour:     17,
+			name:      "late evening after business hours",
+			startHour: 9,
+			endHour:   17,
 			allowedDays: map[time.Weekday]bool{
 				time.Monday: true, time.Tuesday: true, time.Wednesday: true,
 				time.Thursday: true, time.Friday: true,
 			},
-			currentHour:  20,
+			currentHour:    20,
 			currentWeekday: time.Tuesday,
-			wantAllowed: false,
+			wantAllowed:    false,
 		},
 		{
-			name:        "weekend - not allowed",
-			startHour:   9,
-			endHour:     17,
+			name:      "weekend - not allowed",
+			startHour: 9,
+			endHour:   17,
 			allowedDays: map[time.Weekday]bool{
 				time.Monday: true, time.Tuesday: true, time.Wednesday: true,
 				time.Thursday: true, time.Friday: true,
 			},
-			currentHour:  12,
+			currentHour:    12,
 			currentWeekday: time.Saturday,
-			wantAllowed: false,
+			wantAllowed:    false,
 		},
 		{
-			name:        "24/7 access - always allowed",
-			startHour:   0,
-			endHour:     24,
-			allowedDays:  map[time.Weekday]bool{
+			name:      "24/7 access - always allowed",
+			startHour: 0,
+			endHour:   24,
+			allowedDays: map[time.Weekday]bool{
 				time.Sunday: true, time.Monday: true, time.Tuesday: true,
 				time.Wednesday: true, time.Thursday: true, time.Friday: true, time.Saturday: true,
 			},
-			currentHour:  3,
+			currentHour:    3,
 			currentWeekday: time.Sunday,
-			wantAllowed: true,
+			wantAllowed:    true,
 		},
 	}
 
@@ -701,8 +701,8 @@ func TestCertificationCampaignValidation(t *testing.T) {
 	tests := []struct {
 		name        string
 		campaign    *CertificationCampaign
-		shouldError  bool
-		errorMsg     string
+		shouldError bool
+		errorMsg    string
 	}{
 		{
 			name: "valid campaign",
@@ -729,9 +729,9 @@ func TestCertificationCampaignValidation(t *testing.T) {
 				ID:        "camp-002",
 				Name:      "Invalid Campaign",
 				Deadline:  time.Now().Add(-1 * time.Hour),
-				CreatedBy:  "admin-001",
-				CreatedAt:  time.Now(),
-				Reviewers:  []CampaignReviewer{{Type: "user", ID: "reviewer-001"}},
+				CreatedBy: "admin-001",
+				CreatedAt: time.Now(),
+				Reviewers: []CampaignReviewer{{Type: "user", ID: "reviewer-001"}},
 			},
 			shouldError: true,
 			errorMsg:    "future",
@@ -742,8 +742,8 @@ func TestCertificationCampaignValidation(t *testing.T) {
 				ID:        "camp-003",
 				Name:      "No Reviewers",
 				Deadline:  time.Now().Add(24 * time.Hour),
-				CreatedBy:  "admin-001",
-				CreatedAt:  time.Now(),
+				CreatedBy: "admin-001",
+				CreatedAt: time.Now(),
 				Reviewers: []CampaignReviewer{},
 			},
 			shouldError: true,
@@ -752,33 +752,33 @@ func TestCertificationCampaignValidation(t *testing.T) {
 		{
 			name: "valid active campaign",
 			campaign: &CertificationCampaign{
-				ID:              "camp-004",
-				Name:            "Active Campaign",
-				Status:          CampaignStatusActive,
-				Deadline:        time.Now().Add(7 * 24 * time.Hour),
-				CreatedBy:       "admin-001",
-				CreatedAt:       time.Now(),
-				StartedAt:       timePtr(time.Now().Add(-1 * time.Hour)),
-				TotalItems:      100,
-				ReviewedItems:   45,
-				Reviewers:       []CampaignReviewer{{Type: "user", ID: "reviewer-001"}},
+				ID:            "camp-004",
+				Name:          "Active Campaign",
+				Status:        CampaignStatusActive,
+				Deadline:      time.Now().Add(7 * 24 * time.Hour),
+				CreatedBy:     "admin-001",
+				CreatedAt:     time.Now(),
+				StartedAt:     timePtr(time.Now().Add(-1 * time.Hour)),
+				TotalItems:    100,
+				ReviewedItems: 45,
+				Reviewers:     []CampaignReviewer{{Type: "user", ID: "reviewer-001"}},
 			},
 			shouldError: false,
 		},
 		{
 			name: "completed campaign",
 			campaign: &CertificationCampaign{
-				ID:              "camp-005",
-				Name:            "Completed Campaign",
-				Status:          CampaignStatusCompleted,
-				Deadline:        time.Now().Add(-7 * 24 * time.Hour),
-				CreatedBy:       "admin-001",
-				CreatedAt:       time.Now().Add(-30 * 24 * time.Hour),
-				StartedAt:       timePtr(time.Now().Add(-25 * 24 * time.Hour)),
-				CompletedAt:     timePtr(time.Now().Add(-1 * 24 * time.Hour)),
-				TotalItems:      50,
-				ReviewedItems:   50,
-				Reviewers:       []CampaignReviewer{{Type: "user", ID: "reviewer-001"}},
+				ID:            "camp-005",
+				Name:          "Completed Campaign",
+				Status:        CampaignStatusCompleted,
+				Deadline:      time.Now().Add(-7 * 24 * time.Hour),
+				CreatedBy:     "admin-001",
+				CreatedAt:     time.Now().Add(-30 * 24 * time.Hour),
+				StartedAt:     timePtr(time.Now().Add(-25 * 24 * time.Hour)),
+				CompletedAt:   timePtr(time.Now().Add(-1 * 24 * time.Hour)),
+				TotalItems:    50,
+				ReviewedItems: 50,
+				Reviewers:     []CampaignReviewer{{Type: "user", ID: "reviewer-001"}},
 			},
 			shouldError: false,
 		},
@@ -866,7 +866,7 @@ func TestJITGrantValidation(t *testing.T) {
 		name        string
 		grant       *JITGrant
 		shouldError bool
-		errorMsg     string
+		errorMsg    string
 	}{
 		{
 			name: "valid active grant",
@@ -993,9 +993,9 @@ func TestJITRequestValidation(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		request      JITRequest
-		shouldError  bool
+		name          string
+		request       JITRequest
+		shouldError   bool
 		errorContains string
 	}{
 		{
@@ -1029,7 +1029,7 @@ func TestJITRequestValidation(t *testing.T) {
 				Justification: "Quick task",
 				RequestedBy:   "user-003",
 			},
-			shouldError:  true,
+			shouldError:   true,
 			errorContains: "at least",
 		},
 		{
@@ -1041,7 +1041,7 @@ func TestJITRequestValidation(t *testing.T) {
 				Justification: "Long running task",
 				RequestedBy:   "user-004",
 			},
-			shouldError:  true,
+			shouldError:   true,
 			errorContains: "not exceed",
 		},
 		{
@@ -1052,7 +1052,7 @@ func TestJITRequestValidation(t *testing.T) {
 				Justification: "Need access",
 				RequestedBy:   "admin-001",
 			},
-			shouldError:  true,
+			shouldError:   true,
 			errorContains: "user_id",
 		},
 		{
@@ -1063,7 +1063,7 @@ func TestJITRequestValidation(t *testing.T) {
 				Justification: "Need access",
 				RequestedBy:   "user-005",
 			},
-			shouldError:  true,
+			shouldError:   true,
 			errorContains: "role_id",
 		},
 		{
@@ -1074,7 +1074,7 @@ func TestJITRequestValidation(t *testing.T) {
 				Duration:    2 * time.Hour,
 				RequestedBy: "user-006",
 			},
-			shouldError:  true,
+			shouldError:   true,
 			errorContains: "justification",
 		},
 		{
@@ -1086,7 +1086,7 @@ func TestJITRequestValidation(t *testing.T) {
 				Justification: "",
 				RequestedBy:   "user-007",
 			},
-			shouldError:  true,
+			shouldError:   true,
 			errorContains: "justification",
 		},
 	}
@@ -1128,7 +1128,7 @@ func TestJITRequestValidation(t *testing.T) {
 					assert.Contains(t, errorMsg, tt.errorContains)
 				}
 			} else {
-				assert.False(t, hasError, "unexpected validation error: " + errorMsg)
+				assert.False(t, hasError, "unexpected validation error: "+errorMsg)
 			}
 		})
 	}
@@ -1142,52 +1142,52 @@ func TestReviewProgressCalculation_Extended(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		total        int
-		reviewed     int
-		expectedPct  float64
+		name        string
+		total       int
+		reviewed    int
+		expectedPct float64
 	}{
 		{
 			name:        "empty review",
 			total:       0,
-			reviewed:     0,
-			expectedPct:  0,
+			reviewed:    0,
+			expectedPct: 0,
 		},
 		{
 			name:        "no progress",
 			total:       10,
-			reviewed:     0,
-			expectedPct:  0,
+			reviewed:    0,
+			expectedPct: 0,
 		},
 		{
 			name:        "25% complete",
 			total:       100,
-			reviewed:     25,
-			expectedPct:  25,
+			reviewed:    25,
+			expectedPct: 25,
 		},
 		{
 			name:        "half complete",
 			total:       50,
-			reviewed:     25,
+			reviewed:    25,
 			expectedPct: 50,
 		},
 		{
 			name:        "75% complete",
 			total:       200,
-			reviewed:     150,
+			reviewed:    150,
 			expectedPct: 75,
 		},
 		{
 			name:        "fully complete",
 			total:       1000,
-			reviewed:     1000,
-			expectedPct:  100,
+			reviewed:    1000,
+			expectedPct: 100,
 		},
 		{
 			name:        "odd number - one-third complete",
 			total:       9,
-			reviewed:     3,
-			expectedPct:  33.33,
+			reviewed:    3,
+			expectedPct: 33.33,
 		},
 	}
 
@@ -1199,7 +1199,7 @@ func TestReviewProgressCalculation_Extended(t *testing.T) {
 			}
 
 			if tt.expectedPct == 0 || tt.expectedPct == 25 || tt.expectedPct == 50 ||
-			   tt.expectedPct == 75 || tt.expectedPct == 100 {
+				tt.expectedPct == 75 || tt.expectedPct == 100 {
 				assert.InDelta(t, tt.expectedPct, pct, 0.01)
 			} else {
 				// For the 33.33% case, allow more delta

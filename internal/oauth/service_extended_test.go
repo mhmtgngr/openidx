@@ -31,11 +31,11 @@ import (
 
 func TestAuthorizeFlow_ParseRequest(t *testing.T) {
 	tests := []struct {
-		name           string
-		queryParams    string
-		expectError    bool
-		errorContains  string
-		validateReq    func(*testing.T, *FlowAuthorizeRequest)
+		name          string
+		queryParams   string
+		expectError   bool
+		errorContains string
+		validateReq   func(*testing.T, *FlowAuthorizeRequest)
 	}{
 		{
 			name:        "Valid authorization code request",
@@ -50,22 +50,22 @@ func TestAuthorizeFlow_ParseRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "Missing client_id",
-			queryParams:    "redirect_uri=https://example.com/callback&response_type=code",
-			expectError:    true,
-			errorContains:  "client_id is required",
+			name:          "Missing client_id",
+			queryParams:   "redirect_uri=https://example.com/callback&response_type=code",
+			expectError:   true,
+			errorContains: "client_id is required",
 		},
 		{
-			name:           "Missing redirect_uri",
-			queryParams:    "client_id=test-client&response_type=code",
-			expectError:    true,
-			errorContains:  "redirect_uri is required",
+			name:          "Missing redirect_uri",
+			queryParams:   "client_id=test-client&response_type=code",
+			expectError:   true,
+			errorContains: "redirect_uri is required",
 		},
 		{
-			name:           "Missing response_type",
-			queryParams:    "client_id=test-client&redirect_uri=https://example.com/callback",
-			expectError:    true,
-			errorContains:  "response_type is required",
+			name:          "Missing response_type",
+			queryParams:   "client_id=test-client&redirect_uri=https://example.com/callback",
+			expectError:   true,
+			errorContains: "response_type is required",
 		},
 		{
 			name:        "Valid token response_type",
@@ -281,7 +281,7 @@ func TestAuthorizeFlow_RedirectWithCode(t *testing.T) {
 			redirectURI:  "https://example.com/callback",
 			code:         "auth-code-123",
 			state:        "state-456",
-			expectedCode:  http.StatusFound,
+			expectedCode: http.StatusFound,
 			expectedLoc:  "https://example.com/callback?code=auth-code-123&state=state-456",
 		},
 		{
@@ -289,7 +289,7 @@ func TestAuthorizeFlow_RedirectWithCode(t *testing.T) {
 			redirectURI:  "https://example.com/callback",
 			code:         "auth-code-123",
 			state:        "",
-			expectedCode:  http.StatusFound,
+			expectedCode: http.StatusFound,
 			expectedLoc:  "https://example.com/callback?code=auth-code-123",
 		},
 	}
@@ -318,12 +318,12 @@ func TestAuthorizeFlow_RedirectError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name            string
-		req             *FlowAuthorizeRequest
-		errorCode       string
-		description     string
-		expectedCode    int
-		expectedBody    string
+		name             string
+		req              *FlowAuthorizeRequest
+		errorCode        string
+		description      string
+		expectedCode     int
+		expectedBody     string
 		expectedRedirect string
 	}{
 		{
@@ -332,9 +332,9 @@ func TestAuthorizeFlow_RedirectError(t *testing.T) {
 				RedirectURI: "https://example.com/callback",
 				State:       "state-123",
 			},
-			errorCode:       "invalid_request",
-			description:     "Missing required parameter",
-			expectedCode:    http.StatusFound,
+			errorCode:        "invalid_request",
+			description:      "Missing required parameter",
+			expectedCode:     http.StatusFound,
 			expectedRedirect: "https://example.com/callback?error=invalid_request&error_description=Missing+required+parameter&state=state-123",
 		},
 		{
@@ -872,7 +872,7 @@ func TestStore_RefreshTokenLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		err = store.RevokeRefreshToken(ctx, token.Token)
-		assert.NoError(t,	err)
+		assert.NoError(t, err)
 
 		_, err = store.GetRefreshToken(ctx, token.Token)
 		assert.Error(t, err)
@@ -1044,7 +1044,7 @@ func TestClientRepository_ValidateGrantType(t *testing.T) {
 				GrantTypes: []string{"authorization_code", "refresh_token"},
 			},
 			grantType: "authorization_code",
-			expected:   true,
+			expected:  true,
 		},
 		{
 			name: "Unsupported grant type",
@@ -1052,7 +1052,7 @@ func TestClientRepository_ValidateGrantType(t *testing.T) {
 				GrantTypes: []string{"authorization_code"},
 			},
 			grantType: "client_credentials",
-			expected:   false,
+			expected:  false,
 		},
 		{
 			name: "Empty grant types list",
@@ -1060,7 +1060,7 @@ func TestClientRepository_ValidateGrantType(t *testing.T) {
 				GrantTypes: []string{},
 			},
 			grantType: "authorization_code",
-			expected:   false,
+			expected:  false,
 		},
 	}
 
@@ -1586,7 +1586,7 @@ func TestGenerateClientSecret_Extended(t *testing.T) {
 		assert.False(t, secrets[secret], "Client secret should be unique")
 		secrets[secret] = true
 		assert.GreaterOrEqual(t, len(secret), 43) // RFC 7636 minimum
-		assert.LessOrEqual(t, len(secret), 44)   // Base64URL of 32 bytes
+		assert.LessOrEqual(t, len(secret), 44)    // Base64URL of 32 bytes
 	}
 }
 
@@ -1712,12 +1712,12 @@ func TestUserSession_Extended(t *testing.T) {
 func TestOAuthErrorResponses_MatchRFC6749(t *testing.T) {
 	// RFC 6749 Section 4.1.2.1 defines these error codes
 	authorizationErrorCodes := map[string]string{
-		ErrorInvalidRequest:         "The request is missing a required parameter",
-		ErrorUnauthorizedClient:     "The client is not authorized",
-		ErrorAccessDenied:           "The resource owner denied the request",
+		ErrorInvalidRequest:          "The request is missing a required parameter",
+		ErrorUnauthorizedClient:      "The client is not authorized",
+		ErrorAccessDenied:            "The resource owner denied the request",
 		ErrorUnsupportedResponseType: "The authorization server does not support this response type",
-		ErrorInvalidScope:           "The requested scope is invalid",
-		ErrorServerError:            "The authorization server encountered an error",
+		ErrorInvalidScope:            "The requested scope is invalid",
+		ErrorServerError:             "The authorization server encountered an error",
 	}
 
 	for code, desc := range authorizationErrorCodes {

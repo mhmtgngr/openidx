@@ -40,20 +40,20 @@ func BenchmarkLogEvent(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		event := &ServiceAuditEvent{
-			ID:          generateUUIDForBench(),
-			Timestamp:   time.Now().UTC(),
-			EventType:   EventTypeAuthentication,
-			Category:    CategorySecurity,
-			Action:      "auth.login.success",
-			Outcome:     ServiceOutcomeSuccess,
-			ActorID:     "user-" + randomStringForBench(8),
-			ActorType:   "user",
-			ActorIP:     "192.168.1.100",
-			TargetID:    "session-" + randomStringForBench(8),
-			TargetType:  "session",
-			ResourceID:  "resource-" + randomStringForBench(8),
-			SessionID:   "sess-" + randomStringForBench(8),
-			RequestID:   "req-" + randomStringForBench(8),
+			ID:         generateUUIDForBench(),
+			Timestamp:  time.Now().UTC(),
+			EventType:  EventTypeAuthentication,
+			Category:   CategorySecurity,
+			Action:     "auth.login.success",
+			Outcome:    ServiceOutcomeSuccess,
+			ActorID:    "user-" + randomStringForBench(8),
+			ActorType:  "user",
+			ActorIP:    "192.168.1.100",
+			TargetID:   "session-" + randomStringForBench(8),
+			TargetType: "session",
+			ResourceID: "resource-" + randomStringForBench(8),
+			SessionID:  "sess-" + randomStringForBench(8),
+			RequestID:  "req-" + randomStringForBench(8),
 		}
 		// Skip actual DB write for benchmark
 		_ = event
@@ -72,25 +72,25 @@ func BenchmarkLogEventWithDetails(b *testing.B) {
 
 	// Create event with extensive details
 	event := &ServiceAuditEvent{
-		ID:          generateUUIDForBench(),
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeAuthorization,
-		Category:    CategoryAccess,
-		Action:      "policy.evaluate",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "user-123",
-		ActorType:   "user",
-		ActorIP:     "10.0.0.1",
-		TargetID:    "resource-456",
-		TargetType:  "policy",
-		ResourceID:  "policy-789",
+		ID:         generateUUIDForBench(),
+		Timestamp:  time.Now().UTC(),
+		EventType:  EventTypeAuthorization,
+		Category:   CategoryAccess,
+		Action:     "policy.evaluate",
+		Outcome:    ServiceOutcomeSuccess,
+		ActorID:    "user-123",
+		ActorType:  "user",
+		ActorIP:    "10.0.0.1",
+		TargetID:   "resource-456",
+		TargetType: "policy",
+		ResourceID: "policy-789",
 		Details: map[string]interface{}{
-			"policy_id":       "policy-001",
-			"policy_type":     "RBAC",
-			"decision":        "allow",
-			"matched_rules":   []string{"rule1", "rule2"},
-			"roles":           []string{"admin", "auditor"},
-			"groups":          []string{"finance", "executive"},
+			"policy_id":     "policy-001",
+			"policy_type":   "RBAC",
+			"decision":      "allow",
+			"matched_rules": []string{"rule1", "rule2"},
+			"roles":         []string{"admin", "auditor"},
+			"groups":        []string{"finance", "executive"},
 			"request_context": map[string]interface{}{
 				"user_agent": "Mozilla/5.0",
 				"method":     "POST",
@@ -238,15 +238,15 @@ func BenchmarkLogEventParallel(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			event := &ServiceAuditEvent{
-				ID:          generateUUIDForBench(),
-				Timestamp:   time.Now().UTC(),
-				EventType:   EventTypeAuthentication,
-				Category:    CategorySecurity,
-				Action:      "auth.parallel.login",
-				Outcome:     ServiceOutcomeSuccess,
-				ActorID:     "user-parallel-" + randomStringForBench(8),
-				ActorType:   "user",
-				ActorIP:     "192.168.1.1",
+				ID:        generateUUIDForBench(),
+				Timestamp: time.Now().UTC(),
+				EventType: EventTypeAuthentication,
+				Category:  CategorySecurity,
+				Action:    "auth.parallel.login",
+				Outcome:   ServiceOutcomeSuccess,
+				ActorID:   "user-parallel-" + randomStringForBench(8),
+				ActorType: "user",
+				ActorIP:   "192.168.1.1",
 			}
 			_ = svc.LogEvent(ctx, event)
 			i++
@@ -306,15 +306,15 @@ func BenchmarkLogEventBatch(b *testing.B) {
 		// Log 10 events per iteration
 		for j := 0; j < 10; j++ {
 			event := &ServiceAuditEvent{
-				ID:          generateUUIDForBench(),
-				Timestamp:   time.Now().UTC(),
-				EventType:   EventTypeAuthentication,
-				Category:    CategorySecurity,
-				Action:      "auth.batch.login",
-				Outcome:     ServiceOutcomeSuccess,
-				ActorID:     "user-batch-" + randomStringForBench(8),
-				ActorType:   "user",
-				ActorIP:     "192.168.1.1",
+				ID:        generateUUIDForBench(),
+				Timestamp: time.Now().UTC(),
+				EventType: EventTypeAuthentication,
+				Category:  CategorySecurity,
+				Action:    "auth.batch.login",
+				Outcome:   ServiceOutcomeSuccess,
+				ActorID:   "user-batch-" + randomStringForBench(8),
+				ActorType: "user",
+				ActorIP:   "192.168.1.1",
 			}
 			_ = svc.LogEvent(ctx, event)
 		}

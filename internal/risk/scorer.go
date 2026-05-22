@@ -46,20 +46,20 @@ const (
 type Signal struct {
 	Name        string  `json:"name"`
 	Weight      float64 `json:"weight"`
-	Score       float64 `json:"score"`       // 0-100 contribution from this signal
+	Score       float64 `json:"score"` // 0-100 contribution from this signal
 	Description string  `json:"description"`
 	Value       any     `json:"value,omitempty"`
 }
 
 // RiskAssessment represents the complete risk assessment for a login attempt
 type RiskAssessment struct {
-	Score          int           `json:"score"`     // 0-100 total risk score
-	Level          RiskLevel     `json:"level"`
-	Signals        []Signal      `json:"signals"`
+	Score          int            `json:"score"` // 0-100 total risk score
+	Level          RiskLevel      `json:"level"`
+	Signals        []Signal       `json:"signals"`
 	Recommendation Recommendation `json:"recommendation"`
-	AssessedAt     time.Time     `json:"assessed_at"`
-	UserID         string        `json:"user_id,omitempty"`
-	SessionID      string        `json:"session_id,omitempty"`
+	AssessedAt     time.Time      `json:"assessed_at"`
+	UserID         string         `json:"user_id,omitempty"`
+	SessionID      string         `json:"session_id,omitempty"`
 }
 
 // LoginContext provides all available context for risk assessment
@@ -97,37 +97,37 @@ type GeoPoint struct {
 // ScorerConfig holds configuration for the risk scorer
 type ScorerConfig struct {
 	// IP reputation thresholds
-	BlocklistScore           float64 // score if IP on blocklist (default 100)
-	HighRiskCountryScore     float64 // score for high-risk country (default 50)
+	BlocklistScore       float64 // score if IP on blocklist (default 100)
+	HighRiskCountryScore float64 // score for high-risk country (default 50)
 
 	// Device trust thresholds
-	UnknownDeviceScore       float64 // score for unknown device (default 40)
-	SuspiciousDeviceScore    float64 // score for suspicious device change (default 70)
+	UnknownDeviceScore    float64 // score for unknown device (default 40)
+	SuspiciousDeviceScore float64 // score for suspicious device change (default 70)
 
 	// Geo distance thresholds
-	ImpossibleTravelScore    float64 // score for impossible travel (default 100)
-	HighDistanceScore        float64 // score for high distance (default 30)
-	HighDistanceThresholdKm  float64 // threshold for high distance (default 1000)
+	ImpossibleTravelScore   float64 // score for impossible travel (default 100)
+	HighDistanceScore       float64 // score for high distance (default 30)
+	HighDistanceThresholdKm float64 // threshold for high distance (default 1000)
 
 	// Login velocity thresholds
-	HighVelocityScore        float64 // score for high login velocity (default 40)
-	MaxLoginsPerHour         int     // threshold for high velocity (default 20)
+	HighVelocityScore float64 // score for high login velocity (default 40)
+	MaxLoginsPerHour  int     // threshold for high velocity (default 20)
 
 	// Time pattern thresholds
-	UnusualTimeScore         float64 // score for unusual login time (default 20)
+	UnusualTimeScore float64 // score for unusual login time (default 20)
 
 	// Failed attempts thresholds
 	FailedAttemptsScore      float64 // base score for failed attempts
 	FailedAttemptsMultiplier float64 // additional score per failed attempt
 
 	// VPN/Tor thresholds
-	VPNScore                 float64 // score for VPN detection (default 30)
-	TorScore                 float64 // score for Tor detection (default 60)
+	VPNScore float64 // score for VPN detection (default 30)
+	TorScore float64 // score for Tor detection (default 60)
 
 	// Risk level thresholds
-	MediumRiskThreshold      int     // default 40
-	HighRiskThreshold        int     // default 70
-	CriticalRiskThreshold    int     // default 90
+	MediumRiskThreshold   int // default 40
+	HighRiskThreshold     int // default 70
+	CriticalRiskThreshold int // default 90
 }
 
 // DefaultScorerConfig returns the default scorer configuration

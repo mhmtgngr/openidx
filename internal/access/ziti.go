@@ -58,9 +58,9 @@ type hostedService struct {
 
 // zitiAPIResponse represents a generic Ziti Management API response
 type zitiAPIResponse struct {
-	Data    json.RawMessage `json:"data"`
-	Error   *zitiAPIError   `json:"error,omitempty"`
-	Meta    json.RawMessage `json:"meta,omitempty"`
+	Data  json.RawMessage `json:"data"`
+	Error *zitiAPIError   `json:"error,omitempty"`
+	Meta  json.RawMessage `json:"meta,omitempty"`
 }
 
 type zitiAPIError struct {
@@ -94,9 +94,9 @@ type ZitiIdentityInfo struct {
 // NewZitiManager creates and initializes the ZitiManager
 func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*ZitiManager, error) {
 	zm := &ZitiManager{
-		cfg:            cfg,
-		logger:         logger.With(zap.String("component", "ziti")),
-		db:             db,
+		cfg:             cfg,
+		logger:          logger.With(zap.String("component", "ziti")),
+		db:              db,
 		hostedServices:  make(map[string]*hostedService),
 		configTypeCache: make(map[string]string),
 	}
@@ -758,8 +758,8 @@ func (zm *ZitiManager) CreateService(ctx context.Context, name string, attrs []s
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"name":           name,
-		"roleAttributes": attrs,
+		"name":               name,
+		"roleAttributes":     attrs,
 		"encryptionRequired": true,
 	})
 
@@ -828,7 +828,7 @@ func (zm *ZitiManager) CreateIdentity(ctx context.Context, name, identityType st
 
 	var resp struct {
 		Data struct {
-			ID         string `json:"id"`
+			ID         string                 `json:"id"`
 			Enrollment map[string]interface{} `json:"enrollment"`
 		} `json:"data"`
 	}
@@ -1110,17 +1110,17 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 
 	// Create a host.v1 config that tells Ziti where to forward traffic
 	configBody, _ := json.Marshal(map[string]interface{}{
-		"name":     fmt.Sprintf("openidx-host-%s", serviceName),
+		"name":         fmt.Sprintf("openidx-host-%s", serviceName),
 		"configTypeId": zm.resolveConfigTypeID("host.v1"),
 		"data": map[string]interface{}{
-			"protocol":       "tcp",
-			"address":        host,
-			"port":           port,
-			"forwardProtocol": true,
+			"protocol":         "tcp",
+			"address":          host,
+			"port":             port,
+			"forwardProtocol":  true,
 			"allowedProtocols": []string{"tcp"},
-			"forwardAddress":  true,
+			"forwardAddress":   true,
 			"allowedAddresses": []string{host},
-			"forwardPort":     true,
+			"forwardPort":      true,
 			"allowedPortRanges": []map[string]int{
 				{"low": port, "high": port},
 			},
@@ -1480,13 +1480,13 @@ func (zm *ZitiManager) TestServiceDial(ctx context.Context, serviceName string) 
 
 // ZitiAuditEvent represents an audit event from Ziti
 type ZitiAuditEvent struct {
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Timestamp time.Time `json:"timestamp"`
-	Identity  string    `json:"identity,omitempty"`
-	Service   string    `json:"service,omitempty"`
-	Router    string    `json:"router,omitempty"`
-	SourceIP  string    `json:"source_ip,omitempty"`
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	Timestamp time.Time              `json:"timestamp"`
+	Identity  string                 `json:"identity,omitempty"`
+	Service   string                 `json:"service,omitempty"`
+	Router    string                 `json:"router,omitempty"`
+	SourceIP  string                 `json:"source_ip,omitempty"`
 	Details   map[string]interface{} `json:"details,omitempty"`
 }
 

@@ -10,29 +10,29 @@ import (
 
 // LoginAnalytics contains comprehensive login statistics
 type LoginAnalytics struct {
-	Period          string                   `json:"period"`
-	StartDate       time.Time                `json:"start_date"`
-	EndDate         time.Time                `json:"end_date"`
-	Summary         LoginSummary             `json:"summary"`
-	DailyTrends     []DailyLoginStats        `json:"daily_trends"`
-	HourlyPattern   []HourlyStats            `json:"hourly_pattern"`
-	GeoDistribution []GeoLoginStats          `json:"geo_distribution"`
-	RiskDistribution []RiskBucketStats       `json:"risk_distribution"`
-	AuthMethods     []AuthMethodStats        `json:"auth_methods"`
-	TopFailedUsers  []FailedUserStats        `json:"top_failed_users"`
-	DeviceTypes     []DeviceTypeStats        `json:"device_types"`
+	Period           string            `json:"period"`
+	StartDate        time.Time         `json:"start_date"`
+	EndDate          time.Time         `json:"end_date"`
+	Summary          LoginSummary      `json:"summary"`
+	DailyTrends      []DailyLoginStats `json:"daily_trends"`
+	HourlyPattern    []HourlyStats     `json:"hourly_pattern"`
+	GeoDistribution  []GeoLoginStats   `json:"geo_distribution"`
+	RiskDistribution []RiskBucketStats `json:"risk_distribution"`
+	AuthMethods      []AuthMethodStats `json:"auth_methods"`
+	TopFailedUsers   []FailedUserStats `json:"top_failed_users"`
+	DeviceTypes      []DeviceTypeStats `json:"device_types"`
 }
 
 type LoginSummary struct {
-	TotalLogins         int     `json:"total_logins"`
-	SuccessfulLogins    int     `json:"successful_logins"`
-	FailedLogins        int     `json:"failed_logins"`
-	UniqueUsers         int     `json:"unique_users"`
-	NewDevices          int     `json:"new_devices"`
-	HighRiskLogins      int     `json:"high_risk_logins"`
-	MFAChallenges       int     `json:"mfa_challenges"`
-	AverageRiskScore    float64 `json:"average_risk_score"`
-	TrustedBrowserLogins int    `json:"trusted_browser_logins"`
+	TotalLogins          int     `json:"total_logins"`
+	SuccessfulLogins     int     `json:"successful_logins"`
+	FailedLogins         int     `json:"failed_logins"`
+	UniqueUsers          int     `json:"unique_users"`
+	NewDevices           int     `json:"new_devices"`
+	HighRiskLogins       int     `json:"high_risk_logins"`
+	MFAChallenges        int     `json:"mfa_challenges"`
+	AverageRiskScore     float64 `json:"average_risk_score"`
+	TrustedBrowserLogins int     `json:"trusted_browser_logins"`
 }
 
 type DailyLoginStats struct {
@@ -49,11 +49,11 @@ type HourlyStats struct {
 }
 
 type GeoLoginStats struct {
-	Country    string `json:"country"`
-	City       string `json:"city"`
-	Count      int    `json:"count"`
-	Failed     int    `json:"failed"`
-	AvgRisk    float64 `json:"avg_risk"`
+	Country string  `json:"country"`
+	City    string  `json:"city"`
+	Count   int     `json:"count"`
+	Failed  int     `json:"failed"`
+	AvgRisk float64 `json:"avg_risk"`
 }
 
 type RiskBucketStats struct {

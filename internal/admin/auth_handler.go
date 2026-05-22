@@ -18,22 +18,22 @@ import (
 
 // AuthHandler handles authentication operations for the admin console
 type AuthHandler struct {
-	db     *pgxpool.Pool
-	logger *zap.Logger
-	jwtSecret string
+	db          *pgxpool.Pool
+	logger      *zap.Logger
+	jwtSecret   string
 	tokenExpiry time.Duration
 }
 
 // AdminUser represents an admin user
 type AdminUser struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	PasswordHash string    `json:"-"`
-	IsActive     bool      `json:"is_active"`
-	IsSuperAdmin bool      `json:"is_super_admin"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email"`
+	Name         string     `json:"name"`
+	PasswordHash string     `json:"-"`
+	IsActive     bool       `json:"is_active"`
+	IsSuperAdmin bool       `json:"is_super_admin"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
 }
 
@@ -57,10 +57,10 @@ type LoginRequest struct {
 
 // LoginResponse represents a login response
 type LoginResponse struct {
-	Token     string     `json:"token"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	User      AdminUser  `json:"user"`
-	SessionID string     `json:"session_id"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	User      AdminUser `json:"user"`
+	SessionID string    `json:"session_id"`
 }
 
 // MFAVerifyRequest represents an MFA verification request
@@ -70,20 +70,20 @@ type MFAVerifyRequest struct {
 
 // Claims represents JWT claims
 type Claims struct {
-	UserID    string   `json:"sub"`
-	Email     string   `json:"email"`
-	Name      string   `json:"name"`
-	Roles     []string `json:"roles"`
-	IsAdmin   bool     `json:"is_admin"`
+	UserID  string   `json:"sub"`
+	Email   string   `json:"email"`
+	Name    string   `json:"name"`
+	Roles   []string `json:"roles"`
+	IsAdmin bool     `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
 // NewAuthHandler creates a new auth handler
 func NewAuthHandler(db *pgxpool.Pool, logger *zap.Logger, jwtSecret string) *AuthHandler {
 	return &AuthHandler{
-		db:         db,
-		logger:     logger,
-		jwtSecret:  jwtSecret,
+		db:          db,
+		logger:      logger,
+		jwtSecret:   jwtSecret,
 		tokenExpiry: 24 * time.Hour,
 	}
 }
@@ -123,11 +123,11 @@ func (h *AuthHandler) GenerateToken(user *AdminUser) (string, time.Time, error) 
 	expiresAt := time.Now().Add(h.tokenExpiry)
 
 	claims := Claims{
-		UserID:    user.ID,
-		Email:     user.Email,
-		Name:      user.Name,
-		Roles:     []string{"admin"},
-		IsAdmin:   true,
+		UserID:  user.ID,
+		Email:   user.Email,
+		Name:    user.Name,
+		Roles:   []string{"admin"},
+		IsAdmin: true,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

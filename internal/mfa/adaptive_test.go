@@ -17,11 +17,11 @@ import (
 
 // mockAdaptiveRedisClient is a mock implementation of RedisClient for testing
 type mockAdaptiveRedisClient struct {
-	data      map[string]string
-	ttl       map[string]time.Duration
-	getError  error
-	setError  error
-	delError  error
+	data     map[string]string
+	ttl      map[string]time.Duration
+	getError error
+	setError error
+	delError error
 }
 
 func newMockAdaptiveRedisClient() *mockAdaptiveRedisClient {
@@ -298,10 +298,10 @@ func TestAdaptiveService_CriticalRiskScenario_BlockedIP(t *testing.T) {
 // Test risk level thresholds
 func TestAdaptiveService_RiskLevelThresholds(t *testing.T) {
 	tests := []struct {
-		name        string
-		score       int
+		name          string
+		score         int
 		expectedLevel RiskLevel
-		expectedMFA  MFAType
+		expectedMFA   MFAType
 	}{
 		{"Score 0 - Low", 0, RiskLevelLow, MFANone},
 		{"Score 20 - Low", 20, RiskLevelLow, MFANone},
@@ -423,48 +423,48 @@ func TestAdaptiveService_GetSignalInfo(t *testing.T) {
 	redis.Set(context.Background(), service.buildIPKey(userIDStr, "10.0.0.1"), "1", knownIPTTL)
 
 	tests := []struct {
-		name           string
-		deviceID       string
-		ip             string
-		location       string
-		expectNewDevice bool
-		expectNewIP    bool
+		name              string
+		deviceID          string
+		ip                string
+		location          string
+		expectNewDevice   bool
+		expectNewIP       bool
 		expectNewLocation bool
 	}{
 		{
-			name:           "All known",
-			deviceID:       "known-device",
-			ip:             "10.0.0.1",
-			location:       "",
-			expectNewDevice: false,
-			expectNewIP:    false,
+			name:              "All known",
+			deviceID:          "known-device",
+			ip:                "10.0.0.1",
+			location:          "",
+			expectNewDevice:   false,
+			expectNewIP:       false,
 			expectNewLocation: true, // No location data stored yet
 		},
 		{
-			name:           "New device",
-			deviceID:       "unknown-device",
-			ip:             "10.0.0.1",
-			location:       "",
-			expectNewDevice: true,
-			expectNewIP:    false,
+			name:              "New device",
+			deviceID:          "unknown-device",
+			ip:                "10.0.0.1",
+			location:          "",
+			expectNewDevice:   true,
+			expectNewIP:       false,
 			expectNewLocation: true,
 		},
 		{
-			name:           "New IP",
-			deviceID:       "known-device",
-			ip:             "10.0.0.99",
-			location:       "",
-			expectNewDevice: false,
-			expectNewIP:    true,
+			name:              "New IP",
+			deviceID:          "known-device",
+			ip:                "10.0.0.99",
+			location:          "",
+			expectNewDevice:   false,
+			expectNewIP:       true,
 			expectNewLocation: true,
 		},
 		{
-			name:           "Empty device ID",
-			deviceID:       "",
-			ip:             "10.0.0.1",
-			location:       "",
-			expectNewDevice: true, // Empty device ID is treated as new
-			expectNewIP:    false,
+			name:              "Empty device ID",
+			deviceID:          "",
+			ip:                "10.0.0.1",
+			location:          "",
+			expectNewDevice:   true, // Empty device ID is treated as new
+			expectNewIP:       false,
 			expectNewLocation: true,
 		},
 	}

@@ -41,28 +41,28 @@ type Config struct {
 // DefaultConfig returns sensible defaults for cache configuration
 func DefaultConfig() Config {
 	return Config{
-		DefaultTTL:     5 * time.Minute,
-		KeyPrefix:      "openidx:",
-		MaxRetries:     2,
-		EnableMetrics:  false,
+		DefaultTTL:    5 * time.Minute,
+		KeyPrefix:     "openidx:",
+		MaxRetries:    2,
+		EnableMetrics: false,
 	}
 }
 
 // Cache represents a Redis-based cache layer
 type Cache struct {
-	client   *redis.Client
-	config   Config
-	logger   *zap.Logger
-	metrics  *metrics
+	client  *redis.Client
+	config  Config
+	logger  *zap.Logger
+	metrics *metrics
 }
 
 // metrics holds cache operation metrics
 type metrics struct {
-	hits   int64
-	misses int64
-	sets   int64
+	hits    int64
+	misses  int64
+	sets    int64
 	deletes int64
-	errors int64
+	errors  int64
 }
 
 // New creates a new cache instance with the given Redis client

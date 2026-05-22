@@ -17,41 +17,41 @@ import (
 
 // EventStreamer manages real-time streaming of audit events
 type EventStreamer struct {
-	logger         *zap.Logger
-	clients        map[string]*StreamClient
-	clientsMutex   sync.RWMutex
-	webhookQueue   chan *WebhookDelivery
-	webhookConfig  *WebhookConfig
-	service        *Service
+	logger          *zap.Logger
+	clients         map[string]*StreamClient
+	clientsMutex    sync.RWMutex
+	webhookQueue    chan *WebhookDelivery
+	webhookConfig   *WebhookConfig
+	service         *Service
 	originValidator *OriginValidator
-	upgrader       *websocket.Upgrader
+	upgrader        *websocket.Upgrader
 }
 
 // StreamClient represents a connected WebSocket client
 type StreamClient struct {
-	ID         string
-	Conn       *websocket.Conn
-	Send       chan *ServiceAuditEvent
-	Filters    *StreamFilters
-	done       chan struct{}
-	mu         sync.Mutex
+	ID      string
+	Conn    *websocket.Conn
+	Send    chan *ServiceAuditEvent
+	Filters *StreamFilters
+	done    chan struct{}
+	mu      sync.Mutex
 }
 
 // StreamFilters defines event filters for a stream client
 type StreamFilters struct {
-	EventTypes []EventType           `json:"event_types"`
-	Categories []EventCategory       `json:"categories"`
-	ActorID    string                `json:"actor_id,omitempty"`
-	Outcome    *ServiceEventOutcome  `json:"outcome,omitempty"`
+	EventTypes []EventType          `json:"event_types"`
+	Categories []EventCategory      `json:"categories"`
+	ActorID    string               `json:"actor_id,omitempty"`
+	Outcome    *ServiceEventOutcome `json:"outcome,omitempty"`
 }
 
 // WebhookConfig holds webhook delivery configuration
 type WebhookConfig struct {
-	MaxRetries      int           `json:"max_retries"`
-	RetryDelay      time.Duration `json:"retry_delay"`
-	Timeout         time.Duration `json:"timeout"`
-	QueueSize       int           `json:"queue_size"`
-	Enabled         bool          `json:"enabled"`
+	MaxRetries int           `json:"max_retries"`
+	RetryDelay time.Duration `json:"retry_delay"`
+	Timeout    time.Duration `json:"timeout"`
+	QueueSize  int           `json:"queue_size"`
+	Enabled    bool          `json:"enabled"`
 }
 
 // WebhookDelivery represents a webhook delivery attempt
@@ -64,14 +64,14 @@ type WebhookDelivery struct {
 
 // WebhookSubscription represents a registered webhook endpoint
 type WebhookSubscription struct {
-	ID            string         `json:"id"`
-	URL           string         `json:"url"`
-	Secret        string         `json:"secret,omitempty"`
-	Enabled       bool           `json:"enabled"`
-	Filters       *StreamFilters `json:"filters,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	LastDelivery  time.Time      `json:"last_delivery,omitempty"`
-	FailureCount  int            `json:"failure_count"`
+	ID           string         `json:"id"`
+	URL          string         `json:"url"`
+	Secret       string         `json:"secret,omitempty"`
+	Enabled      bool           `json:"enabled"`
+	Filters      *StreamFilters `json:"filters,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	LastDelivery time.Time      `json:"last_delivery,omitempty"`
+	FailureCount int            `json:"failure_count"`
 }
 
 // NewEventStreamer creates a new event streamer with configurable origin validation
@@ -88,9 +88,9 @@ func NewEventStreamer(logger *zap.Logger, service *Service, allowedOrigins []str
 
 	// Create upgrader with origin validation
 	upgrader := &websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-		CheckOrigin:     originValidator.CheckOrigin,
+		ReadBufferSize:   1024,
+		WriteBufferSize:  1024,
+		CheckOrigin:      originValidator.CheckOrigin,
 		HandshakeTimeout: 10 * time.Second,
 	}
 
@@ -122,9 +122,9 @@ func NewEventStreamerWithConfig(logger *zap.Logger, service *Service, streamConf
 	originValidator := NewOriginValidator(logger, streamConfig.AllowedOrigins, streamConfig.EnableSecurityLogging)
 
 	upgrader := &websocket.Upgrader{
-		ReadBufferSize:  streamConfig.MaxMessageSize,
-		WriteBufferSize: streamConfig.MaxMessageSize,
-		CheckOrigin:     originValidator.CheckOrigin,
+		ReadBufferSize:   streamConfig.MaxMessageSize,
+		WriteBufferSize:  streamConfig.MaxMessageSize,
+		CheckOrigin:      originValidator.CheckOrigin,
 		HandshakeTimeout: time.Duration(streamConfig.WriteTimeout) * time.Second,
 	}
 

@@ -23,7 +23,7 @@ type Config struct {
 	JWKSURL string `mapstructure:"jwks_url"`
 
 	// Rate limiting
-	EnableRateLimit bool          `mapstructure:"enable_rate_limit"`
+	EnableRateLimit bool            `mapstructure:"enable_rate_limit"`
 	RateLimitConfig RateLimitConfig `mapstructure:"rate_limit"`
 
 	// CORS
@@ -41,10 +41,10 @@ type Config struct {
 
 // RateLimitConfig holds rate limiting configuration
 type RateLimitConfig struct {
-	RequestsPerMinute   int `mapstructure:"requests_per_minute"`
+	RequestsPerMinute     int `mapstructure:"requests_per_minute"`
 	AuthRequestsPerMinute int `mapstructure:"auth_requests_per_minute"`
-	WindowSeconds       int `mapstructure:"window_seconds"`
-	BurstSize           int `mapstructure:"burst_size"`
+	WindowSeconds         int `mapstructure:"window_seconds"`
+	BurstSize             int `mapstructure:"burst_size"`
 }
 
 // DefaultConfig returns default configuration values
@@ -67,9 +67,9 @@ func DefaultConfig() Config {
 			WindowSeconds:         60,
 			BurstSize:             10,
 		},
-		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:5173"},
-		RequestTimeout:   30 * time.Second,
-		ShutdownTimeout:  30 * time.Second,
+		AllowedOrigins:  []string{"http://localhost:3000", "http://localhost:5173"},
+		RequestTimeout:  30 * time.Second,
+		ShutdownTimeout: 30 * time.Second,
 	}
 }
 
@@ -225,7 +225,7 @@ type RedisBoolCmd struct {
 
 // RedisPipeline defines the pipeline interface for Redis
 type RedisPipeline interface {
-Exec() ([]interface{}, error)
+	Exec() ([]interface{}, error)
 }
 
 // Logger defines the logging interface

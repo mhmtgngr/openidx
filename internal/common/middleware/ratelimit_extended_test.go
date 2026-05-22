@@ -315,12 +315,12 @@ func TestDistributedRateLimit_PerUserTracking(t *testing.T) {
 // TestDistributedRateLimit_AuthPaths tests stricter rate limiting for auth paths
 func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 	tests := []struct {
-		name           string
-		path           string
-		authRequests   int
-		authWindow     time.Duration
-		regularReqs    int
-		expectBlockAt  int
+		name          string
+		path          string
+		authRequests  int
+		authWindow    time.Duration
+		regularReqs   int
+		expectBlockAt int
 	}{
 		{
 			name:          "oauth login path uses stricter limit",
@@ -461,12 +461,12 @@ func TestDistributedRateLimit_SkipPaths(t *testing.T) {
 // TestDistributedRateLimit_Headers tests rate limit headers
 func TestDistributedRateLimit_Headers(t *testing.T) {
 	tests := []struct {
-		name               string
-		requests           int
-		limit              int
-		expectRemaining    []string
-		expectLimitHeader  string
-		expectRetryAfter   bool
+		name              string
+		requests          int
+		limit             int
+		expectRemaining   []string
+		expectLimitHeader string
+		expectRetryAfter  bool
 	}{
 		{
 			name:              "first request shows remaining",
@@ -547,8 +547,8 @@ func TestDistributedRateLimit_FailOpen(t *testing.T) {
 			expectMetrics: true,
 		},
 		{
-			name:          "closed Redis connection allows requests",
-			redisClient:   func() *redis.Client {
+			name: "closed Redis connection allows requests",
+			redisClient: func() *redis.Client {
 				s, client := setupExtendedTestRedis(&testing.T{})
 				s.Close()
 				return client

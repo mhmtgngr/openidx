@@ -164,7 +164,7 @@ func TestServiceConfiguration(t *testing.T) {
 func TestEmailDataTypes(t *testing.T) {
 	t.Run("string data", func(t *testing.T) {
 		data := map[string]interface{}{
-			"Name": "John Doe",
+			"Name":  "John Doe",
 			"Email": "john@example.com",
 		}
 

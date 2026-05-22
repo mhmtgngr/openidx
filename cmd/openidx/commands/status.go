@@ -346,7 +346,7 @@ func NewTopCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "top",
 		Short: "Show resource usage",
-		Long: `Show CPU and memory usage for running containers.`,
+		Long:  `Show CPU and memory usage for running containers.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := NewCommandContext(cmd)
 			success, errColor, _, _, _ := ctx.GetColors()

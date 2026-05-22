@@ -305,8 +305,8 @@ func (h *Handler) RefreshCache(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "Cache refreshed successfully",
-		"refreshed_at":  time.Now().Format(time.RFC3339),
+		"message":      "Cache refreshed successfully",
+		"refreshed_at": time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -613,11 +613,11 @@ func (h *Handler) ListFlagsQuery(c *gin.Context) {
 	paginated := filtered[offset:end]
 
 	c.JSON(http.StatusOK, gin.H{
-		"flags": paginated,
-		"count": len(paginated),
-		"total": total,
+		"flags":  paginated,
+		"count":  len(paginated),
+		"total":  total,
 		"offset": offset,
-		"limit": limit,
+		"limit":  limit,
 	})
 }
 
@@ -651,16 +651,16 @@ func (h *Handler) GetFlagUsage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"flag":             name,
-		"enabled":          flag.Enabled,
-		"percentage":       flag.Percentage,
-		"estimated_reach":  estimatedReach,
+		"flag":              name,
+		"enabled":           flag.Enabled,
+		"percentage":        flag.Percentage,
+		"estimated_reach":   estimatedReach,
 		"whitelisted_users": len(flag.UserWhitelist),
 		"blacklisted_users": len(flag.UserBlacklist),
-		"has_variants":     len(flag.Variants) > 0,
-		"variant_count":    len(flag.Variants),
-		"created_at":       flag.CreatedAt,
-		"updated_at":       flag.UpdatedAt,
-		"updated_by":       flag.UpdatedBy,
+		"has_variants":      len(flag.Variants) > 0,
+		"variant_count":     len(flag.Variants),
+		"created_at":        flag.CreatedAt,
+		"updated_at":        flag.UpdatedAt,
+		"updated_by":        flag.UpdatedBy,
 	})
 }

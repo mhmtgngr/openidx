@@ -31,47 +31,47 @@ var (
 
 // IDTokenClaims represents the standard OIDC ID token claims per OpenID Connect Core 1.0
 type IDTokenClaims struct {
-	Issuer                            string   `json:"iss"`                                 // Issuer
-	Subject                           string   `json:"sub"`                                  // Subject (user ID)
-	Audience                          string   `json:"aud"`                                  // Audience (client ID)
-	Expiration                        int64    `json:"exp"`                                  // Expiration time
-	IssuedAt                          int64    `json:"iat"`                                  // Issued at
-	AuthTime                          int64    `json:"auth_time,omitempty"`                  // Authentication time
-	Nonce                             string   `json:"nonce,omitempty"`                      // Nonce from auth request
-	AccessTokenHash                   string   `json:"at_hash,omitempty"`                    // Access token hash
-	AuthorizationCodeHash             string   `json:"c_hash,omitempty"`                     // Authorization code hash
-	SessionID                         string   `json:"sid,omitempty"`                        // Session ID
-	Email                             string   `json:"email,omitempty"`                      // User email
-	EmailVerified                     bool     `json:"email_verified,omitempty"`              // Email verification status
-	Name                              string   `json:"name,omitempty"`                       // User's full name
-	GivenName                         string   `json:"given_name,omitempty"`                 // User's given name
-	FamilyName                        string   `json:"family_name,omitempty"`                // User's family name
-	MiddleName                        string   `json:"middle_name,omitempty"`                // User's middle name
-	Nickname                          string   `json:"nickname,omitempty"`                   // User's nickname
-	PreferredUsername                 string   `json:"preferred_username,omitempty"`         // Preferred username
-	Profile                           string   `json:"profile,omitempty"`                     // Profile URL
-	Picture                           string   `json:"picture,omitempty"`                    // Picture URL
-	Website                           string   `json:"website,omitempty"`                    // Website URL
-	Gender                            string   `json:"gender,omitempty"`                     // Gender
-	Birthdate                         string   `json:"birthdate,omitempty"`                  // Birthdate
-	ZoneInfo                          string   `json:"zoneinfo,omitempty"`                   // Timezone info
-	Locale                            string   `json:"locale,omitempty"`                     // Locale
-	PhoneNumber                       string   `json:"phone_number,omitempty"`                // Phone number
-	PhoneNumberVerified               bool     `json:"phone_number_verified,omitempty"`       // Phone verification status
-	Address                           *Address `json:"address,omitempty"`                    // Address
-	UpdatedAt                         int64    `json:"updated_at,omitempty"`                  // Last update time
-	Roles                             []string `json:"roles,omitempty"`                      // User roles
-	Groups                            []string `json:"groups,omitempty"`                     // User groups
+	Issuer                string   `json:"iss"`                             // Issuer
+	Subject               string   `json:"sub"`                             // Subject (user ID)
+	Audience              string   `json:"aud"`                             // Audience (client ID)
+	Expiration            int64    `json:"exp"`                             // Expiration time
+	IssuedAt              int64    `json:"iat"`                             // Issued at
+	AuthTime              int64    `json:"auth_time,omitempty"`             // Authentication time
+	Nonce                 string   `json:"nonce,omitempty"`                 // Nonce from auth request
+	AccessTokenHash       string   `json:"at_hash,omitempty"`               // Access token hash
+	AuthorizationCodeHash string   `json:"c_hash,omitempty"`                // Authorization code hash
+	SessionID             string   `json:"sid,omitempty"`                   // Session ID
+	Email                 string   `json:"email,omitempty"`                 // User email
+	EmailVerified         bool     `json:"email_verified,omitempty"`        // Email verification status
+	Name                  string   `json:"name,omitempty"`                  // User's full name
+	GivenName             string   `json:"given_name,omitempty"`            // User's given name
+	FamilyName            string   `json:"family_name,omitempty"`           // User's family name
+	MiddleName            string   `json:"middle_name,omitempty"`           // User's middle name
+	Nickname              string   `json:"nickname,omitempty"`              // User's nickname
+	PreferredUsername     string   `json:"preferred_username,omitempty"`    // Preferred username
+	Profile               string   `json:"profile,omitempty"`               // Profile URL
+	Picture               string   `json:"picture,omitempty"`               // Picture URL
+	Website               string   `json:"website,omitempty"`               // Website URL
+	Gender                string   `json:"gender,omitempty"`                // Gender
+	Birthdate             string   `json:"birthdate,omitempty"`             // Birthdate
+	ZoneInfo              string   `json:"zoneinfo,omitempty"`              // Timezone info
+	Locale                string   `json:"locale,omitempty"`                // Locale
+	PhoneNumber           string   `json:"phone_number,omitempty"`          // Phone number
+	PhoneNumberVerified   bool     `json:"phone_number_verified,omitempty"` // Phone verification status
+	Address               *Address `json:"address,omitempty"`               // Address
+	UpdatedAt             int64    `json:"updated_at,omitempty"`            // Last update time
+	Roles                 []string `json:"roles,omitempty"`                 // User roles
+	Groups                []string `json:"groups,omitempty"`                // User groups
 }
 
 // Address represents a postal address per OIDC spec
 type Address struct {
-	Formatted   string `json:"formatted,omitempty"`
+	Formatted     string `json:"formatted,omitempty"`
 	StreetAddress string `json:"street_address,omitempty"`
-	Locality    string `json:"locality,omitempty"`
-	Region      string `json:"region,omitempty"`
-	PostalCode  string `json:"postal_code,omitempty"`
-	Country     string `json:"country,omitempty"`
+	Locality      string `json:"locality,omitempty"`
+	Region        string `json:"region,omitempty"`
+	PostalCode    string `json:"postal_code,omitempty"`
+	Country       string `json:"country,omitempty"`
 }
 
 // IdentityService defines the interface for user identity operations
@@ -81,11 +81,11 @@ type IdentityService interface {
 
 // OIDCProvider provides OpenID Connect functionality
 type OIDCProvider struct {
-	service          *Service
-	identityService  IdentityService
-	store            *Store
-	logger           *zap.Logger
-	issuer           string
+	service         *Service
+	identityService IdentityService
+	store           *Store
+	logger          *zap.Logger
+	issuer          string
 }
 
 // NewOIDCProvider creates a new OIDC provider
@@ -124,11 +124,11 @@ func (p *OIDCProvider) GenerateIDToken(ctx context.Context, req *IDTokenRequest)
 
 	// Build standard OIDC claims
 	claims := jwt.MapClaims{
-		"iss": p.issuer,                          // Issuer
-		"sub": p.generateSubject(user.ID),        // Subject - pairwise or public identifier
-		"aud": req.ClientID,                      // Audience - client_id
+		"iss": p.issuer,                                                   // Issuer
+		"sub": p.generateSubject(user.ID),                                 // Subject - pairwise or public identifier
+		"aud": req.ClientID,                                               // Audience - client_id
 		"exp": now.Add(time.Duration(req.ExpiresIn) * time.Second).Unix(), // Expiration
-		"iat": now.Unix(),                        // Issued At
+		"iat": now.Unix(),                                                 // Issued At
 	}
 
 	// Add authentication time if provided
@@ -306,15 +306,15 @@ func (p *OIDCProvider) buildFullName(user *identity.User) string {
 
 // IDTokenRequest represents parameters for ID token generation
 type IDTokenRequest struct {
-	UserID     string
-	ClientID   string
-	Scope      string
-	Nonce      string
-	ExpiresIn  int // Token lifetime in seconds
-	AuthTime   int64
+	UserID      string
+	ClientID    string
+	Scope       string
+	Nonce       string
+	ExpiresIn   int // Token lifetime in seconds
+	AuthTime    int64
 	AccessToken string
-	Code       string
-	SessionID  string
+	Code        string
+	SessionID   string
 }
 
 // UserInfoRequest represents parameters for UserInfo endpoint
@@ -325,28 +325,28 @@ type UserInfoRequest struct {
 
 // UserInfoResponse represents the UserInfo response per OpenID Connect Core 1.0 §5.3.1
 type UserInfoResponse struct {
-	Sub               string   `json:"sub"`                                   // Required
-	Name              string   `json:"name,omitempty"`                        // User's full name
-	GivenName         string   `json:"given_name,omitempty"`                  // Given name
-	FamilyName        string   `json:"family_name,omitempty"`                 // Family name
-	MiddleName        string   `json:"middle_name,omitempty"`                 // Middle name
-	Nickname          string   `json:"nickname,omitempty"`                    // Nickname
-	PreferredUsername string   `json:"preferred_username,omitempty"`          // Preferred username
-	Profile           string   `json:"profile,omitempty"`                     // Profile URL
-	Picture           string   `json:"picture,omitempty"`                     // Picture URL
-	Website           string   `json:"website,omitempty"`                     // Website URL
-	Email             string   `json:"email,omitempty"`                       // Email
-	EmailVerified     bool     `json:"email_verified,omitempty"`              // Email verified status
-	Gender            string   `json:"gender,omitempty"`                      // Gender
-	Birthdate         string   `json:"birthdate,omitempty"`                   // Birthdate
-	ZoneInfo          string   `json:"zoneinfo,omitempty"`                    // Timezone
-	Locale            string   `json:"locale,omitempty"`                      // Locale
-	PhoneNumber       string   `json:"phone_number,omitempty"`                // Phone number
-	PhoneNumberVerified bool   `json:"phone_number_verified,omitempty"`       // Phone verified
-	Address           *Address `json:"address,omitempty"`                     // Address
-	UpdatedAt         int64    `json:"updated_at,omitempty"`                 // Last update
-	Roles             []string `json:"roles,omitempty"`                       // User roles
-	Groups            []string `json:"groups,omitempty"`                      // User groups
+	Sub                 string   `json:"sub"`                             // Required
+	Name                string   `json:"name,omitempty"`                  // User's full name
+	GivenName           string   `json:"given_name,omitempty"`            // Given name
+	FamilyName          string   `json:"family_name,omitempty"`           // Family name
+	MiddleName          string   `json:"middle_name,omitempty"`           // Middle name
+	Nickname            string   `json:"nickname,omitempty"`              // Nickname
+	PreferredUsername   string   `json:"preferred_username,omitempty"`    // Preferred username
+	Profile             string   `json:"profile,omitempty"`               // Profile URL
+	Picture             string   `json:"picture,omitempty"`               // Picture URL
+	Website             string   `json:"website,omitempty"`               // Website URL
+	Email               string   `json:"email,omitempty"`                 // Email
+	EmailVerified       bool     `json:"email_verified,omitempty"`        // Email verified status
+	Gender              string   `json:"gender,omitempty"`                // Gender
+	Birthdate           string   `json:"birthdate,omitempty"`             // Birthdate
+	ZoneInfo            string   `json:"zoneinfo,omitempty"`              // Timezone
+	Locale              string   `json:"locale,omitempty"`                // Locale
+	PhoneNumber         string   `json:"phone_number,omitempty"`          // Phone number
+	PhoneNumberVerified bool     `json:"phone_number_verified,omitempty"` // Phone verified
+	Address             *Address `json:"address,omitempty"`               // Address
+	UpdatedAt           int64    `json:"updated_at,omitempty"`            // Last update
+	Roles               []string `json:"roles,omitempty"`                 // User roles
+	Groups              []string `json:"groups,omitempty"`                // User groups
 }
 
 // GetUserInfo retrieves user information for the UserInfo endpoint

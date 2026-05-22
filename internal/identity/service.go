@@ -25,9 +25,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/pquerna/otp/totp"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/pquerna/otp/totp"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
@@ -60,14 +60,14 @@ func actorIDFromContext(ctx context.Context) string {
 
 // Session represents an active user session
 type Session struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	ClientID  string    `json:"client_id"`
-	IPAddress string    `json:"ip_address"`
-	UserAgent string    `json:"user_agent"`
-	StartedAt time.Time `json:"started_at"`
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	ClientID   string    `json:"client_id"`
+	IPAddress  string    `json:"ip_address"`
+	UserAgent  string    `json:"user_agent"`
+	StartedAt  time.Time `json:"started_at"`
 	LastSeenAt time.Time `json:"last_seen_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 // MFATOTP represents TOTP MFA settings for a user
@@ -84,12 +84,12 @@ type MFATOTP struct {
 
 // MFABackupCode represents a backup code for MFA
 type MFABackupCode struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	CodeHash  string    `json:"-"` // Never expose in JSON
-	Used      bool      `json:"used"`
+	ID        string     `json:"id"`
+	UserID    string     `json:"user_id"`
+	CodeHash  string     `json:"-"` // Never expose in JSON
+	Used      bool       `json:"used"`
 	UsedAt    *time.Time `json:"used_at,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // MFAPolicy represents an MFA enforcement policy
@@ -152,7 +152,6 @@ type DirectoryAuthenticator interface {
 	ResetPassword(ctx context.Context, directoryID, username, newPassword string) error
 }
 
-
 // Service provides identity management operations
 type Service struct {
 	db                *database.PostgresDB
@@ -166,13 +165,13 @@ type Service struct {
 	webhookService    WebhookPublisher
 	anomalyDetector   AnomalyDetector
 	smsProvider       SMSProvider       // SMS OTP provider
-	smsProviderMu     sync.RWMutex     // Protects smsProvider for runtime hot-swap
+	smsProviderMu     sync.RWMutex      // Protects smsProvider for runtime hot-swap
 	phoneCallProvider PhoneCallProvider // Phone call MFA provider
 	risk              RiskService       // Risk evaluation service
 
 	// JWKS public key cache
-	jwksCacheMu    sync.RWMutex
-	jwksCachedKey  *rsa.PublicKey
+	jwksCacheMu     sync.RWMutex
+	jwksCachedKey   *rsa.PublicKey
 	jwksCacheExpiry time.Time
 }
 
@@ -532,7 +531,11 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		}
 	}
 
-	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
+	var rows interface {
+		Next() bool
+		Scan(...interface{}) error
+		Close()
+	}
 	var err error
 	if searchQuery != "" {
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
@@ -732,22 +735,22 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 // UpdateIdentityProvider updates an existing identity provider
 func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
 	s.logger.Info("Updating identity provider", zap.String("idp_id", idp.ID.String()))
-	
+
 	idp.UpdatedAt = time.Now()
-	
+
 	_, err := s.db.Pool.Exec(ctx, `
 		UPDATE identity_providers 
 		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9
 		WHERE id = $1
 	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt)
-	
+
 	return err
 }
 
 // DeleteIdentityProvider deletes an identity provider
 func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) error {
 	s.logger.Info("Deleting identity provider", zap.String("idp_id", idpID))
-	
+
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM identity_providers WHERE id = $1", idpID)
 	return err
 }
@@ -755,7 +758,7 @@ func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) erro
 // GetUserSessions retrieves active sessions for a user
 func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	s.logger.Debug("Getting sessions for user", zap.String("user_id", userID))
-	
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, user_id, client_id, ip_address, user_agent, 
 		       started_at, last_seen_at, expires_at
@@ -767,7 +770,7 @@ func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var sessions []Session
 	for rows.Next() {
 		var s Session
@@ -779,7 +782,7 @@ func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session
 		}
 		sessions = append(sessions, s)
 	}
-	
+
 	return sessions, nil
 }
 
@@ -814,7 +817,11 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 		}
 	}
 
-	var rows interface{ Next() bool; Scan(...interface{}) error; Close() }
+	var rows interface {
+		Next() bool
+		Scan(...interface{}) error
+		Close()
+	}
 	var err error
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
@@ -1165,14 +1172,14 @@ func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress
 	expiresAt := now.Add(sessionDuration)
 
 	session := &Session{
-		ID:        sessionID,
-		UserID:    userID,
-		ClientID:  clientID,
-		IPAddress: ipAddress,
-		UserAgent: userAgent,
-		StartedAt: now,
+		ID:         sessionID,
+		UserID:     userID,
+		ClientID:   clientID,
+		IPAddress:  ipAddress,
+		UserAgent:  userAgent,
+		StartedAt:  now,
 		LastSeenAt: now,
-		ExpiresAt: expiresAt,
+		ExpiresAt:  expiresAt,
 	}
 
 	_, err := s.db.Pool.Exec(ctx, `
@@ -2058,7 +2065,7 @@ func (s *Service) checkUserAttributes(ctx context.Context, userID string, attrib
 					return false
 				}
 			}
-		// Add more attribute checks as needed
+			// Add more attribute checks as needed
 		}
 	}
 
@@ -2930,13 +2937,13 @@ func (s *Service) handleListUsers(c *gin.Context) {
 
 func (s *Service) handleGetUser(c *gin.Context) {
 	userID := c.Param("id")
-	
+
 	user, err := s.GetUser(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
 	}
-	
+
 	c.JSON(200, user)
 }
 
@@ -2978,13 +2985,13 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 
 func (s *Service) handleUpdateUser(c *gin.Context) {
 	userID := c.Param("id")
-	
+
 	var user User
 	if err := c.ShouldBindJSON(&user); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	user.ID = userID
 	if err := s.UpdateUser(c.Request.Context(), &user); err != nil {
 		s.logger.Error("failed to update user", zap.String("user_id", userID), zap.Error(err))
@@ -3040,13 +3047,13 @@ func (s *Service) handleListIdentityProviders(c *gin.Context) {
 
 func (s *Service) handleGetIdentityProvider(c *gin.Context) {
 	idpID := c.Param("id")
-	
+
 	idp, err := s.GetIdentityProvider(c.Request.Context(), idpID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "identity provider not found"})
 		return
 	}
-	
+
 	c.JSON(200, idp)
 }
 
@@ -3056,7 +3063,7 @@ func (s *Service) handleCreateIdentityProvider(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	if err := s.CreateIdentityProvider(c.Request.Context(), &idp); err != nil {
 		s.logger.Error("failed to create identity provider", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -3068,13 +3075,13 @@ func (s *Service) handleCreateIdentityProvider(c *gin.Context) {
 
 func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 	idpID := c.Param("id")
-	
+
 	var idp IdentityProvider
 	if err := c.ShouldBindJSON(&idp); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	parsedID, err := uuid.Parse(idpID)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid identity provider ID format"})
@@ -3092,7 +3099,7 @@ func (s *Service) handleUpdateIdentityProvider(c *gin.Context) {
 
 func (s *Service) handleDeleteIdentityProvider(c *gin.Context) {
 	idpID := c.Param("id")
-	
+
 	if err := s.DeleteIdentityProvider(c.Request.Context(), idpID); err != nil {
 		s.logger.Error("failed to delete identity provider", zap.String("id", idpID), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -3104,7 +3111,7 @@ func (s *Service) handleDeleteIdentityProvider(c *gin.Context) {
 
 func (s *Service) handleGetUserSessions(c *gin.Context) {
 	userID := c.Param("id")
-	
+
 	sessions, err := s.GetUserSessions(c.Request.Context(), userID)
 	if err != nil {
 		s.logger.Error("failed to get user sessions", zap.String("user_id", userID), zap.Error(err))
@@ -3898,10 +3905,10 @@ func (s *Service) handleGetPasswordInfo(c *gin.Context) {
 	isLDAP := source != nil && (*source == "ldap" || *source == "active_directory")
 	isAzureAD := source != nil && *source == "azure_ad"
 	resp := gin.H{
-		"is_ldap":               isLDAP,
-		"is_directory_managed":  isDirectory,
-		"is_azure_ad":           isAzureAD,
-		"password_must_change":  passwordMustChange,
+		"is_ldap":              isLDAP,
+		"is_directory_managed": isDirectory,
+		"is_azure_ad":          isAzureAD,
+		"password_must_change": passwordMustChange,
 	}
 	if source != nil {
 		resp["source"] = *source
@@ -4750,14 +4757,14 @@ type LifecycleWorkflow struct {
 	Description      string                   `json:"description"`
 	EventType        string                   `json:"event_type"`
 	TriggerType      string                   `json:"trigger_type"`
-	Actions          []map[string]interface{}  `json:"actions"`
-	Conditions       map[string]interface{}    `json:"conditions"`
-	RequireApproval  bool                      `json:"require_approval"`
-	ApprovalPolicyID *string                   `json:"approval_policy_id,omitempty"`
-	Enabled          bool                      `json:"enabled"`
-	CreatedBy        *string                   `json:"created_by,omitempty"`
-	CreatedAt        time.Time                 `json:"created_at"`
-	UpdatedAt        time.Time                 `json:"updated_at"`
+	Actions          []map[string]interface{} `json:"actions"`
+	Conditions       map[string]interface{}   `json:"conditions"`
+	RequireApproval  bool                     `json:"require_approval"`
+	ApprovalPolicyID *string                  `json:"approval_policy_id,omitempty"`
+	Enabled          bool                     `json:"enabled"`
+	CreatedBy        *string                  `json:"created_by,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+	UpdatedAt        time.Time                `json:"updated_at"`
 }
 
 // LifecycleExecution represents a single execution of a workflow
@@ -4768,8 +4775,8 @@ type LifecycleExecution struct {
 	TriggeredBy      *string                  `json:"triggered_by,omitempty"`
 	TriggerType      string                   `json:"trigger_type"`
 	Status           string                   `json:"status"`
-	ActionsCompleted []map[string]interface{}  `json:"actions_completed"`
-	ActionsFailed    []map[string]interface{}  `json:"actions_failed"`
+	ActionsCompleted []map[string]interface{} `json:"actions_completed"`
+	ActionsFailed    []map[string]interface{} `json:"actions_failed"`
 	Error            *string                  `json:"error,omitempty"`
 	StartedAt        time.Time                `json:"started_at"`
 	CompletedAt      *time.Time               `json:"completed_at,omitempty"`

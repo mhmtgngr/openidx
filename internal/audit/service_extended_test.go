@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestLogger_VerifyEventMethod tests the VerifyEvent method
@@ -90,11 +90,11 @@ func TestParseSearchQueryFromURLValues(t *testing.T) {
 		{
 			name: "single value for each parameter",
 			params: map[string][]string{
-				"actor":          {"user-123"},
-				"action":         {string(ActionAuthLogin)},
-				"resource_type":  {"session"},
-				"outcome":        {"success"},
-				"limit":          {"50"},
+				"actor":         {"user-123"},
+				"action":        {string(ActionAuthLogin)},
+				"resource_type": {"session"},
+				"outcome":       {"success"},
+				"limit":         {"50"},
 			},
 			wantErr: false,
 			check: func(t *testing.T, q *SearchQuery) {
@@ -727,7 +727,7 @@ func TestReportSerialization(t *testing.T) {
 			Framework:   "SOC 2 Type II",
 			Parameters: map[string]interface{}{
 				"include_evidence": true,
-				"format":          "detailed",
+				"format":           "detailed",
 			},
 			Schedule:   "0 9 * * 1",
 			Format:     "pdf",
@@ -1279,15 +1279,15 @@ func TestSearcherBuildWhereClause(t *testing.T) {
 	t.Run("query with all filters", func(t *testing.T) {
 		now := time.Now()
 		query := &SearchQuery{
-			ActorID:      "user-123",
-			Action:       ActionAuthLogin,
-			ResourceType: "session",
-			Outcome:      "success",
-			TenantID:     "tenant-1",
+			ActorID:       "user-123",
+			Action:        ActionAuthLogin,
+			ResourceType:  "session",
+			Outcome:       "success",
+			TenantID:      "tenant-1",
 			CorrelationID: "corr-456",
-			IP:           "192.168.1.1",
-			From:         now.Add(-24 * time.Hour),
-			To:           now,
+			IP:            "192.168.1.1",
+			From:          now.Add(-24 * time.Hour),
+			To:            now,
 		}
 
 		where, args := searcher.buildWhereClause(query)
@@ -1324,11 +1324,11 @@ func TestStatisticsInitialization(t *testing.T) {
 	now := time.Now()
 
 	stats := &Statistics{
-		From:       now.Add(-24 * time.Hour),
-		To:         now,
-		ByAction:   make(map[string]int64),
-		ByActor:    make(map[string]int64),
-		ByOutcome:  make(map[string]int64),
+		From:      now.Add(-24 * time.Hour),
+		To:        now,
+		ByAction:  make(map[string]int64),
+		ByActor:   make(map[string]int64),
+		ByOutcome: make(map[string]int64),
 	}
 
 	assert.NotNil(t, stats.ByAction)
@@ -2070,9 +2070,9 @@ func TestNewAuditEventDifferentActions(t *testing.T) {
 // TestMetadataWithDifferentTypes tests metadata with various types
 func TestMetadataWithDifferentTypes(t *testing.T) {
 	tests := []struct {
-		name   string
-		key    string
-		value  interface{}
+		name  string
+		key   string
+		value interface{}
 	}{
 		{"string value", "str", "value"},
 		{"int value", "int", 42},
@@ -2247,9 +2247,9 @@ func TestSearchResultSerialization(t *testing.T) {
 			NewAuditEvent(ActionAuthLogin).WithActor("user-1", ActorTypeUser),
 			NewAuditEvent(ActionAuthLogout).WithActor("user-1", ActorTypeUser),
 		},
-		NextCursor:  "next-cursor-123",
-		HasMore:     true,
-		TotalCount:  100,
+		NextCursor: "next-cursor-123",
+		HasMore:    true,
+		TotalCount: 100,
 	}
 
 	data, err := json.Marshal(result)

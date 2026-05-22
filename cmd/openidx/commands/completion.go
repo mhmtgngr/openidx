@@ -279,4 +279,3 @@ func appendToCompletionFile(ctx *CommandContext, shell, configFile string) error
 	_, err = f.Write(output)
 	return err
 }
-

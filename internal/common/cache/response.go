@@ -47,12 +47,12 @@ type cacheConfig struct {
 
 // CachedResponse represents a stored HTTP response
 type CachedResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Headers    map[string]string   `json:"headers"`
-	Body       []byte              `json:"body"`
-	ETag       string              `json:"etag,omitempty"`
-	CachedAt   time.Time           `json:"cached_at"`
-	Tags       []string            `json:"tags,omitempty"`
+	StatusCode int               `json:"status_code"`
+	Headers    map[string]string `json:"headers"`
+	Body       []byte            `json:"body"`
+	ETag       string            `json:"etag,omitempty"`
+	CachedAt   time.Time         `json:"cached_at"`
+	Tags       []string          `json:"tags,omitempty"`
 }
 
 // KeyGenerator generates a cache key component based on the request context
@@ -263,8 +263,8 @@ func (rc *ResponseCache) handleRequest(c *gin.Context, duration time.Duration, o
 	originalWriter := c.Writer
 	w := &responseWriter{
 		ResponseWriter: c.Writer,
-		body:          &bytes.Buffer{},
-		headers:       make(http.Header),
+		body:           &bytes.Buffer{},
+		headers:        make(http.Header),
 	}
 	c.Writer = w
 
@@ -653,9 +653,9 @@ func generateETag(body []byte) string {
 // responseWriter wraps gin.ResponseWriter to capture response data
 type responseWriter struct {
 	gin.ResponseWriter
-	body     *bytes.Buffer
-	headers  http.Header
-	written  bool
+	body    *bytes.Buffer
+	headers http.Header
+	written bool
 }
 
 // Write captures the response body
@@ -708,10 +708,10 @@ func RegisterRoute(method, path string, duration time.Duration, opts ...Option) 
 	defer globalResponseCache.mu.Unlock()
 
 	cfg := &cacheConfig{
-		duration:    duration,
-		staleTTL:    duration * 2,
-		tags:        []string{},
-		varyHeaders: []string{},
+		duration:      duration,
+		staleTTL:      duration * 2,
+		tags:          []string{},
+		varyHeaders:   []string{},
 		keyGenerators: []KeyGenerator{},
 	}
 

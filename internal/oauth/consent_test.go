@@ -211,19 +211,19 @@ func TestConsentRecord(t *testing.T) {
 
 func TestIsConsentRequired(t *testing.T) {
 	tests := []struct {
-		name           string
+		name            string
 		requestedScopes []string
 		previousConsent *ConsentRecord
-		expected       bool
+		expected        bool
 	}{
 		{
-			name:           "No previous consent",
+			name:            "No previous consent",
 			requestedScopes: []string{"openid", "profile"},
 			previousConsent: nil,
-			expected:       true,
+			expected:        true,
 		},
 		{
-			name:           "Exact match",
+			name:            "Exact match",
 			requestedScopes: []string{"openid", "profile", "email"},
 			previousConsent: &ConsentRecord{
 				Scopes: []string{"openid", "profile", "email"},
@@ -231,7 +231,7 @@ func TestIsConsentRequired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:           "Subset of previously granted",
+			name:            "Subset of previously granted",
 			requestedScopes: []string{"openid", "profile"},
 			previousConsent: &ConsentRecord{
 				Scopes: []string{"openid", "profile", "email"},
@@ -239,7 +239,7 @@ func TestIsConsentRequired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:           "New scope requested",
+			name:            "New scope requested",
 			requestedScopes: []string{"openid", "profile", "email", "phone"},
 			previousConsent: &ConsentRecord{
 				Scopes: []string{"openid", "profile", "email"},
@@ -247,7 +247,7 @@ func TestIsConsentRequired(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:           "Empty requested scopes",
+			name:            "Empty requested scopes",
 			requestedScopes: []string{},
 			previousConsent: &ConsentRecord{
 				Scopes: []string{"openid", "profile"},
@@ -255,7 +255,7 @@ func TestIsConsentRequired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:           "Only openid requested but profile granted",
+			name:            "Only openid requested but profile granted",
 			requestedScopes: []string{"openid"},
 			previousConsent: &ConsentRecord{
 				Scopes: []string{"openid", "profile"},
@@ -518,13 +518,13 @@ func TestScopeComparison(t *testing.T) {
 
 func TestConsentMetadata(t *testing.T) {
 	consent := &ConsentRecord{
-		ID:      "consent-123",
-		UserID:  "user-123",
+		ID:       "consent-123",
+		UserID:   "user-123",
 		ClientID: "client-123",
-		Scopes:  []string{"openid", "profile"},
+		Scopes:   []string{"openid", "profile"},
 		Metadata: map[string]interface{}{
-			"ip_address":    "192.168.1.1",
-			"user_agent":    "Mozilla/5.0",
+			"ip_address":     "192.168.1.1",
+			"user_agent":     "Mozilla/5.0",
 			"consent_screen": "v2",
 		},
 	}
@@ -558,11 +558,11 @@ func TestConsentRequestWithDeniedScopes(t *testing.T) {
 
 func TestScopeDisplayWithPreviouslyGranted(t *testing.T) {
 	display := ScopeDisplay{
-		Scope:              "profile",
-		Name:               "Basic Profile",
-		Description:        "Access your basic profile information",
-		Required:           false,
-		PreviouslyGranted:  true,
+		Scope:             "profile",
+		Name:              "Basic Profile",
+		Description:       "Access your basic profile information",
+		Required:          false,
+		PreviouslyGranted: true,
 	}
 
 	assert.True(t, display.PreviouslyGranted)
@@ -606,12 +606,12 @@ func TestConsentStatusValidation(t *testing.T) {
 
 func TestConsentWithClaims(t *testing.T) {
 	consent := &ConsentRecord{
-		ID:      "consent-123",
-		UserID:  "user-123",
+		ID:       "consent-123",
+		UserID:   "user-123",
 		ClientID: "client-123",
-		Scopes:  []string{"openid", "profile"},
-		Claims:  []string{"name", "email", "picture"},
-		Status:  ConsentGranted,
+		Scopes:   []string{"openid", "profile"},
+		Claims:   []string{"name", "email", "picture"},
+		Status:   ConsentGranted,
 	}
 
 	assert.Len(t, consent.Claims, 3)

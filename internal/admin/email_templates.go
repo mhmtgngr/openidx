@@ -178,18 +178,18 @@ func (s *Service) handlePreviewEmailTemplate(c *gin.Context) {
 
 	// Sample data for preview
 	sampleData := map[string]string{
-		"FirstName":    "John",
-		"LastName":     "Doe",
-		"Username":     "jdoe",
-		"Email":        "jdoe@example.com",
-		"LoginURL":     "https://app.openidx.io/login",
-		"ResetLink":    "https://app.openidx.io/reset?token=sample",
-		"VerifyLink":   "https://app.openidx.io/verify?token=sample",
-		"InviteLink":   "https://app.openidx.io/invite?token=sample",
-		"InviterName":  "Admin User",
-		"ExpiryDate":   time.Now().Add(72 * time.Hour).Format("January 2, 2006"),
+		"FirstName":     "John",
+		"LastName":      "Doe",
+		"Username":      "jdoe",
+		"Email":         "jdoe@example.com",
+		"LoginURL":      "https://app.openidx.io/login",
+		"ResetLink":     "https://app.openidx.io/reset?token=sample",
+		"VerifyLink":    "https://app.openidx.io/verify?token=sample",
+		"InviteLink":    "https://app.openidx.io/invite?token=sample",
+		"InviterName":   "Admin User",
+		"ExpiryDate":    time.Now().Add(72 * time.Hour).Format("January 2, 2006"),
 		"ExpiryMinutes": "15",
-		"OTPCode":      "123456",
+		"OTPCode":       "123456",
 	}
 
 	tmpl, err := template.New("preview").Parse(htmlBody)
@@ -323,4 +323,3 @@ func (s *Service) handleUpdateEmailBranding(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Branding updated"})
 }
-

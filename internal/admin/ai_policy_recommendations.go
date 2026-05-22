@@ -49,84 +49,84 @@ const (
 
 // AccessPattern represents user access behavior over time
 type AccessPattern struct {
-	UserID           string     `json:"user_id"`
-	RoleID           string     `json:"role_id"`
-	ResourceType     string     `json:"resource_type"`
-	LastAccessed     *time.Time `json:"last_accessed"`
-	AccessCount      int        `json:"access_count"`
-	AccessFrequency  float64    `json:"access_frequency"` // accesses per day
-	AverageSession   float64    `json:"average_session"`  // minutes
-	IsUnused         bool       `json:"is_unused"`
-	IsRarelyUsed     bool       `json:"is_rarely_used"`
-	IsHeavilyUsed    bool       `json:"is_heavily_used"`
-	PeakUsageHours   []int      `json:"peak_usage_hours"`
-	AnomalyScore     float64    `json:"anomaly_score"`
+	UserID          string     `json:"user_id"`
+	RoleID          string     `json:"role_id"`
+	ResourceType    string     `json:"resource_type"`
+	LastAccessed    *time.Time `json:"last_accessed"`
+	AccessCount     int        `json:"access_count"`
+	AccessFrequency float64    `json:"access_frequency"` // accesses per day
+	AverageSession  float64    `json:"average_session"`  // minutes
+	IsUnused        bool       `json:"is_unused"`
+	IsRarelyUsed    bool       `json:"is_rarely_used"`
+	IsHeavilyUsed   bool       `json:"is_heavily_used"`
+	PeakUsageHours  []int      `json:"peak_usage_hours"`
+	AnomalyScore    float64    `json:"anomaly_score"`
 }
 
 // PolicyRecommendation represents an AI-generated policy recommendation
 type PolicyRecommendation struct {
-	ID              string                       `json:"id"`
-	Type            PolicyRecommendationType     `json:"type"`
-	Priority        PolicyRecommendationPriority `json:"priority"`
-	Title           string                       `json:"title"`
-	Description     string                       `json:"description"`
-	Impact          string                       `json:"impact"`
-	EstimatedEffort string                       `json:"estimated_effort"`
-	Confidence      float64                      `json:"confidence"`
-	Reasoning       []string                     `json:"reasoning"`
-	AffectedUsers   int                          `json:"affected_users"`
-	AffectedRoles   int                          `json:"affected_roles"`
-	AffectedResources []string                   `json:"affected_resources"`
-	Metadata        json.RawMessage              `json:"metadata"`
-	Status          string                       `json:"status"` // pending, approved, rejected, implemented
-	CreatedAt       time.Time                    `json:"created_at"`
-	UpdatedAt       time.Time                    `json:"updated_at"`
-	ApprovedBy      *string                      `json:"approved_by,omitempty"`
-	ApprovedAt      *time.Time                   `json:"approved_at,omitempty"`
-	ImplementedAt   *time.Time                   `json:"implemented_at,omitempty"`
+	ID                string                       `json:"id"`
+	Type              PolicyRecommendationType     `json:"type"`
+	Priority          PolicyRecommendationPriority `json:"priority"`
+	Title             string                       `json:"title"`
+	Description       string                       `json:"description"`
+	Impact            string                       `json:"impact"`
+	EstimatedEffort   string                       `json:"estimated_effort"`
+	Confidence        float64                      `json:"confidence"`
+	Reasoning         []string                     `json:"reasoning"`
+	AffectedUsers     int                          `json:"affected_users"`
+	AffectedRoles     int                          `json:"affected_roles"`
+	AffectedResources []string                     `json:"affected_resources"`
+	Metadata          json.RawMessage              `json:"metadata"`
+	Status            string                       `json:"status"` // pending, approved, rejected, implemented
+	CreatedAt         time.Time                    `json:"created_at"`
+	UpdatedAt         time.Time                    `json:"updated_at"`
+	ApprovedBy        *string                      `json:"approved_by,omitempty"`
+	ApprovedAt        *time.Time                   `json:"approved_at,omitempty"`
+	ImplementedAt     *time.Time                   `json:"implemented_at,omitempty"`
 }
 
 // ComplianceGap represents a gap between current and desired compliance state
 type ComplianceGap struct {
-	ID              string    `json:"id"`
-	Standard        string    `json:"standard"`        // SOC2, ISO27001, HIPAA, GDPR
-	ControlID       string    `json:"control_id"`
-	ControlName     string    `json:"control_name"`
-	CurrentState    string    `json:"current_state"`
-	DesiredState    string    `json:"desired_state"`
-	GapDescription  string    `json:"gap_description"`
-	RemediationPlan string    `json:"remediation_plan"`
-	Priority        string    `json:"priority"`
-	EstimatedEffort int       `json:"estimated_effort"` // days
+	ID              string     `json:"id"`
+	Standard        string     `json:"standard"` // SOC2, ISO27001, HIPAA, GDPR
+	ControlID       string     `json:"control_id"`
+	ControlName     string     `json:"control_name"`
+	CurrentState    string     `json:"current_state"`
+	DesiredState    string     `json:"desired_state"`
+	GapDescription  string     `json:"gap_description"`
+	RemediationPlan string     `json:"remediation_plan"`
+	Priority        string     `json:"priority"`
+	EstimatedEffort int        `json:"estimated_effort"` // days
 	DueDate         *time.Time `json:"due_date"`
-	Status          string    `json:"status"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // AccessAnalysisResult represents the result of access pattern analysis
 type AccessAnalysisResult struct {
-	AnalyzedAt         time.Time                   `json:"analyzed_at"`
-	TimeWindow         time.Duration               `json:"time_window"`
-	TotalUsers         int                         `json:"total_users"`
-	TotalRoles         int                         `json:"total_roles"`
-	UnusedAccessCount  int                         `json:"unused_access_count"`
-	RarelyUsedCount    int                         `json:"rarely_used_count"`
-	OverprivilegedUsers int                        `json:"overprivileged_users"`
-	Recommendations    []PolicyRecommendation      `json:"recommendations"`
-	AccessPatterns     []AccessPattern             `json:"access_patterns"`
-	ComplianceGaps     []ComplianceGap             `json:"compliance_gaps"`
-	RiskScore          float64                     `json:"risk_score"`
+	AnalyzedAt          time.Time              `json:"analyzed_at"`
+	TimeWindow          time.Duration          `json:"time_window"`
+	TotalUsers          int                    `json:"total_users"`
+	TotalRoles          int                    `json:"total_roles"`
+	UnusedAccessCount   int                    `json:"unused_access_count"`
+	RarelyUsedCount     int                    `json:"rarely_used_count"`
+	OverprivilegedUsers int                    `json:"overprivileged_users"`
+	Recommendations     []PolicyRecommendation `json:"recommendations"`
+	AccessPatterns      []AccessPattern        `json:"access_patterns"`
+	ComplianceGaps      []ComplianceGap        `json:"compliance_gaps"`
+	RiskScore           float64                `json:"risk_score"`
 }
 
 // RoleSuggestion suggests a role for a user based on their access patterns
 type RoleSuggestion struct {
-	UserID           string   `json:"user_id"`
-	SuggestedRoles   []string `json:"suggested_roles"`
-	Confidence       float64  `json:"confidence"`
-	Reasoning        []string `json:"reasoning"`
-	CurrentRoles     []string `json:"current_roles"`
-	RecommendedRole  string   `json:"recommended_role"`
+	UserID          string   `json:"user_id"`
+	SuggestedRoles  []string `json:"suggested_roles"`
+	Confidence      float64  `json:"confidence"`
+	Reasoning       []string `json:"reasoning"`
+	CurrentRoles    []string `json:"current_roles"`
+	RecommendedRole string   `json:"recommended_role"`
 }
 
 // aiPolicyRecommendationsService handles AI-powered policy recommendations
@@ -138,8 +138,8 @@ type aiPolicyRecommendationsService struct {
 // AnalyzeAccessPatterns analyzes user access patterns to generate recommendations
 func (s *aiPolicyRecommendationsService) AnalyzeAccessPatterns(ctx context.Context, timeWindow time.Duration) (*AccessAnalysisResult, error) {
 	result := &AccessAnalysisResult{
-		AnalyzedAt:     time.Now(),
-		TimeWindow:     timeWindow,
+		AnalyzedAt:      time.Now(),
+		TimeWindow:      timeWindow,
 		Recommendations: []PolicyRecommendation{},
 		AccessPatterns:  []AccessPattern{},
 		ComplianceGaps:  []ComplianceGap{},
@@ -175,7 +175,7 @@ func (s *aiPolicyRecommendationsService) AnalyzeAccessPatterns(ctx context.Conte
 
 	patterns := map[string]*AccessPattern{}
 	unusedThreshold := 30 * 24 * time.Hour // 30 days
-	rarelyUsedThreshold := 1.0              // less than 1 access per day
+	rarelyUsedThreshold := 1.0             // less than 1 access per day
 
 	for rows.Next() {
 		var p AccessPattern
@@ -220,24 +220,24 @@ func (s *aiPolicyRecommendationsService) generateAccessRevocationRecommendations
 	for _, p := range patterns {
 		if p.IsUnused {
 			rec := PolicyRecommendation{
-				ID:          uuid.New().String(),
-				Type:        RecommendationAccessRevocation,
-				Priority:    PriorityMedium,
-				Title:       fmt.Sprintf("Revoke unused access for user %s", p.UserID),
-				Description: fmt.Sprintf("User %s has not accessed resource %s (role: %s) in over 30 days", p.UserID, p.ResourceType, p.RoleID),
-				Impact:      "Reduces attack surface by removing unused privileges",
+				ID:              uuid.New().String(),
+				Type:            RecommendationAccessRevocation,
+				Priority:        PriorityMedium,
+				Title:           fmt.Sprintf("Revoke unused access for user %s", p.UserID),
+				Description:     fmt.Sprintf("User %s has not accessed resource %s (role: %s) in over 30 days", p.UserID, p.ResourceType, p.RoleID),
+				Impact:          "Reduces attack surface by removing unused privileges",
 				EstimatedEffort: "Low",
-				Confidence:  0.85,
+				Confidence:      0.85,
 				Reasoning: []string{
 					fmt.Sprintf("Last accessed %s ago", time.Since(*p.LastAccessed)),
 					"Zero accesses in the last 30 days",
 					"Removal reduces compliance scope",
 				},
-				AffectedUsers:   1,
+				AffectedUsers:     1,
 				AffectedResources: []string{p.ResourceType},
-				Status:      "pending",
-				CreatedAt:   time.Now(),
-				UpdatedAt:   time.Now(),
+				Status:            "pending",
+				CreatedAt:         time.Now(),
+				UpdatedAt:         time.Now(),
 			}
 			result.Recommendations = append(result.Recommendations, rec)
 		}
@@ -268,24 +268,24 @@ func (s *aiPolicyRecommendationsService) generateRoleSizingRecommendations(ctx c
 		rows.Scan(&roleID, &userCount, &resourceCount)
 
 		rec := PolicyRecommendation{
-			ID:          uuid.New().String(),
-			Type:        RecommendationRoleConsolidation,
-			Priority:    PriorityMedium,
-			Title:       fmt.Sprintf("Consider splitting oversized role %s", roleID),
-			Description: fmt.Sprintf("Role %s has %d users and %d resources, making it difficult to manage and audit", roleID, userCount, resourceCount),
-			Impact:      "Improved security posture and easier compliance",
+			ID:              uuid.New().String(),
+			Type:            RecommendationRoleConsolidation,
+			Priority:        PriorityMedium,
+			Title:           fmt.Sprintf("Consider splitting oversized role %s", roleID),
+			Description:     fmt.Sprintf("Role %s has %d users and %d resources, making it difficult to manage and audit", roleID, userCount, resourceCount),
+			Impact:          "Improved security posture and easier compliance",
 			EstimatedEffort: "Medium",
-			Confidence:  0.7,
+			Confidence:      0.7,
 			Reasoning: []string{
 				fmt.Sprintf("Role has %d users (threshold: 100)", userCount),
 				fmt.Sprintf("Role has %d distinct resources (threshold: 50)", resourceCount),
 				"Large roles increase blast radius of compromise",
 			},
-			AffectedUsers:   userCount,
-			AffectedRoles:   1,
-			Status:      "pending",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			AffectedUsers: userCount,
+			AffectedRoles: 1,
+			Status:        "pending",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
 		}
 		result.Recommendations = append(result.Recommendations, rec)
 	}
@@ -295,9 +295,9 @@ func (s *aiPolicyRecommendationsService) generateRoleSizingRecommendations(ctx c
 func (s *aiPolicyRecommendationsService) generateSoDRecommendations(ctx context.Context, result *AccessAnalysisResult) {
 	// Check for users with conflicting roles (e.g., can approve and payments)
 	conflictingPairs := []struct {
-		role1    string
-		role2    string
-		reason   string
+		role1  string
+		role2  string
+		reason string
 	}{
 		{"payment_creator", "payment_approver", "User can create and approve payments"},
 		{"user_creator", "user_deleter", "User can create and delete users"},
@@ -328,14 +328,14 @@ func (s *aiPolicyRecommendationsService) generateSoDRecommendations(ctx context.
 
 		if len(conflictingUsers) > 0 {
 			rec := PolicyRecommendation{
-				ID:          uuid.New().String(),
-				Type:        RecommendationSeparationOfDuties,
-				Priority:    PriorityHigh,
-				Title:       fmt.Sprintf("Separation of Duties conflict: %s vs %s", cp.role1, cp.role2),
-				Description: fmt.Sprintf("%d users have both %s and %s roles", len(conflictingUsers), cp.role1, cp.role2),
-				Impact:      "Critical security risk allowing fraud",
+				ID:              uuid.New().String(),
+				Type:            RecommendationSeparationOfDuties,
+				Priority:        PriorityHigh,
+				Title:           fmt.Sprintf("Separation of Duties conflict: %s vs %s", cp.role1, cp.role2),
+				Description:     fmt.Sprintf("%d users have both %s and %s roles", len(conflictingUsers), cp.role1, cp.role2),
+				Impact:          "Critical security risk allowing fraud",
 				EstimatedEffort: "High",
-				Confidence:  0.95,
+				Confidence:      0.95,
 				Reasoning: []string{
 					cp.reason,
 					fmt.Sprintf("Affected users: %d", len(conflictingUsers)),
@@ -343,9 +343,9 @@ func (s *aiPolicyRecommendationsService) generateSoDRecommendations(ctx context.
 				},
 				AffectedUsers: len(conflictingUsers),
 				AffectedRoles: 2,
-				Status:      "pending",
-				CreatedAt:   time.Now(),
-				UpdatedAt:   time.Now(),
+				Status:        "pending",
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
 			}
 			result.Recommendations = append(result.Recommendations, rec)
 		}

@@ -20,7 +20,7 @@ type Condition func(*gin.Context) bool
 type Entry struct {
 	Name      string
 	Handler   MiddlewareFunc
-	Priority  int  // Lower = runs first
+	Priority  int // Lower = runs first
 	Enabled   bool
 	Condition Condition
 	Groups    []string // Route groups this applies to
@@ -258,18 +258,18 @@ func (r *Registry) sortOrder() {
 
 // Predefined priorities
 const (
-	PriorityFirst       = 0
-	PriorityRecovery    = 10
-	PrioritySecurity    = 20
-	PriorityLogging     = 30
-	PriorityMetrics     = 40
-	PriorityRateLimit   = 50
-	PriorityCORS        = 60
-	PriorityAuth        = 70
+	PriorityFirst         = 0
+	PriorityRecovery      = 10
+	PrioritySecurity      = 20
+	PriorityLogging       = 30
+	PriorityMetrics       = 40
+	PriorityRateLimit     = 50
+	PriorityCORS          = 60
+	PriorityAuth          = 70
 	PriorityAuthorization = 80
-	PriorityValidation  = 90
-	PriorityDefault     = 100
-	PriorityLast        = 1000
+	PriorityValidation    = 90
+	PriorityDefault       = 100
+	PriorityLast          = 1000
 )
 
 // Predefined conditions

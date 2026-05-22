@@ -30,8 +30,8 @@ type DetectorConfig struct {
 	BulkAccessThreshold int           `json:"bulk_access_threshold"`
 
 	// Off-hours detection
-	BusinessHoursStart int `json:"business_hours_start"` // Hour (0-23)
-	BusinessHoursEnd   int `json:"business_hours_end"`   // Hour (0-23)
+	BusinessHoursStart int    `json:"business_hours_start"` // Hour (0-23)
+	BusinessHoursEnd   int    `json:"business_hours_end"`   // Hour (0-23)
 	Timezone           string `json:"timezone"`
 
 	// Privilege escalation window
@@ -44,28 +44,28 @@ type DetectorConfig struct {
 
 // FailedLoginTracker tracks failed login attempts for brute force detection
 type FailedLoginTracker struct {
-	ActorID    string
-	Attempts   []time.Time
-	FirstSeen  time.Time
-	AlertSent  bool
+	ActorID   string
+	Attempts  []time.Time
+	FirstSeen time.Time
+	AlertSent bool
 }
 
 // AnomalyType represents the type of anomaly detected
 type AnomalyType string
 
 const (
-	AnomalyBruteForce      AnomalyType = "brute_force"
+	AnomalyBruteForce          AnomalyType = "brute_force"
 	AnomalyPrivilegeEscalation AnomalyType = "privilege_escalation"
-	AnomalyBulkAccess      AnomalyType = "bulk_access"
-	AnomalyOffHoursAdmin   AnomalyType = "off_hours_admin"
-	AnomalyImpossibleTravel AnomalyType = "impossible_travel"
-	AnomalyDataExfiltration AnomalyType = "data_exfiltration"
+	AnomalyBulkAccess          AnomalyType = "bulk_access"
+	AnomalyOffHoursAdmin       AnomalyType = "off_hours_admin"
+	AnomalyImpossibleTravel    AnomalyType = "impossible_travel"
+	AnomalyDataExfiltration    AnomalyType = "data_exfiltration"
 )
 
 // AnomalyAlert represents a detected anomaly
 type AnomalyAlert struct {
 	ID          string                 `json:"id"`
-	Type        AnomalyType             `json:"type"`
+	Type        AnomalyType            `json:"type"`
 	Severity    string                 `json:"severity"`
 	Title       string                 `json:"title"`
 	Description string                 `json:"description"`
@@ -192,22 +192,22 @@ func (ad *AnomalyDetector) detectBruteForce(event *ServiceAuditEvent) *AnomalyAl
 		tracker.AlertSent = true
 
 		return &AnomalyAlert{
-			ID:          generateUUID(),
-			Type:        AnomalyBruteForce,
-			Severity:    "high",
-			Title:       "Potential Brute Force Attack Detected",
+			ID:       generateUUID(),
+			Type:     AnomalyBruteForce,
+			Severity: "high",
+			Title:    "Potential Brute Force Attack Detected",
 			Description: fmt.Sprintf("More than %d failed login attempts from %s within %s",
 				ad.config.BruteForceThreshold, actorID, ad.config.BruteForceWindow),
 			EventID:   event.ID,
 			ActorID:   actorID,
 			Timestamp: time.Now().UTC(),
 			Details: map[string]interface{}{
-				"failed_attempts":     len(tracker.Attempts),
-				"detection_window":    ad.config.BruteForceWindow.String(),
-				"threshold":           ad.config.BruteForceThreshold,
-				"first_failure":       tracker.FirstSeen,
-				"source_ip":           event.ActorIP,
-				"actor_type":          event.ActorType,
+				"failed_attempts":      len(tracker.Attempts),
+				"detection_window":     ad.config.BruteForceWindow.String(),
+				"threshold":            ad.config.BruteForceThreshold,
+				"first_failure":        tracker.FirstSeen,
+				"source_ip":            event.ActorIP,
+				"actor_type":           event.ActorType,
 				"time_window_exceeded": true,
 			},
 		}
@@ -276,21 +276,21 @@ func (ad *AnomalyDetector) detectPrivilegeEscalation(ctx context.Context, event 
 
 		if len(followedBySensitive) > 0 {
 			return &AnomalyAlert{
-				ID:          generateUUID(),
-				Type:        AnomalyPrivilegeEscalation,
-				Severity:    "critical",
-				Title:       "Potential Privilege Escalation Detected",
+				ID:       generateUUID(),
+				Type:     AnomalyPrivilegeEscalation,
+				Severity: "critical",
+				Title:    "Potential Privilege Escalation Detected",
 				Description: fmt.Sprintf("Role assignment followed by sensitive action: %v",
 					followedBySensitive),
 				EventID:   event.ID,
 				ActorID:   event.ActorID,
 				Timestamp: time.Now().UTC(),
 				Details: map[string]interface{}{
-					"role_change_action":   event.Action,
-					"sensitive_actions":    followedBySensitive,
-					"escalation_window":    ad.config.EscalationWindow.String(),
-					"target_id":            event.TargetID,
-					"new_role":             event.Details,
+					"role_change_action": event.Action,
+					"sensitive_actions":  followedBySensitive,
+					"escalation_window":  ad.config.EscalationWindow.String(),
+					"target_id":          event.TargetID,
+					"new_role":           event.Details,
 				},
 			}
 		}
@@ -349,21 +349,21 @@ func (ad *AnomalyDetector) detectBulkAccess(ctx context.Context, event *ServiceA
 		}
 
 		return &AnomalyAlert{
-			ID:          generateUUID(),
-			Type:        AnomalyBulkAccess,
-			Severity:    "medium",
-			Title:       "Suspicious Bulk Access Pattern Detected",
+			ID:       generateUUID(),
+			Type:     AnomalyBulkAccess,
+			Severity: "medium",
+			Title:    "Suspicious Bulk Access Pattern Detected",
 			Description: fmt.Sprintf("More than %d resource accesses detected within %s",
 				ad.config.BulkAccessThreshold, ad.config.BulkAccessWindow),
 			EventID:   event.ID,
 			ActorID:   event.ActorID,
 			Timestamp: time.Now().UTC(),
 			Details: map[string]interface{}{
-				"total_accesses":      accessCount,
-				"detection_window":    ad.config.BulkAccessWindow.String(),
-				"threshold":           ad.config.BulkAccessThreshold,
-				"resource_breakdown":  resourceBreakdown,
-				"actor_ip":            event.ActorIP,
+				"total_accesses":     accessCount,
+				"detection_window":   ad.config.BulkAccessWindow.String(),
+				"threshold":          ad.config.BulkAccessThreshold,
+				"resource_breakdown": resourceBreakdown,
+				"actor_ip":           event.ActorIP,
 			},
 		}
 	}
@@ -391,25 +391,25 @@ func (ad *AnomalyDetector) detectOffHoursAdmin(event *ServiceAuditEvent) *Anomal
 	if !isBusinessHours {
 		// Check if this is a sensitive action
 		sensitiveActions := map[string]bool{
-			"user.delete":         true,
-			"role.assign":         true,
-			"role.revoke":         true,
-			"policy.change":       true,
-			"policy.delete":       true,
-			"config.change":       true,
-			"permission.grant":    true,
-			"permission.revoke":   true,
-			"group.delete":        true,
-			"data.export":         true,
-			"data.delete":         true,
+			"user.delete":       true,
+			"role.assign":       true,
+			"role.revoke":       true,
+			"policy.change":     true,
+			"policy.delete":     true,
+			"config.change":     true,
+			"permission.grant":  true,
+			"permission.revoke": true,
+			"group.delete":      true,
+			"data.export":       true,
+			"data.delete":       true,
 		}
 
 		if sensitiveActions[event.Action] {
 			return &AnomalyAlert{
-				ID:          generateUUID(),
-				Type:        AnomalyOffHoursAdmin,
-				Severity:    "medium",
-				Title:       "Off-Hours Administrative Action Detected",
+				ID:       generateUUID(),
+				Type:     AnomalyOffHoursAdmin,
+				Severity: "medium",
+				Title:    "Off-Hours Administrative Action Detected",
 				Description: fmt.Sprintf("Administrative action '%s' performed outside business hours (%d:00 - %d:00)",
 					event.Action, start, end),
 				EventID:   event.ID,

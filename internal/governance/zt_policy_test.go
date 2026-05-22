@@ -335,7 +335,7 @@ func TestZTPolicyEvaluator_ResourceConditions(t *testing.T) {
 						"classification": "public",
 					},
 				},
-				Action: "read",
+				Action:  "read",
 				Context: EvaluationContext{Time: time.Now()},
 			},
 			expected: true,
@@ -354,7 +354,7 @@ func TestZTPolicyEvaluator_ResourceConditions(t *testing.T) {
 						"classification": "confidential",
 					},
 				},
-				Action: "read",
+				Action:  "read",
 				Context: EvaluationContext{Time: time.Now()},
 			},
 			expected: false,
@@ -412,7 +412,7 @@ func TestZTPolicyEvaluator_GroupBasedAccess(t *testing.T) {
 				"department": "finance",
 			},
 		},
-		Action: "read",
+		Action:  "read",
 		Context: EvaluationContext{Time: time.Now()},
 	}
 

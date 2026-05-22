@@ -127,7 +127,7 @@ func generateCombinedOpenAPISpec() map[string]interface{} {
 			"/api/v1/identity/users": map[string]interface{}{
 				"get": map[string]interface{}{
 					"summary": "List users",
-					"tags":   []string{"identity"},
+					"tags":    []string{"identity"},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
 							"description": "Success",
@@ -138,7 +138,7 @@ func generateCombinedOpenAPISpec() map[string]interface{} {
 			"/api/v1/oauth/token": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary": "Get OAuth token",
-					"tags":   []string{"oauth"},
+					"tags":    []string{"oauth"},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
 							"description": "Success",
@@ -149,7 +149,7 @@ func generateCombinedOpenAPISpec() map[string]interface{} {
 			"/api/v1/governance/reviews": map[string]interface{}{
 				"get": map[string]interface{}{
 					"summary": "List access reviews",
-					"tags":   []string{"governance"},
+					"tags":    []string{"governance"},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
 							"description": "Success",
@@ -160,7 +160,7 @@ func generateCombinedOpenAPISpec() map[string]interface{} {
 			"/api/v1/audit/events": map[string]interface{}{
 				"get": map[string]interface{}{
 					"summary": "List audit events",
-					"tags":   []string{"audit"},
+					"tags":    []string{"audit"},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
 							"description": "Success",
@@ -171,7 +171,7 @@ func generateCombinedOpenAPISpec() map[string]interface{} {
 			"/api/v1/admin/users": map[string]interface{}{
 				"get": map[string]interface{}{
 					"summary": "List users (admin)",
-					"tags":   []string{"admin"},
+					"tags":    []string{"admin"},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
 							"description": "Success",
@@ -182,7 +182,7 @@ func generateCombinedOpenAPISpec() map[string]interface{} {
 			"/api/v1/risk/score": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary": "Calculate risk score",
-					"tags":   []string{"risk"},
+					"tags":    []string{"risk"},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
 							"description": "Success",
@@ -287,10 +287,10 @@ func generateJSONSchema() map[string]interface{} {
 			"user": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"id":       map[string]interface{}{"type": "string"},
-					"email":    map[string]interface{}{"type": "string", "format": "email"},
-					"name":     map[string]interface{}{"type": "string"},
-					"roles":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"id":    map[string]interface{}{"type": "string"},
+					"email": map[string]interface{}{"type": "string", "format": "email"},
+					"name":  map[string]interface{}{"type": "string"},
+					"roles": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				},
 			},
 			"error": map[string]interface{}{

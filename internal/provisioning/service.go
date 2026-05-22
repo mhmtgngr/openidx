@@ -55,16 +55,16 @@ func writeSCIMError(c *gin.Context, status int, detail string) {
 
 // SCIMUser represents a user in SCIM 2.0 format
 type SCIMUser struct {
-	Schemas     []string        `json:"schemas"`
-	ID          string          `json:"id,omitempty"`
-	ExternalID  string          `json:"externalId,omitempty"`
-	UserName    string          `json:"userName"`
-	Name        SCIMName        `json:"name,omitempty"`
-	DisplayName string          `json:"displayName,omitempty"`
-	Emails      []SCIMEmail     `json:"emails,omitempty"`
-	Active      bool            `json:"active"`
-	Groups      []SCIMGroupRef  `json:"groups,omitempty"`
-	Meta        SCIMMeta        `json:"meta,omitempty"`
+	Schemas     []string       `json:"schemas"`
+	ID          string         `json:"id,omitempty"`
+	ExternalID  string         `json:"externalId,omitempty"`
+	UserName    string         `json:"userName"`
+	Name        SCIMName       `json:"name,omitempty"`
+	DisplayName string         `json:"displayName,omitempty"`
+	Emails      []SCIMEmail    `json:"emails,omitempty"`
+	Active      bool           `json:"active"`
+	Groups      []SCIMGroupRef `json:"groups,omitempty"`
+	Meta        SCIMMeta       `json:"meta,omitempty"`
 }
 
 // SCIMName represents a name in SCIM format
@@ -102,12 +102,12 @@ type SCIMMeta struct {
 
 // SCIMGroup represents a group in SCIM 2.0 format
 type SCIMGroup struct {
-	Schemas     []string       `json:"schemas"`
-	ID          string         `json:"id,omitempty"`
-	ExternalID  string         `json:"externalId,omitempty"`
-	DisplayName string         `json:"displayName"`
-	Members     []SCIMMember   `json:"members,omitempty"`
-	Meta        SCIMMeta       `json:"meta,omitempty"`
+	Schemas     []string     `json:"schemas"`
+	ID          string       `json:"id,omitempty"`
+	ExternalID  string       `json:"externalId,omitempty"`
+	DisplayName string       `json:"displayName"`
+	Members     []SCIMMember `json:"members,omitempty"`
+	Meta        SCIMMeta     `json:"meta,omitempty"`
 }
 
 // SCIMMember represents a member in a SCIM group
@@ -129,13 +129,13 @@ type SCIMListResponse struct {
 
 // SCIMPatchRequest represents a SCIM PATCH request
 type SCIMPatchRequest struct {
-	Schemas    []string           `json:"schemas"`
+	Schemas    []string             `json:"schemas"`
 	Operations []SCIMPatchOperation `json:"Operations"`
 }
 
 // SCIMPatchOperation represents a SCIM PATCH operation
 type SCIMPatchOperation struct {
-	Op    string      `json:"op"`    // add, remove, replace
+	Op    string      `json:"op"` // add, remove, replace
 	Path  string      `json:"path,omitempty"`
 	Value interface{} `json:"value,omitempty"`
 }
@@ -150,28 +150,28 @@ type SCIMError struct {
 
 // ProvisioningRule defines an automated provisioning rule
 type ProvisioningRule struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Trigger     RuleTrigger            `json:"trigger"`
-	Conditions  []RuleCondition        `json:"conditions"`
-	Actions     []RuleAction           `json:"actions"`
-	Enabled     bool                   `json:"enabled"`
-	Priority    int                    `json:"priority"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Trigger     RuleTrigger     `json:"trigger"`
+	Conditions  []RuleCondition `json:"conditions"`
+	Actions     []RuleAction    `json:"actions"`
+	Enabled     bool            `json:"enabled"`
+	Priority    int             `json:"priority"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // RuleTrigger defines what triggers a provisioning rule
 type RuleTrigger string
 
 const (
-	TriggerUserCreated    RuleTrigger = "user_created"
-	TriggerUserUpdated    RuleTrigger = "user_updated"
-	TriggerUserDeleted    RuleTrigger = "user_deleted"
+	TriggerUserCreated     RuleTrigger = "user_created"
+	TriggerUserUpdated     RuleTrigger = "user_updated"
+	TriggerUserDeleted     RuleTrigger = "user_deleted"
 	TriggerGroupMembership RuleTrigger = "group_membership"
 	TriggerAttributeChange RuleTrigger = "attribute_change"
-	TriggerScheduled      RuleTrigger = "scheduled"
+	TriggerScheduled       RuleTrigger = "scheduled"
 )
 
 // RuleCondition defines a condition for a rule
@@ -628,7 +628,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		scim.PUT("/Users/:id", svc.handleReplaceUser)
 		scim.PATCH("/Users/:id", svc.handlePatchUser)
 		scim.DELETE("/Users/:id", svc.handleDeleteUser)
-		
+
 		// Groups
 		scim.GET("/Groups", svc.handleListGroups)
 		scim.POST("/Groups", svc.handleCreateGroup)
@@ -636,14 +636,14 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		scim.PUT("/Groups/:id", svc.handleReplaceGroup)
 		scim.PATCH("/Groups/:id", svc.handlePatchGroup)
 		scim.DELETE("/Groups/:id", svc.handleDeleteGroup)
-		
+
 		// Schema discovery
 		scim.GET("/Schemas", svc.handleGetSchemas)
 		scim.GET("/Schemas/:id", svc.handleGetSchema)
 		scim.GET("/ResourceTypes", svc.handleGetResourceTypes)
 		scim.GET("/ServiceProviderConfig", svc.handleGetServiceProviderConfig)
 	}
-	
+
 	// Internal provisioning API
 	prov := router.Group("/api/v1/provisioning")
 	prov.Use(svc.openIDXAuthMiddleware())
@@ -1365,14 +1365,14 @@ func (s *Service) handleGetResourceTypes(c *gin.Context) {
 
 func (s *Service) handleGetServiceProviderConfig(c *gin.Context) {
 	c.JSON(200, gin.H{
-		"schemas":            []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
-		"documentationUri":   "https://docs.openidx.io/scim",
-		"patch":              gin.H{"supported": true},
-		"bulk":               gin.H{"supported": false},
-		"filter":             gin.H{"supported": true, "maxResults": 200},
-		"changePassword":     gin.H{"supported": true},
-		"sort":               gin.H{"supported": true},
-		"etag":               gin.H{"supported": false},
+		"schemas":          []string{"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"},
+		"documentationUri": "https://docs.openidx.io/scim",
+		"patch":            gin.H{"supported": true},
+		"bulk":             gin.H{"supported": false},
+		"filter":           gin.H{"supported": true, "maxResults": 200},
+		"changePassword":   gin.H{"supported": true},
+		"sort":             gin.H{"supported": true},
+		"etag":             gin.H{"supported": false},
 		"authenticationSchemes": []gin.H{
 			{"type": "oauthbearertoken", "name": "OAuth Bearer Token"},
 		},

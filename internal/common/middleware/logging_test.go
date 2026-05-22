@@ -181,10 +181,10 @@ func TestRequestLogger_ClientIPExtraction(t *testing.T) {
 	})
 
 	tests := []struct {
-		name           string
-		headerXFF      string
-		headerXRealIP  string
-		expectedIP     string
+		name          string
+		headerXFF     string
+		headerXRealIP string
+		expectedIP    string
 	}{
 		{
 			name:       "X-Forwarded-For with single IP",
@@ -367,8 +367,8 @@ func TestRequestLogger_StatusBasedLogLevel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name       string
-		statusCode int
+		name          string
+		statusCode    int
 		expectedLevel zapcore.Level
 	}{
 		{"2xx success", http.StatusOK, zapcore.InfoLevel},

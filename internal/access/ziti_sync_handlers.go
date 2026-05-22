@@ -264,23 +264,23 @@ func (s *Service) handleGetEnrichedDevices(c *gin.Context) {
 	defer rows.Close()
 
 	type EnrichedDevice struct {
-		ID          string   `json:"id"`
-		Fingerprint string   `json:"fingerprint"`
-		Name        string   `json:"name"`
-		IPAddress   string   `json:"ip_address"`
-		UserAgent   string   `json:"user_agent"`
-		Location    string   `json:"location"`
-		Trusted     bool     `json:"trusted"`
-		LastSeenAt  string   `json:"last_seen_at"`
-		CreatedAt   string   `json:"created_at"`
-		UserID      string   `json:"user_id"`
-		Username    string   `json:"username"`
-		Email       string   `json:"email"`
-		FirstName   string   `json:"first_name"`
-		LastName    string   `json:"last_name"`
-		ZitiID      string   `json:"ziti_id"`
-		ZitiEnrolled bool    `json:"ziti_enrolled"`
-		ZitiAttrs   []string `json:"ziti_attributes"`
+		ID           string   `json:"id"`
+		Fingerprint  string   `json:"fingerprint"`
+		Name         string   `json:"name"`
+		IPAddress    string   `json:"ip_address"`
+		UserAgent    string   `json:"user_agent"`
+		Location     string   `json:"location"`
+		Trusted      bool     `json:"trusted"`
+		LastSeenAt   string   `json:"last_seen_at"`
+		CreatedAt    string   `json:"created_at"`
+		UserID       string   `json:"user_id"`
+		Username     string   `json:"username"`
+		Email        string   `json:"email"`
+		FirstName    string   `json:"first_name"`
+		LastName     string   `json:"last_name"`
+		ZitiID       string   `json:"ziti_id"`
+		ZitiEnrolled bool     `json:"ziti_enrolled"`
+		ZitiAttrs    []string `json:"ziti_attributes"`
 	}
 
 	var devices []EnrichedDevice

@@ -118,8 +118,8 @@ func ValidateOriginForProduction(origins []string) error {
 		// Wildcard is not allowed in production
 		if origin == "*" {
 			return &OriginValidationError{
-				Origin:  origin,
-				Reason:  "wildcard origin is not allowed in production",
+				Origin:      origin,
+				Reason:      "wildcard origin is not allowed in production",
 				Remediation: "specify explicit allowed origins",
 			}
 		}
@@ -127,8 +127,8 @@ func ValidateOriginForProduction(origins []string) error {
 		// Check for localhost in production
 		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
 			return &OriginValidationError{
-				Origin:  origin,
-				Reason:  "localhost origins are not allowed in production",
+				Origin:      origin,
+				Reason:      "localhost origins are not allowed in production",
 				Remediation: "use production domain names",
 			}
 		}
@@ -136,8 +136,8 @@ func ValidateOriginForProduction(origins []string) error {
 		// Validate origin format
 		if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
 			return &OriginValidationError{
-				Origin:  origin,
-				Reason:  "origin must start with http:// or https://",
+				Origin:      origin,
+				Reason:      "origin must start with http:// or https://",
 				Remediation: "use fully qualified origin URLs",
 			}
 		}

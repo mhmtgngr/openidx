@@ -27,9 +27,9 @@ const (
 
 // HealthStatus represents the health of a plugin
 type HealthStatus struct {
-	Healthy   bool      `json:"healthy"`
-	Message   string    `json:"message,omitempty"`
-	LastCheck time.Time `json:"last_check"`
+	Healthy   bool                   `json:"healthy"`
+	Message   string                 `json:"message,omitempty"`
+	LastCheck time.Time              `json:"last_check"`
 	Details   map[string]interface{} `json:"details,omitempty"`
 }
 

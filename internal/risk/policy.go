@@ -35,41 +35,41 @@ const (
 
 // TenantPolicy represents per-tenant risk policy thresholds
 type TenantPolicy struct {
-	TenantID         string     `json:"tenant_id"`
-	LowThreshold     int        `json:"low_threshold"`      // Default: 30
-	MediumThreshold  int        `json:"medium_threshold"`   // Default: 50
-	HighThreshold    int        `json:"high_threshold"`     // Default: 70
+	TenantID          string    `json:"tenant_id"`
+	LowThreshold      int       `json:"low_threshold"`      // Default: 30
+	MediumThreshold   int       `json:"medium_threshold"`   // Default: 50
+	HighThreshold     int       `json:"high_threshold"`     // Default: 70
 	CriticalThreshold int       `json:"critical_threshold"` // Default: 90
-	Enabled          bool       `json:"enabled"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	Enabled           bool      `json:"enabled"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // RiskPolicy represents a configurable risk policy (used by identity service)
 type RiskPolicy struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name"`
-	Description      string     `json:"description"`
-	TenantID         string     `json:"tenant_id"`
-	LowThreshold     int        `json:"low_threshold"`
-	MediumThreshold  int        `json:"medium_threshold"`
-	HighThreshold    int        `json:"high_threshold"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Description       string    `json:"description"`
+	TenantID          string    `json:"tenant_id"`
+	LowThreshold      int       `json:"low_threshold"`
+	MediumThreshold   int       `json:"medium_threshold"`
+	HighThreshold     int       `json:"high_threshold"`
 	CriticalThreshold int       `json:"critical_threshold"`
-	Enabled          bool       `json:"enabled"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	Enabled           bool      `json:"enabled"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // CreateRiskPolicyRequest represents a request to create or update a risk policy
 type CreateRiskPolicyRequest struct {
-	Name             string  `json:"name" binding:"required"`
-	Description      string  `json:"description"`
-	TenantID         string  `json:"tenant_id" binding:"required"`
-	LowThreshold     *int    `json:"low_threshold"`
-	MediumThreshold  *int    `json:"medium_threshold"`
-	HighThreshold    *int    `json:"high_threshold"`
+	Name              string `json:"name" binding:"required"`
+	Description       string `json:"description"`
+	TenantID          string `json:"tenant_id" binding:"required"`
+	LowThreshold      *int   `json:"low_threshold"`
+	MediumThreshold   *int   `json:"medium_threshold"`
+	HighThreshold     *int   `json:"high_threshold"`
 	CriticalThreshold *int   `json:"critical_threshold"`
-	Enabled          *bool   `json:"enabled"`
+	Enabled           *bool  `json:"enabled"`
 }
 
 // EvaluateLoginContext represents the context for evaluating login risk
@@ -101,31 +101,31 @@ type PolicyEvaluationResult struct {
 
 // EvaluateRequest represents a risk evaluation request
 type EvaluateRequest struct {
-	TenantID      string  `json:"tenant_id" binding:"required"`
-	UserID        string  `json:"user_id" binding:"required"`
-	IPAddress     string  `json:"ip_address"`
-	UserAgent     string  `json:"user_agent"`
-	DeviceFingerprint string `json:"device_fingerprint"`
-	Latitude      float64 `json:"latitude"`
-	Longitude     float64 `json:"longitude"`
-	LoginHour     int     `json:"login_hour"`
-	Resource      string  `json:"resource,omitempty"`
+	TenantID          string  `json:"tenant_id" binding:"required"`
+	UserID            string  `json:"user_id" binding:"required"`
+	IPAddress         string  `json:"ip_address"`
+	UserAgent         string  `json:"user_agent"`
+	DeviceFingerprint string  `json:"device_fingerprint"`
+	Latitude          float64 `json:"latitude"`
+	Longitude         float64 `json:"longitude"`
+	LoginHour         int     `json:"login_hour"`
+	Resource          string  `json:"resource,omitempty"`
 }
 
 // EvaluateResponse represents the risk evaluation result
 type EvaluateResponse struct {
-	RequestID      string     `json:"request_id"`
-	RiskScore      int        `json:"risk_score"`
-	RiskLevel      RiskLevel  `json:"risk_level"`
-	Action         AuthAction `json:"action"`
-	Reasons        []string   `json:"reasons"`
-	Anomalies      []string   `json:"anomalies"`
-	SessionDuration *int      `json:"session_duration_minutes,omitempty"`
-	RequireMFA     bool       `json:"require_mfa"`
-	MFAMethods     []string   `json:"mfa_methods,omitempty"`
-	RequireApproval bool      `json:"require_approval"`
-	Allowed        bool       `json:"allowed"`
-	EvaluatedAt    time.Time  `json:"evaluated_at"`
+	RequestID       string     `json:"request_id"`
+	RiskScore       int        `json:"risk_score"`
+	RiskLevel       RiskLevel  `json:"risk_level"`
+	Action          AuthAction `json:"action"`
+	Reasons         []string   `json:"reasons"`
+	Anomalies       []string   `json:"anomalies"`
+	SessionDuration *int       `json:"session_duration_minutes,omitempty"`
+	RequireMFA      bool       `json:"require_mfa"`
+	MFAMethods      []string   `json:"mfa_methods,omitempty"`
+	RequireApproval bool       `json:"require_approval"`
+	Allowed         bool       `json:"allowed"`
+	EvaluatedAt     time.Time  `json:"evaluated_at"`
 }
 
 // PolicyConfig holds configuration for risk policies
@@ -137,9 +137,9 @@ type PolicyConfig struct {
 	DefaultCriticalThreshold int
 
 	// Session duration overrides based on risk (minutes)
-	LowRiskSessionDuration     int
-	MediumRiskSessionDuration  int
-	HighRiskSessionDuration    int
+	LowRiskSessionDuration      int
+	MediumRiskSessionDuration   int
+	HighRiskSessionDuration     int
 	CriticalRiskSessionDuration int
 
 	// MFA requirements
@@ -153,17 +153,17 @@ type PolicyConfig struct {
 // DefaultPolicyConfig returns default policy configuration
 func DefaultPolicyConfig() PolicyConfig {
 	return PolicyConfig{
-		DefaultLowThreshold:       30,
-		DefaultMediumThreshold:    50,
-		DefaultHighThreshold:      70,
-		DefaultCriticalThreshold:  90,
-		LowRiskSessionDuration:    480,      // 8 hours
-		MediumRiskSessionDuration: 240,     // 4 hours
-		HighRiskSessionDuration:   60,      // 1 hour
-		CriticalRiskSessionDuration: 15,    // 15 minutes
-		DefaultMFAMethods:         []string{"totp", "webauthn"},
-		StrongMFAMethods:          []string{"webauthn", "push"},
-		CacheTTL:                  5 * time.Minute,
+		DefaultLowThreshold:         30,
+		DefaultMediumThreshold:      50,
+		DefaultHighThreshold:        70,
+		DefaultCriticalThreshold:    90,
+		LowRiskSessionDuration:      480, // 8 hours
+		MediumRiskSessionDuration:   240, // 4 hours
+		HighRiskSessionDuration:     60,  // 1 hour
+		CriticalRiskSessionDuration: 15,  // 15 minutes
+		DefaultMFAMethods:           []string{"totp", "webauthn"},
+		StrongMFAMethods:            []string{"webauthn", "push"},
+		CacheTTL:                    5 * time.Minute,
 	}
 }
 
@@ -227,14 +227,14 @@ func (p *PolicyEngine) GetTenantPolicy(ctx context.Context, tenantID string) (*T
 	if dbErr != nil {
 		// Return default policy
 		policy = TenantPolicy{
-			TenantID:           tenantID,
-			LowThreshold:       p.config.DefaultLowThreshold,
-			MediumThreshold:    p.config.DefaultMediumThreshold,
-			HighThreshold:      p.config.DefaultHighThreshold,
-			CriticalThreshold:  p.config.DefaultCriticalThreshold,
-			Enabled:            true,
-			CreatedAt:          time.Now(),
-			UpdatedAt:          time.Now(),
+			TenantID:          tenantID,
+			LowThreshold:      p.config.DefaultLowThreshold,
+			MediumThreshold:   p.config.DefaultMediumThreshold,
+			HighThreshold:     p.config.DefaultHighThreshold,
+			CriticalThreshold: p.config.DefaultCriticalThreshold,
+			Enabled:           true,
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
 		}
 	}
 
@@ -596,14 +596,14 @@ func (p *PolicyEngine) triggerHighRiskAlert(ctx context.Context, req EvaluateReq
 			score, req.UserID, req.IPAddress,
 		),
 		Details: map[string]interface{}{
-			"tenant_id":     req.TenantID,
-			"user_id":       req.UserID,
-			"ip_address":    req.IPAddress,
-			"user_agent":    req.UserAgent,
-			"risk_score":    score,
-			"anomalies":     anomalies,
-			"latitude":      req.Latitude,
-			"longitude":     req.Longitude,
+			"tenant_id":  req.TenantID,
+			"user_id":    req.UserID,
+			"ip_address": req.IPAddress,
+			"user_agent": req.UserAgent,
+			"risk_score": score,
+			"anomalies":  anomalies,
+			"latitude":   req.Latitude,
+			"longitude":  req.Longitude,
 		},
 		SourceIP:           req.IPAddress,
 		RemediationActions: []string{"verify_identity", "require_mfa", "notify_admin"},

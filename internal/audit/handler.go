@@ -130,14 +130,14 @@ func (h *Handler) SearchEvents(c *gin.Context) {
 
 	// Build search query from query parameters
 	query := &SearchQuery{
-		ActorID:      c.Query("actor"),
-		Action:       c.Query("action"),
-		ResourceType: c.Query("resource_type"),
-		Outcome:      c.Query("outcome"),
-		TenantID:     tenantID.(string),
+		ActorID:       c.Query("actor"),
+		Action:        c.Query("action"),
+		ResourceType:  c.Query("resource_type"),
+		Outcome:       c.Query("outcome"),
+		TenantID:      tenantID.(string),
 		CorrelationID: c.Query("correlation_id"),
-		IP:           c.Query("ip"),
-		AfterID:      c.Query("after_id"),
+		IP:            c.Query("ip"),
+		AfterID:       c.Query("after_id"),
 	}
 
 	// Parse time range

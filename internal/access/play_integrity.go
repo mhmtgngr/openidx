@@ -97,11 +97,11 @@ func (p IntegrityPolicy) Pass(v IntegrityVerdict) bool {
 // decodeIntegrityToken API. Construct via NewPlayIntegrityVerifier. The
 // zero value is safe but unusable — callers must check Enabled().
 type PlayIntegrityVerifier struct {
-	logger          *zap.Logger
-	tokenSource     oauth2.TokenSource
-	httpClient      *http.Client
-	packageName     string
-	maxTokenAge     time.Duration
+	logger           *zap.Logger
+	tokenSource      oauth2.TokenSource
+	httpClient       *http.Client
+	packageName      string
+	maxTokenAge      time.Duration
 	allowedClockSkew time.Duration
 }
 
@@ -235,10 +235,10 @@ type decodeIntegrityTokenResponse struct {
 			TimestampMillis    int64  `json:"timestampMillis,string"`
 		} `json:"requestDetails"`
 		AppIntegrity struct {
-			AppRecognitionVerdict string `json:"appRecognitionVerdict"`
-			PackageName           string `json:"packageName"`
+			AppRecognitionVerdict string   `json:"appRecognitionVerdict"`
+			PackageName           string   `json:"packageName"`
 			CertificateSha256     []string `json:"certificateSha256Digest"`
-			VersionCode           string `json:"versionCode"`
+			VersionCode           string   `json:"versionCode"`
 		} `json:"appIntegrity"`
 		DeviceIntegrity struct {
 			DeviceRecognitionVerdict []string `json:"deviceRecognitionVerdict"`

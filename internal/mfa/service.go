@@ -8,13 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"go.uber.org/zap"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // MFAService provides high-level MFA operations combining TOTP logic and persistence
 type MFAService struct {
-	totp      *Service  // TOTPService from totp.go
+	totp      *Service // TOTPService from totp.go
 	repo      Repository
 	logger    *zap.Logger
 	redis     *redis.Client

@@ -29,35 +29,35 @@ const (
 type RequestEventType string
 
 const (
-	EventRequestSubmitted  RequestEventType = "request_submitted"
-	EventRequestApproved   RequestEventType = "request_approved"
-	EventRequestDenied     RequestEventType = "request_denied"
-	EventRequestEscalated  RequestEventType = "request_escalated"
-	EventRequestExpired    RequestEventType = "request_expired"
-	EventRequestCancelled  RequestEventType = "request_cancelled"
+	EventRequestSubmitted RequestEventType = "request_submitted"
+	EventRequestApproved  RequestEventType = "request_approved"
+	EventRequestDenied    RequestEventType = "request_denied"
+	EventRequestEscalated RequestEventType = "request_escalated"
+	EventRequestExpired   RequestEventType = "request_expired"
+	EventRequestCancelled RequestEventType = "request_cancelled"
 )
 
 // ApprovalStepType defines the type of approval step
 type ApprovalStepType string
 
 const (
-	ApprovalStepTypeSpecificUser ApprovalStepType = "specific_user"   // Specific user must approve
-	ApprovalStepTypeRole        ApprovalStepType = "role"            // Any user with role must approve
-	ApprovalStepTypeGroup       ApprovalStepType = "group"           // Any user in group must approve
-	ApprovalStepTypeManager     ApprovalStepType = "manager"         // Resource owner's manager
-	ApprovalStepTypeAuto        ApprovalStepType = "auto"            // Automatic approval based on conditions
+	ApprovalStepTypeSpecificUser ApprovalStepType = "specific_user" // Specific user must approve
+	ApprovalStepTypeRole         ApprovalStepType = "role"          // Any user with role must approve
+	ApprovalStepTypeGroup        ApprovalStepType = "group"         // Any user in group must approve
+	ApprovalStepTypeManager      ApprovalStepType = "manager"       // Resource owner's manager
+	ApprovalStepTypeAuto         ApprovalStepType = "auto"          // Automatic approval based on conditions
 )
 
 // ApprovalStep represents a single step in an approval chain
 type ApprovalStep struct {
-	Order          int              `json:"order"`                      // Step order (1-based)
-	Type           ApprovalStepType `json:"type"`                       // Type of approval required
-	ApproverID     string           `json:"approver_id,omitempty"`      // Specific user ID (for type=specific_user)
-	RoleID         string           `json:"role_id,omitempty"`          // Role ID (for type=role)
-	GroupID        string           `json:"group_id,omitempty"`         // Group ID (for type=group)
-	MinApprovals   int              `json:"min_approvals"`              // Minimum number of approvals needed (default: 1)
-	TimeoutMinutes int              `json:"timeout_minutes,omitempty"`  // Step timeout in minutes
-	Conditions     map[string]interface{} `json:"conditions,omitempty"` // Auto-approval conditions
+	Order          int                    `json:"order"`                     // Step order (1-based)
+	Type           ApprovalStepType       `json:"type"`                      // Type of approval required
+	ApproverID     string                 `json:"approver_id,omitempty"`     // Specific user ID (for type=specific_user)
+	RoleID         string                 `json:"role_id,omitempty"`         // Role ID (for type=role)
+	GroupID        string                 `json:"group_id,omitempty"`        // Group ID (for type=group)
+	MinApprovals   int                    `json:"min_approvals"`             // Minimum number of approvals needed (default: 1)
+	TimeoutMinutes int                    `json:"timeout_minutes,omitempty"` // Step timeout in minutes
+	Conditions     map[string]interface{} `json:"conditions,omitempty"`      // Auto-approval conditions
 
 	// Legacy fields for backward compatibility
 	StepOrder    int    `json:"step_order,omitempty"`
@@ -68,9 +68,9 @@ type ApprovalStep struct {
 
 // ApprovalChainConfig defines the approval workflow configuration
 type ApprovalChainConfig struct {
-	Steps            []ApprovalStep `json:"steps"`
-	EscalateAfterHours int           `json:"escalate_after_hours"` // Default 24h
-	EscalateTo       []string       `json:"escalate_to"`           // User IDs to escalate to
+	Steps              []ApprovalStep `json:"steps"`
+	EscalateAfterHours int            `json:"escalate_after_hours"` // Default 24h
+	EscalateTo         []string       `json:"escalate_to"`          // User IDs to escalate to
 }
 
 // AccessRequestDetail extends AccessRequest with workflow-specific fields

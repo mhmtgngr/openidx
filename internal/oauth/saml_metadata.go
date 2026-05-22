@@ -33,13 +33,13 @@ type IdPMetadata struct {
 
 // IDPSSODescriptor describes the IdP's SSO capabilities
 type IDPSSODescriptor struct {
-	XMLName                    xml.Name                `xml:"md:IDPSSODescriptor"`
-	WantAuthnRequestsSigned    bool                    `xml:"WantAuthnRequestsSigned,attr"`
-	ProtocolSupportEnumeration string                  `xml:"protocolSupportEnumeration,attr"`
-	KeyDescriptors             []IdPKeyDescriptor      `xml:"md:KeyDescriptor"`
-	NameIDFormats              []IdPNameIDFormat       `xml:"md:NameIDFormat"`
-	SingleSignOnServices       []IdPSingleSignOnService `xml:"md:SingleSignOnService"`
-	SingleLogoutServices       []IdPSingleLogoutService `xml:"md:SingleLogoutService,omitempty"`
+	XMLName                    xml.Name                       `xml:"md:IDPSSODescriptor"`
+	WantAuthnRequestsSigned    bool                           `xml:"WantAuthnRequestsSigned,attr"`
+	ProtocolSupportEnumeration string                         `xml:"protocolSupportEnumeration,attr"`
+	KeyDescriptors             []IdPKeyDescriptor             `xml:"md:KeyDescriptor"`
+	NameIDFormats              []IdPNameIDFormat              `xml:"md:NameIDFormat"`
+	SingleSignOnServices       []IdPSingleSignOnService       `xml:"md:SingleSignOnService"`
+	SingleLogoutServices       []IdPSingleLogoutService       `xml:"md:SingleLogoutService,omitempty"`
 	ArtifactResolutionServices []IdPArtifactResolutionService `xml:"md:ArtifactResolutionService,omitempty"`
 }
 
@@ -52,8 +52,8 @@ type IdPKeyDescriptor struct {
 
 // IdPKeyInfo holds key information as defined in XML DSig
 type IdPKeyInfo struct {
-	XMLName  xml.Name     `xml:"ds:KeyInfo"`
-	X509Data IdPX509Data  `xml:"ds:X509Data"`
+	XMLName  xml.Name    `xml:"ds:KeyInfo"`
+	X509Data IdPX509Data `xml:"ds:X509Data"`
 }
 
 // IdPX509Data holds X.509 certificate data
@@ -92,10 +92,10 @@ type IdPArtifactResolutionService struct {
 
 // IdPOrganization describes the organization
 type IdPOrganization struct {
-	XMLName    xml.Name         `xml:"md:Organization"`
-	Name       IdPLocalizedName `xml:"md:Name"`
+	XMLName     xml.Name         `xml:"md:Organization"`
+	Name        IdPLocalizedName `xml:"md:Name"`
 	DisplayName IdPLocalizedName `xml:"md:DisplayName"`
-	URL        IdPLocalizedName `xml:"md:URL"`
+	URL         IdPLocalizedName `xml:"md:URL"`
 }
 
 // IdPLocalizedName holds a localized string
@@ -107,12 +107,12 @@ type IdPLocalizedName struct {
 
 // IdPContactPerson describes a contact person
 type IdPContactPerson struct {
-	XMLName      xml.Name        `xml:"md:ContactPerson"`
-	ContactType  string          `xml:"contactType,attr"`
-	Company      string          `xml:"md:Company,omitempty"`
-	GivenName    string          `xml:"md:GivenName,omitempty"`
-	SurName      string          `xml:"md:SurName,omitempty"`
-	EmailAddress string         `xml:"md:EmailAddress,omitempty"`
+	XMLName      xml.Name `xml:"md:ContactPerson"`
+	ContactType  string   `xml:"contactType,attr"`
+	Company      string   `xml:"md:Company,omitempty"`
+	GivenName    string   `xml:"md:GivenName,omitempty"`
+	SurName      string   `xml:"md:SurName,omitempty"`
+	EmailAddress string   `xml:"md:EmailAddress,omitempty"`
 }
 
 // MetadataBuilder builds SAML IdP metadata
@@ -170,9 +170,9 @@ func (b *MetadataBuilder) SetWantAuthnSigned(want bool) *MetadataBuilder {
 // SetOrganization sets the organization information
 func (b *MetadataBuilder) SetOrganization(name, displayName, url string) *MetadataBuilder {
 	b.organization = &IdPOrganization{
-		Name: IdPLocalizedName{Value: name},
+		Name:        IdPLocalizedName{Value: name},
 		DisplayName: IdPLocalizedName{Value: displayName},
-		URL: IdPLocalizedName{Value: url},
+		URL:         IdPLocalizedName{Value: url},
 	}
 	return b
 }
@@ -398,24 +398,24 @@ func (s *Service) StoreSAMLMetadata(ctx context.Context, spID string, metadataXM
 
 // SPMetadata represents a parsed SAML SP Metadata XML structure
 type SPMetadata struct {
-	XMLName          xml.Name          `xml:"md:EntityDescriptor"`
-	XMLNS            string            `xml:"xmlns:md,attr"`
-	EntityID         string            `xml:"entityID,attr"`
-	SPSSODescriptor  SPSSODescriptor   `xml:"md:SPSSODescriptor"`
-	Organization     *IdPOrganization  `xml:"md:Organization,omitempty"`
-	ContactPerson    *IdPContactPerson `xml:"md:ContactPerson,omitempty"`
+	XMLName         xml.Name          `xml:"md:EntityDescriptor"`
+	XMLNS           string            `xml:"xmlns:md,attr"`
+	EntityID        string            `xml:"entityID,attr"`
+	SPSSODescriptor SPSSODescriptor   `xml:"md:SPSSODescriptor"`
+	Organization    *IdPOrganization  `xml:"md:Organization,omitempty"`
+	ContactPerson   *IdPContactPerson `xml:"md:ContactPerson,omitempty"`
 }
 
 // SPSSODescriptor describes the SP's SSO capabilities
 type SPSSODescriptor struct {
-	XMLNS                      string             `xml:"xmlns:md,attr"`
-	AuthnRequestsSigned        bool               `xml:"AuthnRequestsSigned,attr"`
-	WantAssertionsSigned       bool               `xml:"WantAssertionsSigned,attr"`
-	ProtocolSupportEnumeration string             `xml:"protocolSupportEnumeration,attr"`
-	KeyDescriptors             []IdPKeyDescriptor `xml:"md:KeyDescriptor"`
-	NameIDFormats              []IdPNameIDFormat  `xml:"md:NameIDFormat"`
+	XMLNS                      string                       `xml:"xmlns:md,attr"`
+	AuthnRequestsSigned        bool                         `xml:"AuthnRequestsSigned,attr"`
+	WantAssertionsSigned       bool                         `xml:"WantAssertionsSigned,attr"`
+	ProtocolSupportEnumeration string                       `xml:"protocolSupportEnumeration,attr"`
+	KeyDescriptors             []IdPKeyDescriptor           `xml:"md:KeyDescriptor"`
+	NameIDFormats              []IdPNameIDFormat            `xml:"md:NameIDFormat"`
 	AssertionConsumerServices  []SPAssertionConsumerService `xml:"md:AssertionConsumerService"`
-	SingleLogoutServices       []IdPSingleLogoutService `xml:"md:SingleLogoutService,omitempty"`
+	SingleLogoutServices       []IdPSingleLogoutService     `xml:"md:SingleLogoutService,omitempty"`
 }
 
 // SPAssertionConsumerService describes the SP's ACS endpoint

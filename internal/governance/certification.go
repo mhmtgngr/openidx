@@ -17,21 +17,21 @@ import (
 type CampaignStatus string
 
 const (
-	CampaignStatusDraft      CampaignStatus = "draft"
-	CampaignStatusActive     CampaignStatus = "active"
-	CampaignStatusCompleted  CampaignStatus = "completed"
-	CampaignStatusExpired    CampaignStatus = "expired"
-	CampaignStatusCancelled  CampaignStatus = "cancelled"
+	CampaignStatusDraft     CampaignStatus = "draft"
+	CampaignStatusActive    CampaignStatus = "active"
+	CampaignStatusCompleted CampaignStatus = "completed"
+	CampaignStatusExpired   CampaignStatus = "expired"
+	CampaignStatusCancelled CampaignStatus = "cancelled"
 )
 
 // CertificationDecision represents the decision on a certification review item
 type CertificationDecision string
 
 const (
-	DecisionConfirm    CertificationDecision = "confirm"
-	DecisionRevoke     CertificationDecision = "revoke"
-	DecisionModify     CertificationDecision = "modify"
-	DecisionPending    CertificationDecision = "pending"
+	DecisionConfirm CertificationDecision = "confirm"
+	DecisionRevoke  CertificationDecision = "revoke"
+	DecisionModify  CertificationDecision = "modify"
+	DecisionPending CertificationDecision = "pending"
 )
 
 // CampaignScope defines what resources are included in the campaign
@@ -51,40 +51,40 @@ type CampaignReviewer struct {
 
 // CertificationCampaign represents an access certification campaign
 type CertificationCampaign struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	Status          CampaignStatus  `json:"status"`
-	Scope           CampaignScope   `json:"scope"`
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	Description     string             `json:"description"`
+	Status          CampaignStatus     `json:"status"`
+	Scope           CampaignScope      `json:"scope"`
 	Reviewers       []CampaignReviewer `json:"reviewers"`
-	Deadline        time.Time       `json:"deadline"`
-	CreatedBy       string          `json:"created_by"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	StartedAt       *time.Time      `json:"started_at,omitempty"`
-	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
-	TotalItems      int             `json:"total_items"`
-	ReviewedItems   int             `json:"reviewed_items"`
-	AutoRevoke      bool            `json:"auto_revoke"`
-	GracePeriodDays int             `json:"grace_period_days"`
+	Deadline        time.Time          `json:"deadline"`
+	CreatedBy       string             `json:"created_by"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	StartedAt       *time.Time         `json:"started_at,omitempty"`
+	CompletedAt     *time.Time         `json:"completed_at,omitempty"`
+	TotalItems      int                `json:"total_items"`
+	ReviewedItems   int                `json:"reviewed_items"`
+	AutoRevoke      bool               `json:"auto_revoke"`
+	GracePeriodDays int                `json:"grace_period_days"`
 }
 
 // CertificationItem represents a single access assignment to be reviewed
 type CertificationItem struct {
-	ID               string         `json:"id"`
-	CampaignID       string         `json:"campaign_id"`
-	UserID           string         `json:"user_id"`
-	UserName         string         `json:"user_name,omitempty"`
-	ResourceType     string         `json:"resource_type"`
-	ResourceID       string         `json:"resource_id"`
-	ResourceName     string         `json:"resource_name,omitempty"`
-	ReviewerID       string         `json:"reviewer_id"`
-	ReviewerName     string         `json:"reviewer_name,omitempty"`
-	Decision         CertificationDecision `json:"decision"`
-	Comments         string         `json:"comments"`
-	ReviewedAt       *time.Time     `json:"reviewed_at,omitempty"`
-	OriginalGrantDate time.Time     `json:"original_grant_date"`
-	CreatedAt        time.Time      `json:"created_at"`
+	ID                string                `json:"id"`
+	CampaignID        string                `json:"campaign_id"`
+	UserID            string                `json:"user_id"`
+	UserName          string                `json:"user_name,omitempty"`
+	ResourceType      string                `json:"resource_type"`
+	ResourceID        string                `json:"resource_id"`
+	ResourceName      string                `json:"resource_name,omitempty"`
+	ReviewerID        string                `json:"reviewer_id"`
+	ReviewerName      string                `json:"reviewer_name,omitempty"`
+	Decision          CertificationDecision `json:"decision"`
+	Comments          string                `json:"comments"`
+	ReviewedAt        *time.Time            `json:"reviewed_at,omitempty"`
+	OriginalGrantDate time.Time             `json:"original_grant_date"`
+	CreatedAt         time.Time             `json:"created_at"`
 }
 
 // CertificationService handles access certification operations
@@ -574,13 +574,13 @@ func (s *CertificationService) ProcessExpiredCampaigns(ctx context.Context) erro
 	defer rows.Close()
 
 	var expiredCampaigns []struct {
-		ID        string
+		ID         string
 		AutoRevoke bool
 	}
 
 	for rows.Next() {
 		var c struct {
-			ID        string
+			ID         string
 			AutoRevoke bool
 		}
 		if err := rows.Scan(&c.ID, &c.AutoRevoke); err != nil {

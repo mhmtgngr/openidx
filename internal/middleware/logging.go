@@ -93,22 +93,22 @@ func (r *responseBodyReader) Read(p []byte) (int, error) {
 
 // JSONLogEntry represents a structured log entry
 type JSONLogEntry struct {
-	Time        string                 `json:"time"`
-	Method      string                 `json:"method"`
-	Path        string                 `json:"path"`
-	Query       string                 `json:"query,omitempty"`
-	Protocol    string                 `json:"protocol"`
-	Status      int                    `json:"status"`
-	Latency     int64                  `json:"duration_ms"`
-	ClientIP    string                 `json:"ip"`
-	UserAgent   string                 `json:"user_agent,omitempty"`
-	RequestID   string                 `json:"request_id"`
-	UserID      string                 `json:"user_id,omitempty"`
-	Referer     string                 `json:"referer,omitempty"`
-	BytesIn     int                    `json:"bytes_in,omitempty"`
-	BytesOut    int                    `json:"bytes_out,omitempty"`
-	Error       string                 `json:"error,omitempty"`
-	Extra       map[string]interface{} `json:"extra,omitempty"`
+	Time      string                 `json:"time"`
+	Method    string                 `json:"method"`
+	Path      string                 `json:"path"`
+	Query     string                 `json:"query,omitempty"`
+	Protocol  string                 `json:"protocol"`
+	Status    int                    `json:"status"`
+	Latency   int64                  `json:"duration_ms"`
+	ClientIP  string                 `json:"ip"`
+	UserAgent string                 `json:"user_agent,omitempty"`
+	RequestID string                 `json:"request_id"`
+	UserID    string                 `json:"user_id,omitempty"`
+	Referer   string                 `json:"referer,omitempty"`
+	BytesIn   int                    `json:"bytes_in,omitempty"`
+	BytesOut  int                    `json:"bytes_out,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	Extra     map[string]interface{} `json:"extra,omitempty"`
 }
 
 // Logging returns a middleware that logs HTTP requests as structured JSON.

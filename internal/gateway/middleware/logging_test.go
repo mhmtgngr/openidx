@@ -22,13 +22,13 @@ func init() {
 
 // mockLogger implements gateway.Logger for testing
 type mockLogger struct {
-	lastLevel   string
-	lastMsg     string
-	lastFields  []interface{}
-	debugCount  int
-	infoCount   int
-	warnCount   int
-	errorCount  int
+	lastLevel  string
+	lastMsg    string
+	lastFields []interface{}
+	debugCount int
+	infoCount  int
+	warnCount  int
+	errorCount int
 }
 
 func (m *mockLogger) Debug(msg string, fields ...interface{}) {

@@ -15,10 +15,10 @@ import (
 
 // CommandContext provides shared context for commands
 type CommandContext struct {
-	RootDir  string
-	Verbose  bool
-	NoColor  bool
-	DryRun   bool
+	RootDir string
+	Verbose bool
+	NoColor bool
+	DryRun  bool
 }
 
 // NewCommandContext creates a new command context from cobra command

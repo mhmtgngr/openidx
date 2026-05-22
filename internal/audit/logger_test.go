@@ -21,7 +21,7 @@ func TestAuditLogger_LogEvent(t *testing.T) {
 		ResourceType: "api",
 		Action:       "login",
 		Metadata: map[string]interface{}{
-			"ip":        "192.168.1.1",
+			"ip":         "192.168.1.1",
 			"user_agent": "Mozilla/5.0",
 		},
 	}
@@ -62,11 +62,11 @@ func TestAuditLogger_LogEventChain(t *testing.T) {
 	// Log multiple events
 	for i := 0; i < 5; i++ {
 		event := AuditEventForTest{
-			EventType:    "test",
-			ActorID:      "user-123",
-			ResourceID:   "resource-456",
-			Action:       "action",
-			Metadata:     map[string]interface{}{"index": i},
+			EventType:  "test",
+			ActorID:    "user-123",
+			ResourceID: "resource-456",
+			Action:     "action",
+			Metadata:   map[string]interface{}{"index": i},
 		}
 		if err := logger.LogEvent(ctx, event); err != nil {
 			t.Fatalf("LogEvent %d failed: %v", i, err)
@@ -89,9 +89,9 @@ func TestAuditLogger_VerifyChecksum(t *testing.T) {
 
 	ctx := context.Background()
 	event := AuditEventForTest{
-		EventType:  "test",
-		ActorID:    "user-123",
-		Action:     "action",
+		EventType: "test",
+		ActorID:   "user-123",
+		Action:    "action",
 	}
 
 	if err := logger.LogEvent(ctx, event); err != nil {
@@ -122,9 +122,9 @@ func TestAuditLogger_GetEventByID(t *testing.T) {
 
 	ctx := context.Background()
 	event := AuditEventForTest{
-		EventType:  "test",
-		ActorID:    "user-123",
-		Action:     "action",
+		EventType: "test",
+		ActorID:   "user-123",
+		Action:    "action",
 	}
 
 	if err := logger.LogEvent(ctx, event); err != nil {
@@ -282,7 +282,7 @@ func TestAuditLogger_ChainTamperingDetection(t *testing.T) {
 		event := AuditEventForTest{
 			EventType: "test",
 			Action:    "action",
-			Metadata: map[string]interface{}{"index": i},
+			Metadata:  map[string]interface{}{"index": i},
 		}
 		if err := logger.LogEvent(ctx, event); err != nil {
 			t.Fatalf("LogEvent failed: %v", err)

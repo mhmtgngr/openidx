@@ -326,34 +326,34 @@ func TestEventStreamer_IsWildcardAllowed(t *testing.T) {
 	service := createTestService(t)
 
 	tests := []struct {
-		name          string
+		name           string
 		allowedOrigins []string
-		expected      bool
+		expected       bool
 	}{
 		{
-			name:          "wildcard present",
+			name:           "wildcard present",
 			allowedOrigins: []string{"*"},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "wildcard with dot",
+			name:           "wildcard with dot",
 			allowedOrigins: []string{"*."},
-			expected:      true,
+			expected:       true,
 		},
 		{
-			name:          "wildcard subdomain",
+			name:           "wildcard subdomain",
 			allowedOrigins: []string{"*.example.com"},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "specific origins only",
+			name:           "specific origins only",
 			allowedOrigins: []string{"https://example.com"},
-			expected:      false,
+			expected:       false,
 		},
 		{
-			name:          "empty list",
+			name:           "empty list",
 			allowedOrigins: []string{},
-			expected:      false,
+			expected:       false,
 		},
 	}
 

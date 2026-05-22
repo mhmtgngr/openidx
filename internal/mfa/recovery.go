@@ -43,21 +43,21 @@ const (
 
 // RecoveryCode represents a single recovery code
 type RecoveryCode struct {
-	ID        uuid.UUID `json:"id"`
-	UserID    uuid.UUID `json:"user_id" db:"user_id"`
-	CodeHash  string    `json:"-" db:"code_hash"` // bcrypt hash
-	Used      bool      `json:"used" db:"used"`
+	ID        uuid.UUID  `json:"id"`
+	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
+	CodeHash  string     `json:"-" db:"code_hash"` // bcrypt hash
+	Used      bool       `json:"used" db:"used"`
 	UsedAt    *time.Time `json:"used_at,omitempty" db:"used_at"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
 }
 
 // RecoveryCodeSet represents a set of recovery codes for a user
 type RecoveryCodeSet struct {
-	UserID      uuid.UUID       `json:"user_id"`
-	Codes       []RecoveryCode  `json:"codes"`
-	Remaining   int             `json:"remaining"`
-	CreatedAt   time.Time       `json:"created_at"`
-	Regenerated bool            `json:"regenerated"`
+	UserID      uuid.UUID      `json:"user_id"`
+	Codes       []RecoveryCode `json:"codes"`
+	Remaining   int            `json:"remaining"`
+	CreatedAt   time.Time      `json:"created_at"`
+	Regenerated bool           `json:"regenerated"`
 }
 
 // RecoveryCodeRepository defines the interface for recovery code persistence

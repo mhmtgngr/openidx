@@ -18,12 +18,12 @@ type ScoreRequest = LoginContext
 
 // ScoreResult represents the result of a risk score calculation
 type ScoreResult struct {
-	TotalScore       int             // 0-100
-	RiskLevel        RiskLevel       // low/medium/high/critical
-	Factors          []RiskFactor    // Individual risk factors
-	RecommendActions []string        // Suggested actions
-	Timestamp        time.Time       // When score was calculated
-	Signals          []Signal        // Raw signals from scorer
+	TotalScore       int          // 0-100
+	RiskLevel        RiskLevel    // low/medium/high/critical
+	Factors          []RiskFactor // Individual risk factors
+	RecommendActions []string     // Suggested actions
+	Timestamp        time.Time    // When score was calculated
+	Signals          []Signal     // Raw signals from scorer
 }
 
 // RiskFactor represents a single risk factor contributing to the score
@@ -62,10 +62,10 @@ func (s *Service) ScoreLoginRequest(ctx context.Context, userID, ip, userAgent, 
 		Latitude:          lat,
 		Longitude:         lon,
 		DeviceTrustLevel:  deviceTrustLevel,
-		CountryCode:       "",    // Will be filled by GeoIP lookup if needed
-		City:              "",    // Will be filled by GeoIP lookup if needed
-		FailedCount:       0,    // Will be filled by checking recent failures
-		LoginCount:        1,    // Will be filled by checking recent logins
+		CountryCode:       "", // Will be filled by GeoIP lookup if needed
+		City:              "", // Will be filled by GeoIP lookup if needed
+		FailedCount:       0,  // Will be filled by checking recent failures
+		LoginCount:        1,  // Will be filled by checking recent logins
 	}
 
 	// Calculate the risk score using the new API

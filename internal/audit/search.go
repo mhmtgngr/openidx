@@ -15,15 +15,15 @@ import (
 
 // SearchQuery represents parameters for searching audit events
 type SearchQuery struct {
-	ActorID      string    `json:"actor_id,omitempty"`
-	Action       string    `json:"action,omitempty"`
-	ResourceType string    `json:"resource_type,omitempty"`
-	Outcome      string    `json:"outcome,omitempty"`
-	TenantID     string    `json:"tenant_id,omitempty"`
-	From         time.Time `json:"from,omitempty"`
-	To           time.Time `json:"to,omitempty"`
-	CorrelationID string   `json:"correlation_id,omitempty"`
-	IP           string    `json:"ip,omitempty"`
+	ActorID       string    `json:"actor_id,omitempty"`
+	Action        string    `json:"action,omitempty"`
+	ResourceType  string    `json:"resource_type,omitempty"`
+	Outcome       string    `json:"outcome,omitempty"`
+	TenantID      string    `json:"tenant_id,omitempty"`
+	From          time.Time `json:"from,omitempty"`
+	To            time.Time `json:"to,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	IP            string    `json:"ip,omitempty"`
 
 	// Cursor-based pagination
 	AfterID string `json:"after_id,omitempty"`
@@ -32,10 +32,10 @@ type SearchQuery struct {
 
 // SearchResult represents the results of a search query
 type SearchResult struct {
-	Events      []*AuditEvent `json:"events"`
-	NextCursor  string        `json:"next_cursor,omitempty"`
-	HasMore     bool          `json:"has_more"`
-	TotalCount  int           `json:"total_count"`
+	Events     []*AuditEvent `json:"events"`
+	NextCursor string        `json:"next_cursor,omitempty"`
+	HasMore    bool          `json:"has_more"`
+	TotalCount int           `json:"total_count"`
 }
 
 // Searcher provides search functionality for audit events
@@ -378,10 +378,10 @@ func (s *Searcher) GetTimeline(ctx context.Context, entityType, entityID, tenant
 // GetStatistics returns statistics about audit events
 func (s *Searcher) GetStatistics(ctx context.Context, tenantID string, from, to time.Time) (*Statistics, error) {
 	stats := &Statistics{
-		From:     from,
-		To:       to,
-		ByAction: make(map[string]int64),
-		ByActor:  make(map[string]int64),
+		From:      from,
+		To:        to,
+		ByAction:  make(map[string]int64),
+		ByActor:   make(map[string]int64),
 		ByOutcome: make(map[string]int64),
 	}
 
@@ -499,14 +499,14 @@ func (q *SearchQuery) Validate() error {
 // ParseSearchQueryFromMap creates a SearchQuery from a map (useful for HTTP query params)
 func ParseSearchQueryFromMap(params map[string]string) (*SearchQuery, error) {
 	query := &SearchQuery{
-		ActorID:      params["actor"],
-		Action:       params["action"],
-		ResourceType: params["resource_type"],
-		Outcome:      params["outcome"],
-		TenantID:     params["tenant_id"],
+		ActorID:       params["actor"],
+		Action:        params["action"],
+		ResourceType:  params["resource_type"],
+		Outcome:       params["outcome"],
+		TenantID:      params["tenant_id"],
 		CorrelationID: params["correlation_id"],
-		IP:           params["ip"],
-		AfterID:      params["after_id"],
+		IP:            params["ip"],
+		AfterID:       params["after_id"],
 	}
 
 	// Parse time range

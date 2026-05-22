@@ -355,8 +355,8 @@ func TestIsProduction(t *testing.T) {
 func TestProductionWarnings(t *testing.T) {
 	t.Run("No warnings in development", func(t *testing.T) {
 		cfg := &Config{
-			Environment:      "development",
-			JWTSecret:        "weak-secret",
+			Environment:        "development",
+			JWTSecret:          "weak-secret",
 			CORSAllowedOrigins: "*",
 		}
 		warnings := cfg.ProductionWarnings()
@@ -365,15 +365,15 @@ func TestProductionWarnings(t *testing.T) {
 
 	t.Run("Warnings for insecure production config", func(t *testing.T) {
 		cfg := &Config{
-			Environment:          "production",
-			JWTSecret:            "change-me",
-			EncryptionKey:        "change-me",
-			AccessSessionSecret:  "change-me-in-production-32bytes!",
-			CORSAllowedOrigins:   "*",
-			CSRFEnabled:          false,
-			DatabaseSSLMode:      "disable",
-			RedisTLSEnabled:      false,
-			TLS:                  TLSConfig{Enabled: false},
+			Environment:         "production",
+			JWTSecret:           "change-me",
+			EncryptionKey:       "change-me",
+			AccessSessionSecret: "change-me-in-production-32bytes!",
+			CORSAllowedOrigins:  "*",
+			CSRFEnabled:         false,
+			DatabaseSSLMode:     "disable",
+			RedisTLSEnabled:     false,
+			TLS:                 TLSConfig{Enabled: false},
 		}
 
 		warnings := cfg.ProductionWarnings()
@@ -412,13 +412,13 @@ func TestProductionWarnings(t *testing.T) {
 func TestValidateProduction(t *testing.T) {
 	t.Run("Always passes in development", func(t *testing.T) {
 		cfg := &Config{
-			Environment:         "development",
-			JWTSecret:           "",
-			CORSAllowedOrigins:  "*",
-			CSRFEnabled:         false,
-			DatabaseSSLMode:     "disable",
-			RedisTLSEnabled:     false,
-			TLS:                 TLSConfig{Enabled: false},
+			Environment:        "development",
+			JWTSecret:          "",
+			CORSAllowedOrigins: "*",
+			CSRFEnabled:        false,
+			DatabaseSSLMode:    "disable",
+			RedisTLSEnabled:    false,
+			TLS:                TLSConfig{Enabled: false},
 		}
 
 		err := cfg.ValidateProduction()
@@ -427,17 +427,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with insecure session secret", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "change-me",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "change-me",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -447,17 +447,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with insecure JWT secret", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "change",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "change",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -467,17 +467,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with wildcard CORS", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "*",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "*",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -487,17 +487,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with CSRF disabled", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         false,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               false,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -507,17 +507,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with database SSL disabled", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "disable",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "disable",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -527,17 +527,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with Redis TLS disabled", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     false,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           false,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -547,17 +547,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with service TLS disabled", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: false},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: false},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -567,17 +567,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with debug OTP enabled", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   true,
+			DebugOTPInResponse:        true,
 		}
 
 		err := cfg.ValidateProduction()
@@ -587,17 +587,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with wildcard audit stream origins", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "*",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -607,17 +607,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Fails with empty audit stream origins", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "require",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()
@@ -627,17 +627,17 @@ func TestValidateProduction(t *testing.T) {
 
 	t.Run("Passes with fully secure config", func(t *testing.T) {
 		cfg := &Config{
-			Environment:        "production",
-			AccessSessionSecret: "secure-key-32-bytes-long!!!!",
-			JWTSecret:           "secure-key-32-bytes-long!!!!!!!!",
-			EncryptionKey:       "secure-key-32-bytes-long!!!!!!!!",
-			CORSAllowedOrigins:  "https://example.com",
-			CSRFEnabled:         true,
-			DatabaseSSLMode:     "verify-full",
-			RedisTLSEnabled:     true,
-			TLS:                 TLSConfig{Enabled: true},
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "verify-full",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
-			DebugOTPInResponse:   false,
+			DebugOTPInResponse:        false,
 		}
 
 		err := cfg.ValidateProduction()

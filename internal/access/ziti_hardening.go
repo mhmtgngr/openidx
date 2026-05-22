@@ -299,12 +299,12 @@ func (zm *ZitiManager) SyncCertificatesFromController(ctx context.Context) error
 
 	var caResp struct {
 		Data []struct {
-			ID                  string `json:"id"`
-			Name                string `json:"name"`
-			Fingerprint         string `json:"fingerprint"`
-			CertPEM             string `json:"certPem"`
-			IsVerified          bool   `json:"isVerified"`
-			IsAutoCaEnrollment  bool   `json:"isAutoCaEnrollmentEnabled"`
+			ID                 string `json:"id"`
+			Name               string `json:"name"`
+			Fingerprint        string `json:"fingerprint"`
+			CertPEM            string `json:"certPem"`
+			IsVerified         bool   `json:"isVerified"`
+			IsAutoCaEnrollment bool   `json:"isAutoCaEnrollmentEnabled"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(caData, &caResp); err != nil {

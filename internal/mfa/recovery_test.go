@@ -519,10 +519,10 @@ func TestTOTPService_ReferenceVectors(t *testing.T) {
 	encrypter := NewNoopEncrypter()
 
 	config := &TOTPConfig{
-		Issuer:      "Test",
-		Period:      30,
-		Digits:      otp.Digits(6),
-		Algorithm:   otp.AlgorithmSHA1,
+		Issuer:       "Test",
+		Period:       30,
+		Digits:       otp.Digits(6),
+		Algorithm:    otp.AlgorithmSHA1,
 		SecretLength: 20,
 	}
 

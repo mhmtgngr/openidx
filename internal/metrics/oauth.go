@@ -143,15 +143,15 @@ const (
 
 // Common token types
 const (
-	TokenTypeAccess = "access_token"
+	TokenTypeAccess  = "access_token"
 	TokenTypeRefresh = "refresh_token"
-	TokenTypeID = "id_token"
+	TokenTypeID      = "id_token"
 )
 
 // Common auth methods
 const (
-	AuthMethodClientSecretPost = "client_secret_post"
+	AuthMethodClientSecretPost  = "client_secret_post"
 	AuthMethodClientSecretBasic = "client_secret_basic"
-	AuthMethodPrivateKeyJWT = "private_key_jwt"
-	AuthMethodNone = "none"
+	AuthMethodPrivateKeyJWT     = "private_key_jwt"
+	AuthMethodNone              = "none"
 )

@@ -57,9 +57,9 @@ func (rl *inMemoryRateLimiter) check(key string, maxRequests int64, window time.
 
 // RedisRateLimiter provides distributed rate limiting using Redis with TTL
 type RedisRateLimiter struct {
-	redis      *redis.Client
-	logger     *zap.Logger
-	keyPrefix  string
+	redis     *redis.Client
+	logger    *zap.Logger
+	keyPrefix string
 }
 
 // NewRedisRateLimiter creates a new Redis-based rate limiter
@@ -122,11 +122,11 @@ func (rl *RedisRateLimiter) Reset(ctx context.Context, key string) error {
 
 // ZTPolicyHandler handles HTTP requests for policy management
 type ZTPolicyHandler struct {
-	store        *ZTPolicyStore
-	eval         *ZTPolicyEvaluator
-	logger       *zap.Logger
-	rateLimiter  *RedisRateLimiter
-	redisClient  *redis.Client
+	store       *ZTPolicyStore
+	eval        *ZTPolicyEvaluator
+	logger      *zap.Logger
+	rateLimiter *RedisRateLimiter
+	redisClient *redis.Client
 }
 
 // NewZTPolicyHandler creates a new policy handler
@@ -168,32 +168,32 @@ func (h *ZTPolicyHandler) RegisterRoutes(r gin.IRouter) {
 
 // CreatePolicyRequest represents the request to create a policy
 type CreatePolicyRequest struct {
-	Name        string         `json:"name" binding:"required"`
-	Description string         `json:"description"`
-	Effect      PolicyEffect   `json:"effect" binding:"required,oneof=allow deny"`
-	Conditions  ConditionGroup `json:"conditions" binding:"required"`
-	Priority    int            `json:"priority"`
-	TenantID    string         `json:"tenant_id"`
+	Name        string          `json:"name" binding:"required"`
+	Description string          `json:"description"`
+	Effect      PolicyEffect    `json:"effect" binding:"required,oneof=allow deny"`
+	Conditions  ConditionGroup  `json:"conditions" binding:"required"`
+	Priority    int             `json:"priority"`
+	TenantID    string          `json:"tenant_id"`
 	Metadata    json.RawMessage `json:"metadata"`
 }
 
 // UpdatePolicyRequest represents the request to update a policy
 type UpdatePolicyRequest struct {
-	Name        *string        `json:"name"`
-	Description *string        `json:"description"`
-	Effect      *PolicyEffect  `json:"effect" binding:"omitempty,oneof=allow deny"`
+	Name        *string         `json:"name"`
+	Description *string         `json:"description"`
+	Effect      *PolicyEffect   `json:"effect" binding:"omitempty,oneof=allow deny"`
 	Conditions  *ConditionGroup `json:"conditions"`
-	Priority    *int           `json:"priority"`
-	Enabled     *bool          `json:"enabled"`
-	TenantID    *string        `json:"tenant_id"`
+	Priority    *int            `json:"priority"`
+	Enabled     *bool           `json:"enabled"`
+	TenantID    *string         `json:"tenant_id"`
 	Metadata    json.RawMessage `json:"metadata"`
 }
 
 // EvaluateRequest represents the request to evaluate policies
 type EvaluateRequest struct {
-	Subject  Subject         `json:"subject" binding:"required"`
-	Resource Resource        `json:"resource" binding:"required"`
-	Action   string          `json:"action" binding:"required"`
+	Subject  Subject           `json:"subject" binding:"required"`
+	Resource Resource          `json:"resource" binding:"required"`
+	Action   string            `json:"action" binding:"required"`
 	Context  EvaluationContext `json:"context"`
 }
 
@@ -596,10 +596,10 @@ func (h *ZTPolicyHandler) PolicyMiddleware(action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Extract subject from context (set by auth middleware)
 		subject := Subject{
-			ID:       "anonymous",
-			Type:     "user",
-			Roles:    []string{},
-			Groups:   []string{},
+			ID:            "anonymous",
+			Type:          "user",
+			Roles:         []string{},
+			Groups:        []string{},
 			Authenticated: false,
 		}
 

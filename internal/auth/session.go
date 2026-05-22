@@ -42,20 +42,20 @@ type Session struct {
 
 // SessionConfig holds configuration for session management
 type SessionConfig struct {
-	DefaultTTL       time.Duration // Default session timeout (default: 24h)
-	MaxSessions      int           // Max concurrent sessions per user (default: 5)
-	CleanupInterval  time.Duration // How often to clean expired sessions (default: 1h)
-	KeyPrefix        string        // Redis key prefix (default: "session:")
-	UserSessionsPrefix string      // Prefix for user session tracking (default: "user_sessions:")
+	DefaultTTL         time.Duration // Default session timeout (default: 24h)
+	MaxSessions        int           // Max concurrent sessions per user (default: 5)
+	CleanupInterval    time.Duration // How often to clean expired sessions (default: 1h)
+	KeyPrefix          string        // Redis key prefix (default: "session:")
+	UserSessionsPrefix string        // Prefix for user session tracking (default: "user_sessions:")
 }
 
 // DefaultSessionConfig returns sensible defaults for session configuration
 func DefaultSessionConfig() SessionConfig {
 	return SessionConfig{
-		DefaultTTL:        24 * time.Hour,
-		MaxSessions:       5,
-		CleanupInterval:   1 * time.Hour,
-		KeyPrefix:         "session:",
+		DefaultTTL:         24 * time.Hour,
+		MaxSessions:        5,
+		CleanupInterval:    1 * time.Hour,
+		KeyPrefix:          "session:",
 		UserSessionsPrefix: "user_sessions:",
 	}
 }

@@ -13,84 +13,84 @@ import (
 
 func TestParseFilter_SimpleEquality(t *testing.T) {
 	tests := []struct {
-		name     string
-		filter   string
-		wantOp   FilterOperator
+		name      string
+		filter    string
+		wantOp    FilterOperator
 		wantField string
 		wantValue string
-		wantErr  bool
+		wantErr   bool
 	}{
 		{
-			name:     "userName eq john.doe",
-			filter:   "userName eq john.doe",
-			wantOp:   OpEqual,
+			name:      "userName eq john.doe",
+			filter:    "userName eq john.doe",
+			wantOp:    OpEqual,
 			wantField: "userName",
 			wantValue: "john.doe",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "active eq true",
-			filter:   "active eq true",
-			wantOp:   OpEqual,
+			name:      "active eq true",
+			filter:    "active eq true",
+			wantOp:    OpEqual,
 			wantField: "active",
 			wantValue: "true",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "name.givenName eq John",
-			filter:   "name.givenName eq John",
-			wantOp:   OpEqual,
+			name:      "name.givenName eq John",
+			filter:    "name.givenName eq John",
+			wantOp:    OpEqual,
 			wantField: "name.givenName",
 			wantValue: "John",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "displayName eq \"Test User\"",
-			filter:   `displayName eq "Test User"`,
-			wantOp:   OpEqual,
+			name:      "displayName eq \"Test User\"",
+			filter:    `displayName eq "Test User"`,
+			wantOp:    OpEqual,
 			wantField: "displayName",
 			wantValue: "Test User",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "userName co admin",
-			filter:   "userName co admin",
-			wantOp:   OpContains,
+			name:      "userName co admin",
+			filter:    "userName co admin",
+			wantOp:    OpContains,
 			wantField: "userName",
 			wantValue: "admin",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "userName sw user",
-			filter:   "userName sw user",
-			wantOp:   OpStartsWith,
+			name:      "userName sw user",
+			filter:    "userName sw user",
+			wantOp:    OpStartsWith,
 			wantField: "userName",
 			wantValue: "user",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "userName ew example.com",
-			filter:   "userName ew example.com",
-			wantOp:   OpEndsWith,
+			name:      "userName ew example.com",
+			filter:    "userName ew example.com",
+			wantOp:    OpEndsWith,
 			wantField: "userName",
 			wantValue: "example.com",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "emails pr",
-			filter:   "emails pr",
-			wantOp:   OpPresent,
+			name:      "emails pr",
+			filter:    "emails pr",
+			wantOp:    OpPresent,
 			wantField: "emails",
 			wantValue: "",
-			wantErr:  false,
+			wantErr:   false,
 		},
 		{
-			name:     "userName ne admin",
-			filter:   "userName ne admin",
-			wantOp:   OpNotEqual,
+			name:      "userName ne admin",
+			filter:    "userName ne admin",
+			wantOp:    OpNotEqual,
 			wantField: "userName",
 			wantValue: "admin",
-			wantErr:  false,
+			wantErr:   false,
 		},
 	}
 
@@ -421,8 +421,8 @@ func TestUserToSCIM(t *testing.T) {
 		Emails: []Email{
 			{Value: "john.doe@example.com", Primary: boolPtr(true), Type: stringPtr("work")},
 		},
-		Groups: []string{"group1", "group2"},
-		Roles:  []string{"admin", "user"},
+		Groups:    []string{"group1", "group2"},
+		Roles:     []string{"admin", "user"},
 		CreatedAt: now,
 		UpdatedAt: now,
 		Meta: &Meta{
@@ -580,8 +580,8 @@ func TestApplySCIMPatchToUser_Add(t *testing.T) {
 		Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
 		Ops: []SCIMPatchOp{
 			{
-				Op:    "add",
-				Path:  stringPtr("emails"),
+				Op:   "add",
+				Path: stringPtr("emails"),
 				Value: []interface{}{
 					map[string]interface{}{"value": "newemail@example.com", "type": "work"},
 				},

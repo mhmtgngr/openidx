@@ -258,11 +258,11 @@ func TestAuditEventDetailsMap(t *testing.T) {
 		ID:        "evt-100",
 		EventType: EventTypeAuthentication,
 		Details: map[string]interface{}{
-			"browser":    "Chrome",
-			"os":         "Linux",
-			"mfa_used":   true,
-			"attempt":    float64(1),
-			"ip_list":    []interface{}{"10.0.0.1", "10.0.0.2"},
+			"browser":  "Chrome",
+			"os":       "Linux",
+			"mfa_used": true,
+			"attempt":  float64(1),
+			"ip_list":  []interface{}{"10.0.0.1", "10.0.0.2"},
 		},
 	}
 

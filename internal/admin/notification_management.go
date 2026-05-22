@@ -631,4 +631,3 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 		"routing_rules_count": routingRulesCount,
 	})
 }
-

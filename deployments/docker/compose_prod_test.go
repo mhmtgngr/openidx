@@ -41,7 +41,7 @@ func TestComposeProductionServiceEnvironment(t *testing.T) {
 		}
 
 		// Check next 500 characters for APP_ENV
-		serviceSection := contentStr[serviceIndex:serviceIndex+500]
+		serviceSection := contentStr[serviceIndex : serviceIndex+500]
 		if !strings.Contains(serviceSection, "APP_ENV=production") {
 			t.Errorf("Service %s should have APP_ENV=production", service)
 		}
@@ -65,7 +65,7 @@ func TestComposeDatabaseConfiguration(t *testing.T) {
 		t.Fatal("Postgres service not found")
 	}
 
-	postgresSection := contentStr[postgresIndex:postgresIndex+1000]
+	postgresSection := contentStr[postgresIndex : postgresIndex+1000]
 
 	// Validate restart policy
 	if !strings.Contains(postgresSection, "restart: always") {
@@ -100,7 +100,7 @@ func TestComposeRedisConfiguration(t *testing.T) {
 		t.Fatal("Redis service not found")
 	}
 
-	redisSection := contentStr[redisIndex:redisIndex+500]
+	redisSection := contentStr[redisIndex : redisIndex+500]
 
 	// Validate password configuration
 	if !strings.Contains(redisSection, "requirepass ${REDIS_PASSWORD") {
@@ -140,7 +140,7 @@ func TestComposeElasticsearchConfiguration(t *testing.T) {
 		t.Fatal("Elasticsearch service not found")
 	}
 
-	esSection := contentStr[esIndex:esIndex+500]
+	esSection := contentStr[esIndex : esIndex+500]
 
 	// Validate single-node discovery
 	if !strings.Contains(esSection, "discovery.type=single-node") {
@@ -175,7 +175,7 @@ func TestComposeAPISIXConfiguration(t *testing.T) {
 		t.Fatal("APISIX service not found")
 	}
 
-	apisixSection := contentStr[apisixIndex:apisixIndex+500]
+	apisixSection := contentStr[apisixIndex : apisixIndex+500]
 
 	// Validate port mappings
 	if !strings.Contains(apisixSection, `"80:9080"`) {
@@ -210,13 +210,13 @@ func TestComposeServicePortBinding(t *testing.T) {
 
 	// All backend services should bind to localhost only
 	services := map[string]string{
-		"identity-service":    "8001",
-		"governance-service":  "8002",
+		"identity-service":     "8001",
+		"governance-service":   "8002",
 		"provisioning-service": "8003",
-		"audit-service":       "8004",
-		"admin-api":           "8005",
-		"oauth-service":       "8006",
-		"access-service":      "8007",
+		"audit-service":        "8004",
+		"admin-api":            "8005",
+		"oauth-service":        "8006",
+		"access-service":       "8007",
 	}
 
 	for service, port := range services {
@@ -230,7 +230,7 @@ func TestComposeServicePortBinding(t *testing.T) {
 		}
 
 		// Check next 2000 characters for port mapping (access-service has many env vars)
-		serviceSection := contentStr[serviceIndex:serviceIndex+2000]
+		serviceSection := contentStr[serviceIndex : serviceIndex+2000]
 
 		// Should bind to 127.0.0.1 only
 		// Note: The actual file uses double quotes around the port mapping
@@ -257,7 +257,7 @@ func TestComposeAdminConsoleBuild(t *testing.T) {
 		t.Fatal("Admin console service not found")
 	}
 
-	consoleSection := contentStr[consoleIndex:consoleIndex+1000]
+	consoleSection := contentStr[consoleIndex : consoleIndex+1000]
 
 	// Validate build configuration
 	if !strings.Contains(consoleSection, "build:") {
@@ -297,7 +297,7 @@ func TestComposeNginxProxyConfiguration(t *testing.T) {
 		t.Fatal("nginx-proxy service not found")
 	}
 
-	nginxSection := contentStr[nginxIndex:nginxIndex+1000]
+	nginxSection := contentStr[nginxIndex : nginxIndex+1000]
 
 	// Validate nginx image
 	if !strings.Contains(nginxSection, "image: nginx:alpine") {
@@ -347,7 +347,7 @@ func TestComposeCertbotConfiguration(t *testing.T) {
 		t.Fatal("certbot service not found")
 	}
 
-	certbotSection := contentStr[certbotIndex:certbotIndex+500]
+	certbotSection := contentStr[certbotIndex : certbotIndex+500]
 
 	// Validate certbot image
 	if !strings.Contains(certbotSection, "image: certbot/certbot:latest") {
@@ -393,7 +393,7 @@ func TestComposeSMTPConfiguration(t *testing.T) {
 			continue
 		}
 
-		serviceSection := contentStr[serviceIndex:serviceIndex+800]
+		serviceSection := contentStr[serviceIndex : serviceIndex+800]
 
 		// Validate SMTP configuration
 		if !strings.Contains(serviceSection, "SMTP_HOST=") {
@@ -431,7 +431,7 @@ func TestComposeOAuthConfiguration(t *testing.T) {
 		t.Fatal("oauth-service not found")
 	}
 
-	oauthSection := contentStr[oauthIndex:oauthIndex+800]
+	oauthSection := contentStr[oauthIndex : oauthIndex+800]
 
 	// Validate JWT secret requirement
 	if !strings.Contains(oauthSection, "${JWT_SECRET:?JWT_SECRET required}") {
@@ -445,7 +445,7 @@ func TestComposeOAuthConfiguration(t *testing.T) {
 
 	// Validate port 8006
 	if !strings.Contains(oauthSection, `"127.0.0.1:8006:8006"`) &&
-	   !strings.Contains(oauthSection, `'127.0.0.1:8006:8006'`) {
+		!strings.Contains(oauthSection, `'127.0.0.1:8006:8006'`) {
 		t.Error("OAuth service should bind to localhost:8006")
 	}
 }
@@ -468,7 +468,7 @@ func TestComposeZitiConfiguration(t *testing.T) {
 		return
 	}
 
-	accessSection := contentStr[accessIndex:accessIndex+1500]
+	accessSection := contentStr[accessIndex : accessIndex+1500]
 
 	// Validate Ziti configuration
 	if strings.Contains(accessSection, "ZITI_ENABLED") {
@@ -636,7 +636,7 @@ func TestComposeDemoAppsProfile(t *testing.T) {
 			continue // App might not exist
 		}
 
-		appSection := contentStr[appIndex:appIndex+200]
+		appSection := contentStr[appIndex : appIndex+200]
 
 		// Should have profiles or restart: no
 		if !strings.Contains(appSection, "profiles:") &&
@@ -679,7 +679,7 @@ func TestComposeMonitoringProfile(t *testing.T) {
 			continue // Service might not exist
 		}
 
-		serviceSection := contentStr[serviceIndex:serviceIndex+200]
+		serviceSection := contentStr[serviceIndex : serviceIndex+200]
 
 		// Should have monitoring profile
 		if !strings.Contains(serviceSection, "profiles:") ||
@@ -725,7 +725,7 @@ func TestComposeZitiProfile(t *testing.T) {
 			continue // Service might not exist
 		}
 
-		serviceSection := contentStr[serviceIndex:serviceIndex+200]
+		serviceSection := contentStr[serviceIndex : serviceIndex+200]
 
 		// Should have ziti profile
 		if !strings.Contains(serviceSection, "profiles:") ||
@@ -776,11 +776,21 @@ func TestComposeServiceCount(t *testing.T) {
 
 	// Also count by checking for common service keywords
 	serviceCount := 0
-	if strings.Contains(contentStr, "  postgres:") { serviceCount++ }
-	if strings.Contains(contentStr, "  redis:") { serviceCount++ }
-	if strings.Contains(contentStr, "  apisix:") { serviceCount++ }
-	if strings.Contains(contentStr, "  identity-service:") { serviceCount++ }
-	if strings.Contains(contentStr, "  nginx-proxy:") { serviceCount++ }
+	if strings.Contains(contentStr, "  postgres:") {
+		serviceCount++
+	}
+	if strings.Contains(contentStr, "  redis:") {
+		serviceCount++
+	}
+	if strings.Contains(contentStr, "  apisix:") {
+		serviceCount++
+	}
+	if strings.Contains(contentStr, "  identity-service:") {
+		serviceCount++
+	}
+	if strings.Contains(contentStr, "  nginx-proxy:") {
+		serviceCount++
+	}
 
 	if serviceCount < 5 {
 		t.Errorf("Expected at least 5 core services, found %d", serviceCount)
@@ -821,7 +831,7 @@ func TestComposeHealthCheckDependencies(t *testing.T) {
 	// Validate nginx-proxy depends on admin-console and apisix
 	nginxIndex := strings.Index(contentStr, "nginx-proxy:")
 	if nginxIndex != -1 {
-		nginxSection := contentStr[nginxIndex:nginxIndex+500]
+		nginxSection := contentStr[nginxIndex : nginxIndex+500]
 
 		if !strings.Contains(nginxSection, "depends_on:") {
 			t.Error("nginx-proxy should have depends_on")

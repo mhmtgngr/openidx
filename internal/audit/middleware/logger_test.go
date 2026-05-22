@@ -92,12 +92,12 @@ func TestWebSocketSecurityLogger_LogSuspiciousActivity(t *testing.T) {
 	wsl := NewWebSocketSecurityLogger(logger)
 
 	event := &SecurityEvent{
-		Timestamp:   time.Now().UTC(),
-		EventType:   "wildcard_in_production",
-		Origin:      "https://example.com",
-		RemoteAddr:  "10.0.0.1:54321",
-		RealIP:      "10.0.0.1",
-		Reason:      "wildcard origin should not be used in production",
+		Timestamp:  time.Now().UTC(),
+		EventType:  "wildcard_in_production",
+		Origin:     "https://example.com",
+		RemoteAddr: "10.0.0.1:54321",
+		RealIP:     "10.0.0.1",
+		Reason:     "wildcard origin should not be used in production",
 	}
 
 	wsl.LogSuspiciousActivity(event)
@@ -197,10 +197,10 @@ func TestExtractRealIP_Whitespace(t *testing.T) {
 
 func TestIsWebSocketUpgrade(t *testing.T) {
 	tests := []struct {
-		name           string
-		connection     string
-		upgrade        string
-		expected       bool
+		name       string
+		connection string
+		upgrade    string
+		expected   bool
 	}{
 		{
 			name:       "valid WebSocket upgrade",

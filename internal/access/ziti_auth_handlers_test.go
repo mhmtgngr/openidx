@@ -620,7 +620,7 @@ func TestValidateZitiToken(t *testing.T) {
 						w.WriteHeader(http.StatusOK)
 						json.NewEncoder(w).Encode(map[string]interface{}{
 							"data": map[string]interface{}{
-								"valid":   true,
+								"valid":    true,
 								"identity": "test-identity",
 							},
 						})

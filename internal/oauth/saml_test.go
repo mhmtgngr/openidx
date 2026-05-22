@@ -47,7 +47,7 @@ func TestDecodeAndParseAuthnRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "invalid xml",
+			name:    "invalid xml",
 			request: `<?xml version="1.0"?><invalid>`,
 			wantErr: true,
 		},
@@ -436,11 +436,11 @@ func TestMetadataBuilder(t *testing.T) {
 
 func TestMetadataXMLSerialization(t *testing.T) {
 	metadata := &IdPMetadata{
-		XMLNS:         SAMLMetadataNamespace,
-		XMLNSDSig:     XMLDSigNamespace,
-		XMLNSSAML:     SAMLAssertionNamespace,
-		EntityID:      "https://idp.example.com",
-		ID:            "_" + uuid.New().String(),
+		XMLNS:     SAMLMetadataNamespace,
+		XMLNSDSig: XMLDSigNamespace,
+		XMLNSSAML: SAMLAssertionNamespace,
+		EntityID:  "https://idp.example.com",
+		ID:        "_" + uuid.New().String(),
 		IDPSSODescriptor: IDPSSODescriptor{
 			WantAuthnRequestsSigned:    false,
 			ProtocolSupportEnumeration: SAMLProtocolNamespace,
@@ -507,10 +507,10 @@ func TestBuildUserAttributes(t *testing.T) {
 
 	sp := &SAMLServiceProvider{
 		AttributeMappings: map[string]string{
-			"email":      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
-			"firstName":  "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname",
-			"lastName":   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname",
-			"groups":     "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups",
+			"email":     "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+			"firstName": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname",
+			"lastName":  "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname",
+			"groups":    "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups",
 		},
 	}
 

@@ -100,7 +100,9 @@ func defaultDeveloperSettings() *DeveloperSettings {
 
 // handleGetDeveloperSettings returns global developer settings
 func (s *Service) handleGetDeveloperSettings(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	ctx := c.Request.Context()
 
 	var valueBytes []byte
@@ -126,7 +128,9 @@ func (s *Service) handleGetDeveloperSettings(c *gin.Context) {
 
 // handleUpdateDeveloperSettings upserts global developer settings
 func (s *Service) handleUpdateDeveloperSettings(c *gin.Context) {
-	if !requireAdmin(c) { return }
+	if !requireAdmin(c) {
+		return
+	}
 	var settings DeveloperSettings
 	if err := c.ShouldBindJSON(&settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

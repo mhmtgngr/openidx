@@ -19,12 +19,12 @@ import (
 
 // EnhancedService provides identity management operations with validation and error handling
 type EnhancedService struct {
-	db        *database.PostgresDB
-	redis     *database.RedisClient
-	config    *config.Config
-	logger    *zap.Logger
-	audit     *logger.AuditLogger
-	perf      *logger.PerformanceLogger
+	db     *database.PostgresDB
+	redis  *database.RedisClient
+	config *config.Config
+	logger *zap.Logger
+	audit  *logger.AuditLogger
+	perf   *logger.PerformanceLogger
 }
 
 // NewEnhancedService creates a new enhanced identity service

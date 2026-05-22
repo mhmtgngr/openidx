@@ -38,12 +38,12 @@ func TestTokenService_GenerateAccessToken(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name      string
-		subject   string
-		tenantID  string
-		roles     []string
-		wantErr   bool
-		errCheck  func(error) bool
+		name     string
+		subject  string
+		tenantID string
+		roles    []string
+		wantErr  bool
+		errCheck func(error) bool
 	}{
 		{
 			name:     "valid token with all fields",
@@ -200,9 +200,9 @@ func TestTokenService_ValidateToken(t *testing.T) {
 	validToken, _ := ts.GenerateAccessToken(ctx, "user123", "tenant456", []string{"admin"})
 
 	tests := []struct {
-		name      string
-		token     string
-		wantErr   error
+		name        string
+		token       string
+		wantErr     error
 		checkClaims func(*testing.T, *Claims)
 	}{
 		{

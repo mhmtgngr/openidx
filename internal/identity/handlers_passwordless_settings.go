@@ -184,7 +184,7 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"magic_links_today":    magicLinksToday,
-		"qr_logins_today":     qrLoginsToday,
+		"qr_logins_today":      qrLoginsToday,
 		"biometric_only_users": biometricOnlyUsers,
 		"adoption_rate":        adoptionRate,
 		"total_users":          totalUsers,

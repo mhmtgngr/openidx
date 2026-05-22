@@ -388,22 +388,22 @@ func TestWebhookDelivery_PayloadStructure(t *testing.T) {
 	streamer := NewEventStreamer(logger, service, []string{"https://example.com"})
 
 	event := &ServiceAuditEvent{
-		ID:          "event-payload",
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeAuthentication,
-		Category:    CategorySecurity,
-		Action:      "auth.login",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "user-456",
-		ActorType:   "user",
-		ActorIP:     "192.168.1.1",
-		TargetID:    "target-789",
-		TargetType:  "session",
-		ResourceID:  "resource-123",
-		SessionID:   "session-456",
-		RequestID:   "req-789",
+		ID:         "event-payload",
+		Timestamp:  time.Now().UTC(),
+		EventType:  EventTypeAuthentication,
+		Category:   CategorySecurity,
+		Action:     "auth.login",
+		Outcome:    ServiceOutcomeSuccess,
+		ActorID:    "user-456",
+		ActorType:  "user",
+		ActorIP:    "192.168.1.1",
+		TargetID:   "target-789",
+		TargetType: "session",
+		ResourceID: "resource-123",
+		SessionID:  "session-456",
+		RequestID:  "req-789",
 		Details: map[string]interface{}{
-			"method": "password",
+			"method":     "password",
 			"user_agent": "test-agent",
 		},
 	}
@@ -443,7 +443,7 @@ func TestWebhookConfig_Update(t *testing.T) {
 		MaxRetries: 10,
 		RetryDelay: 2 * time.Second,
 		Timeout:    60 * time.Second,
-		QueueSize:   2000,
+		QueueSize:  2000,
 		Enabled:    false,
 	}
 
@@ -486,13 +486,13 @@ func BenchmarkWebhookDelivery_Success(b *testing.B) {
 
 func BenchmarkWebhookPayload_Marshal(b *testing.B) {
 	event := &ServiceAuditEvent{
-		ID:          "bench-event",
-		Timestamp:   time.Now().UTC(),
-		EventType:   EventTypeAuthentication,
-		Category:    CategorySecurity,
-		Action:      "auth.login",
-		Outcome:     ServiceOutcomeSuccess,
-		ActorID:     "user-456",
+		ID:        "bench-event",
+		Timestamp: time.Now().UTC(),
+		EventType: EventTypeAuthentication,
+		Category:  CategorySecurity,
+		Action:    "auth.login",
+		Outcome:   ServiceOutcomeSuccess,
+		ActorID:   "user-456",
 		Details: map[string]interface{}{
 			"key1": "value1",
 			"key2": "value2",

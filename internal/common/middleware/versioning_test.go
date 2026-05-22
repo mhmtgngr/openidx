@@ -26,8 +26,8 @@ func TestAPIVersion_URLPathVersioning(t *testing.T) {
 	middleware := APIVersionWithConfig(cfg)
 
 	tests := []struct {
-		name           string
-		path           string
+		name            string
+		path            string
 		expectedVersion string
 	}{
 		{"v1 path", "/api/v1/users", "v1"},
@@ -159,8 +159,8 @@ func TestAPIVersion_DeprecationHeaders(t *testing.T) {
 	middleware := APIVersionWithConfig(cfg)
 
 	tests := []struct {
-		name           string
-		requestVersion string
+		name              string
+		requestVersion    string
 		expectDeprecation bool
 	}{
 		{"deprecated v1", "v1", true},
@@ -481,17 +481,17 @@ func TestMigrateVersion(t *testing.T) {
 
 func TestWrapVersionedResponse(t *testing.T) {
 	tests := []struct {
-		name          string
-		setupContext  func(*gin.Context)
-		expectMeta    bool
-		expectDeprec  bool
+		name         string
+		setupContext func(*gin.Context)
+		expectMeta   bool
+		expectDeprec bool
 	}{
 		{
 			name: "standard v1 response",
 			setupContext: func(c *gin.Context) {
 				c.Set(ContextAPIVersion, "v1")
 			},
-			expectMeta: true,
+			expectMeta:   true,
 			expectDeprec: false,
 		},
 		{
@@ -501,7 +501,7 @@ func TestWrapVersionedResponse(t *testing.T) {
 				c.Writer.Header().Set(HeaderDeprecation, "true")
 				c.Writer.Header().Set(HeaderSunset, "Sun, 31 Dec 2027 23:59:59 GMT")
 			},
-			expectMeta: true,
+			expectMeta:   true,
 			expectDeprec: true,
 		},
 	}

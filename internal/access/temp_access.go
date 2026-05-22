@@ -15,42 +15,42 @@ import (
 
 // TempAccessLink represents a temporary access link for support/vendor access
 type TempAccessLink struct {
-	ID              string    `json:"id"`
-	Token           string    `json:"token"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description,omitempty"`
-	Protocol        string    `json:"protocol"` // ssh, rdp, vnc
-	TargetHost      string    `json:"target_host"`
-	TargetPort      int       `json:"target_port"`
-	Username        string    `json:"username,omitempty"`
-	CreatedBy       string    `json:"created_by"`
-	CreatedByEmail  string    `json:"created_by_email"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	MaxUses         int       `json:"max_uses"`          // 0 = unlimited
-	CurrentUses     int       `json:"current_uses"`
-	AllowedIPs      []string  `json:"allowed_ips,omitempty"` // IP whitelist
-	RequireMFA      bool      `json:"require_mfa"`
-	NotifyOnUse     bool      `json:"notify_on_use"`
-	NotifyEmail     string    `json:"notify_email,omitempty"`
-	RouteID         string    `json:"route_id,omitempty"`
-	GuacConnectionID string   `json:"guacamole_connection_id,omitempty"`
-	AccessURL       string    `json:"access_url"`
-	Status          string    `json:"status"` // active, expired, revoked, used
-	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
-	LastUsedIP      string    `json:"last_used_ip,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID               string     `json:"id"`
+	Token            string     `json:"token"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description,omitempty"`
+	Protocol         string     `json:"protocol"` // ssh, rdp, vnc
+	TargetHost       string     `json:"target_host"`
+	TargetPort       int        `json:"target_port"`
+	Username         string     `json:"username,omitempty"`
+	CreatedBy        string     `json:"created_by"`
+	CreatedByEmail   string     `json:"created_by_email"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	MaxUses          int        `json:"max_uses"` // 0 = unlimited
+	CurrentUses      int        `json:"current_uses"`
+	AllowedIPs       []string   `json:"allowed_ips,omitempty"` // IP whitelist
+	RequireMFA       bool       `json:"require_mfa"`
+	NotifyOnUse      bool       `json:"notify_on_use"`
+	NotifyEmail      string     `json:"notify_email,omitempty"`
+	RouteID          string     `json:"route_id,omitempty"`
+	GuacConnectionID string     `json:"guacamole_connection_id,omitempty"`
+	AccessURL        string     `json:"access_url"`
+	Status           string     `json:"status"` // active, expired, revoked, used
+	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
+	LastUsedIP       string     `json:"last_used_ip,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // TempAccessUsage tracks usage of temporary access links
 type TempAccessUsage struct {
-	ID           string    `json:"id"`
-	LinkID       string    `json:"link_id"`
-	IPAddress    string    `json:"ip_address"`
-	UserAgent    string    `json:"user_agent"`
-	ConnectedAt  time.Time `json:"connected_at"`
+	ID             string     `json:"id"`
+	LinkID         string     `json:"link_id"`
+	IPAddress      string     `json:"ip_address"`
+	UserAgent      string     `json:"user_agent"`
+	ConnectedAt    time.Time  `json:"connected_at"`
 	DisconnectedAt *time.Time `json:"disconnected_at,omitempty"`
-	Duration     int       `json:"duration_seconds,omitempty"`
+	Duration       int        `json:"duration_seconds,omitempty"`
 }
 
 // CreateTempAccessRequest is the request to create a temp access link
@@ -62,7 +62,7 @@ type CreateTempAccessRequest struct {
 	TargetPort   int      `json:"target_port" binding:"required,min=1,max=65535"`
 	Username     string   `json:"username"`
 	DurationMins int      `json:"duration_mins" binding:"required,min=5,max=10080"` // 5 mins to 7 days
-	MaxUses      int      `json:"max_uses"`           // 0 = unlimited
+	MaxUses      int      `json:"max_uses"`                                         // 0 = unlimited
 	AllowedIPs   []string `json:"allowed_ips"`
 	RequireMFA   bool     `json:"require_mfa"`
 	NotifyOnUse  bool     `json:"notify_on_use"`

@@ -85,10 +85,10 @@ func TestSessionService_Create(t *testing.T) {
 			userAgent: "TestAgent",
 			metadata:  nil,
 			config: SessionConfig{
-				DefaultTTL:        1 * time.Hour,
-				MaxSessions:       2,
-				CleanupInterval:   30 * time.Minute,
-				KeyPrefix:         "custom:",
+				DefaultTTL:         1 * time.Hour,
+				MaxSessions:        2,
+				CleanupInterval:    30 * time.Minute,
+				KeyPrefix:          "custom:",
 				UserSessionsPrefix: "custom_user:",
 			},
 			wantErr: nil,
@@ -295,10 +295,10 @@ func TestSessionService_Delete(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name      string
-		setup     func() string
-		wantErr   error
-		verify    func(*testing.T, string)
+		name    string
+		setup   func() string
+		wantErr error
+		verify  func(*testing.T, string)
 	}{
 		{
 			name: "delete existing session",
@@ -429,10 +429,10 @@ func TestSessionService_ListByUser(t *testing.T) {
 	ss := NewSessionService(client, logger)
 
 	tests := []struct {
-		name         string
-		setup        func() string
-		wantCount    int
-		sortedOrder  bool // Whether to check creation order
+		name        string
+		setup       func() string
+		wantCount   int
+		sortedOrder bool // Whether to check creation order
 	}{
 		{
 			name: "list sessions for user with multiple sessions",
@@ -705,10 +705,10 @@ func TestSessionService_WithConfig(t *testing.T) {
 	ctx := context.Background()
 
 	customConfig := SessionConfig{
-		DefaultTTL:        2 * time.Hour,
-		MaxSessions:       10,
-		CleanupInterval:   5 * time.Minute,
-		KeyPrefix:         "test:",
+		DefaultTTL:         2 * time.Hour,
+		MaxSessions:        10,
+		CleanupInterval:    5 * time.Minute,
+		KeyPrefix:          "test:",
 		UserSessionsPrefix: "test_user:",
 	}
 
@@ -757,7 +757,7 @@ func TestSessionService_Metadata(t *testing.T) {
 			},
 		},
 		{
-			name: "empty metadata",
+			name:     "empty metadata",
 			metadata: map[string]interface{}{},
 			check: func(t *testing.T, s *Session) {
 				assert.Empty(t, s.Metadata)
@@ -766,12 +766,12 @@ func TestSessionService_Metadata(t *testing.T) {
 		{
 			name: "metadata with various types",
 			metadata: map[string]interface{}{
-				"string":  "value",
-				"int":     42,
-				"float":   3.14,
-				"bool":    true,
-				"null":    nil,
-				"slice":   []string{"a", "b"},
+				"string": "value",
+				"int":    42,
+				"float":  3.14,
+				"bool":   true,
+				"null":   nil,
+				"slice":  []string{"a", "b"},
 				"nested": map[string]string{"key": "val"},
 			},
 			check: func(t *testing.T, s *Session) {
@@ -947,7 +947,7 @@ func TestSessionService_SessionIDValidation(t *testing.T) {
 
 func TestSessionService_KeyMethods(t *testing.T) {
 	ss := NewSessionService(nil, zap.NewNop()).WithConfig(SessionConfig{
-		KeyPrefix:         "custom:",
+		KeyPrefix:          "custom:",
 		UserSessionsPrefix: "custom_user:",
 	})
 

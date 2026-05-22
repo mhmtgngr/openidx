@@ -13,15 +13,15 @@ import (
 
 // SOC2Report represents a SOC 2 Type II compliance report
 type SOC2Report struct {
-	ReportID      string                   `json:"report_id"`
-	PeriodStart   time.Time                `json:"period_start"`
-	PeriodEnd     time.Time                `json:"period_end"`
-	GeneratedAt   time.Time                `json:"generated_at"`
-	GeneratedBy   string                   `json:"generated_by"`
-	AccessReviews AccessReviewMetrics      `json:"access_reviews"`
-	PasswordPolicy PasswordPolicyMetrics   `json:"password_policy"`
-	MFAAdoption   MFAAdoptionMetrics       `json:"mfa_adoption"`
-	SessionMgmt   SessionManagementMetrics `json:"session_management"`
+	ReportID       string                   `json:"report_id"`
+	PeriodStart    time.Time                `json:"period_start"`
+	PeriodEnd      time.Time                `json:"period_end"`
+	GeneratedAt    time.Time                `json:"generated_at"`
+	GeneratedBy    string                   `json:"generated_by"`
+	AccessReviews  AccessReviewMetrics      `json:"access_reviews"`
+	PasswordPolicy PasswordPolicyMetrics    `json:"password_policy"`
+	MFAAdoption    MFAAdoptionMetrics       `json:"mfa_adoption"`
+	SessionMgmt    SessionManagementMetrics `json:"session_management"`
 }
 
 // AccessReviewMetrics tracks access review compliance
@@ -37,24 +37,24 @@ type AccessReviewMetrics struct {
 
 // PasswordPolicyMetrics tracks password policy compliance
 type PasswordPolicyMetrics struct {
-	MinLength            int     `json:"min_length"`
-	RequireUppercase     bool    `json:"require_uppercase"`
-	RequireLowercase     bool    `json:"require_lowercase"`
-	RequireNumbers       bool    `json:"require_numbers"`
-	RequireSpecialChars  bool    `json:"require_special_chars"`
-	MaxAgeDays           int     `json:"max_age_days"`
+	MinLength              int    `json:"min_length"`
+	RequireUppercase       bool   `json:"require_uppercase"`
+	RequireLowercase       bool   `json:"require_lowercase"`
+	RequireNumbers         bool   `json:"require_numbers"`
+	RequireSpecialChars    bool   `json:"require_special_chars"`
+	MaxAgeDays             int    `json:"max_age_days"`
 	UsersWithWeakPasswords int    `json:"users_with_weak_passwords"`
-	ComplianceStatus     string  `json:"compliance_status"`
+	ComplianceStatus       string `json:"compliance_status"`
 }
 
 // MFAAdoptionMetrics tracks MFA adoption
 type MFAAdoptionMetrics struct {
-	TotalUsers       int       `json:"total_users"`
-	UsersWithMFA     int       `json:"users_with_mfa"`
-	UsersWithTOTP    int       `json:"users_with_totp"`
+	TotalUsers        int       `json:"total_users"`
+	UsersWithMFA      int       `json:"users_with_mfa"`
+	UsersWithTOTP     int       `json:"users_with_totp"`
 	UsersWithWebAuthn int       `json:"users_with_webauthn"`
-	AdoptionRate     float64   `json:"adoption_rate"`
-	LastUpdated      time.Time `json:"last_updated"`
+	AdoptionRate      float64   `json:"adoption_rate"`
+	LastUpdated       time.Time `json:"last_updated"`
 	ComplianceStatus  string    `json:"compliance_status"`
 }
 
@@ -70,23 +70,23 @@ type SessionManagementMetrics struct {
 
 // ISO27001Report represents an ISO 27001:2022 compliance report
 type ISO27001Report struct {
-	ReportID            string                      `json:"report_id"`
-	PeriodStart         time.Time                   `json:"period_start"`
-	PeriodEnd           time.Time                   `json:"period_end"`
-	GeneratedAt         time.Time                   `json:"generated_at"`
-	GeneratedBy         string                      `json:"generated_by"`
-	AccessControl       AccessControlMetrics        `json:"access_control"`
-	Cryptography        CryptographyMetrics         `json:"cryptography"`
+	ReportID            string                     `json:"report_id"`
+	PeriodStart         time.Time                  `json:"period_start"`
+	PeriodEnd           time.Time                  `json:"period_end"`
+	GeneratedAt         time.Time                  `json:"generated_at"`
+	GeneratedBy         string                     `json:"generated_by"`
+	AccessControl       AccessControlMetrics       `json:"access_control"`
+	Cryptography        CryptographyMetrics        `json:"cryptography"`
 	OperationalSecurity OperationalSecurityMetrics `json:"operational_security"`
 }
 
 // AccessControlMetrics for ISO 27001 A.9
 type AccessControlMetrics struct {
-	TotalUsers      int       `json:"total_users"`
-	AdminUsers      int       `json:"admin_users"`
-	AdminRatio      float64   `json:"admin_ratio"`
-	RolesDefined    int       `json:"roles_defined"`
-	GroupsDefined   int       `json:"groups_defined"`
+	TotalUsers       int       `json:"total_users"`
+	AdminUsers       int       `json:"admin_users"`
+	AdminRatio       float64   `json:"admin_ratio"`
+	RolesDefined     int       `json:"roles_defined"`
+	GroupsDefined    int       `json:"groups_defined"`
 	LastAccessReview time.Time `json:"last_access_review"`
 	ComplianceStatus string    `json:"compliance_status"`
 }
@@ -103,13 +103,13 @@ type CryptographyMetrics struct {
 
 // OperationalSecurityMetrics for ISO 27001 A.12
 type OperationalSecurityMetrics struct {
-	TotalEvents      int               `json:"total_events"`
-	EventsByType     map[string]int     `json:"events_by_type"`
-	EventsByDay      []DayEventCount    `json:"events_by_day"`
-	FailedEvents     int               `json:"failed_events"`
-	ErrorRate        float64           `json:"error_rate"`
-	LoggingCoverage  float64           `json:"logging_coverage"`
-	ComplianceStatus string            `json:"compliance_status"`
+	TotalEvents      int             `json:"total_events"`
+	EventsByType     map[string]int  `json:"events_by_type"`
+	EventsByDay      []DayEventCount `json:"events_by_day"`
+	FailedEvents     int             `json:"failed_events"`
+	ErrorRate        float64         `json:"error_rate"`
+	LoggingCoverage  float64         `json:"logging_coverage"`
+	ComplianceStatus string          `json:"compliance_status"`
 }
 
 // DayEventCount tracks events per day
@@ -120,24 +120,24 @@ type DayEventCount struct {
 
 // GDPRReport represents a GDPR compliance report
 type GDPRReport struct {
-	ReportID            string                     `json:"report_id"`
-	PeriodStart         time.Time                  `json:"period_start"`
-	PeriodEnd           time.Time                  `json:"period_end"`
-	GeneratedAt         time.Time                  `json:"generated_at"`
-	GeneratedBy         string                     `json:"generated_by"`
-	DataAccessLogs      DataAccessMetrics          `json:"data_access_logs"`
-	ConsentRecords      ConsentMetrics             `json:"consent_records"`
-	DataSubjectRequests DataSubjectRequestMetrics  `json:"data_subject_requests"`
+	ReportID            string                    `json:"report_id"`
+	PeriodStart         time.Time                 `json:"period_start"`
+	PeriodEnd           time.Time                 `json:"period_end"`
+	GeneratedAt         time.Time                 `json:"generated_at"`
+	GeneratedBy         string                    `json:"generated_by"`
+	DataAccessLogs      DataAccessMetrics         `json:"data_access_logs"`
+	ConsentRecords      ConsentMetrics            `json:"consent_records"`
+	DataSubjectRequests DataSubjectRequestMetrics `json:"data_subject_requests"`
 	DataDeletionRecords DataDeletionMetrics       `json:"data_deletion_records"`
 }
 
 // DataAccessMetrics tracks data access for GDPR Art.30
 type DataAccessMetrics struct {
-	TotalAccessEvents int               `json:"total_access_events"`
-	AccessByActor    map[string]int     `json:"access_by_actor"`
-	AccessByDataType map[string]int     `json:"access_by_data_type"`
-	LastAccessLog    time.Time          `json:"last_access_log"`
-	ComplianceStatus string            `json:"compliance_status"`
+	TotalAccessEvents int            `json:"total_access_events"`
+	AccessByActor     map[string]int `json:"access_by_actor"`
+	AccessByDataType  map[string]int `json:"access_by_data_type"`
+	LastAccessLog     time.Time      `json:"last_access_log"`
+	ComplianceStatus  string         `json:"compliance_status"`
 }
 
 // ConsentMetrics tracks consent records for GDPR Art.7
@@ -152,14 +152,14 @@ type ConsentMetrics struct {
 
 // DataSubjectRequestMetrics tracks GDPR Art.15-20 requests
 type DataSubjectRequestMetrics struct {
-	TotalRequests       int               `json:"total_requests"`
-	RequestsByType      map[string]int     `json:"requests_by_type"`
-	PendingRequests     int               `json:"pending_requests"`
-	CompletedRequests   int               `json:"completed_requests"`
-	OverdueRequests     int               `json:"overdue_requests"`
-	AverageResponseDays float64           `json:"average_response_days"`
-	LastRequestDate     time.Time          `json:"last_request_date"`
-	ComplianceStatus    string            `json:"compliance_status"`
+	TotalRequests       int            `json:"total_requests"`
+	RequestsByType      map[string]int `json:"requests_by_type"`
+	PendingRequests     int            `json:"pending_requests"`
+	CompletedRequests   int            `json:"completed_requests"`
+	OverdueRequests     int            `json:"overdue_requests"`
+	AverageResponseDays float64        `json:"average_response_days"`
+	LastRequestDate     time.Time      `json:"last_request_date"`
+	ComplianceStatus    string         `json:"compliance_status"`
 }
 
 // DataDeletionMetrics tracks right to be forgotten (Art.17)
@@ -290,13 +290,13 @@ func (s *Service) getAccessReviewMetrics(ctx context.Context, startDate, endDate
 
 func (s *Service) getPasswordPolicyMetrics(ctx context.Context) PasswordPolicyMetrics {
 	metrics := PasswordPolicyMetrics{
-		MinLength:            8,
-		RequireUppercase:     true,
-		RequireLowercase:     true,
-		RequireNumbers:       true,
-		RequireSpecialChars:  true,
-		MaxAgeDays:           90,
-		ComplianceStatus:     "compliant",
+		MinLength:           8,
+		RequireUppercase:    true,
+		RequireLowercase:    true,
+		RequireNumbers:      true,
+		RequireSpecialChars: true,
+		MaxAgeDays:          90,
+		ComplianceStatus:    "compliant",
 	}
 
 	if s.db != nil && s.db.Pool != nil {
@@ -739,8 +739,8 @@ func (s *Service) getConsentMetrics(ctx context.Context) ConsentMetrics {
 
 func (s *Service) getDataSubjectRequestMetrics(ctx context.Context, startDate, endDate time.Time) DataSubjectRequestMetrics {
 	metrics := DataSubjectRequestMetrics{
-		RequestsByType:    make(map[string]int),
-		ComplianceStatus:  "compliant",
+		RequestsByType:   make(map[string]int),
+		ComplianceStatus: "compliant",
 	}
 
 	if s.db != nil && s.db.Pool != nil {

@@ -418,9 +418,9 @@ func getServiceDescription(service string) string {
 // NewDevStopCommand creates the dev-stop command
 func NewDevStopCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "dev-stop",
-		Short: "Stop development environment",
-		Long:  `Stop all running development services.`,
+		Use:     "dev-stop",
+		Short:   "Stop development environment",
+		Long:    `Stop all running development services.`,
 		Aliases: []string{"stop", "down"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := NewCommandContext(cmd)

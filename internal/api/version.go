@@ -36,8 +36,8 @@ func VersionMiddleware(version string, supported []string) gin.HandlerFunc {
 			if !isVersionSupported(requestedVersion, supported) {
 				c.Abort()
 				c.JSON(406, gin.H{
-					"error":   "unsupported_api_version",
-					"message": "Requested API version is not supported",
+					"error":              "unsupported_api_version",
+					"message":            "Requested API version is not supported",
 					"supported_versions": supported,
 				})
 				return

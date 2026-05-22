@@ -37,17 +37,17 @@ func (m *mockIdentityService) GetUser(ctx context.Context, id string) (*identity
 
 // TestOIDCContext provides a complete test context for OIDC tests
 type TestOIDCContext struct {
-	T                *testing.T
-	Service          *Service
-	OIDCProvider     *OIDCProvider
-	Store            *Store
-	MiniRedis        *miniredis.Miniredis
-	RedisClient      *redis.Client
-	RedisWrapper     *database.RedisClient
-	IdentityService  *mockIdentityService
-	Logger           *zap.Logger
-	TestKey          *rsa.PrivateKey
-	Cleanup          func()
+	T               *testing.T
+	Service         *Service
+	OIDCProvider    *OIDCProvider
+	Store           *Store
+	MiniRedis       *miniredis.Miniredis
+	RedisClient     *redis.Client
+	RedisWrapper    *database.RedisClient
+	IdentityService *mockIdentityService
+	Logger          *zap.Logger
+	TestKey         *rsa.PrivateKey
+	Cleanup         func()
 }
 
 // NewTestOIDCContext creates a fully configured test context for OIDC testing
@@ -177,11 +177,11 @@ func (ctx *TestOIDCContext) CreateTestClient(clientID, clientSecret string, redi
 // SetupTestScopes returns common test scopes
 func (ctx *TestOIDCContext) SetupTestScopes() map[string]string {
 	return map[string]string{
-		"openid":  "OpenID Connect authentication",
-		"profile": "User profile information",
-		"email":   "User email address",
-		"phone":   "User phone number",
-		"address": "User postal address",
+		"openid":         "OpenID Connect authentication",
+		"profile":        "User profile information",
+		"email":          "User email address",
+		"phone":          "User phone number",
+		"address":        "User postal address",
 		"offline_access": "Refresh token issuance",
 	}
 }

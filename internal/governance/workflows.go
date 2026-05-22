@@ -15,19 +15,19 @@ import (
 
 // AccessRequest represents a request for access to a role, group, or application
 type AccessRequest struct {
-	ID             string      `json:"id"`
-	RequesterID    string      `json:"requester_id"`
-	RequesterName  string      `json:"requester_name,omitempty"`
-	ResourceType   string      `json:"resource_type"`
-	ResourceID     string      `json:"resource_id"`
-	ResourceName   string      `json:"resource_name"`
-	Justification  string      `json:"justification"`
-	Status         string      `json:"status"`
-	Priority       string      `json:"priority"`
-	ExpiresAt      *time.Time  `json:"expires_at,omitempty"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
-	Approvals      []Approval  `json:"approvals,omitempty"`
+	ID            string     `json:"id"`
+	RequesterID   string     `json:"requester_id"`
+	RequesterName string     `json:"requester_name,omitempty"`
+	ResourceType  string     `json:"resource_type"`
+	ResourceID    string     `json:"resource_id"`
+	ResourceName  string     `json:"resource_name"`
+	Justification string     `json:"justification"`
+	Status        string     `json:"status"`
+	Priority      string     `json:"priority"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	Approvals     []Approval `json:"approvals,omitempty"`
 }
 
 // Approval represents a single approval/denial decision on an access request

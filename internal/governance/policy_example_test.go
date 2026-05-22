@@ -58,7 +58,7 @@ deny[msg] {
 		},
 		Resource: PolicyResource{
 			Type: "document",
-			ID:    "doc456",
+			ID:   "doc456",
 		},
 		Action: "read",
 	}

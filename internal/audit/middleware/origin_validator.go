@@ -13,17 +13,17 @@ import (
 
 // OriginValidationConfig holds configuration for origin validation middleware
 type OriginValidationConfig struct {
-	AllowedOrigins     []string
-	EnableLogging      bool
-	RejectOnFailure    bool
-	AllowEmptyOrigin   bool // Allow requests without Origin header (non-browser clients)
-	ProductionMode     bool
+	AllowedOrigins   []string
+	EnableLogging    bool
+	RejectOnFailure  bool
+	AllowEmptyOrigin bool // Allow requests without Origin header (non-browser clients)
+	ProductionMode   bool
 }
 
 // DefaultOriginValidationConfig returns default configuration for development
 func DefaultOriginValidationConfig() *OriginValidationConfig {
 	return &OriginValidationConfig{
-		AllowedOrigins:   []string{
+		AllowedOrigins: []string{
 			"http://localhost:3000",
 			"http://localhost:5173",
 			"http://127.0.0.1:3000",

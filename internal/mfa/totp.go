@@ -51,39 +51,39 @@ const (
 
 // TOTPSecret represents a TOTP secret with its QR code URL
 type TOTPSecret struct {
-	Secret     string `json:"secret"`      // Base32-encoded secret
-	AccountName string `json:"account_name"` // Account name (typically username or email)
-	Issuer      string `json:"issuer"`      // Issuer name (e.g., "OpenIDX")
-	QRCodeURL   string `json:"qr_code_url"` // URL for QR code generation
+	Secret      string    `json:"secret"`       // Base32-encoded secret
+	AccountName string    `json:"account_name"` // Account name (typically username or email)
+	Issuer      string    `json:"issuer"`       // Issuer name (e.g., "OpenIDX")
+	QRCodeURL   string    `json:"qr_code_url"`  // URL for QR code generation
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 // TOTPConfig holds configuration for TOTP generation and validation
 type TOTPConfig struct {
-	Issuer   string        // Issuer name for TOTP
-	Period   uint          // Time step period in seconds
-	Digits   otp.Digits   // Number of digits (6 or 8)
-	Algorithm otp.Algorithm // Hash algorithm
-	SecretLength int       // Length of generated secret in bytes
+	Issuer       string        // Issuer name for TOTP
+	Period       uint          // Time step period in seconds
+	Digits       otp.Digits    // Number of digits (6 or 8)
+	Algorithm    otp.Algorithm // Hash algorithm
+	SecretLength int           // Length of generated secret in bytes
 }
 
 // DefaultTOTPConfig returns the default TOTP configuration
 func DefaultTOTPConfig() *TOTPConfig {
 	return &TOTPConfig{
-		Issuer:     DefaultTOTPIssuer,
-		Period:    DefaultTOTPPeriod,
-		Digits:    otp.Digits(DefaultTOTPDigits),
-		Algorithm: DefaultTOTPAlgorithm,
+		Issuer:       DefaultTOTPIssuer,
+		Period:       DefaultTOTPPeriod,
+		Digits:       otp.Digits(DefaultTOTPDigits),
+		Algorithm:    DefaultTOTPAlgorithm,
 		SecretLength: DefaultSecretLength,
 	}
 }
 
 // Service provides TOTP functionality
 type Service struct {
-	config     *TOTPConfig
-	logger     *zap.Logger
-	redis      RedisClient
-	encrypter  SecretEncrypter
+	config    *TOTPConfig
+	logger    *zap.Logger
+	redis     RedisClient
+	encrypter SecretEncrypter
 }
 
 // RedisClient defines the interface for Redis operations (for replay attack prevention)

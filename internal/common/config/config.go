@@ -22,8 +22,8 @@ type Config struct {
 	ElasticsearchURL string `mapstructure:"elasticsearch_url"`
 
 	// OPA configuration
-	OPAURL        string `mapstructure:"opa_url"`
-	EnableOPAAuthz bool  `mapstructure:"enable_opa_authz"`
+	OPAURL         string `mapstructure:"opa_url"`
+	EnableOPAAuthz bool   `mapstructure:"enable_opa_authz"`
 
 	// OAuth / OIDC settings
 	OAuthIssuer  string `mapstructure:"oauth_issuer"`
@@ -54,22 +54,22 @@ type Config struct {
 	SMTPFrom     string `mapstructure:"smtp_from"`
 
 	// Access Proxy settings
-	GovernanceURL      string `mapstructure:"governance_url"`
-	AuditURL           string `mapstructure:"audit_url"`
+	GovernanceURL       string `mapstructure:"governance_url"`
+	AuditURL            string `mapstructure:"audit_url"`
 	AccessSessionSecret string `mapstructure:"access_session_secret"`
-	AccessProxyDomain  string `mapstructure:"access_proxy_domain"`
+	AccessProxyDomain   string `mapstructure:"access_proxy_domain"`
 
 	// OpenZiti configuration
-	ZitiEnabled       bool   `mapstructure:"ziti_enabled"`
-	ZitiCtrlURL       string `mapstructure:"ziti_ctrl_url"`
-	ZitiAdminUser     string `mapstructure:"ziti_admin_user"`
-	ZitiAdminPassword string `mapstructure:"ziti_admin_password"`
+	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
+	ZitiCtrlURL            string `mapstructure:"ziti_ctrl_url"`
+	ZitiAdminUser          string `mapstructure:"ziti_admin_user"`
+	ZitiAdminPassword      string `mapstructure:"ziti_admin_password"`
 	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
 	ZitiInsecureSkipVerify bool   `mapstructure:"ziti_insecure_skip_verify"`
 
 	// Continuous verification
-	ContinuousVerifyEnabled  bool   `mapstructure:"continuous_verify_enabled"`
-	ContinuousVerifyInterval int    `mapstructure:"continuous_verify_interval"`
+	ContinuousVerifyEnabled  bool `mapstructure:"continuous_verify_enabled"`
+	ContinuousVerifyInterval int  `mapstructure:"continuous_verify_interval"`
 
 	// GeoIP service (optional)
 	GeoIPServiceURL string `mapstructure:"geoip_service_url"`
@@ -80,8 +80,8 @@ type Config struct {
 	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
 
 	// BrowZer configuration (browser-native Ziti participation)
-	BrowZerEnabled     bool   `mapstructure:"browzer_enabled"`
-	BrowZerClientID    string `mapstructure:"browzer_client_id"`
+	BrowZerEnabled          bool   `mapstructure:"browzer_enabled"`
+	BrowZerClientID         string `mapstructure:"browzer_client_id"`
 	BrowZerTargetsPath      string `mapstructure:"browzer_targets_path"`
 	BrowZerRouterConfigPath string `mapstructure:"browzer_router_config_path"`
 	BrowZerCertsPath        string `mapstructure:"browzer_certs_path"`
@@ -128,17 +128,17 @@ type Config struct {
 
 	// Redis TLS configuration
 	RedisTLSEnabled    bool   `mapstructure:"redis_tls_enabled"`
-	RedisTLSCACert     string `mapstructure:"redis_tls_ca_cert"`      // CA cert path
-	RedisTLSCert       string `mapstructure:"redis_tls_cert"`         // Client cert path (mTLS)
-	RedisTLSKey        string `mapstructure:"redis_tls_key"`          // Client key path (mTLS)
-	RedisTLSSkipVerify bool   `mapstructure:"redis_tls_skip_verify"`  // For dev only
+	RedisTLSCACert     string `mapstructure:"redis_tls_ca_cert"`     // CA cert path
+	RedisTLSCert       string `mapstructure:"redis_tls_cert"`        // Client cert path (mTLS)
+	RedisTLSKey        string `mapstructure:"redis_tls_key"`         // Client key path (mTLS)
+	RedisTLSSkipVerify bool   `mapstructure:"redis_tls_skip_verify"` // For dev only
 
 	// Elasticsearch auth and TLS
 	ElasticsearchUsername string `mapstructure:"elasticsearch_username"`
 	ElasticsearchPassword string `mapstructure:"elasticsearch_password"`
 	ElasticsearchTLS      bool   `mapstructure:"elasticsearch_tls"`
 	ElasticsearchCACert   string `mapstructure:"elasticsearch_ca_cert"`
-	AutoMigrate bool `mapstructure:"auto_migrate"`
+	AutoMigrate           bool   `mapstructure:"auto_migrate"`
 
 	// Play Integrity (Phase 1+ Android agent attestation). When both
 	// PlayIntegrityServiceAccountJSON and PlayIntegrityPackageName are set
@@ -152,9 +152,9 @@ type Config struct {
 	// TurnStaticSecret are set the access service mints short-lived TURN
 	// credentials per session (coturn-style use-auth-secret). Unset leaves
 	// admins to supply ICE servers per session via the start-session API.
-	TurnURIs                 string `mapstructure:"turn_uris"`            // comma-separated turn:/turns: URIs
-	TurnStaticSecret         string `mapstructure:"turn_static_secret"`   // matches the TURN server's static-auth-secret
-	TurnRealm                string `mapstructure:"turn_realm"`           // optional
+	TurnURIs                 string `mapstructure:"turn_uris"`                   // comma-separated turn:/turns: URIs
+	TurnStaticSecret         string `mapstructure:"turn_static_secret"`          // matches the TURN server's static-auth-secret
+	TurnRealm                string `mapstructure:"turn_realm"`                  // optional
 	TurnCredentialTTLSeconds int    `mapstructure:"turn_credential_ttl_seconds"` // default 7200
 
 	// Remote-support recording (Phase 4 follow-up). When unset, recording
@@ -166,13 +166,13 @@ type Config struct {
 	//   3. Disabled otherwise.
 	RecordingsStoragePath string `mapstructure:"recordings_storage_path"`
 
-	RecordingsS3Endpoint  string `mapstructure:"recordings_s3_endpoint"`     // e.g., "s3.amazonaws.com", "play.min.io", custom host:port
+	RecordingsS3Endpoint  string `mapstructure:"recordings_s3_endpoint"` // e.g., "s3.amazonaws.com", "play.min.io", custom host:port
 	RecordingsS3Bucket    string `mapstructure:"recordings_s3_bucket"`
 	RecordingsS3Region    string `mapstructure:"recordings_s3_region"`
-	RecordingsS3Prefix    string `mapstructure:"recordings_s3_prefix"`       // optional key prefix inside the bucket
+	RecordingsS3Prefix    string `mapstructure:"recordings_s3_prefix"` // optional key prefix inside the bucket
 	RecordingsS3AccessKey string `mapstructure:"recordings_s3_access_key"`
 	RecordingsS3SecretKey string `mapstructure:"recordings_s3_secret_key"`
-	RecordingsS3UseSSL    bool   `mapstructure:"recordings_s3_use_ssl"`      // default true; set false for local MinIO dev
+	RecordingsS3UseSSL    bool   `mapstructure:"recordings_s3_use_ssl"` // default true; set false for local MinIO dev
 
 	// Recording retention default. Resolves at the bottom of the lookup
 	// chain — session override → per-org policy → this value → hard 90d.
@@ -209,21 +209,21 @@ type TLSConfig struct {
 
 // WebAuthnConfig holds WebAuthn/FIDO2 configuration
 type WebAuthnConfig struct {
-	RPID      string   `mapstructure:"rp_id"`       // Relying Party ID (e.g., "example.com")
-	RPOrigins []string `mapstructure:"rp_origins"`  // Allowed origins
-	Timeout   int      `mapstructure:"timeout"`     // Timeout in seconds (default: 60)
+	RPID      string   `mapstructure:"rp_id"`      // Relying Party ID (e.g., "example.com")
+	RPOrigins []string `mapstructure:"rp_origins"` // Allowed origins
+	Timeout   int      `mapstructure:"timeout"`    // Timeout in seconds (default: 60)
 }
 
 // PushMFAConfig holds Push MFA configuration
 type PushMFAConfig struct {
 	Enabled          bool   `mapstructure:"enabled"`
-	FCMServerKey     string `mapstructure:"fcm_server_key"`      // Firebase Cloud Messaging server key
-	APNSKeyID        string `mapstructure:"apns_key_id"`         // Apple Push Notification Service key ID
-	APNSTeamID       string `mapstructure:"apns_team_id"`        // Apple team ID
-	APNSKeyPath      string `mapstructure:"apns_key_path"`       // Path to APNS .p8 key file
-	APNSBundleID     string `mapstructure:"apns_bundle_id"`      // APNS bundle identifier (e.g., "com.openidx.app")
-	ChallengeTimeout int    `mapstructure:"challenge_timeout"`   // Timeout in seconds (default: 60)
-	AutoApprove      bool   `mapstructure:"auto_approve"`        // Auto-approve for development (NEVER use in production)
+	FCMServerKey     string `mapstructure:"fcm_server_key"`    // Firebase Cloud Messaging server key
+	APNSKeyID        string `mapstructure:"apns_key_id"`       // Apple Push Notification Service key ID
+	APNSTeamID       string `mapstructure:"apns_team_id"`      // Apple team ID
+	APNSKeyPath      string `mapstructure:"apns_key_path"`     // Path to APNS .p8 key file
+	APNSBundleID     string `mapstructure:"apns_bundle_id"`    // APNS bundle identifier (e.g., "com.openidx.app")
+	ChallengeTimeout int    `mapstructure:"challenge_timeout"` // Timeout in seconds (default: 60)
+	AutoApprove      bool   `mapstructure:"auto_approve"`      // Auto-approve for development (NEVER use in production)
 }
 
 // SMSConfig holds SMS MFA configuration
@@ -250,36 +250,36 @@ type SMSConfig struct {
 	IletiMerkeziKey    string `mapstructure:"iletimerkezi_key"`    // İleti Merkezi API key
 	IletiMerkeziSecret string `mapstructure:"iletimerkezi_secret"` // İleti Merkezi API secret
 	IletiMerkeziSender string `mapstructure:"iletimerkezi_sender"` // İleti Merkezi sender name
-	VerimorUsername     string `mapstructure:"verimor_username"`    // Verimor username (908501234567 format)
-	VerimorPassword     string `mapstructure:"verimor_password"`    // Verimor API password
-	VerimorSourceAddr   string `mapstructure:"verimor_source_addr"` // Verimor sender ID
-	TurkcellUsername    string `mapstructure:"turkcell_username"`   // Turkcell Mesajüssü username
-	TurkcellPassword    string `mapstructure:"turkcell_password"`   // Turkcell Mesajüssü password
-	TurkcellSender      string `mapstructure:"turkcell_sender"`     // Turkcell sender name
-	VodafoneAPIKey      string `mapstructure:"vodafone_api_key"`    // Vodafone API key (OAuth2 client_id)
-	VodafoneSecret      string `mapstructure:"vodafone_secret"`     // Vodafone API secret (OAuth2 client_secret)
-	VodafoneSender      string `mapstructure:"vodafone_sender"`     // Vodafone sender address
-	TurkTelekomAPIKey   string `mapstructure:"turktelekom_api_key"` // Türk Telekom API key
-	TurkTelekomSecret   string `mapstructure:"turktelekom_secret"`  // Türk Telekom API secret
-	TurkTelekomSender   string `mapstructure:"turktelekom_sender"`  // Türk Telekom sender name
-	MutlucellUsername   string `mapstructure:"mutlucell_username"`  // Mutlucell username
-	MutlucellPassword   string `mapstructure:"mutlucell_password"`  // Mutlucell password
-	MutlucellAPIKey     string `mapstructure:"mutlucell_api_key"`   // Mutlucell API key
-	MutlucellSender     string `mapstructure:"mutlucell_sender"`    // Mutlucell sender name
+	VerimorUsername    string `mapstructure:"verimor_username"`    // Verimor username (908501234567 format)
+	VerimorPassword    string `mapstructure:"verimor_password"`    // Verimor API password
+	VerimorSourceAddr  string `mapstructure:"verimor_source_addr"` // Verimor sender ID
+	TurkcellUsername   string `mapstructure:"turkcell_username"`   // Turkcell Mesajüssü username
+	TurkcellPassword   string `mapstructure:"turkcell_password"`   // Turkcell Mesajüssü password
+	TurkcellSender     string `mapstructure:"turkcell_sender"`     // Turkcell sender name
+	VodafoneAPIKey     string `mapstructure:"vodafone_api_key"`    // Vodafone API key (OAuth2 client_id)
+	VodafoneSecret     string `mapstructure:"vodafone_secret"`     // Vodafone API secret (OAuth2 client_secret)
+	VodafoneSender     string `mapstructure:"vodafone_sender"`     // Vodafone sender address
+	TurkTelekomAPIKey  string `mapstructure:"turktelekom_api_key"` // Türk Telekom API key
+	TurkTelekomSecret  string `mapstructure:"turktelekom_secret"`  // Türk Telekom API secret
+	TurkTelekomSender  string `mapstructure:"turktelekom_sender"`  // Türk Telekom sender name
+	MutlucellUsername  string `mapstructure:"mutlucell_username"`  // Mutlucell username
+	MutlucellPassword  string `mapstructure:"mutlucell_password"`  // Mutlucell password
+	MutlucellAPIKey    string `mapstructure:"mutlucell_api_key"`   // Mutlucell API key
+	MutlucellSender    string `mapstructure:"mutlucell_sender"`    // Mutlucell sender name
 }
 
 // AdaptiveMFAConfig holds adaptive/risk-based MFA configuration
 type AdaptiveMFAConfig struct {
-	Enabled                  bool `mapstructure:"enabled"`                     // Enable adaptive MFA
-	NewDeviceRiskScore       int  `mapstructure:"new_device_risk_score"`       // Risk score for new device (default: 30)
-	NewLocationRiskScore     int  `mapstructure:"new_location_risk_score"`     // Risk score for new location (default: 20)
-	ImpossibleTravelRiskScore int `mapstructure:"impossible_travel_risk_score"` // Risk score for impossible travel (default: 50)
-	BlockedIPRiskScore       int  `mapstructure:"blocked_ip_risk_score"`       // Risk score for blocked IP (default: 40)
-	FailedLoginRiskScore     int  `mapstructure:"failed_login_risk_score"`     // Risk score per recent failed login (default: 10)
-	TrustedBrowserDays       int  `mapstructure:"trusted_browser_days"`        // Days to trust a browser (default: 30)
-	LowRiskThreshold         int  `mapstructure:"low_risk_threshold"`          // Below this: skip MFA (default: 30)
-	MediumRiskThreshold      int  `mapstructure:"medium_risk_threshold"`       // Below this: standard MFA (default: 50)
-	HighRiskThreshold        int  `mapstructure:"high_risk_threshold"`         // Below this: strong MFA (default: 70)
+	Enabled                   bool `mapstructure:"enabled"`                      // Enable adaptive MFA
+	NewDeviceRiskScore        int  `mapstructure:"new_device_risk_score"`        // Risk score for new device (default: 30)
+	NewLocationRiskScore      int  `mapstructure:"new_location_risk_score"`      // Risk score for new location (default: 20)
+	ImpossibleTravelRiskScore int  `mapstructure:"impossible_travel_risk_score"` // Risk score for impossible travel (default: 50)
+	BlockedIPRiskScore        int  `mapstructure:"blocked_ip_risk_score"`        // Risk score for blocked IP (default: 40)
+	FailedLoginRiskScore      int  `mapstructure:"failed_login_risk_score"`      // Risk score per recent failed login (default: 10)
+	TrustedBrowserDays        int  `mapstructure:"trusted_browser_days"`         // Days to trust a browser (default: 30)
+	LowRiskThreshold          int  `mapstructure:"low_risk_threshold"`           // Below this: skip MFA (default: 30)
+	MediumRiskThreshold       int  `mapstructure:"medium_risk_threshold"`        // Below this: standard MFA (default: 50)
+	HighRiskThreshold         int  `mapstructure:"high_risk_threshold"`          // Below this: strong MFA (default: 70)
 	// Above high_risk_threshold: step-up auth + admin notification
 }
 
@@ -477,109 +477,109 @@ func setDefaults(v *viper.Viper, serviceName string) {
 func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
-		"database_url":      "DATABASE_URL",
-		"redis_url":         "REDIS_URL",
-		"elasticsearch_url": "ELASTICSEARCH_URL",
-		"opa_url":           "OPA_URL",
-		"environment":       "APP_ENV",
-		"log_level":         "LOG_LEVEL",
-		"port":              "PORT",
-		"oauth_issuer":      "OAUTH_ISSUER",
-		"oauth_jwks_url":         "OAUTH_JWKS_URL",
-		"governance_url":         "GOVERNANCE_URL",
-		"audit_url":              "AUDIT_URL",
-		"access_session_secret":  "ACCESS_SESSION_SECRET",
-		"access_proxy_domain":    "ACCESS_PROXY_DOMAIN",
-		"ziti_enabled":              "ZITI_ENABLED",
-		"ziti_ctrl_url":             "ZITI_CTRL_URL",
-		"ziti_admin_user":           "ZITI_ADMIN_USER",
-		"ziti_admin_password":       "ZITI_ADMIN_PASSWORD",
-		"ziti_identity_dir":            "ZITI_IDENTITY_DIR",
-		"ziti_insecure_skip_verify":    "ZITI_INSECURE_SKIP_VERIFY",
-		"continuous_verify_enabled": "CONTINUOUS_VERIFY_ENABLED",
-		"continuous_verify_interval":"CONTINUOUS_VERIFY_INTERVAL",
-		"geoip_service_url":        "GEOIP_SERVICE_URL",
-		"guacamole_url":            "GUACAMOLE_URL",
-		"guacamole_admin_user":     "GUACAMOLE_ADMIN_USER",
-		"guacamole_admin_password": "GUACAMOLE_ADMIN_PASSWORD",
-		"browzer_enabled":          "BROWZER_ENABLED",
-		"browzer_client_id":        "BROWZER_CLIENT_ID",
-		"browzer_targets_path":          "BROWZER_TARGETS_PATH",
-		"browzer_router_config_path":    "BROWZER_ROUTER_CONFIG_PATH",
-		"browzer_certs_path":            "BROWZER_CERTS_PATH",
-		"apisix_config_path":            "APISIX_CONFIG_PATH",
-		"enable_opa_authz":         "ENABLE_OPA_AUTHZ",
-		"jwt_secret":               "JWT_SECRET",
-		"encryption_key":           "ENCRYPTION_KEY",
-		"smtp_host":                "SMTP_HOST",
-		"smtp_port":                "SMTP_PORT",
-		"smtp_username":            "SMTP_USERNAME",
-		"smtp_password":            "SMTP_PASSWORD",
-		"smtp_from":                "SMTP_FROM",
-		"sms.enabled":              "SMS_ENABLED",
-		"sms.provider":             "SMS_PROVIDER",
-		"sms.twilio_sid":           "TWILIO_ACCOUNT_SID",
-		"sms.twilio_token":         "TWILIO_AUTH_TOKEN",
-		"sms.twilio_from":          "TWILIO_FROM_NUMBER",
-		"sms.aws_region":           "AWS_REGION",
-		"sms.aws_access_key":       "AWS_ACCESS_KEY_ID",
-		"sms.aws_secret_key":       "AWS_SECRET_ACCESS_KEY",
-		"sms.webhook_url":          "SMS_WEBHOOK_URL",
-		"sms.webhook_api_key":      "SMS_WEBHOOK_API_KEY",
+		"database_url":               "DATABASE_URL",
+		"redis_url":                  "REDIS_URL",
+		"elasticsearch_url":          "ELASTICSEARCH_URL",
+		"opa_url":                    "OPA_URL",
+		"environment":                "APP_ENV",
+		"log_level":                  "LOG_LEVEL",
+		"port":                       "PORT",
+		"oauth_issuer":               "OAUTH_ISSUER",
+		"oauth_jwks_url":             "OAUTH_JWKS_URL",
+		"governance_url":             "GOVERNANCE_URL",
+		"audit_url":                  "AUDIT_URL",
+		"access_session_secret":      "ACCESS_SESSION_SECRET",
+		"access_proxy_domain":        "ACCESS_PROXY_DOMAIN",
+		"ziti_enabled":               "ZITI_ENABLED",
+		"ziti_ctrl_url":              "ZITI_CTRL_URL",
+		"ziti_admin_user":            "ZITI_ADMIN_USER",
+		"ziti_admin_password":        "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":          "ZITI_IDENTITY_DIR",
+		"ziti_insecure_skip_verify":  "ZITI_INSECURE_SKIP_VERIFY",
+		"continuous_verify_enabled":  "CONTINUOUS_VERIFY_ENABLED",
+		"continuous_verify_interval": "CONTINUOUS_VERIFY_INTERVAL",
+		"geoip_service_url":          "GEOIP_SERVICE_URL",
+		"guacamole_url":              "GUACAMOLE_URL",
+		"guacamole_admin_user":       "GUACAMOLE_ADMIN_USER",
+		"guacamole_admin_password":   "GUACAMOLE_ADMIN_PASSWORD",
+		"browzer_enabled":            "BROWZER_ENABLED",
+		"browzer_client_id":          "BROWZER_CLIENT_ID",
+		"browzer_targets_path":       "BROWZER_TARGETS_PATH",
+		"browzer_router_config_path": "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_certs_path":         "BROWZER_CERTS_PATH",
+		"apisix_config_path":         "APISIX_CONFIG_PATH",
+		"enable_opa_authz":           "ENABLE_OPA_AUTHZ",
+		"jwt_secret":                 "JWT_SECRET",
+		"encryption_key":             "ENCRYPTION_KEY",
+		"smtp_host":                  "SMTP_HOST",
+		"smtp_port":                  "SMTP_PORT",
+		"smtp_username":              "SMTP_USERNAME",
+		"smtp_password":              "SMTP_PASSWORD",
+		"smtp_from":                  "SMTP_FROM",
+		"sms.enabled":                "SMS_ENABLED",
+		"sms.provider":               "SMS_PROVIDER",
+		"sms.twilio_sid":             "TWILIO_ACCOUNT_SID",
+		"sms.twilio_token":           "TWILIO_AUTH_TOKEN",
+		"sms.twilio_from":            "TWILIO_FROM_NUMBER",
+		"sms.aws_region":             "AWS_REGION",
+		"sms.aws_access_key":         "AWS_ACCESS_KEY_ID",
+		"sms.aws_secret_key":         "AWS_SECRET_ACCESS_KEY",
+		"sms.webhook_url":            "SMS_WEBHOOK_URL",
+		"sms.webhook_api_key":        "SMS_WEBHOOK_API_KEY",
 		// Turkish SMS providers
-		"sms.netgsm_usercode":      "NETGSM_USERCODE",
-		"sms.netgsm_password":      "NETGSM_PASSWORD",
-		"sms.netgsm_header":        "NETGSM_HEADER",
-		"sms.iletimerkezi_key":     "ILETIMERKEZI_API_KEY",
-		"sms.iletimerkezi_secret":  "ILETIMERKEZI_API_SECRET",
-		"sms.iletimerkezi_sender":  "ILETIMERKEZI_SENDER",
-		"sms.verimor_username":     "VERIMOR_USERNAME",
-		"sms.verimor_password":     "VERIMOR_PASSWORD",
-		"sms.verimor_source_addr":  "VERIMOR_SOURCE_ADDR",
-		"sms.turkcell_username":    "TURKCELL_SMS_USERNAME",
-		"sms.turkcell_password":    "TURKCELL_SMS_PASSWORD",
-		"sms.turkcell_sender":      "TURKCELL_SMS_SENDER",
-		"sms.vodafone_api_key":     "VODAFONE_SMS_API_KEY",
-		"sms.vodafone_secret":      "VODAFONE_SMS_SECRET",
-		"sms.vodafone_sender":      "VODAFONE_SMS_SENDER",
-		"sms.turktelekom_api_key":  "TURKTELEKOM_SMS_API_KEY",
-		"sms.turktelekom_secret":   "TURKTELEKOM_SMS_SECRET",
-		"sms.turktelekom_sender":   "TURKTELEKOM_SMS_SENDER",
-		"sms.mutlucell_username":   "MUTLUCELL_USERNAME",
-		"sms.mutlucell_password":   "MUTLUCELL_PASSWORD",
-		"sms.mutlucell_api_key":    "MUTLUCELL_API_KEY",
-		"sms.mutlucell_sender":     "MUTLUCELL_SENDER",
-		"database_ssl_mode":         "DATABASE_SSL_MODE",
-		"database_ssl_root_cert":    "DATABASE_SSL_ROOT_CERT",
-		"database_ssl_cert":         "DATABASE_SSL_CERT",
-		"database_ssl_key":          "DATABASE_SSL_KEY",
-		"redis_tls_enabled":         "REDIS_TLS_ENABLED",
-		"redis_tls_ca_cert":         "REDIS_TLS_CA_CERT",
-		"redis_tls_cert":            "REDIS_TLS_CERT",
-		"redis_tls_key":             "REDIS_TLS_KEY",
-		"redis_tls_skip_verify":     "REDIS_TLS_SKIP_VERIFY",
-		"elasticsearch_username":    "ELASTICSEARCH_USERNAME",
-		"elasticsearch_password":    "ELASTICSEARCH_PASSWORD",
-		"elasticsearch_tls":         "ELASTICSEARCH_TLS",
-		"elasticsearch_ca_cert":     "ELASTICSEARCH_CA_CERT",
-		"redis_sentinel_enabled":     "REDIS_SENTINEL_ENABLED",
-		"redis_sentinel_master_name": "REDIS_SENTINEL_MASTER_NAME",
-		"redis_sentinel_addresses":   "REDIS_SENTINEL_ADDRESSES",
-		"redis_sentinel_password":    "REDIS_SENTINEL_PASSWORD",
-		"csrf_enabled":             "CSRF_ENABLED",
-		"csrf_trusted_domain":      "CSRF_TRUSTED_DOMAIN",
-		"debug_otp_in_response":    "DEBUG_OTP_IN_RESPONSE",
-		"tls.enabled":              "TLS_ENABLED",
-		"tls.cert_file":            "TLS_CERT_FILE",
-		"tls.key_file":             "TLS_KEY_FILE",
-		"tls.ca_file":              "TLS_CA_FILE",
-		"adaptive_mfa.enabled":     "ADAPTIVE_MFA_ENABLED",
-		"enable_rate_limit":          "ENABLE_RATE_LIMIT",
-		"rate_limit_requests":        "RATE_LIMIT_REQUESTS",
-		"rate_limit_window":          "RATE_LIMIT_WINDOW",
-		"rate_limit_auth_requests":   "RATE_LIMIT_AUTH_REQUESTS",
-		"rate_limit_auth_window":     "RATE_LIMIT_AUTH_WINDOW",
-		"rate_limit_per_user":        "RATE_LIMIT_PER_USER",
+		"sms.netgsm_usercode":          "NETGSM_USERCODE",
+		"sms.netgsm_password":          "NETGSM_PASSWORD",
+		"sms.netgsm_header":            "NETGSM_HEADER",
+		"sms.iletimerkezi_key":         "ILETIMERKEZI_API_KEY",
+		"sms.iletimerkezi_secret":      "ILETIMERKEZI_API_SECRET",
+		"sms.iletimerkezi_sender":      "ILETIMERKEZI_SENDER",
+		"sms.verimor_username":         "VERIMOR_USERNAME",
+		"sms.verimor_password":         "VERIMOR_PASSWORD",
+		"sms.verimor_source_addr":      "VERIMOR_SOURCE_ADDR",
+		"sms.turkcell_username":        "TURKCELL_SMS_USERNAME",
+		"sms.turkcell_password":        "TURKCELL_SMS_PASSWORD",
+		"sms.turkcell_sender":          "TURKCELL_SMS_SENDER",
+		"sms.vodafone_api_key":         "VODAFONE_SMS_API_KEY",
+		"sms.vodafone_secret":          "VODAFONE_SMS_SECRET",
+		"sms.vodafone_sender":          "VODAFONE_SMS_SENDER",
+		"sms.turktelekom_api_key":      "TURKTELEKOM_SMS_API_KEY",
+		"sms.turktelekom_secret":       "TURKTELEKOM_SMS_SECRET",
+		"sms.turktelekom_sender":       "TURKTELEKOM_SMS_SENDER",
+		"sms.mutlucell_username":       "MUTLUCELL_USERNAME",
+		"sms.mutlucell_password":       "MUTLUCELL_PASSWORD",
+		"sms.mutlucell_api_key":        "MUTLUCELL_API_KEY",
+		"sms.mutlucell_sender":         "MUTLUCELL_SENDER",
+		"database_ssl_mode":            "DATABASE_SSL_MODE",
+		"database_ssl_root_cert":       "DATABASE_SSL_ROOT_CERT",
+		"database_ssl_cert":            "DATABASE_SSL_CERT",
+		"database_ssl_key":             "DATABASE_SSL_KEY",
+		"redis_tls_enabled":            "REDIS_TLS_ENABLED",
+		"redis_tls_ca_cert":            "REDIS_TLS_CA_CERT",
+		"redis_tls_cert":               "REDIS_TLS_CERT",
+		"redis_tls_key":                "REDIS_TLS_KEY",
+		"redis_tls_skip_verify":        "REDIS_TLS_SKIP_VERIFY",
+		"elasticsearch_username":       "ELASTICSEARCH_USERNAME",
+		"elasticsearch_password":       "ELASTICSEARCH_PASSWORD",
+		"elasticsearch_tls":            "ELASTICSEARCH_TLS",
+		"elasticsearch_ca_cert":        "ELASTICSEARCH_CA_CERT",
+		"redis_sentinel_enabled":       "REDIS_SENTINEL_ENABLED",
+		"redis_sentinel_master_name":   "REDIS_SENTINEL_MASTER_NAME",
+		"redis_sentinel_addresses":     "REDIS_SENTINEL_ADDRESSES",
+		"redis_sentinel_password":      "REDIS_SENTINEL_PASSWORD",
+		"csrf_enabled":                 "CSRF_ENABLED",
+		"csrf_trusted_domain":          "CSRF_TRUSTED_DOMAIN",
+		"debug_otp_in_response":        "DEBUG_OTP_IN_RESPONSE",
+		"tls.enabled":                  "TLS_ENABLED",
+		"tls.cert_file":                "TLS_CERT_FILE",
+		"tls.key_file":                 "TLS_KEY_FILE",
+		"tls.ca_file":                  "TLS_CA_FILE",
+		"adaptive_mfa.enabled":         "ADAPTIVE_MFA_ENABLED",
+		"enable_rate_limit":            "ENABLE_RATE_LIMIT",
+		"rate_limit_requests":          "RATE_LIMIT_REQUESTS",
+		"rate_limit_window":            "RATE_LIMIT_WINDOW",
+		"rate_limit_auth_requests":     "RATE_LIMIT_AUTH_REQUESTS",
+		"rate_limit_auth_window":       "RATE_LIMIT_AUTH_WINDOW",
+		"rate_limit_per_user":          "RATE_LIMIT_PER_USER",
 		"audit_stream_allowed_origins": "AUDIT_STREAM_ALLOWED_ORIGINS",
 	}
 
@@ -793,4 +793,3 @@ func (c *Config) ValidateProduction() error {
 func (c *Config) DebugOTPsEnabled() bool {
 	return c.DebugOTPInResponse
 }
-

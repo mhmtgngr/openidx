@@ -15,11 +15,11 @@ import (
 
 // SystemConfig represents the complete system configuration
 type SystemConfig struct {
-	PasswordPolicy PasswordPolicyConfig `json:"password_policy"`
-	SessionPolicy  SessionPolicyConfig  `json:"session_policy"`
-	MFAPolicy      MFAPolicyConfig      `json:"mfa_policy"`
+	PasswordPolicy PasswordPolicyConfig  `json:"password_policy"`
+	SessionPolicy  SessionPolicyConfig   `json:"session_policy"`
+	MFAPolicy      MFAPolicyConfig       `json:"mfa_policy"`
 	RateLimit      RateLimitPolicyConfig `json:"rate_limit"`
-	UpdatedAt      *time.Time           `json:"updated_at"`
+	UpdatedAt      *time.Time            `json:"updated_at"`
 }
 
 // PasswordPolicyConfig defines password requirements
@@ -353,7 +353,7 @@ func containsChar(s string, char rune) bool {
 }
 
 func containsIgnoreCase(s, substr string) bool {
-	return regexp.MustCompile("(?i)"+regexp.QuoteMeta(substr)).MatchString(s)
+	return regexp.MustCompile("(?i)" + regexp.QuoteMeta(substr)).MatchString(s)
 }
 
 // --- Handlers ---

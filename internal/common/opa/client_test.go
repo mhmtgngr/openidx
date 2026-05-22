@@ -320,9 +320,9 @@ func TestAuthorizeRequest(t *testing.T) {
 		cancel() // Cancel immediately
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err := client.Authorize(ctx, input)
@@ -346,9 +346,9 @@ func TestAuthorizeRequest(t *testing.T) {
 		client := NewClient(server.URL, logger)
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		// The HTTP client has a 5-second timeout
@@ -371,9 +371,9 @@ func TestAuthorizeRequest(t *testing.T) {
 		client := NewClient(server.URL, logger)
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err := client.Authorize(context.Background(), input)
@@ -395,9 +395,9 @@ func TestAuthorizeRequest(t *testing.T) {
 		client := NewClient(server.URL, logger)
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err := client.Authorize(context.Background(), input)
@@ -413,9 +413,9 @@ func TestAuthorizeRequest(t *testing.T) {
 		client := NewClient("http://localhost:9999", logger)
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err := client.Authorize(context.Background(), input)
@@ -506,9 +506,9 @@ func TestSSRFValidation(t *testing.T) {
 		client.baseURL = "http://evil.com"
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err := client.Authorize(context.Background(), input)
@@ -548,9 +548,9 @@ func TestSSRFValidation(t *testing.T) {
 		assert.Contains(t, client.ssrfValidator.AllowedDomains, parsedURL.Hostname())
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err = client.Authorize(context.Background(), input)
@@ -567,9 +567,9 @@ func TestSSRFValidation(t *testing.T) {
 		client.baseURL = "file:///etc/passwd"
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		_, err := client.Authorize(context.Background(), input)
@@ -1010,9 +1010,9 @@ func TestUnknownValues(t *testing.T) {
 		client := NewClient(server.URL, logger)
 
 		input := Input{
-			User:     UserContext{ID: "user-123", Authenticated: true},
-			Method:   "GET",
-			Path:     "/api/v1/test",
+			User:   UserContext{ID: "user-123", Authenticated: true},
+			Method: "GET",
+			Path:   "/api/v1/test",
 		}
 
 		decision, err := client.Authorize(context.Background(), input)

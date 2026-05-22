@@ -89,26 +89,26 @@ func TestAccessService_ConfigValidation(t *testing.T) {
 // TestAccessService_ProductionConfigValidation tests production-specific validation
 func TestAccessService_ProductionConfigValidation(t *testing.T) {
 	tests := []struct {
-		name         string
-		cfg          *config.Config
-		wantErr      bool
-		errContains  string
+		name        string
+		cfg         *config.Config
+		wantErr     bool
+		errContains string
 	}{
 		{
 			name: "Valid production config",
 			cfg: &config.Config{
-				Environment:           "production",
-				DatabaseURL:           "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:              "redis://localhost:6379",
-				Port:                  8007,
-				JWTSecret:             "secure-32-byte-secret-key-1234567890",
-				EncryptionKey:         "secure-32-byte-encryption-key-123456",
-				AccessSessionSecret:   "secure-32-byte-session-secret-12345",
-				CORSAllowedOrigins:    "https://example.com",
-				CSRFEnabled:           true,
-				DatabaseSSLMode:       "verify-full",
-				RedisTLSEnabled:       true,
-				TLS:                   config.TLSConfig{Enabled: true},
+				Environment:               "production",
+				DatabaseURL:               "postgres://test@localhost:5432/test?sslmode=verify-full",
+				RedisURL:                  "redis://localhost:6379",
+				Port:                      8007,
+				JWTSecret:                 "secure-32-byte-secret-key-1234567890",
+				EncryptionKey:             "secure-32-byte-encryption-key-123456",
+				AccessSessionSecret:       "secure-32-byte-session-secret-12345",
+				CORSAllowedOrigins:        "https://example.com",
+				CSRFEnabled:               true,
+				DatabaseSSLMode:           "verify-full",
+				RedisTLSEnabled:           true,
+				TLS:                       config.TLSConfig{Enabled: true},
 				AuditStreamAllowedOrigins: "https://example.com",
 			},
 			wantErr: false,
@@ -116,77 +116,77 @@ func TestAccessService_ProductionConfigValidation(t *testing.T) {
 		{
 			name: "Production with insecure JWT secret",
 			cfg: &config.Config{
-				Environment:           "production",
-				DatabaseURL:           "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:              "redis://localhost:6379",
-				Port:                  8007,
-				JWTSecret:             "change-me",
-				EncryptionKey:         "secure-32-byte-encryption-key-123456",
-				AccessSessionSecret:   "secure-32-byte-session-secret-12345",
-				CORSAllowedOrigins:    "https://example.com",
-				CSRFEnabled:           true,
-				DatabaseSSLMode:       "verify-full",
-				RedisTLSEnabled:       true,
-				TLS:                   config.TLSConfig{Enabled: true},
+				Environment:         "production",
+				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=verify-full",
+				RedisURL:            "redis://localhost:6379",
+				Port:                8007,
+				JWTSecret:           "change-me",
+				EncryptionKey:       "secure-32-byte-encryption-key-123456",
+				AccessSessionSecret: "secure-32-byte-session-secret-12345",
+				CORSAllowedOrigins:  "https://example.com",
+				CSRFEnabled:         true,
+				DatabaseSSLMode:     "verify-full",
+				RedisTLSEnabled:     true,
+				TLS:                 config.TLSConfig{Enabled: true},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "jwt_secret",
 		},
 		{
 			name: "Production with wildcard CORS",
 			cfg: &config.Config{
-				Environment:           "production",
-				DatabaseURL:           "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:              "redis://localhost:6379",
-				Port:                  8007,
-				JWTSecret:             "secure-32-byte-secret-key-1234567890",
-				EncryptionKey:         "secure-32-byte-encryption-key-123456",
-				AccessSessionSecret:   "secure-32-byte-session-secret-12345",
-				CORSAllowedOrigins:    "*",
-				CSRFEnabled:           true,
-				DatabaseSSLMode:       "verify-full",
-				RedisTLSEnabled:       true,
-				TLS:                   config.TLSConfig{Enabled: true},
+				Environment:         "production",
+				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=verify-full",
+				RedisURL:            "redis://localhost:6379",
+				Port:                8007,
+				JWTSecret:           "secure-32-byte-secret-key-1234567890",
+				EncryptionKey:       "secure-32-byte-encryption-key-123456",
+				AccessSessionSecret: "secure-32-byte-session-secret-12345",
+				CORSAllowedOrigins:  "*",
+				CSRFEnabled:         true,
+				DatabaseSSLMode:     "verify-full",
+				RedisTLSEnabled:     true,
+				TLS:                 config.TLSConfig{Enabled: true},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "cors",
 		},
 		{
 			name: "Production without CSRF",
 			cfg: &config.Config{
-				Environment:           "production",
-				DatabaseURL:           "postgres://test@localhost:5432/test?sslmode=verify-full",
-				RedisURL:              "redis://localhost:6379",
-				Port:                  8007,
-				JWTSecret:             "secure-32-byte-secret-key-1234567890",
-				EncryptionKey:         "secure-32-byte-encryption-key-123456",
-				AccessSessionSecret:   "secure-32-byte-session-secret-12345",
-				CORSAllowedOrigins:    "https://example.com",
-				CSRFEnabled:           false,
-				DatabaseSSLMode:       "verify-full",
-				RedisTLSEnabled:       true,
-				TLS:                   config.TLSConfig{Enabled: true},
+				Environment:         "production",
+				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=verify-full",
+				RedisURL:            "redis://localhost:6379",
+				Port:                8007,
+				JWTSecret:           "secure-32-byte-secret-key-1234567890",
+				EncryptionKey:       "secure-32-byte-encryption-key-123456",
+				AccessSessionSecret: "secure-32-byte-session-secret-12345",
+				CORSAllowedOrigins:  "https://example.com",
+				CSRFEnabled:         false,
+				DatabaseSSLMode:     "verify-full",
+				RedisTLSEnabled:     true,
+				TLS:                 config.TLSConfig{Enabled: true},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "csrf",
 		},
 		{
 			name: "Production with disabled database TLS",
 			cfg: &config.Config{
-				Environment:           "production",
-				DatabaseURL:           "postgres://test@localhost:5432/test?sslmode=disable",
-				RedisURL:              "redis://localhost:6379",
-				Port:                  8007,
-				JWTSecret:             "secure-32-byte-secret-key-1234567890",
-				EncryptionKey:         "secure-32-byte-encryption-key-123456",
-				AccessSessionSecret:   "secure-32-byte-session-secret-12345",
-				CORSAllowedOrigins:    "https://example.com",
-				CSRFEnabled:           true,
-				DatabaseSSLMode:       "disable",
-				RedisTLSEnabled:       true,
-				TLS:                   config.TLSConfig{Enabled: true},
+				Environment:         "production",
+				DatabaseURL:         "postgres://test@localhost:5432/test?sslmode=disable",
+				RedisURL:            "redis://localhost:6379",
+				Port:                8007,
+				JWTSecret:           "secure-32-byte-secret-key-1234567890",
+				EncryptionKey:       "secure-32-byte-encryption-key-123456",
+				AccessSessionSecret: "secure-32-byte-session-secret-12345",
+				CORSAllowedOrigins:  "https://example.com",
+				CSRFEnabled:         true,
+				DatabaseSSLMode:     "disable",
+				RedisTLSEnabled:     true,
+				TLS:                 config.TLSConfig{Enabled: true},
 			},
-			wantErr: true,
+			wantErr:     true,
 			errContains: "database_ssl_mode",
 		},
 	}
@@ -361,9 +361,9 @@ func TestAccessService_ErrorHandling(t *testing.T) {
 
 	t.Run("Config environment detection", func(t *testing.T) {
 		tests := []struct {
-			env       string
-			isDev     bool
-			isProd    bool
+			env    string
+			isDev  bool
+			isProd bool
 		}{
 			{"development", true, false},
 			{"dev", true, false},
@@ -418,12 +418,12 @@ func TestAccessService_MiddlewareConfiguration(t *testing.T) {
 func TestAccessService_AccessServiceCreation(t *testing.T) {
 	t.Run("Service creation requires valid dependencies", func(t *testing.T) {
 		cfg := &config.Config{
-			Environment:           "development",
-			Port:                  8007,
-			GovernanceURL:         "http://localhost:8002",
-			AuditURL:              "http://localhost:8004",
-			AccessSessionSecret:   "test-session-secret-32-bytes-long!",
-			AccessProxyDomain:     "localhost",
+			Environment:         "development",
+			Port:                8007,
+			GovernanceURL:       "http://localhost:8002",
+			AuditURL:            "http://localhost:8004",
+			AccessSessionSecret: "test-session-secret-32-bytes-long!",
+			AccessProxyDomain:   "localhost",
 		}
 
 		// We can't create a full service without DB, but we can verify config is valid
@@ -437,15 +437,15 @@ func TestAccessService_AccessServiceCreation(t *testing.T) {
 // TestAccessService_TLSConfig tests TLS configuration
 func TestAccessService_TLSConfig(t *testing.T) {
 	tests := []struct {
-		name      string
-		cfg       config.TLSConfig
-		enabled   bool
-		hasCerts  bool
+		name     string
+		cfg      config.TLSConfig
+		enabled  bool
+		hasCerts bool
 	}{
 		{
-			name: "TLS disabled",
-			cfg:  config.TLSConfig{Enabled: false},
-			enabled: false,
+			name:     "TLS disabled",
+			cfg:      config.TLSConfig{Enabled: false},
+			enabled:  false,
 			hasCerts: false,
 		},
 		{
@@ -455,7 +455,7 @@ func TestAccessService_TLSConfig(t *testing.T) {
 				CertFile: "/path/to/cert.pem",
 				KeyFile:  "/path/to/key.pem",
 			},
-			enabled: true,
+			enabled:  true,
 			hasCerts: true,
 		},
 	}
@@ -474,8 +474,8 @@ func TestAccessService_TLSConfig(t *testing.T) {
 // TestAccessService_CSRFConfig tests CSRF configuration
 func TestAccessService_CSRFConfig(t *testing.T) {
 	tests := []struct {
-		name         string
-		enabled      bool
+		name          string
+		enabled       bool
 		trustedDomain string
 	}{
 		{"CSRF disabled", false, ""},
@@ -500,14 +500,14 @@ func TestAccessService_CSRFConfig(t *testing.T) {
 func TestAccessService_ProductionWarnings(t *testing.T) {
 	t.Run("Production warnings detect insecure configs", func(t *testing.T) {
 		cfg := &config.Config{
-			Environment:         "production",
-			JWTSecret:           "change-me",
-			EncryptionKey:       "",
-			CORSAllowedOrigins:  "*",
-			CSRFEnabled:         false,
-			DatabaseSSLMode:     "disable",
-			RedisTLSEnabled:     false,
-			TLS:                 config.TLSConfig{Enabled: false},
+			Environment:        "production",
+			JWTSecret:          "change-me",
+			EncryptionKey:      "",
+			CORSAllowedOrigins: "*",
+			CSRFEnabled:        false,
+			DatabaseSSLMode:    "disable",
+			RedisTLSEnabled:    false,
+			TLS:                config.TLSConfig{Enabled: false},
 		}
 
 		warnings := cfg.ProductionWarnings()

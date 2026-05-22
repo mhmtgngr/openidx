@@ -20,38 +20,38 @@ import (
 
 // GeoIPResult represents the result of a GeoIP lookup
 type GeoIPResult struct {
-	IPAddress   string  `json:"ip_address"`
-	Country     string  `json:"country"`
-	CountryCode string  `json:"country_code"`
-	City        string  `json:"city"`
-	Region      string  `json:"region"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	ISP         string  `json:"isp"`
-	Org         string  `json:"organization"`
-	ASNumber    string  `json:"as_number"`
-	IsMobile    bool    `json:"is_mobile"`
-	IsProxy     bool    `json:"is_proxy"`
-	IsVPN       bool    `json:"is_vpn"`
-	IsTor       bool    `json:"is_tor"`
-	IsHosting   bool    `json:"is_hosting"`
-	ThreatScore int     `json:"threat_score"`
+	IPAddress   string    `json:"ip_address"`
+	Country     string    `json:"country"`
+	CountryCode string    `json:"country_code"`
+	City        string    `json:"city"`
+	Region      string    `json:"region"`
+	Latitude    float64   `json:"latitude"`
+	Longitude   float64   `json:"longitude"`
+	ISP         string    `json:"isp"`
+	Org         string    `json:"organization"`
+	ASNumber    string    `json:"as_number"`
+	IsMobile    bool      `json:"is_mobile"`
+	IsProxy     bool      `json:"is_proxy"`
+	IsVPN       bool      `json:"is_vpn"`
+	IsTor       bool      `json:"is_tor"`
+	IsHosting   bool      `json:"is_hosting"`
+	ThreatScore int       `json:"threat_score"`
 	LookupTime  time.Time `json:"lookup_time"`
 }
 
 // IPBlocklistEntry represents an IP address or range on the blocklist
 type IPBlocklistEntry struct {
-	ID          string     `json:"id"`
-	IPAddress   string     `json:"ip_address"`   // Can be single IP or CIDR
-	CIDR        string     `json:"cidr,omitempty"`
-	Reason      string     `json:"reason"`
-	ThreatType  string     `json:"threat_type"` // malware, botnet, brute-force, etc
-	Source      string     `json:"source"`      // manual, abuseipdb, auto, etc
-	Permanent   bool       `json:"permanent"`
+	ID           string     `json:"id"`
+	IPAddress    string     `json:"ip_address"` // Can be single IP or CIDR
+	CIDR         string     `json:"cidr,omitempty"`
+	Reason       string     `json:"reason"`
+	ThreatType   string     `json:"threat_type"` // malware, botnet, brute-force, etc
+	Source       string     `json:"source"`      // manual, abuseipdb, auto, etc
+	Permanent    bool       `json:"permanent"`
 	BlockedUntil *time.Time `json:"blocked_until,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ReportCount int        `json:"report_count"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ReportCount  int        `json:"report_count"`
 }
 
 // IPAllowlistEntry represents an IP address or range on the allowlist
@@ -65,23 +65,23 @@ type IPAllowlistEntry struct {
 
 // ImpossibleTravelResult represents the result of an impossible travel check
 type ImpossibleTravelResult struct {
-	IsImpossible   bool      `json:"is_impossible"`
-	DistanceKm     float64   `json:"distance_km"`
-	TimeDelta      time.Duration `json:"time_delta"`
-	RequiredTime   time.Duration `json:"required_time"`
-	SpeedKmh       float64   `json:"speed_kmh"`
-	PreviousLocation *GeoPoint `json:"previous_location,omitempty"`
-	CurrentLocation  *GeoPoint `json:"current_location,omitempty"`
-	PreviousTime    time.Time `json:"previous_time"`
-	CurrentTime     time.Time `json:"current_time"`
+	IsImpossible     bool          `json:"is_impossible"`
+	DistanceKm       float64       `json:"distance_km"`
+	TimeDelta        time.Duration `json:"time_delta"`
+	RequiredTime     time.Duration `json:"required_time"`
+	SpeedKmh         float64       `json:"speed_kmh"`
+	PreviousLocation *GeoPoint     `json:"previous_location,omitempty"`
+	CurrentLocation  *GeoPoint     `json:"current_location,omitempty"`
+	PreviousTime     time.Time     `json:"previous_time"`
+	CurrentTime      time.Time     `json:"current_time"`
 }
 
 // IPIntelligenceConfig holds configuration for IP intelligence
 type IPIntelligenceConfig struct {
 	// GeoIP configuration
-	GeoIPCacheTTL      time.Duration
-	GeoIPProvider      string // "maxmind", "ip-api", "ipinfo"
-	GeoIDatabasePath   string // Path to MaxMind GeoLite2 database
+	GeoIPCacheTTL    time.Duration
+	GeoIPProvider    string // "maxmind", "ip-api", "ipinfo"
+	GeoIDatabasePath string // Path to MaxMind GeoLite2 database
 
 	// VPN/Tor detection
 	EnableVPNDetection bool
@@ -89,16 +89,16 @@ type IPIntelligenceConfig struct {
 	VPNCacheTTL        time.Duration
 
 	// Impossible travel
-	MaxTravelSpeed     float64 // km/h (default 900 = commercial aircraft)
-	MinDistanceCheck   float64 // km (default 100)
+	MaxTravelSpeed   float64 // km/h (default 900 = commercial aircraft)
+	MinDistanceCheck float64 // km (default 100)
 
 	// Blocklist/Allowlist
-	BlocklistCacheTTL  time.Duration
-	EnableBlocklist    bool
-	EnableAllowlist    bool
+	BlocklistCacheTTL time.Duration
+	EnableBlocklist   bool
+	EnableAllowlist   bool
 
 	// HTTP client for external APIs
-	HTTPTimeout        time.Duration
+	HTTPTimeout time.Duration
 }
 
 // DefaultIPIntelligenceConfig returns default IP intelligence configuration
@@ -110,7 +110,7 @@ func DefaultIPIntelligenceConfig() IPIntelligenceConfig {
 		EnableTorDetection: true,
 		VPNCacheTTL:        6 * time.Hour,
 		MaxTravelSpeed:     900, // ~900 km/h (aircraft speed)
-		MinDistanceCheck:   100,  // km
+		MinDistanceCheck:   100, // km
 		BlocklistCacheTTL:  1 * time.Hour,
 		EnableBlocklist:    true,
 		EnableAllowlist:    true,
@@ -120,11 +120,11 @@ func DefaultIPIntelligenceConfig() IPIntelligenceConfig {
 
 // IPIntelligence provides IP-based risk assessment
 type IPIntelligence struct {
-	db      *database.PostgresDB
-	redis   *database.RedisClient
-	config  IPIntelligenceConfig
-	client  *http.Client
-	logger  *zap.Logger
+	db     *database.PostgresDB
+	redis  *database.RedisClient
+	config IPIntelligenceConfig
+	client *http.Client
+	logger *zap.Logger
 
 	// In-memory caches for fast lookups
 	torExitNodes map[string]struct{} // Set of known Tor exit IPs
@@ -143,11 +143,11 @@ func NewIPIntelligence(db *database.PostgresDB, redis *database.RedisClient, con
 	}
 
 	return &IPIntelligence{
-		db:      db,
-		redis:   redis,
-		config:  config,
-		client:  &http.Client{Timeout: config.HTTPTimeout},
-		logger:  logger.With(zap.String("component", "ip_intelligence")),
+		db:           db,
+		redis:        redis,
+		config:       config,
+		client:       &http.Client{Timeout: config.HTTPTimeout},
+		logger:       logger.With(zap.String("component", "ip_intelligence")),
 		torExitNodes: make(map[string]struct{}),
 	}
 }
@@ -158,11 +158,11 @@ func (i *IPIntelligence) LookupGeoIP(ctx context.Context, ip string) (*GeoIPResu
 	if parsedIP := net.ParseIP(ip); parsedIP != nil {
 		if parsedIP.IsLoopback() || parsedIP.IsPrivate() || parsedIP.IsLinkLocalUnicast() {
 			return &GeoIPResult{
-				IPAddress:  ip,
-				Country:    "Local",
+				IPAddress:   ip,
+				Country:     "Local",
 				CountryCode: "LO",
-				City:       "Local",
-				LookupTime: time.Now(),
+				City:        "Local",
+				LookupTime:  time.Now(),
 			}, nil
 		}
 	}
@@ -281,10 +281,10 @@ func (i *IPIntelligence) lookupMaxMind(ctx context.Context, ip string) (*GeoIPRe
 	// Placeholder for MaxMind implementation
 	// In production, this would use github.com/oschwald/geoip2-golang
 	return &GeoIPResult{
-		IPAddress:  ip,
-		Country:    "Unknown",
+		IPAddress:   ip,
+		Country:     "Unknown",
 		CountryCode: "??",
-		LookupTime: time.Now(),
+		LookupTime:  time.Now(),
 	}, fmt.Errorf("maxmind provider not configured")
 }
 

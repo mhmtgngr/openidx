@@ -18,13 +18,13 @@ import (
 
 // OAuth 2.0 Token Error Codes (RFC 6749 Section 5.2)
 const (
-	TokenErrorInvalidRequest           = "invalid_request"
-	TokenErrorInvalidClient            = "invalid_client"
-	TokenErrorInvalidGrant             = "invalid_grant"
-	TokenErrorUnauthorizedClient       = "unauthorized_client"
-	TokenErrorUnsupportedGrantType     = "unsupported_grant_type"
-	TokenErrorInvalidScope             = "invalid_scope"
-	TokenErrorServerError              = "server_error"
+	TokenErrorInvalidRequest       = "invalid_request"
+	TokenErrorInvalidClient        = "invalid_client"
+	TokenErrorInvalidGrant         = "invalid_grant"
+	TokenErrorUnauthorizedClient   = "unauthorized_client"
+	TokenErrorUnsupportedGrantType = "unsupported_grant_type"
+	TokenErrorInvalidScope         = "invalid_scope"
+	TokenErrorServerError          = "server_error"
 )
 
 // TokenRequest represents a token request
@@ -58,11 +58,11 @@ type TokenErrorResponse struct {
 
 // TokenFlow handles OAuth 2.0 token endpoint requests
 type TokenFlow struct {
-	clients   *ClientRepository
-	store     *Store
-	jwtSigner jwt.SigningMethod
-	issuer    string
-	logger    *zap.Logger
+	clients    *ClientRepository
+	store      *Store
+	jwtSigner  jwt.SigningMethod
+	issuer     string
+	logger     *zap.Logger
 	keyManager *KeyManager // KeyManager for JWT signing operations
 }
 
@@ -70,11 +70,11 @@ type TokenFlow struct {
 // Deprecated: Use NewTokenFlowWithKeyManager instead
 func NewTokenFlow(clients *ClientRepository, store *Store, privateKey interface{}, issuer string, logger *zap.Logger) *TokenFlow {
 	return &TokenFlow{
-		clients:   clients,
-		store:     store,
-		jwtSigner: jwt.GetSigningMethod("RS256"),
-		issuer:    issuer,
-		logger:    logger.With(zap.String("flow", "token")),
+		clients:    clients,
+		store:      store,
+		jwtSigner:  jwt.GetSigningMethod("RS256"),
+		issuer:     issuer,
+		logger:     logger.With(zap.String("flow", "token")),
 		keyManager: nil, // No KeyManager - backward compatibility mode
 	}
 }
@@ -514,13 +514,13 @@ func (f *TokenFlow) issueTokens(ctx context.Context, client *Client, userID, sco
 func (f *TokenFlow) generateIDToken(client *Client, userID, scope, accessToken string, now time.Time, lifetime time.Duration) (string, error) {
 	// Build JWT claims
 	claims := jwt.MapClaims{
-		"iss": f.issuer,                          // Issuer
-		"sub": userID,                            // Subject (user identifier)
-		"aud": client.ClientID,                   // Audience (client_id)
-		"exp": now.Add(lifetime).Unix(),          // Expiration
-		"iat": now.Unix(),                        // Issued At
-		"auth_time": now.Unix(),                  // Authentication Time
-		"jti": f.store.GenerateToken(),           // JWT ID (unique identifier)
+		"iss":       f.issuer,                 // Issuer
+		"sub":       userID,                   // Subject (user identifier)
+		"aud":       client.ClientID,          // Audience (client_id)
+		"exp":       now.Add(lifetime).Unix(), // Expiration
+		"iat":       now.Unix(),               // Issued At
+		"auth_time": now.Unix(),               // Authentication Time
+		"jti":       f.store.GenerateToken(),  // JWT ID (unique identifier)
 	}
 
 	// Add at_hash if access token is present

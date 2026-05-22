@@ -34,11 +34,11 @@ type AzureADConfig struct {
 	TenantID          string           `json:"tenant_id"`
 	ClientID          string           `json:"client_id"`
 	ClientSecret      string           `json:"client_secret"`
-	UserFilter        string           `json:"user_filter"`         // OData $filter for /users
-	GroupFilter       string           `json:"group_filter"`        // OData $filter for /groups
-	SyncInterval      int              `json:"sync_interval"`       // minutes
+	UserFilter        string           `json:"user_filter"`   // OData $filter for /users
+	GroupFilter       string           `json:"group_filter"`  // OData $filter for /groups
+	SyncInterval      int              `json:"sync_interval"` // minutes
 	SyncEnabled       bool             `json:"sync_enabled"`
-	DeprovisionAction string           `json:"deprovision_action"`  // "disable" or "delete"
+	DeprovisionAction string           `json:"deprovision_action"` // "disable" or "delete"
 	AttributeMapping  AttributeMapping `json:"attribute_mapping"`
 }
 
@@ -109,13 +109,13 @@ type SyncLog struct {
 
 // SyncState represents the current sync state for a directory
 type SyncState struct {
-	DirectoryID        string     `json:"directory_id"`
-	LastSyncAt         *time.Time `json:"last_sync_at,omitempty"`
-	LastUSNChanged     *int64     `json:"last_usn_changed,omitempty"`
-	LastModifyTimestamp *string   `json:"last_modify_timestamp,omitempty"`
-	LastDeltaLink      *string    `json:"last_delta_link,omitempty"` // Azure AD delta query link
-	UsersSynced        int        `json:"users_synced"`
-	GroupsSynced       int        `json:"groups_synced"`
-	ErrorsCount        int        `json:"errors_count"`
-	SyncDurationMs     *int       `json:"sync_duration_ms,omitempty"`
+	DirectoryID         string     `json:"directory_id"`
+	LastSyncAt          *time.Time `json:"last_sync_at,omitempty"`
+	LastUSNChanged      *int64     `json:"last_usn_changed,omitempty"`
+	LastModifyTimestamp *string    `json:"last_modify_timestamp,omitempty"`
+	LastDeltaLink       *string    `json:"last_delta_link,omitempty"` // Azure AD delta query link
+	UsersSynced         int        `json:"users_synced"`
+	GroupsSynced        int        `json:"groups_synced"`
+	ErrorsCount         int        `json:"errors_count"`
+	SyncDurationMs      *int       `json:"sync_duration_ms,omitempty"`
 }

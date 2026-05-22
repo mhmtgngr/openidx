@@ -37,16 +37,16 @@ type Backup struct {
 // BackupConfig holds configuration for backup operations
 type BackupConfig struct {
 	// Storage settings
-	StorageDir     string // Local directory for backups
-	S3Bucket       string // S3 bucket name
-	S3Region       string // S3 region
-	S3Endpoint     string // Custom S3 endpoint (for MinIO, etc.)
-	S3AccessKey    string // S3 access key
-	S3SecretKey    string // S3 secret key
+	StorageDir  string // Local directory for backups
+	S3Bucket    string // S3 bucket name
+	S3Region    string // S3 region
+	S3Endpoint  string // Custom S3 endpoint (for MinIO, etc.)
+	S3AccessKey string // S3 access key
+	S3SecretKey string // S3 secret key
 
 	// Backup settings
-	CompressionLevel int // 0-9, default 6
-	RetentionCount   int // Keep last N backups, 0 = unlimited
+	CompressionLevel int    // 0-9, default 6
+	RetentionCount   int    // Keep last N backups, 0 = unlimited
 	EncryptionKey    string // AES-256 encryption key (optional)
 
 	// Database settings
