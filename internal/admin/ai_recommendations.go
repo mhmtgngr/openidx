@@ -63,7 +63,6 @@ func (s *Service) handleListRecommendations(c *gin.Context) {
 	if impact != "" {
 		query += fmt.Sprintf(" AND impact = $%d", argIdx)
 		args = append(args, impact)
-		argIdx++
 	}
 	query += " ORDER BY CASE impact WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, created_at DESC LIMIT 100"
 

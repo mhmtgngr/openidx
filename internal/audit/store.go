@@ -259,7 +259,7 @@ func (s *Store) updateChainStates(ctx context.Context, tx pgx.Tx, events []*Audi
 func (s *Store) getLastHash(ctx context.Context, tenantID string) (string, error) {
 	var lastHash string
 
-	query := `SELECT last_hash FROM audit_chain_state WHERE tenant_id = $1`
+	var query string
 	if tenantID == "" {
 		query = `SELECT last_hash FROM audit_chain_state WHERE tenant_id = 'default'`
 	} else {

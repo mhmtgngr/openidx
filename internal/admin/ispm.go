@@ -192,7 +192,6 @@ func (s *Service) handleListPostureFindings(c *gin.Context) {
 	if category != "" {
 		query += fmt.Sprintf(" AND category = $%d", argIdx)
 		args = append(args, category)
-		argIdx++
 	}
 	query += " ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC LIMIT 200"
 

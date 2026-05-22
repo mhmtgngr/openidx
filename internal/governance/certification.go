@@ -224,7 +224,6 @@ func (s *CertificationService) generateReviewItems(ctx context.Context, campaign
 	if len(campaign.Scope.ResourceIDs) > 0 {
 		query += fmt.Sprintf(" AND ur.role_id = ANY($%d)", argIdx)
 		args = append(args, campaign.Scope.ResourceIDs)
-		argIdx++
 	}
 
 	rows, err := s.db.Pool.Query(ctx, query, args...)

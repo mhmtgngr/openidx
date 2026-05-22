@@ -731,7 +731,6 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 	if offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", argCount)
 		args = append(args, offset)
-		argCount++
 	}
 
 	rows, err := s.db.Pool.Query(ctx, query, args...)
@@ -2756,7 +2755,6 @@ func (s *Service) GetEntitlementCatalog(ctx context.Context, offset, limit int, 
 	if offset > 0 {
 		query += fmt.Sprintf(" OFFSET $%d", argCount)
 		args = append(args, offset)
-		argCount++
 	}
 
 	rows, err := s.db.Pool.Query(ctx, query, args...)
@@ -3001,7 +2999,6 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 	if offset > 0 {
 		dataQuery += fmt.Sprintf(" OFFSET $%d", argCount)
 		args = append(args, offset)
-		argCount++
 	}
 
 	rows, err := s.db.Pool.Query(ctx, dataQuery, args...)

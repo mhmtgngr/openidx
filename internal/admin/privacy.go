@@ -936,7 +936,6 @@ func (s *Service) handleListPrivacyAssessments(c *gin.Context) {
 	if riskLevel != "" {
 		conditions = append(conditions, fmt.Sprintf("risk_level = $%d", argIdx))
 		args = append(args, riskLevel)
-		argIdx++
 	}
 
 	whereClause := ""

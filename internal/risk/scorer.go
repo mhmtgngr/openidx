@@ -346,7 +346,7 @@ func (s *Scorer) calculateLoginVelocity(ctx context.Context, loginCtx LoginConte
 func (s *Scorer) calculateTimePattern(ctx context.Context, loginCtx LoginContext) Signal {
 	const weight = WeightTimePattern
 	score := 0.0
-	description := "Normal login time"
+	var description string
 
 	loginHour := loginCtx.LoginTime.Hour()
 	isUnusual := true
