@@ -245,9 +245,10 @@ func (h *EnhancedHealthService) Check(ctx context.Context) *EnhancedHealthRespon
 
 	// Map status to response format
 	responseStatus := "healthy"
-	if overallStatus == "warning" {
+	switch overallStatus {
+	case "warning":
 		responseStatus = "degraded"
-	} else if overallStatus == "critical" {
+	case "critical":
 		responseStatus = "unhealthy"
 	}
 

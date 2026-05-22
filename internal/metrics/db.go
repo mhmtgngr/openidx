@@ -65,7 +65,7 @@ func (t *TracedPool) Exec(ctx context.Context, sql string, args ...interface{}) 
 
 // CollectPoolStats collects database connection pool statistics
 func (t *TracedPool) CollectPoolStats() {
-	stat := t.Pool.Stat()
+	stat := t.Stat()
 	SetDBConnections(t.serviceName, "total", float64(stat.TotalConns()))
 	SetDBConnections(t.serviceName, "idle", float64(stat.IdleConns()))
 	SetDBConnections(t.serviceName, "acquire_count", float64(stat.AcquireCount()))

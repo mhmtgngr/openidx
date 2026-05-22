@@ -432,7 +432,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	// Includes Docker embedded DNS (127.0.0.11) plus host DNS servers from /etc/resolv.conf
 	// so internal/corporate domains can be resolved.
 	if hasExternal {
-		b.WriteString(fmt.Sprintf("    resolver %s valid=30s ipv6=off;\n", tm.dnsResolvers))
+		fmt.Fprintf(&b, "    resolver %s valid=30s ipv6=off;\n", tm.dnsResolvers)
 	}
 	b.WriteString("\n")
 
@@ -443,14 +443,14 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			pathWithSlash += "/"
 		}
 
-		b.WriteString(fmt.Sprintf("    location %s {\n", pathWithSlash))
+		fmt.Fprintf(&b, "    location %s {\n", pathWithSlash)
 
 		// Generate a safe variable name from the path prefix (e.g. /psm/ -> upstream_psm)
 		varName := "upstream_" + strings.ReplaceAll(strings.Trim(m.pathPrefix, "/"), "-", "_")
 
 		if m.isGuac {
 			// Guacamole keeps the prefix (it expects /guacamole)
-			b.WriteString(fmt.Sprintf("        proxy_pass %s%s;\n", m.upstream, pathWithSlash))
+			fmt.Fprintf(&b, "        proxy_pass %s%s;\n", m.upstream, pathWithSlash)
 			b.WriteString("        proxy_http_version 1.1;\n")
 			b.WriteString("        proxy_set_header Host $host;\n")
 			b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
@@ -470,13 +470,13 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				// Pass the URI through as-is — nginx forwards /psm/... to upstream /psm/...
 				// Use variable-based proxy_pass so nginx resolves DNS at request time,
 				// not at startup (prevents crash when external hosts are unreachable).
-				b.WriteString(fmt.Sprintf("        set $%s %s;\n", varName, upstreamBase))
-				b.WriteString(fmt.Sprintf("        proxy_pass $%s;\n", varName))
+				fmt.Fprintf(&b, "        set $%s %s;\n", varName, upstreamBase)
+				fmt.Fprintf(&b, "        proxy_pass $%s;\n", varName)
 				// Rewrite Location headers so redirects stay on BrowZer domain
-				b.WriteString(fmt.Sprintf("        proxy_redirect https://%s/ /;\n", parsed.Host))
-				b.WriteString(fmt.Sprintf("        proxy_redirect http://%s/ /;\n", parsed.Host))
+				fmt.Fprintf(&b, "        proxy_redirect https://%s/ /;\n", parsed.Host)
+				fmt.Fprintf(&b, "        proxy_redirect http://%s/ /;\n", parsed.Host)
 				b.WriteString("        proxy_http_version 1.1;\n")
-				b.WriteString(fmt.Sprintf("        proxy_set_header Host %s;\n", parsed.Host))
+				fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", parsed.Host)
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 				b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
 				b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
@@ -486,19 +486,19 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
 				b.WriteString("        sub_filter_once off;\n")
 				b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
-				b.WriteString(fmt.Sprintf("        sub_filter 'https://%s' '';\n", parsed.Host))
-				b.WriteString(fmt.Sprintf("        sub_filter 'http://%s' '';\n", parsed.Host))
+				fmt.Fprintf(&b, "        sub_filter 'https://%s' '';\n", parsed.Host)
+				fmt.Fprintf(&b, "        sub_filter 'http://%s' '';\n", parsed.Host)
 			} else if parsed.Scheme == "https" {
 				// External HTTPS app: strip the prefix from ALL requests since the
 				// backend doesn't know about the BrowZer path prefix. Rewrite every
 				// URI from /prefix/... to /... before proxying.
 				// Use variable-based proxy_pass for runtime DNS resolution.
-				b.WriteString(fmt.Sprintf("        set $%s %s;\n", varName, upstreamBase))
-				b.WriteString(fmt.Sprintf("        rewrite ^%s(/.*)?$ $1 break;\n", pathTrimmed))
-				b.WriteString(fmt.Sprintf("        proxy_pass $%s;\n", varName))
-				b.WriteString(fmt.Sprintf("        proxy_redirect / %s;\n", pathWithSlash))
+				fmt.Fprintf(&b, "        set $%s %s;\n", varName, upstreamBase)
+				fmt.Fprintf(&b, "        rewrite ^%s(/.*)?$ $1 break;\n", pathTrimmed)
+				fmt.Fprintf(&b, "        proxy_pass $%s;\n", varName)
+				fmt.Fprintf(&b, "        proxy_redirect / %s;\n", pathWithSlash)
 				b.WriteString("        proxy_http_version 1.1;\n")
-				b.WriteString(fmt.Sprintf("        proxy_set_header Host %s;\n", parsed.Host))
+				fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", parsed.Host)
 				b.WriteString("        proxy_ssl_server_name on;\n")
 				b.WriteString("        proxy_ssl_verify off;\n")
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
@@ -507,12 +507,12 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
 				b.WriteString("        sub_filter_once off;\n")
 				b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
-				b.WriteString(fmt.Sprintf("        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'url(/' 'url(%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'action=\"/' 'action=\"%s';\n", pathWithSlash))
+				fmt.Fprintf(&b, "        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'url(/' 'url(%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'action=\"/' 'action=\"%s';\n", pathWithSlash)
 			} else {
 				// Internal HTTP app: hybrid path handling — rewrite rules strip the
 				// prefix for the root page and static assets only. All other paths
@@ -520,10 +520,10 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				// backend sees its expected paths (e.g. /apisix/admin/*). sub_filter
 				// rewrites HTML asset paths, and the webpack publicPath so async
 				// chunks load from the correct prefix.
-				b.WriteString(fmt.Sprintf("        rewrite ^%s/?$ / break;\n", pathTrimmed))
-				b.WriteString(fmt.Sprintf("        rewrite \"^%s/(.+\\.(?:js|mjs|css|html|htm|png|svg|ico|jpg|jpeg|gif|webp|woff2?|ttf|eot|otf|map|json|txt|xml|webmanifest))$\" /$1 break;\n", pathTrimmed))
-				b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", upstreamBase))
-				b.WriteString(fmt.Sprintf("        proxy_redirect / %s;\n", pathWithSlash))
+				fmt.Fprintf(&b, "        rewrite ^%s/?$ / break;\n", pathTrimmed)
+				fmt.Fprintf(&b, "        rewrite \"^%s/(.+\\.(?:js|mjs|css|html|htm|png|svg|ico|jpg|jpeg|gif|webp|woff2?|ttf|eot|otf|map|json|txt|xml|webmanifest))$\" /$1 break;\n", pathTrimmed)
+				fmt.Fprintf(&b, "        proxy_pass %s;\n", upstreamBase)
+				fmt.Fprintf(&b, "        proxy_redirect / %s;\n", pathWithSlash)
 				b.WriteString("        proxy_http_version 1.1;\n")
 				b.WriteString("        proxy_set_header Host $host;\n")
 				b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
@@ -532,12 +532,12 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 				b.WriteString("        proxy_set_header Accept-Encoding \"\";\n")
 				b.WriteString("        sub_filter_once off;\n")
 				b.WriteString("        sub_filter_types text/html application/javascript text/javascript text/css;\n")
-				b.WriteString(fmt.Sprintf("        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'url(/' 'url(%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash))
-				b.WriteString(fmt.Sprintf("        sub_filter '.p=\"/\"' '.p=\"%s\"';\n", pathWithSlash))
+				fmt.Fprintf(&b, "        sub_filter 'src=\"/' 'src=\"%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'href=\"/' 'href=\"%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'url(/' 'url(%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter \"url('/\" \"url('%s\";\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter 'url(\"/' 'url(\"%s';\n", pathWithSlash)
+				fmt.Fprintf(&b, "        sub_filter '.p=\"/\"' '.p=\"%s\"';\n", pathWithSlash)
 			}
 		}
 
@@ -560,7 +560,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	b.WriteString("<h1>OpenIDX BrowZer Services</h1><p>Available services:</p>")
 	for _, m := range mappings {
 		label := strings.TrimPrefix(m.pathPrefix, "/")
-		b.WriteString(fmt.Sprintf("<a href=\"%s\">%s</a>", m.pathPrefix, label))
+		fmt.Fprintf(&b, "<a href=\"%s\">%s</a>", m.pathPrefix, label)
 	}
 	b.WriteString("</body></html>';\n")
 	b.WriteString("    }\n")
@@ -569,12 +569,12 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 	// Generate vhost server blocks for routes with unique domains.
 	// These are simple reverse proxies — no sub_filter needed since the app runs at root /.
 	for _, vh := range vhosts {
-		b.WriteString(fmt.Sprintf("\n# Vhost: %s\n", vh.hostname))
+		fmt.Fprintf(&b, "\n# Vhost: %s\n", vh.hostname)
 		b.WriteString("server {\n")
 		b.WriteString("    listen 80;\n")
-		b.WriteString(fmt.Sprintf("    server_name %s;\n\n", vh.hostname))
+		fmt.Fprintf(&b, "    server_name %s;\n\n", vh.hostname)
 		b.WriteString("    location / {\n")
-		b.WriteString(fmt.Sprintf("        proxy_pass %s;\n", vh.upstream))
+		fmt.Fprintf(&b, "        proxy_pass %s;\n", vh.upstream)
 		b.WriteString("        proxy_http_version 1.1;\n")
 		b.WriteString("        proxy_set_header Host $host;\n")
 		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")

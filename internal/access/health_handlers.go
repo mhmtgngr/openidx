@@ -131,9 +131,10 @@ func (s *Service) handleHealthZiti(c *gin.Context) {
 	health := s.checkZitiHealth(c.Request.Context())
 
 	statusCode := http.StatusOK
-	if health.Status == "unhealthy" {
+	switch health.Status {
+	case "unhealthy":
 		statusCode = http.StatusServiceUnavailable
-	} else if health.Status == "degraded" {
+	case "degraded":
 		statusCode = http.StatusOK
 	}
 

@@ -594,7 +594,7 @@ func buildAPISIXSSLBlock(certPEM, keyPEM []byte, sans []string) string {
 	added := make(map[string]bool)
 	for _, san := range sans {
 		if !added[san] {
-			b.WriteString(fmt.Sprintf("      - \"%s\"\n", san))
+			fmt.Fprintf(&b, "      - \"%s\"\n", san)
 			added[san] = true
 		}
 	}

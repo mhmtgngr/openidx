@@ -1103,7 +1103,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 	// 1. Create the Ziti service with host.v1 config so the tunneler knows where to forward.
 	// NOTE: this initial marshal is overwritten by svcPayload below before use; the dead
 	// literal is kept for now and should be removed in a focused cleanup.
-	body, _ := json.Marshal(map[string]interface{}{ //nolint:ineffassign // overwritten by svcPayload below; see note
+	body, _ := json.Marshal(map[string]interface{}{ //nolint:ineffassign,staticcheck // overwritten by svcPayload below; see note
 		"name":               serviceName,
 		"roleAttributes":     []string{serviceName},
 		"encryptionRequired": true,

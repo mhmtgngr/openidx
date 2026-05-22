@@ -17,6 +17,14 @@ import (
 	"github.com/openidx/openidx/internal/gateway"
 )
 
+// ctxKey is a private type for context keys to avoid collisions with keys
+// defined in other packages.
+type ctxKey string
+
+// ginContextKey stores the *gin.Context on the request context for use in
+// proxy request/response modifiers.
+const ginContextKey ctxKey = "gin_context"
+
 // ReverseProxy is a custom reverse proxy handler for the gateway
 type ReverseProxy struct {
 	targetURL      *url.URL
@@ -89,7 +97,7 @@ func (p *ReverseProxy) ServeHTTP(c *gin.Context) {
 	}
 
 	// Store Gin context in request for use in modifiers
-	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), "gin_context", c))
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ginContextKey, c))
 
 	// Serve the proxy request
 	p.proxy.ServeHTTP(c.Writer, c.Request)
@@ -104,7 +112,7 @@ func (p *ReverseProxy) ServeHTTPDirect(w http.ResponseWriter, r *http.Request) {
 func (p *ReverseProxy) modifyRequest(req *http.Request) error {
 	// Get Gin context if available
 	var c *gin.Context
-	if ctxVal := req.Context().Value("gin_context"); ctxVal != nil {
+	if ctxVal := req.Context().Value(ginContextKey); ctxVal != nil {
 		if ginCtx, ok := ctxVal.(*gin.Context); ok {
 			c = ginCtx
 		}
@@ -289,7 +297,7 @@ func removeHopByHopHeaders(headers http.Header) {
 // writeJSONError writes a JSON error response
 func writeJSONError(w http.ResponseWriter, message, code string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(fmt.Sprintf(`{"error":"%s","code":"%s"}`, message, code)))
+	fmt.Fprintf(w, `{"error":"%s","code":"%s"}`, message, code)
 }
 
 // isTimeoutError checks if an error is a timeout error

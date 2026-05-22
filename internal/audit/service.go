@@ -1288,13 +1288,12 @@ func (s *Service) handleDownloadReport(c *gin.Context) {
 
 		// CSV Data
 		for _, finding := range report.Findings {
-			content.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s\n",
+			fmt.Fprintf(&content, "%s,%s,%s,%s,%s\n",
 				escapeCSV(finding.ControlID),
 				escapeCSV(finding.ControlName),
 				escapeCSV(finding.Status),
 				escapeCSV(finding.Evidence),
-				escapeCSV(finding.Remediation),
-			))
+				escapeCSV(finding.Remediation))
 		}
 
 		c.Header("Content-Type", "text/csv")
@@ -1355,7 +1354,7 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 	content.WriteString("ID,Timestamp,Event Type,Category,Action,Outcome,Actor ID,Actor IP,Target ID,Target Type\n")
 
 	for _, e := range events {
-		content.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+		fmt.Fprintf(&content, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 			escapeCSV(e.ID),
 			e.Timestamp.Format(time.RFC3339),
 			escapeCSV(string(e.EventType)),
@@ -1365,8 +1364,7 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 			escapeCSV(e.ActorID),
 			escapeCSV(e.ActorIP),
 			escapeCSV(e.TargetID),
-			escapeCSV(e.TargetType),
-		))
+			escapeCSV(e.TargetType))
 	}
 
 	c.Header("Content-Type", "text/csv")

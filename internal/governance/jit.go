@@ -247,7 +247,7 @@ func (s *JITService) ExtendGrant(ctx context.Context, grantID string, additional
 
 	// Calculate new expiration time
 	newExpiresAt := currentExpiresAt.Add(additionalDuration)
-	totalDuration := time.Since(grant.CreatedAt) + (newExpiresAt.Sub(time.Now()))
+	totalDuration := time.Since(grant.CreatedAt) + (time.Until(newExpiresAt))
 
 	// Enforce maximum duration from creation time
 	if totalDuration > MaximumJITDuration {

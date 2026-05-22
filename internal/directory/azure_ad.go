@@ -411,11 +411,12 @@ func mapGraphUser(u graphUser, mapping AttributeMapping) UserRecord {
 	// The mapping config tells us which Graph field maps to which OpenIDX field
 	// For Azure AD, defaults are: userPrincipalName→username, mail→email, etc.
 	m := mapping
-	if m.Username == "" || m.Username == "userPrincipalName" {
+	switch m.Username {
+	case "", "userPrincipalName":
 		record.Username = u.UserPrincipalName
-	} else if m.Username == "mail" {
+	case "mail":
 		record.Username = u.Mail
-	} else {
+	default:
 		record.Username = u.UserPrincipalName
 	}
 

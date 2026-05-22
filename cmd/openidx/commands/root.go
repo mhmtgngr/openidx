@@ -152,7 +152,7 @@ func FormatTable(headers []string, rows [][]string) string {
 		if i > 0 {
 			sb.WriteString("  ")
 		}
-		sb.WriteString(fmt.Sprintf(" %-*s ", widths[i], h))
+		fmt.Fprintf(&sb, " %-*s ", widths[i], h)
 	}
 	sb.WriteString("\n")
 
@@ -171,7 +171,7 @@ func FormatTable(headers []string, rows [][]string) string {
 			if i > 0 {
 				sb.WriteString("  ")
 			}
-			sb.WriteString(fmt.Sprintf(" %-*s ", widths[i], cell))
+			fmt.Fprintf(&sb, " %-*s ", widths[i], cell)
 		}
 		sb.WriteString("\n")
 	}

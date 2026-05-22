@@ -3,13 +3,18 @@ version: "2"
 # Pragmatic baseline (golangci-lint v2). golangci-lint v1 can't analyze a
 # go1.25 module, so lint was silently broken and a backlog of findings
 # accumulated. Deferred to a dedicated cleanup:
-#   - errcheck / unused / staticcheck (50+ each)
+#   - errcheck (1000+ findings, mostly intentional fire-and-forget / optional
+#     request-body binds; not worth blanket enforcement for v1)
+#   - unused (separate cleanup)
 #   - misspell (mostly British "cancelled"/"behaviour" which are pervasive and
 #     used as status enum values — auto-"fixing" would be a breaking change)
 #   - goimports (import-grouping churn; separate cleanup)
 # gofmt IS enforced (the whole tree was formatted; go1.25 and the
-# golangci-lint binary's gofmt agree). This curated set keeps lint green and
-# meaningful (vet correctness, HTTP body leaks, redundant conversions, gofmt).
+# golangci-lint binary's gofmt agree). staticcheck is enforced for its
+# bug-class (SA*) checks; the stylistic groups (S/ST/QF) plus two SA checks are
+# disabled (see settings below). This curated set keeps lint green and
+# meaningful (vet correctness, HTTP body leaks, redundant conversions,
+# staticcheck bug detection, gofmt).
 run:
   modules-download-mode: readonly
 
@@ -20,6 +25,24 @@ linters:
     - bodyclose
     - ineffassign
     - unconvert
+    - staticcheck
+  settings:
+    staticcheck:
+      # Enforce the SA* bug-class only. The S/ST/QF groups are stylistic
+      # (simplifications, capitalized error strings, quickfixes) — deferred to a
+      # separate pass. Two SA checks are also disabled with cause:
+      #   SA9003: 8 empty branches are intentional placeholders for
+      #           unimplemented features (metrics delta tracking, SCIM email
+      #           PATCH, RSA-exponent warning, Ziti existence check).
+      #   SA5008: 4 SAML metadata XML struct-tag name conflicts — likely a real
+      #           marshaling bug, but fixing needs SAML-schema review; tracked.
+      checks:
+        - all
+        - -S1*
+        - -ST1*
+        - -QF1*
+        - -SA9003
+        - -SA5008
   exclusions:
     generated: lax
     paths:
@@ -27,13 +50,15 @@ linters:
       - ^deploy/
       - docs/api/examples
     rules:
-      # In tests these are low-signal (leaked bodies / redundant casts don't
-      # affect production behavior); keep them enforced in non-test code.
+      # In tests these are low-signal (leaked bodies / redundant casts /
+      # simplifications don't affect production behavior); keep them enforced in
+      # non-test code.
       - path: _test\.go
         linters:
           - bodyclose
           - ineffassign
           - unconvert
+          - staticcheck
 
 formatters:
   enable:

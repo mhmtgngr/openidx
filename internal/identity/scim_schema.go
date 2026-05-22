@@ -274,25 +274,13 @@ func UserToSCIM(user *User, baseURL string) *SCIMUser {
 	// Photos
 	scimUser.Photos = make([]SCIMPhoto, len(user.Photos))
 	for i, photo := range user.Photos {
-		scimUser.Photos[i] = SCIMPhoto{
-			Value: photo.Value,
-			Type:  photo.Type,
-		}
+		scimUser.Photos[i] = SCIMPhoto(photo)
 	}
 
 	// Addresses
 	scimUser.Addresses = make([]SCIMAddress, len(user.Addresses))
 	for i, addr := range user.Addresses {
-		scimUser.Addresses[i] = SCIMAddress{
-			StreetAddress: addr.StreetAddress,
-			Locality:      addr.Locality,
-			Region:        addr.Region,
-			PostalCode:    addr.PostalCode,
-			Country:       addr.Country,
-			Formatted:     addr.Formatted,
-			Type:          addr.Type,
-			Primary:       addr.Primary,
-		}
+		scimUser.Addresses[i] = SCIMAddress(addr)
 	}
 
 	// Groups
@@ -388,13 +376,7 @@ func SCIMToUser(scimUser *SCIMUser) *User {
 	if len(scimUser.Emails) > 0 {
 		user.Emails = make([]Email, len(scimUser.Emails))
 		for i, email := range scimUser.Emails {
-			user.Emails[i] = Email{
-				Value:    email.Value,
-				Type:     email.Type,
-				Primary:  email.Primary,
-				Display:  email.Display,
-				Verified: email.Verified,
-			}
+			user.Emails[i] = Email(email)
 		}
 	}
 
@@ -414,10 +396,7 @@ func SCIMToUser(scimUser *SCIMUser) *User {
 	if len(scimUser.Photos) > 0 {
 		user.Photos = make([]Photo, len(scimUser.Photos))
 		for i, photo := range scimUser.Photos {
-			user.Photos[i] = Photo{
-				Value: photo.Value,
-				Type:  photo.Type,
-			}
+			user.Photos[i] = Photo(photo)
 		}
 	}
 
@@ -425,16 +404,7 @@ func SCIMToUser(scimUser *SCIMUser) *User {
 	if len(scimUser.Addresses) > 0 {
 		user.Addresses = make([]Address, len(scimUser.Addresses))
 		for i, addr := range scimUser.Addresses {
-			user.Addresses[i] = Address{
-				StreetAddress: addr.StreetAddress,
-				Locality:      addr.Locality,
-				Region:        addr.Region,
-				PostalCode:    addr.PostalCode,
-				Country:       addr.Country,
-				Formatted:     addr.Formatted,
-				Type:          addr.Type,
-				Primary:       addr.Primary,
-			}
+			user.Addresses[i] = Address(addr)
 		}
 	}
 
