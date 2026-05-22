@@ -121,7 +121,7 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 }
 
 // isSessionIdle checks if a session has exceeded the idle timeout
-func (s *Service) isSessionIdle(lastSeenAt time.Time, policy SessionPolicy) bool {
+func (s *Service) isSessionIdle(lastSeenAt time.Time, policy SessionPolicy) bool { //nolint:unused // TODO(unwired): session idle-timeout enforcement not yet wired into the session middleware
 	if policy.IdleTimeout <= 0 {
 		return false
 	}
@@ -129,7 +129,7 @@ func (s *Service) isSessionIdle(lastSeenAt time.Time, policy SessionPolicy) bool
 }
 
 // isSessionExpiredAbsolute checks if a session has exceeded the absolute timeout
-func (s *Service) isSessionExpiredAbsolute(startedAt time.Time, policy SessionPolicy) bool {
+func (s *Service) isSessionExpiredAbsolute(startedAt time.Time, policy SessionPolicy) bool { //nolint:unused // TODO(unwired): session absolute-timeout enforcement not yet wired into the session middleware
 	if policy.AbsoluteTimeout <= 0 {
 		return false
 	}

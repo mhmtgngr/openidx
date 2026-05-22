@@ -412,12 +412,6 @@ func (s *Service) handleRotateServiceAccountKey(c *gin.Context) {
 		return
 	}
 
-	// Type assert to get the key IDs
-	type apiKeyLike struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	}
-
 	if keySlice, ok := keys.([]interface{}); ok {
 		for _, k := range keySlice {
 			if km, ok := k.(map[string]interface{}); ok {

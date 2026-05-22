@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -190,28 +189,4 @@ func createMigration(name string) error {
 	fmt.Println("Note: Please create migration files manually in the migrations/ directory")
 	fmt.Println("Format: XXX_name.up.sql and XXX_name.down.sql")
 	return nil
-}
-
-// connectDB creates a database connection from URL string
-func connectDB(dbURL string) (*pgxpool.Pool, error) {
-	config, err := pgxpool.ParseConfig(dbURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse connection string: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
-	}
-
-	// Test connection
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	return pool, nil
 }

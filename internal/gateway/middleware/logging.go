@@ -361,24 +361,3 @@ func LogUpstreamError(c *gin.Context, service string, err error) {
 		"error", err.Error(),
 	)
 }
-
-// buildLogFields builds log fields from request context
-func buildLogFields(c *gin.Context, status int, duration time.Duration) []interface{} {
-	fields := []interface{}{
-		"correlation_id", GetCorrelationID(c),
-		"method", c.Request.Method,
-		"path", c.Request.URL.Path,
-		"query", c.Request.URL.RawQuery,
-		"status", status,
-		"latency_ms", duration.Milliseconds(),
-		"client_ip", c.ClientIP(),
-		"user_agent", c.Request.UserAgent(),
-	}
-
-	// Add X-Forwarded-For if present
-	if forwardedFor := c.GetHeader("X-Forwarded-For"); forwardedFor != "" {
-		fields = append(fields, "forwarded_for", forwardedFor)
-	}
-
-	return fields
-}

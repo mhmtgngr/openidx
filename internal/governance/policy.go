@@ -91,7 +91,6 @@ type PolicyEvaluator struct {
 	policyCache map[string]*compiledPolicy
 	cacheMutex  sync.RWMutex
 	store       storage.Store
-	compiler    *ast.Compiler
 
 	// Metrics
 	evaluationDurationHist *metricHistogram

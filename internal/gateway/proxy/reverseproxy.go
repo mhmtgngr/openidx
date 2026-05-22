@@ -109,7 +109,7 @@ func (p *ReverseProxy) ServeHTTPDirect(w http.ResponseWriter, r *http.Request) {
 }
 
 // modifyRequest is called before forwarding the request to the target
-func (p *ReverseProxy) modifyRequest(req *http.Request) error {
+func (p *ReverseProxy) modifyRequest(req *http.Request) error { //nolint:unused // TODO(unwired): per-request modifier (hop-by-hop header stripping) is implemented but not attached to the proxy
 	// Get Gin context if available
 	var c *gin.Context
 	if ctxVal := req.Context().Value(ginContextKey); ctxVal != nil {

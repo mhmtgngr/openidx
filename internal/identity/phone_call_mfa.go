@@ -297,15 +297,3 @@ func (t *TwilioPhoneCallProvider) GetCallStatus(callSID string) (string, error) 
 	// In production, query Twilio API for call status
 	return "completed", nil
 }
-
-// formatCodeForSpeech formats a code for speech synthesis
-func formatCodeForSpeech(code string) string {
-	result := ""
-	for i, c := range code {
-		if i > 0 {
-			result += ". "
-		}
-		result += string(c)
-	}
-	return result
-}

@@ -44,7 +44,6 @@ type TwilioConfig struct {
 type SMTPProvider struct {
 	config SMTPConfig
 	logger *zap.Logger
-	client *smtp.Client
 }
 
 // NewSMTPProvider creates a new SMTP email provider

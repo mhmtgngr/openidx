@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -498,38 +497,4 @@ func generateSelfSignedCert(domain string) (certPEM, keyPEM []byte, err error) {
 	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	return certPEM, keyPEM, nil
-}
-
-// readCertMetadata reads the cert file from disk and extracts metadata
-func readCertMetadata(certsPath string) (*BrowZerDomainConfig, error) {
-	certPath := filepath.Join(certsPath, "browzer-tls.crt")
-	certBytes, err := os.ReadFile(certPath)
-	if err != nil {
-		return nil, err
-	}
-
-	block, _ := pem.Decode(certBytes)
-	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in cert file")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	fingerprint := sha256.Sum256(cert.Raw)
-	var sans []string
-	sans = append(sans, cert.DNSNames...)
-	for _, ip := range cert.IPAddresses {
-		sans = append(sans, ip.String())
-	}
-
-	return &BrowZerDomainConfig{
-		CertSubject:     cert.Subject.CommonName,
-		CertIssuer:      cert.Issuer.CommonName,
-		CertNotBefore:   cert.NotBefore.Format(time.RFC3339),
-		CertNotAfter:    cert.NotAfter.Format(time.RFC3339),
-		CertFingerprint: hex.EncodeToString(fingerprint[:]),
-		CertSAN:         sans,
-	}, nil
 }

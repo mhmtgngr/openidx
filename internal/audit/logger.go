@@ -282,12 +282,6 @@ func (l *Logger) PrepareForStorage(event *AuditEvent, previousHash string) error
 	return nil
 }
 
-// computeEventHash is a convenience method to compute hash for an event
-func (l *Logger) computeEventHash(event *AuditEvent, previousHash string) (string, error) {
-	event.PreviousHash = previousHash
-	return event.ComputeHash(l.secret)
-}
-
 // verifyEventChain verifies that a chain of events is intact
 func (l *Logger) verifyEventChain(events []*AuditEvent) error {
 	if len(events) == 0 {

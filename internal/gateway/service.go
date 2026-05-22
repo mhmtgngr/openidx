@@ -243,11 +243,6 @@ func (s *Service) logError(msg string, fields ...zap.Field) {
 	// For now, this is a placeholder
 }
 
-func (s *Service) logWarn(msg string, fields ...zap.Field) {
-	// In production, would use proper logger
-	// For now, this is a placeholder
-}
-
 // Create middleware implementations
 func (s *Service) correlationIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -317,28 +312,6 @@ func (s *Service) loggingMiddleware() gin.HandlerFunc {
 			zap.Duration("latency", latency),
 			zap.String("client_ip", c.ClientIP()),
 		)
-	}
-}
-
-func (s *Service) rateLimitMiddleware(serviceName string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Placeholder - implemented in ratelimit.go
-		c.Next()
-	}
-}
-
-func (s *Service) authMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Placeholder - implemented in auth.go
-		c.Next()
-	}
-}
-
-func (s *Service) proxyHeadersMiddleware(serviceName string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Add service identification
-		c.Header("X-Target-Service", serviceName)
-		c.Next()
 	}
 }
 

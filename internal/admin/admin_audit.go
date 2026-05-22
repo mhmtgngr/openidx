@@ -367,7 +367,7 @@ type AuditStreamConfig struct {
 }
 
 // handleGetAuditStreamConfig returns the current audit stream configuration
-func (s *Service) handleGetAuditStreamConfig(c *gin.Context) {
+func (s *Service) handleGetAuditStreamConfig(c *gin.Context) { //nolint:unused // TODO(unwired): audit-stream SIEM config endpoints not yet registered to routes
 	if !requireAdmin(c) {
 		return
 	}
@@ -388,7 +388,7 @@ func (s *Service) handleGetAuditStreamConfig(c *gin.Context) {
 }
 
 // handleUpdateAuditStreamConfig updates the audit stream configuration
-func (s *Service) handleUpdateAuditStreamConfig(c *gin.Context) {
+func (s *Service) handleUpdateAuditStreamConfig(c *gin.Context) { //nolint:unused // TODO(unwired): audit-stream SIEM config endpoints not yet registered to routes
 	if !requireAdmin(c) {
 		return
 	}
@@ -470,7 +470,7 @@ func (s *Service) handleUpdateAuditStreamConfig(c *gin.Context) {
 }
 
 // handleTestAuditStreamOrigin tests if an origin is allowed for audit stream connections
-func (s *Service) handleTestAuditStreamOrigin(c *gin.Context) {
+func (s *Service) handleTestAuditStreamOrigin(c *gin.Context) { //nolint:unused // TODO(unwired): audit-stream SIEM config endpoints not yet registered to routes
 	if !requireAdmin(c) {
 		return
 	}
@@ -533,7 +533,7 @@ func (s *Service) handleTestAuditStreamOrigin(c *gin.Context) {
 }
 
 // handleGetAuditStreamStats returns statistics about the audit stream
-func (s *Service) handleGetAuditStreamStats(c *gin.Context) {
+func (s *Service) handleGetAuditStreamStats(c *gin.Context) { //nolint:unused // TODO(unwired): audit-stream SIEM config endpoints not yet registered to routes
 	if !requireAdmin(c) {
 		return
 	}
@@ -569,7 +569,7 @@ func (s *Service) handleGetAuditStreamStats(c *gin.Context) {
 }
 
 // getAuditStreamConfigFromDB retrieves audit stream configuration from database
-func (s *Service) getAuditStreamConfigFromDB(ctx context.Context) (*AuditStreamConfig, error) {
+func (s *Service) getAuditStreamConfigFromDB(ctx context.Context) (*AuditStreamConfig, error) { //nolint:unused // TODO(unwired): supports the not-yet-registered audit-stream config endpoints
 	var configJSON []byte
 	var updatedAt time.Time
 
@@ -592,7 +592,7 @@ func (s *Service) getAuditStreamConfigFromDB(ctx context.Context) (*AuditStreamC
 }
 
 // saveAuditStreamConfigToDB saves audit stream configuration to database
-func (s *Service) saveAuditStreamConfigToDB(ctx context.Context, config *AuditStreamConfig) error {
+func (s *Service) saveAuditStreamConfigToDB(ctx context.Context, config *AuditStreamConfig) error { //nolint:unused // TODO(unwired): supports the not-yet-registered audit-stream config endpoints
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return err
@@ -609,7 +609,7 @@ func (s *Service) saveAuditStreamConfigToDB(ctx context.Context, config *AuditSt
 }
 
 // normalizeOriginForTest normalizes an origin URL for comparison in tests
-func normalizeOriginForTest(origin string) string {
+func normalizeOriginForTest(origin string) string { //nolint:unused // TODO(unwired): supports the not-yet-registered audit-stream origin-test endpoint
 	origin = strings.TrimSpace(origin)
 	origin = strings.ToLower(origin)
 	origin = strings.TrimSuffix(origin, ":80")
@@ -618,7 +618,7 @@ func normalizeOriginForTest(origin string) string {
 }
 
 // getMessageForOriginResult returns a user-friendly message based on the origin test result
-func getMessageForOriginResult(allowed bool) string {
+func getMessageForOriginResult(allowed bool) string { //nolint:unused // TODO(unwired): supports the not-yet-registered audit-stream origin-test endpoint
 	if allowed {
 		return "Origin is allowed for WebSocket audit stream connections"
 	}
@@ -626,7 +626,7 @@ func getMessageForOriginResult(allowed bool) string {
 }
 
 // getString safely gets a string value from Gin context
-func getString(c *gin.Context, key string) string {
+func getString(c *gin.Context, key string) string { //nolint:unused // TODO(unwired): supports the not-yet-registered audit-stream config endpoints
 	if v, exists := c.Get(key); exists {
 		if str, ok := v.(string); ok {
 			return str

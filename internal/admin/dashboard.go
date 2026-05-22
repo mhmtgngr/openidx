@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -158,18 +156,4 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 	)
 
 	return stats, nil
-}
-
-// handleGetDashboardStats handles GET /api/v1/admin/dashboard/stats
-func (s *Service) handleGetDashboardStats(c *gin.Context) {
-	stats, err := s.GetDashboardStats(c.Request.Context())
-	if err != nil {
-		s.logger.Error("Failed to get dashboard stats", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve dashboard statistics",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, stats)
 }

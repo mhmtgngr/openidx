@@ -2,16 +2,6 @@
 
 package migrations
 
-import (
-	"embed"
-	"fmt"
-	"strconv"
-	"strings"
-)
-
-//go:embed *.sql
-var loaderSQLFiles embed.FS
-
 // LoadMigrations loads all migrations from the embedded filesystem
 func (m *Migrator) LoadMigrations() ([]*Migration, error) {
 	// For embedded migrations, use predefined list
@@ -226,27 +216,4 @@ func allMigrations() []*Migration {
 			DownSQL:     zitiEnhancedDown,
 		},
 	}
-}
-
-// parseMigrationVersion extracts the version number from a filename like "001_name.up.sql"
-func parseMigrationVersion(filename string) (int, string, string, error) {
-	// Expected format: XXX_name.[up|down].sql
-	parts := strings.Split(filename, ".")
-	if len(parts) < 3 {
-		return 0, "", "", fmt.Errorf("invalid migration filename format: %s", filename)
-	}
-
-	versionStr := parts[0]
-	direction := parts[1]
-
-	version, err := strconv.Atoi(versionStr)
-	if err != nil {
-		return 0, "", "", fmt.Errorf("invalid version number: %s", versionStr)
-	}
-
-	// Extract name (remove direction and extension)
-	name := strings.Join(parts[1:len(parts)-1], "_")
-	name = strings.ReplaceAll(name, "_"+direction, "")
-
-	return version, name, direction, nil
 }

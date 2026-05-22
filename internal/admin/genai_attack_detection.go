@@ -567,15 +567,6 @@ func calculatePatternRiskScore(pattern *GenAIRequestPattern) float64 {
 
 // Handlers
 
-// genaiRateLimiter tracks request counts per user/IP for rate limiting
-type genaiRateLimiter struct {
-	requests map[string]int
-}
-
-var rateLimiter = &genaiRateLimiter{
-	requests: make(map[string]int),
-}
-
 // checkRateLimit enforces rate limiting on GenAI attack detection endpoints
 // Returns true if the request should be allowed, false if rate limited
 func checkRateLimit(c *gin.Context, maxRequests int) bool {

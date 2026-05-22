@@ -34,7 +34,6 @@ type StreamClient struct {
 	Send    chan *ServiceAuditEvent
 	Filters *StreamFilters
 	done    chan struct{}
-	mu      sync.Mutex
 }
 
 // StreamFilters defines event filters for a stream client

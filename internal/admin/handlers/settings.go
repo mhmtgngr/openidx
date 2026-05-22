@@ -705,9 +705,7 @@ func indexOf(s, substr string) int {
 }
 
 // SettingsService is a service-level implementation of SettingsRepository
-type SettingsService struct {
-	handler *SettingsHandler
-}
+type SettingsService struct{}
 
 // getPasswordPolicy retrieves the current password policy from the database
 func (h *SettingsHandler) getPasswordPolicy(ctx context.Context) PasswordPolicySettings {
