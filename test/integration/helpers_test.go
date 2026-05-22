@@ -6,6 +6,8 @@
 package integration
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -17,6 +19,40 @@ import (
 	"testing"
 	"time"
 )
+
+// Seeded administrator (see migrations/010_seed_data). Admin operations such
+// as creating users require an authenticated admin bearer token.
+const (
+	adminUsername = "admin"
+	adminPassword = "Admin@123"
+)
+
+// cachedAdminToken memoizes the admin access token across tests in the package
+// (integration tests run sequentially). Obtained on first use via the OAuth
+// authorization-code + PKCE flow.
+var cachedAdminToken string
+
+// adminToken returns an access token for the seeded admin, logging in once.
+func adminToken(t *testing.T) string {
+	t.Helper()
+	if cachedAdminToken == "" {
+		cachedAdminToken = loginAndGetToken(t, adminUsername, adminPassword)
+	}
+	return cachedAdminToken
+}
+
+// pkcePair returns a PKCE code_verifier and its S256 code_challenge.
+func pkcePair(t *testing.T) (verifier, challenge string) {
+	t.Helper()
+	b := make([]byte, 48)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("failed to generate PKCE verifier: %v", err)
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge = base64.RawURLEncoding.EncodeToString(sum[:])
+	return verifier, challenge
+}
 
 // Service URLs (configurable via environment variables)
 var (
@@ -146,7 +182,8 @@ func createTestUser(t *testing.T, username, email, password string) string {
 		"email_verified": true
 	}`, username, email)
 
-	status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users", userData, "")
+	token := adminToken(t)
+	status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users", userData, token)
 
 	if status != 201 {
 		t.Fatalf("Failed to create test user: status %d, body %v", status, body)
@@ -159,7 +196,7 @@ func createTestUser(t *testing.T, username, email, password string) string {
 
 	// Set password
 	passData := fmt.Sprintf(`{"password": %q}`, password)
-	apiRequest(t, "POST", fmt.Sprintf("%s/api/v1/identity/users/%s/set-password", identityURL, id), passData, "")
+	apiRequest(t, "POST", fmt.Sprintf("%s/api/v1/identity/users/%s/set-password", identityURL, id), passData, token)
 
 	return id
 }
@@ -167,18 +204,25 @@ func createTestUser(t *testing.T, username, email, password string) string {
 // deleteTestUser removes a test user
 func deleteTestUser(t *testing.T, userID string) {
 	t.Helper()
-	apiRequest(t, "DELETE", identityURL+"/api/v1/identity/users/"+userID, "", "")
+	apiRequest(t, "DELETE", identityURL+"/api/v1/identity/users/"+userID, "", adminToken(t))
 }
 
 // loginAndGetToken performs the full OAuth flow and returns an access token
 func loginAndGetToken(t *testing.T, username, password string) string {
 	t.Helper()
 
+	// The admin-console client requires PKCE, so generate a verifier/challenge.
+	verifier, challenge := pkcePair(t)
+
 	// Step 1: Initiate authorization
-	authURL := fmt.Sprintf("%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=openid+profile+email",
-		oauthURL, clientID, url.QueryEscape(redirectURI))
+	authURL := fmt.Sprintf("%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=openid+profile+email&code_challenge=%s&code_challenge_method=S256",
+		oauthURL, clientID, url.QueryEscape(redirectURI), challenge)
 
 	req, _ := http.NewRequest("GET", authURL, nil)
+	// For public clients the authorize endpoint renders an HTML login page
+	// unless the caller asks for JSON; request JSON to get the SPA 302 flow
+	// (302 -> redirect_uri?login_session=...) that this helper consumes.
+	req.Header.Set("Accept", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("Authorization request failed: %v", err)
@@ -214,10 +258,11 @@ func loginAndGetToken(t *testing.T, username, password string) string {
 
 	// Step 3: Exchange code for tokens
 	status, tokenBody := formRequest(t, oauthURL+"/oauth/token", url.Values{
-		"grant_type":   {"authorization_code"},
-		"code":         {code},
-		"client_id":    {clientID},
-		"redirect_uri": {redirectURI},
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"client_id":     {clientID},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
 	})
 
 	if status != 200 {

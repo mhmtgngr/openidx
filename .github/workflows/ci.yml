@@ -6,6 +6,7 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main, dev]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -238,19 +239,24 @@ jobs:
           path: coverage_${{ matrix.package }}.out
           if-no-files-found: ignore
 
-  # Integration tests
+  # Integration tests — full-stack E2E against live identity + oauth services.
+  # Informational for now: the harness is solid (services boot, migrate, seed,
+  # auth bootstrap) and the suite runs for real, but a tail of user-lifecycle
+  # and MFA/WebAuthn flows is still being greened, so this must not block PRs.
+  # Failures are visible on the job; re-evaluate making it required once green.
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [detect-changes, build-matrix]
-    if: needs.detect-changes.outputs.go_changed == 'true'
+    if: needs.detect-changes.outputs.go_changed == 'true' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
     timeout-minutes: 30
 
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: openidx_test
+          POSTGRES_DB: openidx
           POSTGRES_USER: openidx
           POSTGRES_PASSWORD: test_secret
         ports:
@@ -269,19 +275,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      elasticsearch:
-        image: elasticsearch:8.13.0
-        env:
-          discovery.type: single-node
-          xpack.security.enabled: false
-          ES_JAVA_OPTS: -Xms512m -Xmx512m
-        ports:
-          - 9200:9200
-        options: >-
-          --health-cmd "curl -f http://localhost:9200/_cluster/health"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+
+    env:
+      # Dev mode skips the production-config gate; localhost defaults in
+      # internal/common/config already point issuer/JWKS at :8006.
+      APP_ENV: development
+      LOG_LEVEL: warn
+      DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      OPENIDX_ENABLE_RATE_LIMIT: "false"
 
     steps:
       - uses: actions/checkout@v4
@@ -292,24 +294,48 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Set up Go build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-build-${{ env.GO_VERSION }}-
-            ${{ runner.os }}-go-build-
+      - name: Apply database migrations
+        run: go run ./cmd/migrate up
 
+      - name: Build services
+        run: |
+          go build -o /tmp/identity-service ./cmd/identity-service
+          go build -o /tmp/oauth-service ./cmd/oauth-service
+
+      # Services are started, health-checked, and tested in ONE step:
+      # processes backgrounded in a separate `run:` step are killed when that
+      # step's shell exits, so they must stay within the step that uses them.
       - name: Run integration tests
         env:
-          DATABASE_URL: postgres://openidx:test_secret@localhost:5432/openidx_test?sslmode=disable
-          REDIS_URL: redis://localhost:6379
-          ELASTICSEARCH_URL: http://localhost:9200
+          OAUTH_URL: http://localhost:8006
+          IDENTITY_URL: http://localhost:8001
         run: |
-          go test -v -tags=integration -timeout=25m ./test/integration/... || true
+          # Pin ports explicitly: the config port map omits oauth-service, so
+          # it would otherwise default to 8080 instead of 8006.
+          PORT=8001 /tmp/identity-service > /tmp/identity.log 2>&1 &
+          PORT=8006 /tmp/oauth-service > /tmp/oauth.log 2>&1 &
+
+          ok=0
+          for url in http://localhost:8001/health http://localhost:8006/health; do
+            for i in $(seq 1 30); do
+              if curl -fsS "$url" >/dev/null 2>&1; then echo "ready: $url"; ok=$((ok+1)); break; fi
+              sleep 2
+            done
+          done
+          if [ "$ok" -ne 2 ]; then
+            echo "::error::services did not become healthy"
+            echo "--- identity.log ---"; tail -100 /tmp/identity.log
+            echo "--- oauth.log ---";    tail -100 /tmp/oauth.log
+            exit 1
+          fi
+
+          set +e
+          go test -v -tags=integration -timeout=20m ./test/integration/...
+          rc=$?
+          set -e
+          echo "--- identity.log (tail) ---"; tail -50 /tmp/identity.log
+          echo "--- oauth.log (tail) ---";    tail -50 /tmp/oauth.log
+          exit $rc
 
   # Benchmark regression detection
   benchmark:
