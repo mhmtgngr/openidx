@@ -120,22 +120,6 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 	return policy
 }
 
-// isSessionIdle checks if a session has exceeded the idle timeout
-func (s *Service) isSessionIdle(lastSeenAt time.Time, policy SessionPolicy) bool { //nolint:unused // TODO(unwired): session idle-timeout enforcement not yet wired into the session middleware
-	if policy.IdleTimeout <= 0 {
-		return false
-	}
-	return time.Since(lastSeenAt) > time.Duration(policy.IdleTimeout)*time.Second
-}
-
-// isSessionExpiredAbsolute checks if a session has exceeded the absolute timeout
-func (s *Service) isSessionExpiredAbsolute(startedAt time.Time, policy SessionPolicy) bool { //nolint:unused // TODO(unwired): session absolute-timeout enforcement not yet wired into the session middleware
-	if policy.AbsoluteTimeout <= 0 {
-		return false
-	}
-	return time.Since(startedAt) > time.Duration(policy.AbsoluteTimeout)*time.Second
-}
-
 // revokeSessionWithRedis marks a session as revoked in both DB and Redis
 func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) error {
 	// Mark in database

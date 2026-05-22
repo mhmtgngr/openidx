@@ -159,7 +159,6 @@ type Service struct {
 	cfg               *config.Config
 	logger            *zap.Logger
 	webauthnSessions  sync.Map // In-memory storage for WebAuthn sessions (use Redis in production)
-	pushMFASessions   sync.Map //nolint:unused // TODO(unwired): in-memory Push MFA challenge store not yet used (challenges persisted elsewhere)
 	directoryService  DirectoryAuthenticator
 	emailService      EmailSender
 	webhookService    WebhookPublisher
