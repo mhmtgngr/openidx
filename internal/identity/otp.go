@@ -375,9 +375,10 @@ func (s *Service) VerifyOTP(ctx context.Context, userID, method, code string) er
 	}
 
 	// Update last used timestamp
-	if method == "sms" {
+	switch method {
+	case "sms":
 		s.updateSMSLastUsed(ctx, userID)
-	} else if method == "email" {
+	case "email":
 		s.updateEmailOTPLastUsed(ctx, userID)
 	}
 
@@ -674,7 +675,7 @@ func generateOTPCode(length int) string {
 	}
 
 	max := new(big.Int)
-	max.SetString(fmt.Sprintf("%s", repeatString("9", length)), 10)
+	max.SetString(repeatString("9", length), 10)
 	max.Add(max, big.NewInt(1))
 
 	n, err := rand.Int(rand.Reader, max)

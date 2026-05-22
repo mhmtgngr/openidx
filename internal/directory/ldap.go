@@ -51,9 +51,9 @@ func (c *LDAPConnector) Connect() (*ldap.Conn, error) {
 	var err error
 
 	if c.cfg.UseTLS {
-		conn, err = ldap.DialTLS("tcp", addr, tlsConfig)
+		conn, err = ldap.DialTLS("tcp", addr, tlsConfig) //nolint:staticcheck // TODO: migrate to ldap.DialURL (needs live-LDAP verification)
 	} else {
-		conn, err = ldap.Dial("tcp", addr)
+		conn, err = ldap.Dial("tcp", addr) //nolint:staticcheck // TODO: migrate to ldap.DialURL (needs live-LDAP verification)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to LDAP server %s: %w", addr, err)

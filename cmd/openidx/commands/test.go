@@ -21,14 +21,14 @@ func NewTestCommand() *cobra.Command {
 
 Supports unit tests, integration tests, and coverage reports.`,
 		Aliases: []string{"t"},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := NewCommandContext(cmd)
 			success, errColor, _, _, _ := ctx.GetColors()
 
 			success.Println("🧪 Running tests...")
 
 			// Build test command
-			args = []string{"test"}
+			args := []string{"test"}
 			if verbose {
 				args = append(args, "-v")
 			}
@@ -112,7 +112,7 @@ func NewTestIntegrationCommand() *cobra.Command {
 
 Note: Integration tests require infrastructure services to be running.
 Use 'openidx dev --infra' to start required services.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := NewCommandContext(cmd)
 			success, errColor, warning, _, _ := ctx.GetColors()
 
@@ -124,7 +124,7 @@ Use 'openidx dev --infra' to start required services.`,
 
 			success.Println("🔗 Running integration tests...")
 
-			args = []string{"test", "-tags=integration"}
+			args := []string{"test", "-tags=integration"}
 			if verbose {
 				args = append(args, "-v")
 			}
@@ -199,15 +199,15 @@ func NewBenchCommand() *cobra.Command {
 		Use:   "bench",
 		Short: "Run benchmarks",
 		Long:  `Run benchmark tests to measure performance.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := NewCommandContext(cmd)
 			success, errColor, _, _, _ := ctx.GetColors()
 
 			success.Println("📊 Running benchmarks...")
 
-			args = []string{"test", "-bench=.", "-benchmem"}
+			args := []string{"test", "-bench=.", "-benchmem"}
 			if bench != "" {
-				args = append(args, fmt.Sprintf("-run=^$"), fmt.Sprintf("-bench=%s", bench))
+				args = append(args, "-run=^$", fmt.Sprintf("-bench=%s", bench))
 			}
 			args = append(args, "./...")
 

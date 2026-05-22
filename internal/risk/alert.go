@@ -367,12 +367,6 @@ func (a *AlertManager) sendEmail(ctx context.Context, alert *Alert) AlertDeliver
 	subject := fmt.Sprintf("[%s] %s", alert.Severity, alert.Title)
 	body := a.formatEmailBody(alert)
 
-	// Build email addresses
-	var toAddresses []string
-	for _, email := range a.config.SecurityTeamEmail {
-		toAddresses = append(toAddresses, fmt.Sprintf("To: %s\r\n", email))
-	}
-
 	// Compose message
 	var msg string
 	msg = fmt.Sprintf("From: %s\r\n", a.config.EmailFrom)

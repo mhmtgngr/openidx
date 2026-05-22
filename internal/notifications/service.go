@@ -284,10 +284,7 @@ func (s *Service) handleGetNotifications(c *gin.Context) {
 
 	channel := c.Query("channel")
 
-	unreadOnly := false
-	if c.Query("unread") == "true" {
-		unreadOnly = true
-	}
+	unreadOnly := c.Query("unread") == "true"
 
 	limit := 20
 	offset := 0

@@ -338,14 +338,14 @@ func CompareProfiles(beforeFile, afterFile string) (string, error) {
 		return "", fmt.Errorf("failed to stat after file: %w", err)
 	}
 
-	result.WriteString(fmt.Sprintf("Before: %s (%.2f MB)\n", beforeFile, float64(beforeInfo.Size())/1024/1024))
-	result.WriteString(fmt.Sprintf("After:  %s (%.2f MB)\n\n", afterFile, float64(afterInfo.Size())/1024/1024))
+	fmt.Fprintf(&result, "Before: %s (%.2f MB)\n", beforeFile, float64(beforeInfo.Size())/1024/1024)
+	fmt.Fprintf(&result, "After:  %s (%.2f MB)\n\n", afterFile, float64(afterInfo.Size())/1024/1024)
 
 	// Use pprof to get top entries for both profiles
 	result.WriteString("Top Functions (Before):\n")
 	beforeTop, err := getTopFunctions(beforeFile, 10)
 	if err != nil {
-		result.WriteString(fmt.Sprintf("  Error: %v\n", err))
+		fmt.Fprintf(&result, "  Error: %v\n", err)
 	} else {
 		result.WriteString(beforeTop)
 	}
@@ -353,13 +353,13 @@ func CompareProfiles(beforeFile, afterFile string) (string, error) {
 	result.WriteString("\nTop Functions (After):\n")
 	afterTop, err := getTopFunctions(afterFile, 10)
 	if err != nil {
-		result.WriteString(fmt.Sprintf("  Error: %v\n", err))
+		fmt.Fprintf(&result, "  Error: %v\n", err)
 	} else {
 		result.WriteString(afterTop)
 	}
 
 	result.WriteString("\nVisual Comparison:\n")
-	result.WriteString(fmt.Sprintf("  pprof -http=:8080 -base %s %s\n", beforeFile, afterFile))
+	fmt.Fprintf(&result, "  pprof -http=:8080 -base %s %s\n", beforeFile, afterFile)
 
 	return result.String(), nil
 }

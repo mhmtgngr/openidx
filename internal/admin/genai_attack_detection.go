@@ -581,8 +581,8 @@ var rateLimiter = &genaiRateLimiter{
 func checkRateLimit(c *gin.Context, maxRequests int) bool {
 	// Get identifier from user_id or IP address
 	// This would be used in production with Redis for distributed rate limiting
-	_ = c.ClientIP() // Used for IP-based rate limiting in production
-	if _, exists := c.Get("user_id"); exists {
+	_ = c.ClientIP()                           // Used for IP-based rate limiting in production
+	if _, exists := c.Get("user_id"); exists { //nolint:staticcheck // placeholder for future user-based rate limiting
 		// User-based rate limiting would use the user_id
 	}
 

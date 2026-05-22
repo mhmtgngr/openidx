@@ -2,6 +2,7 @@
 package identity
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -823,7 +824,7 @@ func validateCreateUserRequest(req *CreateOrUpdateUserRequest) *apperrors.AppErr
 // emitUserLifecycleEvent emits a user lifecycle event
 func (s *Service) emitUserLifecycleEvent(eventType, userID, actorID string) {
 	if s.webhookService != nil {
-		s.webhookService.Publish(nil, eventType, map[string]interface{}{
+		s.webhookService.Publish(context.Background(), eventType, map[string]interface{}{
 			"user_id":  userID,
 			"actor_id": actorID,
 		})
@@ -833,7 +834,7 @@ func (s *Service) emitUserLifecycleEvent(eventType, userID, actorID string) {
 // emitGroupLifecycleEvent emits a group lifecycle event
 func (s *Service) emitGroupLifecycleEvent(eventType, groupID, actorID string) {
 	if s.webhookService != nil {
-		s.webhookService.Publish(nil, eventType, map[string]interface{}{
+		s.webhookService.Publish(context.Background(), eventType, map[string]interface{}{
 			"group_id": groupID,
 			"actor_id": actorID,
 		})

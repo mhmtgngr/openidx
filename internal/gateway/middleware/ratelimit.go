@@ -63,7 +63,7 @@ func (m *RateLimitMiddleware) RateLimit(serviceName string) gin.HandlerFunc {
 		if !allowed {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error":       "rate limit exceeded",
-				"retry_after": int64(resetAt.Sub(time.Now()).Seconds()),
+				"retry_after": int64(time.Until(resetAt).Seconds()),
 			})
 			return
 		}
@@ -153,7 +153,7 @@ func (m *RateLimitMiddleware) setRateLimitHeaders(c *gin.Context, remaining int,
 	c.Header("X-RateLimit-Limit", strconv.Itoa(m.requestsPerMin))
 	c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	c.Header("X-RateLimit-Reset", strconv.FormatInt(resetAt.Unix(), 10))
-	c.Header("X-RateLimit-Reset-After", strconv.FormatInt(int64(resetAt.Sub(time.Now()).Seconds()), 10))
+	c.Header("X-RateLimit-Reset-After", strconv.FormatInt(int64(time.Until(resetAt).Seconds()), 10))
 }
 
 // SlidingWindowRateLimit implements a more accurate sliding window algorithm
@@ -233,7 +233,7 @@ func GetRateLimitHeaders(limit, remaining int, resetAt time.Time) map[string]str
 		"X-RateLimit-Limit":       strconv.Itoa(limit),
 		"X-RateLimit-Remaining":   strconv.Itoa(remaining),
 		"X-RateLimit-Reset":       strconv.FormatInt(resetAt.Unix(), 10),
-		"X-RateLimit-Reset-After": strconv.FormatInt(int64(resetAt.Sub(time.Now()).Seconds()), 10),
+		"X-RateLimit-Reset-After": strconv.FormatInt(int64(time.Until(resetAt).Seconds()), 10),
 	}
 }
 

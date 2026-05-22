@@ -500,12 +500,7 @@ func (h *ZTPolicyHandler) EvaluatePolicies(c *gin.Context) {
 		// Continue with cached policies
 	}
 
-	input := ZTPolicyInput{
-		Subject:  req.Subject,
-		Resource: req.Resource,
-		Action:   req.Action,
-		Context:  req.Context,
-	}
+	input := ZTPolicyInput(req)
 
 	result := h.eval.Evaluate(input)
 

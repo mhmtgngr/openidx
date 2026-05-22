@@ -457,9 +457,10 @@ func (s *Service) getUserAuthStatistics(ctx context.Context, userID string) Auth
 			rows.Scan(&action, &count)
 			stats.LoginsByMethod[action] = count
 			stats.TotalLogins += count
-			if action == "login" || action == "login_mfa" {
+			switch action {
+			case "login", "login_mfa":
 				stats.SuccessfulLogins += count
-			} else if action == "login_failed" {
+			case "login_failed":
 				stats.FailedLogins += count
 			}
 		}

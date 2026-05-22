@@ -59,7 +59,7 @@ func (rw *responseWriter) WriteHeader(code int) {
 // Write captures the response size
 func (rw *responseWriter) Write(data []byte) (int, error) {
 	if !rw.written {
-		rw.WriteHeader(rw.ResponseWriter.Status())
+		rw.WriteHeader(rw.Status())
 	}
 	size, err := rw.ResponseWriter.Write(data)
 	rw.size += size
@@ -69,7 +69,7 @@ func (rw *responseWriter) Write(data []byte) (int, error) {
 // WriteString captures the response size for string writes
 func (rw *responseWriter) WriteString(s string) (int, error) {
 	if !rw.written {
-		rw.WriteHeader(rw.ResponseWriter.Status())
+		rw.WriteHeader(rw.Status())
 	}
 	size, err := rw.ResponseWriter.WriteString(s)
 	rw.size += size
