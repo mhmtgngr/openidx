@@ -24,15 +24,29 @@ type RateLimitConfig struct {
 	AuthWindow time.Duration
 	// Whether to also track per-user (when user_id is in context)
 	PerUser bool
+	// AuthFailOpen controls behavior on auth-sensitive paths when the Redis
+	// backend is unavailable (nil client or error). The default (false) fails
+	// CLOSED — auth requests are rejected with 503 so brute-force protection
+	// can't silently disappear during a Redis outage. Non-auth paths always
+	// fail open to preserve availability. Set true only if you explicitly
+	// prefer login availability over rate-limit enforcement during outages.
+	AuthFailOpen bool
 }
 
-// authPaths are paths that get the stricter auth rate limit tier
+// authPaths are paths that get the stricter auth rate limit tier (and, by
+// default, fail closed when the limiter backend is unavailable). Matched by
+// prefix, so e.g. "/oauth/magic-link" also covers "/oauth/magic-link-verify".
 var authPaths = []string{
 	"/oauth/login",
 	"/oauth/mfa-verify",
+	"/oauth/mfa-send-otp",
+	"/oauth/stepup-verify",
+	"/oauth/magic-link",
 	"/oauth/authorize/callback",
 	"/oauth/token",
 	"/api/v1/identity/users/login",
+	"/api/v1/identity/users/forgot-password",
+	"/api/v1/identity/users/reset-password",
 }
 
 // skipPaths are paths exempt from rate limiting
@@ -57,9 +71,10 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 		}
 
 		// Determine rate limit tier
+		isAuth := isAuthPath(path)
 		limit := cfg.Requests
 		window := cfg.Window
-		if isAuthPath(path) && cfg.AuthRequests > 0 {
+		if isAuth && cfg.AuthRequests > 0 {
 			limit = cfg.AuthRequests
 			window = cfg.AuthWindow
 		}
@@ -79,8 +94,14 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 		windowEpoch := time.Now().Unix() / int64(window.Seconds())
 		key := fmt.Sprintf("ratelimit:%s:%s:%d", scope, identifier, windowEpoch)
 
-		// If Redis is nil, fail open
+		// If Redis is nil, the limiter can't enforce. Fail closed for auth
+		// paths (unless explicitly opted out) so brute-force protection isn't
+		// silently lost; fail open elsewhere to preserve availability.
 		if redisClient == nil {
+			if isAuth && !cfg.AuthFailOpen {
+				rateLimitFailClosed(c, logger, key)
+				return
+			}
 			rlFailOpenTotal.WithLabelValues(scope).Inc()
 			c.Next()
 			return
@@ -91,6 +112,10 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 
 		count, err := redisClient.Incr(ctx, key).Result()
 		if err != nil {
+			if isAuth && !cfg.AuthFailOpen {
+				rateLimitFailClosed(c, logger, key)
+				return
+			}
 			// Fail open: allow request, log warning
 			rlFailOpenTotal.WithLabelValues(scope).Inc()
 			logger.Warn("Rate limit Redis error, failing open",
@@ -125,6 +150,20 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 
 		c.Next()
 	}
+}
+
+// rateLimitFailClosed rejects an auth-sensitive request when the rate-limit
+// backend is unavailable, so brute-force protection is preserved during an
+// outage. Returns 503 with a short Retry-After.
+func rateLimitFailClosed(c *gin.Context, logger *zap.Logger, key string) {
+	rlFailClosedTotal.Inc()
+	logger.Warn("Rate limit backend unavailable on auth path, failing closed",
+		zap.String("key", key),
+		zap.String("path", c.Request.URL.Path))
+	c.Header("Retry-After", "5")
+	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+		"error": "authentication temporarily unavailable, please retry",
+	})
 }
 
 // isAuthPath checks if the request path matches an auth-sensitive path
