@@ -516,7 +516,7 @@ jobs:
 
       - name: Run tests
         working-directory: web/admin-console
-        run: npm test -- --coverage --watchAll=false
+        run: npm test -- run
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
