@@ -386,6 +386,53 @@ func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
+// isIdentitySelfService reports whether an /api/v1/identity request path is a
+// caller-scoped self-service operation (operating on the authenticated user's
+// own account), as opposed to an administrative one that acts on other users
+// or system-wide resources. Matching is precise to avoid e.g. "/users/me"
+// accidentally matching "/users/members".
+func isIdentitySelfService(path string) bool {
+	rest := strings.TrimPrefix(path, "/api/v1/identity")
+	switch {
+	case rest == "/users/me" || strings.HasPrefix(rest, "/users/me/"):
+		return true // profile, password, PATs, consents, privacy, identity-links
+	case strings.HasPrefix(rest, "/mfa/"):
+		return true // the caller's own MFA enrollment/verification
+	case rest == "/trusted-browsers" || strings.HasPrefix(rest, "/trusted-browsers/"):
+		return true
+	case rest == "/risk-assessment", rest == "/resend-verification":
+		return true
+	}
+	return false
+}
+
+// requireAdminUnlessSelfService enforces authorization on the identity API.
+// Self-service paths are allowed for any authenticated user; everything else
+// (user/role/group/provider management, etc.) requires an admin role. This is
+// deny-by-default: any path not explicitly recognized as self-service needs
+// admin, so new administrative routes are protected automatically.
+//
+// Must run after openIDXAuthMiddleware (which sets "roles" from the token).
+func (s *Service) requireAdminUnlessSelfService() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if isIdentitySelfService(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+		rolesRaw, _ := c.Get("roles")
+		roles, _ := rolesRaw.([]string)
+		for _, r := range roles {
+			if r == "admin" || r == "super_admin" {
+				c.Next()
+				return
+			}
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": "admin role required for this operation",
+		})
+	}
+}
+
 // getOAuthPublicKey returns the OAuth service's RSA public key, using a cache with 5-minute TTL
 func (s *Service) getOAuthPublicKey() (*rsa.PublicKey, error) {
 	// Check cache first (read lock)
@@ -2655,6 +2702,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 	identity := router.Group("/api/v1/identity")
 	identity.Use(svc.openIDXAuthMiddleware())
 	identity.Use(middleware.PermissionResolver(svc.db.Pool, svc.redis.Client))
+	// Authorization: self-service paths are open to any authenticated user;
+	// all other (administrative) identity routes require an admin role. Without
+	// this, the user/role/group management API — including POST /users/:id/roles
+	// — was reachable by any authenticated user (privilege escalation).
+	identity.Use(svc.requireAdminUnlessSelfService())
 	{
 		// User Self-Service endpoints (require authentication)
 		identity.GET("/users/me", svc.handleGetCurrentUser)

@@ -118,6 +118,22 @@ OpenIDX includes the following security features:
 - **Security Headers**: CSP, HSTS, and other security headers
 - **Regular Updates**: Automated dependency updates and security patches
 
+### Trust Model (single-tenant)
+
+OpenIDX is currently a **single-tenant** platform: one deployment serves one
+organization. The security boundary is the deployment itself.
+
+- Within a deployment, users holding an **`admin`** (or `super_admin`) role can
+  read and manage **all** users, roles, groups, and configuration. This is by
+  design — there is no intra-deployment tenant isolation. Treat the `admin`
+  role as fully privileged and grant it sparingly.
+- The administrative API (everything under `/api/v1/identity` except the
+  caller's own `/users/me/*` and MFA self-service paths) requires an admin
+  role; ordinary authenticated users can only manage their own account.
+- **Multi-tenant SaaS isolation is not implemented.** Do not rely on roles to
+  separate distinct organizations within one deployment; run a separate
+  deployment per organization instead.
+
 ### Receiving Security Updates
 
 To receive security notifications:
