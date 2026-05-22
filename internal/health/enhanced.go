@@ -508,8 +508,8 @@ func gatherConnectionInfo(db *pgxpool.Pool, redisClient *redis.Client) *ConnInfo
 
 	if db != nil {
 		stats := db.Stat()
-		info.DBTotal = int32(stats.TotalConns())
-		info.DBIdle = int32(stats.IdleConns())
+		info.DBTotal = stats.TotalConns()
+		info.DBIdle = stats.IdleConns()
 		info.DBAcquired = stats.AcquireCount()
 	}
 
