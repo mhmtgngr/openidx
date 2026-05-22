@@ -529,7 +529,7 @@ func (s *Service) showLogoutConfirmationPage(c *gin.Context, spCount int) {
 }
 
 // recordSAMLSession records a SAML session after successful SSO
-func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityID, sessionIndex, nameID, nameIDFormat string) error {
+func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityID, sessionIndex, nameID, nameIDFormat string) error { //nolint:unused // TODO(unwired): SAML SLO session tracking not yet called from the SSO flow
 	// Set expiry to 8 hours
 	expiresAt := time.Now().Add(8 * time.Hour)
 
@@ -544,7 +544,7 @@ func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityI
 }
 
 // cleanupExpiredSAMLSessions removes expired SAML sessions
-func (s *Service) cleanupExpiredSAMLSessions(ctx context.Context) error {
+func (s *Service) cleanupExpiredSAMLSessions(ctx context.Context) error { //nolint:unused // TODO(unwired): SAML SLO session cleanup not yet scheduled
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM saml_sessions WHERE expires_at < NOW()")
 	return err
 }
@@ -562,7 +562,7 @@ func base64Decode(data string) ([]byte, error) {
 
 // handleSAMLLogoutRequest handles incoming SAML logout requests from SPs
 // This is an alternative handler that can be used for receiving logout requests
-func (s *Service) handleSAMLLogoutRequest(c *gin.Context) {
+func (s *Service) handleSAMLLogoutRequest(c *gin.Context) { //nolint:unused // TODO(unwired): alternative SP-initiated SLO entry point not yet registered to a route
 	samlRequest := c.PostForm("SAMLRequest")
 	if samlRequest == "" {
 		samlRequest = c.Query("SAMLRequest")

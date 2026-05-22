@@ -2,9 +2,7 @@
 package middleware
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"time"
@@ -74,21 +72,6 @@ func (rw *responseWriter) WriteString(s string) (int, error) {
 	size, err := rw.ResponseWriter.WriteString(s)
 	rw.size += size
 	return size, err
-}
-
-// responseBodyReader wraps io.Reader to capture request body for logging
-type responseBodyReader struct {
-	io.ReadCloser
-	buf *bytes.Buffer
-}
-
-// Read reads from the underlying reader and buffers the data
-func (r *responseBodyReader) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	if n > 0 {
-		r.buf.Write(p[:n])
-	}
-	return n, err
 }
 
 // JSONLogEntry represents a structured log entry

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -317,21 +316,9 @@ func (s *Service) handleCancelBulkOperation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Operation cancelled"})
 }
 
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
-
 func nilIfEmpty(s string) *string {
 	if s == "" {
 		return nil
 	}
 	return &s
-}
-
-// trimmedLower returns a trimmed lowercase version of s
-func trimmedLower(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
 }

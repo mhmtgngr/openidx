@@ -56,18 +56,6 @@ type hostedService struct {
 	cancel   context.CancelFunc
 }
 
-// zitiAPIResponse represents a generic Ziti Management API response
-type zitiAPIResponse struct {
-	Data  json.RawMessage `json:"data"`
-	Error *zitiAPIError   `json:"error,omitempty"`
-	Meta  json.RawMessage `json:"meta,omitempty"`
-}
-
-type zitiAPIError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
 // ZitiServiceInfo represents a Ziti service from the management API
 type ZitiServiceInfo struct {
 	ID             string   `json:"id"`

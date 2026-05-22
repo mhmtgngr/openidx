@@ -675,14 +675,6 @@ func (s *Service) deleteSAMLServiceProvider(ctx context.Context, id string) erro
 	return nil
 }
 
-// updateSPLastUsed updates the last_used_at timestamp
-func (s *Service) updateSPLastUsed(ctx context.Context, entityID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		"UPDATE saml_service_providers SET last_used_at = NOW() WHERE entity_id = $1",
-		entityID)
-	return err
-}
-
 // Helper functions
 
 // scanSAMLServiceProviders scans a rowset into SAMLServiceProvider structs

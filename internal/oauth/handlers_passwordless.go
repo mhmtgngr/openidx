@@ -4,8 +4,6 @@ package oauth
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -581,22 +579,4 @@ func (s *Service) handleQRLoginPoll(c *gin.Context) {
 	}()
 
 	s.issueAuthorizationCode(c, oauthParams, userID)
-}
-
-// generateSecureHex generates a cryptographically secure random hex string.
-// This is used internally for authorization codes in redirect-based flows.
-// Minimum 16 bytes (128 bits) of entropy required.
-func generateSecureHex(nBytes int) (string, error) {
-	if nBytes < 16 {
-		return "", fmt.Errorf("insufficient entropy: minimum 16 bytes required, got %d", nBytes)
-	}
-	b := make([]byte, nBytes)
-	n, err := rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	if n != nBytes {
-		return "", fmt.Errorf("insufficient random bytes: expected %d, got %d", nBytes, n)
-	}
-	return hex.EncodeToString(b), nil
 }

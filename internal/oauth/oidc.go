@@ -269,17 +269,6 @@ func (p *OIDCProvider) generateSubject(userID string) string {
 	return userID
 }
 
-// generatePairwiseSubject generates a pairwise subject identifier for a specific client
-// This provides privacy by using different subject values for different clients
-func (p *OIDCProvider) generatePairwiseSubject(userID, clientID, sectorIdentifier string) string {
-	// Calculate SHA-256 hash of sector identifier + user ID
-	// This generates a unique subject per client/sector
-	h := sha256.New()
-	h.Write([]byte(sectorIdentifier + userID))
-	hash := h.Sum(nil)
-	return base64.RawURLEncoding.EncodeToString(hash)
-}
-
 // hashHalf computes the first half of a SHA-256 hash (used for at_hash and c_hash)
 // Implements OpenID Connect Core 1.0 §3.2.2.1
 func (p *OIDCProvider) hashHalf(data string) string {

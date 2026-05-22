@@ -93,15 +93,10 @@ func (h *RemoteSupportHandler) SetDefaultRetentionDays(days int) {
 // is immutable for the session's lifetime.
 type signalingSession struct {
 	sessionID string
-	agentID   string
 
 	mu        sync.Mutex
 	adminConn *websocket.Conn
 	agentConn *websocket.Conn
-
-	// closed is set the first time anything closes the session so duplicate
-	// teardown notifications don't fight each other.
-	closed bool
 }
 
 // RegisterRemoteSupportAdminRoutes mounts the admin (and admin-WS) surface.

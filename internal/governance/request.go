@@ -90,7 +90,6 @@ type RequestService struct {
 	db                *database.PostgresDB
 	logger            *zap.Logger
 	notificationHooks []NotificationHook
-	escalationChecker *time.Ticker
 	stopChan          chan struct{}
 }
 

@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -534,25 +533,4 @@ func runList(ctx context.Context, args []string) error {
 
 	fmt.Printf("\nFound %d available endpoint(s).\n", available)
 	return nil
-}
-
-// downloadFile downloads a file from a URL
-func downloadFile(client *http.Client, url string, w io.Writer) error {
-	req, err := http.NewRequestWithContext(context.Background(), "GET", url, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-	}
-
-	_, err = io.Copy(w, resp.Body)
-	return err
 }

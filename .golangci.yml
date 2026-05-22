@@ -5,16 +5,18 @@ version: "2"
 # accumulated. Deferred to a dedicated cleanup:
 #   - errcheck (1000+ findings, mostly intentional fire-and-forget / optional
 #     request-body binds; not worth blanket enforcement for v1)
-#   - unused (separate cleanup)
 #   - misspell (mostly British "cancelled"/"behaviour" which are pervasive and
 #     used as status enum values — auto-"fixing" would be a breaking change)
 #   - goimports (import-grouping churn; separate cleanup)
 # gofmt IS enforced (the whole tree was formatted; go1.25 and the
 # golangci-lint binary's gofmt agree). staticcheck is enforced for its
 # bug-class (SA*) checks; the stylistic groups (S/ST/QF) plus two SA checks are
-# disabled (see settings below). This curated set keeps lint green and
-# meaningful (vet correctness, HTTP body leaks, redundant conversions,
-# staticcheck bug detection, gofmt).
+# disabled (see settings below). unused is enforced: dead code was removed; a
+# handful of built-but-unwired features (session-timeout checks, SAML SLO
+# tracking, proxy hop-by-hop stripping, audit-stream SIEM config) are kept
+# behind //nolint:unused with TODO(unwired) markers pending a wire-or-drop call.
+# This curated set keeps lint green and meaningful (vet correctness, HTTP body
+# leaks, redundant conversions, staticcheck bug detection, dead-code, gofmt).
 run:
   modules-download-mode: readonly
 
@@ -26,6 +28,7 @@ linters:
     - ineffassign
     - unconvert
     - staticcheck
+    - unused
   settings:
     staticcheck:
       # Enforce the SA* bug-class only. The S/ST/QF groups are stylistic
@@ -59,6 +62,7 @@ linters:
           - ineffassign
           - unconvert
           - staticcheck
+          - unused
 
 formatters:
   enable:

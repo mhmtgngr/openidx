@@ -4,10 +4,8 @@ package identity
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -296,95 +294,4 @@ func (s *EnhancedService) ListUsers(ctx context.Context, offset, limit int) ([]U
 	}
 
 	return users, total, nil
-}
-
-// HTTP Handlers with enhanced error handling
-
-func (s *EnhancedService) handleCreateUser(c *gin.Context) {
-	var user User
-	if err := c.ShouldBindJSON(&user); err != nil {
-		errors.HandleError(c, errors.BadRequest("Invalid request body"))
-		return
-	}
-
-	if err := s.CreateUser(c.Request.Context(), &user); err != nil {
-		errors.HandleError(c, err)
-		return
-	}
-
-	c.JSON(201, user)
-}
-
-func (s *EnhancedService) handleGetUser(c *gin.Context) {
-	userID := c.Param("id")
-
-	user, err := s.GetUser(c.Request.Context(), userID)
-	if err != nil {
-		errors.HandleError(c, err)
-		return
-	}
-
-	c.JSON(200, user)
-}
-
-func (s *EnhancedService) handleUpdateUser(c *gin.Context) {
-	userID := c.Param("id")
-
-	var user User
-	if err := c.ShouldBindJSON(&user); err != nil {
-		errors.HandleError(c, errors.BadRequest("Invalid request body"))
-		return
-	}
-
-	user.ID = userID
-	if err := s.UpdateUser(c.Request.Context(), &user); err != nil {
-		errors.HandleError(c, err)
-		return
-	}
-
-	c.JSON(200, user)
-}
-
-func (s *EnhancedService) handleDeleteUser(c *gin.Context) {
-	userID := c.Param("id")
-
-	if err := s.DeleteUser(c.Request.Context(), userID); err != nil {
-		errors.HandleError(c, err)
-		return
-	}
-
-	c.JSON(204, nil)
-}
-
-func (s *EnhancedService) handleListUsers(c *gin.Context) {
-	offset := 0
-	limit := 20
-
-	// Parse query parameters
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		if o, err := parseInt(offsetStr); err == nil {
-			offset = o
-		}
-	}
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if l, err := parseInt(limitStr); err == nil {
-			limit = l
-		}
-	}
-
-	users, total, err := s.ListUsers(c.Request.Context(), offset, limit)
-	if err != nil {
-		errors.HandleError(c, err)
-		return
-	}
-
-	c.Header("X-Total-Count", string(rune(total)))
-	c.JSON(200, users)
-}
-
-// Helper function
-func parseInt(s string) (int, error) {
-	var i int
-	_, err := fmt.Sscanf(s, "%d", &i)
-	return i, err
 }

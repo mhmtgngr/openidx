@@ -540,48 +540,6 @@ func determineQuarantineAction(actions []string) string {
 	return "none"
 }
 
-// validateBreachIncidentRequest validates a breach incident creation request
-func validateBreachIncidentRequest(incidentType string, severity string, affectedUsers []string) error {
-	// Validate breach type
-	validTypes := map[BreachType]bool{
-		BreachCredentialStuffing:  true,
-		BreachPasswordSpraying:    true,
-		BreachImpossibleTravel:    true,
-		BreachAnomalousAccess:     true,
-		BreachDataExfiltration:    true,
-		BreachPrivilegeEscalation: true,
-		BreachSessionHijacking:    true,
-		BreachMaliciousInsider:    true,
-	}
-	if !validTypes[BreachType(incidentType)] {
-		return fmt.Errorf("invalid breach_type: %s", incidentType)
-	}
-
-	// Validate severity
-	validSeverities := map[BreachSeverity]bool{
-		BreachSeverityInfo:     true,
-		BreachSeverityLow:      true,
-		BreachSeverityMedium:   true,
-		BreachSeverityHigh:     true,
-		BreachSeverityCritical: true,
-	}
-	if !validSeverities[BreachSeverity(severity)] {
-		return fmt.Errorf("invalid severity: %s", severity)
-	}
-
-	// Validate affected users
-	if len(affectedUsers) == 0 {
-		return fmt.Errorf("at least one affected_user_id is required")
-	}
-	for _, userID := range affectedUsers {
-		if len(userID) < 3 {
-			return fmt.Errorf("invalid user_id format: %s", userID)
-		}
-	}
-
-	return nil
-}
-
 // Handlers
 
 func (s *Service) handleIBDRDetectBreach(c *gin.Context) {

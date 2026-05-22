@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"testing"
 	"time"
@@ -241,15 +239,6 @@ func strPtr(s string) *string {
 // boolPtr returns a pointer to a bool
 func boolPtr(b bool) *bool {
 	return &b
-}
-
-// parseTestRSAKey parses a PEM-encoded RSA key
-func parseTestRSAKey(pemData []byte) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode(pemData)
-	if block == nil {
-		return nil, nil
-	}
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
 // NewMockRedisContext creates a mock Redis context using testutil

@@ -402,21 +402,6 @@ type ErrorResponse struct {
 	Details string `json:"details,omitempty"`
 }
 
-// newErrorResponse creates a new error response
-func newErrorResponse(err error) ErrorResponse {
-	resp := ErrorResponse{Error: err.Error()}
-
-	// Add specific error codes for known error types
-	switch {
-	case IsTampered(err):
-		resp.Code = "TAMPER_DETECTED"
-	case IsChainBreak(err):
-		resp.Code = "CHAIN_BREAK"
-	}
-
-	return resp
-}
-
 // LogUnauthorizedAccess logs unauthorized access attempts
 func (h *Handler) LogUnauthorizedAccess(c *gin.Context, resource, action string) {
 	// Create an audit event for the unauthorized access

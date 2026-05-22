@@ -394,13 +394,3 @@ func toString(v interface{}) string {
 		return ""
 	}
 }
-
-// getRequestID retrieves or generates a request ID for tracing
-func getRequestID(c *gin.Context) string {
-	if rid, exists := c.Get("request_id"); exists {
-		if id, ok := rid.(string); ok {
-			return id
-		}
-	}
-	return uuid.New().String()
-}

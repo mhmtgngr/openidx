@@ -3,7 +3,6 @@ package migrations
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,9 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
-
-//go:embed *.sql
-var sqlFiles embed.FS
 
 // Migration represents a single database migration
 type Migration struct {

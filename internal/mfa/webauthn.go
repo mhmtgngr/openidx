@@ -81,11 +81,6 @@ func NewWebAuthnService(
 	}, nil
 }
 
-// webauthnUser adapts a user credential to the webauthn.User interface
-type webauthnUser struct {
-	*WebAuthnCredential
-}
-
 // WebAuthnUserID is the interface for user lookups
 type WebAuthnUserID interface {
 	GetUUID() uuid.UUID

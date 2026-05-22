@@ -1197,53 +1197,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 
 // HTTP Handlers
 
-func (s *Service) handleGetDashboard(c *gin.Context) {
-	// Check if user is admin
-	isAdmin := false
-	if roles, exists := c.Get("roles"); exists {
-		if roleList, ok := roles.([]string); ok {
-			for _, r := range roleList {
-				if r == "admin" || r == "super_admin" {
-					isAdmin = true
-					break
-				}
-			}
-		}
-	}
-
-	userID, _ := c.Get("user_id")
-	uid, _ := userID.(string)
-
-	if !isAdmin && uid != "" {
-		dashboard, err := s.GetUserDashboard(c.Request.Context(), uid)
-		if err != nil {
-			s.logger.Error("failed to get user dashboard", zap.String("user_id", uid), zap.Error(err))
-			c.JSON(500, gin.H{"error": "internal server error"})
-			return
-		}
-		c.JSON(200, dashboard)
-		return
-	}
-
-	dashboard, err := s.GetDashboard(c.Request.Context())
-	if err != nil {
-		s.logger.Error("failed to get dashboard", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, dashboard)
-}
-
-func (s *Service) handleGetSettings(c *gin.Context) {
-	settings, err := s.GetSettings(c.Request.Context())
-	if err != nil {
-		s.logger.Error("failed to get settings", zap.Error(err))
-		c.JSON(500, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(200, settings)
-}
-
 func (s *Service) handleUpdateSettings(c *gin.Context) {
 	var settings Settings
 	if err := c.ShouldBindJSON(&settings); err != nil {

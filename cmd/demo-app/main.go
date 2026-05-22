@@ -7,7 +7,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strings"
 	"time"
@@ -15,14 +14,6 @@ import (
 
 //go:embed static/index.html
 var staticFS embed.FS
-
-var htmlTemplate *template.Template
-
-func init() {
-	raw, _ := staticFS.ReadFile("static/index.html")
-	// We inject identity data as a JS variable before </script>
-	htmlTemplate = template.Must(template.New("index").Parse(string(raw)))
-}
 
 type identityData struct {
 	UserID     string `json:"user_id"`
