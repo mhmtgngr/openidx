@@ -11,20 +11,38 @@
 
 | Component | Method | Frequency | Retention |
 |-----------|--------|-----------|-----------|
-| PostgreSQL | `pg_dump -Fc` via `scripts/backup-postgres.sh` | Every 6 hours (cron) | 30 days |
-| Elasticsearch | Snapshot API via `scripts/backup-elasticsearch.sh` | Daily | 14 days |
+| PostgreSQL | `cmd/backup` (`pg_dump -Fc`, gzip, optional AES-256, optional S3) | Every 6 hours (cron) | `BACKUP_RETENTION_COUNT` |
+| Elasticsearch | Snapshot API (not yet automated — use the ES snapshot procedure below) | Daily | 14 days |
 | Redis | Not backed up (ephemeral cache) | N/A | Rebuilt on restart |
 | Kubernetes etcd | Managed by cloud provider or `etcdctl snapshot save` | Daily | 7 days |
+
+### The backup tool
+
+PostgreSQL backups are taken by the `cmd/backup` CLI (`go build -o backup ./cmd/backup`):
+
+```
+backup create [name]    # dump + gzip (+encrypt/S3 if configured)
+backup restore <file>   # restore a backup (pulls from S3 if not local)
+backup list             # list backups
+backup verify <file>    # checksum verification
+```
+
+It is configured via environment variables: `DATABASE_URL`, `BACKUP_DIR`,
+`BACKUP_RETENTION_COUNT`, `BACKUP_ENCRYPTION_KEY` (optional), and for offsite
+copies `BACKUP_S3_BUCKET` / `BACKUP_S3_REGION` / `BACKUP_S3_ENDPOINT` /
+`BACKUP_S3_ACCESS_KEY` / `BACKUP_S3_SECRET_KEY`. When an S3 bucket is set, each
+backup is uploaded there and `restore` will fetch it from S3 if it isn't found
+locally.
 
 ### Recommended Cron Entries
 
 ```cron
-# PostgreSQL backup every 6 hours
-0 */6 * * * PGPASSWORD=<password> /opt/openidx/scripts/backup-postgres.sh >> /var/log/openidx-backup.log 2>&1
-
-# Elasticsearch snapshot daily at 02:00
-0 2 * * * /opt/openidx/scripts/backup-elasticsearch.sh >> /var/log/openidx-es-backup.log 2>&1
+# PostgreSQL backup every 6 hours (offsite copy via BACKUP_S3_* env)
+0 */6 * * * DATABASE_URL=... BACKUP_DIR=/var/backups/openidx BACKUP_RETENTION_COUNT=120 /opt/openidx/backup create >> /var/log/openidx-backup.log 2>&1
 ```
+
+On Kubernetes, schedule this as a `CronJob` running the backup image with the
+same env (tracked as a follow-up to ship a chart `CronJob` template).
 
 ---
 
@@ -34,14 +52,14 @@
 
 ```bash
 # 1. Identify the most recent backup
-ls -lt backups/postgres/
+backup list
 
 # 2. Stop services that write to the database
 kubectl scale deployment --replicas=0 -l app.kubernetes.io/part-of=openidx
 
-# 3. Restore
-export PGPASSWORD=<password>
-./scripts/restore-postgres.sh backups/postgres/openidx_YYYYMMDD_HHMMSS.dump
+# 3. Restore (fetches from S3 automatically if not present locally)
+export DATABASE_URL=... BACKUP_DIR=/var/backups/openidx
+backup restore openidx_YYYYMMDD_HHMMSS.sql.gz
 
 # 4. Run pending migrations (if any)
 # Migrations are applied automatically on service startup
@@ -123,13 +141,12 @@ terraform apply -var-file=production.tfvars
 etcdctl snapshot restore /path/to/etcd-snapshot.db
 
 # 3. Deploy OpenIDX
-helm install openidx deployments/kubernetes/helm/openidx -f values-production.yaml
+helm install openidx deployments/kubernetes/helm/openidx -f values-prod.yaml
 
-# 4. Restore PostgreSQL backup
-./scripts/restore-postgres.sh <latest-backup>
+# 4. Restore PostgreSQL backup (fetches from S3 if not local)
+backup restore <latest-backup>
 
-# 5. Restore Elasticsearch snapshot
-./scripts/backup-elasticsearch.sh  # (restore procedure above)
+# 5. Restore Elasticsearch snapshot (see the ES snapshot procedure above)
 ```
 
 ### 4B. Single Service Recovery

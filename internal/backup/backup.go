@@ -173,10 +173,18 @@ func (m *Manager) Restore(ctx context.Context, filename string) error {
 
 	filepath := filepath.Join(m.config.StorageDir, filename)
 
-	// Read file
+	// Read file locally; if it isn't present and S3 is configured, fetch it
+	// from the bucket so an offsite backup can be restored.
 	data, err := os.ReadFile(filepath)
 	if err != nil {
-		return fmt.Errorf("read backup file: %w", err)
+		if s3 := m.s3Storage(); s3 != nil {
+			m.logger.Info("Backup not found locally; fetching from S3",
+				zap.String("filename", filename))
+			data, err = s3.Load(ctx, filename)
+		}
+		if err != nil {
+			return fmt.Errorf("read backup file: %w", err)
+		}
 	}
 
 	// Verify checksum
@@ -625,13 +633,30 @@ func (m *Manager) loadMetadata(filename string) (*Backup, error) {
 	return &backup, nil
 }
 
-// uploadToS3 uploads a backup to S3
+// s3Storage builds an S3-compatible storage backend from the manager's
+// config, or returns nil when no S3 bucket is configured.
+func (m *Manager) s3Storage() *S3Storage {
+	if m.config.S3Bucket == "" {
+		return nil
+	}
+	return NewS3Storage(m.config.S3Bucket, m.config.S3Region, m.config.S3Endpoint,
+		m.config.S3AccessKey, m.config.S3SecretKey, "backups")
+}
+
+// uploadToS3 uploads a backup to the configured S3-compatible bucket using the
+// Storage backend.
 func (m *Manager) uploadToS3(ctx context.Context, backup *Backup, data []byte) error {
-	// This is a placeholder for S3 upload functionality
-	// In a full implementation, you would use the AWS SDK or minio-go
-	// For now, we'll just log that S3 upload is not implemented
-	m.logger.Info("S3 upload requested but not implemented",
+	s3 := m.s3Storage()
+	if s3 == nil {
+		return fmt.Errorf("S3 bucket not configured")
+	}
+	location, err := s3.Save(ctx, backup.Filename, data)
+	if err != nil {
+		return fmt.Errorf("upload backup to S3: %w", err)
+	}
+	m.logger.Info("Uploaded backup to S3",
 		zap.String("bucket", m.config.S3Bucket),
+		zap.String("location", location),
 		zap.String("filename", backup.Filename))
 	return nil
 }
