@@ -202,20 +202,21 @@ func (ss *SessionService) Get(ctx context.Context, sessionID string) (*Session, 
 		return nil, ErrSessionExpired
 	}
 
-	// Update last seen asynchronously (fire and forget)
-	// Note: This could race with Delete operations, but that's acceptable for a last-seen update
-	go func() {
+	// Update last seen asynchronously (fire and forget). Operate on a copy so we
+	// never mutate the *Session that is returned to (and concurrently used by)
+	// the caller.
+	go func(s Session) {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		session.LastSeen = time.Now()
-		if newData, err := json.Marshal(session); err == nil {
+		s.LastSeen = time.Now()
+		if newData, err := json.Marshal(&s); err == nil {
 			// Only update if session still exists
 			if ss.redis.Exists(refreshCtx, sessionKey).Val() > 0 {
 				ss.redis.Expire(refreshCtx, sessionKey, ss.config.DefaultTTL)
 				ss.redis.Set(refreshCtx, sessionKey, newData, ss.config.DefaultTTL)
 			}
 		}
-	}()
+	}(session)
 
 	return &session, nil
 }

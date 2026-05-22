@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1798,9 +1799,9 @@ func TestEnsureServiceEdgeRouterPolicy(t *testing.T) {
 // TestZitiManagerConcurrency tests concurrent access to ZitiManager
 func TestZitiManagerConcurrency(t *testing.T) {
 	t.Run("Concurrent mgmtRequest calls", func(t *testing.T) {
-		callCount := 0
+		var callCount atomic.Int64
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			callCount++
+			callCount.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1840,7 +1841,7 @@ func TestZitiManagerConcurrency(t *testing.T) {
 			<-done
 		}
 
-		assert.Equal(t, concurrency, callCount)
+		assert.Equal(t, concurrency, int(callCount.Load()))
 	})
 
 	t.Run("Concurrent IsInitialized calls", func(t *testing.T) {
