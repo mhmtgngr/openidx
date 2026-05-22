@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,16 +95,23 @@ func TestGracefulShutdown_MultipleComponents(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	callOrder := make([]string, 0)
+	var mu sync.Mutex // components shut down concurrently; guard the shared slice
 	component1 := NewShutdownFunc("component1", func(ctx context.Context) error {
+		mu.Lock()
 		callOrder = append(callOrder, "component1")
+		mu.Unlock()
 		return nil
 	})
 	component2 := NewShutdownFunc("component2", func(ctx context.Context) error {
+		mu.Lock()
 		callOrder = append(callOrder, "component2")
+		mu.Unlock()
 		return nil
 	})
 	component3 := NewShutdownFunc("component3", func(ctx context.Context) error {
+		mu.Lock()
 		callOrder = append(callOrder, "component3")
+		mu.Unlock()
 		return nil
 	})
 
@@ -387,18 +395,25 @@ func TestGracefulShutdown_ComponentOrder(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	order := make([]string, 0)
+	var mu sync.Mutex // components shut down concurrently; guard the shared slice
 
 	// Create components that record their shutdown order
 	c1 := NewShutdownFunc("first", func(ctx context.Context) error {
+		mu.Lock()
 		order = append(order, "first")
+		mu.Unlock()
 		return nil
 	})
 	c2 := NewShutdownFunc("second", func(ctx context.Context) error {
+		mu.Lock()
 		order = append(order, "second")
+		mu.Unlock()
 		return nil
 	})
 	c3 := NewShutdownFunc("third", func(ctx context.Context) error {
+		mu.Lock()
 		order = append(order, "third")
+		mu.Unlock()
 		return nil
 	})
 
