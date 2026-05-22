@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -56,13 +57,14 @@ type Cache struct {
 	metrics *metrics
 }
 
-// metrics holds cache operation metrics
+// metrics holds cache operation metrics. Counters are atomic because cache
+// operations run concurrently across request goroutines.
 type metrics struct {
-	hits    int64
-	misses  int64
-	sets    int64
-	deletes int64
-	errors  int64
+	hits    atomic.Int64
+	misses  atomic.Int64
+	sets    atomic.Int64
+	deletes atomic.Int64
+	errors  atomic.Int64
 }
 
 // New creates a new cache instance with the given Redis client
@@ -107,18 +109,18 @@ func (c *Cache) SetWithTTL(ctx context.Context, key string, value interface{}, t
 	fullKey := c.fullKey(key)
 	data, err := json.Marshal(value)
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("%w: %v", ErrInvalidValue, err)
 	}
 
 	if err := c.retry(ctx, c.config.MaxRetries, func() error {
 		return c.client.Set(ctx, fullKey, data, ttl).Err()
 	}); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to set cache key: %w", err)
 	}
 
-	c.metrics.sets++
+	c.metrics.sets.Add(1)
 	c.logger.Debug("cache set",
 		zap.String("key", fullKey),
 		zap.Duration("ttl", ttl),
@@ -136,19 +138,19 @@ func (c *Cache) Get(ctx context.Context, key string, dest interface{}) error {
 	data, err := c.client.Get(ctx, fullKey).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			c.metrics.misses++
+			c.metrics.misses.Add(1)
 			return ErrCacheMiss
 		}
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to get cache key: %w", err)
 	}
 
 	if err := json.Unmarshal(data, dest); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("%w: %v", ErrInvalidValue, err)
 	}
 
-	c.metrics.hits++
+	c.metrics.hits.Add(1)
 	c.logger.Debug("cache hit", zap.String("key", fullKey))
 	return nil
 }
@@ -161,11 +163,11 @@ func (c *Cache) Delete(ctx context.Context, key string) error {
 
 	fullKey := c.fullKey(key)
 	if err := c.client.Del(ctx, fullKey).Err(); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to delete cache key: %w", err)
 	}
 
-	c.metrics.deletes++
+	c.metrics.deletes.Add(1)
 	c.logger.Debug("cache delete", zap.String("key", fullKey))
 	return nil
 }
@@ -185,16 +187,16 @@ func (c *Cache) DeleteByPrefix(ctx context.Context, prefix string) (int, error) 
 	}
 
 	if err := iter.Err(); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return 0, fmt.Errorf("failed to scan keys: %w", err)
 	}
 
 	if len(keys) > 0 {
 		if err := c.client.Del(ctx, keys...).Err(); err != nil {
-			c.metrics.errors++
+			c.metrics.errors.Add(1)
 			return 0, fmt.Errorf("failed to delete keys: %w", err)
 		}
-		c.metrics.deletes += int64(len(keys))
+		c.metrics.deletes.Add(int64(len(keys)))
 	}
 
 	c.logger.Debug("cache delete by prefix",
@@ -213,7 +215,7 @@ func (c *Cache) Exists(ctx context.Context, key string) (bool, error) {
 	fullKey := c.fullKey(key)
 	count, err := c.client.Exists(ctx, fullKey).Result()
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return false, fmt.Errorf("failed to check key existence: %w", err)
 	}
 
@@ -235,11 +237,11 @@ func (c *Cache) SetStringWithTTL(ctx context.Context, key, value string, ttl tim
 	if err := c.retry(ctx, c.config.MaxRetries, func() error {
 		return c.client.Set(ctx, fullKey, value, ttl).Err()
 	}); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to set string: %w", err)
 	}
 
-	c.metrics.sets++
+	c.metrics.sets.Add(1)
 	return nil
 }
 
@@ -253,14 +255,14 @@ func (c *Cache) GetString(ctx context.Context, key string) (string, error) {
 	value, err := c.client.Get(ctx, fullKey).Result()
 	if err != nil {
 		if err == redis.Nil {
-			c.metrics.misses++
+			c.metrics.misses.Add(1)
 			return "", ErrCacheMiss
 		}
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return "", fmt.Errorf("failed to get string: %w", err)
 	}
 
-	c.metrics.hits++
+	c.metrics.hits.Add(1)
 	return value, nil
 }
 
@@ -279,11 +281,11 @@ func (c *Cache) SetIntWithTTL(ctx context.Context, key string, value int64, ttl 
 	if err := c.retry(ctx, c.config.MaxRetries, func() error {
 		return c.client.Set(ctx, fullKey, value, ttl).Err()
 	}); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to set int: %w", err)
 	}
 
-	c.metrics.sets++
+	c.metrics.sets.Add(1)
 	return nil
 }
 
@@ -297,14 +299,14 @@ func (c *Cache) GetInt(ctx context.Context, key string) (int64, error) {
 	value, err := c.client.Get(ctx, fullKey).Int64()
 	if err != nil {
 		if err == redis.Nil {
-			c.metrics.misses++
+			c.metrics.misses.Add(1)
 			return 0, ErrCacheMiss
 		}
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return 0, fmt.Errorf("failed to get int: %w", err)
 	}
 
-	c.metrics.hits++
+	c.metrics.hits.Add(1)
 	return value, nil
 }
 
@@ -317,7 +319,7 @@ func (c *Cache) Increment(ctx context.Context, key string, delta int64) (int64, 
 	fullKey := c.fullKey(key)
 	value, err := c.client.IncrBy(ctx, fullKey, delta).Result()
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return 0, fmt.Errorf("failed to increment: %w", err)
 	}
 
@@ -338,7 +340,7 @@ func (c *Cache) Decrement(ctx context.Context, key string, delta int64) (int64, 
 	fullKey := c.fullKey(key)
 	value, err := c.client.DecrBy(ctx, fullKey, delta).Result()
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return 0, fmt.Errorf("failed to decrement: %w", err)
 	}
 
@@ -358,7 +360,7 @@ func (c *Cache) Expire(ctx context.Context, key string, ttl time.Duration) error
 
 	fullKey := c.fullKey(key)
 	if err := c.client.Expire(ctx, fullKey, ttl).Err(); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to set expiry: %w", err)
 	}
 
@@ -378,7 +380,7 @@ func (c *Cache) TTL(ctx context.Context, key string) (time.Duration, error) {
 	fullKey := c.fullKey(key)
 	ttl, err := c.client.TTL(ctx, fullKey).Result()
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return 0, fmt.Errorf("failed to get ttl: %w", err)
 	}
 
@@ -394,11 +396,11 @@ func (c *Cache) GetSet(ctx context.Context, key string, newValue interface{}) (s
 	fullKey := c.fullKey(key)
 	oldValue, err := c.client.GetSet(ctx, fullKey, newValue).Result()
 	if err != nil && err != redis.Nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return "", fmt.Errorf("failed to getset: %w", err)
 	}
 
-	c.metrics.sets++
+	c.metrics.sets.Add(1)
 	c.logger.Debug("cache getset", zap.String("key", fullKey))
 	return oldValue, nil
 }
@@ -420,7 +422,7 @@ func (c *Cache) GetMultiple(ctx context.Context, keys []string) (map[string]stri
 
 	values, err := c.client.MGet(ctx, fullKeys...).Result()
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return nil, fmt.Errorf("failed to get multiple: %w", err)
 	}
 
@@ -431,12 +433,12 @@ func (c *Cache) GetMultiple(ctx context.Context, keys []string) (map[string]stri
 				result[keys[i]] = str
 			}
 		} else {
-			c.metrics.misses++
+			c.metrics.misses.Add(1)
 		}
 	}
 
 	if len(result) > 0 {
-		c.metrics.hits += int64(len(result))
+		c.metrics.hits.Add(int64(len(result)))
 	}
 	return result, nil
 }
@@ -456,18 +458,18 @@ func (c *Cache) SetMultiple(ctx context.Context, items map[string]interface{}, t
 		fullKey := c.fullKey(key)
 		data, err := json.Marshal(value)
 		if err != nil {
-			c.metrics.errors++
+			c.metrics.errors.Add(1)
 			return fmt.Errorf("%w: %v", ErrInvalidValue, err)
 		}
 		pipe.Set(ctx, fullKey, data, ttl)
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to set multiple: %w", err)
 	}
 
-	c.metrics.sets += int64(len(items))
+	c.metrics.sets.Add(int64(len(items)))
 	return nil
 }
 
@@ -484,11 +486,11 @@ func (c *Cache) FlushAll(ctx context.Context) error {
 // Metrics returns the current cache metrics
 func (c *Cache) Metrics() map[string]int64 {
 	return map[string]int64{
-		"hits":    c.metrics.hits,
-		"misses":  c.metrics.misses,
-		"sets":    c.metrics.sets,
-		"deletes": c.metrics.deletes,
-		"errors":  c.metrics.errors,
+		"hits":    c.metrics.hits.Load(),
+		"misses":  c.metrics.misses.Load(),
+		"sets":    c.metrics.sets.Load(),
+		"deletes": c.metrics.deletes.Load(),
+		"errors":  c.metrics.errors.Load(),
 	}
 }
 
@@ -548,7 +550,7 @@ func (c *Cache) AcquireLock(ctx context.Context, key string, opts LockOptions) (
 	for i := 0; i <= opts.MaxRetries; i++ {
 		acquired, err := c.client.SetNX(ctx, fullKey, lockValue, opts.TTL).Result()
 		if err != nil {
-			c.metrics.errors++
+			c.metrics.errors.Add(1)
 			return false, fmt.Errorf("failed to acquire lock: %w", err)
 		}
 
@@ -580,7 +582,7 @@ func (c *Cache) ReleaseLock(ctx context.Context, key string) error {
 
 	fullKey := c.fullKey("lock:" + key)
 	if err := c.client.Del(ctx, fullKey).Err(); err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return fmt.Errorf("failed to release lock: %w", err)
 	}
 
@@ -599,7 +601,7 @@ func (c *Cache) TryAcquireLock(ctx context.Context, key string, ttl time.Duratio
 
 	acquired, err := c.client.SetNX(ctx, fullKey, lockValue, ttl).Result()
 	if err != nil {
-		c.metrics.errors++
+		c.metrics.errors.Add(1)
 		return false, fmt.Errorf("failed to try acquire lock: %w", err)
 	}
 

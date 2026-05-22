@@ -4,6 +4,7 @@ package audit
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 )
@@ -11,6 +12,7 @@ import (
 // OriginValidator provides origin validation for WebSocket connections
 type OriginValidator struct {
 	logger         *zap.Logger
+	mu             sync.RWMutex
 	allowedOrigins []string
 	enableLogging  bool
 }
@@ -44,8 +46,10 @@ func (ov *OriginValidator) CheckOrigin(r *http.Request) bool {
 	// Normalize the origin for comparison
 	normalized := NormalizeOrigin(origin)
 
+	allowedOrigins := ov.snapshotOrigins()
+
 	// If no allowed origins are configured, enforce same-origin policy
-	if len(ov.allowedOrigins) == 0 {
+	if len(allowedOrigins) == 0 {
 		// Extract host from request
 		requestHost := r.Host
 		if requestHost == "" {
@@ -74,7 +78,7 @@ func (ov *OriginValidator) CheckOrigin(r *http.Request) bool {
 	}
 
 	// Check against allowed origins list
-	for _, allowed := range ov.allowedOrigins {
+	for _, allowed := range allowedOrigins {
 		allowed = NormalizeOrigin(allowed)
 
 		// Wildcard allows all
@@ -147,21 +151,32 @@ func (ov *OriginValidator) logRejectedConnection(r *http.Request, origin, reason
 	)
 }
 
+// snapshotOrigins returns the current allowed-origins slice under the read lock.
+// UpdateAllowedOrigins replaces (never mutates in place) the slice, so the
+// returned header is safe to read after the lock is released.
+func (ov *OriginValidator) snapshotOrigins() []string {
+	ov.mu.RLock()
+	defer ov.mu.RUnlock()
+	return ov.allowedOrigins
+}
+
 // GetAllowedOrigins returns the current allowed origins list
 func (ov *OriginValidator) GetAllowedOrigins() []string {
-	return ov.allowedOrigins
+	return ov.snapshotOrigins()
 }
 
 // UpdateAllowedOrigins updates the allowed origins list
 func (ov *OriginValidator) UpdateAllowedOrigins(origins []string) {
+	ov.mu.Lock()
 	ov.allowedOrigins = origins
+	ov.mu.Unlock()
 	ov.logger.Info("WebSocket origin validator updated",
 		zap.Int("origin_count", len(origins)))
 }
 
 // IsWildcardAllowed returns true if wildcard origins are allowed
 func (ov *OriginValidator) IsWildcardAllowed() bool {
-	for _, origin := range ov.allowedOrigins {
+	for _, origin := range ov.snapshotOrigins() {
 		if origin == "*" || origin == "*." {
 			return true
 		}
