@@ -300,7 +300,7 @@ func (s *WebAuthnService) FinishRegistration(
 	}
 
 	// Get the challenge from parsed response
-	challenge := string(parsedResponse.Response.CollectedClientData.Challenge)
+	challenge := parsedResponse.Response.CollectedClientData.Challenge
 
 	// Retrieve session data
 	sessionKey := fmt.Sprintf("webauthn:registration:%s:%s", userID.String(), challenge)
@@ -540,7 +540,7 @@ func (s *WebAuthnService) FinishLogin(
 	}
 
 	// Get the challenge from parsed response
-	challenge := string(parsedResponse.Response.CollectedClientData.Challenge)
+	challenge := parsedResponse.Response.CollectedClientData.Challenge
 
 	// Retrieve session data
 	sessionKey := fmt.Sprintf("webauthn:login:%s:%s", userID.String(), challenge)

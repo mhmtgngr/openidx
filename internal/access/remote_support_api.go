@@ -270,7 +270,7 @@ func (h *RemoteSupportHandler) HandleStartSession(c *gin.Context) {
 		"mode":              mode,
 		"admin_ws":          "/api/v1/access/remote-support/sessions/" + id + "/ws",
 		"agent_ws":          "/api/v1/access/agent/remote-support/sessions/" + id + "/ws",
-		"ice_servers":       json.RawMessage(ice),
+		"ice_servers":       ice,
 		"recording_enabled": recordingEnabled,
 	})
 }
