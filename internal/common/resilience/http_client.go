@@ -30,7 +30,7 @@ func NewResilientHTTPClient(client *http.Client, cb *CircuitBreaker) *ResilientH
 // HTTP 5xx responses are treated as failures for circuit breaker purposes.
 func (rc *ResilientHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	result, err := rc.cb.Execute(func() (interface{}, error) {
-		resp, err := rc.client.Do(req)
+		resp, err := rc.client.Do(req) //nolint:bodyclose // returned to and closed by the caller of Do
 		if err != nil {
 			return nil, err
 		}

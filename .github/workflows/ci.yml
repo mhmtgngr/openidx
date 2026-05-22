@@ -409,10 +409,11 @@ jobs:
             ${{ runner.os }}-go-build-
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        # v7 of the action runs golangci-lint v2, which is built with a recent
+        # enough Go to analyze this go1.25 module (v1 cannot).
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
-          args: --timeout=10m
+          version: v2.12.2
 
   # Security vulnerability check
   vulnerability-check:

@@ -2,6 +2,11 @@ module github.com/openidx/openidx
 
 go 1.25.0
 
+// Build with go1.25.10+, which patches the net/mail, html/template and
+// net/http/httputil stdlib advisories (GO-2026-4976/4977/4980/4982/4986)
+// that govulncheck flags on earlier 1.25.x.
+toolchain go1.25.10
+
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/briandowns/spinner v1.23.2
