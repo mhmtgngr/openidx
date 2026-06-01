@@ -75,6 +75,13 @@ func NewReverseProxy(config Config) (*ReverseProxy, error) {
 			// Set the host header to the target host
 			pr.Out.Host = targetURL.Host
 
+			// Apply the gateway's standard modifications: strip hop-by-hop
+			// headers and inject the X-Forwarded-* / X-User-ID /
+			// X-Correlation-ID / X-Target-Service headers upstream services
+			// rely on. modifyRequest reads the gin context that ServeHTTP
+			// stashed on the request context.
+			_ = proxy.modifyRequest(pr.Out)
+
 			// Call custom modifier if provided
 			if config.ModifyRequest != nil {
 				config.ModifyRequest(pr.Out)
@@ -108,8 +115,10 @@ func (p *ReverseProxy) ServeHTTPDirect(w http.ResponseWriter, r *http.Request) {
 	p.proxy.ServeHTTP(w, r)
 }
 
-// modifyRequest is called before forwarding the request to the target
-func (p *ReverseProxy) modifyRequest(req *http.Request) error { //nolint:unused // TODO(unwired): per-request modifier (hop-by-hop header stripping) is implemented but not attached to the proxy
+// modifyRequest is called before forwarding the request to the target. It
+// strips hop-by-hop headers and adds the gateway's standard forwarding /
+// identity / correlation headers, reading the gin context set by ServeHTTP.
+func (p *ReverseProxy) modifyRequest(req *http.Request) error {
 	// Get Gin context if available
 	var c *gin.Context
 	if ctxVal := req.Context().Value(ginContextKey); ctxVal != nil {
