@@ -529,7 +529,7 @@ func (s *Service) showLogoutConfirmationPage(c *gin.Context, spCount int) {
 }
 
 // recordSAMLSession records a SAML session after successful SSO
-func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityID, sessionIndex, nameID, nameIDFormat string) error { //nolint:unused // TODO(unwired): SAML SLO session tracking not yet called from the SSO flow
+func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityID, sessionIndex, nameID, nameIDFormat string) error {
 	// Set expiry to 8 hours
 	expiresAt := time.Now().Add(8 * time.Hour)
 
@@ -544,7 +544,7 @@ func (s *Service) recordSAMLSession(ctx context.Context, userID, spID, spEntityI
 }
 
 // cleanupExpiredSAMLSessions removes expired SAML sessions
-func (s *Service) cleanupExpiredSAMLSessions(ctx context.Context) error { //nolint:unused // TODO(unwired): SAML SLO session cleanup not yet scheduled
+func (s *Service) cleanupExpiredSAMLSessions(ctx context.Context) error {
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM saml_sessions WHERE expires_at < NOW()")
 	return err
 }

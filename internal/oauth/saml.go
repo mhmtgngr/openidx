@@ -383,12 +383,26 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		return
 	}
 
+	// Generate a SessionIndex for this SSO and attach it to the assertion so
+	// SP-initiated SLO can correlate logout back to this session.
+	sessionIndex := "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+	user.SessionIndex = sessionIndex
+
 	// Generate SAML Response
-	samlResponse, err := s.buildSAMLResponseForUser(user, sp, authnReq)
+	samlResponse, nameID, nameIDFormat, err := s.buildSAMLResponseForUser(user, sp, authnReq)
 	if err != nil {
 		s.logger.Error("Failed to build SAML Response", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build SAML Response"})
 		return
+	}
+
+	// Record the SAML session so SP-initiated SLO can locate it by SessionIndex
+	// (and NameID-based lookup). Failure here degrades SLO but must not fail SSO.
+	if err := s.recordSAMLSession(c.Request.Context(), user.ID, sp.ID, sp.EntityID, sessionIndex, nameID, nameIDFormat); err != nil {
+		s.logger.Warn("Failed to record SAML session for SLO",
+			zap.String("user_id", user.ID),
+			zap.String("sp_entity_id", sp.EntityID),
+			zap.Error(err))
 	}
 
 	// Log the successful SSO in background with timeout
@@ -398,9 +412,10 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 		s.logAuditEvent(ctx, "authentication", "saml_idp", "sso", "success",
 			user.ID, c.ClientIP(), sp.EntityID, "service_provider",
 			map[string]interface{}{
-				"sp_entity_id": sp.EntityID,
-				"sp_name":      sp.Name,
-				"request_id":   authnReq.ID,
+				"sp_entity_id":  sp.EntityID,
+				"sp_name":       sp.Name,
+				"request_id":    authnReq.ID,
+				"session_index": sessionIndex,
 			})
 	}()
 
@@ -614,15 +629,17 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
 	return groups
 }
 
-// buildSAMLResponseForUser creates a SAML Response for a user
-func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvider, authnReq *AuthnRequest) (string, error) {
+// buildSAMLResponseForUser creates a SAML Response for a user. It also returns
+// the resolved NameID and NameID format so the SSO success path can record the
+// SAML session for SLO without duplicating the resolution logic.
+func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvider, authnReq *AuthnRequest) (samlResponse, nameID, nameIDFormat string, err error) {
 	// Determine NameID format and value
-	nameIDFormat := getNameIDFormat(authnReq.NameIDPolicy)
+	nameIDFormat = getNameIDFormat(authnReq.NameIDPolicy)
 	if sp.NameIDFormat != "" {
 		nameIDFormat = sp.NameIDFormat
 	}
 
-	nameID := user.Email
+	nameID = user.Email
 	switch nameIDFormat {
 	case NameIDFormatPersistent:
 		nameID = user.ID
@@ -645,7 +662,8 @@ func (s *Service) buildSAMLResponseForUser(user *SAMLUser, sp *SAMLServiceProvid
 		builder.SetSessionIndex(user.SessionIndex)
 	}
 
-	return builder.Build()
+	samlResponse, err = builder.Build()
+	return
 }
 
 // buildUserAttributes creates SAML attributes from user data with SP mappings

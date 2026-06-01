@@ -96,6 +96,12 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 		}
 	}
 
-	// Phase 3: Clean up stale Redis revocation keys for sessions that are already old
+	// Phase 3: Clean up expired SAML sessions so the saml_sessions bookkeeping
+	// table stays bounded once SLO sessions age out.
+	if err := s.cleanupExpiredSAMLSessions(ctx); err != nil {
+		s.logger.Error("Failed to clean up expired SAML sessions", zap.Error(err))
+	}
+
+	// Phase 4: Clean up stale Redis revocation keys for sessions that are already old
 	// Redis TTL handles this automatically via the 25-hour expiry set in revokeSessionWithRedis
 }
