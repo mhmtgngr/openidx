@@ -559,25 +559,3 @@ func base64Decode(data string) ([]byte, error) {
 	// Try URL-safe base64
 	return base64.URLEncoding.DecodeString(data)
 }
-
-// handleSAMLLogoutRequest handles incoming SAML logout requests from SPs
-// This is an alternative handler that can be used for receiving logout requests
-func (s *Service) handleSAMLLogoutRequest(c *gin.Context) { //nolint:unused // TODO(unwired): alternative SP-initiated SLO entry point not yet registered to a route
-	samlRequest := c.PostForm("SAMLRequest")
-	if samlRequest == "" {
-		samlRequest = c.Query("SAMLRequest")
-	}
-
-	if samlRequest == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing SAMLRequest"})
-		return
-	}
-
-	relayState := c.Query("RelayState")
-	if relayState == "" {
-		relayState = c.PostForm("RelayState")
-	}
-
-	// Process the logout request
-	s.handleSPInitiatedSLO(c, samlRequest, relayState, SAMLBindingHTTPPost)
-}
