@@ -90,19 +90,25 @@ type IdPArtifactResolutionService struct {
 	Index    int      `xml:"index,attr"`
 }
 
-// IdPOrganization describes the organization
+// IdPOrganization describes the organization. The child element names come
+// from the SAML 2.0 metadata schema: md:OrganizationName,
+// md:OrganizationDisplayName, md:OrganizationURL — NOT md:Name / md:DisplayName
+// / md:URL, which the previous version used (and which would have produced
+// malformed metadata that SPs reject).
 type IdPOrganization struct {
 	XMLName     xml.Name         `xml:"md:Organization"`
-	Name        IdPLocalizedName `xml:"md:Name"`
-	DisplayName IdPLocalizedName `xml:"md:DisplayName"`
-	URL         IdPLocalizedName `xml:"md:URL"`
+	Name        IdPLocalizedName `xml:"md:OrganizationName"`
+	DisplayName IdPLocalizedName `xml:"md:OrganizationDisplayName"`
+	URL         IdPLocalizedName `xml:"md:OrganizationURL"`
 }
 
-// IdPLocalizedName holds a localized string
+// IdPLocalizedName holds a localized string. It's embedded as multiple
+// distinct child elements of IdPOrganization (Name / DisplayName / URL), so
+// the element name comes from the parent field's xml tag — no XMLName here
+// (an XMLName would force every use site to emit the same element name).
 type IdPLocalizedName struct {
-	XMLName xml.Name `xml:"md:Name"`
-	Value   string   `xml:",chardata"`
-	Lang    string   `xml:"lang,attr,omitempty"`
+	Value string `xml:",chardata"`
+	Lang  string `xml:"lang,attr,omitempty"`
 }
 
 // IdPContactPerson describes a contact person

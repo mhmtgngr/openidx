@@ -1043,10 +1043,14 @@ type IdPSignedInfo struct {
 	Reference              IdPReference `xml:"ds:Reference"`
 }
 
-// IdPAlgorithm represents a signature algorithm
+// IdPAlgorithm represents a SAML signature algorithm element. This type is
+// embedded as CanonicalizationMethod, SignatureMethod, and DigestMethod
+// fields — the element name comes from the parent field's xml tag, so the
+// type intentionally has no XMLName (an XMLName would override every use
+// site and produce three identical <ds:CanonicalizationMethod> elements,
+// invalidating the signed XML).
 type IdPAlgorithm struct {
-	XMLName   xml.Name `xml:"ds:CanonicalizationMethod"`
-	Algorithm string   `xml:"Algorithm,attr"`
+	Algorithm string `xml:"Algorithm,attr"`
 }
 
 // IdPReference represents a signature reference

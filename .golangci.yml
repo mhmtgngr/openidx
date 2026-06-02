@@ -33,19 +33,16 @@ linters:
     staticcheck:
       # Enforce the SA* bug-class only. The S/ST/QF groups are stylistic
       # (simplifications, capitalized error strings, quickfixes) — deferred to a
-      # separate pass. Two SA checks are also disabled with cause:
+      # separate pass. One SA check is disabled with cause:
       #   SA9003: 8 empty branches are intentional placeholders for
       #           unimplemented features (metrics delta tracking, SCIM email
       #           PATCH, RSA-exponent warning, Ziti existence check).
-      #   SA5008: 4 SAML metadata XML struct-tag name conflicts — likely a real
-      #           marshaling bug, but fixing needs SAML-schema review; tracked.
       checks:
         - all
         - -S1*
         - -ST1*
         - -QF1*
         - -SA9003
-        - -SA5008
   exclusions:
     generated: lax
     paths:
