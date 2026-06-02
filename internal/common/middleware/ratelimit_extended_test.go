@@ -76,7 +76,7 @@ func TestDistributedRateLimit_AllowsRequestsUnderLimit(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     5,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -111,7 +111,7 @@ func TestDistributedRateLimit_BlocksRequestsOverLimit(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     3,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -155,7 +155,7 @@ func TestDistributedRateLimit_ResetAfterTimeWindow(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     2,
-			Window:       2 * time.Second,
+			Window:       60 * time.Second, // 60s window + matching FastForward keeps the reset assertion off the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -184,8 +184,8 @@ func TestDistributedRateLimit_ResetAfterTimeWindow(t *testing.T) {
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
-		// Fast forward time past the window
-		s.FastForward(3 * time.Second)
+		// Fast forward time past the window (matches the 60s Window above)
+		s.FastForward(70 * time.Second)
 
 		// Should be allowed again
 		w2 := httptest.NewRecorder()
@@ -205,7 +205,7 @@ func TestDistributedRateLimit_PerIPTracking(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     2,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -261,7 +261,7 @@ func TestDistributedRateLimit_PerUserTracking(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     2,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      true,
 		}
@@ -326,7 +326,7 @@ func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 			name:          "oauth login path uses stricter limit",
 			path:          "/oauth/login",
 			authRequests:  3,
-			authWindow:    time.Second,
+			authWindow:    60 * time.Second,
 			regularReqs:   100,
 			expectBlockAt: 4,
 		},
@@ -334,7 +334,7 @@ func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 			name:          "oauth token path uses stricter limit",
 			path:          "/oauth/token",
 			authRequests:  2,
-			authWindow:    time.Second,
+			authWindow:    60 * time.Second,
 			regularReqs:   100,
 			expectBlockAt: 3,
 		},
@@ -342,7 +342,7 @@ func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 			name:          "mfa verify path uses stricter limit",
 			path:          "/oauth/mfa-verify",
 			authRequests:  5,
-			authWindow:    time.Second,
+			authWindow:    60 * time.Second,
 			regularReqs:   100,
 			expectBlockAt: 6,
 		},
@@ -350,7 +350,7 @@ func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 			name:          "api login path uses stricter limit",
 			path:          "/api/v1/identity/users/login",
 			authRequests:  3,
-			authWindow:    time.Second,
+			authWindow:    60 * time.Second,
 			regularReqs:   100,
 			expectBlockAt: 4,
 		},
@@ -358,7 +358,7 @@ func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 			name:          "non-auth path uses regular limit",
 			path:          "/api/v1/users",
 			authRequests:  2,
-			authWindow:    time.Second,
+			authWindow:    60 * time.Second,
 			regularReqs:   3, // Lower limit for easier testing
 			expectBlockAt: 4,
 		},
@@ -372,7 +372,7 @@ func TestDistributedRateLimit_AuthPaths(t *testing.T) {
 
 			cfg := RateLimitConfig{
 				Requests:     tt.regularReqs,
-				Window:       time.Second,
+				Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 				AuthRequests: tt.authRequests,
 				AuthWindow:   tt.authWindow,
 				PerUser:      false,
@@ -430,7 +430,7 @@ func TestDistributedRateLimit_SkipPaths(t *testing.T) {
 
 			cfg := RateLimitConfig{
 				Requests:     3,
-				Window:       time.Second,
+				Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 				AuthRequests: 0,
 				PerUser:      false,
 			}
@@ -502,7 +502,7 @@ func TestDistributedRateLimit_Headers(t *testing.T) {
 
 			cfg := RateLimitConfig{
 				Requests:     tt.limit,
-				Window:       time.Second,
+				Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 				AuthRequests: 0,
 				PerUser:      false,
 			}
@@ -563,7 +563,7 @@ func TestDistributedRateLimit_FailOpen(t *testing.T) {
 			resetMetrics()
 			cfg := RateLimitConfig{
 				Requests:     1,
-				Window:       time.Second,
+				Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 				AuthRequests: 0,
 				PerUser:      false,
 			}
@@ -604,7 +604,7 @@ func TestDistributedRateLimit_DistributedConcurrency(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     10,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -662,7 +662,7 @@ func TestDistributedRateLimit_DifferentStrategies(t *testing.T) {
 			name: "low limit high window",
 			cfg: RateLimitConfig{
 				Requests:     2,
-				Window:       5 * time.Second,
+				Window:       60 * time.Second, // bumped from 5s to avoid wall-clock bucket boundary flake on the blocked-at-3 assertion
 				AuthRequests: 0,
 				PerUser:      false,
 			},
@@ -684,9 +684,9 @@ func TestDistributedRateLimit_DifferentStrategies(t *testing.T) {
 			name: "auth path stricter limit",
 			cfg: RateLimitConfig{
 				Requests:     100,
-				Window:       time.Second,
+				Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 				AuthRequests: 2,
-				AuthWindow:   time.Second,
+				AuthWindow:   60 * time.Second,
 				PerUser:      false,
 			},
 			requests:      3,
@@ -782,7 +782,7 @@ func TestDistributedRateLimit_PrometheusMetrics(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     2,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -816,7 +816,7 @@ func TestDistributedRateLimit_ContextTimeout(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     5,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -847,7 +847,7 @@ func TestDistributedRateLimit_RedisKeyFormat(t *testing.T) {
 
 		cfg := RateLimitConfig{
 			Requests:     5,
-			Window:       time.Second,
+			Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 			AuthRequests: 0,
 			PerUser:      false,
 		}
@@ -882,7 +882,7 @@ func BenchmarkDistributedRateLimit_Allow(b *testing.B) {
 
 	cfg := RateLimitConfig{
 		Requests:     10000,
-		Window:       time.Second,
+		Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 		AuthRequests: 0,
 		PerUser:      false,
 	}
@@ -941,7 +941,7 @@ func BenchmarkDistributedRateLimit_Parallel(b *testing.B) {
 
 	cfg := RateLimitConfig{
 		Requests:     10000,
-		Window:       time.Second,
+		Window:       60 * time.Second, // 60s window so tests can't straddle the wall-clock bucket boundary
 		AuthRequests: 0,
 		PerUser:      false,
 	}
