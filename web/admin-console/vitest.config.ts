@@ -22,5 +22,20 @@ export default defineConfig({
     },
     // Use tsconfig paths for resolution
     tsconfig: './tsconfig.json',
+    coverage: {
+      provider: 'v8',
+      // text -> console summary, lcov -> codecov upload, html -> local inspection
+      reporter: ['text', 'lcov', 'html'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/test/**',
+        'src/**/__mocks__/**',
+        'src/**/*.d.ts',
+        'src/main.tsx',
+        'src/vite-env.d.ts',
+      ],
+    },
   },
 })
