@@ -1087,6 +1087,12 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/audit-archives/:id", svc.handleGetAuditArchive)
 	router.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
 
+	// Audit Stream (WebSocket SIEM) — configure allowed origins / inspect stats
+	router.GET("/audit-stream/config", svc.handleGetAuditStreamConfig)
+	router.PUT("/audit-stream/config", svc.handleUpdateAuditStreamConfig)
+	router.POST("/audit-stream/test-origin", svc.handleTestAuditStreamOrigin)
+	router.GET("/audit-stream/stats", svc.handleGetAuditStreamStats)
+
 	// Phase 17: Multi-Tenancy, Privacy, Federation & Notifications
 
 	// 17A: Tenant Branding & Management
