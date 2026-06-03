@@ -215,5 +215,12 @@ func allMigrations() []*Migration {
 			UpSQL:       zitiEnhancedUp,
 			DownSQL:     zitiEnhancedDown,
 		},
+		{
+			Version:     30,
+			Name:        "user_roles_expires_at",
+			Description: "Time-bound role assignments: adds the expires_at column already referenced by GenerateJWT and the role-expiry cleaner",
+			UpSQL:       userRolesExpiresAtUp,
+			DownSQL:     userRolesExpiresAtDown,
+		},
 	}
 }

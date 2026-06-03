@@ -1445,4 +1445,24 @@ DROP INDEX IF EXISTS idx_posture_results_identity;
 DROP TABLE IF EXISTS device_posture_results;
 DROP TABLE IF EXISTS posture_checks;
 DROP TABLE IF NOT EXISTS posture_check_types;`
+
+	// Migration 030: time-bound role assignments
+	//
+	// internal/oauth/service.go:686 (GenerateJWT) filters user_roles with
+	// `AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`, and
+	// internal/identity/role_expiry.go:35 DELETEs expired assignments using
+	// the same column — but the user_roles table created in migration v1
+	// never had `expires_at`. The role query therefore errored on every
+	// invocation, the user.Roles slice came back empty, the OAuth token
+	// carried no `roles` claim, and the post-#79 admin-API authz gate
+	// returned 403 ("admin role required") even for the seeded admin user.
+	// Adding the column closes the loop: existing rows get NULL (no expiry,
+	// the desired default for the seeded admin) and time-bound assignments
+	// can be issued by setting a future timestamp.
+	userRolesExpiresAtUp = `-- Migration 030: add expires_at to user_roles
+ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE;
+CREATE INDEX IF NOT EXISTS idx_user_roles_expires_at ON user_roles(expires_at) WHERE expires_at IS NOT NULL;`
+
+	userRolesExpiresAtDown = `DROP INDEX IF EXISTS idx_user_roles_expires_at;
+ALTER TABLE user_roles DROP COLUMN IF EXISTS expires_at;`
 )
