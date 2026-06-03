@@ -301,7 +301,64 @@ jobs:
           REDIS_URL: redis://localhost:6379
           ELASTICSEARCH_URL: http://localhost:9200
         run: |
-          go test -v -tags=integration -timeout=25m ./test/integration/... || true
+          set -uo pipefail
+
+          # ----- migrations -----
+          echo "::group::Migrate DB"
+          go run ./cmd/migrate up
+          echo "::endgroup::"
+
+          # ----- build services the integration tests hit -----
+          echo "::group::Build identity-service + oauth-service"
+          go build -o /tmp/identity-service ./cmd/identity-service
+          go build -o /tmp/oauth-service    ./cmd/oauth-service
+          echo "::endgroup::"
+
+          # ----- start services in background -----
+          # Both services share the same DATABASE_URL / REDIS_URL the test job
+          # already exports. JWKS URL points at oauth-service's own metadata.
+          export OAUTH_JWKS_URL=http://localhost:8006/.well-known/jwks.json
+          export APP_ENV=test
+          export JWT_SECRET=integration-test-jwt-secret-do-not-use-in-prod
+          export OAUTH_ISSUER=http://localhost:8006
+
+          /tmp/identity-service > /tmp/identity.log 2>&1 &
+          IDENTITY_PID=$!
+          /tmp/oauth-service    > /tmp/oauth.log    2>&1 &
+          OAUTH_PID=$!
+          echo "identity-service pid=$IDENTITY_PID, oauth-service pid=$OAUTH_PID"
+
+          cleanup() {
+            echo "::group::identity-service log"; cat /tmp/identity.log || true; echo "::endgroup::"
+            echo "::group::oauth-service log";    cat /tmp/oauth.log    || true; echo "::endgroup::"
+            kill "$IDENTITY_PID" "$OAUTH_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # ----- wait for both to be healthy -----
+          echo "::group::Wait for service health"
+          for i in $(seq 1 60); do
+            id_ok=0; oa_ok=0
+            curl -sf http://localhost:8001/health/ready >/dev/null 2>&1 && id_ok=1
+            curl -sf http://localhost:8006/health/ready >/dev/null 2>&1 && oa_ok=1
+            if [ "$id_ok" = "1" ] && [ "$oa_ok" = "1" ]; then
+              echo "both services ready after ${i}s"
+              break
+            fi
+            sleep 1
+            if [ "$i" = "60" ]; then
+              echo "::error::services did not become ready within 60s (identity_ok=$id_ok oauth_ok=$oa_ok)"
+              exit 1
+            fi
+          done
+          echo "::endgroup::"
+
+          # ----- run integration tests -----
+          # Still `|| true` (informational) while subsequent PRs fix the bugs this
+          # foundation surfaced (admin-token bootstrap for createTestUser, PKCE
+          # in loginAndGetToken, etc.). A later PR drops the `|| true` and
+          # promotes this job into the Required Checks gate.
+          go test -v -tags=integration -timeout=20m ./test/integration/... || true
 
   # Benchmark regression detection
   benchmark:

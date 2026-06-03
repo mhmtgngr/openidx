@@ -338,8 +338,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		"provisioning-service": 8003,
 		"audit-service":        8004,
 		"admin-api":            8005,
-		"gateway-service":      8008,
+		"oauth-service":        8006,
 		"access-service":       8007,
+		"gateway-service":      8008,
 	}
 	if port, ok := ports[serviceName]; ok {
 		v.SetDefault("port", port)
