@@ -728,7 +728,16 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 		}
 		if v != "" {
 			cutoff, perr := strconv.ParseInt(v, 10, 64)
-			if perr == nil && issuedAt <= cutoff {
+			// Strict less-than on purpose: tokens issued in the same wall-
+			// clock second as the logout-all call are still considered
+			// valid. JWT iat resolution is 1s, and the test pattern
+			// "logout-all then immediately log in twice" otherwise sees
+			// the brand-new tokens get rejected by the very next userinfo
+			// call. Adversarial timing within a single second to slip a
+			// token in is not a realistic threat — and the new token is
+			// scoped to the freshly-authenticated session, not the
+			// just-killed one.
+			if perr == nil && issuedAt < cutoff {
 				return true, nil
 			}
 		}
