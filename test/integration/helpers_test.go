@@ -296,18 +296,21 @@ func extractAuthCode(body map[string]interface{}) string {
 
 // createTestUser creates a user for testing and returns the user ID. It
 // authenticates as the seeded admin so the request passes the post-#79
-// deny-by-default admin-API authz gate.
+// deny-by-default admin-API authz gate, and sends a SCIM-shaped payload so
+// `internal/identity/models.User` can actually bind the values (the previous
+// snake_case keys silently dropped username/email — every insert went in
+// with empty strings and the second one collided on users_email_key).
 func createTestUser(t *testing.T, username, email, password string) string {
 	t.Helper()
 	token := getAdminToken(t)
 
+	// SCIM 2.0 shape (matches the User struct's `json:"…"` tags):
+	//   userName, name.{givenName,familyName}, active, emails[].{value,primary}.
 	userData := fmt.Sprintf(`{
-		"username": %q,
-		"email": %q,
-		"first_name": "Integration",
-		"last_name": "Test",
-		"enabled": true,
-		"email_verified": true
+		"userName": %q,
+		"name": {"givenName": "Integration", "familyName": "Test"},
+		"active": true,
+		"emails": [{"value": %q, "primary": true}]
 	}`, username, email)
 
 	status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users", userData, token)
@@ -321,7 +324,9 @@ func createTestUser(t *testing.T, username, email, password string) string {
 		t.Fatal("User response missing 'id' field")
 	}
 
-	// Set password (admin-only)
+	// Set password (admin-only). The set-password endpoint takes a flat
+	// {"password": "..."} body — keeps the snake_case style its own handler
+	// uses, distinct from the SCIM user payload above.
 	passData := fmt.Sprintf(`{"password": %q}`, password)
 	apiRequest(t, "POST", fmt.Sprintf("%s/api/v1/identity/users/%s/set-password", identityURL, id), passData, token)
 
