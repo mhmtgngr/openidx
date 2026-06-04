@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,15 +56,9 @@ func TestOAuthLoginFlow(t *testing.T) {
 	})
 
 	t.Run("invalid credentials rejected", func(t *testing.T) {
-		// Get login session first
-		authURL := oauthURL + "/oauth/authorize?response_type=code&client_id=" + clientID +
-			"&redirect_uri=" + url.QueryEscape(redirectURI) + "&scope=openid"
-
-		req, _ := httpClient.Get(authURL)
-		req.Body.Close()
-		location := req.Header.Get("Location")
-		redirectURL, _ := url.Parse(location)
-		loginSession := redirectURL.Query().Get("login_session")
+		// Get login session first (PKCE+JSON via the shared helper, so this
+		// works regardless of whether authorize returns 200 HTML or 302).
+		loginSession, _ := beginAuthorizeForLogin(t, "openid", nil)
 
 		loginData := `{"username":"` + username + `","password":"wrong-password","login_session":"` + loginSession + `"}`
 		status, _ := apiRequest(t, "POST", oauthURL+"/oauth/login", loginData, "")
