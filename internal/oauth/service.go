@@ -9,8 +9,10 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -20,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 
@@ -653,6 +656,94 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
 	_, err := s.db.Pool.Exec(ctx, "DELETE FROM oauth_refresh_tokens WHERE token = $1", token)
 	return err
+}
+
+// accessTokenBlacklistKey returns the Redis key used to mark a given access
+// token as revoked. The token is hashed (not stored verbatim) so the key
+// stays bounded and we don't keep raw bearer tokens around in Redis.
+func accessTokenBlacklistKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "oauth:revoked_access_token:" + hex.EncodeToString(sum[:])
+}
+
+// userTokensRevokedAtKey returns the Redis key recording the most recent
+// "revoke everything for this user" timestamp. Any access token whose `iat`
+// is older than the value at this key is considered revoked.
+func userTokensRevokedAtKey(userID string) string {
+	return "oauth:user_tokens_revoked_at:" + userID
+}
+
+// MarkAccessTokenRevoked adds an access token to the revocation blacklist.
+// `expiresAt` is used as the Redis TTL — once the token would have expired on
+// its own, the blacklist entry can be garbage-collected. If Redis is
+// unavailable the call returns the underlying error; callers should still
+// invalidate any DB-side refresh-token row separately.
+func (s *Service) MarkAccessTokenRevoked(ctx context.Context, token string, expiresAt time.Time) error {
+	if s.redis == nil || s.redis.Client == nil {
+		return fmt.Errorf("redis not configured for token revocation")
+	}
+	ttl := time.Until(expiresAt)
+	if ttl <= 0 {
+		// Token has already expired — nothing to blacklist; treat as success.
+		return nil
+	}
+	return s.redis.Client.Set(ctx, accessTokenBlacklistKey(token), "1", ttl).Err()
+}
+
+// MarkUserTokensRevoked records a per-user "revoke everything issued so far"
+// marker. IsAccessTokenRevoked treats any access token with `iat` ≤ this
+// timestamp as revoked, which is how /oauth/logout-all invalidates every
+// outstanding access token at once without enumerating them.
+func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) error {
+	if s.redis == nil || s.redis.Client == nil {
+		return fmt.Errorf("redis not configured for token revocation")
+	}
+	// 7 days is comfortably longer than the configured access-token lifetime
+	// (3600s by default) and bounds memory at one short string per user.
+	return s.redis.Client.Set(ctx, userTokensRevokedAtKey(userID),
+		strconv.FormatInt(time.Now().Unix(), 10), 7*24*time.Hour).Err()
+}
+
+// IsAccessTokenRevoked returns true when either (a) the token's own
+// blacklist entry exists, or (b) the user's "revoke everything before
+// timestamp T" marker is newer than the token's `iat`. When Redis is
+// unavailable it returns the error so the caller can fail closed.
+func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID string, issuedAt int64) (bool, error) {
+	if s.redis == nil || s.redis.Client == nil {
+		return false, fmt.Errorf("redis not configured for token revocation")
+	}
+
+	// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
+	if n, err := s.redis.Client.Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
+		return false, err
+	} else if n > 0 {
+		return true, nil
+	}
+
+	// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
+	if userID != "" && issuedAt > 0 {
+		v, err := s.redis.Client.Get(ctx, userTokensRevokedAtKey(userID)).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return false, err
+		}
+		if v != "" {
+			cutoff, perr := strconv.ParseInt(v, 10, 64)
+			// Strict less-than on purpose: tokens issued in the same wall-
+			// clock second as the logout-all call are still considered
+			// valid. JWT iat resolution is 1s, and the test pattern
+			// "logout-all then immediately log in twice" otherwise sees
+			// the brand-new tokens get rejected by the very next userinfo
+			// call. Adversarial timing within a single second to slip a
+			// token in is not a realistic threat — and the new token is
+			// scoped to the freshly-authenticated session, not the
+			// just-killed one.
+			if perr == nil && issuedAt < cutoff {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 // JWT Token Generation
@@ -2553,9 +2644,34 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 
 func (s *Service) handleRevoke(c *gin.Context) {
 	token := c.PostForm("token")
+	hint := c.PostForm("token_type_hint")
+	ctx := c.Request.Context()
 
-	// Revoke refresh token if it exists
-	s.RevokeRefreshToken(c.Request.Context(), token)
+	// RFC 7009 says we should accept revocation requests for either token
+	// type and figure it out ourselves. Cover both — refresh-token row in
+	// Postgres, and access-token blacklist in Redis (so /oauth/userinfo
+	// stops accepting the bearer immediately).
+	if hint != "refresh_token" {
+		// Treat as access token. Verify the signature against our public key
+		// before reading exp — only blacklist tokens we actually issued. A
+		// garbage / forged token isn't worth a Redis entry, and verifying
+		// here lets us read the claim shape with confidence.
+		parsed, err := jwt.Parse(token, func(*jwt.Token) (interface{}, error) {
+			return s.publicKey, nil
+		})
+		if err == nil && parsed != nil && parsed.Valid {
+			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
+				expSec, _ := claims["exp"].(float64)
+				if expSec > 0 {
+					_ = s.MarkAccessTokenRevoked(ctx, token, time.Unix(int64(expSec), 0))
+				}
+			}
+		}
+	}
+
+	// Always best-effort the refresh-token row too; RFC 7009 doesn't
+	// require the hint to be honored, and a no-op DELETE is cheap.
+	s.RevokeRefreshToken(ctx, token)
 
 	c.JSON(200, gin.H{"status": "revoked"})
 }
@@ -2593,6 +2709,19 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 	}
 
 	userID, _ := claims["sub"].(string)
+	iat, _ := claims["iat"].(float64)
+
+	// Honor revocation: a signature-valid token may still have been revoked
+	// via /oauth/revoke or /oauth/logout(-all). Without this, "log out and
+	// redirect" UX was security-theater.
+	if revoked, err := s.IsAccessTokenRevoked(c.Request.Context(), tokenString, userID, int64(iat)); err != nil {
+		s.logger.Warn("userinfo: revocation check failed", zap.Error(err))
+		c.JSON(401, gin.H{"error": "invalid_token"})
+		return
+	} else if revoked {
+		c.JSON(401, gin.H{"error": "invalid_token", "error_description": "token has been revoked"})
+		return
+	}
 
 	// Get user info
 	userInfo, err := s.GetUserInfo(c.Request.Context(), userID)
@@ -2889,6 +3018,10 @@ func (s *Service) handleLogout(c *gin.Context) {
 	if userID != "" {
 		s.revokeAllUserSessions(c.Request.Context(), userID)
 		s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
+		// Mark every outstanding access token for this user as revoked, so
+		// /oauth/userinfo stops accepting them. Without this, RP-initiated
+		// logout was redirect-theater — the access token kept working.
+		_ = s.MarkUserTokensRevoked(c.Request.Context(), userID)
 		s.logger.Info("Global logout for user", zap.String("user_id", userID))
 
 		// Log audit event in background with timeout
@@ -2939,6 +3072,10 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 
 	s.revokeAllUserSessions(c.Request.Context(), userID)
 	s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
+	// Bump the per-user revocation cutoff so every outstanding access token
+	// (including the one used to call this endpoint) starts being rejected
+	// by /oauth/userinfo on the next request.
+	_ = s.MarkUserTokensRevoked(c.Request.Context(), userID)
 
 	s.logger.Info("Logout-all for user", zap.String("user_id", userID))
 

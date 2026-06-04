@@ -325,10 +325,17 @@ func createTestUser(t *testing.T, username, email, password string) string {
 	}
 
 	// Set password (admin-only). The set-password endpoint takes a flat
-	// {"password": "..."} body — keeps the snake_case style its own handler
-	// uses, distinct from the SCIM user payload above.
+	// {"password": "..."} body. Fail fast if it doesn't take effect; otherwise
+	// every later /oauth/login on this user returns 401 invalid_credentials
+	// and the failure point is far from the cause (this is exactly the
+	// failure mode the integration suite ran into on PR #110 before the
+	// endpoint existed).
 	passData := fmt.Sprintf(`{"password": %q}`, password)
-	apiRequest(t, "POST", fmt.Sprintf("%s/api/v1/identity/users/%s/set-password", identityURL, id), passData, token)
+	pwStatus, pwBody := apiRequest(t, "POST",
+		fmt.Sprintf("%s/api/v1/identity/users/%s/set-password", identityURL, id), passData, token)
+	if pwStatus != 200 {
+		t.Fatalf("set-password for user %s failed: status %d body %v", id, pwStatus, pwBody)
+	}
 
 	return id
 }

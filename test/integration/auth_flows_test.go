@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -129,7 +130,9 @@ func TestOAuthAuthorizationCodeFlow(t *testing.T) {
 func TestPKCEFlow(t *testing.T) {
 	const username = "pkce-test-user"
 	const email = "pkce-test@openidx.local"
-	const password = "PKCE@123"
+	// Needs a lowercase letter to satisfy ValidatePasswordPolicy
+	// (the bare "PKCE" tag has none, so set-password 500'd).
+	const password = "PkceFlow@123"
 
 	// Setup
 	userID := createTestUser(t, username, email, password)
@@ -265,12 +268,16 @@ func TestMFATOTPFlow(t *testing.T) {
 		status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/enable", enableData, token)
 
 		assert.Equal(t, http.StatusOK, status)
-		assert.True(t, body["success"].(bool))
+		// Comma-ok the bool conversion — a 400 / unexpected shape would otherwise
+		// panic during `body["success"].(bool)` and kill the whole test binary.
+		successFlag, _ := body["success"].(bool)
+		assert.True(t, successFlag, "enable should return success=true; got body=%v", body)
 
 		// Verify MFA is now enabled
 		status, profile := apiRequest(t, "GET", identityURL+"/api/v1/identity/users/me", "", token)
 		assert.Equal(t, http.StatusOK, status)
-		assert.True(t, profile["mfaEnabled"].(bool))
+		mfaEnabled, _ := profile["mfaEnabled"].(bool)
+		assert.True(t, mfaEnabled, "expected mfaEnabled=true; got profile=%v", profile)
 
 		// Clean up - disable MFA
 		apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/disable", "", token)
@@ -675,25 +682,20 @@ func TestInvalidScopes(t *testing.T) {
 	})
 }
 
-// Helper function to generate TOTP code for testing
-// This implements the TOTP algorithm per RFC 6238
+// generateTOTPCode returns a valid RFC 6238 TOTP code for the given base32
+// secret at the given moment, using the same library (pquerna/otp) that the
+// identity service uses to validate them on the server side. The previous
+// implementation made up a 6-digit number from time%1000000, which never
+// matched the server's calculation; the enable-MFA subtest then 400'd, the
+// type assertion on body["success"] panicked, and the panic aborted the
+// entire integration binary — *no* later test got to run.
 func generateTOTPCode(secret string, timestamp time.Time) string {
-	// Decode base32 secret
-	// Simplified - in production, use a proper TOTP library
-	// For integration testing, the actual TOTP validation happens on the server
-	// This is a placeholder that generates a valid-looking 6-digit code
-
-	// Note: In a real test environment, you would:
-	// 1. Use a shared test secret with known TOTP values
-	// 2. Or mock the time to predictable values
-	// 3. Or use a test mode that bypasses TOTP validation
-
-	// For now, return a code that may work if the system has test mode
-	// or document that this needs proper TOTP implementation
-
-	// Generate 6-digit code based on time
-	timeSlot := timestamp.Unix() / 30
-	code := fmt.Sprintf("%06d", timeSlot%1000000)
+	code, err := totp.GenerateCode(secret, timestamp)
+	if err != nil {
+		// Surfaces as an assertion failure in the caller's subtest, not a
+		// process-killing panic.
+		return ""
+	}
 	return code
 }
 

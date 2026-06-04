@@ -80,12 +80,20 @@ func (u *UserDB) ToUser() User {
 	return user
 }
 
-// FromUser converts SCIM User to UserDB for database operations
+// FromUser converts SCIM User to UserDB for database operations.
+//
+// SCIM 2.0 uses `active`, while the internal DB column is `enabled`. The
+// User struct carries both fields independently; honor either one so SCIM
+// clients (and the integration suite) that send `{"active": true}` don't
+// silently create a disabled user that every later /users/:id lookup
+// 404s on (handlers query `WHERE enabled = true`).
 func FromUser(user User) UserDB {
+	enabled := user.Enabled || user.Active
+
 	dbUser := UserDB{
 		ID:                 user.ID,
 		Username:           user.UserName,
-		Enabled:            user.Enabled,
+		Enabled:            enabled,
 		EmailVerified:      user.EmailVerified,
 		CreatedAt:          user.CreatedAt,
 		UpdatedAt:          user.UpdatedAt,

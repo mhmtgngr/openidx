@@ -653,6 +653,14 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt)
 
 	if err == nil {
+		// Mirror the generated ID and timestamps back to the caller so the
+		// HTTP handler's `c.JSON(201, user)` returns a usable id, and so
+		// downstream best-effort hooks (email verification, webhooks) see
+		// the real user_id instead of "".
+		user.ID = dbUser.ID
+		user.CreatedAt = dbUser.CreatedAt
+		user.UpdatedAt = dbUser.UpdatedAt
+
 		actorID := actorIDFromContext(ctx)
 		s.logAuditEvent("identity", "user_management", "user.created", "success",
 			actorID, dbUser.ID, "user", map[string]interface{}{
@@ -2746,6 +2754,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
 		identity.POST("/users/:id/reset-password", svc.handleAdminResetPassword)
+		identity.POST("/users/:id/set-password", svc.handleAdminSetPassword)
 
 		// Identity Providers (for SSO) — GET /providers is public (login page needs it)
 		identity.POST("/providers", svc.handleCreateIdentityProvider)
@@ -4384,6 +4393,76 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Password reset email sent successfully"})
+}
+
+// handleAdminSetPassword directly sets a local user's password (admin-only).
+// This is the "bypass email-reset" path needed for admin-driven onboarding
+// of non-SSO users (and for integration tests that need a working login on a
+// freshly-created user). For LDAP/AD/Azure users, callers should keep using
+// reset-password — directory-managed passwords are out-of-band by definition.
+func (s *Service) handleAdminSetPassword(c *gin.Context) {
+	userIDRaw := c.Param("id")
+	ctx := c.Request.Context()
+
+	// Validate userID is a UUID before anything else: keeps log statements
+	// (which include the userID) free of arbitrary user-controlled bytes,
+	// turns malformed paths into 400 instead of 404, and avoids passing
+	// adversarial input into SQL parameter binding even though pgx already
+	// parameterizes safely.
+	userID, uerr := uuid.Parse(userIDRaw)
+	if uerr != nil {
+		c.JSON(400, gin.H{"error": "user id must be a UUID"})
+		return
+	}
+	userIDStr := userID.String()
+
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Reject empty / clearly too-short passwords up front. SetPassword will
+	// also enforce the configured policy.
+	if len(req.Password) < 8 {
+		c.JSON(400, gin.H{"error": "password must be at least 8 characters"})
+		return
+	}
+
+	// Confirm the user exists and is a local account; directory-managed
+	// passwords must be changed via the directory, not here.
+	var source *string
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT source FROM users WHERE id = $1 AND enabled = true", userIDStr,
+	).Scan(&source)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+	if source != nil && (*source == "ldap" || *source == "active_directory" || *source == "azure_ad") {
+		c.JSON(400, gin.H{
+			"error": "Password for directory-managed users must be set via the directory; use reset-password instead.",
+		})
+		return
+	}
+
+	if err := s.SetPassword(ctx, userIDStr, req.Password); err != nil {
+		s.logger.Error("admin set-password failed",
+			zap.String("target_user_id", userIDStr),
+			zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to set password"})
+		return
+	}
+
+	if adminID, ok := c.Get("user_id"); ok {
+		s.logger.Info("admin set user password directly",
+			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+			zap.String("target_user_id", userIDStr))
+	}
+
+	c.JSON(200, gin.H{"status": "password set"})
 }
 
 // Permission represents a system permission
