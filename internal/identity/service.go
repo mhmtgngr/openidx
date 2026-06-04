@@ -2746,6 +2746,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.PUT("/users/:id", svc.handleUpdateUser)
 		identity.DELETE("/users/:id", svc.handleDeleteUser)
 		identity.POST("/users/:id/reset-password", svc.handleAdminResetPassword)
+		identity.POST("/users/:id/set-password", svc.handleAdminSetPassword)
 
 		// Identity Providers (for SSO) — GET /providers is public (login page needs it)
 		identity.POST("/providers", svc.handleCreateIdentityProvider)
@@ -4384,6 +4385,64 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Password reset email sent successfully"})
+}
+
+// handleAdminSetPassword directly sets a local user's password (admin-only).
+// This is the "bypass email-reset" path needed for admin-driven onboarding
+// of non-SSO users (and for integration tests that need a working login on a
+// freshly-created user). For LDAP/AD/Azure users, callers should keep using
+// reset-password — directory-managed passwords are out-of-band by definition.
+func (s *Service) handleAdminSetPassword(c *gin.Context) {
+	userID := c.Param("id")
+	ctx := c.Request.Context()
+
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Reject empty / clearly too-short passwords up front. SetPassword will
+	// also enforce the configured policy.
+	if len(req.Password) < 8 {
+		c.JSON(400, gin.H{"error": "password must be at least 8 characters"})
+		return
+	}
+
+	// Confirm the user exists and is a local account; directory-managed
+	// passwords must be changed via the directory, not here.
+	var source *string
+	err := s.db.Pool.QueryRow(ctx,
+		"SELECT source FROM users WHERE id = $1 AND enabled = true", userID,
+	).Scan(&source)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+	if source != nil && (*source == "ldap" || *source == "active_directory" || *source == "azure_ad") {
+		c.JSON(400, gin.H{
+			"error": "Password for directory-managed users must be set via the directory; use reset-password instead.",
+		})
+		return
+	}
+
+	if err := s.SetPassword(ctx, userID, req.Password); err != nil {
+		s.logger.Error("admin set-password failed",
+			zap.String("target_user_id", userID),
+			zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to set password"})
+		return
+	}
+
+	if adminID, ok := c.Get("user_id"); ok {
+		s.logger.Info("admin set user password directly",
+			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
+			zap.String("target_user_id", userID))
+	}
+
+	c.JSON(200, gin.H{"status": "password set"})
 }
 
 // Permission represents a system permission
