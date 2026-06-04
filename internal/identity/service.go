@@ -653,6 +653,14 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt)
 
 	if err == nil {
+		// Mirror the generated ID and timestamps back to the caller so the
+		// HTTP handler's `c.JSON(201, user)` returns a usable id, and so
+		// downstream best-effort hooks (email verification, webhooks) see
+		// the real user_id instead of "".
+		user.ID = dbUser.ID
+		user.CreatedAt = dbUser.CreatedAt
+		user.UpdatedAt = dbUser.UpdatedAt
+
 		actorID := actorIDFromContext(ctx)
 		s.logAuditEvent("identity", "user_management", "user.created", "success",
 			actorID, dbUser.ID, "user", map[string]interface{}{
