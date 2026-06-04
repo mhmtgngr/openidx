@@ -2652,10 +2652,14 @@ func (s *Service) handleRevoke(c *gin.Context) {
 	// Postgres, and access-token blacklist in Redis (so /oauth/userinfo
 	// stops accepting the bearer immediately).
 	if hint != "refresh_token" {
-		// Treat as access token. Parse to recover sub/exp for the
-		// per-token blacklist TTL; if the token is unparseable, fall through
-		// to the refresh-token DELETE so we don't 5xx on garbage input.
-		if parsed, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{}); err == nil {
+		// Treat as access token. Verify the signature against our public key
+		// before reading exp — only blacklist tokens we actually issued. A
+		// garbage / forged token isn't worth a Redis entry, and verifying
+		// here lets us read the claim shape with confidence.
+		parsed, err := jwt.Parse(token, func(*jwt.Token) (interface{}, error) {
+			return s.publicKey, nil
+		})
+		if err == nil && parsed != nil && parsed.Valid {
 			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
 				expSec, _ := claims["exp"].(float64)
 				if expSec > 0 {

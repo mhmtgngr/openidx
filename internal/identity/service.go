@@ -4401,8 +4401,20 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 // freshly-created user). For LDAP/AD/Azure users, callers should keep using
 // reset-password — directory-managed passwords are out-of-band by definition.
 func (s *Service) handleAdminSetPassword(c *gin.Context) {
-	userID := c.Param("id")
+	userIDRaw := c.Param("id")
 	ctx := c.Request.Context()
+
+	// Validate userID is a UUID before anything else: keeps log statements
+	// (which include the userID) free of arbitrary user-controlled bytes,
+	// turns malformed paths into 400 instead of 404, and avoids passing
+	// adversarial input into SQL parameter binding even though pgx already
+	// parameterizes safely.
+	userID, uerr := uuid.Parse(userIDRaw)
+	if uerr != nil {
+		c.JSON(400, gin.H{"error": "user id must be a UUID"})
+		return
+	}
+	userIDStr := userID.String()
 
 	var req struct {
 		Password string `json:"password" binding:"required"`
@@ -4423,7 +4435,7 @@ func (s *Service) handleAdminSetPassword(c *gin.Context) {
 	// passwords must be changed via the directory, not here.
 	var source *string
 	err := s.db.Pool.QueryRow(ctx,
-		"SELECT source FROM users WHERE id = $1 AND enabled = true", userID,
+		"SELECT source FROM users WHERE id = $1 AND enabled = true", userIDStr,
 	).Scan(&source)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
@@ -4436,9 +4448,9 @@ func (s *Service) handleAdminSetPassword(c *gin.Context) {
 		return
 	}
 
-	if err := s.SetPassword(ctx, userID, req.Password); err != nil {
+	if err := s.SetPassword(ctx, userIDStr, req.Password); err != nil {
 		s.logger.Error("admin set-password failed",
-			zap.String("target_user_id", userID),
+			zap.String("target_user_id", userIDStr),
 			zap.Error(err))
 		c.JSON(500, gin.H{"error": "failed to set password"})
 		return
@@ -4447,7 +4459,7 @@ func (s *Service) handleAdminSetPassword(c *gin.Context) {
 	if adminID, ok := c.Get("user_id"); ok {
 		s.logger.Info("admin set user password directly",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
-			zap.String("target_user_id", userID))
+			zap.String("target_user_id", userIDStr))
 	}
 
 	c.JSON(200, gin.H{"status": "password set"})
