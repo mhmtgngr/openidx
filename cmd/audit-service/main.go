@@ -165,6 +165,7 @@ func main() {
 	healthService := newhealth.NewHealthService(log)
 	healthService.SetVersion(Version)
 	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
+	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
 
 	// Add Elasticsearch check if configured (optional dependency)
 	if es != nil {
