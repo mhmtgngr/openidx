@@ -340,6 +340,87 @@ func deleteTestUser(t *testing.T, userID string) {
 	apiRequest(t, "DELETE", identityURL+"/api/v1/identity/users/"+userID, "", token)
 }
 
+// beginAuthorizeForLogin issues GET /oauth/authorize for the seeded
+// admin-console (public) client with `Accept: application/json` and an S256
+// PKCE challenge, returning the `login_session` the test must POST back to
+// /oauth/login and the matching PKCE verifier the test will need at the
+// token-exchange step.
+//
+// Public clients without the JSON Accept header now get a rendered HTML 200
+// (the SPA login page) instead of a 302, and the seeded admin-console client
+// requires PKCE — inline test flows that hard-coded `require.Equal(302, ...)`
+// and skipped `code_verifier` therefore broke at step 1.
+func beginAuthorizeForLogin(t *testing.T, scope string, extra url.Values) (loginSession, codeVerifier string) {
+	t.Helper()
+	verifier, challenge := pkcePair()
+
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {clientID},
+		"redirect_uri":          {redirectURI},
+		"scope":                 {scope},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+	}
+	for k, vs := range extra {
+		for _, v := range vs {
+			q.Add(k, v)
+		}
+	}
+	authURL := oauthURL + "/oauth/authorize?" + q.Encode()
+	req, err := http.NewRequest("GET", authURL, nil)
+	if err != nil {
+		t.Fatalf("build authorize request: %v", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound {
+		t.Fatalf("authorize: expected 200 or 302, got %d body %s", resp.StatusCode, string(body))
+	}
+	loginSession = extractLoginSession(resp, body)
+	if loginSession == "" {
+		t.Fatalf("authorize: no login_session in response (status %d body %s)", resp.StatusCode, string(body))
+	}
+	return loginSession, verifier
+}
+
+// submitLoginForCode posts credentials to /oauth/login and returns the
+// authorization code extracted from either a direct `code` field or a
+// `redirect_url` containing `?code=...`.
+func submitLoginForCode(t *testing.T, username, password, loginSession string) string {
+	t.Helper()
+	loginData := fmt.Sprintf(`{"username":%q,"password":%q,"login_session":%q}`,
+		username, password, loginSession)
+	status, body := apiRequest(t, "POST", oauthURL+"/oauth/login", loginData, "")
+	if status != http.StatusOK {
+		t.Fatalf("login: status %d body %v", status, body)
+	}
+	code := extractAuthCode(body)
+	if code == "" {
+		t.Fatalf("login: no authorization code in response: %v", body)
+	}
+	return code
+}
+
+// exchangeCodeWithPKCE swaps an authorization code (issued from a flow that
+// began with beginAuthorizeForLogin) for a token response, sending the
+// matching PKCE verifier.
+func exchangeCodeWithPKCE(t *testing.T, code, verifier string) (int, map[string]interface{}) {
+	t.Helper()
+	return formRequest(t, oauthURL+"/oauth/token", url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"client_id":     {clientID},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+	})
+}
+
 // loginAndGetToken performs the full PKCE OAuth code flow as the given user
 // and returns an access token. The shape mirrors doAdminLogin:
 //   - Accept: application/json on /oauth/authorize so the public admin-console
