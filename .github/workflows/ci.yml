@@ -321,6 +321,12 @@ jobs:
           export APP_ENV=test
           export JWT_SECRET=integration-test-jwt-secret-do-not-use-in-prod
           export OAUTH_ISSUER=http://localhost:8006
+          # Tests hammer /oauth/login from a single IP — the production-default
+          # auth-path limit of 20/min (RATE_LIMIT_AUTH_REQUESTS) hits 429 partway
+          # through the suite. Raise the limit only for the integration test
+          # run; the rate-limit middleware itself is still exercised.
+          export RATE_LIMIT_AUTH_REQUESTS=10000
+          export RATE_LIMIT_REQUESTS=10000
 
           /tmp/identity-service > /tmp/identity.log 2>&1 &
           IDENTITY_PID=$!
