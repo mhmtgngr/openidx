@@ -340,30 +340,41 @@ func deleteTestUser(t *testing.T, userID string) {
 	apiRequest(t, "DELETE", identityURL+"/api/v1/identity/users/"+userID, "", token)
 }
 
-// loginAndGetToken performs the full OAuth flow and returns an access token
+// loginAndGetToken performs the full PKCE OAuth code flow as the given user
+// and returns an access token. The shape mirrors doAdminLogin:
+//   - Accept: application/json on /oauth/authorize so the public admin-console
+//     client gets the 302 SPA flow instead of the rendered HTML login page;
+//   - S256 PKCE because the seeded admin-console client requires it;
+//   - tolerant login_session/code extraction (json body OR redirect Location).
+//
+// The pre-#75 version expected an unconditional 302 with no Accept header and
+// no PKCE — handleAuthorize now returns 200 HTML for that exact request shape,
+// and the token endpoint requires the code_verifier, so the old helper failed
+// at step 1 in every test that used it.
 func loginAndGetToken(t *testing.T, username, password string) string {
 	t.Helper()
 
-	// Step 1: Initiate authorization
-	authURL := fmt.Sprintf("%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=openid+profile+email",
-		oauthURL, clientID, url.QueryEscape(redirectURI))
+	verifier, challenge := pkcePair()
 
+	// Step 1: Initiate authorization (with PKCE + Accept: application/json).
+	authURL := fmt.Sprintf(
+		"%s/oauth/authorize?response_type=code&client_id=%s&redirect_uri=%s&scope=openid+profile+email&code_challenge=%s&code_challenge_method=S256",
+		oauthURL, clientID, url.QueryEscape(redirectURI), challenge,
+	)
 	req, _ := http.NewRequest("GET", authURL, nil)
+	req.Header.Set("Accept", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatalf("Authorization request failed: %v", err)
 	}
+	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-
-	if resp.StatusCode != 302 {
-		t.Fatalf("Expected 302 redirect, got %d", resp.StatusCode)
+	if resp.StatusCode != 200 && resp.StatusCode != 302 {
+		t.Fatalf("authorize: status %d body %s", resp.StatusCode, string(body))
 	}
-
-	location := resp.Header.Get("Location")
-	redirectURL, _ := url.Parse(location)
-	loginSession := redirectURL.Query().Get("login_session")
+	loginSession := extractLoginSession(resp, body)
 	if loginSession == "" {
-		t.Fatal("No login_session in redirect URL")
+		t.Fatalf("authorize: no login_session in response (status %d body %s)", resp.StatusCode, string(body))
 	}
 
 	// Step 2: Login
@@ -375,19 +386,18 @@ func loginAndGetToken(t *testing.T, username, password string) string {
 		t.Fatalf("Login failed: status %d, body %v", status, loginBody)
 	}
 
-	redirectWithCode, _ := loginBody["redirect_url"].(string)
-	codeURL, _ := url.Parse(redirectWithCode)
-	code := codeURL.Query().Get("code")
+	code := extractAuthCode(loginBody)
 	if code == "" {
-		t.Fatal("No auth code in login response redirect URL")
+		t.Fatalf("login: no authorization code in response: %v", loginBody)
 	}
 
-	// Step 3: Exchange code for tokens
+	// Step 3: Exchange code for tokens (with PKCE verifier).
 	status, tokenBody := formRequest(t, oauthURL+"/oauth/token", url.Values{
-		"grant_type":   {"authorization_code"},
-		"code":         {code},
-		"client_id":    {clientID},
-		"redirect_uri": {redirectURI},
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"client_id":     {clientID},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
 	})
 
 	if status != 200 {
