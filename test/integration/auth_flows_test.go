@@ -268,10 +268,14 @@ func TestMFATOTPFlow(t *testing.T) {
 		status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/users/me/mfa/enable", enableData, token)
 
 		assert.Equal(t, http.StatusOK, status)
-		// Comma-ok the bool conversion — a 400 / unexpected shape would otherwise
-		// panic during `body["success"].(bool)` and kill the whole test binary.
-		successFlag, _ := body["success"].(bool)
-		assert.True(t, successFlag, "enable should return success=true; got body=%v", body)
+		// The handler responds with `{"status": "mfa enabled", "backupCodes": [...]}`
+		// — not a `success` bool. Match the real contract.
+		statusMsg, _ := body["status"].(string)
+		assert.Contains(t, statusMsg, "mfa enabled", "enable should return status=mfa enabled; got body=%v", body)
+		// Backup codes are issued at enable; their presence is the actual
+		// signal the server completed enrollment.
+		codes, _ := body["backupCodes"].([]interface{})
+		assert.NotEmpty(t, codes, "enable should return backupCodes; got body=%v", body)
 
 		// Verify MFA is now enabled
 		status, profile := apiRequest(t, "GET", identityURL+"/api/v1/identity/users/me", "", token)

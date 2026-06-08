@@ -3080,12 +3080,22 @@ func (s *Service) handleLogout(c *gin.Context) {
 	if userID != "" {
 		s.revokeAllUserSessions(c.Request.Context(), userID)
 		s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
-		// Single-session logout: rely on the per-token blacklist above for
-		// the bearer the caller actually used. We intentionally do NOT bump
-		// the per-user revocation cutoff here — that's reserved for
-		// /oauth/logout-all. Bumping it would mean every other live session
-		// for the same user starts 401'ing too, which the dedicated
-		// logout-all endpoint exists to express deliberately.
+
+		// If the caller authenticated this logout with a Bearer access
+		// token, the per-token blacklist above already kills that exact
+		// bearer and sibling access tokens are intentionally left alone
+		// — single-session logout. But OIDC RP-initiated logout
+		// (id_token_hint, no Bearer) has no specific bearer to blacklist;
+		// the caller is asserting "end the session associated with this
+		// id_token", which in practice means invalidate every access
+		// token still tied to that user's now-killed sessions. Fall back
+		// to the per-user cutoff in that case so /oauth/userinfo stops
+		// accepting any of them — otherwise the redirect to
+		// post_logout_redirect_uri is the security-theater PR #82 spent
+		// real work eliminating.
+		if bearerToken == "" {
+			_ = s.MarkUserTokensRevoked(c.Request.Context(), userID)
+		}
 		s.logger.Info("Single-session logout for user", zap.String("user_id", userID))
 
 		// Log audit event in background with timeout
