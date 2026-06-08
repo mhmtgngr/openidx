@@ -2723,6 +2723,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		identity.POST("/users/me/mfa/setup", svc.handleSetupUserMFA)
 		identity.POST("/users/me/mfa/enable", svc.handleEnableUserMFA)
 		identity.POST("/users/me/mfa/disable", svc.handleDisableUserMFA)
+		identity.GET("/users/me/mfa/status", svc.handleGetMyMFAStatus)
+		identity.GET("/users/me/sessions", svc.handleGetMySessions)
 
 		// Personal Access Tokens (User self-service)
 		identity.GET("/users/me/tokens", svc.handleListUserPATs)
@@ -4463,6 +4465,71 @@ func (s *Service) handleAdminSetPassword(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"status": "password set"})
+}
+
+// handleGetMySessions returns the calling user's own active sessions. The
+// admin-only counterpart (`/users/:id/sessions`) stays admin-only — this
+// route is the self-access path that the user portal needs, sourcing the
+// user ID from the authenticated JWT rather than the path.
+func (s *Service) handleGetMySessions(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "authentication required"})
+		return
+	}
+	sessions, err := s.GetUserSessions(c.Request.Context(), userID)
+	if err != nil {
+		s.logger.Error("failed to get user sessions for self",
+			zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+	// Always emit an empty array (not nil) so client code can iterate
+	// unconditionally; matches the shape /api/v1/identity/users/:id/sessions
+	// returns for admins.
+	if sessions == nil {
+		sessions = []Session{}
+	}
+	c.JSON(200, gin.H{"sessions": sessions})
+}
+
+// handleGetMyMFAStatus reports which MFA factors the calling user has
+// enrolled. The existing /mfa/methods endpoint returns a method->bool map
+// (good for the admin console's enable/disable toggles); /me/mfa/status
+// returns the *enabled* method names as an array, which is the shape the
+// "is this user MFA-protected?" check actually wants.
+func (s *Service) handleGetMyMFAStatus(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{"error": "authentication required"})
+		return
+	}
+	methodsMap, err := s.GetUserMFAMethods(c.Request.Context(), userID)
+	if err != nil {
+		s.logger.Error("failed to get MFA methods",
+			zap.String("user_id", userID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "failed to get MFA methods"})
+		return
+	}
+	enabled := []string{}
+	for name, on := range methodsMap {
+		if !on {
+			continue
+		}
+		// `backup` (recovery codes) is a fallback mechanism — it's never
+		// a *primary* MFA factor on its own. Excluding it from the enabled
+		// list matches the "are you MFA-protected?" semantic the caller
+		// actually wants: enrolling and then disabling TOTP leaves backup
+		// codes lingering in the DB, but that doesn't mean MFA is on.
+		if name == "backup" {
+			continue
+		}
+		enabled = append(enabled, name)
+	}
+	c.JSON(200, gin.H{
+		"methods":     enabled,
+		"mfa_enabled": len(enabled) > 0,
+	})
 }
 
 // Permission represents a system permission
