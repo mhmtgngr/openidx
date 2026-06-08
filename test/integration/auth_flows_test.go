@@ -356,8 +356,10 @@ func TestSessionManagement(t *testing.T) {
 		token := loginAndGetToken(t, username, password)
 		require.NotEmpty(t, token)
 
-		// List sessions for user
-		status, body := apiRequest(t, "GET", fmt.Sprintf("%s/api/v1/identity/users/%s/sessions", identityURL, userID), "", token)
+		// `/users/:id/sessions` is admin-only; the self-access path is
+		// `/users/me/sessions` and reads the user id off the JWT.
+		_ = userID
+		status, body := apiRequest(t, "GET", identityURL+"/api/v1/identity/users/me/sessions", "", token)
 		assert.Equal(t, http.StatusOK, status)
 
 		sessions, ok := body["sessions"].([]interface{})
@@ -571,37 +573,38 @@ func TestWebAuthnFlow(t *testing.T) {
 		token := loginAndGetToken(t, username, password)
 		require.NotEmpty(t, token)
 
-		// Start registration
-		regData := fmt.Sprintf(`{"user_id":%q,"username":%q,"display_name":"Test User","friendly_name":"My Security Key"}`,
-			userID, username)
+		// The user id is sourced from the JWT — body is purely
+		// optional metadata (and the handler ignores it). Send an
+		// empty body so the server's ShouldBindJSON path isn't
+		// exercised twice.
+		status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/mfa/webauthn/register/begin", "", token)
 
-		status, body := apiRequest(t, "POST", identityURL+"/api/v1/identity/mfa/webauthn/register/begin", regData, token)
-
-		// The endpoint may not be accessible via identity service
-		// or may require specific routing
 		if status == http.StatusNotFound || status == http.StatusNotImplemented {
 			t.Skip("WebAuthn registration endpoint not accessible or not implemented")
 		}
 
 		assert.Equal(t, http.StatusOK, status)
-		assert.NotEmpty(t, body["options"])
+		// go-webauthn returns *protocol.CredentialCreation directly, whose
+		// JSON form has `publicKey` at the top level (per the WebAuthn spec).
+		// We don't dictate this shape — both the server and the frontend
+		// type it that way.
+		assert.NotEmpty(t, body["publicKey"], "register/begin should return a CredentialCreation with a publicKey")
 	})
 
 	t.Run("list WebAuthn credentials", func(t *testing.T) {
 		token := loginAndGetToken(t, username, password)
 
-		status, body := apiRequest(t, "GET", identityURL+"/api/v1/identity/mfa/webauthn/credentials", "", token)
+		// The credentials endpoint returns a bare JSON array (the
+		// frontend types it `WebAuthnCredential[]`), so use the
+		// list-shaped helper rather than apiRequest's map parse.
+		status, list := apiRequestList(t, "GET", identityURL+"/api/v1/identity/mfa/webauthn/credentials", "", token)
 
 		if status == http.StatusNotFound || status == http.StatusNotImplemented {
 			t.Skip("WebAuthn credentials endpoint not accessible")
 		}
 
 		assert.Equal(t, http.StatusOK, status)
-
-		credentials, ok := body["credentials"].([]interface{})
-		assert.True(t, ok)
-		// Should be empty initially
-		assert.Empty(t, credentials)
+		assert.Empty(t, list, "no credentials should be enrolled initially")
 	})
 }
 

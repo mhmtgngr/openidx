@@ -222,5 +222,12 @@ func allMigrations() []*Migration {
 			UpSQL:       userRolesExpiresAtUp,
 			DownSQL:     userRolesExpiresAtDown,
 		},
+		{
+			Version:     31,
+			Name:        "oauth_refresh_tokens_session_id",
+			Description: "Adds the session_id column oauth_refresh_tokens has been silently failing INSERTs on since session-bound rotation landed; fixes the refresh-token grant",
+			UpSQL:       oauthRefreshSessionIDUp,
+			DownSQL:     oauthRefreshSessionIDDown,
+		},
 	}
 }

@@ -102,6 +102,43 @@ func apiRequest(t *testing.T, method, url string, body string, token string) (in
 	return resp.StatusCode, result
 }
 
+// apiRequestList is the bare-array sibling of apiRequest, for endpoints whose
+// JSON body is a top-level array (e.g. `[…credentials…]` rather than `{…}`).
+// apiRequest's parse target is `map[string]interface{}` and silently swallows
+// array-shaped responses, leaving the caller with an empty map and a panic
+// at the next `.([]interface{})` assertion.
+func apiRequestList(t *testing.T, method, url, body, token string) (int, []interface{}) {
+	t.Helper()
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+	var list []interface{}
+	if len(respBody) > 0 {
+		_ = json.Unmarshal(respBody, &list)
+	}
+	return resp.StatusCode, list
+}
+
 // formRequest makes a form-encoded POST request (for OAuth token endpoint)
 func formRequest(t *testing.T, endpoint string, data url.Values) (int, map[string]interface{}) {
 	t.Helper()

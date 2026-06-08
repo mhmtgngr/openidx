@@ -2480,15 +2480,25 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// Generate refresh token if allowed
 	if client.AllowRefreshToken && strings.Contains(authCode.Scope, "offline_access") {
 		refreshToken := GenerateRandomToken(32)
-		s.CreateRefreshToken(c.Request.Context(), &RefreshToken{
+		if err := s.CreateRefreshToken(c.Request.Context(), &RefreshToken{
 			Token:     refreshToken,
 			ClientID:  clientID,
 			UserID:    authCode.UserID,
 			Scope:     authCode.Scope,
 			SessionID: sessionID,
 			ExpiresAt: time.Now().Add(time.Duration(client.RefreshTokenLifetime) * time.Second),
-		})
-		response.RefreshToken = refreshToken
+		}); err != nil {
+			// Don't hand the client a token we couldn't persist — every
+			// subsequent /oauth/token grant_type=refresh_token call would
+			// 400 because the row isn't there (exactly how the missing
+			// session_id column went undetected until migration v31).
+			s.logger.Error("failed to persist refresh token",
+				zap.String("client_id", clientID),
+				zap.String("user_id", authCode.UserID),
+				zap.Error(err))
+		} else {
+			response.RefreshToken = refreshToken
+		}
 	}
 
 	c.JSON(200, response)

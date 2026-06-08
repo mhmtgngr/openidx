@@ -1465,4 +1465,22 @@ CREATE INDEX IF NOT EXISTS idx_user_roles_expires_at ON user_roles(expires_at) W
 
 	userRolesExpiresAtDown = `DROP INDEX IF EXISTS idx_user_roles_expires_at;
 ALTER TABLE user_roles DROP COLUMN IF EXISTS expires_at;`
+
+	// Migration 031: the v1 oauth_refresh_tokens schema never had a
+	// session_id column, but CreateRefreshToken's INSERT and GetRefreshToken's
+	// SELECT both reference one (introduced when session-bound refresh
+	// rotation landed). Postgres rejected the INSERT, the error was
+	// swallowed in handleAuthorizationCodeGrant (`s.CreateRefreshToken(...)`
+	// with the return ignored), and the client got a refresh_token that was
+	// never persisted. The next /oauth/token grant_type=refresh_token then
+	// 400'd with invalid_grant because the row didn't exist. Adding the
+	// column closes the gap — existing rows (none for fresh installs, since
+	// no refresh token ever made it through) get NULL, and freshly-issued
+	// tokens carry the linked session for the revoke-by-session path.
+	oauthRefreshSessionIDUp = `-- Migration 031: add session_id to oauth_refresh_tokens
+ALTER TABLE oauth_refresh_tokens ADD COLUMN IF NOT EXISTS session_id UUID;
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_session_id ON oauth_refresh_tokens(session_id) WHERE session_id IS NOT NULL;`
+
+	oauthRefreshSessionIDDown = `DROP INDEX IF EXISTS idx_oauth_refresh_tokens_session_id;
+ALTER TABLE oauth_refresh_tokens DROP COLUMN IF EXISTS session_id;`
 )
