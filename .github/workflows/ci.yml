@@ -360,11 +360,12 @@ jobs:
           echo "::endgroup::"
 
           # ----- run integration tests -----
-          # Still `|| true` (informational) while subsequent PRs fix the bugs this
-          # foundation surfaced (admin-token bootstrap for createTestUser, PKCE
-          # in loginAndGetToken, etc.). A later PR drops the `|| true` and
-          # promotes this job into the Required Checks gate.
-          go test -v -tags=integration -timeout=20m ./test/integration/... || true
+          # Promoted to a hard gate as of PR #114 — the full suite (24/24
+          # top-level tests) is green on main. The earlier `|| true` was
+          # informational while PRs #102, #105, #106, #107, #108, #110,
+          # #112, and #114 worked through the layered bugs that the
+          # foundation surfaced.
+          go test -v -tags=integration -timeout=20m ./test/integration/...
 
   # Benchmark regression detection
   benchmark:
@@ -606,7 +607,7 @@ jobs:
   status-check:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check]
+    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check, test-integration]
     if: always()
     timeout-minutes: 5
 
@@ -626,7 +627,8 @@ jobs:
             "lint=${{ needs.lint.result }}" \
             "test-unit=${{ needs.test-unit.result }}" \
             "test-race=${{ needs.test-race.result }}" \
-            "vulnerability-check=${{ needs.vulnerability-check.result }}"; do
+            "vulnerability-check=${{ needs.vulnerability-check.result }}" \
+            "test-integration=${{ needs.test-integration.result }}"; do
             name="${jr%%=*}"
             result="${jr#*=}"
             if [[ "$result" != "success" && "$result" != "skipped" ]]; then
