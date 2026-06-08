@@ -4513,9 +4513,18 @@ func (s *Service) handleGetMyMFAStatus(c *gin.Context) {
 	}
 	enabled := []string{}
 	for name, on := range methodsMap {
-		if on {
-			enabled = append(enabled, name)
+		if !on {
+			continue
 		}
+		// `backup` (recovery codes) is a fallback mechanism — it's never
+		// a *primary* MFA factor on its own. Excluding it from the enabled
+		// list matches the "are you MFA-protected?" semantic the caller
+		// actually wants: enrolling and then disabling TOTP leaves backup
+		// codes lingering in the DB, but that doesn't mean MFA is on.
+		if name == "backup" {
+			continue
+		}
+		enabled = append(enabled, name)
 	}
 	c.JSON(200, gin.H{
 		"methods":     enabled,

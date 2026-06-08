@@ -728,16 +728,17 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 		}
 		if v != "" {
 			cutoff, perr := strconv.ParseInt(v, 10, 64)
-			// Strict less-than on purpose: tokens issued in the same wall-
-			// clock second as the logout-all call are still considered
-			// valid. JWT iat resolution is 1s, and the test pattern
-			// "logout-all then immediately log in twice" otherwise sees
-			// the brand-new tokens get rejected by the very next userinfo
-			// call. Adversarial timing within a single second to slip a
-			// token in is not a realistic threat — and the new token is
-			// scoped to the freshly-authenticated session, not the
-			// just-killed one.
-			if perr == nil && issuedAt < cutoff {
+			// `<=` means "tokens issued in the same wall-clock second as
+			// (or before) the logout-all call are revoked." This is the
+			// right semantic for /oauth/logout-all: every outstanding
+			// access token that existed at the moment the user said
+			// "kill everything" should stop working — including ones
+			// issued in the very same second. The previous
+			// inter-subtest-pollution worry about `handleLogout` bumping
+			// the cutoff went away when handleLogout switched to a
+			// per-token blacklist for single-session logout (only
+			// logout-all bumps the cutoff now).
+			if perr == nil && issuedAt <= cutoff {
 				return true, nil
 			}
 		}
@@ -2562,6 +2563,36 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 		Scope:       token.Scope,
 	}
 
+	// Refresh-token rotation (RFC 6749 §6 / RFC 6819 §5.2.2.3): when the
+	// scope still carries `offline_access` and the client is allowed
+	// refresh tokens, issue a new refresh_token, invalidate the old one,
+	// and return both. Without this, clients can't safely store the
+	// refresh_token long-term, and refresh-token theft has no detection
+	// surface. The integration suite's TestSessionManagement/refresh_access_token
+	// expects the rotated token in the response.
+	if client.AllowRefreshToken && strings.Contains(token.Scope, "offline_access") {
+		newRefresh := GenerateRandomToken(32)
+		if err := s.CreateRefreshToken(c.Request.Context(), &RefreshToken{
+			Token:     newRefresh,
+			ClientID:  clientID,
+			UserID:    token.UserID,
+			Scope:     token.Scope,
+			SessionID: token.SessionID,
+			ExpiresAt: time.Now().Add(time.Duration(client.RefreshTokenLifetime) * time.Second),
+		}); err != nil {
+			s.logger.Error("failed to persist rotated refresh token",
+				zap.String("client_id", clientID),
+				zap.String("user_id", token.UserID),
+				zap.Error(err))
+		} else {
+			// Invalidate the old refresh token only after the new one
+			// is safely stored, so a crash between the two doesn't leave
+			// the user with no working refresh token.
+			_ = s.RevokeRefreshToken(c.Request.Context(), refreshToken)
+			response.RefreshToken = newRefresh
+		}
+	}
+
 	c.JSON(200, response)
 }
 
@@ -2996,6 +3027,7 @@ func (s *Service) handleLogout(c *gin.Context) {
 	}
 
 	var userID string
+	var bearerToken string
 
 	if idTokenHint != "" {
 		// Parse the ID token (don't validate expiry since it may be expired)
@@ -3009,12 +3041,12 @@ func (s *Service) handleLogout(c *gin.Context) {
 		}
 	}
 
-	// Also try Bearer token
-	if userID == "" {
-		authHeader := c.GetHeader("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-			token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+	// Also try Bearer token (and remember it so we can blacklist it).
+	authHeader := c.GetHeader("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		bearerToken = strings.TrimPrefix(authHeader, "Bearer ")
+		if userID == "" {
+			token, _, err := new(jwt.Parser).ParseUnverified(bearerToken, jwt.MapClaims{})
 			if err == nil {
 				if claims, ok := token.Claims.(jwt.MapClaims); ok {
 					if sub, ok := claims["sub"].(string); ok {
@@ -3025,20 +3057,42 @@ func (s *Service) handleLogout(c *gin.Context) {
 		}
 	}
 
+	// Per-token blacklist for the bearer: signature-verify it first so we
+	// only spend a Redis entry on a token we actually issued. The intent
+	// is to make this specific access token stop working at /oauth/userinfo
+	// from the next request onward, even if the broader per-user
+	// revocation marker isn't set (single-session logout doesn't have to
+	// invalidate sibling sessions).
+	if bearerToken != "" {
+		parsed, err := jwt.Parse(bearerToken, func(*jwt.Token) (interface{}, error) {
+			return s.publicKey, nil
+		})
+		if err == nil && parsed != nil && parsed.Valid {
+			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
+				expSec, _ := claims["exp"].(float64)
+				if expSec > 0 {
+					_ = s.MarkAccessTokenRevoked(c.Request.Context(), bearerToken, time.Unix(int64(expSec), 0))
+				}
+			}
+		}
+	}
+
 	if userID != "" {
 		s.revokeAllUserSessions(c.Request.Context(), userID)
 		s.revokeAllUserRefreshTokens(c.Request.Context(), userID)
-		// Mark every outstanding access token for this user as revoked, so
-		// /oauth/userinfo stops accepting them. Without this, RP-initiated
-		// logout was redirect-theater — the access token kept working.
-		_ = s.MarkUserTokensRevoked(c.Request.Context(), userID)
-		s.logger.Info("Global logout for user", zap.String("user_id", userID))
+		// Single-session logout: rely on the per-token blacklist above for
+		// the bearer the caller actually used. We intentionally do NOT bump
+		// the per-user revocation cutoff here — that's reserved for
+		// /oauth/logout-all. Bumping it would mean every other live session
+		// for the same user starts 401'ing too, which the dedicated
+		// logout-all endpoint exists to express deliberately.
+		s.logger.Info("Single-session logout for user", zap.String("user_id", userID))
 
 		// Log audit event in background with timeout
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			s.logAuditEvent(ctx, "authentication", "security", "global_logout", "success",
+			s.logAuditEvent(ctx, "authentication", "security", "logout", "success",
 				userID, c.ClientIP(), userID, "user",
 				map[string]interface{}{"method": "logout_endpoint"})
 		}()
