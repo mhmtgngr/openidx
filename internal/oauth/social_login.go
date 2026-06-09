@@ -341,7 +341,7 @@ func (s *Service) exchangeCodeForTokens(ctx context.Context, provider *SocialPro
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := s.outboundHTTPClient("social-"+provider.ProviderType+"-token", 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request failed: %w", err)
@@ -384,7 +384,7 @@ func (s *Service) fetchSocialUserInfo(ctx context.Context, provider *SocialProvi
 		req.Header.Set("User-Agent", "OpenIDX")
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := s.outboundHTTPClient("social-"+provider.ProviderType+"-userinfo", 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("userinfo request failed: %w", err)
@@ -506,7 +506,7 @@ func (s *Service) fetchGitHubPrimaryEmail(ctx context.Context, accessToken strin
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "OpenIDX")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := s.outboundHTTPClient("social-github-email", 15*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
