@@ -190,6 +190,11 @@ func main() {
 	adminService.SetWebhookService(&webhookAdapter{svc: webhookService})
 	adminService.SetSecurityService(&securityAdapter{riskService: riskService})
 
+	// Start the background DSAR processor. Auto-executes pending `export`
+	// requests on a 5-minute tick (delete/restrict stay manual). Shares
+	// the same cancellable workers context so it stops cleanly on shutdown.
+	adminService.StartDSARProcessor(ctx, 5*time.Minute)
+
 	// Initialize organization service
 	orgService := organization.NewService(db, redis, cfg, log)
 
