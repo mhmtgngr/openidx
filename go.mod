@@ -8,7 +8,7 @@ go 1.25.0
 toolchain go1.25.11
 
 require (
-	github.com/alicebob/miniredis/v2 v2.36.1
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/briandowns/spinner v1.23.2
 	github.com/elastic/go-elasticsearch/v8 v8.19.1
 	github.com/fatih/color v1.19.0
