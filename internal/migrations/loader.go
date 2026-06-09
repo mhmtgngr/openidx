@@ -229,5 +229,12 @@ func allMigrations() []*Migration {
 			UpSQL:       oauthRefreshSessionIDUp,
 			DownSQL:     oauthRefreshSessionIDDown,
 		},
+		{
+			Version:     32,
+			Name:        "privacy_tables",
+			Description: "Brings privacy/GDPR tables (user_consents, data_subject_requests, privacy_retention_policies, privacy_assessments) under the migration runner — previously only created by deployments/docker/init-db.sql, so Helm/Terraform installs were missing them",
+			UpSQL:       privacyTablesUp,
+			DownSQL:     privacyTablesDown,
+		},
 	}
 }
