@@ -9,6 +9,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.1.0] - 2026-06-09
+
+The first minor release after v1.0.0 — three weeks of post-release hardening
+focused on real security gaps that integration tests surfaced, plus the
+infrastructure to keep them from coming back.
+
+### Added
+- **`POST /api/v1/identity/users/:id/set-password`** — direct admin
+  password-set endpoint. Hashes via `Service.SetPassword` so password-history
+  and policy enforcement apply. Closes the "admin onboards a non-SSO user"
+  gap that previously had no API path (#112).
+- **`GET /api/v1/identity/users/me/sessions`** — the self-access counterpart
+  of the existing admin-only `/users/:id/sessions`. Sources user id from the
+  JWT (#114).
+- **`GET /api/v1/identity/users/me/mfa/status`** — self-service MFA status
+  endpoint. Returns the user's enabled primary factors as an array, distinct
+  from the admin-console toggle map at `/mfa/methods`. Backup recovery codes
+  are intentionally excluded — they're not a primary factor on their own
+  (#114).
+- **Integration test suite is now mandatory in CI**. The full 24-test suite
+  (Postgres + Redis ephemeral services, real identity + oauth-service
+  binaries) runs on every PR; any regression in identity / OAuth / MFA /
+  WebAuthn / session flows blocks the merge (#115).
+
+### Changed
+- **Token revocation is now enforced at `/oauth/userinfo`.** PR #82 made
+  `internal/auth.ValidateToken` fail-closed on revocation, but the OAuth
+  service had its own JWT-parse path that never consulted the revocation
+  store — `/oauth/revoke`, `/oauth/logout`, and `/oauth/logout-all` were
+  redirect-theater. Now backed by two Redis-keyed mechanisms:
+  - Per-token blacklist keyed by `sha256(token)`, TTL = remaining token
+    lifetime. Used by `/oauth/revoke` and single-session `/oauth/logout`
+    (when called with a Bearer).
+  - Per-user revocation cutoff (`oauth:user_tokens_revoked_at:<userID>`).
+    Used by `/oauth/logout-all` and by OIDC RP-initiated `/oauth/logout`
+    when no Bearer is supplied — every token whose `iat ≤ cutoff` is
+    rejected by `/oauth/userinfo` (#112, #114).
+- **Refresh-token rotation now happens on every `grant_type=refresh_token`
+  exchange** (RFC 6749 §6 / RFC 6819 §5.2.2.3). A new random refresh token
+  is issued, the old one is deleted *after* the new one's INSERT succeeds,
+  and the response carries the rotated token. Clients that don't store the
+  rotated token will get `invalid_grant` on the next refresh — this is the
+  intended security improvement (#114).
+- **`Service.CreateUser` now mirrors the generated UUID back to the
+  caller's struct**, so `c.JSON(201, user)` returns a usable `id` and the
+  downstream "user.created" webhook + email-verification token insert see a
+  real value instead of an empty string (#112).
+- **SCIM `active` field now properly maps to the database `enabled` column**
+  in `FromUser`. Previously, SCIM-conformant clients posting
+  `{"active": true}` silently created users with `enabled=false`, and every
+  admin handler queried `WHERE enabled = true` (#112).
+- `handleAdminSetPassword` validates `:id` as a UUID up-front (#112).
+- `handleRevoke` now signature-verifies the access token before blacklisting
+  it (closes a CodeQL "missing JWT signature check" finding) (#112).
+
+### Database
+- **Migration v30**: `ALTER TABLE user_roles ADD COLUMN expires_at TIMESTAMPTZ`.
+  The column was already referenced by `GenerateJWT` and the role-expiry
+  cleaner, but never existed in the v1 schema — every JWT issuance returned
+  an empty `roles` claim, which then 403'd the post-#79 admin-API authz gate
+  (#105).
+- **Migration v31**: `ALTER TABLE oauth_refresh_tokens ADD COLUMN session_id
+  UUID`. The column was added when session-bound rotation landed but never
+  made it into the schema migrations. Postgres rejected every INSERT, the
+  error was swallowed in `handleAuthorizationCodeGrant`, and clients got
+  refresh tokens that were never persisted — every `grant_type=refresh_token`
+  then 400'd with `invalid_grant` (#114).
+
+### Fixed
+- `audit-service` registers the Redis health check it had been silently
+  missing — every other service in the fleet was already checking Redis (#109).
+- SAML SP metadata: corrected SA5008 XML tag conflicts on
+  `Organization{Name,DisplayName,URL}` (#99).
+- `internal/oauth/service.go` and `internal/identity/service.go` cleared
+  CodeQL "log entries from user input" findings introduced by the new admin
+  endpoints (#112).
+- Ratelimit test window flake (#98).
+- Frontend type-check and test command scripts (#88, #89).
+- Race-condition CI job added (#91).
+- CVE bumps: Go toolchain 1.25.11, `go-jose/v4` 4.1.4 (#104, #97).
+
+### Test coverage
+- `internal/migrations` unit tests for `allMigrations()` integrity (versions
+  contiguous, no gaps, no empty SQL) and `splitSQL` behavior pins (#111).
+- `internal/oauth.generateStepUpToken` sign/verify round-trip + claim
+  shape (#111).
+- `internal/oauth.isValidSessionID` regex-gate locked down across 15 cases
+  including path traversal, separator injection, newline injection (#111).
+- Frontend smoke coverage on top admin pages (#101).
+
+### Docs
+- `docs/PRODUCTION-READINESS.md` — end-to-end "can I deploy this?"
+  assessment, 35-item pre-deployment checklist, full feature inventory,
+  known-gaps register, deployment paths for Docker Compose / Helm /
+  Terraform-EKS (#113).
+
+### Upgrade notes
+- **OAuth clients** with refresh tokens: after upgrade, the first
+  `grant_type=refresh_token` exchange rotates the token. Persist the new
+  `refresh_token` from the response; the old one is invalidated. Clients
+  that ignore the rotated token will fail at the *second* refresh, not the
+  first — make sure your client code stores the new value.
+- **Browser SPAs** relying on the legacy "access token survives logout"
+  bug: after upgrade, RP-initiated logout actually kills the access token.
+  This is the desired behavior; UI flows that depended on the old leak
+  should be reviewed.
+- **Database**: two new migrations (v30, v31). Both are
+  `ALTER TABLE ADD COLUMN IF NOT EXISTS` with nullable columns — backward
+  compatible, fast on production-sized tables, no downtime required.
+
 ## [1.0.0] - 2026-05-22
 
 The first tagged release: a hardened, single-tenant, self-hostable v1.
