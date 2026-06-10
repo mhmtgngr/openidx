@@ -1081,9 +1081,20 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		oauth.GET("/mfa-push-status/:challenge_id", svc.handleMFAPushStatus)
 
 		// Step-up MFA endpoints (mid-session re-auth)
-		oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
-		oauth.POST("/stepup-verify", svc.handleStepUpVerify)
-		oauth.GET("/stepup-status/:id", svc.handleStepUpStatus)
+		// The handlers read user_id + session_id from the gin context,
+		// which the auth middleware populates from the JWT's sub + sid
+		// claims. Without the middleware in front, every call sees
+		// empty strings and 401s with "valid session required" even
+		// for a valid bearer — that was the root cause of issue #124.
+		if len(authMiddleware) > 0 {
+			oauth.POST("/stepup-challenge", append(authMiddleware, svc.handleStepUpChallenge)...)
+			oauth.POST("/stepup-verify", append(authMiddleware, svc.handleStepUpVerify)...)
+			oauth.GET("/stepup-status/:id", append(authMiddleware, svc.handleStepUpStatus)...)
+		} else {
+			oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
+			oauth.POST("/stepup-verify", svc.handleStepUpVerify)
+			oauth.GET("/stepup-status/:id", svc.handleStepUpStatus)
+		}
 
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
@@ -2468,10 +2479,11 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// and every downstream handler that requires session_id (stepup,
 	// logout, etc.) rejects the token even though a valid session exists.
 	// See issue #124.
-	bridgeHit := sessionID != ""
-	var fallbackErr error
 	if sessionID == "" {
-		fallbackErr = s.db.Pool.QueryRow(c.Request.Context(), `
+		// Defense in depth: if for any reason the Redis bridge missed,
+		// fall back to the user's most-recently-started active session
+		// so the access token still carries a usable sid claim.
+		_ = s.db.Pool.QueryRow(c.Request.Context(), `
 			SELECT id FROM sessions
 			WHERE user_id = $1
 			  AND client_id = $2
@@ -2481,13 +2493,6 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 			LIMIT 1
 		`, authCode.UserID, clientID).Scan(&sessionID)
 	}
-	s.logger.Info("authorization-code grant: session_id lookup",
-		zap.String("user_id", authCode.UserID),
-		zap.String("client_id", clientID),
-		zap.String("session_id", sessionID),
-		zap.Bool("redis_bridge_hit", bridgeHit),
-		zap.Error(fallbackErr),
-	)
 
 	// Generate tokens (with session ID linkage)
 	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime, sessionID)
