@@ -1,0 +1,121 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+vi.mock('../lib/api', () => ({
+  api: {
+    get: vi.fn(() => Promise.resolve([])),
+    post: vi.fn(() => Promise.resolve({})),
+    put: vi.fn(() => Promise.resolve({})),
+    delete: vi.fn(() => Promise.resolve({})),
+  },
+}))
+
+vi.mock('../hooks/use-toast', () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}))
+
+import { AgentFleetPage } from './agent-fleet'
+import { api } from '../lib/api'
+
+const activeAgent = {
+  agent_id: 'agt-001',
+  device_id: 'dev-aaa-111',
+  status: 'active',
+  compliance_status: 'compliant',
+  compliance_score: 95,
+  last_seen_at: '2026-01-10T00:00:00Z',
+  enrolled_at: '2026-01-01T00:00:00Z',
+  platform: 'android',
+  form_factor: 'phone',
+}
+
+const pendingAgent = {
+  agent_id: 'agt-002',
+  device_id: 'dev-bbb-222',
+  status: 'pending',
+  compliance_status: 'unknown',
+  compliance_score: 0,
+  last_seen_at: null,
+  enrolled_at: '2026-01-11T00:00:00Z',
+  platform: 'android',
+  form_factor: 'phone',
+}
+
+const nonCompliantAgent = {
+  agent_id: 'agt-003',
+  device_id: 'dev-ccc-333',
+  status: 'active',
+  compliance_status: 'non_compliant',
+  compliance_score: 35,
+  last_seen_at: '2026-01-08T00:00:00Z',
+  enrolled_at: '2026-01-02T00:00:00Z',
+  platform: 'macos',
+  form_factor: 'laptop',
+}
+
+function createWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>
+  )
+}
+
+describe('AgentFleetPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+    vi.mocked(api.get).mockResolvedValue([activeAgent, pendingAgent, nonCompliantAgent])
+  })
+
+  it('renders the page heading and Generate QR button', async () => {
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('Agent Fleet')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /generate android enrollment qr/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the four summary cards (total / active / pending / non-compliant)', async () => {
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    await screen.findByText('Agent Fleet')
+    expect(screen.getByText('Total agents')).toBeInTheDocument()
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(screen.getByText('Pending approval')).toBeInTheDocument()
+    expect(screen.getByText('Non-compliant')).toBeInTheDocument()
+  })
+
+  it('lists the enrolled agents in the table', async () => {
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    expect(await screen.findByText('agt-001')).toBeInTheDocument()
+    expect(screen.getByText('agt-002')).toBeInTheDocument()
+    expect(screen.getByText('agt-003')).toBeInTheDocument()
+  })
+
+  it('filters by platform via the platform selector', async () => {
+    const user = userEvent.setup()
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+    await screen.findByText('agt-001')
+
+    // The platform filter is a native <select>, so userEvent.selectOptions
+    // is the supported path.
+    await user.selectOptions(screen.getByDisplayValue(/all platforms/i), 'macos')
+    // After filtering to macOS, the macOS row should remain and the two
+    // Android rows should be gone.
+    expect(screen.getByText('agt-003')).toBeInTheDocument()
+    expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
+    expect(screen.queryByText('agt-002')).not.toBeInTheDocument()
+  })
+
+  it('renders an empty state when no agents are enrolled', async () => {
+    vi.mocked(api.get).mockResolvedValue([])
+    render(<AgentFleetPage />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText('Agent Fleet')).toBeInTheDocument()
+    expect(screen.queryByText('agt-001')).not.toBeInTheDocument()
+  })
+})
