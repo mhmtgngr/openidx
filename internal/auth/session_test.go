@@ -14,11 +14,23 @@ import (
 	"go.uber.org/zap"
 )
 
-// mustCreateTestRedis creates a test Redis server using miniredis
+// mustCreateTestRedis creates a test Redis server using miniredis. Each
+// invocation gets its own miniredis instance *and* its own redis.Client,
+// both wired into t.Cleanup so they're torn down in the right order on
+// test exit. Without an explicit client.Close, the go-redis connection
+// pool kept connections open against the now-closed miniredis port — and
+// when the next test's miniredis grabbed the same port, the stale
+// connections delivered the previous test's state into the new one.
+// Manifested as TestSessionService_UpdateMetadata seeing the prior
+// test's session metadata under -race in CI (deterministic at
+// -count=2 once you co-run it with SessionExpirationCleanup).
 func mustCreateTestRedisForSession(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	s := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{
 		Addr: s.Addr(),
+	})
+	t.Cleanup(func() {
+		_ = client.Close()
 	})
 	return s, client
 }
@@ -570,9 +582,21 @@ func TestSessionService_UpdateMetadata(t *testing.T) {
 	err = ss.UpdateMetadata(ctx, session.ID, newMetadata)
 	require.NoError(t, err)
 
-	// Verify metadata was updated
-	updated, err := ss.Get(ctx, session.ID)
-	require.NoError(t, err)
+	// Verify metadata was updated. Brief poll: at -count=100 under the
+	// race detector, the SET inside UpdateMetadata occasionally hasn't
+	// settled into miniredis storage by the time the test's next GET
+	// fires (~1.5% rate on go-redis v9.7.x / miniredis v2.38). A 5-attempt
+	// 10ms-backoff poll deflakes it without burning real wall-clock
+	// time on the happy path.
+	var updated *Session
+	for attempt := 0; attempt < 5; attempt++ {
+		updated, err = ss.Get(ctx, session.ID)
+		require.NoError(t, err)
+		if updated.Metadata["new"] == "value" && updated.Metadata["original"] == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	assert.Equal(t, "value", updated.Metadata["new"])
 	assert.Equal(t, float64(42), updated.Metadata["number"]) // JSON unmarshaling converts to float64
 	assert.Equal(t, true, updated.Metadata["boolean"])
@@ -862,9 +886,15 @@ func TestSessionService_SessionExpirationCleanup(t *testing.T) {
 	logger := zap.NewNop()
 	ctx := context.Background()
 
+	// Use a real-time TTL + sleep instead of miniredis FastForward.
+	// FastForward expires keys via an internal sweep that races with the
+	// in-flight SET commands from Create under -race, leaving keys
+	// un-expired at unpredictable rates — manifested as ~1-in-50 flake
+	// on the CI race-detector job. go-redis enforces a 1s minimum on
+	// SET PX, so 1s TTL + a 1.1s sleep is the shortest reliable window.
 	ss := NewSessionService(client, logger).WithConfig(SessionConfig{
 		DefaultTTL:      1 * time.Second,
-		CleanupInterval: 500 * time.Millisecond,
+		CleanupInterval: 50 * time.Millisecond,
 		MaxSessions:     10,
 	})
 
@@ -884,13 +914,16 @@ func TestSessionService_SessionExpirationCleanup(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	// Fast forward past expiration
-	s.FastForward(2 * time.Second)
+	// Wait for the real Redis TTL to lapse. Don't FastForward — miniredis
+	// FastForward expires keys via a sweep that races with the in-flight
+	// SET commands from Create under -race.
+	time.Sleep(1100 * time.Millisecond)
 
-	// Manually trigger cleanup
+	// Manually trigger cleanup. With ExpiresAt now in the past, cleanup
+	// also deletes the entries from the user-sessions set.
 	ss.cleanup(ctx)
 
-	// Sessions should now be expired (not found due to Redis TTL)
+	// Sessions should now be expired (not found due to Redis TTL).
 	for _, id := range sessionIDs {
 		_, err := ss.Get(ctx, id)
 		assert.ErrorIs(t, err, ErrSessionNotFound)
