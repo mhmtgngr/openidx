@@ -2468,8 +2468,10 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// and every downstream handler that requires session_id (stepup,
 	// logout, etc.) rejects the token even though a valid session exists.
 	// See issue #124.
+	bridgeHit := sessionID != ""
+	var fallbackErr error
 	if sessionID == "" {
-		_ = s.db.Pool.QueryRow(c.Request.Context(), `
+		fallbackErr = s.db.Pool.QueryRow(c.Request.Context(), `
 			SELECT id FROM sessions
 			WHERE user_id = $1
 			  AND client_id = $2
@@ -2479,6 +2481,13 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 			LIMIT 1
 		`, authCode.UserID, clientID).Scan(&sessionID)
 	}
+	s.logger.Info("authorization-code grant: session_id lookup",
+		zap.String("user_id", authCode.UserID),
+		zap.String("client_id", clientID),
+		zap.String("session_id", sessionID),
+		zap.Bool("redis_bridge_hit", bridgeHit),
+		zap.Error(fallbackErr),
+	)
 
 	// Generate tokens (with session ID linkage)
 	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime, sessionID)
