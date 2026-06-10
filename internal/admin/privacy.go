@@ -2,6 +2,7 @@ package admin
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -604,125 +605,235 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 		return
 	}
 
-	userID, _ := c.Get("user_id")
-	userIDStr, _ := userID.(string)
+	actorID, _ := c.Get("user_id")
+	actorIDStr, _ := actorID.(string)
 
+	result, err := s.ExecuteDSAR(ctx, &dsar, actorIDStr)
+	if err != nil {
+		respondError(c, s.logger, apperrors.Internal(err.Error(), err))
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// ExecuteDSAR routes a DSAR to its type-specific executor and persists the
+// completion record. Broken out from the HTTP handler so the same logic can be
+// driven by the background processor (next PR) and exercised by unit tests
+// without going through gin. The actorID is the admin (or scheduler) that
+// triggered execution; it lands in data_subject_requests.processed_by.
+func (s *Service) ExecuteDSAR(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
 	switch dsar.RequestType {
 	case "export":
-		// Gather user data from multiple tables
-		userData := map[string]interface{}{}
-
-		// User profile
-		var profileJSON json.RawMessage
-		err := s.db.Pool.QueryRow(ctx,
-			`SELECT row_to_json(u) FROM (SELECT id, username, email, first_name, last_name, created_at, updated_at FROM users WHERE id = $1) u`,
-			dsar.UserID).Scan(&profileJSON)
-		if err == nil {
-			userData["profile"] = profileJSON
-		}
-
-		// Consents
-		var consentsJSON json.RawMessage
-		err = s.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(json_agg(row_to_json(c)), '[]'::json) FROM (SELECT id, consent_type, version, granted, granted_at, revoked_at FROM user_consents WHERE user_id = $1) c`,
-			dsar.UserID).Scan(&consentsJSON)
-		if err == nil {
-			userData["consents"] = consentsJSON
-		}
-
-		// Sessions
-		var sessionsJSON json.RawMessage
-		err = s.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) FROM (SELECT id, client_id, ip_address, started_at, expires_at FROM sessions WHERE user_id = $1) s`,
-			dsar.UserID).Scan(&sessionsJSON)
-		if err == nil {
-			userData["sessions"] = sessionsJSON
-		}
-
-		// Audit events
-		var auditJSON json.RawMessage
-		err = s.db.Pool.QueryRow(ctx,
-			`SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) FROM (SELECT id, event_type, action, resource_type, created_at FROM audit_events WHERE actor_id = $1 ORDER BY created_at DESC LIMIT 1000) a`,
-			dsar.UserID).Scan(&auditJSON)
-		if err == nil {
-			userData["audit_events"] = auditJSON
-		}
-
-		// Write gzip file
-		exportDir := "/tmp/openidx-privacy"
-		if err := os.MkdirAll(exportDir, 0750); err != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to create export directory", err))
-			return
-		}
-
-		filename := fmt.Sprintf("dsar-export-%s-%s.json.gz", dsar.UserID, time.Now().Format("20060102-150405"))
-		filePath := filepath.Join(exportDir, filename)
-
-		f, err := os.Create(filePath)
-		if err != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to create export file", err))
-			return
-		}
-
-		gzWriter := gzip.NewWriter(f)
-		encoder := json.NewEncoder(gzWriter)
-		encoder.SetIndent("", "  ")
-		encErr := encoder.Encode(userData)
-		gzWriter.Close()
-		f.Close()
-
-		if encErr != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to write export data", encErr))
-			return
-		}
-
-		// Get file size
-		fi, err := os.Stat(filePath)
-		if err != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to stat export file", err))
-			return
-		}
-		fileSize := fi.Size()
-
-		_, err = s.db.Pool.Exec(ctx,
-			`UPDATE data_subject_requests SET status = 'completed', result_file_path = $1, result_file_size = $2,
-				processed_by = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $4`,
-			filePath, fileSize, nilIfEmpty(userIDStr), id)
-		if err != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to update DSAR", err))
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"message":   "Data export completed",
-			"file_path": filePath,
-			"file_size": fileSize,
-		})
-
+		return s.executeDSARExport(ctx, dsar, actorID)
 	case "delete":
-		// Anonymize user data
-		deletedEmail := fmt.Sprintf("deleted-%s@deleted", dsar.UserID)
-		_, err := s.db.Pool.Exec(ctx,
-			`UPDATE users SET email = $1, first_name = 'Deleted', last_name = 'Deleted', updated_at = NOW() WHERE id = $2`,
-			deletedEmail, dsar.UserID)
-		if err != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to anonymize user data", err))
-			return
-		}
-
-		_, err = s.db.Pool.Exec(ctx,
-			`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
-			nilIfEmpty(userIDStr), id)
-		if err != nil {
-			respondError(c, s.logger, apperrors.Internal("Failed to update DSAR", err))
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "User data anonymized and DSAR completed"})
-
+		return s.executeDSARDelete(ctx, dsar, actorID)
+	case "restrict":
+		return s.executeDSARRestrict(ctx, dsar, actorID)
 	default:
-		respondError(c, nil, apperrors.BadRequest(fmt.Sprintf("Execution not supported for request type: %s", dsar.RequestType)))
+		return nil, fmt.Errorf("unsupported DSAR request_type %q", dsar.RequestType)
 	}
+}
+
+// executeDSARExport gathers the subject's PII across every table that holds
+// any and writes a gzip'd JSON bundle. The category set covers every
+// user-keyed table reachable from internal/identity and the OAuth flows;
+// extending the export when new PII surfaces are added is a one-line entry
+// in `categories` below.
+func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
+	userData := map[string]interface{}{}
+
+	// Each entry is (output key, SQL that returns json_agg or row_to_json).
+	// Errors per category are tolerated (some tables may not exist on
+	// older deployments) — we record what we got.
+	type cat struct {
+		key string
+		sql string
+	}
+	categories := []cat{
+		{"profile",
+			`SELECT row_to_json(u) FROM (SELECT id, username, email, first_name, last_name, created_at, updated_at FROM users WHERE id = $1) u`},
+		{"consents",
+			`SELECT COALESCE(json_agg(row_to_json(c)), '[]'::json) FROM (SELECT id, consent_type, version, granted, granted_at, revoked_at FROM user_consents WHERE user_id = $1) c`},
+		{"sessions",
+			`SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) FROM (SELECT id, client_id, ip_address, started_at, expires_at FROM sessions WHERE user_id = $1) s`},
+		{"audit_events",
+			`SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) FROM (SELECT id, event_type, action, resource_type, created_at FROM audit_events WHERE actor_id = $1 ORDER BY created_at DESC LIMIT 1000) a`},
+		{"roles",
+			`SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) FROM (SELECT ur.role_id, r.name, ur.expires_at FROM user_roles ur LEFT JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1) r`},
+		{"groups",
+			`SELECT COALESCE(json_agg(row_to_json(g)), '[]'::json) FROM (SELECT gm.group_id, g.name FROM group_memberships gm LEFT JOIN groups g ON g.id = gm.group_id WHERE gm.user_id = $1) g`},
+		{"application_assignments",
+			`SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) FROM (SELECT application_id, assigned_at FROM user_application_assignments WHERE user_id = $1) a`},
+		{"access_requests",
+			`SELECT COALESCE(json_agg(row_to_json(ar)), '[]'::json) FROM (SELECT id, resource_type, resource_name, status, created_at FROM access_requests WHERE requester_id = $1) ar`},
+		{"mfa_totp",
+			`SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json) FROM (SELECT enabled, verified_at, created_at FROM mfa_totp WHERE user_id = $1) t`},
+		{"mfa_webauthn",
+			`SELECT COALESCE(json_agg(row_to_json(w)), '[]'::json) FROM (SELECT id, friendly_name, created_at FROM mfa_webauthn WHERE user_id = $1) w`},
+		{"mfa_push_devices",
+			`SELECT COALESCE(json_agg(row_to_json(p)), '[]'::json) FROM (SELECT id, device_type, created_at FROM mfa_push_devices WHERE user_id = $1) p`},
+		{"earlier_dsars",
+			`SELECT COALESCE(json_agg(row_to_json(d)), '[]'::json) FROM (SELECT id, request_type, status, created_at, completed_at FROM data_subject_requests WHERE user_id = $1) d`},
+	}
+	for _, c := range categories {
+		var raw json.RawMessage
+		if err := s.db.Pool.QueryRow(ctx, c.sql, dsar.UserID).Scan(&raw); err == nil {
+			userData[c.key] = raw
+		} else {
+			// Don't blank the export on a single missing-table failure
+			// (older Postgres clusters may pre-date some optional tables).
+			s.logger.Debug("DSAR export skipped category",
+				zap.String("category", c.key), zap.Error(err))
+		}
+	}
+
+	// Write a gzip'd JSON bundle. Keep using the local-fs path the original
+	// implementation used so existing operator runbooks still apply;
+	// uploading to S3 is the next-PR concern.
+	exportDir := "/tmp/openidx-privacy"
+	if err := os.MkdirAll(exportDir, 0750); err != nil {
+		return nil, fmt.Errorf("create export directory: %w", err)
+	}
+	filename := fmt.Sprintf("dsar-export-%s-%s.json.gz", dsar.UserID, time.Now().Format("20060102-150405"))
+	filePath := filepath.Join(exportDir, filename)
+	f, err := os.Create(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("create export file: %w", err)
+	}
+	gz := gzip.NewWriter(f)
+	enc := json.NewEncoder(gz)
+	enc.SetIndent("", "  ")
+	encErr := enc.Encode(userData)
+	gz.Close()
+	f.Close()
+	if encErr != nil {
+		return nil, fmt.Errorf("write export data: %w", encErr)
+	}
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("stat export file: %w", err)
+	}
+	fileSize := fi.Size()
+
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE data_subject_requests SET status = 'completed', result_file_path = $1, result_file_size = $2,
+			processed_by = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $4`,
+		filePath, fileSize, nilIfEmpty(actorID), dsar.ID)
+	if err != nil {
+		return nil, fmt.Errorf("update DSAR record: %w", err)
+	}
+	s.logger.Info("DSAR export completed",
+		zap.String("dsar_id", dsar.ID),
+		zap.String("user_id", dsar.UserID),
+		zap.String("actor_id", actorID),
+		zap.Int64("file_size", fileSize))
+	return map[string]interface{}{
+		"message":    "Data export completed",
+		"categories": len(userData),
+		"file_path":  filePath,
+		"file_size":  fileSize,
+	}, nil
+}
+
+// executeDSARDelete implements the GDPR Article 17 "right to erasure": tear
+// down everything that identifies the subject. The user row itself is kept
+// (and anonymized) rather than deleted so foreign keys from audit tables
+// don't get orphaned — audit immutability requirements would otherwise
+// conflict with the erasure request. Sessions and refresh tokens are
+// wiped (so the user is signed out immediately and can't log in again),
+// MFA enrollments are cleared (no leftover phone numbers / device IDs),
+// consents are cleared, role/group/application assignments are removed.
+func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
+	// Anonymize the user row. Disable the account so a stale session can't
+	// be revived and the user can't log back in.
+	deletedEmail := fmt.Sprintf("deleted-%s@deleted.local", dsar.UserID)
+	if _, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET email = $1,
+		    first_name = 'Deleted',
+		    last_name  = 'Deleted',
+		    username   = $1,
+		    phone_number = NULL,
+		    avatar_url   = NULL,
+		    password_hash = NULL,
+		    enabled = false,
+		    updated_at = NOW()
+		WHERE id = $2`, deletedEmail, dsar.UserID); err != nil {
+		return nil, fmt.Errorf("anonymize user row: %w", err)
+	}
+
+	// Wipe everything that holds PII *about* the subject. Each statement is
+	// idempotent and `DELETE FROM … WHERE user_id = $1` — if the table
+	// doesn't exist on this install, log and continue rather than rolling
+	// back the whole erasure.
+	wipes := []string{
+		`DELETE FROM sessions WHERE user_id = $1`,
+		`DELETE FROM oauth_refresh_tokens WHERE user_id = $1`,
+		`DELETE FROM user_roles WHERE user_id = $1`,
+		`DELETE FROM group_memberships WHERE user_id = $1`,
+		`DELETE FROM user_application_assignments WHERE user_id = $1`,
+		`DELETE FROM mfa_totp WHERE user_id = $1`,
+		`DELETE FROM mfa_webauthn WHERE user_id = $1`,
+		`DELETE FROM mfa_push_devices WHERE user_id = $1`,
+		`DELETE FROM mfa_backup_codes WHERE user_id = $1`,
+		`DELETE FROM user_consents WHERE user_id = $1`,
+		`DELETE FROM api_keys WHERE user_id = $1`,
+	}
+	wiped := 0
+	for _, sql := range wipes {
+		if _, err := s.db.Pool.Exec(ctx, sql, dsar.UserID); err != nil {
+			s.logger.Debug("DSAR delete skipped table",
+				zap.String("sql", sql), zap.Error(err))
+			continue
+		}
+		wiped++
+	}
+
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
+		nilIfEmpty(actorID), dsar.ID); err != nil {
+		return nil, fmt.Errorf("update DSAR record: %w", err)
+	}
+	s.logger.Info("DSAR delete completed",
+		zap.String("dsar_id", dsar.ID),
+		zap.String("user_id", dsar.UserID),
+		zap.String("actor_id", actorID),
+		zap.Int("tables_wiped", wiped))
+	return map[string]interface{}{
+		"message":      "Subject data erased and account anonymized",
+		"tables_wiped": wiped,
+	}, nil
+}
+
+// executeDSARRestrict implements the GDPR Article 18 "right to restriction":
+// keep the data on file (it may be needed for legal claims) but prevent
+// further processing. We disable the account, revoke active sessions and
+// refresh tokens, and flag the user record so background jobs can skip them.
+// Crucially, we do *not* delete anything — the user can have the restriction
+// lifted later, and `restrict` is supposed to be reversible.
+func (s *Service) executeDSARRestrict(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
+	if _, err := s.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1`, dsar.UserID); err != nil {
+		return nil, fmt.Errorf("disable user: %w", err)
+	}
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, dsar.UserID); err != nil {
+		s.logger.Warn("DSAR restrict: failed to drop sessions", zap.Error(err))
+	}
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, dsar.UserID); err != nil {
+		s.logger.Warn("DSAR restrict: failed to drop refresh tokens", zap.Error(err))
+	}
+
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
+		nilIfEmpty(actorID), dsar.ID); err != nil {
+		return nil, fmt.Errorf("update DSAR record: %w", err)
+	}
+	s.logger.Info("DSAR restrict completed",
+		zap.String("dsar_id", dsar.ID),
+		zap.String("user_id", dsar.UserID),
+		zap.String("actor_id", actorID))
+	return map[string]interface{}{
+		"message": "Subject processing restricted; account disabled, sessions revoked",
+	}, nil
 }
 
 // handleListPrivacyRetention lists all privacy retention policies

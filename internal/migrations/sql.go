@@ -1483,4 +1483,94 @@ CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_session_id ON oauth_refresh_
 
 	oauthRefreshSessionIDDown = `DROP INDEX IF EXISTS idx_oauth_refresh_tokens_session_id;
 ALTER TABLE oauth_refresh_tokens DROP COLUMN IF EXISTS session_id;`
+
+	// Migration 032: privacy / GDPR tables (user_consents, data_subject_requests,
+	// privacy_retention_policies, privacy_assessments). These had been living only
+	// in deployments/docker/init-db.sql — so any install that came up via
+	// `cmd/migrate up` (Helm / Terraform / Kubernetes) was missing them, and
+	// every call into internal/identity/handlers_privacy.go or
+	// internal/admin/privacy.go 500'd at the first SELECT. Bringing them under
+	// the migration runner is the prerequisite for the DSAR processor work.
+	privacyTablesUp = `-- Migration 032: privacy / GDPR tables
+CREATE TABLE IF NOT EXISTS user_consents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    consent_type VARCHAR(100) NOT NULL,
+    version VARCHAR(50) NOT NULL DEFAULT '1.0',
+    granted BOOLEAN NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    metadata JSONB DEFAULT '{}',
+    granted_at TIMESTAMP WITH TIME ZONE,
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_consents_user ON user_consents(user_id, consent_type);
+CREATE INDEX IF NOT EXISTS idx_user_consents_type ON user_consents(consent_type, granted);
+
+CREATE TABLE IF NOT EXISTS data_subject_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    request_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    reason TEXT,
+    requested_data_categories JSONB DEFAULT '[]',
+    result_file_path VARCHAR(500),
+    result_file_size BIGINT,
+    processed_by UUID REFERENCES users(id),
+    notes TEXT,
+    due_date TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_dsar_user ON data_subject_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_dsar_status ON data_subject_requests(status);
+
+CREATE TABLE IF NOT EXISTS privacy_retention_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    data_category VARCHAR(100) NOT NULL,
+    retention_days INTEGER NOT NULL,
+    action VARCHAR(50) NOT NULL DEFAULT 'delete',
+    anonymize_fields JSONB DEFAULT '[]',
+    enabled BOOLEAN DEFAULT false,
+    last_executed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_retention_category ON privacy_retention_policies(data_category);
+
+CREATE TABLE IF NOT EXISTS privacy_assessments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    data_categories JSONB DEFAULT '[]',
+    processing_purposes JSONB DEFAULT '[]',
+    risk_level VARCHAR(50) DEFAULT 'low',
+    status VARCHAR(50) DEFAULT 'draft',
+    findings JSONB DEFAULT '[]',
+    mitigations JSONB DEFAULT '[]',
+    assessor_id UUID REFERENCES users(id),
+    reviewer_id UUID REFERENCES users(id),
+    review_notes TEXT,
+    approved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_privacy_assessments_status ON privacy_assessments(status);
+CREATE INDEX IF NOT EXISTS idx_privacy_assessments_risk ON privacy_assessments(risk_level);`
+
+	privacyTablesDown = `DROP INDEX IF EXISTS idx_privacy_assessments_risk;
+DROP INDEX IF EXISTS idx_privacy_assessments_status;
+DROP TABLE IF EXISTS privacy_assessments;
+DROP INDEX IF EXISTS idx_privacy_retention_category;
+DROP TABLE IF EXISTS privacy_retention_policies;
+DROP INDEX IF EXISTS idx_dsar_status;
+DROP INDEX IF EXISTS idx_dsar_user;
+DROP TABLE IF EXISTS data_subject_requests;
+DROP INDEX IF EXISTS idx_user_consents_type;
+DROP INDEX IF EXISTS idx_user_consents_user;
+DROP TABLE IF EXISTS user_consents;`
 )
