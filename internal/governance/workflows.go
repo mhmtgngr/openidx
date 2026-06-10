@@ -874,6 +874,12 @@ func (s *Service) handleDeleteApprovalPolicy(c *gin.Context) {
 }
 
 // fulfillRequest provisions the approved access by granting the requested resource
+// to the requester. The supported resource types are exactly the three that
+// access requests can be raised against: role, group, and application. An
+// unknown resource type is a hard error rather than a silent "marked
+// fulfilled but nothing granted" — the previous warning-only no-op path
+// shipped approved-but-empty requests to production (the P1.1 gap the
+// roadmap called out).
 func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) error {
 	switch request.ResourceType {
 	case "role":
@@ -892,8 +898,19 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 		if err != nil {
 			return fmt.Errorf("failed to add to group: %w", err)
 		}
+	case "application":
+		_, err := s.db.Pool.Exec(ctx,
+			`INSERT INTO user_application_assignments (user_id, application_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			request.RequesterID, request.ResourceID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to assign application: %w", err)
+		}
 	default:
-		s.logger.Warn("Fulfillment not implemented for resource type", zap.String("resource_type", request.ResourceType))
+		// Fail loudly. Marking a request "fulfilled" without granting
+		// anything is exactly the bug the P1.1 audit found — an approved
+		// application request used to land here and silently no-op.
+		return fmt.Errorf("unsupported access-request resource type %q", request.ResourceType)
 	}
 
 	_, err := s.db.Pool.Exec(ctx,
@@ -903,6 +920,15 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 	if err != nil {
 		return fmt.Errorf("failed to update request status to fulfilled: %w", err)
 	}
+
+	// Audit the grant so the access trail isn't lost to whoever investigates
+	// later. Keep it best-effort — the grant itself already succeeded.
+	s.logger.Info("Access request fulfilled",
+		zap.String("request_id", request.ID),
+		zap.String("requester_id", request.RequesterID),
+		zap.String("resource_type", request.ResourceType),
+		zap.String("resource_id", request.ResourceID),
+	)
 
 	request.Status = "fulfilled"
 	return nil

@@ -434,9 +434,7 @@ type SPAssertionConsumerService struct {
 
 // FetchSAMLMetadata fetches and parses metadata from a remote URL
 func (s *Service) FetchSAMLMetadata(ctx context.Context, metadataURL string) (*SPMetadata, error) {
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	client := s.outboundHTTPClient("saml-metadata", 30*time.Second)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", metadataURL, nil)
 	if err != nil {

@@ -342,14 +342,21 @@ func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *Ce
 	return "00000000-0000-0000-0000-000000000001", nil
 }
 
-// ReviewItem records a decision on a certification item
+// ReviewItem records a decision on a certification item — and, when the
+// decision is `revoke`, actually removes the underlying access. Recording
+// the decision without acting on it was the P2.4 gap the roadmap called
+// out: campaigns looked like they were doing work but the user kept their
+// role/group/application.
 func (s *CertificationService) ReviewItem(ctx context.Context, itemID string, decision CertificationDecision, reviewerID, comments string) error {
-	// Verify the item exists and is pending
+	// Verify the item exists and is pending; pull the (user, resource)
+	// pair while we're here so we can act on revoke decisions without
+	// re-querying.
 	var currentReviewerID string
 	var currentStatus string
+	var userID, resourceType, resourceID string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT reviewer_id, decision FROM certification_items WHERE id = $1`,
-		itemID).Scan(&currentReviewerID, &currentStatus)
+		`SELECT reviewer_id, decision, user_id, resource_type, resource_id FROM certification_items WHERE id = $1`,
+		itemID).Scan(&currentReviewerID, &currentStatus, &userID, &resourceType, &resourceID)
 	if err != nil {
 		return fmt.Errorf("certification item not found: %w", err)
 	}
@@ -363,6 +370,17 @@ func (s *CertificationService) ReviewItem(ctx context.Context, itemID string, de
 			reviewerID).Scan(&isAdmin)
 		if !isAdmin {
 			return fmt.Errorf("user is not authorized to review this item")
+		}
+	}
+
+	// When the reviewer chose to revoke, actually remove the access *before*
+	// flipping the item's decision column. Ordering matters: if the access
+	// removal fails (DB issue, unknown resource type) we want the item to
+	// stay `pending` so the dashboard surfaces it for another attempt rather
+	// than showing a "revoked" item whose underlying access is still live.
+	if decision == DecisionRevoke {
+		if err := s.revokeAccess(ctx, resourceType, userID, resourceID); err != nil {
+			return fmt.Errorf("revoke access for certification item: %w", err)
 		}
 	}
 
@@ -615,6 +633,44 @@ func (s *CertificationService) ProcessExpiredCampaigns(ctx context.Context) erro
 }
 
 // revokeUnreviewedItems revokes access for all pending items in a campaign
+// revokeAccess removes a (user, resourceType, resourceID) assignment from the
+// underlying access table. Centralized so both the reviewer-driven path
+// (ReviewItem with decision=revoke) and the auto-revoke-after-deadline path
+// (revokeUnreviewedItems) share the same implementation — and so adding a
+// new resource type lands in exactly one place.
+//
+// Mirrors the resource-type set fulfillRequest supports. Returns a non-nil
+// error for unknown types rather than silently treating them as already-
+// revoked.
+func (s *CertificationService) revokeAccess(ctx context.Context, resourceType, userID, resourceID string) error {
+	switch resourceType {
+	case "role":
+		_, err := s.db.Pool.Exec(ctx,
+			`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`,
+			userID, resourceID)
+		if err != nil {
+			return fmt.Errorf("revoke role: %w", err)
+		}
+	case "group":
+		_, err := s.db.Pool.Exec(ctx,
+			`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2`,
+			userID, resourceID)
+		if err != nil {
+			return fmt.Errorf("revoke group: %w", err)
+		}
+	case "application":
+		_, err := s.db.Pool.Exec(ctx,
+			`DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2`,
+			userID, resourceID)
+		if err != nil {
+			return fmt.Errorf("revoke application: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported certification resource type %q", resourceType)
+	}
+	return nil
+}
+
 func (s *CertificationService) revokeUnreviewedItems(ctx context.Context, campaignID string) {
 	// Get all pending items
 	rows, err := s.db.Pool.Query(ctx,
@@ -635,19 +691,19 @@ func (s *CertificationService) revokeUnreviewedItems(ctx context.Context, campai
 			continue
 		}
 
-		// Revoke the access based on resource type
-		switch resourceType {
-		case "role":
-			_, err := s.db.Pool.Exec(ctx,
-				`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`,
-				userID, resourceID)
-			if err != nil {
-				s.logger.Error("Failed to revoke role",
-					zap.String("user_id", userID),
-					zap.String("role_id", resourceID),
-					zap.Error(err))
-				continue
-			}
+		// Revoke the actual access (role / group / application).
+		if err := s.revokeAccess(ctx, resourceType, userID, resourceID); err != nil {
+			s.logger.Error("Failed to revoke access on auto-revoke",
+				zap.String("item_id", itemID),
+				zap.String("user_id", userID),
+				zap.String("resource_type", resourceType),
+				zap.String("resource_id", resourceID),
+				zap.Error(err))
+			// Don't mark the certification item as revoked if the
+			// underlying access still exists — the next operator pass
+			// will reprocess it on the next ProcessExpiredCampaigns tick
+			// rather than burying the failure in the audit log.
+			continue
 		}
 
 		// Mark item as revoked
@@ -665,6 +721,7 @@ func (s *CertificationService) revokeUnreviewedItems(ctx context.Context, campai
 		s.logger.Info("Auto-revoked unreviewed certification item",
 			zap.String("item_id", itemID),
 			zap.String("user_id", userID),
+			zap.String("resource_type", resourceType),
 			zap.String("resource_id", resourceID))
 	}
 
