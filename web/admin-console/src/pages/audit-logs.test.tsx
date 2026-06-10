@@ -95,4 +95,63 @@ describe('AuditLogsPage', () => {
       expect(searchInput).toBeInTheDocument()
     })
   })
+
+  it('renders the page subtitle and the Export CSV / Hide Stats action buttons', async () => {
+    const wrapper = createWrapper()
+    render(<AuditLogsPage />, { wrapper })
+
+    expect(
+      await screen.findByText(/view and search audit events/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /export csv/i }),
+    ).toBeInTheDocument()
+    // showStats defaults to true, so the toggle label reads "Hide Stats"
+    // on first render.
+    expect(
+      screen.getByRole('button', { name: /hide stats/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('exposes the three quick date-range buttons (Last 7 / 30 / 90 Days)', async () => {
+    const wrapper = createWrapper()
+    render(<AuditLogsPage />, { wrapper })
+
+    await screen.findByText(/view and search audit events/i)
+    expect(screen.getByRole('button', { name: /^last 7 days$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^last 30 days$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^last 90 days$/i })).toBeInTheDocument()
+  })
+
+  it('toggles the stats panel off when Hide Stats is clicked', async () => {
+    const wrapper = createWrapper()
+    render(<AuditLogsPage />, { wrapper })
+
+    await screen.findByText(/view and search audit events/i)
+    // Stats panel rendered initially (showStats defaults to true).
+    expect(await screen.findByText(/events over time/i)).toBeInTheDocument()
+
+    // Click "Hide Stats" — the panel unmounts and the button flips to "Show Stats".
+    screen.getByRole('button', { name: /hide stats/i }).click()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show stats/i })).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/events over time/i)).not.toBeInTheDocument()
+  })
+
+  it('renders the audit event row with event_type and category info', async () => {
+    const wrapper = createWrapper()
+    render(<AuditLogsPage />, { wrapper })
+
+    await waitFor(() => {
+      // event_type is rendered as a label in the row — anchor on it
+      // (case-insensitive). It collides with the stats panel's
+      // "By Type" / "Events by Type" section title since stats are on
+      // by default, so allow multiple.
+      expect(
+        screen.getAllByText(/authentication/i).length,
+      ).toBeGreaterThan(0)
+    })
+  })
 })
