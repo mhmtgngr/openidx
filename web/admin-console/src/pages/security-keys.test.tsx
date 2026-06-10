@@ -26,6 +26,9 @@ import { api } from '../lib/api'
 
 const yubiKey = {
   id: 'cred-1',
+  user_id: 'u-1',
+  credential_id: 'cid-abc',
+  aaguid: '00000000-0000-0000-0000-000000000000',
   name: 'YubiKey 5C',
   created_at: '2026-01-15T00:00:00Z',
   last_used_at: '2026-06-01T00:00:00Z',

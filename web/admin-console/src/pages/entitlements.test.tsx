@@ -81,7 +81,7 @@ describe('EntitlementsPage', () => {
       return Promise.resolve({ data: [] }) as ReturnType<typeof api.get>
     })
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [roleEntitlement, groupEntitlement, appEntitlement] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [roleEntitlement, groupEntitlement, appEntitlement] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '3' },
     })
   })
@@ -128,7 +128,7 @@ describe('EntitlementsPage', () => {
 
   it('renders the empty catalog table when no entitlements match', async () => {
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '0' },
     })
     render(<EntitlementsPage />, { wrapper: createWrapper() })

@@ -20,20 +20,26 @@ import { api } from '../lib/api'
 
 const iphone = {
   id: 'd-1',
+  user_id: 'u-1',
   device_name: 'Alice iPhone',
   device_model: 'iPhone 15',
   platform: 'ios',
+  enabled: true,
+  trusted: true,
   created_at: '2026-05-01T00:00:00Z',
   last_used_at: '2026-06-09T00:00:00Z',
 }
 
 const androidPhone = {
   id: 'd-2',
+  user_id: 'u-1',
   device_name: 'Pixel Work',
   device_model: 'Pixel 8',
   platform: 'android',
+  enabled: true,
+  trusted: false,
   created_at: '2026-04-01T00:00:00Z',
-  last_used_at: null,
+  last_used_at: undefined,
 }
 
 describe('PushDevicesPage', () => {

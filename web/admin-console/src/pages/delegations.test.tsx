@@ -66,7 +66,7 @@ describe('DelegationsPage', () => {
     // the delegations array. Mock the bare-array shape (matching
     // abac-policies pattern).
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [enabledDelegation, disabledDelegation] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [enabledDelegation, disabledDelegation] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '2' },
     })
   })
@@ -98,7 +98,7 @@ describe('DelegationsPage', () => {
 
   it('renders the empty state when no delegations exist', async () => {
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: {},
     })
     render(<DelegationsPage />, { wrapper: createWrapper() })

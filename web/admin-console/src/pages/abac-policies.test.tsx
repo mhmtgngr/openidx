@@ -69,7 +69,7 @@ describe('ABACPoliciesPage', () => {
     // `{ items, total }`. So the mock returns the array directly under
     // `data`, not pre-wrapped.
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [allowPolicy, denyPolicy] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [allowPolicy, denyPolicy] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '2' },
     })
   })
@@ -144,7 +144,7 @@ describe('ABACPoliciesPage', () => {
 
   it('renders the empty state when no policies exist', async () => {
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: {},
     })
     render(<ABACPoliciesPage />, { wrapper: createWrapper() })

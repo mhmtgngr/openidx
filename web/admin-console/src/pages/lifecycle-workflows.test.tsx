@@ -54,7 +54,7 @@ describe('LifecycleWorkflowsPage', () => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [onboardWorkflow, offboardWorkflow] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [onboardWorkflow, offboardWorkflow] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '2' },
     })
     vi.mocked(api.get).mockResolvedValue([])

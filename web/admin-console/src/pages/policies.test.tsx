@@ -57,7 +57,7 @@ describe('PoliciesPage', () => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [sodPolicy, riskPolicy] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [sodPolicy, riskPolicy] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '2' },
     })
   })
@@ -112,7 +112,7 @@ describe('PoliciesPage', () => {
 
   it('shows the "No policies found" empty state when the catalog is empty', async () => {
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '0' },
     })
 

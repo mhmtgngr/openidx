@@ -59,7 +59,7 @@ describe('ProvisioningRulesPage', () => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [rule1, rule2] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [rule1, rule2] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '2' },
     })
   })
@@ -111,7 +111,7 @@ describe('ProvisioningRulesPage', () => {
 
   it('shows the empty "No provisioning rules found." row when there are none', async () => {
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '0' },
     })
 

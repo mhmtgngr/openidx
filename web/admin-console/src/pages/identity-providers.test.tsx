@@ -60,7 +60,7 @@ describe('IdentityProvidersPage', () => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [oidcProvider, samlProvider] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [oidcProvider, samlProvider] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '2' },
     })
   })
@@ -120,7 +120,7 @@ describe('IdentityProvidersPage', () => {
 
   it('shows the "No identity providers found." empty row when the list is empty', async () => {
     vi.mocked(api.getWithHeaders).mockResolvedValue({
-      data: [] as unknown as ReturnType<typeof api.getWithHeaders>['data'],
+      data: [] as unknown as Awaited<ReturnType<typeof api.getWithHeaders>>['data'],
       headers: { 'x-total-count': '0' },
     })
 
