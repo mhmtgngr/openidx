@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.2.0] - 2026-06-10
+
+A follow-on minor release closing the rest of the P1 and P2 backlog items
+queued behind v1.1.0, plus a full sweep through the admin-console test
+suite. Every admin-console page is now covered.
+
+### Added
+- **GDPR DSAR processor.** `Service.ExecuteDSAR` now actually fulfills
+  data-subject access requests instead of marking them "received":
+  - `export` (Article 15) compiles 12 categories of subject data (profile,
+    consents, sessions, audit events, roles, groups, app assignments,
+    access requests, MFA TOTP, MFA WebAuthn, MFA push, prior DSARs).
+  - `delete` (Article 17) erases the subject's records.
+  - `restrict` (Article 18) flags the subject for restricted processing.
+  A background processor (`StartDSARProcessor`) auto-executes new `export`
+  requests; `delete` and `restrict` stay manual on purpose. Backed by
+  schema migration v32 (privacy tables) (#118).
+- **Outbound resilience.** New `internal/common/resilience` package wraps
+  external OAuth / SAML / OIDC discovery calls behind a circuit breaker
+  (`ResilientHTTPClient` + per-host `Registry`). Long IdP outages no
+  longer drag the whole login path down (#117).
+- **Frontend test coverage: 100%.** Every page under
+  `web/admin-console/src/pages/` (87 in total) now has a vitest suite.
+  Suite is 114 files / 684 tests. Patterns established for fixtures with
+  TanStack Query, Radix listeners, fetch-direct pages, route params, and
+  `useAuth` mocks (#120).
+
+### Changed
+- **Application access requests are fulfilled end-to-end.** Approving an
+  access request whose `resource_type == application` now provisions the
+  application binding through `internal/provisioning`. Prior to this it
+  marked the request approved and warned (#117).
+- **Certification reviews now enforce decisions.** Reviewing an item
+  with `decision == revoke` (whether per-item or via the campaign's
+  `revokeUnreviewedItems`) actually revokes the underlying role / group /
+  app assignment instead of just recording the decision (#117).
+
+### Fixed
+- **Session-cleanup race-detector flake.** `TestSessionService_Session-`
+  `ExpirationCleanup` no longer relies on `miniredis.FastForward`, which
+  raced the cleanup goroutine when `-race` was on. The test uses a real
+  1 s TTL plus a 1.1 s sleep; the helper also closes its Redis client
+  via `t.Cleanup` so leaked goroutines don't carry across tests (#119).
+
+### Notes
+- v1.1.0 deployments upgrade in place. The new privacy tables (migration
+  v32) apply on startup through the standard migration runner.
+
 ## [1.1.0] - 2026-06-09
 
 The first minor release after v1.0.0 — three weeks of post-release hardening
