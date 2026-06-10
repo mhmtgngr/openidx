@@ -1,0 +1,115 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+vi.mock('../lib/api', () => ({
+  api: {
+    get: vi.fn(),
+    post: vi.fn(() => Promise.resolve({})),
+    put: vi.fn(() => Promise.resolve({})),
+    delete: vi.fn(() => Promise.resolve({})),
+  },
+}))
+
+vi.mock('../hooks/use-toast', () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}))
+
+import { SAMLServiceProvidersPage } from './saml-service-providers'
+import { api } from '../lib/api'
+
+const slackSP = {
+  id: 'sp-1',
+  name: 'Slack',
+  entity_id: 'https://example.slack.com',
+  acs_url: 'https://example.slack.com/sso/saml',
+  name_id_format: 'emailAddress',
+  enabled: true,
+  created_at: '2026-01-01T00:00:00Z',
+}
+
+const salesforceSP = {
+  id: 'sp-2',
+  name: 'Salesforce',
+  entity_id: 'https://saml.salesforce.com',
+  acs_url: 'https://login.salesforce.com',
+  name_id_format: 'persistent',
+  enabled: false,
+  created_at: '2026-02-01T00:00:00Z',
+}
+
+function createWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>
+  )
+}
+
+describe('SAMLServiceProvidersPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+    vi.mocked(api.get).mockResolvedValue({
+      service_providers: [slackSP, salesforceSP],
+    })
+  })
+
+  it('renders the heading + subtitle + Add SP / Download metadata buttons', async () => {
+    render(<SAMLServiceProvidersPage />, { wrapper: createWrapper() })
+
+    expect(
+      await screen.findByText('SAML Service Providers'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/manage saml 2.0 service provider registrations for sso/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /add service provider/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /download idp metadata/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('lists service-provider rows with their name + entity ID + ACS URL', async () => {
+    render(<SAMLServiceProvidersPage />, { wrapper: createWrapper() })
+
+    expect(await screen.findByText('Slack')).toBeInTheDocument()
+    expect(screen.getByText('Salesforce')).toBeInTheDocument()
+    expect(screen.getByText('https://example.slack.com')).toBeInTheDocument()
+    expect(screen.getByText('https://example.slack.com/sso/saml')).toBeInTheDocument()
+  })
+
+  it('shows the search input', async () => {
+    render(<SAMLServiceProvidersPage />, { wrapper: createWrapper() })
+    await screen.findByText('Slack')
+
+    expect(
+      screen.getByPlaceholderText(/search by name, entity id, or acs url/i),
+    ).toBeInTheDocument()
+  })
+
+  it('renders the registered count "Registered Service Providers (2)"', async () => {
+    render(<SAMLServiceProvidersPage />, { wrapper: createWrapper() })
+
+    expect(
+      await screen.findByText(/registered service providers \(2\)/i),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the empty state when no providers are registered', async () => {
+    vi.mocked(api.get).mockResolvedValue({ service_providers: [] })
+
+    render(<SAMLServiceProvidersPage />, { wrapper: createWrapper() })
+
+    expect(
+      await screen.findByText(/no saml service providers found/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/register a service provider to enable saml sso/i),
+    ).toBeInTheDocument()
+  })
+})
