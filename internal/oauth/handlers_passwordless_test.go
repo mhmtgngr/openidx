@@ -26,11 +26,14 @@ func TestIsValidSessionID(t *testing.T) {
 		{"valid UUID with mixed digits/letters", "abcdef01-2345-6789-abcd-ef0123456789", true},
 
 		// --- base64url happy paths
-		// 43 chars is what GenerateRandomToken(32) produces (32 random
-		// bytes → 43 base64url chars without padding).
+		// 43 chars is what RawURLEncoding produces; 44 chars (with
+		// trailing `=`) is what URLEncoding (which GenerateRandomToken
+		// actually calls) produces for a 32-byte secret.
 		{"43-char base64url with letters+digits", "dBjftJeZ4CVPmB92K27uhbUJU1p1rwW1gFWFOEjXkpQ", true},
 		{"43-char base64url with underscores", "Abc__def__ghi__jkl__mno__pqr__stu__vwx__yz0", true},
 		{"43-char base64url with dashes", "Abc--def--ghi--jkl--mno--pqr--stu--vwx--yz0", true},
+		{"44-char URLEncoding with `=` padding", strings.Repeat("a", 43) + "=", true},
+		{"45-char URLEncoding with `==` padding", strings.Repeat("a", 43) + "==", true},
 		{"32 chars (lower bound)", strings.Repeat("a", 32), true},
 		{"128 chars (upper bound)", strings.Repeat("a", 128), true},
 		// Uppercase is fine in base64url, so a UUID-shaped value with

@@ -21,17 +21,39 @@ import (
 // Pattern matches: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx where x is hexadecimal digit
 var validUUIDPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
-// validTokenPattern matches URL-safe base64 ("base64url") tokens,
-// bounded to 32..128 characters. GenerateRandomToken (used by
-// /oauth/authorize to mint login_session values) produces ~43 chars
-// for a 32-byte secret in this alphabet.
-var validTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,128}$`)
+// isValidBase64URLToken returns true when s is 32..128 characters in the
+// URL-safe base64 alphabet (`[A-Za-z0-9_-]`) with up to two trailing `=`
+// padding chars. GenerateRandomToken (which mints login_session values
+// at /oauth/authorize) uses base64.URLEncoding *with* padding, so a
+// 32-byte secret comes back as 44 chars ending in `=`.
+func isValidBase64URLToken(s string) bool {
+	if n := len(s); n < 32 || n > 128 {
+		return false
+	}
+	// Strip up to two trailing `=` and validate the body.
+	end := len(s)
+	for end > 0 && s[end-1] == '=' && len(s)-end < 2 {
+		end--
+	}
+	for i := 0; i < end; i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-' || c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // isValidSessionID validates session ID format to prevent Redis-key
 // injection attacks. Accepts:
 //   - a 36-character UUID (identity sessions, MFA challenge IDs), or
 //   - a 32..128-character base64url token (login_session values from
-//     /oauth/authorize).
+//     /oauth/authorize), optional `=` padding.
 //
 // Either way, no `:`, `/`, or whitespace can sneak past — both forms
 // stay safely inside a Redis key.
@@ -44,7 +66,7 @@ func isValidSessionID(sessionID string) bool {
 	if len(sessionID) == 36 && validUUIDPattern.MatchString(sessionID) {
 		return true
 	}
-	return validTokenPattern.MatchString(sessionID)
+	return isValidBase64URLToken(sessionID)
 }
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.
