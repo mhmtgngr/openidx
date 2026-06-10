@@ -156,12 +156,23 @@ func TestQRLoginCreate(t *testing.T) {
 		}
 	})
 
-	// NOTE: the happy-path test "valid session returns qr_content +
-	// session_token" was removed because /oauth/authorize generates
-	// login_session as a 43-char base64url token (GenerateRandomToken(32))
-	// but isValidSessionID requires a 36-char UUID — see follow-up bug.
-	// QR / magic-link flows can never accept a real auth login_session
-	// until that mismatch is fixed.
+	t.Run("valid session reaches CreateQRLoginSession (validator no longer blocks)", func(t *testing.T) {
+		// Restored after #125 to confirm the validator no longer rejects
+		// the base64url login_session shape that /oauth/authorize
+		// produces. The full happy path (200 with session_token +
+		// qr_content) requires a `qr_login_sessions` table that no
+		// migration creates — separate bug, filed as follow-up. For
+		// now, prove we moved past the 400 "invalid login_session
+		// format" gate.
+		sess := freshLoginSession(t)
+		body := fmt.Sprintf(`{"login_session":%q}`, sess)
+		status, respBody := apiRequest(t, "POST", oauthURL+"/oauth/qr-login/create", body, "")
+		if status == http.StatusBadRequest {
+			if desc, _ := respBody["error_description"].(string); strings.Contains(desc, "invalid login_session format") {
+				t.Errorf("validator still rejecting the real login_session; body = %v", respBody)
+			}
+		}
+	})
 }
 
 // TestQRLoginPoll covers GET /oauth/qr-login/poll.
@@ -189,11 +200,17 @@ func TestQRLoginPoll(t *testing.T) {
 		}
 	})
 
-	// NOTE: "returns 404 when session_token unknown" was removed —
-	// isValidSessionID requires a 36-char UUID; a 32-char base64url-style
-	// session_token is rejected with 400 *before* the handler attempts the
-	// lookup. Add a UUID-shaped fixture once the validator is relaxed (see
-	// follow-up bug for the validator-vs-actual-token mismatch).
+	t.Run("returns 404 when session_token unknown", func(t *testing.T) {
+		// Restored after #125: a 32-char base64url-style token now
+		// passes the validator and the handler reaches the QR-session
+		// lookup, which 404s for an unknown token.
+		q := "session_token=abcdefghijklmnopqrstuvwxyz012345" +
+			"&login_session=abcdefghijklmnopqrstuvwxyz012345"
+		status, _ := apiRequest(t, "GET", oauthURL+"/oauth/qr-login/poll?"+q, "", "")
+		if status != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", status)
+		}
+	})
 }
 
 // TestPasskeyBegin covers POST /oauth/passkey-begin. Reaching the success

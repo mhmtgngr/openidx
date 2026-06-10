@@ -19,18 +19,54 @@ import (
 
 // validUUIDPattern validates UUID format only (RFC 4122)
 // Pattern matches: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx where x is hexadecimal digit
-// This prevents Redis key injection by strictly limiting to UUID format
 var validUUIDPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
-// isValidSessionID validates session token format to prevent Redis key injection attacks
-// RESTRICTED TO UUID FORMAT ONLY for JWT session IDs to prevent injection attacks
-func isValidSessionID(sessionID string) bool {
-	// Strict UUID format validation (36 characters with hyphens in specific positions)
-	// This prevents path traversal and injection attacks while allowing legitimate UUIDs
-	if len(sessionID) != 36 {
+// isValidBase64URLToken returns true when s is 32..128 characters in the
+// URL-safe base64 alphabet (`[A-Za-z0-9_-]`) with up to two trailing `=`
+// padding chars. GenerateRandomToken (which mints login_session values
+// at /oauth/authorize) uses base64.URLEncoding *with* padding, so a
+// 32-byte secret comes back as 44 chars ending in `=`.
+func isValidBase64URLToken(s string) bool {
+	if n := len(s); n < 32 || n > 128 {
 		return false
 	}
-	return validUUIDPattern.MatchString(sessionID)
+	// Strip up to two trailing `=` and validate the body.
+	end := len(s)
+	for end > 0 && s[end-1] == '=' && len(s)-end < 2 {
+		end--
+	}
+	for i := 0; i < end; i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-' || c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isValidSessionID validates session ID format to prevent Redis-key
+// injection attacks. Accepts:
+//   - a 36-character UUID (identity sessions, MFA challenge IDs), or
+//   - a 32..128-character base64url token (login_session values from
+//     /oauth/authorize), optional `=` padding.
+//
+// Either way, no `:`, `/`, or whitespace can sneak past — both forms
+// stay safely inside a Redis key.
+//
+// Previously this required the UUID format only; that rejected every
+// login_session produced by the actual /oauth/authorize handler, so
+// downstream flows (QR login, MFA OTP, passkey, magic-link verify)
+// 400'd on every legitimate session. See issue #125.
+func isValidSessionID(sessionID string) bool {
+	if len(sessionID) == 36 && validUUIDPattern.MatchString(sessionID) {
+		return true
+	}
+	return isValidBase64URLToken(sessionID)
 }
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.

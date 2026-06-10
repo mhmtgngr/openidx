@@ -1081,9 +1081,20 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		oauth.GET("/mfa-push-status/:challenge_id", svc.handleMFAPushStatus)
 
 		// Step-up MFA endpoints (mid-session re-auth)
-		oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
-		oauth.POST("/stepup-verify", svc.handleStepUpVerify)
-		oauth.GET("/stepup-status/:id", svc.handleStepUpStatus)
+		// The handlers read user_id + session_id from the gin context,
+		// which the auth middleware populates from the JWT's sub + sid
+		// claims. Without the middleware in front, every call sees
+		// empty strings and 401s with "valid session required" even
+		// for a valid bearer — that was the root cause of issue #124.
+		if len(authMiddleware) > 0 {
+			oauth.POST("/stepup-challenge", append(authMiddleware, svc.handleStepUpChallenge)...)
+			oauth.POST("/stepup-verify", append(authMiddleware, svc.handleStepUpVerify)...)
+			oauth.GET("/stepup-status/:id", append(authMiddleware, svc.handleStepUpStatus)...)
+		} else {
+			oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
+			oauth.POST("/stepup-verify", svc.handleStepUpVerify)
+			oauth.GET("/stepup-status/:id", svc.handleStepUpStatus)
+		}
 
 		// SSO callback endpoint
 		oauth.GET("/callback", svc.handleCallback)
@@ -2460,6 +2471,27 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	// Clean up the Redis key
 	if sessionID != "" {
 		s.redis.Client.Del(c.Request.Context(), "authcode_session:"+code)
+	}
+
+	// Fallback: if the Redis bridge is empty (the login path didn't write
+	// one, or the key expired), look up the user's most-recently-started
+	// active session. Without this, the access token has no `sid` claim
+	// and every downstream handler that requires session_id (stepup,
+	// logout, etc.) rejects the token even though a valid session exists.
+	// See issue #124.
+	if sessionID == "" {
+		// Defense in depth: if for any reason the Redis bridge missed,
+		// fall back to the user's most-recently-started active session
+		// so the access token still carries a usable sid claim.
+		_ = s.db.Pool.QueryRow(c.Request.Context(), `
+			SELECT id FROM sessions
+			WHERE user_id = $1
+			  AND client_id = $2
+			  AND (revoked IS NULL OR revoked = false)
+			  AND expires_at > NOW()
+			ORDER BY started_at DESC
+			LIMIT 1
+		`, authCode.UserID, clientID).Scan(&sessionID)
 	}
 
 	// Generate tokens (with session ID linkage)
