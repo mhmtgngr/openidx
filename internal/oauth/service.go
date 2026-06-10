@@ -2462,6 +2462,24 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		s.redis.Client.Del(c.Request.Context(), "authcode_session:"+code)
 	}
 
+	// Fallback: if the Redis bridge is empty (the login path didn't write
+	// one, or the key expired), look up the user's most-recently-started
+	// active session. Without this, the access token has no `sid` claim
+	// and every downstream handler that requires session_id (stepup,
+	// logout, etc.) rejects the token even though a valid session exists.
+	// See issue #124.
+	if sessionID == "" {
+		_ = s.db.Pool.QueryRow(c.Request.Context(), `
+			SELECT id FROM sessions
+			WHERE user_id = $1
+			  AND client_id = $2
+			  AND (revoked IS NULL OR revoked = false)
+			  AND expires_at > NOW()
+			ORDER BY started_at DESC
+			LIMIT 1
+		`, authCode.UserID, clientID).Scan(&sessionID)
+	}
+
 	// Generate tokens (with session ID linkage)
 	accessToken, _ := s.GenerateJWT(c.Request.Context(), authCode.UserID, clientID, authCode.Scope, client.AccessTokenLifetime, sessionID)
 

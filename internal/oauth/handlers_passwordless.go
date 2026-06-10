@@ -19,18 +19,32 @@ import (
 
 // validUUIDPattern validates UUID format only (RFC 4122)
 // Pattern matches: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx where x is hexadecimal digit
-// This prevents Redis key injection by strictly limiting to UUID format
 var validUUIDPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
-// isValidSessionID validates session token format to prevent Redis key injection attacks
-// RESTRICTED TO UUID FORMAT ONLY for JWT session IDs to prevent injection attacks
+// validTokenPattern matches URL-safe base64 ("base64url") tokens,
+// bounded to 32..128 characters. GenerateRandomToken (used by
+// /oauth/authorize to mint login_session values) produces ~43 chars
+// for a 32-byte secret in this alphabet.
+var validTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32,128}$`)
+
+// isValidSessionID validates session ID format to prevent Redis-key
+// injection attacks. Accepts:
+//   - a 36-character UUID (identity sessions, MFA challenge IDs), or
+//   - a 32..128-character base64url token (login_session values from
+//     /oauth/authorize).
+//
+// Either way, no `:`, `/`, or whitespace can sneak past — both forms
+// stay safely inside a Redis key.
+//
+// Previously this required the UUID format only; that rejected every
+// login_session produced by the actual /oauth/authorize handler, so
+// downstream flows (QR login, MFA OTP, passkey, magic-link verify)
+// 400'd on every legitimate session. See issue #125.
 func isValidSessionID(sessionID string) bool {
-	// Strict UUID format validation (36 characters with hyphens in specific positions)
-	// This prevents path traversal and injection attacks while allowing legitimate UUIDs
-	if len(sessionID) != 36 {
-		return false
+	if len(sessionID) == 36 && validUUIDPattern.MatchString(sessionID) {
+		return true
 	}
-	return validUUIDPattern.MatchString(sessionID)
+	return validTokenPattern.MatchString(sessionID)
 }
 
 // handleMFASendOTP triggers SMS or Email OTP delivery during the login MFA flow.
