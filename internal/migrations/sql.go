@@ -1897,4 +1897,217 @@ ALTER TABLE login_history               DROP COLUMN IF EXISTS org_id;
 ALTER TABLE known_devices               DROP COLUMN IF EXISTS org_id;
 ALTER TABLE email_verification_tokens   DROP COLUMN IF EXISTS org_id;
 ALTER TABLE api_keys                    DROP COLUMN IF EXISTS org_id;`
+
+	// Migration 035 — backfills the default organization UUID into
+	// every NULL org_id row across the tables v34 just scoped.
+	//
+	// The default organization itself was created by v25
+	// (id = 00000000-0000-0000-0000-000000000010, slug = 'default').
+	// v25 also backfilled four core tables (users, groups, roles,
+	// applications); v35 fills in the remaining ~50.
+	//
+	// Strategy: a single UPDATE per table guarded by
+	// WHERE org_id IS NULL. This is idempotent — re-running v35 is a
+	// no-op because the second run finds no NULLs. It also does not
+	// clobber any rows an install may have set to a non-default
+	// org_id manually (e.g., via a custom seed script).
+	//
+	// Single-tenant installs that previously had no
+	// 'default' org row will have one created by the safety INSERT
+	// at the top of this migration: v25 already creates it
+	// unconditionally on every install, so the INSERT below is
+	// purely defensive against installs that may have somehow
+	// reached v34 without v25 — that can't happen with the standard
+	// runner, but the cost of an extra ON CONFLICT INSERT is zero.
+	//
+	// What this migration DOES NOT do:
+	//   - It does not set org_id NOT NULL (v036 does that)
+	//   - It does not add a FK to organizations(id) (v036 does that)
+	//   - It does not change behavior of any service code
+	//   - It does not activate RLS (v036 creates PERMISSIVE policies)
+	//
+	// Inheritance vs. blanket default: an earlier draft inherited
+	// org_id from the parent row (e.g., mfa_totp.org_id from
+	// users.org_id via JOIN). For single-tenant installs the result
+	// is identical because every parent row already points at the
+	// default org. For installs that have multiple organizations
+	// today, this migration alone cannot reconstruct the intent;
+	// those installs already have org_id populated where it matters
+	// (the org service writes it on create), and any NULL leftovers
+	// are unowned rows that the default org takes ownership of —
+	// the operator can re-assign via the admin API after upgrade.
+	orgIDBackfillUp = `-- Migration 035: backfill default org_id for v2.0 multi-tenancy
+
+-- Defensive: ensure the default org row exists even if an install
+-- somehow reaches v35 without v25 having run successfully. v25's
+-- canonical row uses this exact id.
+INSERT INTO organizations (id, name, slug, domain, plan, status, max_users, max_applications)
+VALUES ('00000000-0000-0000-0000-000000000010', 'Default Organization', 'default', NULL, 'enterprise', 'active', 999999, 999999)
+ON CONFLICT (id) DO NOTHING;
+
+-- Identity / user-data tables
+UPDATE api_keys                    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE email_verification_tokens   SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE known_devices               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE login_history               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE notification_preferences    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE password_history            SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE password_reset_tokens       SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE qr_login_sessions           SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE stepup_challenges           SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE user_consents               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE user_invitations            SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE user_sessions               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE group_memberships           SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE user_application_assignments SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- MFA tables
+UPDATE mfa_backup_codes            SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE mfa_policies                SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE mfa_push_challenges         SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE mfa_push_devices            SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE mfa_totp                    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE mfa_webauthn                SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE user_mfa_policies           SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- OAuth tables
+UPDATE oauth_access_tokens         SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE oauth_authorization_codes   SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE oauth_refresh_tokens        SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Tables v25 already added org_id to but may have unbackfilled rows
+-- (defensive; v25 already does these so this is a no-op in normal
+-- installs, but cheap to assert).
+UPDATE oauth_clients               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE audit_events                SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE sessions                    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE policies                    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE access_reviews              SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE service_accounts            SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE webhook_subscriptions       SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE access_requests             SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE security_alerts             SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE notifications               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Role / permission joins
+UPDATE composite_roles             SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE role_permissions            SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE user_roles                  SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Application / SSO config
+UPDATE application_sso_settings    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Group tables
+UPDATE group_join_requests         SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Governance / access review / approval
+UPDATE access_request_approvals    SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE approval_policies           SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE compliance_reports          SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE review_items                SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Directory integrations / sync
+UPDATE directory_integrations      SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE directory_sync_logs         SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE directory_sync_state        SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Identity providers
+UPDATE identity_providers          SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Privacy / GDPR
+UPDATE data_subject_requests       SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE privacy_assessments         SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE privacy_retention_policies  SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Provisioning / SCIM
+UPDATE provisioning_rules          SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE scim_groups                 SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE scim_users                  SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Security / risk
+UPDATE credential_rotations        SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE device_posture_results      SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE posture_checks              SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE policy_rules                SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE webhook_deliveries          SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- Proxy (ZTA)
+UPDATE proxy_routes                SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE proxy_sessions              SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+
+-- OpenZiti
+UPDATE ziti_certificates           SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE ziti_identities             SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE ziti_service_policies       SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;
+UPDATE ziti_services               SET org_id = '00000000-0000-0000-0000-000000000010' WHERE org_id IS NULL;`
+
+	orgIDBackfillDown = `-- Migration 035 down: reverse the backfill by setting org_id back
+-- to NULL for rows that currently hold the default UUID. This is
+-- intentionally narrower than the Up's WHERE — it does not touch
+-- rows that hold a non-default org_id, so a multi-org install
+-- stays intact.
+UPDATE ziti_services               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE ziti_service_policies       SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE ziti_identities             SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE ziti_certificates           SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE proxy_sessions              SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE proxy_routes                SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE webhook_deliveries          SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE policy_rules                SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE posture_checks              SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE device_posture_results      SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE credential_rotations        SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE scim_users                  SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE scim_groups                 SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE provisioning_rules          SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE privacy_retention_policies  SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE privacy_assessments         SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE data_subject_requests       SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE identity_providers          SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE directory_sync_state        SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE directory_sync_logs         SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE directory_integrations      SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE review_items                SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE compliance_reports          SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE approval_policies           SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE access_request_approvals    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE group_join_requests         SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE application_sso_settings    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE user_roles                  SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE role_permissions            SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE composite_roles             SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE notifications               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE security_alerts             SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE access_requests             SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE webhook_subscriptions       SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE service_accounts            SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE access_reviews              SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE policies                    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE sessions                    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE audit_events                SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE oauth_clients               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE oauth_refresh_tokens        SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE oauth_authorization_codes   SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE oauth_access_tokens         SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE user_mfa_policies           SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE mfa_webauthn                SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE mfa_totp                    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE mfa_push_devices            SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE mfa_push_challenges         SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE mfa_policies                SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE mfa_backup_codes            SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE user_application_assignments SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE group_memberships           SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE user_sessions               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE user_invitations            SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE user_consents               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE stepup_challenges           SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE qr_login_sessions           SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE password_reset_tokens       SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE password_history            SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE notification_preferences    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE login_history               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE known_devices               SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE email_verification_tokens   SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';
+UPDATE api_keys                    SET org_id = NULL WHERE org_id = '00000000-0000-0000-0000-000000000010';`
 )
