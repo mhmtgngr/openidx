@@ -9,6 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.3.0] - 2026-06-11
+
+A focused follow-on release driven by the P1.5 backend-test sweep —
+which surfaced (and made us fix) two real OAuth-flow bugs and one
+missing schema migration that production deployments had been
+silently broken on since the QR-login feature shipped.
+
+### Added
+- **Backend unit-test coverage on previously untested seams** (#122):
+  - `internal/oauth/authorize_handler_test.go` — the methods on
+    `*AuthorizeHandler` (`validateRedirectURI`, `validateResponseType`,
+    `validateScope`, `validatePKCEParameters`, `parseAuthorizeRequest`)
+    were 0% covered; new file takes them to 100% without bringing up
+    a Service / Redis / DB.
+  - `internal/common/netutil/ssrf_test.go` — entire package was
+    untested. `DefaultSSRFConfig`, `ValidateURL` (scheme / localhost /
+    private-IP / no-hostname / allowlist-miss branches),
+    `domainMatches`, `isPrivateIP` (RFC 1918 + RFC 4193 boundaries),
+    `isLocalhostIP`, `IsPrivateURL`, `KnownPublicAPIs` sanity. Uses
+    literal IPs so the test stays off DNS. **Package coverage
+    0 % → 66.2 %**.
+  - `internal/common/events/bus_test.go` — entire package was
+    untested. `Event` constructor + fluent setters + `JSON`,
+    `MemoryBus` subscribe / wildcard / all / with-filter / unsubscribe /
+    publish-returns-last-error / close-rejects-publish /
+    `PublishAsync`-delivers, and the package-level global-bus wrappers.
+    **Package coverage 0 % → 100 %**.
+- **Integration coverage for stepup + passwordless** (#123, #126,
+  #127). Two new test files (`test/integration/stepup_test.go`,
+  `test/integration/passwordless_test.go`) exercise 13 routes /
+  ~25 cases. The stepup happy-path round-trip and the QR-login
+  create / poll happy paths are now part of the gating integration
+  suite.
+- **Database migration v33: `qr_login_sessions`** (#127). The table
+  `internal/identity/passwordless.go` has been `INSERT`-ing into since
+  the QR-login feature shipped — but which no migration ever created.
+  Every `POST /oauth/qr-login/create` therefore 500'd at the first
+  `INSERT` against "relation does not exist". Surfaced by PR #126's
+  integration tests; was previously masked by the broken-session-id
+  validator (see Fixed below). Schema mirrors the column set the
+  package already reads/writes (id, unique session_token, qr_code_data,
+  status enum, nullable user_id, JSONB device blobs, IP, four
+  lifecycle timestamps) plus indexes on `(status, created_at)` and a
+  partial `user_id` index for the post-scan lookups.
+
+### Fixed
+- **`/oauth/stepup-*` returned 401 for every valid bearer token**
+  (#126, closes #124). The three step-up routes were registered
+  against the bare `/oauth` group with no auth middleware in front of
+  them. The handlers read `user_id` and `session_id` from the gin
+  context — but nothing populated them, because no middleware ran the
+  JWT parse. The fix wraps the routes with `authMiddleware` the same
+  way the `/oauth/authorize` consent endpoint already does. As a
+  defense-in-depth follow-on, `handleAuthorizationCodeGrant` also now
+  falls back to a DB lookup for the user's most-recent active session
+  when the Redis `authcode_session:<code>` bridge is empty, so the
+  access token always carries a usable `sid` claim.
+- **`isValidSessionID` rejected every real `login_session`** (#126,
+  closes #125). The validator required a strict 36-character UUID,
+  but `/oauth/authorize` produces `login_session` via
+  `GenerateRandomToken(32)` — a 44-character padded base64url token.
+  The mismatch broke QR login, MFA OTP, passkey, and magic-link-verify
+  end to end against the actual auth flow. `isValidSessionID` now
+  accepts either form: a 36-character UUID, OR a 32..128-character
+  base64url token with optional `=` padding. Both still exclude `:`,
+  `/`, whitespace, and control bytes — Redis-key injection / path
+  traversal stays blocked. Unit tests expanded to 23 cases covering
+  the UUID happy path, the base64url happy path with and without
+  padding, length boundaries, and the full injection-shaped rejection
+  set.
+
+### Notes
+- All v1.2.0 deployments upgrade in place. Migration v33 applies on
+  startup through the standard migration runner; the table is empty
+  on first use and the OAuth service starts populating it
+  immediately.
+
 ## [1.2.0] - 2026-06-10
 
 A follow-on minor release closing the rest of the P1 and P2 backlog items
