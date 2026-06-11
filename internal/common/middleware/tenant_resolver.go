@@ -67,16 +67,16 @@ type TenantResolverConfig struct {
 // organization for each request and attaches it to ctx via orgctx.
 //
 // Resolution order (per v2.0 multi-tenancy design):
-//   1. X-Org-Slug header (set by the gateway from the subdomain when
-//      the install fronts wildcard *.openidx.io). Highest priority
-//      because the URL is the most explicit tenant signal.
-//   2. JWT claim "org_id" (already attached to the gin context by
-//      the Auth middleware; the resolver does not re-parse the JWT).
-//   3. X-Org-ID header, only honored when PlatformAdminPredicate
-//      returns true. Lets ops/compliance tools cross org boundaries
-//      without ambiguity. Every consumer that respects the
-//      platform-admin marker is required to write an audit entry.
-//   4. Default org fallback, if configured.
+//  1. X-Org-Slug header (set by the gateway from the subdomain when
+//     the install fronts wildcard *.openidx.io). Highest priority
+//     because the URL is the most explicit tenant signal.
+//  2. JWT claim "org_id" (already attached to the gin context by
+//     the Auth middleware; the resolver does not re-parse the JWT).
+//  3. X-Org-ID header, only honored when PlatformAdminPredicate
+//     returns true. Lets ops/compliance tools cross org boundaries
+//     without ambiguity. Every consumer that respects the
+//     platform-admin marker is required to write an audit entry.
+//  4. Default org fallback, if configured.
 //
 // On lookup failure: ErrOrgNotFound → 400. Any other error → 500.
 //
