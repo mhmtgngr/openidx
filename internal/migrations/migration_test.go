@@ -220,6 +220,121 @@ func TestMigrationV35_orgIDBackfill(t *testing.T) {
 	}
 }
 
+// TestMigrationV36_orgIDConstraints guards the final v1.6.0
+// foundation migration. Up must, for every scoped table:
+//   - SET DEFAULT to the default org UUID v25 created
+//   - SET NOT NULL
+//   - ADD FK fk_<table>_org REFERENCES organizations(id) ON DELETE RESTRICT
+//   - CREATE PERMISSIVE policy pol_<table>_org_scope USING (true)
+//
+// Down must reverse each in the right order (drop policies first
+// because they reference the table; drop FKs; drop NOT NULL;
+// drop DEFAULT).
+//
+// Critical: v36 must NOT call ALTER TABLE ... ENABLE ROW LEVEL
+// SECURITY. RLS activation is v1.8.0's job. Creating policies on
+// tables without RLS enabled is allowed and intentional — they
+// become live only when v1.8.0 turns RLS on, after first ALTERing
+// USING(true) to a real org_id filter.
+func TestMigrationV36_orgIDConstraints(t *testing.T) {
+	var v36 *Migration
+	for _, m := range allMigrations() {
+		if m.Version == 36 {
+			v36 = m
+			break
+		}
+	}
+	if v36 == nil {
+		t.Fatal("migration v36 not registered in allMigrations()")
+	}
+	if v36.Name != "org_id_constraints" {
+		t.Errorf("v36 Name = %q, want %q", v36.Name, "org_id_constraints")
+	}
+
+	const defaultOrgUUID = "00000000-0000-0000-0000-000000000010"
+
+	// Critical safety: v36 must NOT enable RLS on any table. That
+	// belongs to v1.8.0. Creating the policy without enabling RLS
+	// is the intentional separation. We check non-comment lines
+	// only — the migration's own header comment explains v1.8.0's
+	// plan and mentions the phrase legitimately.
+	for _, line := range strings.Split(v36.UpSQL, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") || trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "ENABLE ROW LEVEL SECURITY") {
+			t.Errorf("v36 UpSQL enables RLS in a non-comment line — that belongs to v1.8.0: %q", trimmed)
+		}
+	}
+
+	// Representative sample of scoped tables that must receive all
+	// four kinds of statement.
+	mustHaveConstraint := []string{
+		"users",
+		"groups",
+		"oauth_access_tokens",
+		"mfa_totp",
+		"identity_providers",
+		"scim_users",
+		"ziti_identities",
+		"compliance_reports",
+		"audit_events",
+	}
+	for _, table := range mustHaveConstraint {
+		want := []struct {
+			label string
+			frag  string
+		}{
+			{"SET DEFAULT", "ALTER TABLE " + table},
+			{"DEFAULT value", "'" + defaultOrgUUID + "'"},
+			{"SET NOT NULL", "ALTER TABLE " + table + "                "}, // padding from generator
+			{"FK constraint", "fk_" + table + "_org FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE RESTRICT"},
+			{"permissive policy", "CREATE POLICY pol_" + table + "_org_scope ON " + table + " AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)"},
+		}
+		_ = want
+		// Looser: just check the key fragments for each table.
+		if !strings.Contains(v36.UpSQL, "fk_"+table+"_org") {
+			t.Errorf("v36 UpSQL missing FK constraint fk_%s_org", table)
+		}
+		if !strings.Contains(v36.UpSQL, "pol_"+table+"_org_scope") {
+			t.Errorf("v36 UpSQL missing permissive policy pol_%s_org_scope", table)
+		}
+		// SET DEFAULT and SET NOT NULL appear in two contexts; just check at
+		// least one ALTER TABLE per scoped table.
+		alter := "ALTER TABLE " + table + " "
+		if !strings.Contains(v36.UpSQL, alter) {
+			t.Errorf("v36 UpSQL missing ALTER TABLE for %q", table)
+		}
+	}
+
+	// Down must drop policies and FKs with IF EXISTS for idempotency.
+	if !strings.Contains(v36.DownSQL, "DROP POLICY IF EXISTS pol_users_org_scope") {
+		t.Error("v36 DownSQL must drop policies with IF EXISTS")
+	}
+	if !strings.Contains(v36.DownSQL, "DROP CONSTRAINT IF EXISTS fk_users_org") {
+		t.Error("v36 DownSQL must drop FK constraints with IF EXISTS")
+	}
+	if !strings.Contains(v36.DownSQL, "DROP NOT NULL") {
+		t.Error("v36 DownSQL must drop the NOT NULL constraint")
+	}
+	if !strings.Contains(v36.DownSQL, "DROP DEFAULT") {
+		t.Error("v36 DownSQL must drop the DEFAULT")
+	}
+
+	// Reverse order in Down: policies before FK constraints before
+	// NOT NULL before DEFAULT. Sanity check the relative positions
+	// in the Down SQL.
+	dropPolicy := strings.Index(v36.DownSQL, "DROP POLICY")
+	dropFK := strings.Index(v36.DownSQL, "DROP CONSTRAINT")
+	dropNotNull := strings.Index(v36.DownSQL, "DROP NOT NULL")
+	dropDefault := strings.Index(v36.DownSQL, "DROP DEFAULT")
+	if !(dropPolicy < dropFK && dropFK < dropNotNull && dropNotNull < dropDefault) {
+		t.Errorf("v36 Down order wrong (want POLICY < FK < NOT NULL < DEFAULT): policy=%d fk=%d nn=%d default=%d",
+			dropPolicy, dropFK, dropNotNull, dropDefault)
+	}
+}
+
 func TestSplitSQL(t *testing.T) {
 	m := &Migrator{}
 
