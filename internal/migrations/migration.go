@@ -129,11 +129,46 @@ func (m *Migrator) unregisterMigration(ctx context.Context, version int) error {
 // migration runtime so a healthy in-progress migration is never stolen.
 const lockStaleAfter = 15 * time.Minute
 
-// acquireLock attempts to acquire the migration lock. It succeeds if the lock
-// is free or if the current holder's lock has gone stale (older than
-// lockStaleAfter), which lets a fresh migrator recover after a crashed holder
-// instead of deadlocking forever.
+// lockAcquireTimeout bounds how long acquireLock will keep retrying when
+// the lock is held by another live migrator. Picked to comfortably cover
+// a rolling deploy where many service replicas start in parallel and a
+// migrate-job sidecar races them — but tight enough that a stuck job
+// fails CI / Kubernetes liveness reasonably fast.
+const lockAcquireTimeout = 30 * time.Second
+
+// lockPollInterval is how long acquireLock sleeps between conflict
+// retries. Each retry costs one UPDATE round-trip; 500ms means ~60
+// attempts per default 30s window.
+const lockPollInterval = 500 * time.Millisecond
+
+// errLockBusy is the conflict-distinguishing error tryAcquireLockOnce
+// returns when the row is taken by a live holder. retryUntilAcquired
+// treats it as "retryable"; anything else (a real DB error) is
+// surfaced immediately.
+var errLockBusy = fmt.Errorf("migration lock is held by another process")
+
+// acquireLock attempts to acquire the migration lock, retrying on
+// conflict for up to lockAcquireTimeout. It succeeds as soon as the
+// lock is free or the current holder's lock has gone stale (older than
+// lockStaleAfter), which lets a fresh migrator recover after a crashed
+// holder instead of deadlocking forever.
+//
+// Earlier this returned instantly on conflict — fine for a single
+// admin-driven `cmd/migrate up`, but it raced in containerized
+// environments where the migrate job, the identity-service replicas,
+// and the oauth-service replicas were all coming up against the same
+// database at startup. The retry loop here lets the loser of that race
+// wait politely for the winner to finish.
 func (m *Migrator) acquireLock(ctx context.Context, identifier string) error {
+	return retryUntilAcquired(ctx, lockAcquireTimeout, lockPollInterval, func() error {
+		return m.tryAcquireLockOnce(ctx, identifier)
+	})
+}
+
+// tryAcquireLockOnce performs a single conflict-or-success UPDATE
+// against schema_migration_lock. Extracted so the retry helper above
+// (and its unit tests) can drive it without a real database.
+func (m *Migrator) tryAcquireLockOnce(ctx context.Context, identifier string) error {
 	sql := `
 		UPDATE schema_migration_lock
 		SET locked = true, locked_at = $1, locked_by = $2
@@ -144,11 +179,50 @@ func (m *Migrator) acquireLock(ctx context.Context, identifier string) error {
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock: %w", err)
 	}
-	rows := result.RowsAffected()
-	if rows == 0 {
-		return fmt.Errorf("migration lock is already held by another process (held within the last %s)", lockStaleAfter)
+	if result.RowsAffected() == 0 {
+		return errLockBusy
 	}
 	return nil
+}
+
+// retryUntilAcquired calls tryOnce in a loop, sleeping pollInterval
+// between attempts, until either tryOnce returns nil (success) or
+// maxWait elapses. ctx cancellation aborts immediately. The function
+// is exported as a free function (not a method) so its unit tests can
+// drive it without any *Migrator at all.
+//
+// Behavioral guarantees the tests pin down:
+//   - tryOnce is called at least once.
+//   - Non-errLockBusy errors are returned immediately (no point
+//     retrying a connection-refused).
+//   - Timeout is strictly enforced: callers see an error within
+//     maxWait + one pollInterval, not later.
+func retryUntilAcquired(ctx context.Context, maxWait, pollInterval time.Duration, tryOnce func() error) error {
+	deadline := time.Now().Add(maxWait)
+	var lastErr error
+	for {
+		err := tryOnce()
+		if err == nil {
+			return nil
+		}
+		if err != errLockBusy {
+			return err
+		}
+		lastErr = err
+
+		if !time.Now().Add(pollInterval).Before(deadline) {
+			return fmt.Errorf(
+				"migration lock not acquired within %s (held by another process): %w",
+				maxWait, lastErr,
+			)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
 }
 
 // releaseLock releases the migration lock
