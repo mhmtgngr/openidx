@@ -9,6 +9,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.6.0] - 2026-06-11
+
+**Multi-tenancy Foundation milestone.** First of four releases in
+the v2.0 multi-tenant SaaS isolation epic (`docs/v2-multitenancy-
+design.md`). v1.6.0 lays the schema + plumbing groundwork **without
+changing any behavior** for existing single-tenant installs — the
+ship gate for this milestone is "existing functionality unchanged."
+
+Multi-tenancy enforcement comes in v1.7.0 (service-layer query
+scoping) and v1.8.0 (RLS belt + per-org primitives). v1.6.0 is the
+foundation other releases build on.
+
+### Added
+
+- **`internal/common/orgctx` package** (#136). Pure-additive
+  `context.Context` carrier for the resolved organization (UUID id
+  + slug) and a platform-admin marker. The tenant-resolution
+  middleware writes into it; v1.7.0 service code reads from it.
+  `With` / `From` / `MustFrom` / `WithPlatformAdmin` /
+  `IsPlatformAdmin` exposed with `ErrNoOrgContext` sentinel. 10
+  unit tests.
+
+- **`internal/common/middleware.TenantResolver`** (#140). The gin
+  middleware that resolves the request's organization from
+  `X-Org-Slug` header (gateway-set from subdomain), JWT `org_id`
+  claim already attached by the Auth middleware, or `X-Org-ID`
+  header (platform-admin only). Falls back to the install's
+  default org so single-tenant installs keep working unchanged.
+  Defines the `OrgLookup` interface and `ErrOrgNotFound`
+  sentinel. 16 unit tests covering every resolution path.
+
+- **`tools/orgscope` CLI** (#141). Static helper that walks
+  `internal/` looking for SQL statements targeting a scoped
+  table without an `org_id` reference. Filters out gin's
+  `c.Query("client_id")`-style false positives by checking that
+  the string literal starts with a SQL keyword. Mirrors v36's
+  scoped-table list (68 tables, with documented install-wide
+  exclusions). Wired into Go CI as an **informational job**
+  ("Org-scope lint") that posts findings to the run summary but
+  never gates a PR — v1.7.0 will promote to `-fail` once the
+  service-layer refactors complete. Baseline on current `main`:
+  ~1096 findings, each a concrete v1.7.0 refactor target. 28
+  unit + fixture tests.
+
+- **`docs/v2-multitenancy-design.md`** (#135). The architectural
+  design doc the v1.0 plan called out as a v2 prerequisite.
+  Captures three approved decisions (tenant resolution model,
+  app-layer + Postgres RLS defense-in-depth, automatic `'default'`
+  org backfill for existing installs), the four-milestone delivery
+  plan (v1.6 → v2.0), out-of-scope items, risk register, sizing.
+
+### Changed (schema)
+
+- **Migration v34** (#137) — `org_id UUID NULL` column +
+  `idx_<table>_org_id` index added to ~55 tables that migration
+  v25 didn't reach (api_keys, mfa_*, oauth_*_tokens, ziti_*,
+  scim_*, directory_*, privacy_*, posture_*, governance tables,
+  …). Idempotent via `IF NOT EXISTS`. Six tables explicitly **not**
+  scoped because they are install-wide rather than tenant-data:
+  `organizations`, `permissions`, `system_settings`,
+  `ip_threat_list`, `posture_check_types`, `policy_sync_state`.
+
+- **Migration v35** (#138) — Backfills the default organization
+  UUID (`00000000-0000-0000-0000-000000000010`, created by v25)
+  into every NULL `org_id` row across v34's scoped set. Idempotent
+  via `WHERE org_id IS NULL` guards. Down is narrower: only
+  reverses rows currently holding the default UUID, so multi-org
+  installs (none today) stay intact.
+
+- **Migration v36** (#139) — Final foundation migration. For each
+  of the 68 scoped tables, applies `SET DEFAULT '<default-org-
+  uuid>'` (preserves ship gate — INSERTs that omit `org_id`
+  silently land in default), `SET NOT NULL`, `ADD CONSTRAINT
+  fk_<t>_org … REFERENCES organizations(id) ON DELETE RESTRICT`,
+  and `CREATE POLICY pol_<t>_org_scope … PERMISSIVE … USING
+  (true)`. **RLS is NOT enabled** on the tables — v1.8.0 owns
+  activation by `ALTER POLICY` to a real org filter + `ALTER TABLE
+  … ENABLE ROW LEVEL SECURITY`. v1.7.0's final PR will `DROP
+  DEFAULT` once every INSERT path is org-context-aware.
+
+### Notes for operators
+
+- **No operator action required.** Migrations are
+  forward-only-idempotent and `default` org is created
+  automatically. The install behaves as a single-tenant install
+  did before, just with the multi-tenancy plumbing ready
+  underneath.
+- **Migration v36 caveat:** `SET NOT NULL` on a table with very
+  many rows (audit_events, login_history at scale) runs a
+  validation scan. v35 backfilled every existing row so the scan
+  succeeds, but for the largest installs we recommend the
+  migration runs during a maintenance window.
+- `tools/orgscope` baseline (~1096 unscoped queries) is **not**
+  a regression — it documents the surface v1.7.0 will refactor.
+  The CI job posts the count informationally; PRs are not gated.
+
+### What's NOT in this release
+
+- No enforcement of org scoping. Service code still ignores
+  `orgctx`. Queries do not filter by `org_id` yet. RLS is not
+  enabled. (v1.7.0 owns the app-layer enforcement; v1.8.0 owns
+  RLS.)
+- No tenant signup UI, billing, hard quotas, per-tenant signing
+  keys, schema/db-per-tenant — those are explicitly out of scope
+  for the entire v2.0 epic; see the design doc.
+
 ## [1.5.0] - 2026-06-11
 
 A docs-only release that closes the last open P2 backlog item from
