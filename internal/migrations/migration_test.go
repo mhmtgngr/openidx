@@ -136,6 +136,90 @@ func TestMigrationV34_orgIDColumns(t *testing.T) {
 	}
 }
 
+// TestMigrationV35_orgIDBackfill guards the v2.0 multi-tenancy
+// backfill migration. Up must defensively INSERT the default org
+// (matching the UUID v025 created) and UPDATE every v34-scoped table
+// using a WHERE org_id IS NULL guard for idempotency. Down must
+// reverse each backfill row narrowly (only the default UUID) so that
+// installs with non-default org_id values are left intact.
+func TestMigrationV35_orgIDBackfill(t *testing.T) {
+	var v35 *Migration
+	for _, m := range allMigrations() {
+		if m.Version == 35 {
+			v35 = m
+			break
+		}
+	}
+	if v35 == nil {
+		t.Fatal("migration v35 not registered in allMigrations()")
+	}
+	if v35.Name != "org_id_backfill" {
+		t.Errorf("v35 Name = %q, want %q", v35.Name, "org_id_backfill")
+	}
+
+	const defaultOrgUUID = "00000000-0000-0000-0000-000000000010"
+
+	// Up must contain the defensive INSERT (idempotent via ON CONFLICT).
+	if !strings.Contains(v35.UpSQL, "INSERT INTO organizations") {
+		t.Error("v35 UpSQL missing defensive INSERT INTO organizations")
+	}
+	if !strings.Contains(v35.UpSQL, "ON CONFLICT (id) DO NOTHING") {
+		t.Error("v35 UpSQL INSERT is not idempotent (missing ON CONFLICT)")
+	}
+
+	// Representative sample of tables v34 just scoped. Each must have
+	// a backfill UPDATE in v35 guarded by WHERE org_id IS NULL.
+	mustHaveBackfill := []string{
+		"api_keys",
+		"oauth_access_tokens",
+		"oauth_refresh_tokens",
+		"mfa_totp",
+		"user_roles",
+		"identity_providers",
+		"scim_users",
+		"ziti_identities",
+		"compliance_reports",
+		"data_subject_requests",
+	}
+	for _, table := range mustHaveBackfill {
+		stmt := "UPDATE " + table
+		if !strings.Contains(v35.UpSQL, stmt) {
+			t.Errorf("v35 UpSQL missing %q backfill", stmt)
+		}
+		// Must use the v25 default org UUID, not invent its own.
+		if !strings.Contains(v35.UpSQL, "'"+defaultOrgUUID+"'") {
+			t.Errorf("v35 UpSQL missing default org UUID %q", defaultOrgUUID)
+		}
+	}
+
+	// Every UPDATE in Up must be guarded by WHERE org_id IS NULL —
+	// that is the idempotency contract. Without it, re-running v35
+	// would overwrite intentional non-default values.
+	for _, stmt := range (&Migrator{}).splitSQL(v35.UpSQL) {
+		s := strings.TrimSpace(stmt)
+		if !strings.HasPrefix(s, "UPDATE ") {
+			continue
+		}
+		if !strings.Contains(s, "WHERE org_id IS NULL") {
+			t.Errorf("v35 UpSQL UPDATE missing 'WHERE org_id IS NULL' guard: %q", s)
+		}
+	}
+
+	// Every UPDATE in Down must be guarded by
+	// WHERE org_id = '<default uuid>' — that is the narrowness
+	// contract. Without it, Down would clobber installs that have
+	// rows with deliberate non-default org_id values.
+	for _, stmt := range (&Migrator{}).splitSQL(v35.DownSQL) {
+		s := strings.TrimSpace(stmt)
+		if !strings.HasPrefix(s, "UPDATE ") {
+			continue
+		}
+		if !strings.Contains(s, "WHERE org_id = '"+defaultOrgUUID+"'") {
+			t.Errorf("v35 DownSQL UPDATE missing narrow 'WHERE org_id = default' guard: %q", s)
+		}
+	}
+}
+
 func TestSplitSQL(t *testing.T) {
 	m := &Migrator{}
 

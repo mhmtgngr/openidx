@@ -250,5 +250,12 @@ func allMigrations() []*Migration {
 			UpSQL:       orgIDColumnsUp,
 			DownSQL:     orgIDColumnsDown,
 		},
+		{
+			Version:     35,
+			Name:        "org_id_backfill",
+			Description: "Backfills the default organization UUID (00000000-0000-0000-0000-000000000010, created by v025) into every NULL org_id row across the ~55 tables v34 scoped. Idempotent (WHERE org_id IS NULL guards each UPDATE). Defensive INSERT at the top ensures the default org row exists even on installs that somehow skipped v25. No schema change, no constraint change, no behavioral change. Sets up v036 to add NOT NULL + FK.",
+			UpSQL:       orgIDBackfillUp,
+			DownSQL:     orgIDBackfillDown,
+		},
 	}
 }
