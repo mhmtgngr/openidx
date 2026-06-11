@@ -1,5 +1,14 @@
 # Getting Started with OpenIDX
 
+> **Planning a production deploy?** The 5-minute Quick Start below
+> brings up a development stack with insecure defaults. Before going
+> to production, walk through
+> [docs/SECURITY-HARDENING.md](./SECURITY-HARDENING.md), which lists
+> the knobs the in-process `ValidateProduction()` gate refuses to
+> start without. Also read
+> [docs/SECURITY-TENANCY.md](./SECURITY-TENANCY.md) — OpenIDX is
+> single-tenant by design.
+
 ## 🚀 Quick Start (5 Minutes)
 
 ### Prerequisites
@@ -37,13 +46,26 @@ createdb openidx
 
 ### 3. Initialize Database
 
-```bash
-# Connect to PostgreSQL
-psql postgresql://openidx:openidx_secret@localhost:5432/openidx
+Migrations are tracked under `internal/migrations` and applied by the
+dedicated `cmd/migrate` binary. Do not run them by hand and do not
+let the service binaries auto-migrate — `cmd/migrate up` is the
+single supported entry point.
 
-# Run the schema (will be provided in migrations)
-\i migrations/001_create_tables.sql
+```bash
+# Build the migrator
+go build -o bin/migrate ./cmd/migrate
+
+# Apply all pending migrations
+export DATABASE_URL="postgresql://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable"
+./bin/migrate up
+
+# Verify
+./bin/migrate status
 ```
+
+`migrate up` is idempotent — re-running it is safe. The lock table
+prevents concurrent migrators from racing, and the loser of that race
+now waits up to 30 s for the winner to finish (see PR #130).
 
 ### 4. Build Services
 

@@ -174,44 +174,18 @@ By submitting a vulnerability report, you agree that your disclosure may be used
 
 ## Security Best Practices for Deployment
 
-### Pre-Deployment Checklist
+The production hardening checklist now lives in
+**[docs/SECURITY-HARDENING.md](./docs/SECURITY-HARDENING.md)**. That
+file is grounded in the code — every required item maps to a check in
+`Config.ValidateProduction()`, which the service runs as a blocking
+startup gate. Keeping the checklist and the validator in sync is part
+of the PR checklist for any new gate.
 
-- Change all default passwords and secrets before deploying to production
-- Use TLS for all external-facing endpoints
-- Enable MFA for all administrator accounts
-- Review OPA policies and adjust to your organization's requirements
-- Regularly rotate JWT signing keys and database credentials
-- Enable audit logging and monitor for suspicious activity
-- Keep all dependencies up to date
-
-### Runtime Security
-
-- Run services as non-root users
-- Use read-only file systems where possible
-- Implement resource limits (CPU, memory)
-- Enable security scanning for Docker images
-- Regular vulnerability scanning with Dependabot/Trivy
-
-### Network Security
-
-- Use API Gateway (APISIX) for all external traffic
-- Implement network policies in Kubernetes
-- Use TLS mutual authentication for service-to-service communication
-- Configure firewall rules to limit inbound/outbound traffic
-
-### Data Security
-
-- Enable PostgreSQL transparent data encryption (TDE)
-- Use Redis AUTH with strong passwords
-- Encrypt sensitive configuration values
-- Regular database backups with encryption
-
-### Monitoring
-
-- Enable audit logging for all security events
-- Set up alerts for suspicious activity
-- Regular security reviews of access logs
-- Monitor for unusual login patterns or failed authentication attempts
+The trust-boundary assumption (one OpenIDX install = one organization)
+is documented separately in
+**[docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md)**. Read it
+before deploying OpenIDX in a setting where two unrelated
+organizations might share infrastructure.
 
 ---
 

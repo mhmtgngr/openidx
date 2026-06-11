@@ -22,6 +22,13 @@
 
 OpenIDX is an open-source Zero Trust Access Platform (ZTAP) that unifies API gateway capabilities, AAA controls, identity management, and Zero Trust architecture. Built to compete with commercial solutions like Microsoft Entra ID, Okta, and Duo while offering **70-80% cost savings**.
 
+> **Single-tenant by design.** One OpenIDX install is for one
+> organization. The data model is intentionally not tenant-scoped,
+> and queries do not implicitly filter by a `tenant_id`. If you need
+> multi-tenant SaaS isolation, run one OpenIDX install per tenant —
+> see [docs/SECURITY-TENANCY.md](./docs/SECURITY-TENANCY.md) for the
+> trust boundary and the supported deployment topology.
+
 ### Why OpenIDX?
 
 - 🔐 **Zero Trust Native** - Never trust, always verify
