@@ -90,17 +90,35 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	}
 
 	// Build TLS config for Ziti controller management API communication.
-	// The management API is internal (container-to-container) and uses the Ziti controller's
-	// self-signed PKI, so we skip TLS verification. The SDK-level identity auth uses the
-	// identity file's CA for proper verification.
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	// The management API runs against the Ziti controller's self-signed
+	// PKI. If the operator-provided identity directory contains the
+	// matching ca.pem, we use it for proper validation (the desired
+	// path). If it doesn't AND ziti_insecure_skip_verify is set, we
+	// fall back to the dev-loop escape hatch; otherwise we surface the
+	// error so production deploys can't silently lose verification.
+	// Previously this set InsecureSkipVerify unconditionally, which
+	// erased the value of every CA we then bolted on.
+	tlsConfig := &tls.Config{}
 	caFile := filepath.Join(cfg.ZitiIdentityDir, "ca.pem")
+	caLoaded := false
 	if caPEM, err := os.ReadFile(caFile); err == nil {
 		pool := x509.NewCertPool()
 		if pool.AppendCertsFromPEM(caPEM) {
 			tlsConfig.RootCAs = pool
+			caLoaded = true
 			zm.logger.Info("Loaded Ziti CA certificate", zap.String("file", caFile))
 		}
+	}
+	if !caLoaded {
+		if !cfg.ZitiInsecureSkipVerify {
+			return nil, fmt.Errorf(
+				"ziti CA file not loaded (looked at %s) and ziti_insecure_skip_verify is false; "+
+					"provide the controller CA or set ZITI_INSECURE_SKIP_VERIFY=true for dev",
+				caFile,
+			)
+		}
+		tlsConfig.InsecureSkipVerify = true
+		zm.logger.Warn("Ziti controller TLS verification disabled by configuration (ziti_insecure_skip_verify=true)")
 	}
 
 	zm.mgmtClient = &http.Client{

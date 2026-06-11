@@ -210,13 +210,17 @@ func TestResolveConfigTypeID(t *testing.T) {
 
 // TestZitiManagerInitialization tests ZitiManager initialization
 func TestZitiManagerInitialization(t *testing.T) {
-	t.Run("Initialization with missing CA file continues", func(t *testing.T) {
+	t.Run("Initialization with missing CA file continues when skip-verify is on", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		// As of P2.1 the manager refuses to start without either a CA
+		// file or an explicit ZitiInsecureSkipVerify=true; the test
+		// exercises the dev-loop branch by setting the latter.
 		cfg := &config.Config{
-			ZitiCtrlURL:       "https://ziti.test:1280",
-			ZitiAdminUser:     "admin",
-			ZitiAdminPassword: "admin",
-			ZitiIdentityDir:   tmpDir,
+			ZitiCtrlURL:            "https://ziti.test:1280",
+			ZitiAdminUser:          "admin",
+			ZitiAdminPassword:      "admin",
+			ZitiIdentityDir:        tmpDir,
+			ZitiInsecureSkipVerify: true,
 		}
 
 		// Create a mock auth server
@@ -273,6 +277,28 @@ func TestZitiManagerInitialization(t *testing.T) {
 		// Expected to fail due to invalid enrollment JWT
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to bootstrap ziti")
+	})
+
+	t.Run("Initialization fails when no CA and no skip-verify (P2.1 guard)", func(t *testing.T) {
+		// Defense-in-depth: a production-shaped config that lost its CA
+		// file (mis-deployed bundle, mounted volume missing, etc.) must
+		// not silently fall back to InsecureSkipVerify — the manager
+		// refuses to start instead, surfacing the misconfiguration.
+		tmpDir := t.TempDir()
+		cfg := &config.Config{
+			ZitiCtrlURL:            "https://ziti.test:1280",
+			ZitiAdminUser:          "admin",
+			ZitiAdminPassword:      "admin",
+			ZitiIdentityDir:        tmpDir, // empty dir — no ca.pem
+			ZitiInsecureSkipVerify: false,  // explicit
+		}
+		_, err := NewZitiManager(cfg, nil, MockLogger(t))
+		if err == nil {
+			t.Fatal("expected NewZitiManager to refuse to start; got nil")
+		}
+		if !strings.Contains(err.Error(), "ca") && !strings.Contains(err.Error(), "ziti_insecure_skip_verify") {
+			t.Errorf("err = %v, want mention of missing CA or skip-verify hint", err)
+		}
 	})
 
 	t.Run("IsInitialized returns correct state", func(t *testing.T) {
