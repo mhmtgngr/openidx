@@ -236,5 +236,12 @@ func allMigrations() []*Migration {
 			UpSQL:       privacyTablesUp,
 			DownSQL:     privacyTablesDown,
 		},
+		{
+			Version:     33,
+			Name:        "qr_login_sessions",
+			Description: "Adds the qr_login_sessions table that internal/identity/passwordless.go has been INSERTing into since the QR-login feature shipped, but which no migration ever created — /oauth/qr-login/create was 500ing for every install on the first INSERT. Surfaced by the PR #126 integration tests.",
+			UpSQL:       qrLoginSessionsUp,
+			DownSQL:     qrLoginSessionsDown,
+		},
 	}
 }

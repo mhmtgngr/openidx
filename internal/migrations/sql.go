@@ -1573,4 +1573,43 @@ DROP TABLE IF EXISTS data_subject_requests;
 DROP INDEX IF EXISTS idx_user_consents_type;
 DROP INDEX IF EXISTS idx_user_consents_user;
 DROP TABLE IF EXISTS user_consents;`
+
+	// Migration 033: qr_login_sessions — the passwordless QR-login table that
+	// internal/identity/passwordless.go has been INSERTing into since the
+	// feature shipped, but which no migration ever created. Every call into
+	// /oauth/qr-login/create therefore 500'd at the first INSERT, and the
+	// browser-side polling endpoint had nothing to poll. Surfaced by the
+	// integration tests added in PR #126.
+	//
+	// Schema mirrors the columns the package reads/writes (see
+	// CreateQRLoginSession / GetQRLoginSession): an id, a unique
+	// session_token (the lookup key), opaque QR payload, status enum,
+	// nullable user_id set when the mobile app scans, JSONB device blobs,
+	// IP, and the four lifecycle timestamps.
+	qrLoginSessionsUp = `-- Migration 033: qr_login_sessions
+CREATE TABLE IF NOT EXISTS qr_login_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_token VARCHAR(255) UNIQUE NOT NULL,
+    qr_code_data TEXT,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    browser_info JSONB DEFAULT '{}',
+    mobile_info JSONB,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    scanned_at TIMESTAMP WITH TIME ZONE,
+    approved_at TIMESTAMP WITH TIME ZONE
+);
+-- session_token is the lookup key on every read; UNIQUE already creates an
+-- index but we add the daily-approved-count predicate the passwordless
+-- settings page hits.
+CREATE INDEX IF NOT EXISTS idx_qr_login_status_created
+    ON qr_login_sessions(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_qr_login_user
+    ON qr_login_sessions(user_id) WHERE user_id IS NOT NULL;`
+
+	qrLoginSessionsDown = `DROP INDEX IF EXISTS idx_qr_login_user;
+DROP INDEX IF EXISTS idx_qr_login_status_created;
+DROP TABLE IF EXISTS qr_login_sessions;`
 )
