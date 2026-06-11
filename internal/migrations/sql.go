@@ -1612,4 +1612,289 @@ CREATE INDEX IF NOT EXISTS idx_qr_login_user
 	qrLoginSessionsDown = `DROP INDEX IF EXISTS idx_qr_login_user;
 DROP INDEX IF EXISTS idx_qr_login_status_created;
 DROP TABLE IF EXISTS qr_login_sessions;`
+
+	// Migration 034 — adds the NULL-able org_id UUID column to every
+	// table that the v2.0 multi-tenancy design says must be org-scoped
+	// but that doesn't have the column yet (migration v025 covered the
+	// initial wave: users, groups, roles, applications, oauth_clients,
+	// audit_events, sessions, policies, access_reviews,
+	// service_accounts, webhook_subscriptions, access_requests,
+	// security_alerts; notifications got it inline in v028).
+	//
+	// This migration ONLY adds columns and indexes. It does NOT:
+	//   - backfill values (that's v035)
+	//   - set NOT NULL (that's v036)
+	//   - add the foreign key constraint (that's v036)
+	//   - activate RLS policies (that's v036, deferred via PERMISSIVE
+	//     USING(true) until v1.8.0 turns them on)
+	//
+	// Idempotent via IF NOT EXISTS so re-running it (or running it on
+	// an install where a future migration already added a particular
+	// column) is safe.
+	//
+	// Tables deliberately NOT scoped here, because they are
+	// install-wide rather than tenant-scoped:
+	//   - organizations           (the tenant table itself)
+	//   - permissions             (global permission-string catalog)
+	//   - system_settings         (install-wide config: SMTP, etc.)
+	//   - ip_threat_list          (shared threat-intel feed)
+	//   - posture_check_types     (global enum of posture check kinds)
+	//   - policy_sync_state       (global ziti sync watermark)
+	//
+	// If a future PR scopes one of these (e.g., per-tenant SMTP), it
+	// owns that column add in its own migration.
+	orgIDColumnsUp = `-- Migration 034: per-table org_id columns for v2.0 multi-tenancy
+
+-- Identity / user-data tables (child of users)
+ALTER TABLE api_keys                    ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE email_verification_tokens   ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE known_devices               ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE login_history               ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE notification_preferences    ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE password_history            ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE password_reset_tokens       ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE qr_login_sessions           ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE stepup_challenges           ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE user_consents               ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE user_invitations            ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE user_sessions               ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE group_memberships           ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE user_application_assignments ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- MFA tables (per-user MFA enrollment)
+ALTER TABLE mfa_backup_codes            ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE mfa_policies                ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE mfa_push_challenges         ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE mfa_push_devices            ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE mfa_totp                    ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE mfa_webauthn                ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE user_mfa_policies           ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- OAuth tables (token / authorization-code lifetimes)
+ALTER TABLE oauth_access_tokens         ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE oauth_authorization_codes   ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE oauth_refresh_tokens        ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Role / permission joins
+ALTER TABLE composite_roles             ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE role_permissions            ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE user_roles                  ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Application / SSO config
+ALTER TABLE application_sso_settings    ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Group tables
+ALTER TABLE group_join_requests         ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Governance / access review / approval
+ALTER TABLE access_request_approvals    ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE approval_policies           ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE compliance_reports          ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE review_items                ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Directory integrations / sync
+ALTER TABLE directory_integrations      ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE directory_sync_logs         ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE directory_sync_state        ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Identity providers (per-org SAML/OIDC IdP)
+ALTER TABLE identity_providers          ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Privacy / GDPR
+ALTER TABLE data_subject_requests       ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE privacy_assessments         ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE privacy_retention_policies  ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Provisioning / SCIM
+ALTER TABLE provisioning_rules          ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE scim_groups                 ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE scim_users                  ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Security / risk
+ALTER TABLE credential_rotations        ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE device_posture_results      ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE posture_checks              ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE policy_rules                ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE webhook_deliveries          ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Proxy (ZTA)
+ALTER TABLE proxy_routes                ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE proxy_sessions              ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- OpenZiti
+ALTER TABLE ziti_certificates           ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE ziti_identities             ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE ziti_service_policies       ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE ziti_services               ADD COLUMN IF NOT EXISTS org_id UUID;
+
+-- Indexes on every column we just added. idx_<table>_org_id is the
+-- convention v025 established and the v1.7.0 query-rewrite work will
+-- rely on (RLS in v1.8.0 too).
+CREATE INDEX IF NOT EXISTS idx_api_keys_org_id                    ON api_keys(org_id);
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_org_id   ON email_verification_tokens(org_id);
+CREATE INDEX IF NOT EXISTS idx_known_devices_org_id               ON known_devices(org_id);
+CREATE INDEX IF NOT EXISTS idx_login_history_org_id               ON login_history(org_id);
+CREATE INDEX IF NOT EXISTS idx_notification_preferences_org_id    ON notification_preferences(org_id);
+CREATE INDEX IF NOT EXISTS idx_password_history_org_id            ON password_history(org_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_org_id       ON password_reset_tokens(org_id);
+CREATE INDEX IF NOT EXISTS idx_qr_login_sessions_org_id           ON qr_login_sessions(org_id);
+CREATE INDEX IF NOT EXISTS idx_stepup_challenges_org_id           ON stepup_challenges(org_id);
+CREATE INDEX IF NOT EXISTS idx_user_consents_org_id               ON user_consents(org_id);
+CREATE INDEX IF NOT EXISTS idx_user_invitations_org_id            ON user_invitations(org_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_org_id               ON user_sessions(org_id);
+CREATE INDEX IF NOT EXISTS idx_group_memberships_org_id           ON group_memberships(org_id);
+CREATE INDEX IF NOT EXISTS idx_user_application_assignments_org_id ON user_application_assignments(org_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_backup_codes_org_id            ON mfa_backup_codes(org_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_policies_org_id                ON mfa_policies(org_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_push_challenges_org_id         ON mfa_push_challenges(org_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_push_devices_org_id            ON mfa_push_devices(org_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_totp_org_id                    ON mfa_totp(org_id);
+CREATE INDEX IF NOT EXISTS idx_mfa_webauthn_org_id                ON mfa_webauthn(org_id);
+CREATE INDEX IF NOT EXISTS idx_user_mfa_policies_org_id           ON user_mfa_policies(org_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_org_id         ON oauth_access_tokens(org_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_org_id   ON oauth_authorization_codes(org_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_org_id        ON oauth_refresh_tokens(org_id);
+CREATE INDEX IF NOT EXISTS idx_composite_roles_org_id             ON composite_roles(org_id);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_org_id            ON role_permissions(org_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_org_id                  ON user_roles(org_id);
+CREATE INDEX IF NOT EXISTS idx_application_sso_settings_org_id    ON application_sso_settings(org_id);
+CREATE INDEX IF NOT EXISTS idx_group_join_requests_org_id         ON group_join_requests(org_id);
+CREATE INDEX IF NOT EXISTS idx_access_request_approvals_org_id    ON access_request_approvals(org_id);
+CREATE INDEX IF NOT EXISTS idx_approval_policies_org_id           ON approval_policies(org_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_reports_org_id          ON compliance_reports(org_id);
+CREATE INDEX IF NOT EXISTS idx_review_items_org_id                ON review_items(org_id);
+CREATE INDEX IF NOT EXISTS idx_directory_integrations_org_id      ON directory_integrations(org_id);
+CREATE INDEX IF NOT EXISTS idx_directory_sync_logs_org_id         ON directory_sync_logs(org_id);
+CREATE INDEX IF NOT EXISTS idx_directory_sync_state_org_id        ON directory_sync_state(org_id);
+CREATE INDEX IF NOT EXISTS idx_identity_providers_org_id          ON identity_providers(org_id);
+CREATE INDEX IF NOT EXISTS idx_data_subject_requests_org_id       ON data_subject_requests(org_id);
+CREATE INDEX IF NOT EXISTS idx_privacy_assessments_org_id         ON privacy_assessments(org_id);
+CREATE INDEX IF NOT EXISTS idx_privacy_retention_policies_org_id  ON privacy_retention_policies(org_id);
+CREATE INDEX IF NOT EXISTS idx_provisioning_rules_org_id          ON provisioning_rules(org_id);
+CREATE INDEX IF NOT EXISTS idx_scim_groups_org_id                 ON scim_groups(org_id);
+CREATE INDEX IF NOT EXISTS idx_scim_users_org_id                  ON scim_users(org_id);
+CREATE INDEX IF NOT EXISTS idx_credential_rotations_org_id        ON credential_rotations(org_id);
+CREATE INDEX IF NOT EXISTS idx_device_posture_results_org_id      ON device_posture_results(org_id);
+CREATE INDEX IF NOT EXISTS idx_posture_checks_org_id              ON posture_checks(org_id);
+CREATE INDEX IF NOT EXISTS idx_policy_rules_org_id                ON policy_rules(org_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_org_id          ON webhook_deliveries(org_id);
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_org_id                ON proxy_routes(org_id);
+CREATE INDEX IF NOT EXISTS idx_proxy_sessions_org_id              ON proxy_sessions(org_id);
+CREATE INDEX IF NOT EXISTS idx_ziti_certificates_org_id           ON ziti_certificates(org_id);
+CREATE INDEX IF NOT EXISTS idx_ziti_identities_org_id             ON ziti_identities(org_id);
+CREATE INDEX IF NOT EXISTS idx_ziti_service_policies_org_id       ON ziti_service_policies(org_id);
+CREATE INDEX IF NOT EXISTS idx_ziti_services_org_id               ON ziti_services(org_id);`
+
+	orgIDColumnsDown = `-- Migration 034 down: drop the indexes first, then the columns.
+-- Idempotent. If a v035 backfill ran before this Down, the column
+-- will still drop cleanly (values go with it).
+DROP INDEX IF EXISTS idx_ziti_services_org_id;
+DROP INDEX IF EXISTS idx_ziti_service_policies_org_id;
+DROP INDEX IF EXISTS idx_ziti_identities_org_id;
+DROP INDEX IF EXISTS idx_ziti_certificates_org_id;
+DROP INDEX IF EXISTS idx_proxy_sessions_org_id;
+DROP INDEX IF EXISTS idx_proxy_routes_org_id;
+DROP INDEX IF EXISTS idx_webhook_deliveries_org_id;
+DROP INDEX IF EXISTS idx_policy_rules_org_id;
+DROP INDEX IF EXISTS idx_posture_checks_org_id;
+DROP INDEX IF EXISTS idx_device_posture_results_org_id;
+DROP INDEX IF EXISTS idx_credential_rotations_org_id;
+DROP INDEX IF EXISTS idx_scim_users_org_id;
+DROP INDEX IF EXISTS idx_scim_groups_org_id;
+DROP INDEX IF EXISTS idx_provisioning_rules_org_id;
+DROP INDEX IF EXISTS idx_privacy_retention_policies_org_id;
+DROP INDEX IF EXISTS idx_privacy_assessments_org_id;
+DROP INDEX IF EXISTS idx_data_subject_requests_org_id;
+DROP INDEX IF EXISTS idx_identity_providers_org_id;
+DROP INDEX IF EXISTS idx_directory_sync_state_org_id;
+DROP INDEX IF EXISTS idx_directory_sync_logs_org_id;
+DROP INDEX IF EXISTS idx_directory_integrations_org_id;
+DROP INDEX IF EXISTS idx_review_items_org_id;
+DROP INDEX IF EXISTS idx_compliance_reports_org_id;
+DROP INDEX IF EXISTS idx_approval_policies_org_id;
+DROP INDEX IF EXISTS idx_access_request_approvals_org_id;
+DROP INDEX IF EXISTS idx_group_join_requests_org_id;
+DROP INDEX IF EXISTS idx_application_sso_settings_org_id;
+DROP INDEX IF EXISTS idx_user_roles_org_id;
+DROP INDEX IF EXISTS idx_role_permissions_org_id;
+DROP INDEX IF EXISTS idx_composite_roles_org_id;
+DROP INDEX IF EXISTS idx_oauth_refresh_tokens_org_id;
+DROP INDEX IF EXISTS idx_oauth_authorization_codes_org_id;
+DROP INDEX IF EXISTS idx_oauth_access_tokens_org_id;
+DROP INDEX IF EXISTS idx_user_mfa_policies_org_id;
+DROP INDEX IF EXISTS idx_mfa_webauthn_org_id;
+DROP INDEX IF EXISTS idx_mfa_totp_org_id;
+DROP INDEX IF EXISTS idx_mfa_push_devices_org_id;
+DROP INDEX IF EXISTS idx_mfa_push_challenges_org_id;
+DROP INDEX IF EXISTS idx_mfa_policies_org_id;
+DROP INDEX IF EXISTS idx_mfa_backup_codes_org_id;
+DROP INDEX IF EXISTS idx_user_application_assignments_org_id;
+DROP INDEX IF EXISTS idx_group_memberships_org_id;
+DROP INDEX IF EXISTS idx_user_sessions_org_id;
+DROP INDEX IF EXISTS idx_user_invitations_org_id;
+DROP INDEX IF EXISTS idx_user_consents_org_id;
+DROP INDEX IF EXISTS idx_stepup_challenges_org_id;
+DROP INDEX IF EXISTS idx_qr_login_sessions_org_id;
+DROP INDEX IF EXISTS idx_password_reset_tokens_org_id;
+DROP INDEX IF EXISTS idx_password_history_org_id;
+DROP INDEX IF EXISTS idx_notification_preferences_org_id;
+DROP INDEX IF EXISTS idx_login_history_org_id;
+DROP INDEX IF EXISTS idx_known_devices_org_id;
+DROP INDEX IF EXISTS idx_email_verification_tokens_org_id;
+DROP INDEX IF EXISTS idx_api_keys_org_id;
+
+ALTER TABLE ziti_services               DROP COLUMN IF EXISTS org_id;
+ALTER TABLE ziti_service_policies       DROP COLUMN IF EXISTS org_id;
+ALTER TABLE ziti_identities             DROP COLUMN IF EXISTS org_id;
+ALTER TABLE ziti_certificates           DROP COLUMN IF EXISTS org_id;
+ALTER TABLE proxy_sessions              DROP COLUMN IF EXISTS org_id;
+ALTER TABLE proxy_routes                DROP COLUMN IF EXISTS org_id;
+ALTER TABLE webhook_deliveries          DROP COLUMN IF EXISTS org_id;
+ALTER TABLE policy_rules                DROP COLUMN IF EXISTS org_id;
+ALTER TABLE posture_checks              DROP COLUMN IF EXISTS org_id;
+ALTER TABLE device_posture_results      DROP COLUMN IF EXISTS org_id;
+ALTER TABLE credential_rotations        DROP COLUMN IF EXISTS org_id;
+ALTER TABLE scim_users                  DROP COLUMN IF EXISTS org_id;
+ALTER TABLE scim_groups                 DROP COLUMN IF EXISTS org_id;
+ALTER TABLE provisioning_rules          DROP COLUMN IF EXISTS org_id;
+ALTER TABLE privacy_retention_policies  DROP COLUMN IF EXISTS org_id;
+ALTER TABLE privacy_assessments         DROP COLUMN IF EXISTS org_id;
+ALTER TABLE data_subject_requests       DROP COLUMN IF EXISTS org_id;
+ALTER TABLE identity_providers          DROP COLUMN IF EXISTS org_id;
+ALTER TABLE directory_sync_state        DROP COLUMN IF EXISTS org_id;
+ALTER TABLE directory_sync_logs         DROP COLUMN IF EXISTS org_id;
+ALTER TABLE directory_integrations      DROP COLUMN IF EXISTS org_id;
+ALTER TABLE review_items                DROP COLUMN IF EXISTS org_id;
+ALTER TABLE compliance_reports          DROP COLUMN IF EXISTS org_id;
+ALTER TABLE approval_policies           DROP COLUMN IF EXISTS org_id;
+ALTER TABLE access_request_approvals    DROP COLUMN IF EXISTS org_id;
+ALTER TABLE group_join_requests         DROP COLUMN IF EXISTS org_id;
+ALTER TABLE application_sso_settings    DROP COLUMN IF EXISTS org_id;
+ALTER TABLE user_roles                  DROP COLUMN IF EXISTS org_id;
+ALTER TABLE role_permissions            DROP COLUMN IF EXISTS org_id;
+ALTER TABLE composite_roles             DROP COLUMN IF EXISTS org_id;
+ALTER TABLE oauth_refresh_tokens        DROP COLUMN IF EXISTS org_id;
+ALTER TABLE oauth_authorization_codes   DROP COLUMN IF EXISTS org_id;
+ALTER TABLE oauth_access_tokens         DROP COLUMN IF EXISTS org_id;
+ALTER TABLE user_mfa_policies           DROP COLUMN IF EXISTS org_id;
+ALTER TABLE mfa_webauthn                DROP COLUMN IF EXISTS org_id;
+ALTER TABLE mfa_totp                    DROP COLUMN IF EXISTS org_id;
+ALTER TABLE mfa_push_devices            DROP COLUMN IF EXISTS org_id;
+ALTER TABLE mfa_push_challenges         DROP COLUMN IF EXISTS org_id;
+ALTER TABLE mfa_policies                DROP COLUMN IF EXISTS org_id;
+ALTER TABLE mfa_backup_codes            DROP COLUMN IF EXISTS org_id;
+ALTER TABLE user_application_assignments DROP COLUMN IF EXISTS org_id;
+ALTER TABLE group_memberships           DROP COLUMN IF EXISTS org_id;
+ALTER TABLE user_sessions               DROP COLUMN IF EXISTS org_id;
+ALTER TABLE user_invitations            DROP COLUMN IF EXISTS org_id;
+ALTER TABLE user_consents               DROP COLUMN IF EXISTS org_id;
+ALTER TABLE stepup_challenges           DROP COLUMN IF EXISTS org_id;
+ALTER TABLE qr_login_sessions           DROP COLUMN IF EXISTS org_id;
+ALTER TABLE password_reset_tokens       DROP COLUMN IF EXISTS org_id;
+ALTER TABLE password_history            DROP COLUMN IF EXISTS org_id;
+ALTER TABLE notification_preferences    DROP COLUMN IF EXISTS org_id;
+ALTER TABLE login_history               DROP COLUMN IF EXISTS org_id;
+ALTER TABLE known_devices               DROP COLUMN IF EXISTS org_id;
+ALTER TABLE email_verification_tokens   DROP COLUMN IF EXISTS org_id;
+ALTER TABLE api_keys                    DROP COLUMN IF EXISTS org_id;`
 )
