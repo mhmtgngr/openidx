@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.5.0] - 2026-06-11
+
+A docs-only release that closes the last open P2 backlog item from
+the v1.0 plan. No code change; safe to skip if you're already on
+v1.4.0 and don't need the new operator-facing docs.
+
+### Added
+- **`docs/SECURITY-HARDENING.md`** (#133). Production-readiness
+  checklist where every "hard requirement" row maps to a check in
+  `Config.ValidateProduction()` — the in-process blocking startup
+  gate that already refuses to bring up a misconfigured production
+  deploy. Covers the secrets / transport / CSRF-CORS-audit-stream /
+  debug-knob sections the validator gates on, plus an "outside the
+  validator" section for the operational items that aren't config
+  flags. The policy at the bottom nails down validator-first,
+  doc-update-in-the-same-PR.
+- **`docs/SECURITY-TENANCY.md`** (#133). Explicit, prose statement
+  of the single-tenant assumption the v1.0 plan made and the v1.x
+  releases preserved. Describes what is shared (data layer,
+  identity, authorization, audit), what we do support (federation
+  across IdPs, per-app authz, per-customer deployments), and what
+  we don't (row-level tenant isolation, per-tenant signing keys,
+  per-tenant rate limits, per-tenant audit isolation) — and why
+  each is intentional, not a gap.
+
+### Changed
+- **`SECURITY.md`** Deployment section trimmed (#133). The previous
+  generic OWASP-ish bullet list duplicated marketing copy from the
+  README and overlapped with the new hardening doc by 90%. Replaced
+  with two pointers to `SECURITY-HARDENING.md` and
+  `SECURITY-TENANCY.md` plus the lock-step policy. Vuln reporting
+  and supported-versions sections are unchanged.
+- **`README.md`** Overview (#133). Adds a prominent blockquote that
+  states the single-tenant assumption in one sentence and links to
+  `docs/SECURITY-TENANCY.md`. First-impression accuracy for readers
+  who would otherwise spend time evaluating us against a multi-
+  tenant SaaS use case we don't support.
+- **`docs/GETTING-STARTED.md`** "Initialize Database" step (#133).
+  The old step told operators to run `\i migrations/001_create_tables.sql`
+  — a pre-historic flow. Replaced with the supported path: build
+  `cmd/migrate`, run `migrate up`, verify with `migrate status`.
+  Plus a top-of-doc callout pointing readers at the new hardening
+  and tenancy docs before any production deploy.
+
+### Notes
+- v1.4.0 deployments upgrade in place. The release tags the v1.5.0
+  binaries identically to v1.4.0; if you don't pull the docs, the
+  upgrade is a no-op.
+
 ## [1.4.0] - 2026-06-11
 
 A short, focused security-hardening release. Three independent P1/P2
