@@ -446,8 +446,11 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("elasticsearch_tls", false)
 	v.SetDefault("elasticsearch_ca_cert", "")
 
-	// CSRF defaults (disabled by default, auto-enabled in production via warning)
-	v.SetDefault("csrf_enabled", false)
+	// CSRF defaults: enabled by default. Operators who don't want CSRF
+	// protection on a single-page test box still have an explicit opt-out
+	// (CSRF_ENABLED=false), but the secure-by-default posture means no
+	// production deployment can forget to flip the bit.
+	v.SetDefault("csrf_enabled", true)
 	v.SetDefault("csrf_trusted_domain", "")
 
 	// Debug OTP defaults (NEVER enable in production)
@@ -779,6 +782,19 @@ func (c *Config) ValidateProduction() error {
 	if c.DebugOTPInResponse {
 		criticalIssues = append(criticalIssues,
 			"debug_otp_in_response must be false in production; OTP codes must never be exposed in API responses")
+	}
+
+	// Critical: TLS skip-verify flags must NEVER be true in production.
+	// These flags exist as dev-loop escape hatches against self-signed
+	// certs in a local docker stack; in production they erase the entire
+	// trust chain on the link they cover.
+	if c.RedisTLSSkipVerify {
+		criticalIssues = append(criticalIssues,
+			"redis_tls_skip_verify must be false in production; setting it to true disables Redis server-cert validation")
+	}
+	if c.ZitiInsecureSkipVerify {
+		criticalIssues = append(criticalIssues,
+			"ziti_insecure_skip_verify must be false in production; setting it to true disables Ziti controller TLS validation")
 	}
 
 	if len(criticalIssues) > 0 {

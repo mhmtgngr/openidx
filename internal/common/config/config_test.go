@@ -143,6 +143,46 @@ func TestLoad(t *testing.T) {
 	})
 }
 
+// TestSecureByDefaultSettings pins down the secure-by-default posture
+// the P2.1 sweep adopted: csrf_enabled flips from false to true and the
+// two TLS skip-verify escape hatches stay false. A future change that
+// silently flips any of these to "more permissive" should fail loudly
+// here rather than on a production deploy.
+func TestSecureByDefaultSettings(t *testing.T) {
+	// Save and clear interfering env vars so the assertions read
+	// defaults, not whatever the runner happens to export.
+	envVars := []string{
+		"APP_ENV", "DATABASE_URL", "PORT", "OPENIDX_ENVIRONMENT",
+		"CSRF_ENABLED", "REDIS_TLS_SKIP_VERIFY", "ZITI_INSECURE_SKIP_VERIFY",
+		"DEBUG_OTP_IN_RESPONSE",
+	}
+	saved := make(map[string]string)
+	for _, e := range envVars {
+		saved[e] = os.Getenv(e)
+		os.Unsetenv(e)
+	}
+	defer func() {
+		for e, v := range saved {
+			if v != "" {
+				os.Setenv(e, v)
+			} else {
+				os.Unsetenv(e)
+			}
+		}
+	}()
+
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+	cfg, err := Load("test-service")
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.True(t, cfg.CSRFEnabled, "csrf_enabled default = false; secure-by-default requires true")
+	assert.False(t, cfg.RedisTLSSkipVerify, "redis_tls_skip_verify default flipped to true")
+	assert.False(t, cfg.ZitiInsecureSkipVerify, "ziti_insecure_skip_verify default flipped to true")
+	assert.False(t, cfg.DebugOTPInResponse, "debug_otp_in_response default flipped to true")
+}
+
 func TestGetRedisSentinelAddresses(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -625,6 +665,48 @@ func TestValidateProduction(t *testing.T) {
 		assert.Contains(t, err.Error(), "audit_stream_allowed_origins")
 	})
 
+	t.Run("Fails when redis_tls_skip_verify is true", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			RedisTLSSkipVerify:        true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "redis_tls_skip_verify")
+	})
+
+	t.Run("Fails when ziti_insecure_skip_verify is true", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+			ZitiInsecureSkipVerify:    true,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ziti_insecure_skip_verify")
+	})
+
 	t.Run("Passes with fully secure config", func(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
@@ -708,8 +790,12 @@ func TestConfigDefaults(t *testing.T) {
 	assert.False(t, cfg.ContinuousVerifyEnabled)
 	assert.False(t, cfg.BrowZerEnabled)
 	assert.Equal(t, "*", cfg.CORSAllowedOrigins)
-	assert.False(t, cfg.CSRFEnabled)
+	// Secure-by-default after P2.1: CSRF is on by default and the
+	// dev-loop escape hatches (DebugOTPInResponse, skip-verify) are off.
+	assert.True(t, cfg.CSRFEnabled)
 	assert.False(t, cfg.DebugOTPInResponse)
+	assert.False(t, cfg.RedisTLSSkipVerify)
+	assert.False(t, cfg.ZitiInsecureSkipVerify)
 	assert.False(t, cfg.TLS.Enabled)
 	assert.Equal(t, "disable", cfg.DatabaseSSLMode)
 	assert.False(t, cfg.RedisTLSEnabled)
