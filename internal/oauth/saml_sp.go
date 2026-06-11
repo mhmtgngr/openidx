@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -552,6 +554,31 @@ func (s *Service) createSAMLServiceProvider(ctx context.Context, req *CreateSAML
 	}, nil
 }
 
+// samlSPUpdatableColumns is the closed allow-list of columns
+// updateSAMLServiceProvider is permitted to touch. The builder below
+// rejects anything else even if a future bug tries to wire it in.
+// updated_at is appended unconditionally and is therefore in the set too.
+var samlSPUpdatableColumns = map[string]struct{}{
+	"name":                   {},
+	"description":            {},
+	"entity_id":              {},
+	"acs_url":                {},
+	"slo_url":                {},
+	"metadata_url":           {},
+	"certificate":            {},
+	"name_id_format":         {},
+	"attribute_mappings":     {},
+	"want_assertions_signed": {},
+	"encryption_enabled":     {},
+	"enabled":                {},
+	"updated_at":             {},
+}
+
+// samlSPColumnRE is the runtime defense-in-depth check on column names.
+// PostgreSQL identifiers are at most 63 chars and SQL-safe identifiers
+// are [A-Za-z_][A-Za-z0-9_]*; we keep it lowercase to match our schema.
+var samlSPColumnRE = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
 // updateSAMLServiceProvider updates an existing SP
 func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req *UpdateSAMLServiceProviderRequest) (*SAMLServiceProvider, error) {
 	// Get existing SP
@@ -560,99 +587,88 @@ func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req 
 		return nil, err
 	}
 
-	// Update fields from request
 	now := time.Now()
-	updates := []string{}
-	args := []interface{}{}
-	argIdx := 1
 
-	if req.Name != nil {
-		updates = append(updates, fmt.Sprintf("name = $%d", argIdx))
-		args = append(args, *req.Name)
-		argIdx++
-		sp.Name = *req.Name
-	}
-	if req.Description != nil {
-		updates = append(updates, fmt.Sprintf("description = $%d", argIdx))
-		args = append(args, *req.Description)
-		argIdx++
-		sp.Description = *req.Description
-	}
-	if req.EntityID != nil {
-		updates = append(updates, fmt.Sprintf("entity_id = $%d", argIdx))
-		args = append(args, *req.EntityID)
-		argIdx++
-		sp.EntityID = *req.EntityID
-	}
-	if req.ACSURL != nil {
-		updates = append(updates, fmt.Sprintf("acs_url = $%d", argIdx))
-		args = append(args, *req.ACSURL)
-		argIdx++
-		sp.ACSURL = *req.ACSURL
-	}
-	if req.SLOURL != nil {
-		updates = append(updates, fmt.Sprintf("slo_url = $%d", argIdx))
-		args = append(args, *req.SLOURL)
-		argIdx++
-		sp.SLOURL = *req.SLOURL
-	}
-	if req.MetadataURL != nil {
-		updates = append(updates, fmt.Sprintf("metadata_url = $%d", argIdx))
-		args = append(args, *req.MetadataURL)
-		argIdx++
-		sp.MetadataURL = *req.MetadataURL
-	}
-	if req.Certificate != nil {
-		updates = append(updates, fmt.Sprintf("certificate = $%d", argIdx))
-		args = append(args, *req.Certificate)
-		argIdx++
-		sp.Certificate = *req.Certificate
-	}
-	if req.NameIDFormat != nil {
-		updates = append(updates, fmt.Sprintf("name_id_format = $%d", argIdx))
-		args = append(args, *req.NameIDFormat)
-		argIdx++
-		sp.NameIDFormat = *req.NameIDFormat
-	}
-	if req.AttributeMappings != nil {
-		attrMappingsJSON, _ := json.Marshal(req.AttributeMappings)
-		updates = append(updates, fmt.Sprintf("attribute_mappings = $%d", argIdx))
-		args = append(args, attrMappingsJSON)
-		argIdx++
-		sp.AttributeMappings = req.AttributeMappings
-	}
-	if req.WantAssertionsSigned != nil {
-		updates = append(updates, fmt.Sprintf("want_assertions_signed = $%d", argIdx))
-		args = append(args, *req.WantAssertionsSigned)
-		argIdx++
-		sp.WantAssertionsSigned = *req.WantAssertionsSigned
-	}
-	if req.EncryptionEnabled != nil {
-		updates = append(updates, fmt.Sprintf("encryption_enabled = $%d", argIdx))
-		args = append(args, *req.EncryptionEnabled)
-		argIdx++
-		sp.EncryptionEnabled = *req.EncryptionEnabled
-	}
-	if req.Enabled != nil {
-		updates = append(updates, fmt.Sprintf("enabled = $%d", argIdx))
-		args = append(args, *req.Enabled)
-		argIdx++
-		sp.Enabled = *req.Enabled
+	// Single source of truth for the (column → value, set?) mapping. By
+	// pulling every column literal into one slice we kill the previous
+	// pattern of scattered `fmt.Sprintf("column = $%d", argIdx)` calls in
+	// if-blocks — any new column has to be added here, declared in
+	// samlSPUpdatableColumns, AND go through the runtime allow-list check
+	// in buildUpdateClause below.
+	attrJSON, _ := json.Marshal(req.AttributeMappings)
+	fields := []sqlUpdateField{
+		{col: "name", val: derefStr(req.Name), set: req.Name != nil},
+		{col: "description", val: derefStr(req.Description), set: req.Description != nil},
+		{col: "entity_id", val: derefStr(req.EntityID), set: req.EntityID != nil},
+		{col: "acs_url", val: derefStr(req.ACSURL), set: req.ACSURL != nil},
+		{col: "slo_url", val: derefStr(req.SLOURL), set: req.SLOURL != nil},
+		{col: "metadata_url", val: derefStr(req.MetadataURL), set: req.MetadataURL != nil},
+		{col: "certificate", val: derefStr(req.Certificate), set: req.Certificate != nil},
+		{col: "name_id_format", val: derefStr(req.NameIDFormat), set: req.NameIDFormat != nil},
+		{col: "attribute_mappings", val: attrJSON, set: req.AttributeMappings != nil},
+		{col: "want_assertions_signed", val: derefBool(req.WantAssertionsSigned), set: req.WantAssertionsSigned != nil},
+		{col: "encryption_enabled", val: derefBool(req.EncryptionEnabled), set: req.EncryptionEnabled != nil},
+		{col: "enabled", val: derefBool(req.Enabled), set: req.Enabled != nil},
 	}
 
-	if len(updates) == 0 {
+	setClauses, args, err := buildUpdateClause(fields, samlSPUpdatableColumns, samlSPColumnRE)
+	if err != nil {
+		return nil, err
+	}
+	if len(setClauses) == 0 {
 		return sp, nil
 	}
 
-	updates = append(updates, fmt.Sprintf("updated_at = $%d", argIdx))
+	// updated_at is always written when there's at least one user-driven
+	// column to update.
+	setClauses = append(setClauses, "updated_at = $"+strconv.Itoa(len(args)+1))
 	args = append(args, now)
-	argIdx++
-
 	args = append(args, id)
-	// SECURITY: Column names in 'updates' are hardcoded string literals from the if-blocks above,
-	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE saml_service_providers SET %s WHERE id = $%d",
-		strings.Join(updates, ", "), argIdx)
+
+	// Mirror the requested changes onto the returned struct now that we
+	// know we'll execute the UPDATE.
+	if req.Name != nil {
+		sp.Name = *req.Name
+	}
+	if req.Description != nil {
+		sp.Description = *req.Description
+	}
+	if req.EntityID != nil {
+		sp.EntityID = *req.EntityID
+	}
+	if req.ACSURL != nil {
+		sp.ACSURL = *req.ACSURL
+	}
+	if req.SLOURL != nil {
+		sp.SLOURL = *req.SLOURL
+	}
+	if req.MetadataURL != nil {
+		sp.MetadataURL = *req.MetadataURL
+	}
+	if req.Certificate != nil {
+		sp.Certificate = *req.Certificate
+	}
+	if req.NameIDFormat != nil {
+		sp.NameIDFormat = *req.NameIDFormat
+	}
+	if req.AttributeMappings != nil {
+		sp.AttributeMappings = req.AttributeMappings
+	}
+	if req.WantAssertionsSigned != nil {
+		sp.WantAssertionsSigned = *req.WantAssertionsSigned
+	}
+	if req.EncryptionEnabled != nil {
+		sp.EncryptionEnabled = *req.EncryptionEnabled
+	}
+	if req.Enabled != nil {
+		sp.Enabled = *req.Enabled
+	}
+
+	// Table name + WHERE column are package-literal strings. The
+	// SET clause comes from setClauses, every entry of which has been
+	// allow-listed by buildUpdateClause.
+	query := "UPDATE saml_service_providers SET " + strings.Join(setClauses, ", ") +
+		" WHERE id = $" + strconv.Itoa(len(args))
 
 	_, err = s.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
@@ -661,6 +677,24 @@ func (s *Service) updateSAMLServiceProvider(ctx context.Context, id string, req 
 
 	sp.UpdatedAt = now
 	return sp, nil
+}
+
+// derefStr returns *p (or "" for nil). Used by the SQL update builder
+// above to flatten *string columns into the args slice without inline
+// dereferences.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// derefBool — see derefStr.
+func derefBool(p *bool) bool {
+	if p == nil {
+		return false
+	}
+	return *p
 }
 
 // deleteSAMLServiceProvider deletes an SP

@@ -351,42 +351,44 @@ func (s *Service) handleUpdatePathClassification(c *gin.Context) {
 		}
 	}
 
-	// Build dynamic update
-	sets := []string{"classification_source='manual'", "updated_at=NOW()"}
-	args := []interface{}{}
-	argIdx := 1
-
-	if req.Classification != "" {
-		sets = append(sets, fmt.Sprintf("classification=$%d", argIdx))
-		args = append(args, req.Classification)
-		argIdx++
-	}
-	if req.AllowedRoles != nil {
-		rolesJSON, _ := json.Marshal(req.AllowedRoles)
-		sets = append(sets, fmt.Sprintf("allowed_roles=$%d", argIdx))
-		args = append(args, rolesJSON)
-		argIdx++
-	}
-	if req.RequireAuth != nil {
-		sets = append(sets, fmt.Sprintf("require_auth=$%d", argIdx))
-		args = append(args, *req.RequireAuth)
-		argIdx++
-	}
-	if req.RequireDeviceTrust != nil {
-		sets = append(sets, fmt.Sprintf("require_device_trust=$%d", argIdx))
-		args = append(args, *req.RequireDeviceTrust)
-		argIdx++
-	}
-	if req.SuggestedPolicy != "" {
-		sets = append(sets, fmt.Sprintf("suggested_policy=$%d", argIdx))
-		args = append(args, req.SuggestedPolicy)
-		argIdx++
+	// Single source of truth for the (column → value, set?) mapping. By
+	// pulling every column literal into one slice we kill the previous
+	// pattern of scattered `fmt.Sprintf("col=$%d", argIdx)` calls in
+	// if-blocks. Any new column has to be added here, declared in
+	// discoveredPathsUpdatableColumns, AND pass the runtime allow-list
+	// check in buildUpdateClause.
+	rolesJSON, _ := json.Marshal(req.AllowedRoles)
+	fields := []sqlUpdateField{
+		{col: "classification", val: req.Classification, set: req.Classification != ""},
+		{col: "allowed_roles", val: rolesJSON, set: req.AllowedRoles != nil},
+		{col: "require_auth", val: derefBool(req.RequireAuth), set: req.RequireAuth != nil},
+		{col: "require_device_trust", val: derefBool(req.RequireDeviceTrust), set: req.RequireDeviceTrust != nil},
+		{col: "suggested_policy", val: req.SuggestedPolicy, set: req.SuggestedPolicy != ""},
 	}
 
+	setClauses, args, buildErr := buildUpdateClause(
+		fields, discoveredPathsUpdatableColumns, discoveredPathsColumnRE,
+	)
+	if buildErr != nil {
+		s.logger.Error("discovered_paths update builder rejected a column",
+			zap.Error(buildErr))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	// classification_source and updated_at are always written when there
+	// is at least one user-driven column to update.
+	setClauses = append(setClauses,
+		"classification_source = 'manual'",
+		"updated_at = NOW()",
+	)
 	args = append(args, pathID)
-	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
-	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE discovered_paths SET %s WHERE id=$%d", strings.Join(sets, ", "), argIdx)
+
+	// Table name + WHERE column are package-literal strings. The SET
+	// clause comes from setClauses, every entry of which has been
+	// allow-listed by buildUpdateClause.
+	query := "UPDATE discovered_paths SET " + strings.Join(setClauses, ", ") +
+		" WHERE id = $" + strconv.Itoa(len(args))
 
 	tag, err := s.db.Pool.Exec(ctx, query, args...)
 	if err != nil || tag.RowsAffected() == 0 {
