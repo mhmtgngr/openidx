@@ -471,6 +471,54 @@ jobs:
         with:
           version: v2.12.2
 
+  # orgscope is the v2.0-multi-tenancy static helper: it walks
+  # internal/ looking for SQL statements that target a scoped table
+  # without an org_id mention. In v1.6.0 it is informational only —
+  # the job posts the finding count to the run summary but never
+  # exits non-zero. v1.7.0 will promote it to a hard gate once the
+  # service-layer refactors complete.
+  orgscope:
+    name: Org-scope lint (informational)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go_changed == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run orgscope
+        run: |
+          set +e
+          go run ./tools/orgscope ./internal > orgscope.out 2> orgscope.err
+          rc=$?
+          set -e
+          count=$(tail -n1 orgscope.err 2>/dev/null | grep -oE '^orgscope: [0-9]+' | awk '{print $2}' || echo "?")
+          {
+            echo "## orgscope — possible org-unscoped queries"
+            echo
+            echo "**Finding count:** ${count}"
+            echo
+            echo "Informational only in v1.6.0 — does not gate the PR."
+            echo
+            echo "### Findings"
+            echo
+            echo '```'
+            head -200 orgscope.out
+            if [ "$(wc -l < orgscope.out)" -gt 200 ]; then
+              echo "... (truncated; $(wc -l < orgscope.out) lines total)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Always exit 0 in v1.6.0 — informational gate.
+          exit 0
+
   # Security vulnerability check
   vulnerability-check:
     name: Vulnerability Check
