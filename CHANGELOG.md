@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [1.4.0] - 2026-06-11
+
+A short, focused security-hardening release. Three independent P1/P2
+items the v1.0 plan called out, each landed as its own commit with
+defense-in-depth tests:
+
+### Changed
+- **Dynamic UPDATE builders now run behind a column allow-list**
+  (#129). Both `updateSAMLServiceProvider`
+  (`internal/oauth/saml_sp.go`) and the
+  `/access/paths/:pathID/classification` handler
+  (`internal/access/app_publish.go`) used to build their SQL with
+  `fmt.Sprintf("col = $%d", argIdx)` scattered through one if-block
+  per column. The literals were hardcoded so the pattern was not
+  actively exploitable, but the blast radius was wide: one refactor
+  wiring a request-derived string into a Sprintf would have introduced
+  a real SQL-injection vector. The new `buildUpdateClause` helper
+  takes a per-caller column allow-list, validates each candidate
+  against both that map and a strict identifier regex
+  (`^[a-z_][a-z0-9_]{0,62}$`), and refuses to build the query when
+  anything else slips through. Unit tests pin the rejection paths.
+- **Migration lock acquisition retries up to 30 s before giving up**
+  (#130). Previously `acquireLock` returned instantly on conflict —
+  fine for a single admin-driven `cmd/migrate up`, but it raced in
+  containerized environments where the migrate job and the
+  identity-service / oauth-service replicas were all coming up against
+  the same database at startup. Whichever migrator won the race ran
+  the migrations; every other process exited with "lock is already
+  held" and the orchestrator restarted them in a crash loop. The lock
+  now retries every 500 ms for up to 30 s before reporting failure.
+  Stale-lock recovery (15 min) is unchanged. A real DB error (not
+  `errLockBusy`) still surfaces on the first try — only conflicts
+  retry. Six unit tests pin the new behavior including
+  context-cancellation handling.
+- **CSRF protection is on by default** (#131). The
+  `csrf_enabled` default flipped from `false` to `true`. The
+  production gate (`ValidateProduction`) caught the old default
+  anyway, but every non-prod environment had to remember to opt in.
+  Operators now opt out (`CSRF_ENABLED=false`) only when they know
+  they need to.
+
+### Fixed
+- **`internal/access/ziti.go` was hardcoding
+  `tls.Config{InsecureSkipVerify: true}` unconditionally** (#131).
+  The line ran before the CA-loading branch, which then bolted a
+  `RootCAs` pool onto the TLS config — but `InsecureSkipVerify=true`
+  nullifies every CA after it, so the verification path was doing
+  nothing for security and the connection was insecure regardless of
+  the operator's intent. Replaced with:
+  - Load `ZitiIdentityDir/ca.pem` → use it for proper validation
+    (the desired path).
+  - Missing CA + `ZitiInsecureSkipVerify=true` → log a warning and
+    use `InsecureSkipVerify` (the dev-loop escape hatch).
+  - Missing CA + `ZitiInsecureSkipVerify=false` → refuse to start
+    with a hint pointing at both knobs (the production refusal).
+
+### Security
+- **`ValidateProduction()` now rejects two new misconfigurations**
+  (#131):
+  - `redis_tls_skip_verify=true`
+  - `ziti_insecure_skip_verify=true`
+  Both are dev-loop escape hatches against self-signed certs in a
+  local docker stack; in production they silently erase the trust
+  chain on the link they cover. The blocking startup gate
+  (`security_check.ValidateProductionConfig`) now ensures production
+  deploys can't ship with either flag on.
+
+### Notes
+- All v1.3.0 deployments upgrade in place. The CSRF default flip and
+  the new skip-verify production gates are the only behavioral
+  changes most operators will see; the SQL builder and migration lock
+  refactors are internal.
+
 ## [1.3.0] - 2026-06-11
 
 A focused follow-on release driven by the P1.5 backend-test sweep —
