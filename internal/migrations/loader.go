@@ -257,5 +257,12 @@ func allMigrations() []*Migration {
 			UpSQL:       orgIDBackfillUp,
 			DownSQL:     orgIDBackfillDown,
 		},
+		{
+			Version:     36,
+			Name:        "org_id_constraints",
+			Description: "Final v1.6.0 foundation migration. For each of the 68 scoped tables: SET DEFAULT to default org UUID (preserves v1.6.0 ship gate — INSERTs that omit org_id silently land in default org), SET NOT NULL (schema correctness; v35 backfilled every row so this never rewrites data), ADD FK to organizations(id) ON DELETE RESTRICT (referential integrity), CREATE permissive RLS policy (placeholder — v1.8.0 ALTER POLICY tightens to a real org_id filter and ALTER TABLE ENABLE ROW LEVEL SECURITY activates enforcement). RLS itself is NOT enabled here; v1.8.0 owns activation.",
+			UpSQL:       orgIDConstraintsUp,
+			DownSQL:     orgIDConstraintsDown,
+		},
 	}
 }
