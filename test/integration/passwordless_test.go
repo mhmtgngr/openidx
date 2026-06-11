@@ -156,21 +156,26 @@ func TestQRLoginCreate(t *testing.T) {
 		}
 	})
 
-	t.Run("valid session reaches CreateQRLoginSession (validator no longer blocks)", func(t *testing.T) {
-		// Restored after #125 to confirm the validator no longer rejects
-		// the base64url login_session shape that /oauth/authorize
-		// produces. The full happy path (200 with session_token +
-		// qr_content) requires a `qr_login_sessions` table that no
-		// migration creates — separate bug, filed as follow-up. For
-		// now, prove we moved past the 400 "invalid login_session
-		// format" gate.
+	t.Run("valid session returns qr_content + session_token", func(t *testing.T) {
+		// With #125's validator relaxation AND migration v33 (creates
+		// the qr_login_sessions table), the full happy path is now
+		// reachable: 200 with session_token, well-formed qr_content
+		// URL, and expires_at.
 		sess := freshLoginSession(t)
 		body := fmt.Sprintf(`{"login_session":%q}`, sess)
 		status, respBody := apiRequest(t, "POST", oauthURL+"/oauth/qr-login/create", body, "")
-		if status == http.StatusBadRequest {
-			if desc, _ := respBody["error_description"].(string); strings.Contains(desc, "invalid login_session format") {
-				t.Errorf("validator still rejecting the real login_session; body = %v", respBody)
-			}
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %v", status, respBody)
+		}
+		if respBody["session_token"] == nil || respBody["session_token"] == "" {
+			t.Errorf("missing session_token; body = %v", respBody)
+		}
+		qr, _ := respBody["qr_content"].(string)
+		if !strings.HasPrefix(qr, "openidx://qr-login?session=") {
+			t.Errorf("qr_content = %q, want openidx://qr-login?session=...", qr)
+		}
+		if respBody["expires_at"] == nil {
+			t.Errorf("missing expires_at; body = %v", respBody)
 		}
 	})
 }
