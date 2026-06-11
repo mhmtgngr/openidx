@@ -243,5 +243,12 @@ func allMigrations() []*Migration {
 			UpSQL:       qrLoginSessionsUp,
 			DownSQL:     qrLoginSessionsDown,
 		},
+		{
+			Version:     34,
+			Name:        "org_id_columns",
+			Description: "Adds NULL-able org_id UUID columns + idx_<table>_org_id indexes to ~55 tables the v2.0 multi-tenancy design says must be org-scoped but that migration v025 didn't reach. Idempotent (IF NOT EXISTS). No backfill, no NOT NULL, no FK — those land in v035 and v036. Tables that are genuinely install-wide (organizations, permissions, system_settings, ip_threat_list, posture_check_types, policy_sync_state) are deliberately not scoped.",
+			UpSQL:       orgIDColumnsUp,
+			DownSQL:     orgIDColumnsDown,
+		},
 	}
 }

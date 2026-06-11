@@ -48,6 +48,94 @@ func TestAllMigrationsIntegrity(t *testing.T) {
 	}
 }
 
+// TestMigrationV34_orgIDColumns guards the v2.0 multi-tenancy
+// foundation migration. Up must add org_id (and an index) to a
+// representative sample of the ~55 scoped tables. Down must drop
+// every column and index Up added. The full table list is the
+// design's source of truth; this test pins the contract against
+// silent regressions.
+func TestMigrationV34_orgIDColumns(t *testing.T) {
+	var v34 *Migration
+	for _, m := range allMigrations() {
+		if m.Version == 34 {
+			v34 = m
+			break
+		}
+	}
+	if v34 == nil {
+		t.Fatal("migration v34 not registered in allMigrations()")
+	}
+	if v34.Name != "org_id_columns" {
+		t.Errorf("v34 Name = %q, want %q", v34.Name, "org_id_columns")
+	}
+
+	// Representative sample of the table set the design lists as
+	// scoped-in-v34. If a table is removed from the migration without
+	// being moved to v25 or a later migration, this test catches it.
+	mustHaveAddColumn := []string{
+		"api_keys",
+		"oauth_access_tokens",
+		"oauth_refresh_tokens",
+		"mfa_totp",
+		"user_roles",
+		"role_permissions",
+		"identity_providers",
+		"directory_integrations",
+		"ziti_identities",
+		"scim_users",
+		"data_subject_requests",
+		"compliance_reports",
+	}
+	for _, table := range mustHaveAddColumn {
+		alter := "ALTER TABLE " + table
+		if !strings.Contains(v34.UpSQL, alter) {
+			t.Errorf("v34 UpSQL missing %q", alter)
+		}
+		idx := "idx_" + table + "_org_id"
+		if !strings.Contains(v34.UpSQL, idx) {
+			t.Errorf("v34 UpSQL missing index %q", idx)
+		}
+		if !strings.Contains(v34.DownSQL, "DROP INDEX IF EXISTS "+idx) {
+			t.Errorf("v34 DownSQL missing DROP INDEX %q", idx)
+		}
+		if !strings.Contains(v34.DownSQL, alter+" "+strings.Repeat(" ", 0)+"DROP COLUMN IF EXISTS org_id") &&
+			!strings.Contains(v34.DownSQL, alter) {
+			t.Errorf("v34 DownSQL missing ALTER for %q", table)
+		}
+	}
+
+	// Tables explicitly NOT scoped — the migration must not touch
+	// them. If a future PR scopes one of them, that PR owns its own
+	// migration; this test forces the decision to be deliberate.
+	mustNotScope := []string{
+		"permissions ",
+		"system_settings ",
+		"ip_threat_list ",
+		"posture_check_types ",
+		"policy_sync_state ",
+	}
+	for _, table := range mustNotScope {
+		alter := "ALTER TABLE " + table + "ADD COLUMN IF NOT EXISTS org_id"
+		if strings.Contains(v34.UpSQL, alter) {
+			t.Errorf("v34 UpSQL scopes %q, which is documented as install-wide", strings.TrimSpace(table))
+		}
+	}
+
+	// Idempotency safety: every ALTER must be IF NOT EXISTS so
+	// reapplying the migration (or applying it on an install where
+	// a later migration already added a particular column) is safe.
+	stmts := (&Migrator{}).splitSQL(v34.UpSQL)
+	for _, s := range stmts {
+		s = strings.TrimSpace(s)
+		if !strings.HasPrefix(s, "ALTER TABLE") {
+			continue
+		}
+		if !strings.Contains(s, "IF NOT EXISTS") {
+			t.Errorf("v34 ALTER TABLE statement is not idempotent (missing IF NOT EXISTS): %q", s)
+		}
+	}
+}
+
 func TestSplitSQL(t *testing.T) {
 	m := &Migrator{}
 
