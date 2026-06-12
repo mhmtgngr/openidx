@@ -151,6 +151,46 @@ func (s *Service) GetOrganization(ctx context.Context, orgID string) (*Organizat
 	return &org, nil
 }
 
+// GetOrganizationBySlug retrieves an organization by its slug.
+//
+// The slug is the URL-safe handle used by the tenant-resolver middleware
+// to translate an X-Org-Slug header (set by the gateway from the
+// subdomain) into an org row. This method intentionally does not join
+// organization_members for a member count — the tenant resolver does
+// not need it, and avoiding the join makes this the cheap hot-path
+// query that runs on every browser-facing request.
+//
+// Returns the underlying pgx error wrapped with %w on failure; the
+// caller can `errors.Is(err, pgx.ErrNoRows)` to distinguish
+// not-found from a transport error. (The OrgLookup adapter does
+// exactly that.)
+func (s *Service) GetOrganizationBySlug(ctx context.Context, slug string) (*Organization, error) {
+	var org Organization
+	var settingsBytes []byte
+
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, name, slug, domain, plan, status, settings,
+		        max_users, max_applications, created_at, updated_at
+		 FROM organizations
+		 WHERE slug = $1`, slug,
+	).Scan(
+		&org.ID, &org.Name, &org.Slug, &org.Domain, &org.Plan, &org.Status,
+		&settingsBytes, &org.MaxUsers, &org.MaxApplications,
+		&org.CreatedAt, &org.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization by slug: %w", err)
+	}
+
+	if settingsBytes != nil {
+		if err := json.Unmarshal(settingsBytes, &org.Settings); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal settings: %w", err)
+		}
+	}
+
+	return &org, nil
+}
+
 // ListOrganizations returns a paginated list of organizations with a total count
 func (s *Service) ListOrganizations(ctx context.Context, limit, offset int) ([]Organization, int, error) {
 	var total int
