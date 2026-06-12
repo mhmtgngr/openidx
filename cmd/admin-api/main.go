@@ -213,6 +213,16 @@ func main() {
 	// Resolve permissions from roles (cached in Redis)
 	v1.Use(middleware.PermissionResolver(db.Pool, redis.Client))
 
+	// Resolve the tenant for every request and attach it to the request
+	// context (v1.7.0 #2). Group-level and after Auth, so unlike the
+	// other services the JWT org_id claim path is live here, not just
+	// X-Org-Slug. DefaultOrgFallback keeps single-tenant installs on
+	// the default org — the final v1.7.0 PR flips it off.
+	v1.Use(middleware.TenantResolver(organization.NewOrgLookup(orgService), middleware.TenantResolverConfig{
+		DefaultOrgFallback: true,
+		DefaultOrgID:       middleware.DefaultOrgID,
+	}))
+
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)
 	if cfg.EnableOPAAuthz {
 		opaClient := opa.NewClient(cfg.OPAURL, log)
