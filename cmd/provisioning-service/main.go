@@ -23,6 +23,7 @@ import (
 	"github.com/openidx/openidx/internal/common/tracing"
 	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
+	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/provisioning"
 	"github.com/openidx/openidx/internal/server"
 )
@@ -114,6 +115,19 @@ func main() {
 
 	// API versioning middleware
 	router.Use(api.StandardVersionMiddleware())
+
+	// Resolve the tenant for every request and attach it to the request
+	// context (v1.7.0 #2). Resolution at this point in the chain runs
+	// before route-level auth, so it sees the gateway-set X-Org-Slug
+	// header or falls back to the default org; the JWT-claim path
+	// activates when resolution moves behind auth later in v1.7.0.
+	// DefaultOrgFallback keeps single-tenant installs on the default
+	// org — the final v1.7.0 PR flips it off.
+	orgLookup := organization.NewOrgLookup(organization.NewService(db, redis, cfg, log))
+	router.Use(middleware.TenantResolver(orgLookup, middleware.TenantResolverConfig{
+		DefaultOrgFallback: true,
+		DefaultOrgID:       middleware.DefaultOrgID,
+	}))
 
 	provisioningService := provisioning.NewService(db, redis, cfg, log)
 
