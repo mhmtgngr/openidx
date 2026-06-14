@@ -147,6 +147,62 @@ func TestScanFile_doubleQuotedSQL_handled(t *testing.T) {
 	}
 }
 
+func TestScanFile_ignoreDirective_sameLine_suppresses(t *testing.T) {
+	// A flagged query is suppressed when the //orgscope:ignore
+	// directive sits on the same line, with a reason.
+	src := headerOK + "var _ = func(db DB, ctx context.Context) { db.Query(ctx, `SELECT id FROM users WHERE email = $1`, \"a\") } //orgscope:ignore auth path, keyed by unique email\n"
+	dir := writeGoFixture(t, src)
+	findings, _ := scanDir(dir)
+	if len(findings) != 0 {
+		t.Fatalf("got %d findings, want 0 (same-line ignore directive should suppress): %+v", len(findings), findings)
+	}
+}
+
+func TestScanFile_ignoreDirective_lineAbove_suppresses(t *testing.T) {
+	// The directive on the line directly above the statement suppresses
+	// it — the common shape for a multi-line backtick query.
+	src := headerOK + `var _ = func(db DB, ctx context.Context) {
+	//orgscope:ignore validated by globally-unique key_hash before tenant resolution
+	db.Query(ctx, ` + "`SELECT id FROM api_keys WHERE key_hash = $1`" + `, "a")
+}
+`
+	dir := writeGoFixture(t, src)
+	findings, _ := scanDir(dir)
+	if len(findings) != 0 {
+		t.Fatalf("got %d findings, want 0 (line-above ignore directive should suppress): %+v", len(findings), findings)
+	}
+}
+
+func TestScanFile_ignoreDirective_requiresReason(t *testing.T) {
+	// A bare //orgscope:ignore with no reason must NOT suppress — an
+	// unexplained exception is exactly what we don't want to let slip.
+	src := headerOK + "var _ = func(db DB, ctx context.Context) { db.Query(ctx, `SELECT id FROM users WHERE email = $1`, \"a\") } //orgscope:ignore\n"
+	dir := writeGoFixture(t, src)
+	findings, _ := scanDir(dir)
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1 (reason-less ignore must not suppress): %+v", len(findings), findings)
+	}
+}
+
+func TestScanFile_ignoreDirective_doesNotLeakToNextStatement(t *testing.T) {
+	// An ignore directive suppresses only its own statement, not an
+	// unrelated flagged query two lines down.
+	src := headerOK + `var _ = func(db DB, ctx context.Context) {
+	//orgscope:ignore intentional
+	db.Query(ctx, ` + "`SELECT id FROM api_keys WHERE key_hash = $1`" + `, "a")
+	db.Query(ctx, ` + "`SELECT id FROM users WHERE email = $1`" + `, "b")
+}
+`
+	dir := writeGoFixture(t, src)
+	findings, _ := scanDir(dir)
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1 (directive must not leak to the next statement): %+v", len(findings), findings)
+	}
+	if findings[0].Table != "users" {
+		t.Errorf("Table = %q, want users (the non-ignored query)", findings[0].Table)
+	}
+}
+
 func TestScanFile_invalidGoFile_skipsGracefully(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "broken.go"), []byte("not go at all"), 0o644); err != nil {

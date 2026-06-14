@@ -12,6 +12,19 @@
 // scoped-table reference that has no `org_id` mention. _test.go files
 // are skipped (test fixtures are allowed to mock without scoping).
 //
+// A query that is intentionally unscoped — e.g. an auth-path lookup
+// keyed by a globally-unique value before any tenant is resolved, or
+// a write to an install-wide table — can be exempted with an inline
+// directive carrying a mandatory reason:
+//
+//	//orgscope:ignore validated by globally-unique key_hash before tenant resolution
+//	db.QueryRow(ctx, `SELECT org_id FROM api_keys WHERE key_hash = $1`, h)
+//
+// The directive may sit on the same line as the SQL or on the line
+// directly above the statement. A reason-less directive does not
+// suppress anything (and is reported to stderr), so an exception can
+// never slip in unexplained.
+//
 // In v1.6.0 the tool is informational: it always exits 0 unless -fail
 // is set. v1.7.0 will run it with -fail in CI as the enforcement gate
 // after each service-layer migration.
