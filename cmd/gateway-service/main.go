@@ -21,6 +21,7 @@ import (
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/gateway"
+	gwmiddleware "github.com/openidx/openidx/internal/gateway/middleware"
 	"github.com/openidx/openidx/internal/gateway/routes"
 	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
@@ -94,6 +95,12 @@ func main() {
 	router.Use(logger.GinMiddleware(log))
 	router.Use(metrics.Middleware("gateway-service"))
 	router.Use(api.StandardVersionMiddleware())
+
+	// Tenant header production (v1.7.0 #3): strip any client-supplied
+	// X-Org-Slug and, when TENANT_BASE_DOMAIN is set, derive it from
+	// the request's subdomain. Backends' TenantResolver consumes it as
+	// their highest-priority tenant signal.
+	router.Use(gwmiddleware.OrgSlugHeader(cfg.TenantBaseDomain))
 
 	// Metrics endpoint
 	router.GET("/metrics", metrics.Handler())
