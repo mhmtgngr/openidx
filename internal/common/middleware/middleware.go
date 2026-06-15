@@ -245,6 +245,11 @@ type APIKeyInfo struct {
 	UserID           string
 	ServiceAccountID string
 	Scopes           []string
+	// OrgID is the organization the key belongs to. The auth path
+	// sets the request's org_id from it — the API-key analog of the
+	// JWT org_id claim — so the tenant resolver scopes API-key callers
+	// to the key's org.
+	OrgID string
 }
 
 // Auth validates JWT tokens via JWKS
@@ -288,6 +293,15 @@ func AuthWithAPIKey(jwksURL string, apiKeyValidator APIKeyValidator) gin.Handler
 			}
 			if keyInfo.ServiceAccountID != "" {
 				c.Set("service_account_id", keyInfo.ServiceAccountID)
+			}
+			// Carry the key's org so the tenant resolver scopes the
+			// request to it — the API-key analog of the JWT org_id
+			// claim. Falls back to the default org when unset, matching
+			// the JWT path below.
+			if keyInfo.OrgID != "" {
+				c.Set("org_id", keyInfo.OrgID)
+			} else {
+				c.Set("org_id", "00000000-0000-0000-0000-000000000010")
 			}
 			c.Set("api_key_id", keyInfo.KeyID)
 			c.Set("scopes", keyInfo.Scopes)

@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ServiceAccount represents a non-human identity used for programmatic access
@@ -50,6 +51,13 @@ type APIKeyInfo struct {
 	ServiceAccountID string   `json:"service_account_id"`
 	Scopes           []string `json:"scopes"`
 	Status           string   `json:"status"`
+	// OrgID is the organization the key belongs to. The auth layer
+	// sets the request's tenant from it — an API key is the tenancy
+	// signal for programmatic callers, the analog of the JWT org_id
+	// claim. Validation looks the key up by its globally-unique hash
+	// (there is no tenant context yet at that point), so OrgID is
+	// reported out, not filtered on.
+	OrgID string `json:"org_id"`
 }
 
 // Service manages API keys and service accounts
@@ -72,8 +80,13 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *za
 // Service Accounts
 // ---------------------------------------------------------------------------
 
-// CreateServiceAccount creates a new service account
+// CreateServiceAccount creates a new service account in the caller's org
 func (s *Service) CreateServiceAccount(ctx context.Context, name, description, ownerID string) (*ServiceAccount, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	id := uuid.New().String()
 	now := time.Now().UTC()
 
@@ -82,10 +95,10 @@ func (s *Service) CreateServiceAccount(ctx context.Context, name, description, o
 		ownerParam = nil
 	}
 
-	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO service_accounts (id, name, description, owner_id, status, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		id, name, description, ownerParam, "active", now, now,
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO service_accounts (id, name, description, owner_id, status, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, name, description, ownerParam, "active", now, now, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("failed to create service account", zap.Error(err))
@@ -108,10 +121,15 @@ func (s *Service) CreateServiceAccount(ctx context.Context, name, description, o
 	}, nil
 }
 
-// ListServiceAccounts returns a paginated list of service accounts
+// ListServiceAccounts returns a paginated list of the caller's org's service accounts
 func (s *Service) ListServiceAccounts(ctx context.Context, limit, offset int) ([]ServiceAccount, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM service_accounts`).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM service_accounts WHERE org_id = $1`, org.ID).Scan(&total)
 	if err != nil {
 		s.logger.Error("failed to count service accounts", zap.Error(err))
 		return nil, 0, fmt.Errorf("failed to count service accounts: %w", err)
@@ -120,9 +138,10 @@ func (s *Service) ListServiceAccounts(ctx context.Context, limit, offset int) ([
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, name, description, owner_id, status, created_at, updated_at
 		 FROM service_accounts
+		 WHERE org_id = $1
 		 ORDER BY created_at DESC
-		 LIMIT $1 OFFSET $2`,
-		limit, offset,
+		 LIMIT $2 OFFSET $3`,
+		org.ID, limit, offset,
 	)
 	if err != nil {
 		s.logger.Error("failed to list service accounts", zap.Error(err))
@@ -138,13 +157,20 @@ func (s *Service) ListServiceAccounts(ctx context.Context, limit, offset int) ([
 	return accounts, total, nil
 }
 
-// GetServiceAccount retrieves a service account by ID
+// GetServiceAccount retrieves a service account by ID within the caller's org.
+// A row in another org reads as not-found (404, not 403) to avoid leaking
+// the existence of other tenants' service accounts.
 func (s *Service) GetServiceAccount(ctx context.Context, id string) (*ServiceAccount, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var sa ServiceAccount
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, description, owner_id, status, created_at, updated_at
-		 FROM service_accounts WHERE id = $1`,
-		id,
+		 FROM service_accounts WHERE id = $1 AND org_id = $2`,
+		id, org.ID,
 	).Scan(&sa.ID, &sa.Name, &sa.Description, &sa.OwnerID, &sa.Status, &sa.CreatedAt, &sa.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -157,12 +183,19 @@ func (s *Service) GetServiceAccount(ctx context.Context, id string) (*ServiceAcc
 	return &sa, nil
 }
 
-// DeleteServiceAccount removes a service account and its associated API keys
+// DeleteServiceAccount removes a service account and its associated API keys,
+// scoped to the caller's org. A service account in another org reads as
+// not-found rather than being deleted.
 func (s *Service) DeleteServiceAccount(ctx context.Context, id string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Fetch key hashes before deletion so we can clear the Redis cache
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT key_hash FROM api_keys WHERE service_account_id = $1`,
-		id,
+		`SELECT key_hash FROM api_keys WHERE service_account_id = $1 AND org_id = $2`,
+		id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("failed to query api keys for service account", zap.Error(err))
@@ -182,7 +215,7 @@ func (s *Service) DeleteServiceAccount(ctx context.Context, id string) error {
 
 	// Delete the service account; api_keys rows should cascade
 	tag, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM service_accounts WHERE id = $1`, id,
+		`DELETE FROM service_accounts WHERE id = $1 AND org_id = $2`, id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("failed to delete service account", zap.Error(err))
@@ -207,6 +240,11 @@ func (s *Service) DeleteServiceAccount(ctx context.Context, id string) error {
 // CreateAPIKey generates a new API key, stores its hash, and returns the
 // plaintext key exactly once.
 func (s *Service) CreateAPIKey(ctx context.Context, name string, userID, serviceAccountID *string, scopes []string, expiresAt *time.Time) (string, *APIKey, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
 	// Generate 32 random bytes and encode as hex (64 hex chars)
 	randBytes := make([]byte, 32)
 	if _, err := rand.Read(randBytes); err != nil {
@@ -222,10 +260,10 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string, userID, service
 	id := uuid.New().String()
 	now := time.Now().UTC()
 
-	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO api_keys (id, name, key_prefix, key_hash, user_id, service_account_id, scopes, expires_at, status, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		id, name, keyPrefix, keyHash, userID, serviceAccountID, scopes, expiresAt, "active", now,
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO api_keys (id, name, key_prefix, key_hash, user_id, service_account_id, scopes, expires_at, status, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		id, name, keyPrefix, keyHash, userID, serviceAccountID, scopes, expiresAt, "active", now, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("failed to create api key", zap.Error(err))
@@ -273,13 +311,18 @@ func (s *Service) ValidateAPIKey(ctx context.Context, rawKey string) (*APIKeyInf
 		scopes           []string
 		status           string
 		expiresAt        *time.Time
+		orgID            string
 	)
 
+	// The key is the identity: looked up by its globally-unique hash
+	// before any tenant is resolved, so org_id is read out of the row
+	// (returned to the caller) rather than filtered on.
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, user_id, service_account_id, scopes, status, expires_at
+		//orgscope:ignore auth path — keyed by globally-unique key_hash before tenant resolution
+		`SELECT id, user_id, service_account_id, scopes, status, expires_at, org_id
 		 FROM api_keys WHERE key_hash = $1`,
 		keyHash,
-	).Scan(&keyID, &userID, &serviceAccountID, &scopes, &status, &expiresAt)
+	).Scan(&keyID, &userID, &serviceAccountID, &scopes, &status, &expiresAt, &orgID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("invalid api key")
@@ -300,6 +343,7 @@ func (s *Service) ValidateAPIKey(ctx context.Context, rawKey string) (*APIKeyInf
 		KeyID:  keyID,
 		Status: status,
 		Scopes: scopes,
+		OrgID:  orgID,
 	}
 	if userID != nil {
 		info.UserID = *userID
@@ -320,20 +364,26 @@ func (s *Service) ValidateAPIKey(ctx context.Context, rawKey string) (*APIKeyInf
 }
 
 // ListAPIKeys returns all API keys for a given owner (user or service account)
+// within the caller's org.
 func (s *Service) ListAPIKeys(ctx context.Context, ownerID string, ownerType string) ([]APIKey, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var query string
 	switch strings.ToLower(ownerType) {
 	case "user":
 		query = `SELECT id, name, key_prefix, user_id, service_account_id, scopes, expires_at, last_used_at, status, created_at
-				 FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`
+				 FROM api_keys WHERE user_id = $1 AND org_id = $2 ORDER BY created_at DESC`
 	case "service_account":
 		query = `SELECT id, name, key_prefix, user_id, service_account_id, scopes, expires_at, last_used_at, status, created_at
-				 FROM api_keys WHERE service_account_id = $1 ORDER BY created_at DESC`
+				 FROM api_keys WHERE service_account_id = $1 AND org_id = $2 ORDER BY created_at DESC`
 	default:
 		return nil, fmt.Errorf("invalid owner type: %s (expected 'user' or 'service_account')", ownerType)
 	}
 
-	rows, err := s.db.Pool.Query(ctx, query, ownerID)
+	rows, err := s.db.Pool.Query(ctx, query, ownerID, org.ID)
 	if err != nil {
 		s.logger.Error("failed to list api keys", zap.Error(err))
 		return nil, fmt.Errorf("failed to list api keys: %w", err)
@@ -343,12 +393,18 @@ func (s *Service) ListAPIKeys(ctx context.Context, ownerID string, ownerType str
 	return scanAPIKeys(rows)
 }
 
-// RevokeAPIKey marks a single API key as revoked and clears its cache
+// RevokeAPIKey marks a single API key in the caller's org as revoked and
+// clears its cache. A key in another org reads as not-found.
 func (s *Service) RevokeAPIKey(ctx context.Context, keyID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	var keyHash string
-	err := s.db.Pool.QueryRow(ctx,
-		`UPDATE api_keys SET status = 'revoked' WHERE id = $1 RETURNING key_hash`,
-		keyID,
+	err = s.db.Pool.QueryRow(ctx,
+		`UPDATE api_keys SET status = 'revoked' WHERE id = $1 AND org_id = $2 RETURNING key_hash`,
+		keyID, org.ID,
 	).Scan(&keyHash)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -365,9 +421,14 @@ func (s *Service) RevokeAPIKey(ctx context.Context, keyID string) error {
 // RevokeAllUserKeys revokes every API key owned by a user and clears the
 // corresponding Redis caches
 func (s *Service) RevokeAllUserKeys(ctx context.Context, userID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
-		`UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND status = 'active' RETURNING key_hash`,
-		userID,
+		`UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND status = 'active' AND org_id = $2 RETURNING key_hash`,
+		userID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("failed to revoke all user keys", zap.Error(err))
@@ -398,6 +459,7 @@ func (s *Service) updateLastUsed(keyHash string) {
 	defer cancel()
 
 	_, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore background fire-and-forget keyed by globally-unique key_hash; no tenant context
 		`UPDATE api_keys SET last_used_at = $1 WHERE key_hash = $2`,
 		time.Now().UTC(), keyHash,
 	)
