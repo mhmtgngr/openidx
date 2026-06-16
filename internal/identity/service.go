@@ -908,6 +908,11 @@ func (s *Service) TerminateSession(ctx context.Context, sessionID string) error 
 func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...string) ([]Group, int, error) {
 	s.logger.Debug("Listing groups", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	searchQuery := ""
 	if len(search) > 0 {
 		searchQuery = search[0]
@@ -916,12 +921,12 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 	var total int
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
-		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE name ILIKE $1 OR description ILIKE $1", searchPattern).Scan(&total)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE (name ILIKE $1 OR description ILIKE $1) AND org_id = $2", searchPattern, org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
 	} else {
-		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -932,25 +937,25 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 		Scan(...interface{}) error
 		Close()
 	}
-	var err error
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count
 			FROM groups g
-			WHERE g.name ILIKE $1 OR g.description ILIKE $1
+			WHERE (g.name ILIKE $2 OR g.description ILIKE $2) AND g.org_id = $1
 			ORDER BY g.name
-			OFFSET $2 LIMIT $3
-		`, searchPattern, offset, limit)
+			OFFSET $3 LIMIT $4
+		`, org.ID, searchPattern, offset, limit)
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count
 			FROM groups g
+			WHERE g.org_id = $1
 			ORDER BY g.name
-			OFFSET $1 LIMIT $2
-		`, offset, limit)
+			OFFSET $2 LIMIT $3
+		`, org.ID, offset, limit)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -975,12 +980,17 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	s.logger.Debug("Getting group", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var dbGroup GroupDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
-		FROM groups g WHERE g.id = $1
-	`, groupID).Scan(
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
+		FROM groups g WHERE g.id = $1 AND g.org_id = $2
+	`, groupID, org.ID).Scan(
 		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 	)
 	if err != nil {
@@ -994,13 +1004,18 @@ func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) 
 func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupMember, error) {
 	s.logger.Debug("Getting group members", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name, gm.joined_at
 		FROM users u
 		JOIN group_memberships gm ON u.id = gm.user_id
-		WHERE gm.group_id = $1
+		WHERE gm.group_id = $1 AND gm.org_id = $2
 		ORDER BY gm.joined_at
-	`, groupID)
+	`, groupID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,6 +1037,11 @@ func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupM
 func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Creating group", zap.String("name", group.GetName()))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Generate UUID if not provided
 	if group.ID == "" {
 		group.ID = uuid.New().String()
@@ -1034,10 +1054,10 @@ func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	// Convert SCIM Group to GroupDB for database insert
 	dbGroup := FromGroup(*group)
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID)
 
 	return err
 }
@@ -1046,16 +1066,21 @@ func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Updating group", zap.String("group_id", group.ID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	group.UpdatedAt = time.Now()
 
 	// Convert SCIM Group to GroupDB for database update
 	dbGroup := FromGroup(*group)
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE groups
 		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5, require_approval = $6, max_members = $7, updated_at = $8
-		WHERE id = $1
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt)
+		WHERE id = $1 AND org_id = $9
+	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt, org.ID)
 
 	return err
 }
@@ -1064,14 +1089,19 @@ func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting group", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// First remove all group memberships
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1", groupID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2", groupID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove group memberships: %w", err)
 	}
 
 	// Then delete the group
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1", groupID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID)
 	return err
 }
 
@@ -1079,8 +1109,14 @@ func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) error {
 	s.logger.Info("Adding member to group", zap.String("group_id", groupID), zap.String("user_id", userID))
 
-	// Check if group exists
-	_, err := s.GetGroup(ctx, groupID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Check if group exists (GetGroup scopes to the caller's org, so a
+	// group in another org reads as not-found here).
+	_, err = s.GetGroup(ctx, groupID)
 	if err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
@@ -1094,16 +1130,16 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 	// Use a single atomic query that checks the member limit and inserts in one step,
 	// avoiding the TOCTOU race between counting members and inserting.
 	result, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO group_memberships (group_id, user_id, joined_at)
-		SELECT $1, $2, NOW()
-		WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)
+		INSERT INTO group_memberships (group_id, user_id, joined_at, org_id)
+		SELECT $1, $2, NOW(), $3
+		WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3)
 		AND (
-			SELECT COUNT(*) FROM group_memberships WHERE group_id = $1
+			SELECT COUNT(*) FROM group_memberships WHERE group_id = $1 AND org_id = $3
 		) < COALESCE(
-			(SELECT max_members FROM groups WHERE id = $1),
+			(SELECT max_members FROM groups WHERE id = $1 AND org_id = $3),
 			2147483647
 		)
-	`, groupID, userID)
+	`, groupID, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to add member: %w", err)
 	}
@@ -1111,7 +1147,7 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 	if result.RowsAffected() == 0 {
 		// Check why the insert didn't happen: either already a member or limit reached
 		var exists bool
-		err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)", groupID, userID).Scan(&exists)
+		err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3)", groupID, userID, org.ID).Scan(&exists)
 		if err != nil {
 			return err
 		}
@@ -1128,9 +1164,14 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 func (s *Service) RemoveGroupMember(ctx context.Context, groupID, userID string) error {
 	s.logger.Info("Removing member from group", zap.String("group_id", groupID), zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
-		DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2
-	`, groupID, userID)
+		DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3
+	`, groupID, userID, org.ID)
 
 	if err != nil {
 		return err
@@ -1193,21 +1234,27 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, search string, offset, limit int) ([]GroupMember, int, error) {
 	s.logger.Debug("Getting group members paginated", zap.String("group_id", groupID))
 
-	// Get total count
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Get total count. Membership rows are scoped by gm.org_id so the
+	// count only reflects members within the caller's org.
 	var total int
 	countQuery := `
 		SELECT COUNT(*) FROM users u
 		JOIN group_memberships gm ON u.id = gm.user_id
-		WHERE gm.group_id = $1
+		WHERE gm.group_id = $1 AND gm.org_id = $2
 	`
-	countArgs := []interface{}{groupID}
+	countArgs := []interface{}{groupID, org.ID}
 
 	if search != "" {
-		countQuery += ` AND (u.username ILIKE $2 OR u.email ILIKE $2 OR u.first_name ILIKE $2 OR u.last_name ILIKE $2)`
+		countQuery += ` AND (u.username ILIKE $3 OR u.email ILIKE $3 OR u.first_name ILIKE $3 OR u.last_name ILIKE $3)`
 		countArgs = append(countArgs, "%"+search+"%")
 	}
 
-	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1217,17 +1264,17 @@ func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, 
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name, gm.joined_at
 		FROM users u
 		JOIN group_memberships gm ON u.id = gm.user_id
-		WHERE gm.group_id = $1
+		WHERE gm.group_id = $1 AND gm.org_id = $2
 	`
-	args := []interface{}{groupID}
+	args := []interface{}{groupID, org.ID}
 
 	if search != "" {
-		query += ` AND (u.username ILIKE $2 OR u.email ILIKE $2 OR u.first_name ILIKE $2 OR u.last_name ILIKE $2)`
+		query += ` AND (u.username ILIKE $3 OR u.email ILIKE $3 OR u.first_name ILIKE $3 OR u.last_name ILIKE $3)`
 		args = append(args, "%"+search+"%")
-		query += ` ORDER BY gm.joined_at DESC OFFSET $3 LIMIT $4`
+		query += ` ORDER BY gm.joined_at DESC OFFSET $4 LIMIT $5`
 		args = append(args, offset, limit)
 	} else {
-		query += ` ORDER BY gm.joined_at DESC OFFSET $2 LIMIT $3`
+		query += ` ORDER BY gm.joined_at DESC OFFSET $3 LIMIT $4`
 		args = append(args, offset, limit)
 	}
 
@@ -1253,13 +1300,18 @@ func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, 
 func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, error) {
 	s.logger.Debug("Getting subgroups", zap.String("parent_id", parentID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
 		FROM groups g
-		WHERE g.parent_id = $1
+		WHERE g.parent_id = $1 AND g.org_id = $2
 		ORDER BY g.name
-	`, parentID)
+	`, parentID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2190,12 +2242,17 @@ func (s *Service) checkUserAttributes(ctx context.Context, userID string, attrib
 
 // getUserGroups retrieves all groups a user belongs to
 func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.created_at, g.updated_at
 		FROM groups g
 		JOIN group_memberships gm ON g.id = gm.group_id
-		WHERE gm.user_id = $1
-	`, userID)
+		WHERE gm.user_id = $1 AND gm.org_id = $2
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2218,8 +2275,13 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int, error) {
 	s.logger.Debug("Listing roles", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2227,9 +2289,10 @@ func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, is_composite, created_at
 		FROM roles
+		WHERE org_id = $1
 		ORDER BY name
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $2 LIMIT $3
+	`, org.ID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2252,11 +2315,16 @@ func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int
 func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
 	s.logger.Debug("Getting role", zap.String("role_id", roleID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var role Role
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, is_composite, created_at
-		FROM roles WHERE id = $1
-	`, roleID).Scan(&role.ID, &role.Name, &role.Description, &role.IsComposite, &role.CreatedAt)
+		FROM roles WHERE id = $1 AND org_id = $2
+	`, roleID, org.ID).Scan(&role.ID, &role.Name, &role.Description, &role.IsComposite, &role.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2268,6 +2336,11 @@ func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
 func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 	s.logger.Info("Creating role", zap.String("name", role.Name))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	if role.ID == "" {
 		role.ID = uuid.New().String()
 	}
@@ -2275,10 +2348,10 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 	now := time.Now()
 	role.CreatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO roles (id, name, description, is_composite, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $5)
-	`, role.ID, role.Name, role.Description, role.IsComposite, now)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO roles (id, name, description, is_composite, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $5, $6)
+	`, role.ID, role.Name, role.Description, role.IsComposite, now, org.ID)
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
@@ -2295,11 +2368,16 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 	s.logger.Info("Updating role", zap.String("role_id", role.ID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE roles
 		SET name = $2, description = $3, is_composite = $4, updated_at = $5
-		WHERE id = $1
-	`, role.ID, role.Name, role.Description, role.IsComposite, time.Now())
+		WHERE id = $1 AND org_id = $6
+	`, role.ID, role.Name, role.Description, role.IsComposite, time.Now(), org.ID)
 
 	if err != nil {
 		return err
@@ -2322,20 +2400,25 @@ func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 	s.logger.Info("Deleting role", zap.String("role_id", roleID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// First remove all user-role assignments
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1", roleID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove role assignments: %w", err)
 	}
 
 	// Remove composite role relationships
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM composite_roles WHERE parent_role_id = $1 OR child_role_id = $1", roleID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM composite_roles WHERE (parent_role_id = $1 OR child_role_id = $1) AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove composite role relationships: %w", err)
 	}
 
 	// Delete the role
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM roles WHERE id = $1", roleID)
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM roles WHERE id = $1 AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -2351,14 +2434,20 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, error) {
 	s.logger.Debug("Getting user roles", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.name, r.description, r.is_composite, r.created_at
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
+		AND ur.org_id = $2
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		ORDER BY r.name
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2381,15 +2470,21 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 func (s *Service) GetUserRoleAssignments(ctx context.Context, userID string) ([]UserRoleAssignment, error) {
 	s.logger.Debug("Getting user role assignments", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.name, r.description, r.is_composite, r.created_at,
 		       COALESCE(ur.assigned_by::text, ''), ur.assigned_at, ur.expires_at
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
+		AND ur.org_id = $2
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		ORDER BY r.name
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2681,11 +2776,16 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 	s.logger.Info("Assigning role to user",
 		zap.String("user_id", userID), zap.String("role_id", roleID), zap.String("assigned_by", assignedBy))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Check if role assignment already exists (only non-expired)
 	var exists bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2 AND (expires_at IS NULL OR expires_at > NOW()))
-	`, userID, roleID).Scan(&exists)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3 AND (expires_at IS NULL OR expires_at > NOW()))
+	`, userID, roleID, org.ID).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -2696,9 +2796,9 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 
 	// Insert role assignment
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at, expires_at)
-		VALUES ($1, $2, $3, NOW(), $4)
-	`, userID, roleID, assignedBy, expiresAt)
+		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at, expires_at, org_id)
+		VALUES ($1, $2, $3, NOW(), $4, $5)
+	`, userID, roleID, assignedBy, expiresAt, org.ID)
 
 	return err
 }
@@ -2707,9 +2807,14 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) error {
 	s.logger.Info("Removing role from user", zap.String("user_id", userID), zap.String("role_id", roleID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
-		DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2
-	`, userID, roleID)
+		DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3
+	`, userID, roleID, org.ID)
 
 	if err != nil {
 		return err
@@ -2727,6 +2832,11 @@ func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) err
 func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []string, assignedBy string) error {
 	s.logger.Info("Updating user roles", zap.String("user_id", userID), zap.Int("role_count", len(roleIDs)))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Start transaction
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
@@ -2735,7 +2845,7 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 	defer tx.Rollback(ctx)
 
 	// Remove all existing roles
-	_, err = tx.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1", userID)
+	_, err = tx.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -2743,9 +2853,9 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 	// Insert new roles
 	for _, roleID := range roleIDs {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO user_roles (user_id, role_id, assigned_at)
-			VALUES ($1, $2, NOW())
-		`, userID, roleID)
+			INSERT INTO user_roles (user_id, role_id, assigned_at, org_id)
+			VALUES ($1, $2, NOW(), $3)
+		`, userID, roleID, org.ID)
 		if err != nil {
 			return err
 		}
@@ -4628,13 +4738,18 @@ func (s *Service) ListPermissions(ctx context.Context) ([]Permission, error) {
 
 // GetRolePermissions returns permissions assigned to a role
 func (s *Service) GetRolePermissions(ctx context.Context, roleID string) ([]Permission, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT p.id, p.name, p.description, p.resource, p.action, p.created_at
 		FROM permissions p
 		JOIN role_permissions rp ON p.id = rp.permission_id
-		WHERE rp.role_id = $1
+		WHERE rp.role_id = $1 AND rp.org_id = $2
 		ORDER BY p.resource, p.action
-	`, roleID)
+	`, roleID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -4653,19 +4768,24 @@ func (s *Service) GetRolePermissions(ctx context.Context, roleID string) ([]Perm
 
 // SetRolePermissions replaces all permissions for a role
 func (s *Service) SetRolePermissions(ctx context.Context, roleID string, permissionIDs []string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, "DELETE FROM role_permissions WHERE role_id = $1", roleID)
+	_, err = tx.Exec(ctx, "DELETE FROM role_permissions WHERE role_id = $1 AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return err
 	}
 
 	for _, permID := range permissionIDs {
-		_, err = tx.Exec(ctx, "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)", roleID, permID)
+		_, err = tx.Exec(ctx, "INSERT INTO role_permissions (role_id, permission_id, org_id) VALUES ($1, $2, $3)", roleID, permID, org.ID)
 		if err != nil {
 			return err
 		}
@@ -4683,8 +4803,12 @@ func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) 
 	if s.redis == nil || s.redis.Client == nil {
 		return
 	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
 	var roleName string
-	_ = s.db.Pool.QueryRow(ctx, "SELECT name FROM roles WHERE id = $1", roleID).Scan(&roleName)
+	_ = s.db.Pool.QueryRow(ctx, "SELECT name FROM roles WHERE id = $1 AND org_id = $2", roleID, org.ID).Scan(&roleName)
 	if roleName == "" {
 		return
 	}
