@@ -32,6 +32,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/risk"
 )
 
@@ -528,14 +529,21 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	// Query from database - use UserDB for scanning
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Query from database - use UserDB for scanning. A user in another
+	// org reads as not-found (pgx.ErrNoRows) rather than 403, so the
+	// existence of other tenants' users can't be probed.
 	var dbUser UserDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE id = $1
-	`, userID).Scan(
+		FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(
 		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
 		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
@@ -554,6 +562,11 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...string) ([]User, int, error) {
 	s.logger.Debug("Listing users", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	searchQuery := ""
 	if len(search) > 0 {
 		searchQuery = search[0]
@@ -563,15 +576,16 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 	if searchQuery != "" {
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
 		searchPattern := "%" + escaped + "%"
-		err := s.db.Pool.QueryRow(ctx, `
+		err = s.db.Pool.QueryRow(ctx, `
 			SELECT COUNT(*) FROM users
-			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
-		`, searchPattern).Scan(&total)
+			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			  AND org_id = $2
+		`, searchPattern, org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
 	} else {
-		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -582,7 +596,6 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		Scan(...interface{}) error
 		Close()
 	}
-	var err error
 	if searchQuery != "" {
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
 		searchPattern := "%" + escaped + "%"
@@ -591,19 +604,21 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
-			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
+			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			  AND org_id = $2
 			ORDER BY created_at DESC
-			OFFSET $2 LIMIT $3
-		`, searchPattern, offset, limit)
+			OFFSET $3 LIMIT $4
+		`, searchPattern, org.ID, offset, limit)
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT id, username, email, first_name, last_name, enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
+			WHERE org_id = $1
 			ORDER BY created_at DESC
-			OFFSET $1 LIMIT $2
-		`, offset, limit)
+			OFFSET $2 LIMIT $3
+		`, org.ID, offset, limit)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -631,6 +646,11 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *User) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Convert SCIM User to UserDB for database operations
 	dbUser := FromUser(*user)
 
@@ -645,12 +665,12 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 	dbUser.CreatedAt = now
 	dbUser.UpdatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO users (id, username, email, first_name, last_name, enabled,
-		                   email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		                   email_verified, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt)
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt, org.ID)
 
 	if err == nil {
 		// Mirror the generated ID and timestamps back to the caller so the
@@ -677,6 +697,11 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
 
 	// Convert SCIM User to UserDB for database operations
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	dbUser := FromUser(*user)
 
 	dbUser.UpdatedAt = time.Now()
@@ -685,9 +710,9 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
-		WHERE id = $1
+		WHERE id = $1 AND org_id = $9
 	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt)
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID)
 	if err != nil {
 		return err
 	}
@@ -701,12 +726,17 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting user", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Log audit event before deletion so the record exists even if delete succeeds
 	actorID := actorIDFromContext(ctx)
 	s.logAuditEvent("identity", "user_management", "user.deleted", "success",
 		actorID, userID, "user", nil)
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -720,15 +750,20 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
 	s.logger.Info("Creating identity provider", zap.String("name", idp.Name))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	idp.ID = uuid.New()
 	now := time.Now()
 	idp.CreatedAt = now
 	idp.UpdatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt, org.ID)
 
 	return err
 }
@@ -737,11 +772,16 @@ func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvi
 func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*IdentityProvider, error) {
 	s.logger.Debug("Getting identity provider", zap.String("idp_id", idpID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var idp IdentityProvider
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
-		FROM identity_providers WHERE id = $1
-	`, idpID).Scan(
+		FROM identity_providers WHERE id = $1 AND org_id = $2
+	`, idpID, org.ID).Scan(
 		&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL, &idp.ClientID, &idp.ClientSecret, &idp.Scopes, &idp.Enabled, &idp.CreatedAt, &idp.UpdatedAt,
 	)
 	if err != nil {
@@ -755,8 +795,13 @@ func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*Ident
 func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) ([]IdentityProvider, int, error) {
 	s.logger.Debug("Listing identity providers", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM identity_providers").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM identity_providers WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -764,9 +809,10 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
 		FROM identity_providers
+		WHERE org_id = $1
 		ORDER BY name
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $2 LIMIT $3
+	`, org.ID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -790,13 +836,18 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
 	s.logger.Info("Updating identity provider", zap.String("idp_id", idp.ID.String()))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	idp.UpdatedAt = time.Now()
 
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE identity_providers 
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE identity_providers
 		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9
-		WHERE id = $1
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt)
+		WHERE id = $1 AND org_id = $10
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt, org.ID)
 
 	return err
 }
@@ -805,7 +856,12 @@ func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvi
 func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) error {
 	s.logger.Info("Deleting identity provider", zap.String("idp_id", idpID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM identity_providers WHERE id = $1", idpID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM identity_providers WHERE id = $1 AND org_id = $2", idpID, org.ID)
 	return err
 }
 
@@ -1095,16 +1151,22 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 		limit = 20
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	searchPattern := "%" + query + "%"
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
 		FROM users
-		WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+		WHERE (username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+		  AND org_id = $2
 		ORDER BY username
-		LIMIT $2
-	`, searchPattern, limit)
+		LIMIT $3
+	`, searchPattern, org.ID, limit)
 	if err != nil {
 		return nil, err
 	}
