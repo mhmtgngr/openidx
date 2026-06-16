@@ -1615,6 +1615,11 @@ func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword
 		return err
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
@@ -1624,8 +1629,8 @@ func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET password_hash = $2, password_changed_at = $3, password_must_change = false
-		WHERE id = $1
-	`, userID, string(hashedPassword), now)
+		WHERE id = $1 AND org_id = $4
+	`, userID, string(hashedPassword), now, org.ID)
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
@@ -1641,9 +1646,14 @@ func (s *Service) CheckPasswordExpiry(ctx context.Context, userID string) (bool,
 	var passwordChangedAt *time.Time
 	var mustChange bool
 
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT password_changed_at, password_must_change FROM users WHERE id = $1
-	`, userID).Scan(&passwordChangedAt, &mustChange)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT password_changed_at, password_must_change FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&passwordChangedAt, &mustChange)
 
 	if err != nil {
 		return false, err
@@ -1817,6 +1827,11 @@ func (s *Service) SetPassword(ctx context.Context, userID string, password strin
 		return err
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -1827,8 +1842,8 @@ func (s *Service) SetPassword(ctx context.Context, userID string, password strin
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET password_hash = $2, password_changed_at = $3, password_must_change = false
-		WHERE id = $1
-	`, userID, string(hash), now)
+		WHERE id = $1 AND org_id = $4
+	`, userID, string(hash), now, org.ID)
 
 	return err
 }
@@ -4133,14 +4148,20 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to verify password"})
+		return
+	}
+
 	// Check if user is from an LDAP directory
 	var source *string
 	var directoryID *string
 	var username string
 	var passwordHash string
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT username, source, directory_id, password_hash FROM users WHERE id = $1
-	`, userID).Scan(&username, &source, &directoryID, &passwordHash)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT username, source, directory_id, password_hash FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&username, &source, &directoryID, &passwordHash)
 
 	if err != nil {
 		s.logger.Error("Failed to get user info", zap.String("user_id", userID), zap.Error(err))
@@ -4161,7 +4182,7 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 			return
 		}
 		// Update password_changed_at in local DB (but NOT the hash — password stays in directory)
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1`, userID)
+		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
 		c.JSON(200, gin.H{"status": "password changed"})
 		return
 	}
@@ -4189,12 +4210,18 @@ func (s *Service) handleGetPasswordInfo(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
 	var source *string
 	var passwordChangedAt *time.Time
 	var passwordMustChange bool
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
-		SELECT source, password_changed_at, password_must_change FROM users WHERE id = $1
-	`, userID).Scan(&source, &passwordChangedAt, &passwordMustChange)
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT source, password_changed_at, password_must_change FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&source, &passwordChangedAt, &passwordMustChange)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -4425,15 +4452,25 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Opportunistic cleanup of expired/used tokens
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL")
+	ctx := c.Request.Context()
+	// The org is resolved (subdomain/default) before this public
+	// endpoint runs, so reset is scoped to the caller's tenant: the
+	// same email in another org must not yield a token here.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
+		return
+	}
+
+	// Opportunistic cleanup of this org's expired/used tokens
+	s.db.Pool.Exec(ctx, "DELETE FROM password_reset_tokens WHERE (expires_at < NOW() OR used_at IS NOT NULL) AND org_id = $1", org.ID)
 
 	// Always return success to prevent email enumeration
 	// Look up user by email, including source
 	var userID string
 	var source *string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, source FROM users WHERE email = $1 AND enabled = true", req.Email).Scan(&userID, &source)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT id, source FROM users WHERE email = $1 AND enabled = true AND org_id = $2", req.Email, org.ID).Scan(&userID, &source)
 	if err != nil {
 		// User not found - still return success
 		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
@@ -4459,10 +4496,10 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	token := hex.EncodeToString(tokenBytes)
 
 	// Store token with 1 hour expiry
-	_, err = s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO password_reset_tokens (user_id, token, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, token, time.Now().Add(1*time.Hour))
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at, org_id)
+		VALUES ($1, $2, $3, $4)
+	`, userID, token, time.Now().Add(1*time.Hour), org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create password reset token", zap.Error(err))
 		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
@@ -4478,10 +4515,10 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	// Send password reset email
 	if s.emailService != nil {
 		var firstName string
-		s.db.Pool.QueryRow(c.Request.Context(),
-			"SELECT first_name FROM users WHERE id = $1", userID).Scan(&firstName)
+		s.db.Pool.QueryRow(ctx,
+			"SELECT first_name FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&firstName)
 		baseURL := "http://localhost:3000"
-		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), req.Email, firstName, token, baseURL); err != nil {
+		if err := s.emailService.SendPasswordResetEmail(ctx, req.Email, firstName, token, baseURL); err != nil {
 			s.logger.Error("Failed to send password reset email", zap.Error(err))
 		}
 	}
@@ -4504,13 +4541,20 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid or expired reset token"})
+		return
+	}
+
 	// Validate token
 	var userID string
 	var usedAt *time.Time
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT user_id, used_at FROM password_reset_tokens
-		WHERE token = $1 AND expires_at > NOW()
-	`, req.Token).Scan(&userID, &usedAt)
+		WHERE token = $1 AND org_id = $2 AND expires_at > NOW()
+	`, req.Token, org.ID).Scan(&userID, &usedAt)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid or expired reset token"})
 		return
@@ -4528,17 +4572,17 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 	}
 
 	// Update password
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2",
-		string(hashedPassword), userID)
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 AND org_id = $3",
+		string(hashedPassword), userID, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
 
 	// Mark token as used
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1", req.Token)
+	s.db.Pool.Exec(ctx,
+		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1 AND org_id = $2", req.Token, org.ID)
 
 	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
 }
@@ -4549,13 +4593,19 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	userID := c.Param("id")
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
 	// Get user info including source
 	var email, firstName, username string
 	var source *string
 	var directoryID *string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT email, first_name, username, source, directory_id FROM users WHERE id = $1 AND enabled = true",
-		userID).Scan(&email, &firstName, &username, &source, &directoryID)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT email, first_name, username, source, directory_id FROM users WHERE id = $1 AND org_id = $2 AND enabled = true",
+		userID, org.ID).Scan(&email, &firstName, &username, &source, &directoryID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
@@ -4588,7 +4638,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		}
 
 		// Mark password_must_change so user is prompted at next login
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1`, userID)
+		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`, userID, org.ID)
 
 		s.logger.Info("Admin reset directory password",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
@@ -4608,9 +4658,9 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	token := hex.EncodeToString(tokenBytes)
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO password_reset_tokens (user_id, token, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, token, time.Now().Add(24*time.Hour))
+		INSERT INTO password_reset_tokens (user_id, token, expires_at, org_id)
+		VALUES ($1, $2, $3, $4)
+	`, userID, token, time.Now().Add(24*time.Hour), org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create password reset token", zap.Error(err))
 		c.JSON(500, gin.H{"error": "Failed to create reset token"})
@@ -4670,11 +4720,17 @@ func (s *Service) handleAdminSetPassword(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
 	// Confirm the user exists and is a local account; directory-managed
 	// passwords must be changed via the directory, not here.
 	var source *string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT source FROM users WHERE id = $1 AND enabled = true", userIDStr,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT source FROM users WHERE id = $1 AND org_id = $2 AND enabled = true", userIDStr, org.ID,
 	).Scan(&source)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})

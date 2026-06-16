@@ -220,6 +220,36 @@ func TestAuthAndSessions_requireOrgContext(t *testing.T) {
 	})
 }
 
+func TestPasswords_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+	// Policy-valid so SetPassword/UpdatePassword reach the org check
+	// rather than short-circuiting on the password-policy validation.
+	const strongPw = "Str0ngPassw0rd!"
+
+	t.Run("SetPassword", func(t *testing.T) {
+		assertNoOrgContext(t, s.SetPassword(ctx, "u-1", strongPw))
+	})
+	t.Run("UpdatePassword", func(t *testing.T) {
+		assertNoOrgContext(t, s.UpdatePassword(ctx, "u-1", strongPw))
+	})
+	t.Run("CheckPasswordExpiry", func(t *testing.T) {
+		_, err := s.CheckPasswordExpiry(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("CheckPasswordExpiration", func(t *testing.T) {
+		_, _, err := s.CheckPasswordExpiration(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("CheckPasswordHistory", func(t *testing.T) {
+		_, err := s.CheckPasswordHistory(ctx, "u-1", strongPw, 5)
+		assertNoOrgContext(t, err)
+	})
+	t.Run("SavePasswordHistory", func(t *testing.T) {
+		assertNoOrgContext(t, s.SavePasswordHistory(ctx, "u-1", "hash"))
+	})
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

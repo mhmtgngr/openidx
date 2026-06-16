@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/openidx/openidx/internal/common/netutil"
+	"github.com/openidx/openidx/internal/common/orgctx"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -62,12 +63,16 @@ func (s *Service) ValidatePasswordPolicyChecks(password string) []string {
 // CheckPasswordHistory checks whether the given password was previously used by the user.
 // Returns true if the password was previously used.
 func (s *Service) CheckPasswordHistory(ctx context.Context, userID, newPassword string, historyCount int) (bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT password_hash FROM password_history
-		WHERE user_id = $1
+		WHERE user_id = $1 AND org_id = $3
 		ORDER BY created_at DESC
 		LIMIT $2
-	`, userID, historyCount)
+	`, userID, historyCount, org.ID)
 	if err != nil {
 		return false, fmt.Errorf("failed to query password history: %w", err)
 	}
@@ -88,9 +93,13 @@ func (s *Service) CheckPasswordHistory(ctx context.Context, userID, newPassword 
 
 // SavePasswordHistory stores a password hash in the password_history table for the given user.
 func (s *Service) SavePasswordHistory(ctx context.Context, userID, passwordHash string) error {
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)
-	`, userID, passwordHash)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO password_history (user_id, password_hash, org_id) VALUES ($1, $2, $3)
+	`, userID, passwordHash, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to save password history: %w", err)
 	}
@@ -155,10 +164,14 @@ func (s *Service) CheckCompromisedPassword(ctx context.Context, password string)
 
 // CheckPasswordExpiration checks if a user's password has expired based on a 90-day maximum age.
 func (s *Service) CheckPasswordExpiration(ctx context.Context, userID string) (bool, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, 0, err
+	}
 	var passwordChangedAt *time.Time
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT password_changed_at FROM users WHERE id = $1
-	`, userID).Scan(&passwordChangedAt)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT password_changed_at FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&passwordChangedAt)
 	if err != nil {
 		return false, 0, fmt.Errorf("failed to query user password_changed_at: %w", err)
 	}
