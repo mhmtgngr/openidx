@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -165,6 +166,57 @@ func TestRoleManagement_requireOrgContext(t *testing.T) {
 	})
 	t.Run("SetRolePermissions", func(t *testing.T) {
 		assertNoOrgContext(t, s.SetRolePermissions(ctx, "r-1", []string{"p-1"}))
+	})
+}
+
+func TestAuthAndSessions_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+
+	// Authentication: the org is resolved (from subdomain) before the
+	// request reaches these, so they authenticate within the caller's
+	// tenant — a username/email that exists only in another org must
+	// not satisfy a login here.
+	t.Run("AuthenticateUser", func(t *testing.T) {
+		_, err := s.AuthenticateUser(ctx, "john", "pw")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("RecordFailedLogin", func(t *testing.T) {
+		assertNoOrgContext(t, s.RecordFailedLogin(ctx, "john"))
+	})
+	t.Run("ClearFailedLogins", func(t *testing.T) {
+		assertNoOrgContext(t, s.ClearFailedLogins(ctx, "john"))
+	})
+	t.Run("IsAccountLocked", func(t *testing.T) {
+		_, err := s.IsAccountLocked(ctx, "john")
+		assertNoOrgContext(t, err)
+	})
+
+	// Sessions
+	t.Run("CreateSession", func(t *testing.T) {
+		_, err := s.CreateSession(ctx, "u-1", "client", "1.2.3.4", "ua", time.Hour)
+		assertNoOrgContext(t, err)
+	})
+	t.Run("UpdateSessionActivity", func(t *testing.T) {
+		assertNoOrgContext(t, s.UpdateSessionActivity(ctx, "sess-1"))
+	})
+	t.Run("IsSessionValid", func(t *testing.T) {
+		_, err := s.IsSessionValid(ctx, "sess-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("CountActiveSessions", func(t *testing.T) {
+		_, err := s.CountActiveSessions(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("GetUserSessions", func(t *testing.T) {
+		_, err := s.GetUserSessions(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("TerminateSession", func(t *testing.T) {
+		assertNoOrgContext(t, s.TerminateSession(ctx, "sess-1"))
+	})
+	t.Run("RevokeUserSessionsOnPasswordChange", func(t *testing.T) {
+		assertNoOrgContext(t, s.RevokeUserSessionsOnPasswordChange(ctx, "u-1"))
 	})
 }
 

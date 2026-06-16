@@ -869,13 +869,18 @@ func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) erro
 func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	s.logger.Debug("Getting sessions for user", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, user_id, client_id, ip_address, user_agent, 
+		SELECT id, user_id, client_id, ip_address, user_agent,
 		       started_at, last_seen_at, expires_at
 		FROM sessions
-		WHERE user_id = $1 AND expires_at > NOW()
+		WHERE user_id = $1 AND org_id = $2 AND expires_at > NOW()
 		ORDER BY last_seen_at DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -900,7 +905,12 @@ func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session
 func (s *Service) TerminateSession(ctx context.Context, sessionID string) error {
 	s.logger.Info("Terminating session", zap.String("session_id", sessionID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1", sessionID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1 AND org_id = $2", sessionID, org.ID)
 	return err
 }
 
@@ -1335,6 +1345,11 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress, userAgent string, sessionDuration time.Duration) (*Session, error) {
 	s.logger.Info("Creating session", zap.String("user_id", userID), zap.String("client_id", clientID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionID := uuid.New().String()
 	now := time.Now()
 	expiresAt := now.Add(sessionDuration)
@@ -1350,11 +1365,11 @@ func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress
 		ExpiresAt:  expiresAt,
 	}
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, session.ID, session.UserID, session.ClientID, session.IPAddress, session.UserAgent,
-		session.StartedAt, session.LastSeenAt, session.ExpiresAt)
+		session.StartedAt, session.LastSeenAt, session.ExpiresAt, org.ID)
 
 	if err != nil {
 		return nil, err
@@ -1367,11 +1382,16 @@ func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress
 func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) error {
 	s.logger.Debug("Updating session activity", zap.String("session_id", sessionID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET last_seen_at = $2
-		WHERE id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, sessionID, now)
+		WHERE id = $1 AND org_id = $3 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+	`, sessionID, now, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1385,11 +1405,16 @@ func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) e
 
 // IsSessionValid checks if a session is not revoked and not expired
 func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	var revoked bool
 	var expiresAt time.Time
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1
-	`, sessionID).Scan(&revoked, &expiresAt)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1 AND org_id = $2
+	`, sessionID, org.ID).Scan(&revoked, &expiresAt)
 	if err != nil {
 		return false, err
 	}
@@ -1398,10 +1423,15 @@ func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, e
 
 // CountActiveSessions returns the number of active (non-revoked, non-expired) sessions for a user
 func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, userID).Scan(&count)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+	`, userID, org.ID).Scan(&count)
 	return count, err
 }
 
@@ -1409,10 +1439,15 @@ func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, 
 func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID string) error {
 	s.logger.Info("Revoking all sessions on password change", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id FROM sessions
-		WHERE user_id = $1 AND (revoked IS NULL OR revoked = false)
-	`, userID)
+		WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
+	`, userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1423,14 +1458,14 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 		if err := rows.Scan(&sessionID); err != nil {
 			continue
 		}
-		if _, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1`, sessionID); err != nil {
+		if _, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1 AND org_id = $2`, sessionID, org.ID); err != nil {
 			return fmt.Errorf("failed to revoke session %s: %w", sessionID, err)
 		}
 		s.redis.Client.Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 	}
 
 	// Also delete all refresh tokens
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`, userID, org.ID); err != nil {
 		return fmt.Errorf("failed to delete refresh tokens: %w", err)
 	}
 
@@ -1441,14 +1476,19 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 func (s *Service) RecordFailedLogin(ctx context.Context, username string) error {
 	s.logger.Info("Recording failed login", zap.String("username", username))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 
 	// Get current user state
 	var user User
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE username = $1
-	`, username).Scan(&user.ID, &user.FailedLoginCount, &user.LastFailedLoginAt, &user.LockedUntil)
+		FROM users WHERE username = $1 AND org_id = $2
+	`, username, org.ID).Scan(&user.ID, &user.FailedLoginCount, &user.LastFailedLoginAt, &user.LockedUntil)
 	if err != nil {
 		return err
 	}
@@ -1485,8 +1525,8 @@ func (s *Service) RecordFailedLogin(ctx context.Context, username string) error 
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = $2, last_failed_login_at = $3, locked_until = $4
-		WHERE username = $1
-	`, username, user.FailedLoginCount, user.LastFailedLoginAt, user.LockedUntil)
+		WHERE username = $1 AND org_id = $5
+	`, username, user.FailedLoginCount, user.LastFailedLoginAt, user.LockedUntil, org.ID)
 
 	return err
 }
@@ -1495,21 +1535,31 @@ func (s *Service) RecordFailedLogin(ctx context.Context, username string) error 
 func (s *Service) ClearFailedLogins(ctx context.Context, username string) error {
 	s.logger.Debug("Clearing failed logins", zap.String("username", username))
 
-	_, err := s.db.Pool.Exec(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = 0, last_failed_login_at = NULL, locked_until = NULL
-		WHERE username = $1
-	`, username)
+		WHERE username = $1 AND org_id = $2
+	`, username, org.ID)
 
 	return err
 }
 
 // IsAccountLocked checks if a user account is currently locked
 func (s *Service) IsAccountLocked(ctx context.Context, username string) (bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	var lockedUntil *time.Time
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT locked_until FROM users WHERE username = $1
-	`, username).Scan(&lockedUntil)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT locked_until FROM users WHERE username = $1 AND org_id = $2
+	`, username, org.ID).Scan(&lockedUntil)
 
 	if err != nil {
 		return false, err
@@ -1628,6 +1678,15 @@ var ErrAccountDisabled = errors.New("account is disabled")
 func (s *Service) AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
 	s.logger.Info("Authenticating user", zap.String("username", username))
 
+	// The org is resolved (from subdomain/JWT/default) before the
+	// request reaches here, so authentication is scoped to the
+	// caller's tenant: the same username/email may exist in other
+	// orgs, and they must not satisfy a login against this one.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var userID, passwordHash string
 	var enabled bool
 	var lockedUntil *time.Time
@@ -1635,12 +1694,12 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	var source *string
 	var directoryID *string
 
-	// Get user by username or email
-	err := s.db.Pool.QueryRow(ctx, `
+	// Get user by username or email, within the caller's org
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, password_hash, enabled, locked_until, failed_login_count, source, directory_id
 		FROM users
-		WHERE username = $1 OR email = $1
-	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount, &source, &directoryID)
+		WHERE (username = $1 OR email = $1) AND org_id = $2
+	`, username, org.ID).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount, &source, &directoryID)
 
 	if err != nil {
 		s.logger.Debug("User not found", zap.String("username", username))
@@ -1694,8 +1753,8 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = 0, last_login_at = $2, locked_until = NULL
-		WHERE id = $1
-	`, userID, now)
+		WHERE id = $1 AND org_id = $3
+	`, userID, now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update login stats", zap.Error(err))
 	}
@@ -1706,6 +1765,12 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 
 // recordFailedLogin records a failed login attempt and locks account if necessary
 func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentCount int) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Error("Failed to record failed login: no org context", zap.Error(err))
+		return
+	}
+
 	newCount := currentCount + 1
 	now := time.Now()
 
@@ -1733,11 +1798,11 @@ func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentC
 		s.logger.Warn("Account locked due to failed attempts", zap.String("user_id", userID))
 	}
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = $2, last_failed_login_at = $3, locked_until = $4
-		WHERE id = $1
-	`, userID, newCount, now, lockedUntil)
+		WHERE id = $1 AND org_id = $5
+	`, userID, newCount, now, lockedUntil, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to record failed login", zap.Error(err))
 	}
