@@ -7,11 +7,19 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AutoMigrate runs pending migrations automatically
 // This is intended to be called from service startup
 func AutoMigrate(ctx context.Context, db *pgxpool.Pool, log *zap.Logger) error {
+	// Migrations are install-wide DDL/DML run as the table owner. Once v37 turns
+	// on FORCE row-level security, the pool's checkout hook would otherwise scope
+	// the migrator's connections to an (empty) org and filter their rows — so the
+	// migrator runs with the explicit RLS bypass.
+	ctx = orgctx.WithBypassRLS(ctx)
+
 	migrator := NewMigrator(db, log)
 
 	// Check current state

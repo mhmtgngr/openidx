@@ -23,6 +23,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // retentionHardFallbackDays caps the resolution chain when nothing else is
@@ -186,6 +188,7 @@ func (h *RemoteSupportHandler) resolveEffectiveRetention(
 // A retention of 0 (infinite) is skipped — those rows stay until something
 // upstream changes their policy.
 func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Context, interval time.Duration) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	if h.recordingStore == nil || h.db == nil || h.db.Pool == nil {
 		return
 	}

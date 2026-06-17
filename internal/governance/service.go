@@ -2191,6 +2191,7 @@ func (s *Service) handleGetCampaignRuns(c *gin.Context) {
 // StartCampaignScheduler runs a background loop that checks for campaigns due to run
 // and for campaign runs that have exceeded their deadline.
 func (s *Service) StartCampaignScheduler(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 	for {

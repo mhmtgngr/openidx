@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // SyncResult represents the result of syncing a single user to Ziti.
@@ -328,6 +330,7 @@ func (zm *ZitiManager) GetSyncStatus(ctx context.Context) (*SyncStatus, error) {
 // StartUserSyncPoller starts a background goroutine that periodically checks
 // for users without Ziti identities and creates them.
 func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()

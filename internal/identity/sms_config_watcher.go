@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/sms"
 )
 
@@ -14,6 +15,7 @@ import (
 // and hot-swaps the SMS provider when a change is detected.
 // This allows admin console settings changes to take effect without restarting the identity service.
 func (s *Service) StartSMSConfigWatcher(ctx context.Context, interval time.Duration) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

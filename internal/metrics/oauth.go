@@ -4,6 +4,8 @@ package metrics
 import (
 	"context"
 	"time"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // OAuthMetricsCollector collects OAuth-specific business metrics
@@ -29,6 +31,7 @@ func NewOAuthMetricsCollector(serviceName string, db OAuthDBStats) *OAuthMetrics
 
 // Start starts the metrics collection loop
 func (g *OAuthMetricsCollector) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	// Initial collection
 	g.collectMetrics(ctx)
 

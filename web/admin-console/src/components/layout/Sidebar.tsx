@@ -8,6 +8,7 @@ import {
   FileText,
   ScrollText,
   Settings,
+  Palette,
   ChevronLeft,
   ChevronRight,
   LogOut,
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/reviews', icon: ShieldCheck, label: 'Access Reviews' },
   { to: '/policies', icon: FileText, label: 'Policies' },
   { to: '/audit', icon: ScrollText, label: 'Audit Logs' },
+  { to: '/branding', icon: Palette, label: 'Branding' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

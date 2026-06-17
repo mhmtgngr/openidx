@@ -7,7 +7,7 @@ import (
 
 // Test AllRoles constant contains all valid roles
 func TestAllRoles(t *testing.T) {
-	expectedRoles := []Role{RoleSuperAdmin, RoleAdmin, RoleOperator, RoleAuditor, RoleUser}
+	expectedRoles := []Role{RoleSuperAdmin, RoleAdmin, RoleOperator, RoleAuditor, RoleComplianceReader, RoleUser}
 
 	if len(AllRoles) != len(expectedRoles) {
 		t.Errorf("AllRoles has %d elements, expected %d", len(AllRoles), len(expectedRoles))
@@ -388,5 +388,29 @@ func BenchmarkParsePermission(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ParsePermission(permStr)
+	}
+}
+
+// compliance_reader is an audit-only role: it can read/export audit but must NOT
+// gain user/group/config/policy access (it intentionally inherits nothing).
+func TestComplianceReaderIsAuditOnly(t *testing.T) {
+	perms := GetPermissions(RoleComplianceReader)
+	has := func(resource, action string) bool {
+		for _, p := range perms {
+			if p.Resource == resource && p.Action == action {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("audit", "read") || !has("audit", "export") {
+		t.Fatalf("compliance_reader must have audit read+export; got %v", perms)
+	}
+	if has("users", "read") || has("users", "write") || has("config", "manage") ||
+		has("policies", "manage") || has("groups", "manage") || has("tenants", "manage") {
+		t.Fatalf("compliance_reader must be audit-only; leaked non-audit perms: %v", perms)
+	}
+	if len(perms) != 2 {
+		t.Fatalf("compliance_reader should have exactly 2 perms (audit read+export); got %d: %v", len(perms), perms)
 	}
 }

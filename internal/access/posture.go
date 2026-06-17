@@ -725,6 +725,7 @@ func (zm *ZitiManager) DeletePolicySyncState(ctx context.Context, id string) err
 // StartPostureResultExpiryChecker runs a background goroutine that periodically
 // deletes expired posture check results from the database.
 func (zm *ZitiManager) StartPostureResultExpiryChecker(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()

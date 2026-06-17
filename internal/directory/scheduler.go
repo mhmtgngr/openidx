@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Scheduler runs periodic directory syncs
@@ -34,6 +35,7 @@ func NewScheduler(db *database.PostgresDB, engine *SyncEngine, logger *zap.Logge
 
 // Start begins the scheduling loop
 func (s *Scheduler) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	s.logger.Info("Directory sync scheduler started")
 
 	ticker := time.NewTicker(60 * time.Second)

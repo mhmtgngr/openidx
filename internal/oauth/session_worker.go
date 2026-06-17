@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // StartSessionWorker starts a background goroutine that periodically checks for
 // expired or idle sessions and revokes them. It runs every 60 seconds.
 func (s *Service) StartSessionWorker(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	s.logger.Info("Starting session expiry worker")
 
 	go func() {

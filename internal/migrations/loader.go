@@ -264,5 +264,12 @@ func allMigrations() []*Migration {
 			UpSQL:       orgIDConstraintsUp,
 			DownSQL:     orgIDConstraintsDown,
 		},
+		{
+			Version:     37,
+			Name:        "rls_activate",
+			Description: "v1.8.0 RLS belt. Rewrites the 68 dormant pol_<t>_org_scope policies from USING(true) to a real tenant predicate — app.bypass_rls='on' OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid (fail-closed when the GUC is unset) — then ENABLE + FORCE ROW LEVEL SECURITY per table (FORCE because the app connects as the table owner). The per-request GUC is set at pool checkout from orgctx (internal/common/database); background/cross-org jobs opt into app.bypass_rls via orgctx.WithBypassRLS. Down reverts to USING(true) + RLS off.",
+			UpSQL:       rlsActivateUp,
+			DownSQL:     rlsActivateDown,
+		},
 	}
 }

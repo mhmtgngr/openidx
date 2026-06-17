@@ -35,6 +35,7 @@ func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
 
 // Start launches the background scheduler
 func (s *Service) Start(ctx context.Context) error {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	s.cancelFn = cancel
 	go s.scheduler.Start(ctx)

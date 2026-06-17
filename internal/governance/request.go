@@ -406,6 +406,7 @@ func (s *RequestService) CancelRequest(ctx context.Context, requestID, requester
 // StartEscalationChecker starts the background goroutine that checks for requests
 // needing escalation and auto-escalates after the configured timeout
 func (s *RequestService) StartEscalationChecker(ctx context.Context, checkInterval time.Duration) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 

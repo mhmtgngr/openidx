@@ -37,6 +37,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // RemoteSupportHandler owns the broker (peer registry + signaling fan-out)
@@ -644,6 +645,7 @@ func (h *RemoteSupportHandler) audit(ctx context.Context, action, sessionID, out
 // sessions with no signaling activity in `idleAfter`. Janitor restart is
 // safe — it operates only on Postgres state, not broker memory.
 func (h *RemoteSupportHandler) StartJanitor(ctx context.Context, idleAfter time.Duration, tick time.Duration) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()

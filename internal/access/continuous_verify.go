@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ContinuousVerifier periodically re-evaluates active proxy sessions against current
@@ -33,6 +35,7 @@ func NewContinuousVerifier(svc *Service, interval time.Duration, logger *zap.Log
 
 // Start launches the background verification goroutine
 func (cv *ContinuousVerifier) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(cv.interval)
 		defer ticker.Stop()

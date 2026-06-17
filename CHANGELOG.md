@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Multi-tenancy — RLS belt + per-org primitives (v1.8.0)
+
+Defense-in-depth: Postgres Row-Level Security so a missing app-layer org filter
+still cannot leak across tenants, plus the per-org primitives.
+
+#### Added
+- Migration **v37**: activates RLS on all 68 org-scoped tables — policies
+  rewritten to `app.bypass_rls='on' OR org_id = current_setting('app.org_id')`
+  with `ENABLE` + `FORCE ROW LEVEL SECURITY` (fail-closed when the GUC is unset).
+- Pool-checkout GUC injection (`internal/common/database/rls.go`): each
+  connection is stamped with the request's tenant scope from `orgctx`; no query
+  call-site changes. `orgctx.WithBypassRLS` is the explicit opt-in for
+  background/cross-org jobs (wired into ~25 ticker/sweep entrypoints + the migrator).
+- Two-tenant RLS ship-gate test (`test/integration/cross_org_test.go:TestRLSBelt`):
+  a raw cross-org `SELECT` returns 0 rows even with the app filter "broken".
+- Per-org rate-limit buckets; `compliance_reader` org-scoped read-only audit role;
+  admin-console **Branding** page; `docs/multitenancy-upgrade-runbook.md`.
+
+#### Changed
+- **BREAKING (operational):** with RLS forced, direct SQL against org-scoped
+  tables sees no rows unless the session sets `app.org_id` (or
+  `app.bypass_rls='on'`). See the upgrade runbook.
+
 ### Multi-tenancy — App-layer enforcement (v1.7.0)
 
 The v2.0 multi-tenancy epic's enforcement milestone. Every service query now

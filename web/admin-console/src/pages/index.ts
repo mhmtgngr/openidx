@@ -91,6 +91,7 @@ export { ApiDocsPage as APIDocs } from './api-docs'
 // System
 export { SystemHealthPage as SystemHealth } from './system-health'
 export { OrganizationsPage as Organizations } from './organizations'
+export { BrandingPage as Branding } from './branding'
 export { DelegationsPage as Delegations } from './delegations'
 export { WebhooksPage as Webhooks } from './webhooks'
 export { TenantManagementPage as TenantManagement } from './tenant-management'

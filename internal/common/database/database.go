@@ -53,6 +53,10 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 	config.MaxConnIdleTime = 30 * time.Minute
 	config.HealthCheckPeriod = time.Minute
 
+	// v1.8.0 RLS belt: stamp each connection with the request's tenant scope
+	// (app.org_id / app.bypass_rls) at checkout from orgctx on the acquire ctx.
+	configureRLS(config)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

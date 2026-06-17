@@ -18,12 +18,16 @@ const (
 	RoleOperator Role = "operator"
 	// RoleAuditor has read-only access for compliance and auditing
 	RoleAuditor Role = "auditor"
+	// RoleComplianceReader is a narrow, org-scoped read-only role: it can read and
+	// export the org's audit trail and nothing else (no user/group/config access).
+	// Intended for external auditors / compliance reviewers granted to a single org.
+	RoleComplianceReader Role = "compliance_reader"
 	// RoleUser is the base role for regular users
 	RoleUser Role = "user"
 )
 
 // AllRoles defines all valid roles in the system
-var AllRoles = []Role{RoleSuperAdmin, RoleAdmin, RoleOperator, RoleAuditor, RoleUser}
+var AllRoles = []Role{RoleSuperAdmin, RoleAdmin, RoleOperator, RoleAuditor, RoleComplianceReader, RoleUser}
 
 // Permission represents a granular permission on a resource
 type Permission struct {
@@ -85,11 +89,12 @@ var AllPermissions = []string{
 // RoleLevel defines the hierarchy level of each role (higher = more privileges)
 // super_admin (4) > admin (3) > operator (2) > auditor (1) > user (0)
 var RoleLevel = map[Role]int{
-	RoleSuperAdmin: 4,
-	RoleAdmin:      3,
-	RoleOperator:   2,
-	RoleAuditor:    1,
-	RoleUser:       0,
+	RoleSuperAdmin:       4,
+	RoleAdmin:            3,
+	RoleOperator:         2,
+	RoleAuditor:          1,
+	RoleComplianceReader: 1, // read-only tier, narrower than auditor (audit only)
+	RoleUser:             0,
 }
 
 // RoleHierarchy defines which roles a role inherits permissions from.
@@ -99,7 +104,10 @@ var RoleHierarchy = map[Role][]Role{
 	RoleAdmin:      {RoleOperator, RoleAuditor, RoleUser},
 	RoleOperator:   {RoleAuditor, RoleUser},
 	RoleAuditor:    {RoleUser},
-	RoleUser:       {}, // Base role, no inheritance
+	// compliance_reader is deliberately standalone — it must NOT inherit RoleUser's
+	// users:read; its only capability is reading the org's audit trail.
+	RoleComplianceReader: {},
+	RoleUser:             {}, // Base role, no inheritance
 }
 
 // RolePermissions defines the direct permissions for each role (not including inherited)
@@ -137,6 +145,10 @@ var RolePermissions = map[Role][]Permission{
 		{"audit", "read"},
 		{"audit", "export"},
 		{"users", "read"},
+	},
+	RoleComplianceReader: {
+		{"audit", "read"},
+		{"audit", "export"},
 	},
 	RoleUser: {
 		{"users", "read"},

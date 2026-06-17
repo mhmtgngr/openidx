@@ -4,6 +4,8 @@ package metrics
 import (
 	"context"
 	"time"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // IdentityMetricsCollector collects identity-specific business metrics
@@ -36,6 +38,7 @@ func NewIdentityMetricsCollector(serviceName string, db DBStatsCollector, redis 
 
 // Start starts the metrics collection loop
 func (i *IdentityMetricsCollector) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	// Initial collection
 	i.collectMetrics(ctx)
 

@@ -407,6 +407,7 @@ func (zm *ZitiManager) SyncCertificatesFromController(ctx context.Context) error
 // StartCertificateMonitor launches a background goroutine that periodically checks for
 // expiring certificates, logs warnings, and auto-rotates certificates that have auto_renew enabled.
 func (zm *ZitiManager) StartCertificateMonitor(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
