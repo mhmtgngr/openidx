@@ -1161,7 +1161,7 @@ func TestDoSync_InvalidDirectoryType(t *testing.T) {
 	result := &SyncResult{}
 
 	ctx := context.Background()
-	err := engine.doSync(ctx, "dir-001", "invalid_type", []byte("{}"), false, result)
+	err := engine.doSync(ctx, "dir-001", "org-1", "invalid_type", []byte("{}"), false, result)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported directory type")
@@ -1175,7 +1175,7 @@ func TestDoSync_InvalidLDAPConfig(t *testing.T) {
 	ctx := context.Background()
 	invalidJSON := []byte("{invalid json}")
 
-	err := engine.doSync(ctx, "dir-001", "ldap", invalidJSON, false, result)
+	err := engine.doSync(ctx, "dir-001", "org-1", "ldap", invalidJSON, false, result)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid LDAP config")
@@ -1189,7 +1189,7 @@ func TestDoSync_InvalidAzureADConfig(t *testing.T) {
 	ctx := context.Background()
 	invalidJSON := []byte("{invalid json}")
 
-	err := engine.doSync(ctx, "dir-001", "azure_ad", invalidJSON, false, result)
+	err := engine.doSync(ctx, "dir-001", "org-1", "azure_ad", invalidJSON, false, result)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid Azure AD config")

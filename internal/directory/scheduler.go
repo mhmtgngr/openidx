@@ -98,6 +98,7 @@ type syncConfig struct {
 
 func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore background scheduler enumerates every org's enabled integrations; RunSync resolves + scopes each by its own org
 		`SELECT id, type, config FROM directory_integrations WHERE enabled = true`)
 	if err != nil {
 		s.logger.Error("Failed to query directories for scheduling", zap.Error(err))
@@ -125,6 +126,7 @@ func (s *Scheduler) checkAndRunSyncs(ctx context.Context) {
 		// Check if sync is due
 		var lastSyncAt *time.Time
 		s.db.Pool.QueryRow(ctx,
+			//orgscope:ignore background scheduler, keyed by globally-unique directory_id; no single request org
 			`SELECT last_sync_at FROM directory_sync_state WHERE directory_id = $1`, id).Scan(&lastSyncAt)
 
 		syncDue := false
@@ -165,6 +167,7 @@ func (s *Scheduler) loadDirectoryConfig(ctx context.Context, directoryID string)
 	var dirType string
 	var configBytes []byte
 	err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore background scheduler, keyed by globally-unique directory_id; RunSync resolves + scopes the sync by the integration's org
 		`SELECT type, config FROM directory_integrations WHERE id = $1`, directoryID).Scan(&dirType, &configBytes)
 	if err != nil {
 		return "", nil, err

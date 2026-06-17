@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Service is the directory sync service facade
@@ -143,10 +144,14 @@ func (s *Service) ResetPassword(ctx context.Context, directoryID, username, newP
 		}
 		// For Azure AD, username is actually the user's external_id (Azure objectId)
 		// Look up the external_id for this user
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			return err
+		}
 		var externalID *string
 		s.db.Pool.QueryRow(ctx,
-			`SELECT external_id FROM users WHERE username = $1 AND directory_id = $2`,
-			username, directoryID).Scan(&externalID)
+			`SELECT external_id FROM users WHERE username = $1 AND directory_id = $2 AND org_id = $3`,
+			username, directoryID, org.ID).Scan(&externalID)
 		if externalID == nil {
 			return fmt.Errorf("user not found in Azure AD directory")
 		}
@@ -159,11 +164,15 @@ func (s *Service) ResetPassword(ctx context.Context, directoryID, username, newP
 
 // loadDirectoryTypeAndConfig loads the type and raw config for a directory integration
 func (s *Service) loadDirectoryTypeAndConfig(ctx context.Context, directoryID string) (string, []byte, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", nil, err
+	}
 	var dirType string
 	var configBytes []byte
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT type, config FROM directory_integrations WHERE id = $1 AND enabled = true`,
-		directoryID).Scan(&dirType, &configBytes)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT type, config FROM directory_integrations WHERE id = $1 AND org_id = $2 AND enabled = true`,
+		directoryID, org.ID).Scan(&dirType, &configBytes)
 	if err != nil {
 		return "", nil, fmt.Errorf("directory not found or disabled: %w", err)
 	}
@@ -176,13 +185,18 @@ func (s *Service) GetSyncLogs(ctx context.Context, directoryID string, limit int
 		limit = 20
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, directory_id, sync_type, status, started_at, completed_at,
 		        users_added, users_updated, users_disabled, groups_added, groups_updated, groups_deleted, error_message
 		 FROM directory_sync_logs
-		 WHERE directory_id = $1
+		 WHERE directory_id = $1 AND org_id = $3
 		 ORDER BY started_at DESC
-		 LIMIT $2`, directoryID, limit)
+		 LIMIT $2`, directoryID, limit, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -209,9 +223,14 @@ func (s *Service) GetSyncState(ctx context.Context, directoryID string) (*SyncSt
 	var state SyncState
 	state.DirectoryID = directoryID
 
-	err := s.db.Pool.QueryRow(ctx,
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT last_sync_at, last_usn_changed, last_modify_timestamp, users_synced, groups_synced, errors_count, sync_duration_ms
-		 FROM directory_sync_state WHERE directory_id = $1`, directoryID).Scan(
+		 FROM directory_sync_state WHERE directory_id = $1 AND org_id = $2`, directoryID, org.ID).Scan(
 		&state.LastSyncAt, &state.LastUSNChanged, &state.LastModifyTimestamp,
 		&state.UsersSynced, &state.GroupsSynced, &state.ErrorsCount, &state.SyncDurationMs)
 	if err != nil {
