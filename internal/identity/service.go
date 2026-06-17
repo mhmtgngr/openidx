@@ -682,7 +682,7 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 		user.UpdatedAt = dbUser.UpdatedAt
 
 		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent("identity", "user_management", "user.created", "success",
+		s.logAuditEvent(ctx, "identity", "user_management", "user.created", "success",
 			actorID, dbUser.ID, "user", map[string]interface{}{
 				"username": dbUser.Username,
 				"email":    dbUser.Email,
@@ -733,7 +733,7 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 
 	// Log audit event before deletion so the record exists even if delete succeeds
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("identity", "user_management", "user.deleted", "success",
+	s.logAuditEvent(ctx, "identity", "user_management", "user.deleted", "success",
 		actorID, userID, "user", nil)
 
 	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
@@ -1634,7 +1634,7 @@ func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent("identity", "security", "user.password_changed", "success",
+		s.logAuditEvent(ctx, "identity", "security", "user.password_changed", "success",
 			actorID, userID, "user", nil)
 	}
 
@@ -2475,7 +2475,7 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent("identity", "role_management", "role.created", "success",
+		s.logAuditEvent(ctx, "identity", "role_management", "role.created", "success",
 			actorID, role.ID, "role", map[string]interface{}{
 				"role_name": role.Name,
 			})
@@ -2508,7 +2508,7 @@ func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 	}
 
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("identity", "role_management", "role.updated", "success",
+	s.logAuditEvent(ctx, "identity", "role_management", "role.updated", "success",
 		actorID, role.ID, "role", map[string]interface{}{
 			"role_name": role.Name,
 		})
@@ -2654,18 +2654,23 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 		zap.String("action", action),
 		zap.Int("target_roles", len(targetRoleIDs)))
 
-	// Query all enabled policies with their rules
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil // Fail open: no org context, don't block
+	}
+
+	// Query all enabled policies (for this org) with their rules
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT p.id, p.name, p.type, p.priority,
 		       COALESCE(json_agg(json_build_object(
 		           'id', pr.id, 'condition', pr.condition, 'effect', pr.effect, 'priority', pr.priority
 		       )) FILTER (WHERE pr.id IS NOT NULL), '[]'::json) as rules
 		FROM policies p
-		LEFT JOIN policy_rules pr ON pr.policy_id = p.id
-		WHERE p.enabled = true
+		LEFT JOIN policy_rules pr ON pr.policy_id = p.id AND pr.org_id = p.org_id
+		WHERE p.enabled = true AND p.org_id = $1
 		GROUP BY p.id, p.name, p.type, p.priority
 		ORDER BY p.priority DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query policies", zap.Error(err))
 		return nil // Fail open: don't block if we can't check policies
@@ -2686,8 +2691,8 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 	targetRoleNames := make(map[string]string) // id -> name
 	if len(targetRoleIDs) > 0 {
 		roleRows, err := s.db.Pool.Query(ctx, `
-			SELECT id, name FROM roles WHERE id = ANY($1)
-		`, targetRoleIDs)
+			SELECT id, name FROM roles WHERE id = ANY($1) AND org_id = $2
+		`, targetRoleIDs, org.ID)
 		if err == nil {
 			defer roleRows.Close()
 			for roleRows.Next() {
@@ -6070,7 +6075,16 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 
 // logAuditEvent writes an audit event to the audit_events table (best-effort, non-blocking).
 // It mirrors the pattern used in the OAuth service.
-func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+	// Capture the org synchronously from the request context: the
+	// write runs on a detached background context (audit is
+	// fire-and-forget), so the tenant must be read before we leave the
+	// request. Falls back to the default org UUID when none is
+	// resolved, matching the milestone's DefaultOrgFallback semantics.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
+		orgID = org.ID
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -6078,9 +6092,9 @@ func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, t
 		_, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
-			                          resource_id, details)
-			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', '', $6, $7, $6, $8)
-		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON)
+			                          resource_id, details, org_id)
+			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', '', $6, $7, $6, $8, $9)
+		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON, orgID)
 		if err != nil {
 			s.logger.Warn("failed to record audit event",
 				zap.String("event_type", eventType),

@@ -377,6 +377,17 @@ func TestSCIMLookups_requireOrgContext(t *testing.T) {
 	})
 }
 
+func TestCheckPolicies_failsOpenWithoutOrgContext(t *testing.T) {
+	// CheckPolicies fails open (returns nil) when it can't evaluate —
+	// including when there's no org on the context — rather than
+	// blocking the operation. With a nil pool, returning nil proves it
+	// bailed at the org guard before touching the database.
+	s := newUnboundService(t)
+	if err := s.CheckPolicies(context.Background(), "u-1", "assign_role", []string{"r-1"}, "1.2.3.4"); err != nil {
+		t.Fatalf("CheckPolicies without org = %v, want nil (fail-open before DB access)", err)
+	}
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {
