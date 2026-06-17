@@ -3318,9 +3318,15 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 	// Send verification email (best-effort)
 	if s.emailService != nil {
 		token := uuid.New().String()
-		_, err := s.db.Pool.Exec(c.Request.Context(),
-			"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
-			user.ID, token)
+		org, oerr := orgctx.From(ctx)
+		var err error
+		if oerr != nil {
+			err = oerr
+		} else {
+			_, err = s.db.Pool.Exec(ctx,
+				"INSERT INTO email_verification_tokens (user_id, token, expires_at, org_id) VALUES ($1, $2, NOW() + INTERVAL '24 hours', $3)",
+				user.ID, token, org.ID)
+		}
 		if err == nil {
 			baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
 			s.emailService.SendVerificationEmail(c.Request.Context(), user.GetEmail(), user.GetFirstName(), token, baseURL)
@@ -5027,23 +5033,30 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 		return
 	}
 
-	var userID string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT user_id FROM email_verification_tokens WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL",
-		req.Token).Scan(&userID)
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired token"})
 		return
 	}
 
-	_, err = s.db.Pool.Exec(c.Request.Context(), "UPDATE users SET email_verified = true WHERE id = $1", userID)
+	var userID string
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id FROM email_verification_tokens WHERE token = $1 AND org_id = $2 AND expires_at > NOW() AND used_at IS NULL",
+		req.Token, org.ID).Scan(&userID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired token"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "UPDATE users SET email_verified = true WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to verify email"})
 		return
 	}
 
-	if _, err := s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1", req.Token); err != nil {
+	if _, err := s.db.Pool.Exec(ctx,
+		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1 AND org_id = $2", req.Token, org.ID); err != nil {
 		s.logger.Error("failed to mark verification token as used", zap.String("token", req.Token), zap.Error(err))
 	}
 
@@ -5054,18 +5067,25 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 func (s *Service) handleResendVerification(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
 	var email, firstName string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT email, first_name FROM users WHERE id = $1", userID).Scan(&email, &firstName)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT email, first_name FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&email, &firstName)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
 	}
 
 	token := uuid.New().String()
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
-		userID, token)
+	_, err = s.db.Pool.Exec(ctx,
+		"INSERT INTO email_verification_tokens (user_id, token, expires_at, org_id) VALUES ($1, $2, NOW() + INTERVAL '24 hours', $3)",
+		userID, token, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create verification token"})
 		return
@@ -5081,9 +5101,14 @@ func (s *Service) handleResendVerification(c *gin.Context) {
 
 // handleListInvitations lists pending invitations
 func (s *Service) handleListInvitations(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at
-		 FROM user_invitations ORDER BY created_at DESC LIMIT 50`)
+		 FROM user_invitations WHERE org_id = $1 ORDER BY created_at DESC LIMIT 50`, org.ID)
 	if err != nil {
 		s.logger.Error("failed to list invitations", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -5135,11 +5160,17 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 	invitedBy, _ := c.Get("user_id")
 	token := uuid.New().String()
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
 	var id string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days') RETURNING id`,
-		req.Email, invitedBy, req.Roles, req.Groups, token).Scan(&id)
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days', $6) RETURNING id`,
+		req.Email, invitedBy, req.Roles, req.Groups, token, org.ID).Scan(&id)
 	if err != nil {
 		s.logger.Error("failed to create invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -5163,8 +5194,13 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 // handleDeleteInvitation revokes an invitation
 func (s *Service) handleDeleteInvitation(c *gin.Context) {
 	id := c.Param("id")
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_invitations WHERE id = $1", id)
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM user_invitations WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		s.logger.Error("failed to delete invitation", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -5188,19 +5224,27 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 		return
 	}
 
-	// Look up invitation
-	var invID, email string
-	var roles, groups []string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, email, roles, groups FROM user_invitations
-		 WHERE token = $1 AND status = 'pending' AND expires_at > NOW()`,
-		token).Scan(&invID, &email, &roles, &groups)
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
 		return
 	}
 
-	// Create user
+	// Look up invitation within the caller's org (the invite link is
+	// org-specific via the subdomain it was sent for)
+	var invID, email string
+	var roles, groups []string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id, email, roles, groups FROM user_invitations
+		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+		token, org.ID).Scan(&invID, &email, &roles, &groups)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
+		return
+	}
+
+	// Create user (CreateUser scopes to the org carried on ctx)
 	user := &User{
 		UserName: req.Username,
 		Emails:   []Email{{Value: email, Primary: boolPtr(true), Verified: boolPtr(true)}},
@@ -5208,7 +5252,7 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 		Enabled:  true,
 	}
 
-	if err := s.CreateUser(c.Request.Context(), user); err != nil {
+	if err := s.CreateUser(ctx, user); err != nil {
 		s.logger.Error("failed to create user from invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -5217,28 +5261,28 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	// Set password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err == nil {
-		s.db.Pool.Exec(c.Request.Context(),
-			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2",
-			string(hashedPassword), user.ID)
+		s.db.Pool.Exec(ctx,
+			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2 AND org_id = $3",
+			string(hashedPassword), user.ID, org.ID)
 	}
 
-	// Assign roles
+	// Assign roles (only roles within the caller's org)
 	for _, role := range roles {
-		s.db.Pool.Exec(c.Request.Context(),
-			"INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE name = $2 ON CONFLICT DO NOTHING",
-			user.ID, role)
+		s.db.Pool.Exec(ctx,
+			"INSERT INTO user_roles (user_id, role_id, org_id) SELECT $1, id, $3 FROM roles WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			user.ID, role, org.ID)
 	}
 
-	// Add to groups
+	// Add to groups (only groups within the caller's org)
 	for _, group := range groups {
-		s.db.Pool.Exec(c.Request.Context(),
-			"INSERT INTO group_memberships (user_id, group_id) SELECT $1, id FROM groups WHERE name = $2 ON CONFLICT DO NOTHING",
-			user.ID, group)
+		s.db.Pool.Exec(ctx,
+			"INSERT INTO group_memberships (user_id, group_id, org_id) SELECT $1, id, $3 FROM groups WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			user.ID, group, org.ID)
 	}
 
 	// Mark invitation as accepted
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1", invID)
+	s.db.Pool.Exec(ctx,
+		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1 AND org_id = $2", invID, org.ID)
 
 	// Send welcome email
 	if s.emailService != nil {
