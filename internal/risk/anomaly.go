@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -47,10 +48,15 @@ func (s *Service) DetectImpossibleTravel(ctx context.Context, userID, ip string,
 	var lastTime time.Time
 	var lastIP string
 
-	err := s.db.Pool.QueryRow(ctx,
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
+
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT ip_address, latitude, longitude, created_at FROM login_history
-		 WHERE user_id = $1 AND success = true AND latitude != 0 AND longitude != 0
-		 ORDER BY created_at DESC LIMIT 1`, userID).Scan(&lastIP, &lastLat, &lastLon, &lastTime)
+		 WHERE user_id = $1 AND org_id = $2 AND success = true AND latitude != 0 AND longitude != 0
+		 ORDER BY created_at DESC LIMIT 1`, userID, org.ID).Scan(&lastIP, &lastLat, &lastLon, &lastTime)
 	if err != nil {
 		return nil
 	}
@@ -110,10 +116,14 @@ func (s *Service) DetectImpossibleTravel(ctx context.Context, userID, ip string,
 // DetectBruteForce checks for brute force login attempts from a given IP address.
 func (s *Service) DetectBruteForce(ctx context.Context, ip, userID string) *SecurityAlert {
 	var failedCount int
-	err := s.db.Pool.QueryRow(ctx,
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE ip_address = $1 AND success = false AND created_at > NOW() - INTERVAL '15 minutes'`,
-		ip).Scan(&failedCount)
+		 WHERE ip_address = $1 AND org_id = $2 AND success = false AND created_at > NOW() - INTERVAL '15 minutes'`,
+		ip, org.ID).Scan(&failedCount)
 	if err != nil {
 		s.logger.Error("Failed to query brute force attempts", zap.Error(err))
 		return nil
@@ -218,6 +228,10 @@ func (s *Service) RemoveFromThreatList(ctx context.Context, id string) error {
 
 // CreateSecurityAlert inserts a new security alert into the database.
 func (s *Service) CreateSecurityAlert(ctx context.Context, alert *SecurityAlert) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	if alert.ID == "" {
 		alert.ID = uuid.New().String()
 	}
@@ -244,11 +258,11 @@ func (s *Service) CreateSecurityAlert(ctx context.Context, alert *SecurityAlert)
 
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO security_alerts
-		 (id, user_id, alert_type, severity, status, title, description, details, source_ip, remediation_actions, resolved_by, resolved_at, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		 (id, user_id, alert_type, severity, status, title, description, details, source_ip, remediation_actions, resolved_by, resolved_at, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		alert.ID, alert.UserID, alert.AlertType, alert.Severity, alert.Status,
 		alert.Title, alert.Description, detailsJSON, alert.SourceIP, remediationJSON,
-		alert.ResolvedBy, alert.ResolvedAt, alert.CreatedAt, alert.UpdatedAt)
+		alert.ResolvedBy, alert.ResolvedAt, alert.CreatedAt, alert.UpdatedAt, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to create security alert: %w", err)
 	}
@@ -264,11 +278,19 @@ func (s *Service) CreateSecurityAlert(ctx context.Context, alert *SecurityAlert)
 
 // ListSecurityAlerts returns a paginated list of security alerts with optional filters.
 func (s *Service) ListSecurityAlerts(ctx context.Context, status, severity, alertType string, limit, offset int) ([]SecurityAlert, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	whereClause := ""
 	args := []interface{}{}
 	argIdx := 1
 
 	conditions := []string{}
+	conditions = append(conditions, fmt.Sprintf("org_id = $%d", argIdx))
+	args = append(args, org.ID)
+	argIdx++
 	if status != "" {
 		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
 		args = append(args, status)
@@ -297,12 +319,13 @@ func (s *Service) ListSecurityAlerts(ctx context.Context, status, severity, aler
 
 	var total int
 	countQuery := "SELECT COUNT(*) FROM security_alerts" + whereClause
-	err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count security alerts: %w", err)
 	}
 
 	query := fmt.Sprintf(
+		//orgscope:ignore org_id filter is applied via the whereClause built above (org_id = $1 always prepended)
 		`SELECT id, user_id, alert_type, severity, status, title, description, details, source_ip,
 		        remediation_actions, resolved_by, resolved_at, created_at, updated_at
 		 FROM security_alerts%s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`,
@@ -345,13 +368,18 @@ func (s *Service) ListSecurityAlerts(ctx context.Context, status, severity, aler
 
 // GetSecurityAlert retrieves a single security alert by ID.
 func (s *Service) GetSecurityAlert(ctx context.Context, id string) (*SecurityAlert, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var a SecurityAlert
 	var detailsJSON, remediationJSON []byte
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, user_id, alert_type, severity, status, title, description, details, source_ip,
 		        remediation_actions, resolved_by, resolved_at, created_at, updated_at
-		 FROM security_alerts WHERE id = $1`, id).Scan(
+		 FROM security_alerts WHERE id = $1 AND org_id = $2`, id, org.ID).Scan(
 		&a.ID, &a.UserID, &a.AlertType, &a.Severity, &a.Status,
 		&a.Title, &a.Description, &detailsJSON, &a.SourceIP,
 		&remediationJSON, &a.ResolvedBy, &a.ResolvedAt,
@@ -376,18 +404,22 @@ func (s *Service) GetSecurityAlert(ctx context.Context, id string) (*SecurityAle
 
 // UpdateAlertStatus updates the status of a security alert.
 func (s *Service) UpdateAlertStatus(ctx context.Context, id, status, resolvedBy string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	if status == "resolved" || status == "false_positive" {
 		_, err := s.db.Pool.Exec(ctx,
 			`UPDATE security_alerts SET status = $1, resolved_by = $2, resolved_at = NOW(), updated_at = NOW()
-			 WHERE id = $3`,
-			status, resolvedBy, id)
+			 WHERE id = $3 AND org_id = $4`,
+			status, resolvedBy, id, org.ID)
 		if err != nil {
 			return fmt.Errorf("failed to update alert status: %w", err)
 		}
 	} else {
 		_, err := s.db.Pool.Exec(ctx,
-			`UPDATE security_alerts SET status = $1, updated_at = NOW() WHERE id = $2`,
-			status, id)
+			`UPDATE security_alerts SET status = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+			status, id, org.ID)
 		if err != nil {
 			return fmt.Errorf("failed to update alert status: %w", err)
 		}
@@ -482,8 +514,12 @@ func (s *Service) RunAnomalyCheck(ctx context.Context, userID, ip, userAgent str
 
 // RemediateAccountLock locks a user account by setting enabled to false.
 func (s *Service) RemediateAccountLock(ctx context.Context, userID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`UPDATE users SET enabled = false WHERE id = $1`, userID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE users SET enabled = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to lock account: %w", err)
 	}
@@ -494,8 +530,12 @@ func (s *Service) RemediateAccountLock(ctx context.Context, userID string) error
 
 // RemediateRevokeSessions revokes all active sessions for a user.
 func (s *Service) RemediateRevokeSessions(ctx context.Context, userID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND (revoked IS NULL OR revoked = false)`, userID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to revoke sessions: %w", err)
 	}
@@ -506,8 +546,12 @@ func (s *Service) RemediateRevokeSessions(ctx context.Context, userID string) er
 
 // RemediateRequireReauth forces re-authentication by expiring all active sessions for a user.
 func (s *Service) RemediateRequireReauth(ctx context.Context, userID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`UPDATE sessions SET expires_at = NOW() WHERE user_id = $1`, userID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE sessions SET expires_at = NOW() WHERE user_id = $1 AND org_id = $2`, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to expire sessions: %w", err)
 	}

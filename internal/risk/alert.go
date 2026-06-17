@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AlertSeverity represents the severity level of an alert
@@ -214,12 +215,22 @@ func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
 	actionsJSON, _ := json.Marshal(alert.RemediationActions)
 	deliveriesJSON, _ := json.Marshal(alert.Deliveries)
 
+	// security_alerts carries both the pre-existing tenant_id and the v34 org_id
+	// column; they are the same organization. Populate org_id = tenant_id so the
+	// org-scoped reads/filters resolve. storeAlert also runs from the background
+	// deliverAlert goroutine (context.Background()), so the org is taken from the
+	// alert itself, not request context, with a default-org fallback.
+	orgID := alert.TenantID
+	if orgID == "" {
+		orgID = "00000000-0000-0000-0000-000000000010"
+	}
+
 	_, err := a.db.Pool.Exec(ctx,
 		`INSERT INTO security_alerts
 		 (id, tenant_id, user_id, alert_type, severity, status, title, description,
 		  details, source_ip, ip_address, user_agent, remediation_actions, deliveries,
-		  acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		  acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		 ON CONFLICT (id) DO UPDATE
 		 SET status = EXCLUDED.status,
 		     updated_at = EXCLUDED.updated_at,
@@ -232,7 +243,7 @@ func (a *AlertManager) storeAlert(ctx context.Context, alert *Alert) error {
 		string(alert.Status), alert.Title, alert.Description, detailsJSON,
 		alert.SourceIP, alert.IPAddress, alert.UserAgent, actionsJSON, deliveriesJSON,
 		alert.AcknowledgedBy, alert.AcknowledgedAt, alert.ResolvedBy, alert.ResolvedAt,
-		alert.CreatedAt, alert.UpdatedAt)
+		alert.CreatedAt, alert.UpdatedAt, orgID)
 
 	return err
 }
@@ -480,15 +491,20 @@ func (a *AlertManager) formatEmailBody(alert *Alert) string {
 
 // GetAlert retrieves an alert by ID
 func (a *AlertManager) GetAlert(ctx context.Context, alertID string) (*Alert, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var alert Alert
 	var detailsJSON, actionsJSON, deliveriesJSON []byte
 
-	err := a.db.Pool.QueryRow(ctx,
+	err = a.db.Pool.QueryRow(ctx,
 		`SELECT id, tenant_id, user_id, alert_type, severity, status, title, description,
 		         details, source_ip, ip_address, user_agent, remediation_actions, deliveries,
 		         acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at
-		 FROM security_alerts WHERE id = $1`,
-		alertID).Scan(&alert.ID, &alert.TenantID, &alert.UserID, &alert.Type, &alert.Severity,
+		 FROM security_alerts WHERE id = $1 AND org_id = $2`,
+		alertID, org.ID).Scan(&alert.ID, &alert.TenantID, &alert.UserID, &alert.Type, &alert.Severity,
 		&alert.Status, &alert.Title, &alert.Description, &detailsJSON, &alert.SourceIP,
 		&alert.IPAddress, &alert.UserAgent, &actionsJSON, &deliveriesJSON,
 		&alert.AcknowledgedBy, &alert.AcknowledgedAt, &alert.ResolvedBy, &alert.ResolvedAt,
@@ -516,7 +532,7 @@ func (a *AlertManager) ListAlerts(ctx context.Context, tenantID string, filter A
 	query := `SELECT id, tenant_id, user_id, alert_type, severity, status, title, description,
 		         details, source_ip, ip_address, user_agent, remediation_actions, deliveries,
 		         acknowledged_by, acknowledged_at, resolved_by, resolved_at, created_at, updated_at
-		 FROM security_alerts WHERE tenant_id = $1`
+		 FROM security_alerts WHERE org_id = $1`
 
 	args := []interface{}{tenantID}
 	argIdx := 2
@@ -544,7 +560,7 @@ func (a *AlertManager) ListAlerts(ctx context.Context, tenantID string, filter A
 
 	// Get total count
 	var total int
-	countQuery := "SELECT COUNT(*) FROM security_alerts WHERE tenant_id = $1"
+	countQuery := "SELECT COUNT(*) FROM security_alerts WHERE org_id = $1"
 	countArgs := []interface{}{tenantID}
 	countArgIdx := 2
 
@@ -627,12 +643,16 @@ type AlertFilter struct {
 
 // AcknowledgeAlert marks an alert as acknowledged
 func (a *AlertManager) AcknowledgeAlert(ctx context.Context, alertID, acknowledgedBy string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	_, err := a.db.Pool.Exec(ctx,
+	_, err = a.db.Pool.Exec(ctx,
 		`UPDATE security_alerts
 		 SET status = 'acknowledged', acknowledged_by = $2, acknowledged_at = $3, updated_at = $3
-		 WHERE id = $1`,
-		alertID, acknowledgedBy, now)
+		 WHERE id = $1 AND org_id = $4`,
+		alertID, acknowledgedBy, now, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to acknowledge alert: %w", err)
@@ -648,12 +668,16 @@ func (a *AlertManager) AcknowledgeAlert(ctx context.Context, alertID, acknowledg
 
 // ResolveAlert marks an alert as resolved
 func (a *AlertManager) ResolveAlert(ctx context.Context, alertID, resolvedBy string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	_, err := a.db.Pool.Exec(ctx,
+	_, err = a.db.Pool.Exec(ctx,
 		`UPDATE security_alerts
 		 SET status = 'resolved', resolved_by = $2, resolved_at = $3, updated_at = $3
-		 WHERE id = $1`,
-		alertID, resolvedBy, now)
+		 WHERE id = $1 AND org_id = $4`,
+		alertID, resolvedBy, now, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to resolve alert: %w", err)
@@ -669,12 +693,16 @@ func (a *AlertManager) ResolveAlert(ctx context.Context, alertID, resolvedBy str
 
 // MarkAsFalsePositive marks an alert as a false positive
 func (a *AlertManager) MarkAsFalsePositive(ctx context.Context, alertID, resolvedBy string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	_, err := a.db.Pool.Exec(ctx,
+	_, err = a.db.Pool.Exec(ctx,
 		`UPDATE security_alerts
 		 SET status = 'false_positive', resolved_by = $2, resolved_at = $3, updated_at = $3
-		 WHERE id = $1`,
-		alertID, resolvedBy, now)
+		 WHERE id = $1 AND org_id = $4`,
+		alertID, resolvedBy, now, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to mark alert as false positive: %w", err)
@@ -693,6 +721,7 @@ func (a *AlertManager) CleanupOldAlerts(ctx context.Context) error {
 	retentionDate := time.Now().AddDate(0, 0, -a.config.RetentionDays)
 
 	result, err := a.db.Pool.Exec(ctx,
+		//orgscope:ignore background retention sweep across all orgs; deletes resolved alerts past the install-wide retention window
 		`DELETE FROM security_alerts WHERE created_at < $1 AND status IN ('resolved', 'false_positive')`,
 		retentionDate)
 
@@ -719,7 +748,7 @@ func (a *AlertManager) GetAlertStatistics(ctx context.Context, tenantID string, 
 	rows, err := a.db.Pool.Query(ctx,
 		`SELECT severity, COUNT(*) as count
 		 FROM security_alerts
-		 WHERE tenant_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval
+		 WHERE org_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval
 		 GROUP BY severity`,
 		tenantID, days)
 	if err == nil {
@@ -739,7 +768,7 @@ func (a *AlertManager) GetAlertStatistics(ctx context.Context, tenantID string, 
 	rows, err = a.db.Pool.Query(ctx,
 		`SELECT status, COUNT(*) as count
 		 FROM security_alerts
-		 WHERE tenant_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval
+		 WHERE org_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval
 		 GROUP BY status`,
 		tenantID, days)
 	if err == nil {
@@ -759,7 +788,7 @@ func (a *AlertManager) GetAlertStatistics(ctx context.Context, tenantID string, 
 	var totalCount int
 	a.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM security_alerts
-		 WHERE tenant_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval`,
+		 WHERE org_id = $1 AND created_at > NOW() - ($2::int || ' days')::interval`,
 		tenantID, days).Scan(&totalCount)
 	stats["total_count"] = totalCount
 

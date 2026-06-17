@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Redis key prefixes for policy storage
@@ -528,10 +529,16 @@ func (p *PolicyEngine) checkDeviceRisk(ctx context.Context, userID, fingerprint 
 		return 30
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		// No org context - assume unknown device risk
+		return 30
+	}
+
 	var trusted bool
-	err := p.db.Pool.QueryRow(ctx,
-		`SELECT trusted FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&trusted)
+	err = p.db.Pool.QueryRow(ctx,
+		`SELECT trusted FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&trusted)
 
 	if err != nil {
 		// Device not found - new device risk
@@ -552,13 +559,19 @@ func (p *PolicyEngine) checkFailedAttempts(ctx context.Context, userID, ip strin
 		return 0
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		// No org context - no failure data available
+		return 0
+	}
+
 	var count int
 
 	// Check user-specific failures
-	err := p.db.Pool.QueryRow(ctx,
+	err = p.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour'`,
-		userID).Scan(&count)
+		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour' AND org_id = $2`,
+		userID, org.ID).Scan(&count)
 
 	if err == nil && count > 0 {
 		// 10 points per failure, max 50
@@ -572,8 +585,8 @@ func (p *PolicyEngine) checkFailedAttempts(ctx context.Context, userID, ip strin
 	// Check IP-based failures
 	err = p.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE ip_address = $1 AND success = false AND created_at > NOW() - INTERVAL '15 minutes'`,
-		ip).Scan(&count)
+		 WHERE ip_address = $1 AND success = false AND created_at > NOW() - INTERVAL '15 minutes' AND org_id = $2`,
+		ip, org.ID).Scan(&count)
 
 	if err == nil && count > 5 {
 		return 30
@@ -620,22 +633,32 @@ func (p *PolicyEngine) triggerHighRiskAlert(ctx context.Context, req EvaluateReq
 
 // CreateSecurityAlert creates a security alert in the database
 func (p *PolicyEngine) CreateSecurityAlert(ctx context.Context, alert *SecurityAlert) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	detailsJSON, _ := json.Marshal(alert.Details)
 	remediationJSON, _ := json.Marshal(alert.RemediationActions)
 
-	_, err := p.db.Pool.Exec(ctx,
+	_, err = p.db.Pool.Exec(ctx,
 		`INSERT INTO security_alerts
-		 (id, user_id, alert_type, severity, status, title, description, details, source_ip, remediation_actions, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		 (id, user_id, alert_type, severity, status, title, description, details, source_ip, remediation_actions, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		alert.ID, alert.UserID, alert.AlertType, alert.Severity, alert.Status,
 		alert.Title, alert.Description, detailsJSON, alert.SourceIP,
-		remediationJSON, alert.CreatedAt, alert.UpdatedAt)
+		remediationJSON, alert.CreatedAt, alert.UpdatedAt, org.ID)
 
 	return err
 }
 
 // GetRiskStatistics returns risk statistics for a tenant
 func (p *PolicyEngine) GetRiskStatistics(ctx context.Context, tenantID string, days int) (map[string]interface{}, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	stats := make(map[string]interface{})
 
 	// Get risk score distribution from login_history
@@ -648,7 +671,8 @@ func (p *PolicyEngine) GetRiskStatistics(ctx context.Context, tenantID string, d
 				AVG(risk_score) as avg_score,
 				MAX(risk_score) as max_score
 		 FROM login_history
-		 WHERE created_at > NOW() - ($1::int || ' days')::interval`)
+		 WHERE created_at > NOW() - ($1::int || ' days')::interval AND org_id = $2`,
+		days, org.ID)
 	if err == nil {
 		var lowCount, mediumCount, highCount, criticalCount int
 		var avgScore float64
@@ -670,8 +694,8 @@ func (p *PolicyEngine) GetRiskStatistics(ctx context.Context, tenantID string, d
 	var blockedCount int
 	p.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE success = false AND created_at > NOW() - ($1::int || ' days')::interval`,
-		days).Scan(&blockedCount)
+		 WHERE success = false AND created_at > NOW() - ($1::int || ' days')::interval AND org_id = $2`,
+		days, org.ID).Scan(&blockedCount)
 	stats["blocked_count"] = blockedCount
 
 	// Get MFA required count
@@ -679,8 +703,8 @@ func (p *PolicyEngine) GetRiskStatistics(ctx context.Context, tenantID string, d
 	p.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
 		 WHERE risk_score >= 30 AND risk_score < 70 AND success = true
-		 AND created_at > NOW() - ($1::int || ' days')::interval`,
-		days).Scan(&mfaRequiredCount)
+		 AND created_at > NOW() - ($1::int || ' days')::interval AND org_id = $2`,
+		days, org.ID).Scan(&mfaRequiredCount)
 	stats["mfa_required_count"] = mfaRequiredCount
 
 	return stats, nil

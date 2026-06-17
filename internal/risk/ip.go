@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // GeoIPResult represents the result of a GeoIP lookup
@@ -566,6 +567,11 @@ func (i *IPIntelligence) RemoveFromAllowlist(ctx context.Context, ip string) err
 
 // CheckImpossibleTravel detects impossible travel between two login locations
 func (i *IPIntelligence) CheckImpossibleTravel(ctx context.Context, userID string, currentIP string, currentTime time.Time) (*ImpossibleTravelResult, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &ImpossibleTravelResult{
 		CurrentTime: currentTime,
 	}
@@ -575,12 +581,12 @@ func (i *IPIntelligence) CheckImpossibleTravel(ctx context.Context, userID strin
 	var lastLat, lastLon float64
 	var lastTime time.Time
 
-	err := i.db.Pool.QueryRow(ctx,
+	err = i.db.Pool.QueryRow(ctx,
 		`SELECT ip_address, latitude, longitude, created_at
 		 FROM login_history
-		 WHERE user_id = $1 AND success = true AND latitude != 0 AND longitude != 0
+		 WHERE user_id = $1 AND success = true AND latitude != 0 AND longitude != 0 AND org_id = $2
 		 ORDER BY created_at DESC LIMIT 1`,
-		userID).Scan(&lastIP, &lastLat, &lastLon, &lastTime)
+		userID, org.ID).Scan(&lastIP, &lastLat, &lastLon, &lastTime)
 
 	if err != nil {
 		// No previous login - can't check impossible travel
@@ -686,14 +692,16 @@ func (i *IPIntelligence) GetThreatScore(ctx context.Context, ip string) (int, er
 		}
 	}
 
-	// Check for recent failed login attempts from this IP
-	var failCount int
-	err = i.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history
-		 WHERE ip_address = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour'`,
-		ip).Scan(&failCount)
-	if err == nil && failCount > 5 {
-		score += minIPInt(30, failCount*5)
+	// Check for recent failed login attempts from this IP (scoped to the request's org)
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		var failCount int
+		err = i.db.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM login_history
+			 WHERE ip_address = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour' AND org_id = $2`,
+			ip, org.ID).Scan(&failCount)
+		if err == nil && failCount > 5 {
+			score += minIPInt(30, failCount*5)
+		}
 	}
 
 	return minIPInt(score, 100), nil

@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // TrustLevel represents how trusted a device is
@@ -163,6 +164,11 @@ func (f *DeviceFingerprinter) ComputeFingerprint(req DeviceFingerprintRequest) s
 func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID string, req DeviceFingerprintRequest) (*DeviceFingerprint, bool, error) {
 	fingerprint := f.ComputeFingerprint(req)
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// Try to get from cache first
 	cacheKey := fmt.Sprintf("device:%s:%s", userID, fingerprint)
 	cached, err := f.redis.Client.Get(ctx, cacheKey).Result()
@@ -186,8 +192,8 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 	dbErr := f.db.Pool.QueryRow(ctx,
 		`SELECT id, trusted, seen_count, first_seen, last_seen
 		 FROM known_devices
-		 WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&deviceID, &trusted, &seenCount, &firstSeen, &lastSeen)
+		 WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&deviceID, &trusted, &seenCount, &firstSeen, &lastSeen)
 
 	if dbErr == nil {
 		// Device exists - update it
@@ -198,8 +204,8 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 		_, err := f.db.Pool.Exec(ctx,
 			`UPDATE known_devices
 			 SET seen_count = $3, last_seen = $4, ip_address = $5, user_agent = $6
-			 WHERE id = $1`,
-			deviceID, userID, seenCount, lastSeen, req.IP, req.UserAgent)
+			 WHERE id = $1 AND org_id = $7`,
+			deviceID, userID, seenCount, lastSeen, req.IP, req.UserAgent, org.ID)
 		if err != nil {
 			f.logger.Warn("Failed to update device record", zap.Error(err))
 		}
@@ -235,11 +241,11 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 
 	var newDeviceID string
 	err = f.db.Pool.QueryRow(ctx,
-		`INSERT INTO known_devices (user_id, fingerprint, name, ip_address, user_agent, seen_count, first_seen, last_seen, trusted)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO known_devices (user_id, fingerprint, name, ip_address, user_agent, seen_count, first_seen, last_seen, trusted, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING id`,
 		userID, fingerprint, f.generateDeviceName(req.UserAgent), req.IP, req.UserAgent,
-		seenCount, now, now, false).Scan(&newDeviceID)
+		seenCount, now, now, false, org.ID).Scan(&newDeviceID)
 
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to create device record: %w", err)
@@ -288,10 +294,15 @@ func (f *DeviceFingerprinter) GetDeviceTrustLevel(ctx context.Context, userID, f
 	var seenCount int
 	var trusted bool
 
-	err := f.db.Pool.QueryRow(ctx,
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return TrustLevelUnknown
+	}
+
+	err = f.db.Pool.QueryRow(ctx,
 		`SELECT seen_count, trusted FROM known_devices
-		 WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&seenCount, &trusted)
+		 WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&seenCount, &trusted)
 
 	if err != nil {
 		return TrustLevelUnknown
@@ -306,9 +317,13 @@ func (f *DeviceFingerprinter) GetDeviceTrustLevel(ctx context.Context, userID, f
 
 // TrustDevice marks a device as trusted
 func (f *DeviceFingerprinter) TrustDevice(ctx context.Context, userID, fingerprint string) error {
-	_, err := f.db.Pool.Exec(ctx,
-		`UPDATE known_devices SET trusted = true WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = f.db.Pool.Exec(ctx,
+		`UPDATE known_devices SET trusted = true WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to trust device: %w", err)
@@ -328,16 +343,19 @@ func (f *DeviceFingerprinter) TrustDevice(ctx context.Context, userID, fingerpri
 
 // RevokeDevice removes trust from a device or deletes it
 func (f *DeviceFingerprinter) RevokeDevice(ctx context.Context, userID, fingerprint string, delete bool) error {
-	var err error
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 
 	if delete {
 		_, err = f.db.Pool.Exec(ctx,
-			`DELETE FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-			userID, fingerprint)
+			`DELETE FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+			userID, fingerprint, org.ID)
 	} else {
 		_, err = f.db.Pool.Exec(ctx,
-			`UPDATE known_devices SET trusted = false WHERE user_id = $1 AND fingerprint = $2`,
-			userID, fingerprint)
+			`UPDATE known_devices SET trusted = false WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+			userID, fingerprint, org.ID)
 	}
 
 	if err != nil {
@@ -353,13 +371,17 @@ func (f *DeviceFingerprinter) RevokeDevice(ctx context.Context, userID, fingerpr
 
 // GetUserDevices returns all devices for a user
 func (f *DeviceFingerprinter) GetUserDevices(ctx context.Context, userID string) ([]DeviceRecord, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := f.db.Pool.Query(ctx,
 		`SELECT id, user_id, fingerprint, name, ip_address, user_agent, location,
 		        trusted, seen_count, first_seen, last_seen, created_at
 		 FROM known_devices
-		 WHERE user_id = $1
+		 WHERE user_id = $1 AND org_id = $2
 		 ORDER BY last_seen DESC`,
-		userID)
+		userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -395,12 +417,16 @@ func (f *DeviceFingerprinter) calculateTrustLevel(seenCount int) TrustLevel {
 // from a previously known device for the same user
 func (f *DeviceFingerprinter) checkForSuspiciousFingerprint(ctx context.Context, userID, newFingerprint string) (bool, string) {
 	// Get recent devices for this user
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, ""
+	}
 	rows, err := f.db.Pool.Query(ctx,
 		`SELECT fingerprint, seen_count FROM known_devices
-		 WHERE user_id = $1
+		 WHERE user_id = $1 AND org_id = $2
 		 ORDER BY last_seen DESC
 		 LIMIT 5`,
-		userID)
+		userID, org.ID)
 	if err != nil {
 		return false, ""
 	}
