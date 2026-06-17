@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -248,15 +249,20 @@ func (s *Service) handleIdPInitiatedSLO(c *gin.Context, sessionToken string, tar
 
 // findUserByNameID finds a user by their NameID (email or persistent ID)
 func (s *Service) findUserByNameID(ctx context.Context, nameID string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
+
 	// Try email first
 	var userID string
-	err := s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE email = $1", nameID).Scan(&userID)
+	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND org_id = $2", nameID, org.ID).Scan(&userID)
 	if err == nil {
 		return userID, nil
 	}
 
 	// Try external_user_id
-	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE external_user_id = $1", nameID).Scan(&userID)
+	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE external_user_id = $1 AND org_id = $2", nameID, org.ID).Scan(&userID)
 	if err == nil {
 		return userID, nil
 	}
@@ -276,8 +282,13 @@ func (s *Service) findUserBySessionIndex(ctx context.Context, sessionIndex, spEn
 
 // performUserLogout performs the actual logout for a user
 func (s *Service) performUserLogout(ctx context.Context, userID, spEntityID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Delete all user sessions from the sessions table
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1", userID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user sessions: %w", err)
 	}
@@ -289,12 +300,12 @@ func (s *Service) performUserLogout(ctx context.Context, userID, spEntityID stri
 	}
 
 	// Revoke any OAuth tokens for this user
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_refresh_tokens WHERE user_id = $1", userID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to delete OAuth tokens", zap.Error(err))
 	}
 
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_access_tokens WHERE user_id = $1", userID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_access_tokens WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to delete access tokens", zap.Error(err))
 	}
@@ -473,18 +484,24 @@ func (s *Service) sendLogoutRequestToSP(ctx context.Context, logoutReq LogoutReq
 
 // extractUserIDFromSession extracts user ID from a session token
 func (s *Service) extractUserIDFromSession(ctx context.Context, sessionToken string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
 	var userID string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT user_id FROM user_sessions WHERE session_token = $1 AND expires_at > NOW()",
-		sessionToken).Scan(&userID)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id FROM user_sessions WHERE session_token = $1 AND org_id = $2 AND expires_at > NOW()",
+		sessionToken, org.ID).Scan(&userID)
 	return userID, err
 }
 
 // clearIdPSession clears the IdP session (cookie)
 func (s *Service) clearIdPSession(c *gin.Context, sessionToken string) {
 	// Delete from database
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_sessions WHERE session_token = $1", sessionToken)
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		s.db.Pool.Exec(c.Request.Context(),
+			"DELETE FROM user_sessions WHERE session_token = $1 AND org_id = $2", sessionToken, org.ID)
+	}
 
 	// Clear cookie
 	c.SetCookie("openidx_session", "", -1, "/", "", false, true)

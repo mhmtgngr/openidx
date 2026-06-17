@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/identity"
@@ -43,14 +44,20 @@ func (s *Service) handleStepUpChallenge(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+
 	// Insert step-up challenge with 5-minute expiry
 	var challengeID string
 	var expiresAt time.Time
-	err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO stepup_challenges (id, user_id, session_id, reason, status, created_at, expires_at)
-		VALUES (gen_random_uuid(), $1, $2, $3, 'pending', NOW(), NOW() + INTERVAL '5 minutes')
+	err = s.db.Pool.QueryRow(ctx, `
+		INSERT INTO stepup_challenges (id, user_id, session_id, reason, status, created_at, expires_at, org_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'pending', NOW(), NOW() + INTERVAL '5 minutes', $4)
 		RETURNING id, expires_at`,
-		userID, sessionID, req.Reason,
+		userID, sessionID, req.Reason, org.ID,
 	).Scan(&challengeID, &expiresAt)
 	if err != nil {
 		s.logger.Error("Failed to create step-up challenge",
@@ -172,13 +179,19 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+
 	// Look up the challenge
 	var challengeUserID, challengeSessionID, status, reason string
 	var expiresAt time.Time
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, user_id, session_id, status, expires_at
-		FROM stepup_challenges WHERE id = $1`,
-		req.ChallengeID,
+		FROM stepup_challenges WHERE id = $1 AND org_id = $2`,
+		req.ChallengeID, org.ID,
 	).Scan(&req.ChallengeID, &challengeUserID, &challengeSessionID, &status, &expiresAt)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -216,12 +229,12 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 	}
 
 	// Retrieve the reason for the step-up token claims
-	_ = s.db.Pool.QueryRow(ctx, `SELECT reason FROM stepup_challenges WHERE id = $1`, req.ChallengeID).Scan(&reason)
+	_ = s.db.Pool.QueryRow(ctx, `SELECT reason FROM stepup_challenges WHERE id = $1 AND org_id = $2`, req.ChallengeID, org.ID).Scan(&reason)
 
 	// Mark challenge as completed (actual MFA verification is handled by existing MFA handlers)
 	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE stepup_challenges SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-		req.ChallengeID,
+		UPDATE stepup_challenges SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2`,
+		req.ChallengeID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to complete step-up challenge",
@@ -288,12 +301,18 @@ func (s *Service) handleStepUpStatus(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+
 	var challengeUserID, status, reason string
 	var expiresAt time.Time
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT user_id, status, reason, expires_at
-		FROM stepup_challenges WHERE id = $1`,
-		challengeID,
+		FROM stepup_challenges WHERE id = $1 AND org_id = $2`,
+		challengeID, org.ID,
 	).Scan(&challengeUserID, &status, &reason, &expiresAt)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{

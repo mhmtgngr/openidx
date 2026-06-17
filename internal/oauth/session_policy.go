@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -91,13 +92,19 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 			concStrategy    *string
 			bindIP          *bool
 		)
-		err := s.db.Pool.QueryRow(ctx, `
-			SELECT ass.idle_timeout, ass.absolute_timeout, ass.max_concurrent_sessions,
-			       ass.concurrent_session_strategy, ass.bind_ip
-			FROM application_sso_settings ass
-			JOIN applications a ON a.id = ass.application_id
-			WHERE a.client_id = $1
-		`, clientID).Scan(&idleTimeout, &absoluteTimeout, &maxConcurrent, &concStrategy, &bindIP)
+		org, oerr := orgctx.From(ctx)
+		var err error
+		if oerr != nil {
+			err = oerr
+		} else {
+			err = s.db.Pool.QueryRow(ctx, `
+				SELECT ass.idle_timeout, ass.absolute_timeout, ass.max_concurrent_sessions,
+				       ass.concurrent_session_strategy, ass.bind_ip
+				FROM application_sso_settings ass
+				JOIN applications a ON a.id = ass.application_id
+				WHERE a.client_id = $1 AND a.org_id = $2
+			`, clientID, org.ID).Scan(&idleTimeout, &absoluteTimeout, &maxConcurrent, &concStrategy, &bindIP)
+		}
 		if err == nil {
 			if idleTimeout != nil && *idleTimeout > 0 {
 				policy.IdleTimeout = *idleTimeout
@@ -123,8 +130,9 @@ func (s *Service) getEffectiveSessionPolicy(ctx context.Context, clientID string
 // revokeSessionWithRedis marks a session as revoked in both DB and Redis
 func (s *Service) revokeSessionWithRedis(ctx context.Context, sessionID string) error {
 	// Mark in database
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1
+	_, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore revokes by globally-unique session id; reachable from the cross-org background session sweep
+		`UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1
 	`, sessionID)
 	if err != nil {
 		return err

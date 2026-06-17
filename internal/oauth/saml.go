@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -462,7 +463,7 @@ func (s *Service) authenticateIdPUser(c *gin.Context) (*SAMLUser, error) {
 	authHeader := c.GetHeader("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-		return s.extractSAMLUserFromToken(tokenStr)
+		return s.extractSAMLUserFromToken(c.Request.Context(), tokenStr)
 	}
 
 	// Check for session cookie
@@ -475,7 +476,7 @@ func (s *Service) authenticateIdPUser(c *gin.Context) (*SAMLUser, error) {
 }
 
 // extractSAMLUserFromToken extracts SAML user info from a JWT token
-func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
+func (s *Service) extractSAMLUserFromToken(reqCtx context.Context, tokenStr string) (*SAMLUser, error) {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		// Support both RSA and Ed25519 signing methods
 		switch t.Method.(type) {
@@ -511,13 +512,19 @@ func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
 		return nil, fmt.Errorf("missing sub claim")
 	}
 
-	// Fetch additional user details with timeout
+	org, err := orgctx.From(reqCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch additional user details with timeout. Derive from the request
+	// context so the org carried on it survives into the scoped queries.
 	var firstName, lastName string
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(reqCtx, 5*time.Second)
 	defer cancel()
 	_ = s.db.Pool.QueryRow(ctx,
-		"SELECT COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1",
-		userID).Scan(&firstName, &lastName)
+		"SELECT COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1 AND org_id = $2",
+		userID, org.ID).Scan(&firstName, &lastName)
 
 	if firstName == "" && lastName == "" && name != "" {
 		// Try to parse name into first/last
@@ -547,18 +554,23 @@ func (s *Service) extractSAMLUserFromToken(tokenStr string) (*SAMLUser, error) {
 
 // extractSAMLUserFromSession extracts SAML user info from a session cookie
 func (s *Service) extractSAMLUserFromSession(ctx context.Context, sessionID string) (*SAMLUser, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var userID string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT user_id FROM user_sessions WHERE session_token = $1 AND expires_at > NOW()",
-		sessionID).Scan(&userID)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id FROM user_sessions WHERE session_token = $1 AND org_id = $2 AND expires_at > NOW()",
+		sessionID, org.ID).Scan(&userID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid session: %w", err)
 	}
 
 	var email, firstName, lastName string
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1",
-		userID).Scan(&email, &firstName, &lastName)
+		"SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, '') FROM users WHERE id = $1 AND org_id = $2",
+		userID, org.ID).Scan(&email, &firstName, &lastName)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
@@ -585,12 +597,16 @@ func (s *Service) extractSAMLUserFromSession(ctx context.Context, sessionID stri
 
 // getUserRoles fetches role names for a user
 func (s *Service) getUserRoles(ctx context.Context, userID string) []string {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DISTINCT r.name
 		FROM roles r
 		INNER JOIN user_roles ur ON ur.role_id = r.id
-		WHERE ur.user_id = $1
-	`, userID)
+		WHERE ur.user_id = $1 AND ur.org_id = $2
+	`, userID, org.ID)
 	if err != nil {
 		return nil
 	}
@@ -608,12 +624,16 @@ func (s *Service) getUserRoles(ctx context.Context, userID string) []string {
 
 // getUserGroups fetches group names for a user
 func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DISTINCT g.name
 		FROM groups g
 		INNER JOIN user_groups ug ON ug.group_id = g.id
-		WHERE ug.user_id = $1
-	`, userID)
+		WHERE ug.user_id = $1 AND g.org_id = $2
+	`, userID, org.ID)
 	if err != nil {
 		return nil
 	}

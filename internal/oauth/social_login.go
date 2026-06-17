@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -290,11 +291,16 @@ func (s *Service) loadSocialProviderConfig(ctx context.Context, providerID strin
 	var provider SocialProviderConfig
 	var scopesJSON []byte
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled
 		FROM identity_providers
-		WHERE id = $1
-	`, providerID).Scan(
+		WHERE id = $1 AND org_id = $2
+	`, providerID, org.ID).Scan(
 		&provider.ID, &provider.Name, &provider.ProviderType,
 		&provider.IssuerURL, &provider.ClientID, &provider.ClientSecret,
 		&scopesJSON, &provider.Enabled)
@@ -592,9 +598,14 @@ func (s *Service) parseGenericUserInfo(body []byte, info *SocialUserInfo) error 
 // linkOrCreateSocialUser links the social identity to an existing user or creates a new one
 // Returns the local user ID
 func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string, userInfo *SocialUserInfo) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
+
 	// Check if this social account is already linked
 	var existingUserID string
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT user_id FROM social_account_links
 		WHERE provider_id = $1 AND external_user_id = $2
 	`, providerID, userInfo.ID).Scan(&existingUserID)
@@ -613,7 +624,7 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 	if userInfo.Email != "" {
 		var userID string
 		err := s.db.Pool.QueryRow(ctx,
-			"SELECT id FROM users WHERE email = $1", userInfo.Email).Scan(&userID)
+			"SELECT id FROM users WHERE email = $1 AND org_id = $2", userInfo.Email, org.ID).Scan(&userID)
 
 		if err == nil {
 			// User exists but has no linked social account for this provider.
@@ -634,14 +645,14 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 	username := s.deriveSocialUsername(userInfo)
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, first_name, last_name, enabled, email_verified, external_user_id)
-		VALUES ($1, $2, $3, $4, $5, true, true, $6)
+		INSERT INTO users (id, username, email, first_name, last_name, enabled, email_verified, external_user_id, org_id)
+		VALUES ($1, $2, $3, $4, $5, true, true, $6, $7)
 		ON CONFLICT (email) DO UPDATE SET
 			first_name = COALESCE(EXCLUDED.first_name, users.first_name),
 			last_name = COALESCE(EXCLUDED.last_name, users.last_name),
 			updated_at = NOW()
 		RETURNING id
-	`, userID, username, userInfo.Email, userInfo.FirstName, userInfo.LastName, userInfo.ID)
+	`, userID, username, userInfo.Email, userInfo.FirstName, userInfo.LastName, userInfo.ID, org.ID)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to create user: %w", err)
@@ -650,7 +661,7 @@ func (s *Service) linkOrCreateSocialUser(ctx context.Context, providerID string,
 	// On conflict, the userID from RETURNING may differ from what we generated
 	// Re-fetch to be safe
 	_ = s.db.Pool.QueryRow(ctx,
-		"SELECT id FROM users WHERE email = $1", userInfo.Email).Scan(&userID)
+		"SELECT id FROM users WHERE email = $1 AND org_id = $2", userInfo.Email, org.ID).Scan(&userID)
 
 	// Create the social account link
 	if linkErr := s.createSocialAccountLink(ctx, providerID, userID, userInfo); linkErr != nil {
