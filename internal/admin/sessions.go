@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AdminSession represents an active or historical session for admin viewing
@@ -148,10 +150,16 @@ func (s *Service) handleAdminRevokeSession(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET revoked = true, revoked_at = NOW(), revoked_by = $1, revoke_reason = $2
-		WHERE id = $3
-	`, adminID, body.Reason, sessionID)
+		WHERE id = $3 AND org_id = $4
+	`, adminID, body.Reason, sessionID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to revoke session", zap.Error(err), zap.String("session_id", sessionID))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke session"})
@@ -187,10 +195,16 @@ func (s *Service) handleAdminRevokeAllUserSessions(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET revoked = true, revoked_at = NOW(), revoked_by = $1, revoke_reason = $2
-		WHERE user_id = $3 AND (revoked IS NULL OR revoked = false)
-	`, adminID, body.Reason, userID)
+		WHERE user_id = $3 AND (revoked IS NULL OR revoked = false) AND org_id = $4
+	`, adminID, body.Reason, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to revoke user sessions", zap.Error(err), zap.String("user_id", userID))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke user sessions"})

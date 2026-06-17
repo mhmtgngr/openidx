@@ -16,6 +16,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/sms"
 )
 
@@ -310,19 +311,24 @@ func (s *Service) SetSecurityService(ss SecurityService) {
 func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	s.logger.Debug("Getting dashboard statistics")
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var totalUsers, activeUsers, totalGroups, totalApps, activeSessions, pendingReviews, securityAlerts int
 
 	// Get all dashboard counts in a single query
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM users),
-			(SELECT COUNT(*) FROM users WHERE enabled = true),
-			(SELECT COUNT(*) FROM groups),
-			(SELECT COUNT(*) FROM applications),
-			(SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()),
-			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')),
-			(SELECT COUNT(*) FROM audit_events WHERE outcome = 'failure' AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '24 hours')
-	`).Scan(&totalUsers, &activeUsers, &totalGroups, &totalApps, &activeSessions, &pendingReviews, &securityAlerts)
+			(SELECT COUNT(*) FROM users WHERE org_id = $1),
+			(SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1),
+			(SELECT COUNT(*) FROM groups WHERE org_id = $1),
+			(SELECT COUNT(*) FROM applications WHERE org_id = $1),
+			(SELECT COUNT(*) FROM sessions WHERE expires_at > NOW() AND org_id = $1),
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND org_id = $1),
+			(SELECT COUNT(*) FROM audit_events WHERE outcome = 'failure' AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '24 hours' AND org_id = $1)
+	`, org.ID).Scan(&totalUsers, &activeUsers, &totalGroups, &totalApps, &activeSessions, &pendingReviews, &securityAlerts)
 	if err != nil {
 		s.logger.Error("Failed to query dashboard stats", zap.Error(err))
 	}
@@ -332,9 +338,10 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, event_type, action, actor_id, timestamp
 		FROM audit_events
+		WHERE org_id = $1
 		ORDER BY timestamp DESC
 		LIMIT 5
-	`)
+	`, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -361,12 +368,12 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 	alertRows, err := s.db.Pool.Query(ctx, `
 		SELECT COALESCE(actor_id, 'unknown') as actor, COUNT(*) as cnt, MAX(timestamp) as latest
 		FROM audit_events
-		WHERE outcome = 'failure' AND event_type = 'authentication'
+		WHERE org_id = $1 AND outcome = 'failure' AND event_type = 'authentication'
 		AND timestamp > NOW() - INTERVAL '24 hours'
 		GROUP BY actor_id
 		ORDER BY cnt DESC
 		LIMIT 5
-	`)
+	`, org.ID)
 	if err == nil {
 		defer alertRows.Close()
 		for alertRows.Next() {
@@ -386,15 +393,20 @@ func (s *Service) GetDashboard(ctx context.Context) (*Dashboard, error) {
 func (s *Service) GetUserDashboard(ctx context.Context, userID string) (*Dashboard, error) {
 	s.logger.Debug("Getting user dashboard statistics", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var myGroups, myApps, mySessions, myPendingReviews int
 
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM group_memberships WHERE user_id = $1),
-			(SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1),
-			(SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW()),
-			(SELECT COUNT(*) FROM review_items ri JOIN access_reviews ar ON ri.review_id = ar.id WHERE ri.user_id = $1 AND ar.status IN ('pending', 'in_progress'))
-	`, userID).Scan(&myGroups, &myApps, &mySessions, &myPendingReviews)
+			(SELECT COUNT(*) FROM group_memberships WHERE user_id = $1 AND org_id = $2),
+			(SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1 AND org_id = $2),
+			(SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW() AND org_id = $2),
+			(SELECT COUNT(*) FROM review_items ri JOIN access_reviews ar ON ri.review_id = ar.id AND ar.org_id = ri.org_id WHERE ri.org_id = $2 AND ri.user_id = $1 AND ar.status IN ('pending', 'in_progress'))
+	`, userID, org.ID).Scan(&myGroups, &myApps, &mySessions, &myPendingReviews)
 	if err != nil {
 		s.logger.Error("Failed to query user dashboard stats", zap.Error(err))
 	}
@@ -404,10 +416,10 @@ func (s *Service) GetUserDashboard(ctx context.Context, userID string) (*Dashboa
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, event_type, action, actor_id, timestamp
 		FROM audit_events
-		WHERE actor_id = $1 OR target_id = $1
+		WHERE org_id = $2 AND (actor_id = $1 OR target_id = $1)
 		ORDER BY timestamp DESC
 		LIMIT 5
-	`, userID)
+	`, userID, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -441,14 +453,16 @@ func (s *Service) getUserAuthStatistics(ctx context.Context, userID string) Auth
 		LoginsByMethod: make(map[string]int),
 	}
 
+	org, _ := orgctx.From(ctx)
+
 	// Count user's login events
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT action, COUNT(*) as cnt
 		FROM audit_events
-		WHERE event_type = 'authentication' AND actor_id = $1
+		WHERE org_id = $2 AND event_type = 'authentication' AND actor_id = $1
 		AND timestamp > NOW() - INTERVAL '30 days'
 		GROUP BY action
-	`, userID)
+	`, userID, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -470,11 +484,11 @@ func (s *Service) getUserAuthStatistics(ctx context.Context, userID string) Auth
 	dayRows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp) as day, COUNT(*) as cnt
 		FROM audit_events
-		WHERE event_type = 'authentication' AND actor_id = $1
+		WHERE org_id = $2 AND event_type = 'authentication' AND actor_id = $1
 		AND timestamp > NOW() - INTERVAL '30 days'
 		GROUP BY DATE(timestamp)
 		ORDER BY day
-	`, userID)
+	`, userID, org.ID)
 	if err == nil {
 		defer dayRows.Close()
 		for dayRows.Next() {
@@ -493,40 +507,42 @@ func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
 		LoginsByMethod: make(map[string]int),
 	}
 
+	org, _ := orgctx.From(ctx)
+
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
-		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.TotalLogins); err != nil {
+		WHERE org_id = $1 AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
+	`, org.ID).Scan(&stats.TotalLogins); err != nil {
 		s.logger.Error("Failed to query total logins", zap.Error(err))
 	}
 
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
-		WHERE event_type = 'authentication' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.SuccessfulLogins); err != nil {
+		WHERE org_id = $1 AND event_type = 'authentication' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
+	`, org.ID).Scan(&stats.SuccessfulLogins); err != nil {
 		s.logger.Error("Failed to query successful logins", zap.Error(err))
 	}
 
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
-		WHERE event_type = 'authentication' AND outcome = 'failure' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.FailedLogins); err != nil {
+		WHERE org_id = $1 AND event_type = 'authentication' AND outcome = 'failure' AND timestamp > NOW() - INTERVAL '30 days'
+	`, org.ID).Scan(&stats.FailedLogins); err != nil {
 		s.logger.Error("Failed to query failed logins", zap.Error(err))
 	}
 
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
-		WHERE event_type = 'mfa_verification' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&stats.MFAUsage); err != nil {
+		WHERE org_id = $1 AND event_type = 'mfa_verification' AND outcome = 'success' AND timestamp > NOW() - INTERVAL '30 days'
+	`, org.ID).Scan(&stats.MFAUsage); err != nil {
 		s.logger.Error("Failed to query MFA usage", zap.Error(err))
 	}
 
 	// Logins by method
 	methodRows, err := s.db.Pool.Query(ctx, `
 		SELECT COALESCE(action, 'unknown'), COUNT(*) FROM audit_events
-		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
+		WHERE org_id = $1 AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
 		GROUP BY action
-	`)
+	`, org.ID)
 	if err == nil {
 		defer methodRows.Close()
 		for methodRows.Next() {
@@ -540,10 +556,10 @@ func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
 	// Logins by day (last 7 days)
 	dayRows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp)::text, COUNT(*) FROM audit_events
-		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '7 days'
+		WHERE org_id = $1 AND event_type = 'authentication' AND timestamp > NOW() - INTERVAL '7 days'
 		GROUP BY DATE(timestamp)
 		ORDER BY DATE(timestamp)
-	`)
+	`, org.ID)
 	if err == nil {
 		defer dayRows.Close()
 		for dayRows.Next() {
@@ -642,6 +658,11 @@ func (s *Service) UpdateSettings(ctx context.Context, settings *Settings) error 
 func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[string]interface{}) error {
 	s.logger.Info("Updating application", zap.String("id", id))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	setParts := []string{}
 	args := []interface{}{}
 	argCount := 1
@@ -694,11 +715,11 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 	}
 
 	setParts = append(setParts, "updated_at = NOW()")
-	query := fmt.Sprintf("UPDATE applications SET %s WHERE id = $%d",
-		strings.Join(setParts, ", "), argCount)
-	args = append(args, id)
+	query := fmt.Sprintf("UPDATE applications SET %s WHERE id = $%d AND org_id = $%d",
+		strings.Join(setParts, ", "), argCount, argCount+1)
+	args = append(args, id, org.ID)
 
-	_, err := s.db.Pool.Exec(ctx, query, args...)
+	_, err = s.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update application: %w", err)
 	}
@@ -710,8 +731,13 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Application, int, error) {
 	s.logger.Debug("Listing applications")
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var totalCount int
-	if err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalCount); err != nil {
+	if err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID).Scan(&totalCount); err != nil {
 		s.logger.Error("Failed to query application count", zap.Error(err))
 	}
 
@@ -719,10 +745,11 @@ func (s *Service) ListApplications(ctx context.Context, offset, limit int) ([]Ap
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
 		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
 		FROM applications
+		WHERE org_id = $1
 		ORDER BY name
 	`
-	args := []interface{}{}
-	argCount := 1
+	args := []interface{}{org.ID}
+	argCount := 2
 
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argCount)
@@ -768,11 +795,16 @@ func (s *Service) CreateApplication(ctx context.Context, app *Application) error
 	app.CreatedAt = time.Now()
 	app.UpdatedAt = time.Now()
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, app.ID, app.ClientID, app.Name, app.Description, app.Type, app.Protocol,
-		app.BaseURL, app.RedirectURIs, app.Enabled, app.CreatedAt, app.UpdatedAt)
+		app.BaseURL, app.RedirectURIs, app.Enabled, app.CreatedAt, app.UpdatedAt, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to create application: %w", err)
 	}
@@ -784,12 +816,17 @@ func (s *Service) CreateApplication(ctx context.Context, app *Application) error
 func (s *Service) GetApplicationSSOSettings(ctx context.Context, applicationID string) (*ApplicationSSOSettings, error) {
 	s.logger.Debug("Getting SSO settings", zap.String("application_id", applicationID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var settings ApplicationSSOSettings
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, application_id, enabled, use_refresh_tokens, access_token_lifetime,
 		       refresh_token_lifetime, require_consent, created_at, updated_at
-		FROM application_sso_settings WHERE application_id = $1
-	`, applicationID).Scan(
+		FROM application_sso_settings WHERE application_id = $1 AND org_id = $2
+	`, applicationID, org.ID).Scan(
 		&settings.ID, &settings.ApplicationID, &settings.Enabled, &settings.UseRefreshTokens,
 		&settings.AccessTokenLifetime, &settings.RefreshTokenLifetime, &settings.RequireConsent,
 		&settings.CreatedAt, &settings.UpdatedAt,
@@ -817,14 +854,19 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 
 	settings.UpdatedAt = time.Now()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Try to update existing settings
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE application_sso_settings SET
 			enabled = $2, use_refresh_tokens = $3, access_token_lifetime = $4,
 			refresh_token_lifetime = $5, require_consent = $6, updated_at = $7
-		WHERE application_id = $1
+		WHERE application_id = $1 AND org_id = $8
 	`, settings.ApplicationID, settings.Enabled, settings.UseRefreshTokens,
-		settings.AccessTokenLifetime, settings.RefreshTokenLifetime, settings.RequireConsent, settings.UpdatedAt)
+		settings.AccessTokenLifetime, settings.RefreshTokenLifetime, settings.RequireConsent, settings.UpdatedAt, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update SSO settings: %w", err)
@@ -838,11 +880,11 @@ func (s *Service) UpdateApplicationSSOSettings(ctx context.Context, settings *Ap
 
 		_, err = s.db.Pool.Exec(ctx, `
 			INSERT INTO application_sso_settings (id, application_id, enabled, use_refresh_tokens,
-				access_token_lifetime, refresh_token_lifetime, require_consent, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				access_token_lifetime, refresh_token_lifetime, require_consent, created_at, updated_at, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		`, settings.ID, settings.ApplicationID, settings.Enabled, settings.UseRefreshTokens,
 			settings.AccessTokenLifetime, settings.RefreshTokenLifetime, settings.RequireConsent,
-			settings.CreatedAt, settings.UpdatedAt)
+			settings.CreatedAt, settings.UpdatedAt, org.ID)
 
 		if err != nil {
 			return fmt.Errorf("failed to create SSO settings: %w", err)
@@ -1368,13 +1410,18 @@ func (s *Service) handleCreateApplication(c *gin.Context) {
 }
 
 func (s *Service) handleGetApplication(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
 	var app Application
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT id, client_id, name, COALESCE(description, ''), type, protocol,
 		       COALESCE(base_url, ''), redirect_uris, enabled, created_at, updated_at
-		FROM applications WHERE id = $1
-	`, id).Scan(
+		FROM applications WHERE id = $1 AND org_id = $2
+	`, id, org.ID).Scan(
 		&app.ID, &app.ClientID, &app.Name, &app.Description, &app.Type,
 		&app.Protocol, &app.BaseURL, &app.RedirectURIs, &app.Enabled, &app.CreatedAt, &app.UpdatedAt,
 	)
@@ -1401,8 +1448,13 @@ func (s *Service) handleUpdateApplication(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Application updated successfully"})
 }
 func (s *Service) handleDeleteApplication(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
-	result, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM applications WHERE id = $1", id)
+	result, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM applications WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to delete application"})
 		return
@@ -1415,10 +1467,15 @@ func (s *Service) handleDeleteApplication(c *gin.Context) {
 }
 
 func (s *Service) handleListDirectories(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT id, name, type, config, enabled, last_sync_at, sync_status, created_at, updated_at
-		FROM directory_integrations ORDER BY name
-	`)
+		FROM directory_integrations WHERE org_id = $1 ORDER BY name
+	`, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to list directories"})
 		return
@@ -1446,6 +1503,11 @@ func (s *Service) handleListDirectories(c *gin.Context) {
 }
 
 func (s *Service) handleCreateDirectory(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	var dir DirectoryIntegration
 	if err := c.ShouldBindJSON(&dir); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -1459,10 +1521,10 @@ func (s *Service) handleCreateDirectory(c *gin.Context) {
 
 	configBytes, _ := json.Marshal(dir.Config)
 
-	_, err := s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO directory_integrations (id, name, type, config, enabled, sync_status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, dir.ID, dir.Name, dir.Type, configBytes, dir.Enabled, dir.SyncStatus, dir.CreatedAt, dir.UpdatedAt)
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO directory_integrations (id, name, type, config, enabled, sync_status, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, dir.ID, dir.Name, dir.Type, configBytes, dir.Enabled, dir.SyncStatus, dir.CreatedAt, dir.UpdatedAt, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to create directory integration"})
 		return
@@ -1472,12 +1534,17 @@ func (s *Service) handleCreateDirectory(c *gin.Context) {
 }
 
 func (s *Service) handleGetDirectory(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
 	var d DirectoryIntegration
 	var configBytes []byte
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, type, config, enabled, last_sync_at, sync_status, created_at, updated_at
-		 FROM directory_integrations WHERE id = $1`, id).Scan(
+		 FROM directory_integrations WHERE id = $1 AND org_id = $2`, id, org.ID).Scan(
 		&d.ID, &d.Name, &d.Type, &configBytes, &d.Enabled, &d.LastSyncAt, &d.SyncStatus, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Directory not found"})
@@ -1490,6 +1557,11 @@ func (s *Service) handleGetDirectory(c *gin.Context) {
 }
 
 func (s *Service) handleUpdateDirectory(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
 	var dir DirectoryIntegration
 	if err := c.ShouldBindJSON(&dir); err != nil {
@@ -1501,8 +1573,8 @@ func (s *Service) handleUpdateDirectory(c *gin.Context) {
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), `
 		UPDATE directory_integrations SET name = $2, type = $3, config = $4, enabled = $5, updated_at = NOW()
-		WHERE id = $1
-	`, id, dir.Name, dir.Type, configBytes, dir.Enabled)
+		WHERE id = $1 AND org_id = $6
+	`, id, dir.Name, dir.Type, configBytes, dir.Enabled, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update directory"})
 		return
@@ -1515,8 +1587,13 @@ func (s *Service) handleUpdateDirectory(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteDirectory(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
-	result, err := s.db.Pool.Exec(c.Request.Context(), `DELETE FROM directory_integrations WHERE id = $1`, id)
+	result, err := s.db.Pool.Exec(c.Request.Context(), `DELETE FROM directory_integrations WHERE id = $1 AND org_id = $2`, id, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to delete directory"})
 		return
@@ -1529,11 +1606,16 @@ func (s *Service) handleDeleteDirectory(c *gin.Context) {
 }
 
 func (s *Service) handleSyncDirectory(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
 
 	// Verify directory exists
 	var exists bool
-	s.db.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1)`, id).Scan(&exists)
+	s.db.Pool.QueryRow(c.Request.Context(), `SELECT EXISTS(SELECT 1 FROM directory_integrations WHERE id = $1 AND org_id = $2)`, id, org.ID).Scan(&exists)
 	if !exists {
 		c.JSON(404, gin.H{"error": "Directory integration not found"})
 		return
@@ -1551,7 +1633,7 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 		// Fallback: just mark as syncing if no directory service
 		s.db.Pool.Exec(c.Request.Context(), `
 			UPDATE directory_integrations SET sync_status = 'syncing', last_sync_at = NOW(), updated_at = NOW()
-			WHERE id = $1`, id)
+			WHERE id = $1 AND org_id = $2`, id, org.ID)
 	}
 
 	syncType := "incremental"
@@ -1563,12 +1645,17 @@ func (s *Service) handleSyncDirectory(c *gin.Context) {
 }
 
 func (s *Service) handleTestConnection(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
 
 	var dirType string
 	var configBytes []byte
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT type, config FROM directory_integrations WHERE id = $1`, id).Scan(&dirType, &configBytes)
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT type, config FROM directory_integrations WHERE id = $1 AND org_id = $2`, id, org.ID).Scan(&dirType, &configBytes)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "Directory not found"})
 		return
@@ -1745,12 +1832,18 @@ func (s *Service) handleTrustDevice(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	deviceID := c.Param("id")
 
 	// Look up user_id before trusting so frontend can sync Ziti attributes
 	var userID string
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM known_devices WHERE id = $1`, deviceID).Scan(&userID)
+		`SELECT user_id FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&userID)
 
 	if err := s.riskService.TrustDevice(c.Request.Context(), deviceID); err != nil {
 		s.logger.Error("failed to trust device", zap.String("device_id", deviceID), zap.Error(err))
@@ -1766,12 +1859,18 @@ func (s *Service) handleRevokeDevice(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	deviceID := c.Param("id")
 
 	// Look up user_id before revoking so frontend can sync Ziti attributes
 	var userID string
 	_ = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT user_id FROM known_devices WHERE id = $1`, deviceID).Scan(&userID)
+		`SELECT user_id FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID).Scan(&userID)
 
 	if err := s.riskService.RevokeDevice(c.Request.Context(), deviceID); err != nil {
 		s.logger.Error("failed to revoke device", zap.String("device_id", deviceID), zap.Error(err))
@@ -2209,12 +2308,18 @@ func (s *Service) handleWebhookStats(c *gin.Context) {
 // Invitation handlers
 
 func (s *Service) handleListInvitations(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT id, email, roles, groups, token, invited_by, expires_at, created_at
 		FROM user_invitations
+		WHERE org_id = $1
 		ORDER BY created_at DESC
 		LIMIT 50
-	`)
+	`, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to list invitations"})
 		return
@@ -2247,6 +2352,11 @@ func (s *Service) handleListInvitations(c *gin.Context) {
 }
 
 func (s *Service) handleCreateInvitation(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	var req struct {
 		Email  string   `json:"email"`
 		Roles  []string `json:"roles"`
@@ -2272,10 +2382,10 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 	}
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 
-	_, err := s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO user_invitations (id, email, roles, groups, token, invited_by, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-	`, id, req.Email, req.Roles, req.Groups, token, invitedBy, expiresAt)
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO user_invitations (id, email, roles, groups, token, invited_by, expires_at, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+	`, id, req.Email, req.Roles, req.Groups, token, invitedBy, expiresAt, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to create invitation"})
 		return
@@ -2293,8 +2403,13 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteInvitation(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
-	result, err := s.db.Pool.Exec(c.Request.Context(), `DELETE FROM user_invitations WHERE id = $1`, id)
+	result, err := s.db.Pool.Exec(c.Request.Context(), `DELETE FROM user_invitations WHERE id = $1 AND org_id = $2`, id, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to delete invitation"})
 		return
@@ -2320,6 +2435,11 @@ func parsePeriod(period string) string {
 }
 
 func (s *Service) handleLoginAnalytics(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	interval := parsePeriod(c.Query("period"))
 
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
@@ -2327,9 +2447,9 @@ func (s *Service) handleLoginAnalytics(c *gin.Context) {
 		       COUNT(*) FILTER (WHERE success = true) as successful,
 		       COUNT(*) FILTER (WHERE success = false) as failed
 		FROM login_history
-		WHERE created_at > NOW() - $1::interval
+		WHERE org_id = $2 AND created_at > NOW() - $1::interval
 		GROUP BY 1 ORDER BY 1
-	`, interval)
+	`, interval, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to query login analytics"})
 		return
@@ -2356,6 +2476,11 @@ func (s *Service) handleLoginAnalytics(c *gin.Context) {
 }
 
 func (s *Service) handleRiskAnalytics(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	interval := parsePeriod(c.Query("period"))
 
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
@@ -2368,9 +2493,9 @@ func (s *Service) handleRiskAnalytics(c *gin.Context) {
 			END as level,
 			COUNT(*) as count
 		FROM login_history
-		WHERE created_at > NOW() - $1::interval
+		WHERE org_id = $2 AND created_at > NOW() - $1::interval
 		GROUP BY 1
-	`, interval)
+	`, interval, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to query risk analytics"})
 		return
@@ -2396,14 +2521,19 @@ func (s *Service) handleRiskAnalytics(c *gin.Context) {
 }
 
 func (s *Service) handleUserAnalytics(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	interval := parsePeriod(c.Query("period"))
 
 	// User growth over time
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT date_trunc('day', created_at)::date as date, COUNT(*) as count
-		FROM users WHERE created_at > NOW() - $1::interval
+		FROM users WHERE org_id = $2 AND created_at > NOW() - $1::interval
 		GROUP BY 1 ORDER BY 1
-	`, interval)
+	`, interval, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to query user analytics"})
 		return
@@ -2428,8 +2558,8 @@ func (s *Service) handleUserAnalytics(c *gin.Context) {
 
 	// Total and active users
 	var total, active int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users").Scan(&total)
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&active)
+	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
+	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&active)
 
 	c.JSON(200, gin.H{
 		"growth": growth,
@@ -2439,13 +2569,18 @@ func (s *Service) handleUserAnalytics(c *gin.Context) {
 }
 
 func (s *Service) handleEventAnalytics(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	interval := parsePeriod(c.Query("period"))
 
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT event_type, COUNT(*) as count
-		FROM audit_events WHERE timestamp > NOW() - $1::interval
+		FROM audit_events WHERE org_id = $2 AND timestamp > NOW() - $1::interval
 		GROUP BY 1 ORDER BY 2 DESC LIMIT 10
-	`, interval)
+	`, interval, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to query event analytics"})
 		return
@@ -2492,13 +2627,18 @@ type CompliancePosture struct {
 func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture, error) {
 	posture := &CompliancePosture{}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// MFA adoption: % of enabled users with at least one MFA method enrolled
 	var totalEnabled, mfaEnrolled int
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM users WHERE enabled = true),
+			(SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1),
 			(SELECT COUNT(DISTINCT user_id) FROM mfa_enrollments WHERE status = 'active')
-	`).Scan(&totalEnabled, &mfaEnrolled)
+	`, org.ID).Scan(&totalEnabled, &mfaEnrolled)
 	if err != nil {
 		s.logger.Warn("Failed to query MFA adoption", zap.Error(err))
 	}
@@ -2510,8 +2650,8 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 	var passwordCompliant int
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM users
-		WHERE enabled = true AND (password_changed_at IS NULL OR password_changed_at > NOW() - INTERVAL '90 days')
-	`).Scan(&passwordCompliant)
+		WHERE enabled = true AND org_id = $1 AND (password_changed_at IS NULL OR password_changed_at > NOW() - INTERVAL '90 days')
+	`, org.ID).Scan(&passwordCompliant)
 	if err != nil {
 		s.logger.Warn("Failed to query password compliance", zap.Error(err))
 	}
@@ -2522,9 +2662,9 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 	// Open and overdue access reviews
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')),
-			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND end_date < NOW())
-	`).Scan(&posture.OpenReviewsCount, &posture.OverdueReviewsCount)
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND org_id = $1),
+			(SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND end_date < NOW() AND org_id = $1)
+	`, org.ID).Scan(&posture.OpenReviewsCount, &posture.OverdueReviewsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query review counts", zap.Error(err))
 	}
@@ -2532,16 +2672,16 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 	// Dormant accounts: users who haven't logged in for 90+ days
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM users
-		WHERE enabled = true AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
-	`).Scan(&posture.DormantAccountsCount)
+		WHERE enabled = true AND org_id = $1 AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
+	`, org.ID).Scan(&posture.DormantAccountsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query dormant accounts", zap.Error(err))
 	}
 
 	// Disabled accounts
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM users WHERE enabled = false
-	`).Scan(&posture.DisabledAccountsCount)
+		SELECT COUNT(*) FROM users WHERE enabled = false AND org_id = $1
+	`, org.ID).Scan(&posture.DisabledAccountsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query disabled accounts", zap.Error(err))
 	}
@@ -2573,9 +2713,9 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 	// Policy violations: failed policy evaluations in last 30 days
 	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
-		WHERE event_type = 'policy_evaluation' AND outcome = 'failure'
+		WHERE org_id = $1 AND event_type = 'policy_evaluation' AND outcome = 'failure'
 		AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&posture.PolicyViolationsCount)
+	`, org.ID).Scan(&posture.PolicyViolationsCount)
 	if err != nil {
 		s.logger.Warn("Failed to query policy violations", zap.Error(err))
 	}
@@ -2649,22 +2789,30 @@ type EntitlementStats struct {
 
 // GetEntitlementCatalog returns a unified view of all entitlements
 func (s *Service) GetEntitlementCatalog(ctx context.Context, offset, limit int, entType, riskLevel, search string) ([]EntitlementEntry, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	query := `
 		WITH catalog AS (
 			SELECT r.id, r.name, 'role' as type, COALESCE(r.description, '') as description,
-				(SELECT COUNT(*) FROM user_roles WHERE role_id = r.id) as member_count,
+				(SELECT COUNT(*) FROM user_roles WHERE role_id = r.id AND org_id = $1) as member_count,
 				r.created_at
 			FROM roles r
+			WHERE r.org_id = $1
 			UNION ALL
 			SELECT g.id, g.name, 'group' as type, COALESCE(g.description, '') as description,
-				(SELECT COUNT(*) FROM group_memberships WHERE group_id = g.id) as member_count,
+				(SELECT COUNT(*) FROM group_memberships WHERE group_id = g.id AND org_id = $1) as member_count,
 				g.created_at
 			FROM groups g
+			WHERE g.org_id = $1
 			UNION ALL
 			SELECT a.id, a.name, 'application' as type, COALESCE(a.description, '') as description,
-				(SELECT COUNT(*) FROM user_application_assignments WHERE application_id = a.id) as member_count,
+				(SELECT COUNT(*) FROM user_application_assignments WHERE application_id = a.id AND org_id = $1) as member_count,
 				a.created_at
 			FROM applications a
+			WHERE a.org_id = $1
 		)
 		SELECT c.id, c.name, c.type, c.description, c.member_count, c.created_at,
 			COALESCE(em.risk_level, 'low') as risk_level,
@@ -2677,8 +2825,8 @@ func (s *Service) GetEntitlementCatalog(ctx context.Context, offset, limit int, 
 	`
 
 	conditions := []string{}
-	args := []interface{}{}
-	argCount := 1
+	args := []interface{}{org.ID}
+	argCount := 2
 
 	if entType != "" {
 		conditions = append(conditions, fmt.Sprintf("c.type = $%d", argCount))
@@ -2754,10 +2902,15 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 		ByRiskLevel: make(map[string]int),
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var roleCount, groupCount, appCount int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles").Scan(&roleCount)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&groupCount)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&appCount)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID).Scan(&roleCount)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&groupCount)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID).Scan(&appCount)
 
 	stats.ByType["role"] = roleCount
 	stats.ByType["group"] = groupCount
@@ -2785,9 +2938,9 @@ func (s *Service) GetEntitlementStats(ctx context.Context) (*EntitlementStats, e
 	var orphanCount int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM roles r WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE role_id = r.id)) +
-			(SELECT COUNT(*) FROM groups g WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = g.id))
-	`).Scan(&orphanCount)
+			(SELECT COUNT(*) FROM roles r WHERE r.org_id = $1 AND NOT EXISTS (SELECT 1 FROM user_roles WHERE role_id = r.id AND org_id = $1)) +
+			(SELECT COUNT(*) FROM groups g WHERE g.org_id = $1 AND NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = g.id AND org_id = $1))
+	`, org.ID).Scan(&orphanCount)
 	stats.OrphanCount = orphanCount
 
 	return stats, nil
@@ -2910,6 +3063,11 @@ func (s *Service) CreateDelegation(ctx context.Context, d *AdminDelegation) erro
 func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeType string) ([]AdminDelegation, int, error) {
 	s.logger.Debug("Listing admin delegations")
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	countQuery := "SELECT COUNT(*) FROM admin_delegations"
 	dataQuery := `
 		SELECT ad.id, ad.delegate_id,
@@ -2918,35 +3076,48 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 			COALESCE(u2.first_name || ' ' || u2.last_name, u2.username, '') as delegated_by_name,
 			ad.scope_type, ad.scope_id,
 			CASE ad.scope_type
-				WHEN 'group' THEN (SELECT name FROM groups WHERE id = ad.scope_id)
-				WHEN 'role' THEN (SELECT name FROM roles WHERE id = ad.scope_id)
-				WHEN 'application' THEN (SELECT name FROM applications WHERE id = ad.scope_id)
+				WHEN 'group' THEN (SELECT name FROM groups WHERE id = ad.scope_id AND org_id = $1)
+				WHEN 'role' THEN (SELECT name FROM roles WHERE id = ad.scope_id AND org_id = $1)
+				WHEN 'application' THEN (SELECT name FROM applications WHERE id = ad.scope_id AND org_id = $1)
 				WHEN 'organization' THEN (SELECT name FROM organizations WHERE id = ad.scope_id)
 				ELSE ''
 			END as scope_name,
 			ad.permissions, ad.enabled, ad.expires_at, ad.created_at, ad.updated_at
 		FROM admin_delegations ad
-		LEFT JOIN users u1 ON u1.id = ad.delegate_id
-		LEFT JOIN users u2 ON u2.id = ad.delegated_by
+		LEFT JOIN users u1 ON u1.id = ad.delegate_id AND u1.org_id = $1
+		LEFT JOIN users u2 ON u2.id = ad.delegated_by AND u2.org_id = $1
 	`
 
+	// org.ID is referenced as $1 in dataQuery (scoped JOINs/subqueries); the
+	// countQuery touches only the unscoped admin_delegations table, so it uses
+	// its own arg slice without org.ID and its own placeholder numbering.
 	conditions := []string{}
-	args := []interface{}{}
-	argCount := 1
+	args := []interface{}{org.ID}
+	argCount := 2
+	countConditions := []string{}
+	countArgs := []interface{}{}
+	countArgCount := 1
 
 	if scopeType != "" {
 		conditions = append(conditions, fmt.Sprintf("ad.scope_type = $%d", argCount))
 		args = append(args, scopeType)
 		argCount++
+		countConditions = append(countConditions, fmt.Sprintf("ad.scope_type = $%d", countArgCount))
+		countArgs = append(countArgs, scopeType)
+		countArgCount++
 	}
 
 	whereClause := ""
 	if len(conditions) > 0 {
 		whereClause = " WHERE " + strings.Join(conditions, " AND ")
 	}
+	countWhereClause := ""
+	if len(countConditions) > 0 {
+		countWhereClause = " WHERE " + strings.Join(countConditions, " AND ")
+	}
 
 	var total int
-	if err := s.db.Pool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total); err != nil {
+	if err := s.db.Pool.QueryRow(ctx, countQuery+countWhereClause, countArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count delegations: %w", err)
 	}
 
@@ -2999,28 +3170,33 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 func (s *Service) GetDelegation(ctx context.Context, id string) (*AdminDelegation, error) {
 	s.logger.Debug("Getting admin delegation", zap.String("id", id))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var d AdminDelegation
 	var permJSON []byte
 	var scopeName *string
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT ad.id, ad.delegate_id,
 			COALESCE(u1.first_name || ' ' || u1.last_name, u1.username, '') as delegate_name,
 			ad.delegated_by,
 			COALESCE(u2.first_name || ' ' || u2.last_name, u2.username, '') as delegated_by_name,
 			ad.scope_type, ad.scope_id,
 			CASE ad.scope_type
-				WHEN 'group' THEN (SELECT name FROM groups WHERE id = ad.scope_id)
-				WHEN 'role' THEN (SELECT name FROM roles WHERE id = ad.scope_id)
-				WHEN 'application' THEN (SELECT name FROM applications WHERE id = ad.scope_id)
+				WHEN 'group' THEN (SELECT name FROM groups WHERE id = ad.scope_id AND org_id = $2)
+				WHEN 'role' THEN (SELECT name FROM roles WHERE id = ad.scope_id AND org_id = $2)
+				WHEN 'application' THEN (SELECT name FROM applications WHERE id = ad.scope_id AND org_id = $2)
 				WHEN 'organization' THEN (SELECT name FROM organizations WHERE id = ad.scope_id)
 				ELSE ''
 			END as scope_name,
 			ad.permissions, ad.enabled, ad.expires_at, ad.created_at, ad.updated_at
 		FROM admin_delegations ad
-		LEFT JOIN users u1 ON u1.id = ad.delegate_id
-		LEFT JOIN users u2 ON u2.id = ad.delegated_by
+		LEFT JOIN users u1 ON u1.id = ad.delegate_id AND u1.org_id = $2
+		LEFT JOIN users u2 ON u2.id = ad.delegated_by AND u2.org_id = $2
 		WHERE ad.id = $1
-	`, id).Scan(&d.ID, &d.DelegateID, &d.DelegateName, &d.DelegatedBy, &d.DelegatedByName,
+	`, id, org.ID).Scan(&d.ID, &d.DelegateID, &d.DelegateName, &d.DelegatedBy, &d.DelegatedByName,
 		&d.ScopeType, &d.ScopeID, &scopeName, &permJSON, &d.Enabled, &d.ExpiresAt, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("delegation not found: %w", err)

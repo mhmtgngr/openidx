@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 const (
@@ -86,11 +88,16 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 	stats := &EnhancedDashboardStats{}
 	twentyFourHoursAgo := time.Now().Add(-24 * time.Hour)
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get total user count from identity service (users table)
 	var totalUsers int64
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM users WHERE deleted_at IS NULL
-	`).Scan(&totalUsers)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND org_id = $1
+	`, org.ID).Scan(&totalUsers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count users: %w", err)
 	}
@@ -104,7 +111,8 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 		AND action IN ('login', 'login_mfa')
 		AND outcome = 'success'
 		AND timestamp >= $1
-	`, twentyFourHoursAgo).Scan(&activeUsers24h)
+		AND org_id = $2
+	`, twentyFourHoursAgo, org.ID).Scan(&activeUsers24h)
 	if err != nil {
 		s.logger.Warn("Failed to count active users 24h", zap.Error(err))
 		activeUsers24h = 0
@@ -115,10 +123,10 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 	if totalUsers > 0 {
 		var mfaEnabledUsers int64
 		err = s.db.Pool.QueryRow(ctx, `
-			SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true
+			SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1
 			UNION
-			SELECT COUNT(DISTINCT user_id) FROM mfa_backup_codes WHERE used = false
-		`).Scan(&mfaEnabledUsers)
+			SELECT COUNT(DISTINCT user_id) FROM mfa_backup_codes WHERE used = false AND org_id = $1
+		`, org.ID).Scan(&mfaEnabledUsers)
 		if err != nil {
 			s.logger.Warn("Failed to count MFA enabled users", zap.Error(err))
 			mfaEnabledUsers = 0
@@ -132,7 +140,8 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 		SELECT COUNT(*) FROM sessions
 		WHERE expires_at > NOW()
 		AND (revoked IS NULL OR revoked = false)
-	`).Scan(&activeSessions)
+		AND org_id = $1
+	`, org.ID).Scan(&activeSessions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count active sessions: %w", err)
 	}
@@ -145,7 +154,8 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp >= $1
-	`, twentyFourHoursAgo).Scan(&failedLogins24h)
+		AND org_id = $2
+	`, twentyFourHoursAgo, org.ID).Scan(&failedLogins24h)
 	if err != nil {
 		s.logger.Warn("Failed to count failed logins", zap.Error(err))
 		failedLogins24h = 0
@@ -172,10 +182,11 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 		FROM audit_events ae
 		LEFT JOIN user_risk_scores urs ON ae.actor_id = urs.user_id
 		WHERE ae.timestamp >= $1
+		AND ae.org_id = $2
 		AND (urs.risk_score >= 70 OR ae.outcome = 'failure')
 		ORDER BY urs.risk_score DESC, ae.timestamp DESC
 		LIMIT 10
-	`, twentyFourHoursAgo)
+	`, twentyFourHoursAgo, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to query top risk events", zap.Error(err))
 		stats.TopRiskEvents = []RiskEvent{}
@@ -206,7 +217,8 @@ func (s *Service) aggregateEnhancedDashboardStats(ctx context.Context) (*Enhance
 		AND action IN ('login', 'login_mfa')
 		AND outcome = 'success'
 		AND timestamp >= $1
-	`, twentyFourHoursAgo).Scan(&successfulLogins)
+		AND org_id = $2
+	`, twentyFourHoursAgo, org.ID).Scan(&successfulLogins)
 	if err != nil {
 		s.logger.Warn("Failed to count successful logins", zap.Error(err))
 		successfulLogins = 0

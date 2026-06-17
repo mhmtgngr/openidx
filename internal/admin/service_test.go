@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 func init() {
@@ -206,7 +208,10 @@ func TestUpdateApplicationNoFields(t *testing.T) {
 	// Service with nil db will panic if it reaches the DB call,
 	// so we test that empty updates returns an error before that
 	svc := &Service{logger: zap.NewNop()}
-	err := svc.UpdateApplication(context.Background(), "app-1", map[string]interface{}{})
+	// v1.7.0: UpdateApplication resolves the org first (fail-closed), so supply one
+	// to reach the no-valid-fields validation this test targets.
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: "00000000-0000-0000-0000-000000000010"})
+	err := svc.UpdateApplication(ctx, "app-1", map[string]interface{}{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no valid fields to update")
 }

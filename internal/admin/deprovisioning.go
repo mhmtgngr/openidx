@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // LifecyclePolicy represents an automated de-provisioning policy
@@ -305,6 +307,14 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 		return
 	}
 
+	// Capture the org synchronously: the execution runs on a detached
+	// context.Background goroutine and can't read the request org later.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Find affected users
 	affected := s.findAffectedUsers(c.Request.Context(), p)
 
@@ -325,8 +335,8 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 		return
 	}
 
-	// Execute actions
-	go s.executeLifecyclePolicy(execID, p, affected)
+	// Execute actions (org captured above, threaded into the detached goroutine)
+	go s.executeLifecyclePolicy(org.ID, execID, p, affected)
 
 	// Update last_run_at
 	_, _ = s.db.Pool.Exec(c.Request.Context(),
@@ -337,6 +347,11 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 
 func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []AffectedUser {
 	var users []AffectedUser
+
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		return []AffectedUser{}
+	}
 
 	var conds map[string]interface{}
 	_ = json.Unmarshal(p.Conditions, &conds)
@@ -349,8 +364,8 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 		}
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT id, username, email, enabled, last_login_at, created_at FROM users
-			 WHERE enabled = true AND (last_login_at IS NULL OR last_login_at < NOW() - $1 * INTERVAL '1 day')
-			 ORDER BY last_login_at NULLS FIRST LIMIT 500`, inactiveDays)
+			 WHERE enabled = true AND (last_login_at IS NULL OR last_login_at < NOW() - $1 * INTERVAL '1 day') AND org_id = $2
+			 ORDER BY last_login_at NULLS FIRST LIMIT 500`, inactiveDays, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -369,8 +384,8 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 		}
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT id, username, email, enabled, last_login_at, created_at FROM users
-			 WHERE enabled = false AND updated_at < NOW() - $1 * INTERVAL '1 day'
-			 ORDER BY updated_at LIMIT 500`, disabledDays)
+			 WHERE enabled = false AND updated_at < NOW() - $1 * INTERVAL '1 day' AND org_id = $2
+			 ORDER BY updated_at LIMIT 500`, disabledDays, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -385,9 +400,9 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 	case "orphan_detection":
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT u.id, u.username, u.email, u.enabled, u.last_login_at, u.created_at FROM users u
-			 LEFT JOIN group_memberships gm ON u.id = gm.user_id
-			 WHERE gm.group_id IS NULL AND (u.last_login_at IS NULL OR u.last_login_at < NOW() - INTERVAL '30 days')
-			 ORDER BY u.last_login_at NULLS FIRST LIMIT 500`)
+			 LEFT JOIN group_memberships gm ON u.id = gm.user_id AND gm.org_id = u.org_id
+			 WHERE gm.group_id IS NULL AND (u.last_login_at IS NULL OR u.last_login_at < NOW() - INTERVAL '30 days') AND u.org_id = $1
+			 ORDER BY u.last_login_at NULLS FIRST LIMIT 500`, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -406,8 +421,8 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 		}
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT id, username, email, enabled, last_login_at, created_at FROM users
-			 WHERE enabled = true AND (password_changed_at IS NULL OR password_changed_at < NOW() - $1 * INTERVAL '1 day')
-			 ORDER BY password_changed_at NULLS FIRST LIMIT 500`, maxAgeDays)
+			 WHERE enabled = true AND (password_changed_at IS NULL OR password_changed_at < NOW() - $1 * INTERVAL '1 day') AND org_id = $2
+			 ORDER BY password_changed_at NULLS FIRST LIMIT 500`, maxAgeDays, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -426,8 +441,9 @@ func (s *Service) findAffectedUsers(ctx context.Context, p LifecyclePolicy) []Af
 	return users
 }
 
-func (s *Service) executeLifecyclePolicy(execID string, p LifecyclePolicy, affected []AffectedUser) {
-	// Use timeout context for lifecycle policy execution
+func (s *Service) executeLifecyclePolicy(orgID, execID string, p LifecyclePolicy, affected []AffectedUser) {
+	// Use timeout context for lifecycle policy execution. The org was captured in
+	// the handler and threaded in so every user mutation stays scoped.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	usersAffected := 0
@@ -441,11 +457,11 @@ func (s *Service) executeLifecyclePolicy(execID string, p LifecyclePolicy, affec
 		var err error
 		switch action {
 		case "disable":
-			_, err = s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", u.ID)
+			_, err = s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", u.ID, orgID)
 		case "delete":
-			_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
+			_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", u.ID, orgID)
 		case "force_password_reset":
-			_, err = s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1", u.ID)
+			_, err = s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", u.ID, orgID)
 		default:
 			// Flag only - mark in actions taken
 			action = "flagged"

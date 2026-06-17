@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // DashboardHandler handles dashboard-related requests
@@ -79,6 +81,13 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 	h.logger.Debug("Fetching dashboard statistics")
 
 	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	stats := &DashboardStats{
 		RecentEvents: []RecentEvent{},
 		SystemMetrics: SystemMetrics{
@@ -88,13 +97,13 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 	}
 
 	// Query dashboard stats - single query for efficiency
-	err := h.db.QueryRow(ctx, `
+	err = h.db.QueryRow(ctx, `
 		SELECT
-			COALESCE((SELECT COUNT(*) FROM users WHERE deleted_at IS NULL), 0),
-			COALESCE((SELECT COUNT(*) FROM users WHERE enabled = true AND deleted_at IS NULL), 0),
-			COALESCE((SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW()), 0),
-			COALESCE((SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress')), 0)
-	`).Scan(&stats.TotalUsers, &stats.ActiveUsers, &stats.ActiveSessions, &stats.PendingReviews)
+			COALESCE((SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND org_id = $1), 0),
+			COALESCE((SELECT COUNT(*) FROM users WHERE enabled = true AND deleted_at IS NULL AND org_id = $1), 0),
+			COALESCE((SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW() AND org_id = $1), 0),
+			COALESCE((SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND org_id = $1), 0)
+	`, org.ID).Scan(&stats.TotalUsers, &stats.ActiveUsers, &stats.ActiveSessions, &stats.PendingReviews)
 
 	if err != nil {
 		h.logger.Error("Failed to query dashboard stats", zap.Error(err))
@@ -107,9 +116,10 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 		SELECT id, event_type, action, actor_id, outcome, timestamp
 		FROM audit_events
 		WHERE timestamp >= $1
+		AND org_id = $2
 		ORDER BY timestamp DESC
 		LIMIT 10
-	`, twentyFourHoursAgo)
+	`, twentyFourHoursAgo, org.ID)
 
 	if err == nil {
 		defer rows.Close()
@@ -128,7 +138,8 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp >= $1
-	`, twentyFourHoursAgo).Scan(&failedLogins)
+		AND org_id = $2
+	`, twentyFourHoursAgo, org.ID).Scan(&failedLogins)
 
 	if err == nil {
 		stats.SecurityAlerts.FailedLogins24h = failedLogins
@@ -143,10 +154,11 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 			AND outcome = 'failure'
 			AND actor_ip IS NOT NULL
 			AND timestamp >= $1
+			AND org_id = $2
 			GROUP BY actor_ip
 			HAVING COUNT(*) >= 5
 		) suspicious_ips
-	`, twentyFourHoursAgo).Scan(&stats.SecurityAlerts.SuspiciousIPs)
+	`, twentyFourHoursAgo, org.ID).Scan(&stats.SecurityAlerts.SuspiciousIPs)
 
 	if err == nil {
 		stats.SecurityAlerts.ActiveThreats = stats.SecurityAlerts.SuspiciousIPs

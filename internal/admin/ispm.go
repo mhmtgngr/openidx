@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PostureScore represents the overall identity security posture score
@@ -66,6 +68,11 @@ func (s *Service) handleGetPostureScore(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	score := PostureScore{
 		CategoryScores: map[string]int{},
@@ -74,12 +81,12 @@ func (s *Service) handleGetPostureScore(c *gin.Context) {
 
 	// Run all enabled checks and calculate score
 	var totalUsers, mfaUsers, staleUsers, disabledUsers int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE verified = true`).Scan(&mfaUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE verified = true AND org_id = $1`, org.ID).Scan(&mfaUsers)
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM users WHERE enabled = true AND
-		(last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')`).Scan(&staleUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = false").Scan(&disabledUsers)
+		SELECT COUNT(*) FROM users WHERE org_id = $1 AND enabled = true AND
+		(last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')`, org.ID).Scan(&staleUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = false AND org_id = $1", org.ID).Scan(&disabledUsers)
 
 	// MFA adoption score (0-100)
 	mfaAdoptionPct := 0
@@ -102,12 +109,13 @@ func (s *Service) handleGetPostureScore(c *gin.Context) {
 	var adminUsers, activeAdmins int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT ur.user_id) FROM user_roles ur
-		JOIN roles r ON ur.role_id = r.id WHERE r.name IN ('admin', 'super_admin')`).Scan(&adminUsers)
+		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
+		WHERE ur.org_id = $1 AND r.name IN ('admin', 'super_admin')`, org.ID).Scan(&adminUsers)
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT ae.actor_id) FROM audit_events ae
-		JOIN user_roles ur ON ae.actor_id = ur.user_id::text
-		JOIN roles r ON ur.role_id = r.id
-		WHERE r.name IN ('admin', 'super_admin') AND ae.timestamp > NOW() - INTERVAL '30 days'`).Scan(&activeAdmins)
+		JOIN user_roles ur ON ae.actor_id = ur.user_id::text AND ur.org_id = ae.org_id
+		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
+		WHERE ae.org_id = $1 AND r.name IN ('admin', 'super_admin') AND ae.timestamp > NOW() - INTERVAL '30 days'`, org.ID).Scan(&activeAdmins)
 	authzScore := 80
 	if adminUsers > 0 && activeAdmins < adminUsers/2 {
 		authzScore = 50 // Many admins are inactive
@@ -123,10 +131,11 @@ func (s *Service) handleGetPostureScore(c *gin.Context) {
 
 	// Compliance score - check for policy coverage
 	var totalApps, appsWithPolicy int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications").Scan(&totalApps)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM applications WHERE org_id = $1", org.ID).Scan(&totalApps)
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT pr.id) FROM policies p
-		JOIN policy_rules pr ON p.id = pr.policy_id WHERE p.enabled = true`).Scan(&appsWithPolicy)
+		JOIN policy_rules pr ON p.id = pr.policy_id AND pr.org_id = p.org_id
+		WHERE p.org_id = $1 AND p.enabled = true`, org.ID).Scan(&appsWithPolicy)
 	complianceScore := 70
 	if totalApps > 0 && appsWithPolicy > 0 {
 		complianceScore = clampScore((appsWithPolicy * 100) / max(totalApps, 1))
@@ -271,11 +280,16 @@ func (s *Service) handleRemediatePostureFinding(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	id := c.Param("id")
 
 	// Get the finding to determine remediation
 	var checkType, entityType, entityID string
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT check_type, COALESCE(affected_entity_type, ''), COALESCE(affected_entity_id, '')
 		FROM ispm_findings WHERE id = $1 AND status = 'open'`, id).Scan(&checkType, &entityType, &entityID)
 	if err != nil {
@@ -289,7 +303,7 @@ func (s *Service) handleRemediatePostureFinding(c *gin.Context) {
 	switch checkType {
 	case "stale_accounts":
 		if entityType == "user" && entityID != "" {
-			s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", entityID)
+			s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", entityID, org.ID)
 			remediationResult["action"] = "account_disabled"
 		}
 	case "mfa_adoption":
@@ -300,7 +314,7 @@ func (s *Service) handleRemediatePostureFinding(c *gin.Context) {
 		remediationResult["message"] = "User flagged for access review"
 	case "shared_accounts":
 		if entityType == "user" && entityID != "" {
-			s.db.Pool.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1", entityID)
+			s.db.Pool.Exec(ctx, "DELETE FROM user_sessions WHERE user_id = $1 AND org_id = $2", entityID, org.ID)
 			remediationResult["action"] = "sessions_revoked"
 		}
 	default:
@@ -445,6 +459,11 @@ func (s *Service) RunPostureChecks(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	findingsCreated := 0
 
 	// Clear old open findings before re-scan
@@ -453,9 +472,9 @@ func (s *Service) RunPostureChecks(c *gin.Context) {
 	// Check 1: MFA Adoption
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, u.email FROM users u
-		WHERE u.enabled = true AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_totp WHERE verified = true)
-		AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_webauthn)
-		LIMIT 50`)
+		WHERE u.org_id = $1 AND u.enabled = true AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_totp WHERE verified = true AND org_id = $1)
+		AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_webauthn WHERE org_id = $1)
+		LIMIT 50`, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -472,8 +491,8 @@ func (s *Service) RunPostureChecks(c *gin.Context) {
 	// Check 2: Stale Accounts
 	staleRows, err := s.db.Pool.Query(ctx, `
 		SELECT id, username, email, last_login FROM users
-		WHERE enabled = true AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
-		LIMIT 50`)
+		WHERE org_id = $1 AND enabled = true AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
+		LIMIT 50`, org.ID)
 	if err == nil {
 		defer staleRows.Close()
 		for staleRows.Next() {
@@ -491,8 +510,8 @@ func (s *Service) RunPostureChecks(c *gin.Context) {
 	// Check 3: Shared Account Detection (concurrent sessions from different IPs)
 	sharedRows, err := s.db.Pool.Query(ctx, `
 		SELECT user_id, COUNT(DISTINCT ip_address) as ip_count
-		FROM user_sessions WHERE expires_at > NOW()
-		GROUP BY user_id HAVING COUNT(DISTINCT ip_address) > 2`)
+		FROM user_sessions WHERE org_id = $1 AND expires_at > NOW()
+		GROUP BY user_id HAVING COUNT(DISTINCT ip_address) > 2`, org.ID)
 	if err == nil {
 		defer sharedRows.Close()
 		for sharedRows.Next() {
@@ -500,7 +519,7 @@ func (s *Service) RunPostureChecks(c *gin.Context) {
 			var ipCount int
 			sharedRows.Scan(&uid, &ipCount)
 			var uname string
-			s.db.Pool.QueryRow(ctx, "SELECT username FROM users WHERE id = $1", uid).Scan(&uname)
+			s.db.Pool.QueryRow(ctx, "SELECT username FROM users WHERE id = $1 AND org_id = $2", uid, org.ID).Scan(&uname)
 			s.createFinding(ctx, "shared_accounts", "high", "accounts",
 				fmt.Sprintf("Account '%s' has %d concurrent IPs", uname, ipCount),
 				"This account has active sessions from multiple IP addresses, suggesting credential sharing.",
@@ -512,9 +531,9 @@ func (s *Service) RunPostureChecks(c *gin.Context) {
 	// Check 4: Applications without policies
 	noPolicyRows, err := s.db.Pool.Query(ctx, `
 		SELECT a.id, a.name FROM applications a
-		WHERE a.id NOT IN (SELECT DISTINCT unnest(pr.target_applications) FROM policy_rules pr
-			JOIN policies p ON pr.policy_id = p.id WHERE p.enabled = true)
-		LIMIT 50`)
+		WHERE a.org_id = $1 AND a.id NOT IN (SELECT DISTINCT unnest(pr.target_applications) FROM policy_rules pr
+			JOIN policies p ON pr.policy_id = p.id AND p.org_id = pr.org_id WHERE pr.org_id = $1 AND p.enabled = true)
+		LIMIT 50`, org.ID)
 	if err == nil {
 		defer noPolicyRows.Close()
 		for noPolicyRows.Next() {

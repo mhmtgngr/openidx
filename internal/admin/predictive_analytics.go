@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PredictionSummary holds all prediction results
@@ -83,6 +85,12 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	summary := PredictionSummary{}
 
 	// Login forecast
@@ -90,7 +98,8 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp) as d, COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
-		GROUP BY d ORDER BY d`)
+		  AND org_id = $1
+		GROUP BY d ORDER BY d`, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -110,7 +119,8 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	rRows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp) as d, AVG(COALESCE((details->>'risk_score')::float, 0)) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '30 days'
-		GROUP BY d ORDER BY d`)
+		  AND org_id = $1
+		GROUP BY d ORDER BY d`, org.ID)
 	if err == nil {
 		defer rRows.Close()
 		for rRows.Next() {
@@ -130,20 +140,22 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(MAX(cnt), 0), COALESCE(AVG(cnt)::int, 0) FROM (
 			SELECT DATE_TRUNC('hour', created_at) as h, COUNT(*) as cnt FROM user_sessions
-			WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY h
-		) sub`).Scan(&peakSessions, &avgSessions)
+			WHERE created_at > NOW() - INTERVAL '7 days' AND org_id = $1 GROUP BY h
+		) sub`, org.ID).Scan(&peakSessions, &avgSessions)
 
 	var peakHour int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT EXTRACT(HOUR FROM created_at)::int as h FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '7 days'
-		GROUP BY h ORDER BY COUNT(*) DESC LIMIT 1`).Scan(&peakHour)
+		  AND org_id = $1
+		GROUP BY h ORDER BY COUNT(*) DESC LIMIT 1`, org.ID).Scan(&peakHour)
 
 	var peakDow int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT EXTRACT(DOW FROM created_at)::int as dow FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '30 days'
-		GROUP BY dow ORDER BY COUNT(*) DESC LIMIT 1`).Scan(&peakDow)
+		  AND org_id = $1
+		GROUP BY dow ORDER BY COUNT(*) DESC LIMIT 1`, org.ID).Scan(&peakDow)
 	dowNames := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 	peakDayName := "Monday"
 	if peakDow >= 0 && peakDow < 7 {
@@ -151,8 +163,8 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	}
 
 	var totalUsers, activeUsers int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&activeUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&activeUsers)
 
 	licenseUtil := 0.0
 	if totalUsers > 0 {
@@ -174,7 +186,8 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 	gRows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(created_at) as d, COUNT(*) FROM users
 		WHERE created_at > NOW() - INTERVAL '90 days'
-		GROUP BY d ORDER BY d`)
+		  AND org_id = $1
+		GROUP BY d ORDER BY d`, org.ID)
 	if err == nil {
 		defer gRows.Close()
 		for gRows.Next() {
@@ -204,21 +217,23 @@ func (s *Service) handlePredictionsSummary(c *gin.Context) {
 			SELECT actor_id, COUNT(*) as cnt FROM audit_events
 			WHERE event_type = 'authentication' AND outcome = 'success'
 			AND timestamp > NOW() - INTERVAL '15 days'
+			AND org_id = $1
 			GROUP BY actor_id
 		), previous AS (
 			SELECT actor_id, COUNT(*) as cnt FROM audit_events
 			WHERE event_type = 'authentication' AND outcome = 'success'
 			AND timestamp BETWEEN NOW() - INTERVAL '30 days' AND NOW() - INTERVAL '15 days'
+			AND org_id = $1
 			GROUP BY actor_id
 		)
 		SELECT p.actor_id, u.username, u.last_login,
 			COALESCE(r.cnt, 0) as recent_cnt, p.cnt as prev_cnt
 		FROM previous p
 		LEFT JOIN recent r ON p.actor_id = r.actor_id
-		JOIN users u ON p.actor_id = u.id::text
+		JOIN users u ON p.actor_id = u.id::text AND u.org_id = $1
 		WHERE COALESCE(r.cnt, 0) < p.cnt * 0.5 AND p.cnt >= 3
 		ORDER BY (COALESCE(r.cnt::float, 0) / p.cnt::float) ASC
-		LIMIT 10`)
+		LIMIT 10`, org.ID)
 	if err == nil {
 		defer cRows.Close()
 		for cRows.Next() {
@@ -256,11 +271,18 @@ func (s *Service) handleLoginForecast(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	hist := []DailyMetric{}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp) as d, COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '60 days'
-		GROUP BY d ORDER BY d`)
+		  AND org_id = $1
+		GROUP BY d ORDER BY d`, org.ID)
 	if err != nil {
 		s.logger.Error("failed to query login history", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get login data"})
@@ -289,11 +311,18 @@ func (s *Service) handleRiskForecast(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	hist := []DailyFloat{}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp) as d, AVG(COALESCE((details->>'risk_score')::float, 0)) FROM audit_events
 		WHERE event_type = 'authentication' AND timestamp > NOW() - INTERVAL '60 days'
-		GROUP BY d ORDER BY d`)
+		  AND org_id = $1
+		GROUP BY d ORDER BY d`, org.ID)
 	if err != nil {
 		s.logger.Error("failed to query risk history", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get risk data"})
@@ -322,12 +351,19 @@ func (s *Service) handleCapacityForecast(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Hourly session distribution
 	hourly := []map[string]interface{}{}
 	hRows, err := s.db.Pool.Query(ctx, `
 		SELECT EXTRACT(HOUR FROM created_at)::int as h, COUNT(*) FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '7 days'
-		GROUP BY h ORDER BY h`)
+		  AND org_id = $1
+		GROUP BY h ORDER BY h`, org.ID)
 	if err == nil {
 		defer hRows.Close()
 		for hRows.Next() {
@@ -342,7 +378,8 @@ func (s *Service) handleCapacityForecast(c *gin.Context) {
 	wRows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE_TRUNC('week', created_at)::date as w, COUNT(*) FROM user_sessions
 		WHERE created_at > NOW() - INTERVAL '12 weeks'
-		GROUP BY w ORDER BY w`)
+		  AND org_id = $1
+		GROUP BY w ORDER BY w`, org.ID)
 	if err == nil {
 		defer wRows.Close()
 		for wRows.Next() {
@@ -354,8 +391,8 @@ func (s *Service) handleCapacityForecast(c *gin.Context) {
 	}
 
 	var totalUsers, activeSessions int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW()").Scan(&activeSessions)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW() AND org_id = $1", org.ID).Scan(&activeSessions)
 
 	c.JSON(http.StatusOK, gin.H{
 		"hourly_distribution": hourly,

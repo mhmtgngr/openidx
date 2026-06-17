@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // BulkOperation represents a bulk operation on multiple entities
@@ -78,9 +80,17 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	// Capture the org synchronously: the execution runs on a detached
+	// context.Background goroutine, so it can't read the request org later.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Create the bulk operation
 	var opID string
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO bulk_operations (type, status, total_items, parameters, created_by)
 		 VALUES ($1, 'running', $2, $3, $4) RETURNING id`,
 		req.Type, len(req.UserIDs), params, nilIfEmpty(userIDStr),
@@ -95,7 +105,7 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 	for _, uid := range req.UserIDs {
 		// Look up username for display
 		var username string
-		_ = s.db.Pool.QueryRow(ctx, "SELECT username FROM users WHERE id = $1", uid).Scan(&username)
+		_ = s.db.Pool.QueryRow(ctx, "SELECT username FROM users WHERE id = $1 AND org_id = $2", uid, org.ID).Scan(&username)
 		if username == "" {
 			username = uid
 		}
@@ -104,14 +114,15 @@ func (s *Service) handleCreateBulkOperation(c *gin.Context) {
 			 VALUES ($1, $2, $3, 'pending')`, opID, uid, username)
 	}
 
-	// Execute the operation
-	go s.executeBulkOperation(opID, req.Type, req.UserIDs, params)
+	// Execute the operation (org captured above and threaded into the detached goroutine)
+	go s.executeBulkOperation(org.ID, opID, req.Type, req.UserIDs, params)
 
 	c.JSON(http.StatusCreated, gin.H{"id": opID, "status": "running", "total_items": len(req.UserIDs)})
 }
 
-func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, params json.RawMessage) {
-	// Use timeout context for bulk operation execution
+func (s *Service) executeBulkOperation(orgID, opID, opType string, userIDs []string, params json.RawMessage) {
+	// Use timeout context for bulk operation execution. The org was captured from
+	// the request in the handler and is threaded in so every mutation stays scoped.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	successCount := 0
@@ -126,17 +137,17 @@ func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, pa
 
 		switch opType {
 		case "enable_users":
-			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1", uid)
+			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
 			if err != nil {
 				errMsg = err.Error()
 			}
 		case "disable_users":
-			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", uid)
+			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
 			if err != nil {
 				errMsg = err.Error()
 			}
 		case "delete_users":
-			_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", uid)
+			_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", uid, orgID)
 			if err != nil {
 				errMsg = err.Error()
 			}
@@ -146,8 +157,8 @@ func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, pa
 				errMsg = "role_id parameter required"
 			} else {
 				_, err := s.db.Pool.Exec(ctx,
-					`INSERT INTO user_roles (user_id, role_id, assigned_at) VALUES ($1, $2, NOW())
-					 ON CONFLICT (user_id, role_id) DO NOTHING`, uid, roleID)
+					`INSERT INTO user_roles (user_id, role_id, assigned_at, org_id) VALUES ($1, $2, NOW(), $3)
+					 ON CONFLICT (user_id, role_id) DO NOTHING`, uid, roleID, orgID)
 				if err != nil {
 					errMsg = err.Error()
 				}
@@ -157,7 +168,7 @@ func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, pa
 			if roleID == "" {
 				errMsg = "role_id parameter required"
 			} else {
-				_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2", uid, roleID)
+				_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", uid, roleID, orgID)
 				if err != nil {
 					errMsg = err.Error()
 				}
@@ -168,8 +179,8 @@ func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, pa
 				errMsg = "group_id parameter required"
 			} else {
 				_, err := s.db.Pool.Exec(ctx,
-					`INSERT INTO group_memberships (user_id, group_id, joined_at) VALUES ($1, $2, NOW())
-					 ON CONFLICT DO NOTHING`, uid, groupID)
+					`INSERT INTO group_memberships (user_id, group_id, joined_at, org_id) VALUES ($1, $2, NOW(), $3)
+					 ON CONFLICT DO NOTHING`, uid, groupID, orgID)
 				if err != nil {
 					errMsg = err.Error()
 				}
@@ -179,13 +190,13 @@ func (s *Service) executeBulkOperation(opID, opType string, userIDs []string, pa
 			if groupID == "" {
 				errMsg = "group_id parameter required"
 			} else {
-				_, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2", uid, groupID)
+				_, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", uid, groupID, orgID)
 				if err != nil {
 					errMsg = err.Error()
 				}
 			}
 		case "reset_passwords":
-			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1", uid)
+			_, err := s.db.Pool.Exec(ctx, "UPDATE users SET password_must_change = true, updated_at = NOW() WHERE id = $1 AND org_id = $2", uid, orgID)
 			if err != nil {
 				errMsg = err.Error()
 			}

@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // RetentionPolicy defines how long to keep audit events
@@ -249,25 +251,33 @@ func (s *Service) handleCreateAuditArchive(c *gin.Context) {
 		return
 	}
 
-	// Run archive creation in background
-	go s.createAuditArchive(archiveID, start, end, req.Category)
+	// Capture the org synchronously: archive creation runs on a detached
+	// context.Background goroutine and can't read the request org later.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Run archive creation in background (scoped to the creating admin's org)
+	go s.createAuditArchive(org.ID, archiveID, start, end, req.Category)
 
 	c.JSON(http.StatusCreated, gin.H{"id": archiveID, "status": "creating"})
 }
 
-func (s *Service) createAuditArchive(archiveID string, start, end time.Time, category string) {
+func (s *Service) createAuditArchive(orgID, archiveID string, start, end time.Time, category string) {
 	// Use timeout context for archive creation (can be long-running)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	// Query events in date range
+	// Query events in date range, scoped to the org the archive belongs to.
 	query := `SELECT id, timestamp, event_type, category, action, outcome, actor_id, actor_type,
 	          actor_ip, target_id, target_type, resource_id, details, session_id, request_id
-	          FROM audit_events WHERE timestamp >= $1 AND timestamp < $2`
-	args := []interface{}{start, end}
+	          FROM audit_events WHERE timestamp >= $1 AND timestamp < $2 AND org_id = $3`
+	args := []interface{}{start, end, orgID}
 
 	if category != "" && category != "all" {
-		query += " AND category = $3"
+		query += " AND category = $4"
 		args = append(args, category)
 	}
 	query += " ORDER BY timestamp"
@@ -403,6 +413,11 @@ func (s *Service) handleRestoreAuditArchive(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	var filePath, status string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		"SELECT file_path, status FROM audit_archives WHERE id = $1", id,
@@ -443,12 +458,12 @@ func (s *Service) handleRestoreAuditArchive(c *gin.Context) {
 		_, err := s.db.Pool.Exec(c.Request.Context(),
 			`INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			  actor_id, actor_type, actor_ip, target_id, target_type, resource_id,
-			  details, session_id, request_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			  details, session_id, request_id, org_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			 ON CONFLICT (id) DO NOTHING`,
 			evt["id"], evt["timestamp"], evt["event_type"], evt["category"], evt["action"], evt["outcome"],
 			evt["actor_id"], evt["actor_type"], evt["actor_ip"], evt["target_id"], evt["target_type"], evt["resource_id"],
-			details, evt["session_id"], evt["request_id"])
+			details, evt["session_id"], evt["request_id"], org.ID)
 		if err == nil {
 			restored++
 		}
