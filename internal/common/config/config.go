@@ -59,6 +59,12 @@ type Config struct {
 	AccessSessionSecret string `mapstructure:"access_session_secret"`
 	AccessProxyDomain   string `mapstructure:"access_proxy_domain"`
 
+	// Multi-tenancy: the wildcard domain tenants live under
+	// (e.g. "openidx.io" for acme.openidx.io). When set, the gateway
+	// derives the X-Org-Slug header from the request's subdomain.
+	// Empty (the default) disables subdomain tenant resolution.
+	TenantBaseDomain string `mapstructure:"tenant_base_domain"`
+
 	// OpenZiti configuration
 	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
 	ZitiCtrlURL            string `mapstructure:"ziti_ctrl_url"`
@@ -378,6 +384,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("audit_url", "http://localhost:8004")
 	v.SetDefault("access_session_secret", "change-me-in-production-32bytes!")
 	v.SetDefault("access_proxy_domain", "localhost")
+
+	// Multi-tenancy: empty disables subdomain-based tenant resolution.
+	v.SetDefault("tenant_base_domain", "")
 
 	// OpenZiti defaults
 	v.SetDefault("ziti_enabled", false)
