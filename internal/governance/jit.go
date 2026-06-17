@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 const (
@@ -92,9 +93,13 @@ func (s *JITService) RequestElevation(ctx context.Context, req JITRequest) (*JIT
 	}
 
 	// Verify the role exists
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var roleName string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT name FROM roles WHERE id = $1`, req.RoleID).Scan(&roleName)
+		`SELECT name FROM roles WHERE id = $1 AND org_id = $2`, req.RoleID, org.ID).Scan(&roleName)
 	if err != nil {
 		return nil, fmt.Errorf("role not found: %w", err)
 	}
