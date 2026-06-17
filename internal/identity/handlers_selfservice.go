@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PersonalAccessToken represents a user's API key
@@ -34,11 +36,17 @@ func (s *Service) handleListUserPATs(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT id, name, key_prefix, scopes, expires_at, last_used_at, status, created_at
-		FROM api_keys WHERE user_id = $1
+		FROM api_keys WHERE user_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list user PATs", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list tokens"})
@@ -102,13 +110,19 @@ func (s *Service) handleCreateUserPAT(c *gin.Context) {
 	hash := sha256.Sum256([]byte(plaintext))
 	keyHash := hex.EncodeToString(hash[:])
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
+		return
+	}
+
 	id := uuid.New().String()
 	now := time.Now().UTC()
 
-	_, err := s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO api_keys (id, name, key_prefix, key_hash, user_id, scopes, expires_at, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, id, req.Name, keyPrefix, keyHash, userID, req.Scopes, expiresAt, "active", now)
+	_, err = s.db.Pool.Exec(c.Request.Context(), `
+		INSERT INTO api_keys (id, name, key_prefix, key_hash, user_id, scopes, expires_at, status, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, id, req.Name, keyPrefix, keyHash, userID, req.Scopes, expiresAt, "active", now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create PAT", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
@@ -142,13 +156,19 @@ func (s *Service) handleRevokeUserPAT(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token not found or already revoked"})
+		return
+	}
+
 	// Only revoke if the key belongs to this user
 	var keyHash string
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
 		UPDATE api_keys SET status = 'revoked'
-		WHERE id = $1 AND user_id = $2 AND status = 'active'
+		WHERE id = $1 AND user_id = $2 AND org_id = $3 AND status = 'active'
 		RETURNING key_hash
-	`, keyID, userID).Scan(&keyHash)
+	`, keyID, userID, org.ID).Scan(&keyHash)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "token not found or already revoked"})
 		return
@@ -182,6 +202,12 @@ func (s *Service) handleListUserConsents(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list authorized apps"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT rt.client_id,
 		       COALESCE(oc.name, rt.client_id) AS client_name,
@@ -190,11 +216,11 @@ func (s *Service) handleListUserConsents(c *gin.Context) {
 		       MIN(rt.created_at) AS authorized_at,
 		       MAX(rt.created_at) AS last_used_at
 		FROM oauth_refresh_tokens rt
-		LEFT JOIN oauth_clients oc ON oc.client_id = rt.client_id
-		WHERE rt.user_id = $1 AND rt.expires_at > NOW()
+		LEFT JOIN oauth_clients oc ON oc.client_id = rt.client_id AND oc.org_id = rt.org_id
+		WHERE rt.user_id = $1 AND rt.org_id = $2 AND rt.expires_at > NOW()
 		GROUP BY rt.client_id, oc.name, oc.logo_uri
 		ORDER BY authorized_at DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list user consents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list authorized apps"})
@@ -226,10 +252,16 @@ func (s *Service) handleRevokeUserConsent(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke authorization"})
+		return
+	}
+
 	// Delete refresh tokens
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND client_id = $2",
-		userID, clientID)
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND client_id = $2 AND org_id = $3",
+		userID, clientID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to revoke consent", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke authorization"})
@@ -238,8 +270,8 @@ func (s *Service) handleRevokeUserConsent(c *gin.Context) {
 
 	// Also delete access tokens
 	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM oauth_access_tokens WHERE user_id = $1 AND client_id = $2",
-		userID, clientID)
+		"DELETE FROM oauth_access_tokens WHERE user_id = $1 AND client_id = $2 AND org_id = $3",
+		userID, clientID, org.ID)
 
 	s.logger.Info("User consent revoked",
 		zap.String("user_id", userID),

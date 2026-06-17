@@ -330,6 +330,25 @@ func TestLifecycleAction_requireOrgContext(t *testing.T) {
 	}
 }
 
+func TestMFABypassAndBiometric_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+
+	t.Run("GenerateMFABypassCode", func(t *testing.T) {
+		_, err := s.GenerateMFABypassCode(ctx,
+			&GenerateBypassCodeRequest{UserID: "u-1", Reason: "lost device"}, "admin-1", "1.2.3.4")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("ListBypassCodes", func(t *testing.T) {
+		_, _, err := s.ListBypassCodes(ctx, "", "", false, 50, 0)
+		assertNoOrgContext(t, err)
+	})
+	t.Run("GetApplicableBiometricPolicy", func(t *testing.T) {
+		_, err := s.GetApplicableBiometricPolicy(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

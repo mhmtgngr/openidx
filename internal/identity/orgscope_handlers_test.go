@@ -44,6 +44,13 @@ func TestInvitationAndVerifyHandlers_requireOrgContext(t *testing.T) {
 		{"GetMyDSARs", "GET", "/me/dsars", "/me/dsars", svc.handleGetMyDSARs, ``, "u-1"},
 
 		{"OffboardUser", "POST", "/users/u-1/offboard", "/users/:id/offboard", svc.handleOffboardUser, ``, "admin-1"},
+
+		{"ListUserPATs", "GET", "/me/tokens", "/me/tokens", svc.handleListUserPATs, ``, "u-1"},
+		{"CreateUserPAT", "POST", "/me/tokens", "/me/tokens", svc.handleCreateUserPAT, `{"name":"ci"}`, "u-1"},
+		{"RevokeUserPAT", "DELETE", "/me/tokens/k-1", "/me/tokens/:id", svc.handleRevokeUserPAT, ``, "u-1"},
+		{"ListUserConsents", "GET", "/me/consents-oauth", "/me/consents-oauth", svc.handleListUserConsents, ``, "u-1"},
+		{"RevokeUserConsent", "DELETE", "/me/apps/c-1", "/me/apps/:client_id", svc.handleRevokeUserConsent, ``, "u-1"},
+		{"GetMyIdentityLinks", "GET", "/me/identity-links", "/me/identity-links", svc.handleGetMyIdentityLinks, ``, "u-1"},
 	}
 
 	for _, tc := range cases {
