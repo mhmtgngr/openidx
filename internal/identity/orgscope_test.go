@@ -283,6 +283,34 @@ func TestMFA_requireOrgContext(t *testing.T) {
 	})
 }
 
+func TestPasswordlessAndQR_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+
+	t.Run("CreateMagicLink", func(t *testing.T) {
+		_, err := s.CreateMagicLink(ctx, "a@b.com", "login", "", "1.2.3.4", "ua")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("CreateQRLoginSession", func(t *testing.T) {
+		_, err := s.CreateQRLoginSession(ctx, "1.2.3.4", nil)
+		assertNoOrgContext(t, err)
+	})
+	t.Run("ScanQRLoginSession", func(t *testing.T) {
+		_, err := s.ScanQRLoginSession(ctx, "tok", "u-1", nil)
+		assertNoOrgContext(t, err)
+	})
+	t.Run("ApproveQRLoginSession", func(t *testing.T) {
+		assertNoOrgContext(t, s.ApproveQRLoginSession(ctx, "tok", "u-1"))
+	})
+	t.Run("RejectQRLoginSession", func(t *testing.T) {
+		assertNoOrgContext(t, s.RejectQRLoginSession(ctx, "tok"))
+	})
+	t.Run("GetQRLoginSession", func(t *testing.T) {
+		_, err := s.GetQRLoginSession(ctx, "tok")
+		assertNoOrgContext(t, err)
+	})
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

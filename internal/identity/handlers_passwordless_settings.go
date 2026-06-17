@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PasswordlessSystemSettings represents the system-wide passwordless authentication settings
@@ -136,9 +138,15 @@ func (s *Service) handlePatchPasswordlessSettings(c *gin.Context) {
 func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+
 	// Count today's magic links
 	var magicLinksToday int
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		"SELECT COUNT(*) FROM magic_links WHERE created_at >= CURRENT_DATE",
 	).Scan(&magicLinksToday)
 	if err != nil {
@@ -149,7 +157,8 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 	// Count today's approved QR logins
 	var qrLoginsToday int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM qr_login_sessions WHERE created_at >= CURRENT_DATE AND status = 'approved'",
+		"SELECT COUNT(*) FROM qr_login_sessions WHERE created_at >= CURRENT_DATE AND status = 'approved' AND org_id = $1",
+		org.ID,
 	).Scan(&qrLoginsToday)
 	if err != nil {
 		s.logger.Warn("failed to count qr logins", zap.Error(err))
@@ -169,7 +178,7 @@ func (s *Service) handleGetPasswordlessStats(c *gin.Context) {
 	// Count total users
 	var totalUsers int
 	err = s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM users",
+		"SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID,
 	).Scan(&totalUsers)
 	if err != nil {
 		s.logger.Warn("failed to count total users", zap.Error(err))
