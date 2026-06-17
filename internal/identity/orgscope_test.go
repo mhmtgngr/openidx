@@ -349,6 +349,34 @@ func TestMFABypassAndBiometric_requireOrgContext(t *testing.T) {
 	})
 }
 
+func TestSCIMLookups_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+
+	t.Run("GetUserByUsername", func(t *testing.T) {
+		_, err := s.GetUserByUsername(ctx, "alice")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("GetUserByEmail", func(t *testing.T) {
+		_, err := s.GetUserByEmail(ctx, "a@b.com")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("GetGroupByDisplayName", func(t *testing.T) {
+		_, err := s.GetGroupByDisplayName(ctx, "Engineering")
+		assertNoOrgContext(t, err)
+	})
+	// These delegate to the org-scoped ListUsers/ListGroups, so they
+	// surface the same guard.
+	t.Run("ListUsersWithFilter", func(t *testing.T) {
+		_, err := s.ListUsersWithFilter(ctx, UserFilter{})
+		assertNoOrgContext(t, err)
+	})
+	t.Run("ListGroupsWithFilter", func(t *testing.T) {
+		_, err := s.ListGroupsWithFilter(ctx, GroupFilter{})
+		assertNoOrgContext(t, err)
+	})
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

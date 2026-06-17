@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ============================================================
@@ -39,14 +41,19 @@ func (s *Service) GetUserByUsername(ctx context.Context, username string) (*User
 		return repo.GetUserByUsername(ctx, username)
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Fall back to direct database query
 	var dbUser UserDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE username = $1
-	`, username).Scan(
+		FROM users WHERE username = $1 AND org_id = $2
+	`, username, org.ID).Scan(
 		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
 		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
@@ -69,14 +76,19 @@ func (s *Service) GetUserByEmail(ctx context.Context, email string) (*User, erro
 		return repo.GetUserByEmail(ctx, email)
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Fall back to direct database query
 	var dbUser UserDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE email = $1
-	`, email).Scan(
+		FROM users WHERE email = $1 AND org_id = $2
+	`, email, org.ID).Scan(
 		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
 		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
@@ -143,13 +155,18 @@ func (s *Service) GetGroupByDisplayName(ctx context.Context, displayName string)
 		return repo.GetGroupByDisplayName(ctx, displayName)
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Fall back to direct database query
 	var dbGroup GroupDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
-		FROM groups g WHERE g.name = $1
-	`, displayName).Scan(
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
+		FROM groups g WHERE g.name = $1 AND g.org_id = $2
+	`, displayName, org.ID).Scan(
 		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 	)
 	if err != nil {
