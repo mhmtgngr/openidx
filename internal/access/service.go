@@ -25,6 +25,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ProxyRoute represents a configured proxy route
@@ -590,6 +591,12 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		}
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
 		        allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
@@ -600,7 +607,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        created_at, updated_at
-		 FROM proxy_routes ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset)
+		 FROM proxy_routes WHERE org_id = $3 ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list routes", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list routes"})
@@ -695,7 +702,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 
 	// Get total count
 	var total int
-	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM proxy_routes").Scan(&total)
+	s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM proxy_routes WHERE org_id = $1", org.ID).Scan(&total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"routes": routes,
@@ -782,21 +789,27 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		idpID = &req.IDPId
 	}
 
-	_, err := s.db.Pool.Exec(c.Request.Context(),
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`INSERT INTO proxy_routes (id, name, description, from_url, to_url, preserve_host,
 		  require_auth, allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
 		  cors_allowed_origins, custom_headers, enabled, priority,
 		  idp_id, route_type, remote_host, remote_port,
 		  reverify_interval, posture_check_ids, inline_policy,
-		  require_device_trust, allowed_countries, max_risk_score)
+		  require_device_trust, allowed_countries, max_risk_score, org_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
+		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
 		id, req.Name, req.Description, req.FromURL, req.ToURL, req.PreserveHost,
 		requireAuth, rolesJSON, groupsJSON, policyJSON, req.IdleTimeout, req.AbsoluteTimeout,
 		corsJSON, headersJSON, enabled, req.Priority,
 		idpID, req.RouteType, req.RemoteHost, req.RemotePort,
 		req.ReverifyInterval, postureJSON, req.InlinePolicy,
-		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore)
+		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
@@ -978,6 +991,12 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		idpID = &existing.IDPId
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE proxy_routes SET name=$1, description=$2, from_url=$3, to_url=$4,
 		  preserve_host=$5, require_auth=$6, allowed_roles=$7, allowed_groups=$8,
@@ -987,14 +1006,14 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		  reverify_interval=$20, posture_check_ids=$21, inline_policy=$22,
 		  require_device_trust=$23, allowed_countries=$24, max_risk_score=$25,
 		  updated_at=NOW()
-		 WHERE id=$26`,
+		 WHERE id=$26 AND org_id=$27`,
 		existing.Name, existing.Description, existing.FromURL, existing.ToURL,
 		existing.PreserveHost, existing.RequireAuth, rolesJSON, groupsJSON,
 		policyJSON, existing.IdleTimeout, existing.AbsoluteTimeout, corsJSON,
 		headersJSON, existing.Enabled, existing.Priority,
 		idpID, existing.RouteType, existing.RemoteHost, existing.RemotePort,
 		existing.ReverifyInterval, postureJSON, existing.InlinePolicy,
-		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore, id)
+		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore, id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
@@ -1007,10 +1026,16 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 func (s *Service) handleDeleteRoute(c *gin.Context) {
 	id := c.Param("id")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Deprovision Guacamole connection before deleting route
 	s.deprovisionGuacamoleForRoute(c.Request.Context(), id)
 
-	result, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM proxy_routes WHERE id=$1", id)
+	result, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM proxy_routes WHERE id=$1 AND org_id=$2", id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to delete route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete route"})
@@ -1028,10 +1053,15 @@ func (s *Service) handleDeleteRoute(c *gin.Context) {
 // ---- Session management ----
 
 func (s *Service) handleListSessions(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, user_id, route_id, ip_address, user_agent, started_at, last_active_at, expires_at, revoked
-		 FROM proxy_sessions WHERE revoked=false AND expires_at > NOW()
-		 ORDER BY last_active_at DESC LIMIT 100`)
+		 FROM proxy_sessions WHERE revoked=false AND expires_at > NOW() AND org_id = $1
+		 ORDER BY last_active_at DESC LIMIT 100`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list sessions"})
 		return
@@ -1058,8 +1088,13 @@ func (s *Service) handleListSessions(c *gin.Context) {
 
 func (s *Service) handleRevokeSession(c *gin.Context) {
 	id := c.Param("id")
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE proxy_sessions SET revoked=true WHERE id=$1", id)
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"UPDATE proxy_sessions SET revoked=true WHERE id=$1 AND org_id=$2", id, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke session"})
 		return
@@ -1346,9 +1381,11 @@ func (s *Service) handleLogout(c *gin.Context) {
 		// Find and revoke session
 		var sessionID string
 		err := s.db.Pool.QueryRow(c.Request.Context(),
+			//orgscope:ignore proxy data-plane logout; session looked up by globally-unique session_token hash, pre-org-resolution
 			"SELECT id FROM proxy_sessions WHERE session_token=$1", hashToken(cookie)).Scan(&sessionID)
 		if err == nil {
 			s.db.Pool.Exec(c.Request.Context(),
+				//orgscope:ignore proxy data-plane logout; revoke by primary key resolved from the unique session_token above
 				"UPDATE proxy_sessions SET revoked=true WHERE id=$1", sessionID)
 			s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
 		}
@@ -1547,6 +1584,17 @@ func (s *Service) handleProxy(c *gin.Context) {
 // ---- Helper methods ----
 
 func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, error) {
+	// Scope to the request's org when present. The proxy data-plane and the
+	// continuous-verification background sweep call this with no org context;
+	// route id is a globally-unique primary key, so the by-id lookup is safe and
+	// the org filter is applied only for request-path (admin) callers.
+	orgFilter := ""
+	args := []interface{}{id}
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgFilter = " AND org_id=$2"
+		args = append(args, org.ID)
+	}
+
 	var r ProxyRoute
 	var desc, zitiServiceName, idpID, remoteHost, inlinePolicy, guacConnID *string
 	var remotePort *int
@@ -1562,7 +1610,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        created_at, updated_at
-		 FROM proxy_routes WHERE id=$1`, id).Scan(
+		 FROM proxy_routes WHERE id=$1`+orgFilter, args...).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
 		&r.RequireAuth, &allowedRoles, &allowedGroups, &policyIDs,
 		&r.IdleTimeout, &r.AbsoluteTimeout, &corsOrigins, &customHeaders,
@@ -1653,6 +1701,7 @@ func (s *Service) EnsureZitiServicesForRoutes(ctx context.Context, zm *ZitiManag
 	time.Sleep(15 * time.Second)
 
 	rows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore startup infra provisioning across all orgs; reconciles Ziti controller services for every ziti-enabled route on boot
 		`SELECT pr.id, pr.ziti_service_name, pr.to_url, COALESCE(pr.browzer_enabled, false)
 		 FROM proxy_routes pr
 		 WHERE pr.ziti_enabled = true
@@ -1762,6 +1811,7 @@ func (s *Service) EnsureBrowZerRouterService(ctx context.Context, zm *ZitiManage
 		// GetServiceByName iterates ListServices which can be unreliable; try DB fallback
 		var dbZitiID string
 		if dbErr := zm.GetDB().Pool.QueryRow(ctx,
+			//orgscope:ignore startup infra provisioning; the BrowZer router is an install-wide Ziti service identified by its globally-unique name
 			"SELECT ziti_id FROM ziti_services WHERE name=$1", BrowZerRouterServiceName).Scan(&dbZitiID); dbErr == nil {
 			serviceID = dbZitiID
 			s.logger.Info("Found router service ID from DB", zap.String("ziti_id", serviceID))
@@ -1881,17 +1931,23 @@ func (s *Service) handleQuickCreate(c *gin.Context) {
 	rolesJSON, _ := json.Marshal(req.AllowedRoles)
 	groupsJSON, _ := json.Marshal(req.AllowedGroups)
 
-	_, err := s.db.Pool.Exec(c.Request.Context(),
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(c.Request.Context(),
 		`INSERT INTO proxy_routes (id, name, from_url, to_url, require_auth, enabled, priority,
 		  route_type, allowed_roles, allowed_groups,
 		  idle_timeout, absolute_timeout, max_risk_score,
-		  allowed_countries, cors_allowed_origins, custom_headers, policy_ids, posture_check_ids)
+		  allowed_countries, cors_allowed_origins, custom_headers, policy_ids, posture_check_ids, org_id)
 		 VALUES ($1, $2, $3, $4, $5, true, 0,
 		         $6, $7, $8,
 		         900, 43200, 100,
-		         '[]', '[]', '{}', '[]', '[]')`,
+		         '[]', '[]', '{}', '[]', '[]', $9)`,
 		routeID, req.Name, fromURL, req.TargetURL, requireAuth,
-		req.RouteType, rolesJSON, groupsJSON)
+		req.RouteType, rolesJSON, groupsJSON, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
@@ -1973,6 +2029,7 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 
 	// Match from_url containing the host
 	err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore proxy data-plane route resolution; the reverse proxy matches an inbound request to its route by host before any user/org is resolved
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
 		        allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
 		        cors_allowed_origins, custom_headers, enabled, priority,
@@ -2079,10 +2136,18 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 
 	expiresAt := time.Now().Add(12 * time.Hour)
 
+	// Proxy data-plane login: the session belongs to the org of the route the user
+	// authenticated against. The org is taken from context when present, with a
+	// default-org fallback so the data-plane never fails to mint a session.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
+		orgID = org.ID
+	}
+
 	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO proxy_sessions (id, user_id, session_token, ip_address, user_agent, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, userID, tokenHash, c.ClientIP(), c.Request.UserAgent(), expiresAt)
+		`INSERT INTO proxy_sessions (id, user_id, session_token, ip_address, user_agent, expires_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, userID, tokenHash, c.ClientIP(), c.Request.UserAgent(), expiresAt, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -2189,6 +2254,7 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 
 func (s *Service) updateSessionActivity(ctx context.Context, session *ProxySession) {
 	s.db.Pool.Exec(ctx,
+		//orgscope:ignore proxy data-plane activity heartbeat; updates the active session by its primary key on every proxied request
 		"UPDATE proxy_sessions SET last_active_at=NOW() WHERE id=$1", session.ID)
 }
 

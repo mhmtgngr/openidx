@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ---- Ziti Status ----
@@ -38,12 +40,18 @@ func (s *Service) handleZitiStatus(c *gin.Context) {
 		status["controller_version"] = version
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Count local DB records
 	var serviceCount, identityCount int
-	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services").Scan(&serviceCount); err != nil {
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_services WHERE org_id = $1", org.ID).Scan(&serviceCount); err != nil {
 		s.logger.Warn("Failed to count ziti services", zap.Error(err))
 	}
-	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities").Scan(&identityCount); err != nil {
+	if err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT COUNT(*) FROM ziti_identities WHERE org_id = $1", org.ID).Scan(&identityCount); err != nil {
 		s.logger.Warn("Failed to count ziti identities", zap.Error(err))
 	}
 	status["services_count"] = serviceCount
@@ -55,6 +63,11 @@ func (s *Service) handleZitiStatus(c *gin.Context) {
 // ---- Ziti Services ----
 
 func (s *Service) handleListZitiServices(c *gin.Context) {
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	// List services with BrowZer route info via LEFT JOIN
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT zs.id, zs.ziti_id, zs.name, zs.description, zs.protocol, zs.host, zs.port,
@@ -63,10 +76,13 @@ func (s *Service) handleListZitiServices(c *gin.Context) {
 		        pr_vhost.from_url AS browzer_domain_url
 		 FROM ziti_services zs
 		 LEFT JOIN proxy_routes pr_path ON pr_path.ziti_service_name = zs.name
+		      AND pr_path.org_id = zs.org_id
 		      AND pr_path.browzer_enabled = true AND pr_path.name LIKE 'browzer-%' AND pr_path.name NOT LIKE 'browzer-vhost-%'
 		 LEFT JOIN proxy_routes pr_vhost ON pr_vhost.ziti_service_name = zs.name
+		      AND pr_vhost.org_id = zs.org_id
 		      AND pr_vhost.browzer_enabled = true AND pr_vhost.name LIKE 'browzer-vhost-%'
-		 ORDER BY zs.name`)
+		 WHERE zs.org_id = $1
+		 ORDER BY zs.name`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list ziti services"})
 		return
@@ -155,6 +171,12 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 		attrs = []string{req.Name}
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	zitiID, err := s.zitiManager.CreateService(c.Request.Context(), req.Name, attrs)
 	if err != nil {
 		s.logger.Error("Failed to create ziti service", zap.Error(err))
@@ -165,9 +187,9 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 	// Persist to DB
 	var id string
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO ziti_services (ziti_id, name, description, protocol, host, port)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		zitiID, req.Name, req.Description, req.Protocol, req.Host, req.Port).Scan(&id)
+		`INSERT INTO ziti_services (ziti_id, name, description, protocol, host, port, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		zitiID, req.Name, req.Description, req.Protocol, req.Host, req.Port, org.ID).Scan(&id)
 	if err != nil {
 		s.logger.Error("Failed to persist ziti service to DB", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "service created in Ziti but failed to persist locally"})
@@ -190,10 +212,16 @@ func (s *Service) handleDeleteZitiService(c *gin.Context) {
 
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Get ziti_id from DB
 	var zitiID string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT ziti_id FROM ziti_services WHERE id=$1", id).Scan(&zitiID)
+		"SELECT ziti_id FROM ziti_services WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ziti service not found"})
 		return
@@ -208,14 +236,14 @@ func (s *Service) handleDeleteZitiService(c *gin.Context) {
 	// Clean up any BrowZer proxy_routes linked to this service
 	var serviceName string
 	if err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT name FROM ziti_services WHERE id = $1`, id,
+		`SELECT name FROM ziti_services WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&serviceName); err == nil && serviceName != "" {
 		s.db.Pool.Exec(c.Request.Context(),
-			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
+			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
 	}
 
 	// Delete from DB
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_services WHERE id=$1", id)
+	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_services WHERE id=$1 AND org_id=$2", id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "ziti service deleted"})
 }
@@ -223,9 +251,14 @@ func (s *Service) handleDeleteZitiService(c *gin.Context) {
 // ---- Ziti Identities ----
 
 func (s *Service) handleListZitiIdentities(c *gin.Context) {
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, ziti_id, name, identity_type, user_id, enrolled, attributes, created_at, updated_at
-		 FROM ziti_identities ORDER BY name`)
+		 FROM ziti_identities WHERE org_id = $1 ORDER BY name`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list ziti identities"})
 		return
@@ -283,6 +316,12 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 		req.IdentityType = "Device"
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	zitiID, enrollmentJWT, err := s.zitiManager.CreateIdentity(c.Request.Context(), req.Name, req.IdentityType, req.Attributes)
 	if err != nil {
 		s.logger.Error("Failed to create ziti identity", zap.Error(err))
@@ -295,9 +334,9 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 	// Persist to DB
 	var id string
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrollment_jwt, attributes)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		zitiID, req.Name, req.IdentityType, req.UserID, enrollmentJWT, attrsJSON).Scan(&id)
+		`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrollment_jwt, attributes, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		zitiID, req.Name, req.IdentityType, req.UserID, enrollmentJWT, attrsJSON, org.ID).Scan(&id)
 	if err != nil {
 		s.logger.Error("Failed to persist ziti identity to DB", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "identity created in Ziti but failed to persist locally"})
@@ -321,9 +360,15 @@ func (s *Service) handleDeleteZitiIdentity(c *gin.Context) {
 
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var zitiID string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT ziti_id FROM ziti_identities WHERE id=$1", id).Scan(&zitiID)
+		"SELECT ziti_id FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
 		return
@@ -333,7 +378,7 @@ func (s *Service) handleDeleteZitiIdentity(c *gin.Context) {
 		s.logger.Error("Failed to delete ziti identity from controller", zap.Error(err))
 	}
 
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_identities WHERE id=$1", id)
+	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "ziti identity deleted"})
 }
@@ -341,10 +386,16 @@ func (s *Service) handleDeleteZitiIdentity(c *gin.Context) {
 func (s *Service) handleGetEnrollmentJWT(c *gin.Context) {
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var enrollmentJWT *string
 	var zitiID string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT ziti_id, enrollment_jwt FROM ziti_identities WHERE id=$1", id).Scan(&zitiID, &enrollmentJWT)
+		"SELECT ziti_id, enrollment_jwt FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID, &enrollmentJWT)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
 		return
@@ -364,7 +415,7 @@ func (s *Service) handleGetEnrollmentJWT(c *gin.Context) {
 		if err == nil && jwt != "" {
 			// Update DB
 			s.db.Pool.Exec(c.Request.Context(),
-				"UPDATE ziti_identities SET enrollment_jwt=$1 WHERE id=$2", jwt, id)
+				"UPDATE ziti_identities SET enrollment_jwt=$1 WHERE id=$2 AND org_id=$3", jwt, id, org.ID)
 			c.JSON(http.StatusOK, gin.H{
 				"enrollment_jwt": jwt,
 				"ziti_id":        zitiID,

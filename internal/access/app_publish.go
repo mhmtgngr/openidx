@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ---- Data structures ----
@@ -409,9 +411,15 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Load app
 	var appName, targetURL string
-	err := s.db.Pool.QueryRow(ctx, `SELECT name, target_url FROM published_apps WHERE id=$1`, appID).Scan(&appName, &targetURL)
+	err = s.db.Pool.QueryRow(ctx, `SELECT name, target_url FROM published_apps WHERE id=$1`, appID).Scan(&appName, &targetURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return
@@ -466,14 +474,14 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 				require_auth, allowed_roles, enabled, priority, route_type,
 				inline_policy, require_device_trust, max_risk_score,
 				allowed_groups, policy_ids, cors_allowed_origins, custom_headers,
-				posture_check_ids, allowed_countries, idle_timeout, absolute_timeout)
+				posture_check_ids, allowed_countries, idle_timeout, absolute_timeout, org_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, true, 0, 'http',
 				$8, $9, 100,
-				'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200)`,
+				'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200, $10)`,
 			routeID, routeName,
 			fmt.Sprintf("Auto-published from %s app discovery", appName),
 			fromURL, toURL, dp.RequireAuth, rolesJSON,
-			dp.SuggestedPolicy, dp.RequireDeviceTrust)
+			dp.SuggestedPolicy, dp.RequireDeviceTrust, org.ID)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", dp.Path, err.Error()))
 			result.TotalFailed++
@@ -1021,8 +1029,14 @@ func (s *Service) handleGetAppZitiServices(c *gin.Context) {
 	appID := c.Param("appId")
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var appName string
-	err := s.db.Pool.QueryRow(ctx, `SELECT name FROM published_apps WHERE id=$1`, appID).Scan(&appName)
+	err = s.db.Pool.QueryRow(ctx, `SELECT name FROM published_apps WHERE id=$1`, appID).Scan(&appName)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return
@@ -1032,10 +1046,10 @@ func (s *Service) handleGetAppZitiServices(c *gin.Context) {
 		SELECT DISTINCT zs.id, zs.ziti_id, zs.name, COALESCE(zs.description,''), zs.protocol,
 		       zs.host, zs.port, zs.enabled, dp.path, COALESCE(dp.classification,''), pr.name as route_name
 		FROM discovered_paths dp
-		JOIN proxy_routes pr ON pr.id = dp.route_id
-		JOIN ziti_services zs ON zs.name = pr.ziti_service_name
-		WHERE dp.app_id = $1 AND dp.published = true AND pr.ziti_service_name IS NOT NULL
-		ORDER BY zs.name`, appID)
+		JOIN proxy_routes pr ON pr.id = dp.route_id AND pr.org_id = dp.org_id
+		JOIN ziti_services zs ON zs.name = pr.ziti_service_name AND zs.org_id = pr.org_id
+		WHERE dp.app_id = $1 AND dp.published = true AND pr.ziti_service_name IS NOT NULL AND dp.org_id = $2
+		ORDER BY zs.name`, appID, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

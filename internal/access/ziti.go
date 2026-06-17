@@ -28,6 +28,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ZitiManager handles OpenZiti SDK integration and management API communication
@@ -268,6 +269,7 @@ func (zm *ZitiManager) HostAllServices(ctx context.Context) {
 	}
 
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore startup Ziti service hosting across all orgs; keyed by globally-unique ziti service name
 		`SELECT ziti_service_name, to_url FROM proxy_routes
 		 WHERE ziti_enabled = true AND ziti_service_name IS NOT NULL AND ziti_service_name != ''`)
 	if err != nil {
@@ -314,6 +316,7 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		err := zm.db.Pool.QueryRow(ctx,
+			//orgscope:ignore data-plane Ziti edge connection identity enrichment; keyed by globally-unique ziti identity name (= user id)
 			`SELECT COALESCE(u.email,''), COALESCE(u.first_name||' '||u.last_name,''), COALESCE(string_agg(r.name,','),'')
 			 FROM users u
 			 LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -1184,6 +1187,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 
 	// 2. Persist to ziti_services table
 	_, err = zm.db.Pool.Exec(ctx,
+		//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; keyed by globally-unique ziti service name
 		`INSERT INTO ziti_services (ziti_id, name, host, port, route_id) VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (name) DO UPDATE SET ziti_id=$1, host=$3, port=$4, route_id=$5, updated_at=NOW()`,
 		zitiServiceID, serviceName, host, port, routeID)
@@ -1202,6 +1206,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 		zm.logger.Warn("Failed to create Bind policy", zap.Error(err))
 	} else {
 		zm.db.Pool.Exec(ctx,
+			//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; system policy keyed by globally-unique ziti policy id
 			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
 			 VALUES ($1, $2, $3, $4, $5, true) ON CONFLICT (ziti_id) DO NOTHING`,
 			bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
@@ -1218,6 +1223,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 		zm.logger.Warn("Failed to create Dial policy", zap.Error(err))
 	} else {
 		zm.db.Pool.Exec(ctx,
+			//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; system policy keyed by globally-unique ziti policy id
 			`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
 			 VALUES ($1, $2, $3, $4, $5, true) ON CONFLICT (ziti_id) DO NOTHING`,
 			dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
@@ -1251,6 +1257,7 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 
 	// 7. Update the proxy route
 	_, err = zm.db.Pool.Exec(ctx,
+		//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; route keyed by id, ziti service by globally-unique name
 		"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2",
 		serviceName, routeID)
 	if err != nil {
@@ -1275,6 +1282,7 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 	// Find service for this route
 	var zitiServiceID, serviceName string
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; service keyed by globally-unique ziti service name / route id
 		"SELECT ziti_id, name FROM ziti_services WHERE route_id=$1", routeID).Scan(&zitiServiceID, &serviceName)
 	if err != nil {
 		zm.logger.Debug("No ziti service found for route", zap.String("route_id", routeID))
@@ -1283,6 +1291,7 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 		zm.StopHostingService(serviceName)
 		// Delete service policies first
 		rows, _ := zm.db.Pool.Query(ctx,
+			//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; policies keyed by globally-unique ziti service name
 			"SELECT ziti_id FROM ziti_service_policies WHERE name LIKE $1",
 			fmt.Sprintf("%%-%s", serviceName))
 		if rows != nil {
@@ -1293,16 +1302,21 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 			}
 			rows.Close()
 		}
-		zm.db.Pool.Exec(ctx, "DELETE FROM ziti_service_policies WHERE name LIKE $1",
+		zm.db.Pool.Exec(ctx,
+			//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; policies keyed by globally-unique ziti service name
+			"DELETE FROM ziti_service_policies WHERE name LIKE $1",
 			fmt.Sprintf("%%-%s", serviceName))
 
 		// Delete the service
 		zm.DeleteService(ctx, zitiServiceID)
-		zm.db.Pool.Exec(ctx, "DELETE FROM ziti_services WHERE route_id=$1", routeID)
+		zm.db.Pool.Exec(ctx,
+			//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; service keyed by globally-unique ziti service name / route id
+			"DELETE FROM ziti_services WHERE route_id=$1", routeID)
 	}
 
 	// Update the route
 	_, err = zm.db.Pool.Exec(ctx,
+		//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; route keyed by id
 		"UPDATE proxy_routes SET ziti_enabled=false, ziti_service_name=NULL, updated_at=NOW() WHERE id=$1",
 		routeID)
 	if err != nil {
@@ -1510,6 +1524,11 @@ func (zm *ZitiManager) GetAuditEvents(ctx context.Context, since *time.Time) ([]
 
 // CreateService (overloaded) creates a Ziti service with host/port config
 func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host string, port int) (*ZitiServiceInfo, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	attrs := []string{name, "openidx-managed"}
 
 	zitiID, err := zm.CreateService(ctx, name, attrs)
@@ -1521,9 +1540,9 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 	if zm.db != nil && zm.db.Pool != nil {
 		id := uuid.New().String()
 		_, err = zm.db.Pool.Exec(ctx, `
-			INSERT INTO ziti_services (id, ziti_id, name, protocol, host, port, enabled)
-			VALUES ($1, $2, $3, 'tcp', $4, $5, true)
-		`, id, zitiID, name, host, port)
+			INSERT INTO ziti_services (id, ziti_id, name, protocol, host, port, enabled, org_id)
+			VALUES ($1, $2, $3, 'tcp', $4, $5, true, $6)
+		`, id, zitiID, name, host, port, org.ID)
 		if err != nil {
 			zm.logger.Warn("Failed to save service to DB", zap.Error(err))
 		}

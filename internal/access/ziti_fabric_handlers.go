@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 func (s *Service) zitiUnavailable(c *gin.Context) bool {
@@ -151,11 +153,17 @@ func (s *Service) handleTestZitiService(c *gin.Context) {
 	}
 	serviceID := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Look up the service to get the Ziti service name
 	var zitiID, name, host string
 	var port int
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT ziti_id, name, host, port FROM ziti_services WHERE id = $1`, serviceID).
+		`SELECT ziti_id, name, host, port FROM ziti_services WHERE id = $1 AND org_id = $2`, serviceID, org.ID).
 		Scan(&zitiID, &name, &host, &port)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
@@ -567,6 +575,12 @@ func (s *Service) handleCreateServicePolicy(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	zitiID, err := s.zitiManager.CreateServicePolicy(c.Request.Context(), req.Name, req.Type, req.ServiceRoles, req.IdentityRoles)
 	if err != nil {
 		s.logger.Error("failed to create service policy", zap.String("name", req.Name), zap.Error(err))
@@ -580,9 +594,9 @@ func (s *Service) handleCreateServicePolicy(c *gin.Context) {
 
 	var id string
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system)
-		 VALUES ($1, $2, $3, $4, $5, false) RETURNING id`,
-		zitiID, req.Name, req.Type, serviceRolesJSON, identityRolesJSON).Scan(&id)
+		`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, is_system, org_id)
+		 VALUES ($1, $2, $3, $4, $5, false, $6) RETURNING id`,
+		zitiID, req.Name, req.Type, serviceRolesJSON, identityRolesJSON, org.ID).Scan(&id)
 	if err != nil {
 		s.logger.Error("Failed to persist service policy to DB", zap.Error(err))
 	}
@@ -619,11 +633,17 @@ func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Look up ziti_id and check if system policy
 	var zitiID string
 	var isSystem bool
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT ziti_id, COALESCE(is_system, false) FROM ziti_service_policies WHERE id=$1", id).Scan(&zitiID, &isSystem)
+		"SELECT ziti_id, COALESCE(is_system, false) FROM ziti_service_policies WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID, &isSystem)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service policy not found"})
 		return
@@ -643,8 +663,8 @@ func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
 	serviceRolesJSON, _ := json.Marshal(req.ServiceRoles)
 	identityRolesJSON, _ := json.Marshal(req.IdentityRoles)
 	s.db.Pool.Exec(c.Request.Context(),
-		`UPDATE ziti_service_policies SET name=$1, policy_type=$2, service_roles=$3, identity_roles=$4 WHERE id=$5`,
-		req.Name, req.Type, serviceRolesJSON, identityRolesJSON, id)
+		`UPDATE ziti_service_policies SET name=$1, policy_type=$2, service_roles=$3, identity_roles=$4 WHERE id=$5 AND org_id=$6`,
+		req.Name, req.Type, serviceRolesJSON, identityRolesJSON, id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":             id,
@@ -663,10 +683,16 @@ func (s *Service) handleDeleteServicePolicy(c *gin.Context) {
 
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var zitiID string
 	var isSystem bool
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT ziti_id, COALESCE(is_system, false) FROM ziti_service_policies WHERE id=$1", id).Scan(&zitiID, &isSystem)
+		"SELECT ziti_id, COALESCE(is_system, false) FROM ziti_service_policies WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID, &isSystem)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service policy not found"})
 		return
@@ -680,7 +706,7 @@ func (s *Service) handleDeleteServicePolicy(c *gin.Context) {
 		s.logger.Error("failed to delete service policy from controller", zap.String("id", id), zap.Error(err))
 	}
 
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_service_policies WHERE id=$1", id)
+	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM ziti_service_policies WHERE id=$1 AND org_id=$2", id, org.ID)
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -704,10 +730,16 @@ func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Look up ziti_id from DB
 	var zitiID string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT ziti_id FROM ziti_identities WHERE id=$1", id).Scan(&zitiID)
+		"SELECT ziti_id FROM ziti_identities WHERE id=$1 AND org_id=$2", id, org.ID).Scan(&zitiID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ziti identity not found"})
 		return
@@ -722,7 +754,7 @@ func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
 	// Update DB
 	attrsJSON, _ := json.Marshal(req.Attributes)
 	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE ziti_identities SET attributes=$1, updated_at=NOW() WHERE id=$2", attrsJSON, id)
+		"UPDATE ziti_identities SET attributes=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3", attrsJSON, id, org.ID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":         id,

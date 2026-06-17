@@ -277,6 +277,7 @@ func (zm *ZitiManager) GetServiceRoleAttributes(ctx context.Context, zitiService
 func (zm *ZitiManager) getAdminUserID(ctx context.Context) string {
 	var userID string
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore startup BrowZer bootstrap; resolves the install-wide default admin by well-known username/email before any tenant context exists
 		"SELECT id FROM users WHERE username = 'admin' OR email = 'admin@openidx.local' LIMIT 1").Scan(&userID)
 	if err != nil {
 		zm.logger.Debug("Could not find admin user for BrowZer identity", zap.Error(err))
