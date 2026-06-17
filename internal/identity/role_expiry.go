@@ -27,10 +27,10 @@ func (s *Service) StartRoleExpirationChecker(ctx context.Context) {
 }
 
 func (s *Service) cleanupExpiredRoles(ctx context.Context) {
-	result, err := s.db.Pool.Exec(ctx, `
-		DELETE FROM user_roles
-		WHERE expires_at IS NOT NULL AND expires_at < NOW()
-	`)
+	result, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore background ticker sweep of expired role assignments across all orgs; no request/tenant context
+		`DELETE FROM user_roles
+		WHERE expires_at IS NOT NULL AND expires_at < NOW()`)
 	if err != nil {
 		s.logger.Error("Failed to cleanup expired roles", zap.Error(err))
 		return
