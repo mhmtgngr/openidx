@@ -34,6 +34,26 @@ type OrgLookup interface {
 // error; not-found is a 400 client error).
 var ErrOrgNotFound = errors.New("organization not found")
 
+// DefaultOrgID is the canonical UUID of the install's default
+// organization. Migration v25 creates the row with this exact UUID
+// (slug "default") and v35 backfills it into every pre-multitenancy
+// row, so the Auth middleware, the tenant resolver's fallback, and
+// the service mains all reference the same value.
+const DefaultOrgID = "00000000-0000-0000-0000-000000000010"
+
+// tenantSkipPaths are infrastructure endpoints the resolver passes
+// through without resolving an org. Probes and scrapers are not
+// org-scoped, and — more importantly — Kubernetes liveness probes
+// must keep answering while the database (and therefore the org
+// lookup) is down. Matches whole path segments: "/health" and
+// "/health/ready" skip, "/healthcheck-export" does not.
+var tenantSkipPaths = []string{
+	"/health",
+	"/metrics",
+	"/ready",
+	"/live",
+}
+
 // TenantResolverConfig governs how the middleware resolves the org.
 //
 // The defaults are tuned for the v1.6.0 ship gate: existing single
@@ -86,6 +106,11 @@ type TenantResolverConfig struct {
 // That is the v1.7.0 surface; v1.6.0 only plumbs the context.
 func TenantResolver(lookup OrgLookup, cfg TenantResolverConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if isTenantSkipPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+
 		org, err := resolveOrgFromRequest(c, lookup, cfg)
 		if err != nil {
 			if errors.Is(err, ErrOrgNotFound) {
@@ -107,6 +132,18 @@ func TenantResolver(lookup OrgLookup, cfg TenantResolverConfig) gin.HandlerFunc 
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
+}
+
+// isTenantSkipPath reports whether path is an infrastructure endpoint
+// exempt from tenant resolution. Whole-segment matching: the skip
+// entry must equal the path or be followed by "/".
+func isTenantSkipPath(path string) bool {
+	for _, sp := range tenantSkipPaths {
+		if path == sp || strings.HasPrefix(path, sp+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverConfig) (orgctx.Org, error) {

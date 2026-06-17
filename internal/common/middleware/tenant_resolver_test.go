@@ -412,3 +412,64 @@ func TestErrOrgNotFound_isSentinel(t *testing.T) {
 		t.Fatal("ErrOrgNotFound does not behave as a sentinel under errors.Is")
 	}
 }
+
+func TestDefaultOrgID_matchesMigrationUUID(t *testing.T) {
+	// v25 creates the default org row with this exact UUID; the v35
+	// backfill and the Auth middleware both depend on it. If this
+	// constant drifts from the migrations, single-tenant installs
+	// break, so pin it.
+	if DefaultOrgID != "00000000-0000-0000-0000-000000000010" {
+		t.Fatalf("DefaultOrgID = %q, want the canonical v25 UUID", DefaultOrgID)
+	}
+}
+
+func TestTenantResolver_infraPaths_skipResolution(t *testing.T) {
+	// Health, readiness, and metrics endpoints must keep working when
+	// the org lookup (i.e. the database) is down — Kubernetes probes
+	// hit them to decide whether to restart the pod. The resolver
+	// must pass these through without resolving an org.
+	lookup := newFakeLookup()
+	lookup.fail = errors.New("database is down")
+	cfg := TenantResolverConfig{DefaultOrgFallback: true, DefaultOrgID: defaultOrgID}
+
+	for _, path := range []string{
+		"/health",
+		"/health/ready",
+		"/health/live",
+		"/metrics",
+		"/ready",
+		"/live",
+	} {
+		got := &capturedRequest{}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+
+		rec := runResolver(t, lookup, cfg, got, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200 (infra path must bypass resolver); body=%s",
+				path, rec.Code, rec.Body.String())
+		}
+		if !errors.Is(got.orgErr, orgctx.ErrNoOrgContext) {
+			t.Errorf("%s: orgctx err = %v, want ErrNoOrgContext (no org should be attached)",
+				path, got.orgErr)
+		}
+	}
+}
+
+func TestTenantResolver_nonInfraPath_withInfraPrefixInName_isResolved(t *testing.T) {
+	// "/healthcheck-export" is NOT an infra path: the skip must match
+	// whole path segments, not raw string prefixes.
+	lookup := newFakeLookup()
+	cfg := TenantResolverConfig{DefaultOrgFallback: true, DefaultOrgID: defaultOrgID}
+	got := &capturedRequest{}
+	req := httptest.NewRequest(http.MethodGet, "/healthcheck-export", nil)
+
+	rec := runResolver(t, lookup, cfg, got, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got.org.ID != defaultOrgID {
+		t.Fatalf("got org = %+v, want default org resolved (path is not an infra path)", got.org)
+	}
+}
