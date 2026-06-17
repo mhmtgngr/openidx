@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // UserApplication represents an application assigned to a user
@@ -69,15 +70,20 @@ func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
 // GetMyApplications returns the applications assigned to a user.
 // If no assignments exist, it falls back to returning all enabled applications.
 func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserApplication, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT a.id, a.name, COALESCE(a.description, '') AS description,
 		       COALESCE(a.base_url, '') AS base_url, COALESCE(a.protocol, '') AS protocol
 		FROM user_application_assignments uaa
 		JOIN applications a ON a.id = uaa.application_id
-		WHERE uaa.user_id = $1 AND a.enabled = true
+		WHERE uaa.user_id = $1 AND uaa.org_id = $2 AND a.enabled = true
 		ORDER BY a.name`
 
-	rows, err := s.db.Pool.Query(ctx, query, userID)
+	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query user applications: %w", err)
 	}
@@ -101,10 +107,10 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 			SELECT id, name, COALESCE(description, '') AS description,
 			       COALESCE(base_url, '') AS base_url, COALESCE(protocol, '') AS protocol
 			FROM applications
-			WHERE enabled = true
+			WHERE enabled = true AND org_id = $1
 			ORDER BY name`
 
-		fallbackRows, err := s.db.Pool.Query(ctx, fallbackQuery)
+		fallbackRows, err := s.db.Pool.Query(ctx, fallbackQuery, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query all applications: %w", err)
 		}
@@ -127,15 +133,20 @@ func (s *Service) GetMyApplications(ctx context.Context, userID string) ([]UserA
 
 // GetAvailableGroups returns groups that allow self-join, along with membership and pending request status for the user.
 func (s *Service) GetAvailableGroups(ctx context.Context, userID string) ([]map[string]interface{}, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT g.id, g.name, COALESCE(g.description, '') AS description,
-		       EXISTS(SELECT 1 FROM group_memberships gm WHERE gm.group_id = g.id AND gm.user_id = $1) AS is_member,
-		       EXISTS(SELECT 1 FROM group_join_requests gjr WHERE gjr.group_id = g.id AND gjr.user_id = $1 AND gjr.status = 'pending') AS has_pending_request
+		       EXISTS(SELECT 1 FROM group_memberships gm WHERE gm.group_id = g.id AND gm.user_id = $1 AND gm.org_id = $2) AS is_member,
+		       EXISTS(SELECT 1 FROM group_join_requests gjr WHERE gjr.group_id = g.id AND gjr.user_id = $1 AND gjr.org_id = $2 AND gjr.status = 'pending') AS has_pending_request
 		FROM groups g
-		WHERE g.allow_self_join = true
+		WHERE g.allow_self_join = true AND g.org_id = $2
 		ORDER BY g.name`
 
-	rows, err := s.db.Pool.Query(ctx, query, userID)
+	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query available groups: %w", err)
 	}
@@ -166,11 +177,16 @@ func (s *Service) GetAvailableGroups(ctx context.Context, userID string) ([]map[
 // RequestGroupJoin handles a user's request to join a group.
 // If the group does not require approval, the user is added directly.
 func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justification string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Check that the group allows self-join and whether approval is required
 	var allowSelfJoin, requireApproval bool
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT allow_self_join, COALESCE(require_approval, true) FROM groups WHERE id = $1`,
-		groupID,
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT allow_self_join, COALESCE(require_approval, true) FROM groups WHERE id = $1 AND org_id = $2`,
+		groupID, org.ID,
 	).Scan(&allowSelfJoin, &requireApproval)
 	if err != nil {
 		return fmt.Errorf("failed to query group: %w", err)
@@ -182,9 +198,9 @@ func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justifi
 	if !requireApproval {
 		// Add the user directly to the group
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO group_memberships (id, group_id, user_id, created_at) VALUES ($1, $2, $3, $4)
+			`INSERT INTO group_memberships (id, group_id, user_id, created_at, org_id) VALUES ($1, $2, $3, $4, $5)
 			 ON CONFLICT DO NOTHING`,
-			uuid.New().String(), groupID, userID, time.Now().UTC(),
+			uuid.New().String(), groupID, userID, time.Now().UTC(), org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)
@@ -194,9 +210,9 @@ func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justifi
 
 	// Insert a join request for approval
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO group_join_requests (id, user_id, group_id, justification, status, created_at)
-		 VALUES ($1, $2, $3, $4, 'pending', $5)`,
-		uuid.New().String(), userID, groupID, justification, time.Now().UTC(),
+		`INSERT INTO group_join_requests (id, user_id, group_id, justification, status, created_at, org_id)
+		 VALUES ($1, $2, $3, $4, 'pending', $5, $6)`,
+		uuid.New().String(), userID, groupID, justification, time.Now().UTC(), org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create group join request: %w", err)
@@ -207,16 +223,21 @@ func (s *Service) RequestGroupJoin(ctx context.Context, userID, groupID, justifi
 
 // GetMyGroupRequests returns the current user's group join requests.
 func (s *Service) GetMyGroupRequests(ctx context.Context, userID string) ([]GroupJoinRequest, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT gjr.id, gjr.user_id, gjr.group_id, g.name AS group_name,
 		       COALESCE(gjr.justification, '') AS justification, gjr.status,
 		       gjr.reviewed_by, gjr.reviewed_at, gjr.review_comments, gjr.created_at
 		FROM group_join_requests gjr
 		JOIN groups g ON g.id = gjr.group_id
-		WHERE gjr.user_id = $1
+		WHERE gjr.user_id = $1 AND gjr.org_id = $2
 		ORDER BY gjr.created_at DESC`
 
-	rows, err := s.db.Pool.Query(ctx, query, userID)
+	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query group requests: %w", err)
 	}
@@ -243,9 +264,14 @@ func (s *Service) GetMyGroupRequests(ctx context.Context, userID string) ([]Grou
 func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*AccessOverview, error) {
 	overview := &AccessOverview{}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Count roles
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM user_roles WHERE user_id = $1`, userID,
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND org_id = $2`, userID, org.ID,
 	).Scan(&overview.RolesCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count roles: %w", err)
@@ -253,7 +279,7 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Count groups
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_memberships WHERE user_id = $1`, userID,
+		`SELECT COUNT(*) FROM group_memberships WHERE user_id = $1 AND org_id = $2`, userID, org.ID,
 	).Scan(&overview.GroupsCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count groups: %w", err)
@@ -261,7 +287,7 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Count apps
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1`, userID,
+		`SELECT COUNT(*) FROM user_application_assignments WHERE user_id = $1 AND org_id = $2`, userID, org.ID,
 	).Scan(&overview.AppsCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count apps: %w", err)
@@ -269,7 +295,7 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Count pending requests
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_join_requests WHERE user_id = $1 AND status = 'pending'`, userID,
+		`SELECT COUNT(*) FROM group_join_requests WHERE user_id = $1 AND status = 'pending' AND org_id = $2`, userID, org.ID,
 	).Scan(&overview.PendingRequests)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count pending requests: %w", err)
@@ -277,7 +303,7 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Get role names
 	roleRows, err := s.db.Pool.Query(ctx,
-		`SELECT r.id, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 ORDER BY r.name`, userID,
+		`SELECT r.id, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND ur.org_id = $2 ORDER BY r.name`, userID, org.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query roles: %w", err)
@@ -301,7 +327,7 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 
 	// Get group names
 	groupRows, err := s.db.Pool.Query(ctx,
-		`SELECT g.id, g.name FROM group_memberships gm JOIN groups g ON g.id = gm.group_id WHERE gm.user_id = $1 ORDER BY g.name`, userID,
+		`SELECT g.id, g.name FROM group_memberships gm JOIN groups g ON g.id = gm.group_id WHERE gm.user_id = $1 AND gm.org_id = $2 ORDER BY g.name`, userID, org.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query groups: %w", err)
@@ -334,12 +360,17 @@ func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID,
 
 	now := time.Now().UTC()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Update the request status
 	tag, err := s.db.Pool.Exec(ctx,
 		`UPDATE group_join_requests
 		 SET status = $1, reviewed_by = $2, reviewed_at = $3, review_comments = $4
-		 WHERE id = $5 AND status = 'pending'`,
-		decision, reviewerID, now, comments, requestID,
+		 WHERE id = $5 AND org_id = $6 AND status = 'pending'`,
+		decision, reviewerID, now, comments, requestID, org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update group join request: %w", err)
@@ -352,16 +383,16 @@ func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID,
 	if decision == "approved" {
 		var userID, groupID string
 		err := s.db.Pool.QueryRow(ctx,
-			`SELECT user_id, group_id FROM group_join_requests WHERE id = $1`, requestID,
+			`SELECT user_id, group_id FROM group_join_requests WHERE id = $1 AND org_id = $2`, requestID, org.ID,
 		).Scan(&userID, &groupID)
 		if err != nil {
 			return fmt.Errorf("failed to fetch request details: %w", err)
 		}
 
 		_, err = s.db.Pool.Exec(ctx,
-			`INSERT INTO group_memberships (id, group_id, user_id, created_at) VALUES ($1, $2, $3, $4)
+			`INSERT INTO group_memberships (id, group_id, user_id, created_at, org_id) VALUES ($1, $2, $3, $4, $5)
 			 ON CONFLICT DO NOTHING`,
-			uuid.New().String(), groupID, userID, now,
+			uuid.New().String(), groupID, userID, now, org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add user to group: %w", err)

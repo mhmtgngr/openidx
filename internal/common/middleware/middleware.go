@@ -19,6 +19,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // JWKSKey represents a single key from the JWKS endpoint
@@ -549,10 +551,20 @@ func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.Handler
 			return
 		}
 
+		// Resolve permissions within the caller's org: role names are
+		// per-tenant (the same "admin" role exists in many orgs), so the
+		// cache key MUST include the org or one tenant's perms would leak
+		// to another. Falls back to the default org when unresolved,
+		// matching the milestone's DefaultOrgFallback semantics.
+		orgID := "00000000-0000-0000-0000-000000000010"
+		if org, err := orgctx.From(c.Request.Context()); err == nil && org.ID != "" {
+			orgID = org.ID
+		}
+
 		sortedRoles := make([]string, len(roleNames))
 		copy(sortedRoles, roleNames)
 		sort.Strings(sortedRoles)
-		cacheKey := "perms:" + strings.Join(sortedRoles, ",")
+		cacheKey := "perms:" + orgID + ":" + strings.Join(sortedRoles, ",")
 
 		// Try Redis cache
 		if redisClient != nil {
@@ -573,8 +585,8 @@ func PermissionResolver(db *pgxpool.Pool, redisClient *redis.Client) gin.Handler
 			FROM permissions p
 			JOIN role_permissions rp ON p.id = rp.permission_id
 			JOIN roles r ON r.id = rp.role_id
-			WHERE r.name = ANY($1)
-		`, roleNames)
+			WHERE r.name = ANY($1) AND r.org_id = $2
+		`, roleNames, orgID)
 		if err != nil {
 			c.Next()
 			return
