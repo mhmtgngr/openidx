@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // DetailedComplianceReport provides an in-depth compliance assessment with
@@ -111,16 +113,18 @@ func (s *Service) evaluateCC1ControlEnvironment(ctx context.Context, startDate, 
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check total users and admin ratio
 	var totalUsers, adminUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true`).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT ur.user_id)
 		FROM user_roles ur
-		JOIN roles r ON ur.role_id = r.id
+		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
 		WHERE r.name IN ('admin', 'super_admin')
-	`).Scan(&adminUsers)
+		AND ur.org_id = $1
+	`, org.ID).Scan(&adminUsers)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Total active users: %d", totalUsers))
@@ -179,13 +183,15 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check audit log configuration
 	var auditCount int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&auditCount)
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&auditCount)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Audit events recorded in period: %d", auditCount))
@@ -203,7 +209,8 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT event_type) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&eventTypeCount)
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&eventTypeCount)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Distinct event types captured: %d", eventTypeCount))
@@ -219,8 +226,8 @@ func (s *Service) evaluateCC2Communication(ctx context.Context, startDate, endDa
 	// Check notification / webhook configuration
 	var webhookCount int
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM webhook_subscriptions WHERE enabled = true
-	`).Scan(&webhookCount)
+		SELECT COUNT(*) FROM webhook_subscriptions WHERE enabled = true AND org_id = $1
+	`, org.ID).Scan(&webhookCount)
 
 	if webhookCount > 0 {
 		assessment.Evidence = append(assessment.Evidence,
@@ -247,6 +254,7 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check risk scoring activity
 	var riskAssessments int
@@ -254,7 +262,8 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 		SELECT COUNT(*) FROM login_history
 		WHERE risk_score > 0
 		  AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&riskAssessments)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&riskAssessments)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Login risk assessments performed: %d", riskAssessments))
@@ -273,7 +282,8 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 		SELECT COUNT(*) FROM login_history
 		WHERE risk_score >= 50
 		  AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&highRiskLogins)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&highRiskLogins)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("High-risk logins (score >= 50): %d", highRiskLogins))
@@ -283,7 +293,8 @@ func (s *Service) evaluateCC3RiskAssessment(ctx context.Context, startDate, endD
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&alertCount)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&alertCount)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Security alerts generated: %d", alertCount))
@@ -310,11 +321,12 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// MFA adoption
 	var totalEnabledUsers, mfaTotpUsers, webauthnUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true`).Scan(&totalEnabledUsers)
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true`).Scan(&mfaTotpUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalEnabledUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1`, org.ID).Scan(&mfaTotpUsers)
 	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM webauthn_credentials`).Scan(&webauthnUsers)
 
 	mfaUsers := mfaTotpUsers + webauthnUsers
@@ -342,8 +354,8 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 	// Session policy check
 	var activeSessions int
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM sessions WHERE expires_at > NOW()
-	`).Scan(&activeSessions)
+		SELECT COUNT(*) FROM sessions WHERE expires_at > NOW() AND org_id = $1
+	`, org.ID).Scan(&activeSessions)
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Active sessions: %d", activeSessions))
 
@@ -368,11 +380,11 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 	// API key management
 	var activeAPIKeys, expiredAPIKeys int
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
-	`).Scan(&activeAPIKeys)
+		SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) AND org_id = $1
+	`, org.ID).Scan(&activeAPIKeys)
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM api_keys WHERE expires_at IS NOT NULL AND expires_at <= NOW() AND revoked_at IS NULL
-	`).Scan(&expiredAPIKeys)
+		SELECT COUNT(*) FROM api_keys WHERE expires_at IS NOT NULL AND expires_at <= NOW() AND revoked_at IS NULL AND org_id = $1
+	`, org.ID).Scan(&expiredAPIKeys)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Active API keys: %d, Expired but not revoked: %d", activeAPIKeys, expiredAPIKeys))
@@ -399,13 +411,15 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check health check / monitoring configuration
 	var totalEvents int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&totalEvents)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Total audit events in period: %d", totalEvents))
@@ -416,7 +430,8 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'system'
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&systemEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&systemEvents)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("System events logged: %d", systemEvents))
@@ -427,7 +442,8 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 		SELECT COUNT(*) FROM audit_events
 		WHERE outcome = 'failure'
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&failedEvents)
 
 	if totalEvents > 0 {
 		errorRate := float64(failedEvents) / float64(totalEvents) * 100
@@ -456,7 +472,8 @@ func (s *Service) evaluateCC7SystemOperations(ctx context.Context, startDate, en
 		SELECT COUNT(DISTINCT DATE(timestamp))
 		FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&daysWithEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&daysWithEvents)
 
 	if totalDays > 0 {
 		coverage := float64(daysWithEvents) / float64(totalDays) * 100
@@ -486,6 +503,7 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check admin audit log entries (configuration changes)
 	var configChanges int
@@ -493,7 +511,8 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'configuration'
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&configChanges)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&configChanges)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Configuration change events: %d", configChanges))
@@ -504,7 +523,8 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'role_management'
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&roleChanges)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&roleChanges)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Role management events: %d", roleChanges))
@@ -515,7 +535,8 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'user_management'
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&userMgmtEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&userMgmtEvents)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("User management events: %d", userMgmtEvents))
@@ -537,7 +558,8 @@ func (s *Service) evaluateCC8ChangeManagement(ctx context.Context, startDate, en
 		WHERE event_type IN ('configuration', 'role_management', 'user_management')
 		  AND (actor_id IS NULL OR actor_id = '')
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&unattributedChanges)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&unattributedChanges)
 
 	if unattributedChanges > 0 {
 		score -= 20
@@ -690,10 +712,11 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check role definitions
 	var roleCount int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM roles`).Scan(&roleCount)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM roles WHERE org_id = $1`, org.ID).Scan(&roleCount)
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Defined roles: %d", roleCount))
 
@@ -710,9 +733,10 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT ur.user_id)
 		FROM user_roles ur
-		JOIN roles r ON ur.role_id = r.id
+		JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
 		WHERE r.name IN ('admin', 'super_admin')
-	`).Scan(&adminCount)
+		  AND ur.org_id = $1
+	`, org.ID).Scan(&adminCount)
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Users with admin roles: %d", adminCount))
 
@@ -726,7 +750,7 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 
 	// Check group-based access
 	var groupCount int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups`).Scan(&groupCount)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID).Scan(&groupCount)
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Defined groups: %d", groupCount))
 
@@ -752,17 +776,18 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// MFA adoption check
 	var totalUsers, mfaUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true`).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT user_id) FROM (
-			SELECT user_id FROM mfa_totp WHERE enabled = true
+			SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
 			UNION
 			SELECT user_id FROM webauthn_credentials
 		) mfa_combined
-	`).Scan(&mfaUsers)
+	`, org.ID).Scan(&mfaUsers)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("MFA enabled users: %d/%d", mfaUsers, totalUsers))
@@ -807,7 +832,8 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 		SELECT AVG(EXTRACT(EPOCH FROM (expires_at - created_at)) / 3600.0)
 		FROM sessions
 		WHERE created_at > NOW() - INTERVAL '30 days'
-	`).Scan(&avgSessionHours)
+		  AND org_id = $1
+	`, org.ID).Scan(&avgSessionHours)
 	if avgSessionHours != nil {
 		assessment.Evidence = append(assessment.Evidence,
 			fmt.Sprintf("Average session duration: %.1f hours", *avgSessionHours))
@@ -826,7 +852,8 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure'
 		  AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedAuth)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&failedAuth)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Failed authentication attempts in period: %d", failedAuth))
@@ -845,13 +872,15 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Audit logging check
 	var totalEvents int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&totalEvents)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Total audit events: %d", totalEvents))
@@ -870,8 +899,9 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 		SELECT event_type, COUNT(*)
 		FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
+		  AND org_id = $3
 		GROUP BY event_type
-	`, startDate, endDate)
+	`, startDate, endDate, org.ID)
 	if err == nil {
 		for rows.Next() {
 			var et string
@@ -903,7 +933,8 @@ func (s *Service) evaluateA12OperationsSecurity(ctx context.Context, startDate, 
 		SELECT COUNT(DISTINCT DATE(timestamp))
 		FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&daysWithEvents)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&daysWithEvents)
 
 	totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
 	if totalDays > 0 {
@@ -926,19 +957,22 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 		Findings:  []string{},
 	}
 	score := 100.0
+	org, _ := orgctx.From(ctx)
 
 	// Check security alerts
 	var totalAlerts, resolvedAlerts int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalAlerts)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&totalAlerts)
 
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM security_alerts
 		WHERE created_at BETWEEN $1 AND $2
 		  AND status = 'resolved'
-	`, startDate, endDate).Scan(&resolvedAlerts)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&resolvedAlerts)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("Security alerts in period: %d (resolved: %d)", totalAlerts, resolvedAlerts))
@@ -965,7 +999,8 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 		WHERE created_at BETWEEN $1 AND $2
 		  AND status = 'resolved'
 		  AND resolved_at IS NOT NULL
-	`, startDate, endDate).Scan(&avgResponseHours)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&avgResponseHours)
 
 	if avgResponseHours != nil {
 		assessment.Evidence = append(assessment.Evidence,
@@ -992,7 +1027,8 @@ func (s *Service) evaluateA16IncidentManagement(ctx context.Context, startDate, 
 		SELECT COUNT(*) FROM login_history
 		WHERE risk_score >= 70
 		  AND created_at BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&highRiskLogins)
+		  AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&highRiskLogins)
 
 	if highRiskLogins > 0 {
 		assessment.Evidence = append(assessment.Evidence,
