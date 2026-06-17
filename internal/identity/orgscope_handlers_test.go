@@ -36,6 +36,12 @@ func TestInvitationAndVerifyHandlers_requireOrgContext(t *testing.T) {
 		{"CreateInvitation", "POST", "/invitations", "/invitations", svc.handleCreateInvitation, `{"email":"a@b.com"}`, "u-1"},
 		{"DeleteInvitation", "DELETE", "/invitations/i-1", "/invitations/:id", svc.handleDeleteInvitation, ``, "u-1"},
 		{"AcceptInvitation", "POST", "/invitations/tok/accept", "/invitations/:token/accept", svc.handleAcceptInvitation, `{"username":"u","password":"p"}`, ""},
+
+		{"GetMyPrivacyConsents", "GET", "/me/consents", "/me/consents", svc.handleGetMyPrivacyConsents, ``, "u-1"},
+		{"GrantPrivacyConsent", "POST", "/me/consents", "/me/consents", svc.handleGrantPrivacyConsent, `{"consent_type":"marketing"}`, "u-1"},
+		{"RevokePrivacyConsent", "DELETE", "/me/consents/marketing", "/me/consents/:consentType", svc.handleRevokePrivacyConsent, ``, "u-1"},
+		{"SubmitDSAR", "POST", "/me/dsar", "/me/dsar", svc.handleSubmitDSAR, `{"request_type":"export"}`, "u-1"},
+		{"GetMyDSARs", "GET", "/me/dsars", "/me/dsars", svc.handleGetMyDSARs, ``, "u-1"},
 	}
 
 	for _, tc := range cases {
