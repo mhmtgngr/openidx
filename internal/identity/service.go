@@ -1889,19 +1889,24 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 		return fmt.Errorf("invalid TOTP verification code")
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	totpID := uuid.New().String()
 
 	// Remove any existing TOTP records for this user before inserting
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1`, userID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1 AND org_id = $2`, userID, org.ID); err != nil {
 		return fmt.Errorf("failed to remove existing TOTP records: %w", err)
 	}
 
 	// Insert TOTP record
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, totpID, userID, secret, true, now, now, now)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, totpID, userID, secret, true, now, now, now, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to enroll TOTP: %w", err)
@@ -1914,12 +1919,17 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, error) {
 	s.logger.Debug("Verifying TOTP code", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	// Get user's TOTP secret
 	var secret string
 	var enabled bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT secret, enabled FROM mfa_totp WHERE user_id = $1
-	`, userID).Scan(&secret, &enabled)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT secret, enabled FROM mfa_totp WHERE user_id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&secret, &enabled)
 
 	if err != nil {
 		return false, fmt.Errorf("failed to get TOTP settings: %w", err)
@@ -1935,8 +1945,8 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 		// Update last used timestamp
 		now := time.Now()
 		_, err = s.db.Pool.Exec(ctx, `
-			UPDATE mfa_totp SET last_used_at = $2, updated_at = $2 WHERE user_id = $1
-		`, userID, now)
+			UPDATE mfa_totp SET last_used_at = $2, updated_at = $2 WHERE user_id = $1 AND org_id = $3
+		`, userID, now, org.ID)
 		if err != nil {
 			s.logger.Warn("Failed to update TOTP last used timestamp", zap.Error(err))
 		}
@@ -1949,9 +1959,14 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 func (s *Service) DisableTOTP(ctx context.Context, userID string) error {
 	s.logger.Info("Disabling TOTP for user", zap.String("user_id", userID))
 
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE mfa_totp SET enabled = false, updated_at = $2 WHERE user_id = $1
-	`, userID, time.Now())
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE mfa_totp SET enabled = false, updated_at = $2 WHERE user_id = $1 AND org_id = $3
+	`, userID, time.Now(), org.ID)
 
 	return err
 }
@@ -1960,11 +1975,16 @@ func (s *Service) DisableTOTP(ctx context.Context, userID string) error {
 func (s *Service) GetTOTPStatus(ctx context.Context, userID string) (*MFATOTP, error) {
 	s.logger.Debug("Getting TOTP status", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var totp MFATOTP
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, user_id, enabled, enrolled_at, last_used_at, created_at, updated_at
-		FROM mfa_totp WHERE user_id = $1
-	`, userID).Scan(
+		FROM mfa_totp WHERE user_id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(
 		&totp.ID, &totp.UserID, &totp.Enabled, &totp.EnrolledAt,
 		&totp.LastUsedAt, &totp.CreatedAt, &totp.UpdatedAt,
 	)
@@ -1983,6 +2003,11 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 
 	if count <= 0 || count > 20 {
 		count = 10 // Default to 10 codes
+	}
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	var codes []string
@@ -2004,9 +2029,9 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 		// Store in database
 		codeID := uuid.New().String()
 		_, err := s.db.Pool.Exec(ctx, `
-			INSERT INTO mfa_backup_codes (id, user_id, code_hash, created_at)
-			VALUES ($1, $2, $3, $4)
-		`, codeID, userID, codeHash, time.Now())
+			INSERT INTO mfa_backup_codes (id, user_id, code_hash, created_at, org_id)
+			VALUES ($1, $2, $3, $4, $5)
+		`, codeID, userID, codeHash, time.Now(), org.ID)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to store backup code: %w", err)
@@ -2020,16 +2045,21 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (bool, error) {
 	s.logger.Info("Validating backup code", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	// Hash the provided code
 	hash := sha256.Sum256([]byte(strings.ToUpper(code)))
 	codeHash := hex.EncodeToString(hash[:])
 
 	// Check if code exists and is unused
 	var codeID string
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id FROM mfa_backup_codes
-		WHERE user_id = $1 AND code_hash = $2 AND used = false
-	`, userID, codeHash).Scan(&codeID)
+		WHERE user_id = $1 AND code_hash = $2 AND used = false AND org_id = $3
+	`, userID, codeHash, org.ID).Scan(&codeID)
 
 	if err != nil {
 		return false, nil // Code not found or already used
@@ -2038,8 +2068,8 @@ func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (
 	// Mark code as used
 	now := time.Now()
 	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE mfa_backup_codes SET used = true, used_at = $2 WHERE id = $1
-	`, codeID, now)
+		UPDATE mfa_backup_codes SET used = true, used_at = $2 WHERE id = $1 AND org_id = $3
+	`, codeID, now, org.ID)
 
 	if err != nil {
 		s.logger.Warn("Failed to mark backup code as used", zap.Error(err))
@@ -2050,10 +2080,15 @@ func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (
 
 // GetRemainingBackupCodes returns count of unused backup codes
 func (s *Service) GetRemainingBackupCodes(ctx context.Context, userID string) (int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM mfa_backup_codes WHERE user_id = $1 AND used = false
-	`, userID).Scan(&count)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM mfa_backup_codes WHERE user_id = $1 AND used = false AND org_id = $2
+	`, userID, org.ID).Scan(&count)
 
 	return count, err
 }
@@ -2077,14 +2112,19 @@ func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFAD
 func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+
 	// Get all active MFA policies ordered by priority
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, enabled, priority, conditions, required_methods, grace_period_hours,
 		       created_at, updated_at
 		FROM mfa_policies
-		WHERE enabled = true
+		WHERE enabled = true AND org_id = $1
 		ORDER BY priority DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to query MFA policies: %w", err)
 	}

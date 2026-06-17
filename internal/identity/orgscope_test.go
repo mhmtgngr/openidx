@@ -250,6 +250,39 @@ func TestPasswords_requireOrgContext(t *testing.T) {
 	})
 }
 
+func TestMFA_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+
+	t.Run("VerifyTOTP", func(t *testing.T) {
+		_, err := s.VerifyTOTP(ctx, "u-1", "123456")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("DisableTOTP", func(t *testing.T) {
+		assertNoOrgContext(t, s.DisableTOTP(ctx, "u-1"))
+	})
+	t.Run("GetTOTPStatus", func(t *testing.T) {
+		_, err := s.GetTOTPStatus(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("GenerateBackupCodes", func(t *testing.T) {
+		_, err := s.GenerateBackupCodes(ctx, "u-1", 10)
+		assertNoOrgContext(t, err)
+	})
+	t.Run("ValidateBackupCode", func(t *testing.T) {
+		_, err := s.ValidateBackupCode(ctx, "u-1", "CODE1234")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("GetRemainingBackupCodes", func(t *testing.T) {
+		_, err := s.GetRemainingBackupCodes(ctx, "u-1")
+		assertNoOrgContext(t, err)
+	})
+	t.Run("IsMFARequired", func(t *testing.T) {
+		_, _, err := s.IsMFARequired(ctx, "u-1", "1.2.3.4")
+		assertNoOrgContext(t, err)
+	})
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

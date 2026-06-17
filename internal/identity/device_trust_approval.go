@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // DeviceTrustRequest represents a request for device trust approval
@@ -359,18 +361,26 @@ func (s *Service) ExpireOldRequests(ctx context.Context) (int, error) {
 // Helper functions
 
 func (s *Service) trustDevice(ctx context.Context, userID, fingerprint string) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
 	s.db.Pool.Exec(ctx,
-		"UPDATE known_devices SET trusted = true WHERE user_id = $1 AND fingerprint = $2",
-		userID, fingerprint,
+		"UPDATE known_devices SET trusted = true WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3",
+		userID, fingerprint, org.ID,
 	)
 }
 
 func (s *Service) isKnownIP(ctx context.Context, userID, ipAddress string) bool {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false
+	}
 	var count int
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM known_devices
-		WHERE user_id = $1 AND ip_address = $2 AND trusted = true`,
-		userID, ipAddress,
+		WHERE user_id = $1 AND ip_address = $2 AND trusted = true AND org_id = $3`,
+		userID, ipAddress, org.ID,
 	).Scan(&count)
 	return count > 0
 }
@@ -378,11 +388,15 @@ func (s *Service) isKnownIP(ctx context.Context, userID, ipAddress string) bool 
 func (s *Service) isCorporateDevice(ctx context.Context, fingerprint string) bool {
 	// Check if device matches corporate device criteria
 	// This could check domain membership, MDM enrollment, etc.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false
+	}
 	var count int
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM known_devices
-		WHERE fingerprint = $1 AND (device_type = 'corporate' OR name LIKE '%Corporate%')`,
-		fingerprint,
+		WHERE fingerprint = $1 AND (device_type = 'corporate' OR name LIKE '%Corporate%') AND org_id = $2`,
+		fingerprint, org.ID,
 	).Scan(&count)
 	return count > 0
 }
