@@ -42,6 +42,8 @@ func TestInvitationAndVerifyHandlers_requireOrgContext(t *testing.T) {
 		{"RevokePrivacyConsent", "DELETE", "/me/consents/marketing", "/me/consents/:consentType", svc.handleRevokePrivacyConsent, ``, "u-1"},
 		{"SubmitDSAR", "POST", "/me/dsar", "/me/dsar", svc.handleSubmitDSAR, `{"request_type":"export"}`, "u-1"},
 		{"GetMyDSARs", "GET", "/me/dsars", "/me/dsars", svc.handleGetMyDSARs, ``, "u-1"},
+
+		{"OffboardUser", "POST", "/users/u-1/offboard", "/users/:id/offboard", svc.handleOffboardUser, ``, "admin-1"},
 	}
 
 	for _, tc := range cases {

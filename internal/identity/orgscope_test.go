@@ -311,6 +311,25 @@ func TestPasswordlessAndQR_requireOrgContext(t *testing.T) {
 	})
 }
 
+func TestLifecycleAction_requireOrgContext(t *testing.T) {
+	s := newUnboundService(t)
+	ctx := context.Background()
+
+	// Each action type reaches the org guard once its required fields
+	// are present, before any DB access.
+	for _, action := range []map[string]interface{}{
+		{"type": "assign_role", "role_id": "r-1"},
+		{"type": "remove_role", "role_id": "r-1"},
+		{"type": "assign_group", "group_id": "g-1"},
+		{"type": "remove_group", "group_id": "g-1"},
+		{"type": "enable_user"},
+		{"type": "disable_user"},
+		{"type": "revoke_sessions"},
+	} {
+		assertNoOrgContext(t, s.executeLifecycleAction(ctx, "u-1", action))
+	}
+}
+
 func assertNoOrgContext(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

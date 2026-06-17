@@ -5303,29 +5303,36 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 func (s *Service) handleOffboardUser(c *gin.Context) {
 	userID := c.Param("id")
 
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to disable user"})
+		return
+	}
+
 	// Disable user
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", userID)
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to disable user"})
 		return
 	}
 
 	// Revoke all API keys
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Remove from all groups
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM group_memberships WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Remove all role assignments
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_roles WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Terminate all sessions
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM sessions WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Publish webhook
 	if s.webhookService != nil {
@@ -5653,6 +5660,11 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		return fmt.Errorf("action missing 'type' field")
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	switch actionType {
 	case "assign_role":
 		roleID, ok := action["role_id"].(string)
@@ -5660,8 +5672,8 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("assign_role action missing 'role_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"INSERT INTO user_roles (user_id, role_id, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING",
-			userID, roleID)
+			"INSERT INTO user_roles (user_id, role_id, created_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
+			userID, roleID, org.ID)
 		return err
 
 	case "remove_role":
@@ -5670,8 +5682,8 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("remove_role action missing 'role_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2",
-			userID, roleID)
+			"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3",
+			userID, roleID, org.ID)
 		return err
 
 	case "assign_group":
@@ -5680,8 +5692,8 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("assign_group action missing 'group_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"INSERT INTO group_memberships (id, group_id, user_id, created_at) VALUES (gen_random_uuid(), $1, $2, NOW()) ON CONFLICT DO NOTHING",
-			groupID, userID)
+			"INSERT INTO group_memberships (id, group_id, user_id, created_at, org_id) VALUES (gen_random_uuid(), $1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
+			groupID, userID, org.ID)
 		return err
 
 	case "remove_group":
@@ -5690,26 +5702,26 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("remove_group action missing 'group_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2",
-			groupID, userID)
+			"DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3",
+			groupID, userID, org.ID)
 		return err
 
 	case "enable_user":
 		_, err := s.db.Pool.Exec(ctx,
-			"UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1",
-			userID)
+			"UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1 AND org_id = $2",
+			userID, org.ID)
 		return err
 
 	case "disable_user":
 		_, err := s.db.Pool.Exec(ctx,
-			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1",
-			userID)
+			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2",
+			userID, org.ID)
 		return err
 
 	case "revoke_sessions":
 		_, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM sessions WHERE user_id = $1",
-			userID)
+			"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2",
+			userID, org.ID)
 		return err
 
 	default:
