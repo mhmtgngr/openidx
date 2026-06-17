@@ -65,6 +65,17 @@ type Config struct {
 	// Empty (the default) disables subdomain tenant resolution.
 	TenantBaseDomain string `mapstructure:"tenant_base_domain"`
 
+	// DefaultOrgFallback, when true, makes the TenantResolver attach the
+	// install's default org to any request that resolves no tenant signal
+	// (single-tenant compatibility). v1.7.0 ships with this OFF: a request
+	// that carries no org is rejected (400) rather than silently scoped to
+	// the default org. Single-tenant installs set DEFAULT_ORG_FALLBACK=true.
+	DefaultOrgFallback bool `mapstructure:"default_org_fallback"`
+
+	// DefaultOrgID is the org UUID handed out when DefaultOrgFallback is on.
+	// Defaults to the canonical default-org UUID (migration v25).
+	DefaultOrgID string `mapstructure:"default_org_id"`
+
 	// OpenZiti configuration
 	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
 	ZitiCtrlURL            string `mapstructure:"ziti_ctrl_url"`
@@ -387,6 +398,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Multi-tenancy: empty disables subdomain-based tenant resolution.
 	v.SetDefault("tenant_base_domain", "")
+	// v1.7.0: tenant isolation is enforced by default — no silent default-org
+	// fallback. Single-tenant installs opt back in with DEFAULT_ORG_FALLBACK=true.
+	v.SetDefault("default_org_fallback", false)
+	v.SetDefault("default_org_id", "00000000-0000-0000-0000-000000000010")
 
 	// OpenZiti defaults
 	v.SetDefault("ziti_enabled", false)
@@ -498,6 +513,9 @@ func bindEnvVars(v *viper.Viper) {
 		"log_level":                  "LOG_LEVEL",
 		"port":                       "PORT",
 		"oauth_issuer":               "OAUTH_ISSUER",
+		"tenant_base_domain":         "TENANT_BASE_DOMAIN",
+		"default_org_fallback":       "DEFAULT_ORG_FALLBACK",
+		"default_org_id":             "DEFAULT_ORG_ID",
 		"oauth_jwks_url":             "OAUTH_JWKS_URL",
 		"governance_url":             "GOVERNANCE_URL",
 		"audit_url":                  "AUDIT_URL",

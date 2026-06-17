@@ -146,6 +146,7 @@ type Service struct {
 	publicKey        *rsa.PublicKey
 	keyManager       *KeyManager // KeyManager for Ed25519 and RSA key management
 	issuer           string
+	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
 	identityService  *identity.Service
 	riskService      *risk.Service
 	webhookService   WebhookPublisher
@@ -237,14 +238,15 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	}
 
 	svc := &Service{
-		db:              db,
-		redis:           redis,
-		config:          cfg,
-		logger:          logger.With(zap.String("service", "oauth")),
-		privateKey:      privateKey,
-		publicKey:       &privateKey.PublicKey,
-		issuer:          issuer,
-		identityService: idSvc,
+		db:               db,
+		redis:            redis,
+		config:           cfg,
+		logger:           logger.With(zap.String("service", "oauth")),
+		privateKey:       privateKey,
+		publicKey:        &privateKey.PublicKey,
+		issuer:           issuer,
+		tenantBaseDomain: cfg.TenantBaseDomain,
+		identityService:  idSvc,
 	}
 
 	// Initialize authorize handler
@@ -813,6 +815,18 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 
 // JWT Token Generation
 
+// issuerForOrg returns the JWT issuer for the given org. In a multi-tenant
+// subdomain deployment (tenantBaseDomain set) each tenant gets its own issuer
+// (https://<slug>.<base>) so tokens are bound to the tenant that minted them.
+// The default org and single-tenant installs (no base domain) keep the global
+// issuer, so this is a no-op unless subdomain tenancy is configured.
+func (s *Service) issuerForOrg(org orgctx.Org) string {
+	if s.tenantBaseDomain != "" && org.Slug != "" && org.Slug != "default" {
+		return "https://" + org.Slug + "." + s.tenantBaseDomain
+	}
+	return s.issuer
+}
+
 // GenerateJWT generates a signed JWT access token
 func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int, sessionID ...string) (string, error) {
 	now := time.Now()
@@ -903,7 +917,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		"aud":         clientID,
 		"client_id":   clientID,
 		"scope":       scope,
-		"iss":         s.issuer,
+		"iss":         s.issuerForOrg(org),
 		"iat":         now.Unix(),
 		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 		"email":       email,
@@ -1002,7 +1016,7 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 	claims := jwt.MapClaims{
 		"sub":         userID,
 		"aud":         clientID,
-		"iss":         s.issuer,
+		"iss":         s.issuerForOrg(org),
 		"iat":         now.Unix(),
 		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 		"email":       email,
@@ -1241,12 +1255,21 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		return
 	}
 
+	// Per-tenant discovery: when subdomain tenancy is configured the issuer and
+	// all endpoints are served under the tenant's own host so the document a
+	// tenant fetches matches the issuer its tokens carry. Falls back to the
+	// global issuer for the default org / single-tenant installs.
+	base := s.issuer
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		base = s.issuerForOrg(org)
+	}
+
 	discovery := OIDCDiscovery{
-		Issuer:                            s.issuer,
-		AuthorizationEndpoint:             s.issuer + "/oauth/authorize",
-		TokenEndpoint:                     s.issuer + "/oauth/token",
-		UserInfoEndpoint:                  s.issuer + "/oauth/userinfo",
-		JwksURI:                           s.issuer + "/.well-known/jwks.json",
+		Issuer:                            base,
+		AuthorizationEndpoint:             base + "/oauth/authorize",
+		TokenEndpoint:                     base + "/oauth/token",
+		UserInfoEndpoint:                  base + "/oauth/userinfo",
+		JwksURI:                           base + "/.well-known/jwks.json",
 		ScopesSupported:                   []string{"openid", "profile", "email", "offline_access"},
 		ResponseTypesSupported:            []string{"code", "id_token", "token id_token", "code id_token"},
 		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials"},
@@ -1255,7 +1278,7 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
 		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
 		CodeChallengeMethodsSupported:     []string{"S256", "plain"},
-		EndSessionEndpoint:                s.issuer + "/oauth/logout",
+		EndSessionEndpoint:                base + "/oauth/logout",
 		BackchannelLogoutSupported:        true,
 		BackchannelLogoutSessionSupported: true,
 	}
@@ -3338,6 +3361,7 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, clientID string, scopes []string) (*TokenFlowResponse, error) {
 	now := time.Now()
 	accessLifetime := 1 * time.Hour
+	org, _ := orgctx.From(ctx) // best-effort: per-tenant issuer when subdomain tenancy is on
 
 	// Generate access token
 	accessToken := generateRandomToken(32)
@@ -3362,7 +3386,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	claims := jwt.MapClaims{
 		"sub": user.ID,
 		"aud": clientID,
-		"iss": s.issuer,
+		"iss": s.issuerForOrg(org),
 		"exp": accessExpiry.Unix(),
 		"iat": now.Unix(),
 	}
@@ -3392,7 +3416,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	// Generate ID token for openid scope
 	if containsScope(scopes, "openid") {
 		idClaims := jwt.MapClaims{
-			"iss":            s.issuer,
+			"iss":            s.issuerForOrg(org),
 			"sub":            user.ID,
 			"aud":            clientID,
 			"exp":            accessExpiry.Unix(),

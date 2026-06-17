@@ -16,6 +16,8 @@ import (
 	adminhandlers "github.com/openidx/openidx/internal/admin/handlers"
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/apikeys"
+	"github.com/openidx/openidx/internal/audit"
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
@@ -219,8 +221,10 @@ func main() {
 	// X-Org-Slug. DefaultOrgFallback keeps single-tenant installs on
 	// the default org — the final v1.7.0 PR flips it off.
 	v1.Use(middleware.TenantResolver(organization.NewOrgLookup(orgService), middleware.TenantResolverConfig{
-		DefaultOrgFallback: true,
-		DefaultOrgID:       middleware.DefaultOrgID,
+		DefaultOrgFallback:     cfg.DefaultOrgFallback,
+		DefaultOrgID:           cfg.DefaultOrgID,
+		PlatformAdminPredicate: auth.SuperAdminPredicate,
+		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool),
 	}))
 
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)

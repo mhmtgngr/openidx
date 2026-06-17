@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Multi-tenancy — App-layer enforcement (v1.7.0)
+
+The v2.0 multi-tenancy epic's enforcement milestone. Every service query now
+reads `org_id` from request context and filters/populates by it
+(`orgscope ./internal` = 0), and tenant isolation is **activated**.
+
+#### Added
+- Cross-org integration test (`test/integration/cross_org_test.go`): a token
+  scoped to org A gets **404** (not 403) reading org B's data; a platform admin
+  (`super_admin`) may read cross-org via `X-Org-ID` and every such access writes
+  an `audit_events` row (`platform_admin_cross_org_access`).
+- Platform-admin bypass + mandatory audit, wired through the `TenantResolver`
+  (`OnPlatformCrossOrg` hook + `auth.SuperAdminPredicate`).
+- Per-tenant JWT `iss` and per-tenant OIDC discovery, derived from the org slug
+  and `TENANT_BASE_DOMAIN`.
+- Admin-console tenant selector (super_admin-only) that scopes requests via
+  `X-Org-Slug`.
+- `orgscope` is now a hard CI gate (`-fail`).
+
+#### Changed
+- **BREAKING (config):** `DEFAULT_ORG_FALLBACK` now defaults to **false** — a
+  request that resolves no tenant is rejected (400) instead of being scoped to
+  the default org. Single-tenant installs must set `DEFAULT_ORG_FALLBACK=true`.
+- JWT `iss` is per-tenant when `TENANT_BASE_DOMAIN` is set (token-format change;
+  global issuer otherwise, so single-tenant installs are unaffected).
 
 ## [1.6.0] - 2026-06-11
 

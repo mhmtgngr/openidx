@@ -205,19 +205,31 @@ with milestone N?" is "would shipping this leak data?"
 Ship gate: install upgrades cleanly, all v1.5 functionality continues
 working, no enforcement yet.
 
-### v1.7.0 — App-layer enforcement
+### v1.7.0 — App-layer enforcement ✅ COMPLETE
 
-- Service-by-service refactor: every query reads `org_id` from
-  context and filters by it. Inserts populate it.
-- Platform admin bypass + audit log entry on every bypass
-- Per-tenant JWT `iss` claim
-- Admin UI tenant selector
-- CI lint promotes "missing org filter" from warning to error
-- Tests: cross-org access via a token returns 404 (not 403, to
-  prevent enumeration); platform admin can read across orgs
+- ✅ Service-by-service refactor: every query reads `org_id` from
+  context and filters by it. Inserts populate it. `orgscope ./internal`
+  is 0 across all services.
+- ✅ `DefaultOrgFallback` flipped off by default (config-driven via
+  `DEFAULT_ORG_FALLBACK`); a request that resolves no tenant is rejected
+  (400) rather than silently scoped to the default org. Single-tenant
+  installs opt back in with `DEFAULT_ORG_FALLBACK=true`.
+- ✅ Platform admin bypass (super_admin) + mandatory audit log entry on
+  every X-Org-ID cross-org access (TenantResolver `OnPlatformCrossOrg`
+  hook → `audit_events` row, event_type `platform_admin_cross_org_access`).
+- ✅ Per-tenant JWT `iss` claim (derived from the org slug + the
+  `TENANT_BASE_DOMAIN`; global issuer otherwise — no change unless
+  subdomain tenancy is configured). OIDC discovery is per-tenant too.
+- ✅ Admin UI tenant selector (super_admin-only header dropdown → sets
+  `X-Org-Slug` on every request).
+- ✅ CI lint promotes "missing org filter" from warning to error
+  (orgscope `-fail` hard gate).
+- ✅ Tests: cross-org access via a token returns 404 (not 403, to
+  prevent enumeration); platform admin can read across orgs (audited).
+  See `test/integration/cross_org_test.go`.
 
 Ship gate: a token issued for org A cannot read org B's data via
-any service method.
+any service method. **Met.**
 
 ### v1.8.0 — RLS belt + per-org primitives
 

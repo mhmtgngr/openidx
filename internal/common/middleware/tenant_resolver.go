@@ -77,10 +77,16 @@ type TenantResolverConfig struct {
 	// the X-Org-ID header is honored and whether the platform-admin
 	// marker should be attached to the context. It receives the gin
 	// context and should return true if the actor is a platform admin
-	// (typically: users.is_platform_admin == true). When nil, the
-	// X-Org-ID header is ignored and the platform-admin marker is
-	// never set.
+	// (typically: a super_admin role). When nil, the X-Org-ID header is
+	// ignored and the platform-admin marker is never set.
 	PlatformAdminPredicate func(*gin.Context) bool
+
+	// OnPlatformCrossOrg, when set, is invoked exactly when a platform
+	// admin resolves a request to an org via the X-Org-ID header (a
+	// deliberate cross-org access). It MUST record an audit entry — this
+	// is the mandatory audit trail for platform-admin org-boundary
+	// crossings. It runs synchronously before the request proceeds.
+	OnPlatformCrossOrg func(c *gin.Context, target orgctx.Org)
 }
 
 // TenantResolver returns the gin middleware that resolves the
@@ -178,7 +184,8 @@ func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverC
 		}
 	}
 
-	// 3. X-Org-ID header (platform-admin only).
+	// 3. X-Org-ID header (platform-admin only). This is a deliberate
+	// cross-org access; emit the mandatory audit entry via the hook.
 	if cfg.PlatformAdminPredicate != nil && cfg.PlatformAdminPredicate(c) {
 		if id := strings.TrimSpace(c.GetHeader("X-Org-ID")); id != "" {
 			org, err := lookup.ByID(ctx, id)
@@ -187,6 +194,9 @@ func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverC
 					return orgctx.Org{}, fmt.Errorf("unknown organization in X-Org-ID header: %w", ErrOrgNotFound)
 				}
 				return orgctx.Org{}, err
+			}
+			if cfg.OnPlatformCrossOrg != nil {
+				cfg.OnPlatformCrossOrg(c, org)
 			}
 			return org, nil
 		}

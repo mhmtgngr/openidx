@@ -10,6 +10,16 @@ vi.mock('@/lib/store', () => ({
   useAppStore: vi.fn(() => ({
     toggleSidebar: mockToggleSidebar,
   })),
+  useOrgStore: vi.fn(() => ({
+    selectedOrgSlug: null,
+    setOrg: vi.fn(),
+  })),
+}))
+
+// Header's tenant selector only renders for super_admins; default the mock to a
+// non-platform-admin so these layout tests render the selector-free header.
+vi.mock('@/lib/auth', () => ({
+  useAuth: vi.fn(() => ({ hasRole: () => false })),
 }))
 
 describe('Header', () => {

@@ -193,6 +193,15 @@ func IsSuperAdminInContext(c *gin.Context) (bool, error) {
 	return HasRoleInContext(c, RoleSuperAdmin)
 }
 
+// SuperAdminPredicate is the platform-admin predicate for the tenant
+// resolver: a super_admin is treated as a platform admin (may cross org
+// boundaries via the X-Org-ID header, with a mandatory audit entry).
+// Errors resolving the role are treated as "not a platform admin".
+func SuperAdminPredicate(c *gin.Context) bool {
+	ok, _ := IsSuperAdminInContext(c)
+	return ok
+}
+
 // SetUserInContext sets user information in the Gin context
 // This is useful for testing or when manually setting context
 func SetUserInContext(c *gin.Context, userID, tenantID string, roles []string) {

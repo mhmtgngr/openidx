@@ -473,3 +473,64 @@ func TestTenantResolver_nonInfraPath_withInfraPrefixInName_isResolved(t *testing
 		t.Fatalf("got org = %+v, want default org resolved (path is not an infra path)", got.org)
 	}
 }
+
+// TestTenantResolver_platformAdmin_crossOrg_firesAudit verifies that when a
+// platform admin selects an org via X-Org-ID, the resolver resolves that org,
+// sets the platform-admin marker, and invokes the mandatory OnPlatformCrossOrg
+// audit hook with the target org.
+func TestTenantResolver_platformAdmin_crossOrg_firesAudit(t *testing.T) {
+	var hookCalls int
+	var hookTarget orgctx.Org
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback:     false,
+		DefaultOrgID:           defaultOrgID,
+		PlatformAdminPredicate: func(*gin.Context) bool { return true },
+		OnPlatformCrossOrg: func(_ *gin.Context, target orgctx.Org) {
+			hookCalls++
+			hookTarget = target
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/whatever", nil)
+	req.Header.Set("X-Org-ID", acmeOrgID)
+
+	var got capturedRequest
+	rec := runResolver(t, newFakeLookup(), cfg, &got, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got.org.ID != acmeOrgID {
+		t.Fatalf("resolved org = %+v, want acme via X-Org-ID", got.org)
+	}
+	if !got.isPlatformAdmin {
+		t.Fatal("expected platform-admin marker on context")
+	}
+	if hookCalls != 1 || hookTarget.ID != acmeOrgID {
+		t.Fatalf("audit hook calls=%d target=%+v, want 1 call with acme", hookCalls, hookTarget)
+	}
+}
+
+// TestTenantResolver_nonPlatformAdmin_ignoresXOrgID confirms a non-platform
+// caller's X-Org-ID is ignored and the hook never fires (with fallback off the
+// request is rejected because nothing else resolves).
+func TestTenantResolver_nonPlatformAdmin_ignoresXOrgID(t *testing.T) {
+	var hookCalls int
+	cfg := TenantResolverConfig{
+		DefaultOrgFallback:     false,
+		PlatformAdminPredicate: func(*gin.Context) bool { return false },
+		OnPlatformCrossOrg:     func(_ *gin.Context, _ orgctx.Org) { hookCalls++ },
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/whatever", nil)
+	req.Header.Set("X-Org-ID", acmeOrgID)
+
+	var got capturedRequest
+	rec := runResolver(t, newFakeLookup(), cfg, &got, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (no org resolvable, fallback off)", rec.Code)
+	}
+	if hookCalls != 0 {
+		t.Fatalf("audit hook fired %d times for non-platform-admin, want 0", hookCalls)
+	}
+}

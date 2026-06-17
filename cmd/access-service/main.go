@@ -14,6 +14,8 @@ import (
 
 	"github.com/openidx/openidx/internal/access"
 	"github.com/openidx/openidx/internal/api"
+	"github.com/openidx/openidx/internal/audit"
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
@@ -148,8 +150,10 @@ func main() {
 	// org — the final v1.7.0 PR flips it off.
 	orgLookup := organization.NewOrgLookup(organization.NewService(db, redis, cfg, log))
 	router.Use(middleware.TenantResolver(orgLookup, middleware.TenantResolverConfig{
-		DefaultOrgFallback: true,
-		DefaultOrgID:       middleware.DefaultOrgID,
+		DefaultOrgFallback:     cfg.DefaultOrgFallback,
+		DefaultOrgID:           cfg.DefaultOrgID,
+		PlatformAdminPredicate: auth.SuperAdminPredicate,
+		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool),
 	}))
 
 	// Metrics endpoint
