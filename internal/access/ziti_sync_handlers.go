@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // handleGetSyncStatus returns the current user-to-Ziti sync state.
@@ -70,14 +72,20 @@ func (s *Service) handleGetUnsyncedUsers(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name
 		FROM users u
-		LEFT JOIN ziti_identities zi ON zi.user_id = u.id
-		WHERE zi.id IS NULL AND u.enabled = true
+		LEFT JOIN ziti_identities zi ON zi.user_id = u.id AND zi.org_id = u.org_id
+		WHERE zi.id IS NULL AND u.enabled = true AND u.org_id = $1
 		ORDER BY u.username
 		LIMIT 50
-	`)
+	`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -125,14 +133,20 @@ func (s *Service) handleGetMyZitiIdentity(c *gin.Context) {
 		}
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var zitiID, name string
 	var enrolled bool
 	var attrs []string
 	err := s.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT zi.ziti_id, zi.name, zi.enrolled, zi.attributes
 		FROM ziti_identities zi
-		WHERE zi.user_id = $1
-	`, userID).Scan(&zitiID, &name, &enrolled, &attrs)
+		WHERE zi.user_id = $1 AND zi.org_id = $2
+	`, userID, org.ID).Scan(&zitiID, &name, &enrolled, &attrs)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"linked": false})
 		return
@@ -150,7 +164,7 @@ func (s *Service) handleGetMyZitiIdentity(c *gin.Context) {
 	if !enrolled {
 		var enrollmentJWT *string
 		if err := s.db.Pool.QueryRow(c.Request.Context(),
-			"SELECT enrollment_jwt FROM ziti_identities WHERE ziti_id=$1", zitiID).Scan(&enrollmentJWT); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			"SELECT enrollment_jwt FROM ziti_identities WHERE ziti_id=$1 AND org_id=$2", zitiID, org.ID).Scan(&enrollmentJWT); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			s.logger.Error("failed to query enrollment JWT", zap.String("ziti_id", zitiID), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query enrollment JWT"})
 			return
@@ -171,11 +185,16 @@ func (s *Service) handleGetMyZitiIdentity(c *gin.Context) {
 // handleGetUserZitiMap returns a mapping of user IDs to their Ziti identity info.
 // GET /api/v1/access/ziti/sync/user-map
 func (s *Service) handleGetUserZitiMap(c *gin.Context) {
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT zi.user_id, zi.ziti_id, zi.name, zi.enrolled, zi.attributes
 		FROM ziti_identities zi
-		WHERE zi.user_id IS NOT NULL
-	`)
+		WHERE zi.user_id IS NOT NULL AND zi.org_id = $1
+	`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -243,8 +262,14 @@ func (s *Service) handleGetEnrichedDevices(c *gin.Context) {
 		offset = 0
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var total int
-	_ = s.db.Pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM known_devices`).Scan(&total)
+	_ = s.db.Pool.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&total)
 
 	rows, err := s.db.Pool.Query(c.Request.Context(), `
 		SELECT d.id, d.fingerprint, COALESCE(d.name,''), COALESCE(d.ip_address,''),
@@ -253,10 +278,11 @@ func (s *Service) handleGetEnrichedDevices(c *gin.Context) {
 		       u.id, u.username, COALESCE(u.email,''), COALESCE(u.first_name,''), COALESCE(u.last_name,''),
 		       COALESCE(zi.ziti_id,''), COALESCE(zi.enrolled, false), COALESCE(zi.attributes, '[]')
 		FROM known_devices d
-		JOIN users u ON u.id = d.user_id
-		LEFT JOIN ziti_identities zi ON zi.user_id = d.user_id
+		JOIN users u ON u.id = d.user_id AND u.org_id = d.org_id
+		LEFT JOIN ziti_identities zi ON zi.user_id = d.user_id AND zi.org_id = d.org_id
+		WHERE d.org_id = $3
 		ORDER BY d.last_seen_at DESC
-		LIMIT $1 OFFSET $2`, limit, offset)
+		LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

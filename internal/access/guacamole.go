@@ -16,6 +16,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // GuacamoleClient communicates with the Apache Guacamole REST API to manage connections
@@ -441,9 +442,11 @@ func (s *Service) provisionGuacamoleForRoute(ctx context.Context, route *ProxyRo
 	}
 
 	// Update route with connection ID
-	s.db.Pool.Exec(ctx,
-		"UPDATE proxy_routes SET guacamole_connection_id=$1, updated_at=NOW() WHERE id=$2",
-		connID, route.ID)
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		s.db.Pool.Exec(ctx,
+			"UPDATE proxy_routes SET guacamole_connection_id=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
+			connID, route.ID, org.ID)
+	}
 
 	s.logger.Info("Provisioned Guacamole connection for route",
 		zap.String("route_id", route.ID),

@@ -35,8 +35,9 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 	policy := s.getEffectiveSessionPolicy(ctx, "")
 
 	// Phase 1: Revoke sessions past their expires_at (absolute expiry set at creation)
-	expiredRows, err := s.db.Pool.Query(ctx, `
-		SELECT id FROM sessions
+	expiredRows, err := s.db.Pool.Query(ctx,
+		//orgscope:ignore background ticker sweeping expired sessions across all orgs; no request/tenant context
+		`SELECT id FROM sessions
 		WHERE (revoked IS NULL OR revoked = false)
 		AND expires_at <= NOW()
 		LIMIT 500
@@ -66,8 +67,9 @@ func (s *Service) processExpiredSessions(ctx context.Context) {
 	// Phase 2: Revoke sessions that have been idle too long (based on global policy)
 	if policy.IdleTimeout > 0 {
 		idleCutoff := time.Now().Add(-time.Duration(policy.IdleTimeout) * time.Second)
-		idleRows, err := s.db.Pool.Query(ctx, `
-			SELECT id FROM sessions
+		idleRows, err := s.db.Pool.Query(ctx,
+			//orgscope:ignore background ticker sweeping idle sessions across all orgs; no request/tenant context
+			`SELECT id FROM sessions
 			WHERE (revoked IS NULL OR revoked = false)
 			AND expires_at > NOW()
 			AND last_seen_at < $1

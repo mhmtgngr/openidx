@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // IDPConfig represents an identity provider configuration loaded from the database
@@ -32,12 +34,17 @@ func (s *Service) getRouteIDP(ctx context.Context, route *ProxyRoute) (*IDPConfi
 		return nil, nil
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var idp IDPConfig
 	var scopesJSON []byte
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled
-		 FROM identity_providers WHERE id=$1`, route.IDPId).
+		 FROM identity_providers WHERE id=$1 AND org_id=$2`, route.IDPId, org.ID).
 		Scan(&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL,
 			&idp.ClientID, &idp.ClientSecret, &scopesJSON, &idp.Enabled)
 	if err != nil {
@@ -58,9 +65,13 @@ func (s *Service) getRouteIDP(ctx context.Context, route *ProxyRoute) (*IDPConfi
 
 // listEnabledIDPs returns all enabled identity providers
 func (s *Service) listEnabledIDPs(ctx context.Context) ([]IDPConfig, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, name, provider_type, issuer_url, client_id, scopes, enabled
-		 FROM identity_providers WHERE enabled=true ORDER BY name`)
+		 FROM identity_providers WHERE enabled=true AND org_id=$1 ORDER BY name`, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query IDPs: %w", err)
 	}
@@ -160,12 +171,18 @@ func (s *Service) handleIDPDiscovery(c *gin.Context) {
 func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Load the IDP
 	var idp IDPConfig
 	var scopesJSON []byte
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes
-		 FROM identity_providers WHERE id=$1 AND enabled=true`, idpID).
+		 FROM identity_providers WHERE id=$1 AND enabled=true AND org_id=$2`, idpID, org.ID).
 		Scan(&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL,
 			&idp.ClientID, &idp.ClientSecret, &scopesJSON)
 	if err != nil {
@@ -221,11 +238,17 @@ func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifier, redirectURL string) {
 	code := c.Query("code")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Load the IDP to get client_secret
 	var clientID, clientSecret string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT client_id, client_secret FROM identity_providers WHERE id=$1",
-		idpID).Scan(&clientID, &clientSecret)
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		"SELECT client_id, client_secret FROM identity_providers WHERE id=$1 AND org_id=$2",
+		idpID, org.ID).Scan(&clientID, &clientSecret)
 	if err != nil {
 		s.logger.Error("Failed to load IDP for callback", zap.String("idp_id", idpID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "authentication failed"})
@@ -266,7 +289,7 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 
 	// Store IDP ID on the session
 	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2", idpID, session.ID)
+		"UPDATE proxy_sessions SET idp_id=$1 WHERE id=$2 AND org_id=$3", idpID, session.ID, org.ID)
 
 	// Set session cookie with SameSite=Lax for CSRF protection
 	http.SetCookie(c.Writer, &http.Cookie{

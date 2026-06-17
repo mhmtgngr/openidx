@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -137,4 +138,111 @@ func TestOrgLookup_returnsOrgctxOrg_notFullOrganization(t *testing.T) {
 	_ = got.Slug
 	// If the orgctx.Org struct grows a field, this test won't catch
 	// it — but the adapter signature does (orgctx.Org return type).
+}
+
+// The tenant resolver consults the lookup on every request (the
+// default-org fallback path in particular), so the adapter caches
+// successful lookups for a short TTL to avoid a database round-trip
+// per request platform-wide.
+
+func TestOrgLookup_ByID_secondCallWithinTTL_servedFromCache(t *testing.T) {
+	calls := 0
+	f := &fakeFetcher{
+		byID: func(_ context.Context, _ string) (*Organization, error) {
+			calls++
+			return &Organization{ID: "id-1", Slug: "acme"}, nil
+		},
+	}
+	l := NewOrgLookup(f)
+
+	for i := 0; i < 3; i++ {
+		got, err := l.ByID(context.Background(), "id-1")
+		if err != nil {
+			t.Fatalf("ByID call %d: unexpected error: %v", i, err)
+		}
+		if got.ID != "id-1" || got.Slug != "acme" {
+			t.Fatalf("ByID call %d: got %+v, want id-1/acme", i, got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("inner fetcher called %d times, want 1 (cache must absorb repeats)", calls)
+	}
+}
+
+func TestOrgLookup_ByID_afterTTL_refetches(t *testing.T) {
+	calls := 0
+	f := &fakeFetcher{
+		byID: func(_ context.Context, _ string) (*Organization, error) {
+			calls++
+			return &Organization{ID: "id-1", Slug: "acme"}, nil
+		},
+	}
+	l := NewOrgLookup(f)
+
+	clock := time.Unix(1000, 0)
+	l.now = func() time.Time { return clock }
+
+	if _, err := l.ByID(context.Background(), "id-1"); err != nil {
+		t.Fatalf("first ByID: %v", err)
+	}
+	clock = clock.Add(l.ttl + time.Second)
+	if _, err := l.ByID(context.Background(), "id-1"); err != nil {
+		t.Fatalf("second ByID: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("inner fetcher called %d times, want 2 (entry past TTL must refetch)", calls)
+	}
+}
+
+func TestOrgLookup_ByID_errorNotCached(t *testing.T) {
+	calls := 0
+	f := &fakeFetcher{
+		byID: func(_ context.Context, _ string) (*Organization, error) {
+			calls++
+			if calls == 1 {
+				return nil, errors.New("transient connection error")
+			}
+			return &Organization{ID: "id-1", Slug: "acme"}, nil
+		},
+	}
+	l := NewOrgLookup(f)
+
+	if _, err := l.ByID(context.Background(), "id-1"); err == nil {
+		t.Fatal("first ByID: expected the transient error")
+	}
+	got, err := l.ByID(context.Background(), "id-1")
+	if err != nil {
+		t.Fatalf("second ByID: unexpected error: %v (errors must not be cached)", err)
+	}
+	if got.ID != "id-1" {
+		t.Fatalf("second ByID: got %+v, want id-1", got)
+	}
+}
+
+func TestOrgLookup_BySlug_cachedIndependentlyFromByID(t *testing.T) {
+	idCalls, slugCalls := 0, 0
+	f := &fakeFetcher{
+		byID: func(_ context.Context, _ string) (*Organization, error) {
+			idCalls++
+			return &Organization{ID: "id-1", Slug: "acme"}, nil
+		},
+		bySlug: func(_ context.Context, _ string) (*Organization, error) {
+			slugCalls++
+			return &Organization{ID: "id-1", Slug: "acme"}, nil
+		},
+	}
+	l := NewOrgLookup(f)
+
+	if _, err := l.ByID(context.Background(), "id-1"); err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if _, err := l.BySlug(context.Background(), "acme"); err != nil {
+		t.Fatalf("BySlug: %v", err)
+	}
+	if _, err := l.BySlug(context.Background(), "acme"); err != nil {
+		t.Fatalf("BySlug repeat: %v", err)
+	}
+	if idCalls != 1 || slugCalls != 1 {
+		t.Fatalf("fetcher calls = (byID=%d, bySlug=%d), want (1, 1)", idCalls, slugCalls)
+	}
 }

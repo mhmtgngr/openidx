@@ -9,6 +9,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 const (
@@ -79,11 +81,16 @@ func (s *Service) GetDashboardStats(ctx context.Context) (*DashboardStats, error
 func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats, error) {
 	stats := &DashboardStats{}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get total user count from identity service
 	var totalUsers int64
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM users WHERE deleted_at IS NULL
-	`).Scan(&totalUsers)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND org_id = $1
+	`, org.ID).Scan(&totalUsers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count users: %w", err)
 	}
@@ -95,7 +102,8 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 		SELECT COUNT(*) FROM sessions
 		WHERE expires_at > NOW()
 		AND (revoked IS NULL OR revoked = false)
-	`).Scan(&activeSessions)
+		AND org_id = $1
+	`, org.ID).Scan(&activeSessions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count active sessions: %w", err)
 	}
@@ -105,8 +113,8 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 	if totalUsers > 0 {
 		var mfaEnabledUsers int64
 		err = s.db.Pool.QueryRow(ctx, `
-			SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true
-		`).Scan(&mfaEnabledUsers)
+			SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1
+		`, org.ID).Scan(&mfaEnabledUsers)
 		if err != nil {
 			s.logger.Warn("Failed to count MFA enabled users", zap.Error(err))
 			mfaEnabledUsers = 0
@@ -121,9 +129,10 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 		       COALESCE(actor_id, ''), COALESCE(actor_ip, '')
 		FROM audit_events
 		WHERE timestamp >= $1
+		AND org_id = $2
 		ORDER BY timestamp DESC
 		LIMIT 10
-	`, twentyFourHoursAgo)
+	`, twentyFourHoursAgo, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to query recent security events", zap.Error(err))
 		stats.RecentEvents = []SecurityEvent{}

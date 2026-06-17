@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Recommendation represents an AI-generated access recommendation
@@ -233,19 +235,28 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	generated := 0
 
 	// 1. Permission Right-Sizing: Find users with admin roles who haven't done admin actions
 	rightSizeRows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, r.name as role_name FROM users u
-		JOIN user_roles ur ON u.id = ur.user_id
-		JOIN roles r ON ur.role_id = r.id
+		JOIN user_roles ur ON u.id = ur.user_id AND ur.org_id = u.org_id
+		JOIN roles r ON ur.role_id = r.id AND r.org_id = u.org_id
 		WHERE r.name IN ('admin', 'super_admin') AND u.enabled = true
+		AND u.org_id = $1
 		AND u.id NOT IN (
 			SELECT DISTINCT actor_id::uuid FROM audit_events
 			WHERE event_type IN ('user.create', 'user.delete', 'settings.update', 'policy.create')
 			AND timestamp > NOW() - INTERVAL '30 days'
-		) LIMIT 20`)
+			AND org_id = $1
+		) LIMIT 20`, org.ID)
 	if err == nil {
 		defer rightSizeRows.Close()
 		entities := []map[string]interface{}{}
@@ -271,13 +282,14 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 	// 2. MFA Enrollment: Users without MFA who log in frequently
 	mfaRows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, COUNT(ae.id) as login_count FROM users u
-		JOIN audit_events ae ON u.id::text = ae.actor_id
+		JOIN audit_events ae ON u.id::text = ae.actor_id AND ae.org_id = u.org_id
 		WHERE ae.event_type = 'authentication' AND ae.timestamp > NOW() - INTERVAL '30 days'
-		AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_totp WHERE verified = true)
-		AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_webauthn)
+		AND u.org_id = $1
+		AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_totp WHERE verified = true AND org_id = $1)
+		AND u.id NOT IN (SELECT DISTINCT user_id FROM mfa_webauthn WHERE org_id = $1)
 		AND u.enabled = true
 		GROUP BY u.id, u.username HAVING COUNT(ae.id) > 5
-		LIMIT 20`)
+		LIMIT 20`, org.ID)
 	if err == nil {
 		defer mfaRows.Close()
 		entities := []map[string]interface{}{}
@@ -304,7 +316,8 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 	var staleCount int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM users WHERE enabled = true
-		AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')`).Scan(&staleCount)
+		AND (last_login IS NULL OR last_login < NOW() - INTERVAL '90 days')
+		AND org_id = $1`, org.ID).Scan(&staleCount)
 	if staleCount > 0 {
 		actionJSON, _ := json.Marshal(map[string]interface{}{
 			"action": "disable_accounts", "threshold_days": 90,
@@ -323,8 +336,9 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 	var unprotectedApps int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM applications a
-		WHERE a.id NOT IN (SELECT DISTINCT unnest(pr.target_applications) FROM policy_rules pr
-			JOIN policies p ON pr.policy_id = p.id WHERE p.enabled = true)`).Scan(&unprotectedApps)
+		WHERE a.org_id = $1
+		AND a.id NOT IN (SELECT DISTINCT unnest(pr.target_applications) FROM policy_rules pr
+			JOIN policies p ON pr.policy_id = p.id AND p.org_id = pr.org_id WHERE p.enabled = true AND pr.org_id = $1)`, org.ID).Scan(&unprotectedApps)
 	if unprotectedApps > 0 {
 		actionJSON, _ := json.Marshal(map[string]interface{}{
 			"action": "create_default_policy", "type": "conditional_access",
@@ -377,8 +391,8 @@ func (s *Service) handleGenerateRecommendations(c *gin.Context) {
 	// 6. Compliance gap detection
 	var mfaAdoptionPct int
 	var totalU, mfaU int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&totalU)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE verified = true").Scan(&mfaU)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalU)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE verified = true AND org_id = $1", org.ID).Scan(&mfaU)
 	if totalU > 0 {
 		mfaAdoptionPct = (mfaU * 100) / totalU
 	}

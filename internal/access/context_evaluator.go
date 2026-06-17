@@ -69,6 +69,7 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 		// Find the Ziti identity for this user
 		var zitiIdentityID string
 		s.db.Pool.QueryRow(ctx,
+			//orgscope:ignore proxy data-plane posture eval; resolves the Ziti identity for the already-authenticated session user by user_id on every forward-auth request
 			"SELECT ziti_id FROM ziti_identities WHERE user_id=$1 LIMIT 1",
 			session.UserID).Scan(&zitiIdentityID)
 

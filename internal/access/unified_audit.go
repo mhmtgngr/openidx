@@ -280,6 +280,7 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 		if event.Service != "" {
 			var rid string
 			err := uas.db.Pool.QueryRow(ctx,
+				//orgscope:ignore external audit sync correlation; maps a Ziti controller event to its route by globally-unique ziti_service_name, no tenant context on the sync
 				`SELECT id FROM proxy_routes WHERE ziti_service_name = $1`, event.Service).Scan(&rid)
 			if err == nil {
 				routeID = &rid

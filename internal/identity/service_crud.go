@@ -6,47 +6,31 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ============================================================
-// Repository-based CRUD methods
-// ============================================================
-
-// SetRepository sets the repository for the service (enables repository pattern)
-// Note: This is a placeholder for future repository pattern implementation
-func (s *Service) SetRepository(repo Repository) {
-	// Repository would be set on Service struct in a future refactor
-	// For now, this is a no-op to maintain API compatibility
-}
-
-// getRepository returns the repository if set (for future use)
-func (s *Service) getRepository() Repository {
-	// In a future refactor, this would return s.repository
-	// For now, return nil to use direct database access
-	return nil
-}
-
-// ============================================================
-// User CRUD Methods using Repository Interface
+// User CRUD Methods (direct database access)
 // ============================================================
 
 // GetUserByUsername retrieves a user by username
 func (s *Service) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	s.logger.Debug("Getting user by username", zap.String("username", username))
 
-	// Try using repository if available
-	if repo := s.getRepository(); repo != nil {
-		return repo.GetUserByUsername(ctx, username)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fall back to direct database query
 	var dbUser UserDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE username = $1
-	`, username).Scan(
+		FROM users WHERE username = $1 AND org_id = $2
+	`, username, org.ID).Scan(
 		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
 		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
@@ -64,19 +48,19 @@ func (s *Service) GetUserByUsername(ctx context.Context, username string) (*User
 func (s *Service) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	s.logger.Debug("Getting user by email", zap.String("email", email))
 
-	// Try using repository if available
-	if repo := s.getRepository(); repo != nil {
-		return repo.GetUserByEmail(ctx, email)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fall back to direct database query
 	var dbUser UserDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE email = $1
-	`, email).Scan(
+		FROM users WHERE email = $1 AND org_id = $2
+	`, email, org.ID).Scan(
 		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
 		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
@@ -97,12 +81,6 @@ func (s *Service) ListUsersWithFilter(ctx context.Context, filter UserFilter) (*
 		zap.Int("limit", filter.Limit),
 		zap.String("query", pointerString(filter.Query)))
 
-	// Try using repository if available
-	if repo := s.getRepository(); repo != nil {
-		return repo.ListUsers(ctx, filter)
-	}
-
-	// Fall back to direct database query
 	// Set default pagination values
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 50
@@ -131,25 +109,25 @@ func (s *Service) ListUsersWithFilter(ctx context.Context, filter UserFilter) (*
 }
 
 // ============================================================
-// Group CRUD Methods using Repository Interface
+// Group CRUD Methods (direct database access)
 // ============================================================
 
 // GetGroupByDisplayName retrieves a group by display name
 func (s *Service) GetGroupByDisplayName(ctx context.Context, displayName string) (*Group, error) {
 	s.logger.Debug("Getting group by display name", zap.String("display_name", displayName))
 
-	// Try using repository if available
-	if repo := s.getRepository(); repo != nil {
-		return repo.GetGroupByDisplayName(ctx, displayName)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fall back to direct database query
 	var dbGroup GroupDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
-		FROM groups g WHERE g.name = $1
-	`, displayName).Scan(
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
+		FROM groups g WHERE g.name = $1 AND g.org_id = $2
+	`, displayName, org.ID).Scan(
 		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 	)
 	if err != nil {
@@ -167,12 +145,6 @@ func (s *Service) ListGroupsWithFilter(ctx context.Context, filter GroupFilter) 
 		zap.Int("limit", filter.Limit),
 		zap.String("query", pointerString(filter.Query)))
 
-	// Try using repository if available
-	if repo := s.getRepository(); repo != nil {
-		return repo.ListGroups(ctx, filter)
-	}
-
-	// Fall back to direct database query
 	// Set default pagination values
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 50

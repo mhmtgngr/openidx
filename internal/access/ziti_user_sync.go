@@ -41,6 +41,7 @@ type SyncStatus struct {
 // getUserGroupNames returns the names of all groups a user belongs to.
 func (zm *ZitiManager) getUserGroupNames(ctx context.Context, userID string) ([]string, error) {
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id (a user belongs to exactly one org), so the membership set is org-bounded
 		`SELECT g.name FROM groups g
 		 JOIN group_memberships gm ON gm.group_id = g.id
 		 WHERE gm.user_id = $1
@@ -67,6 +68,7 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 	// Check if user already has a Ziti identity
 	var existingID string
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore Ziti user-sync engine; one identity per globally-unique user_id, so the lookup is org-bounded
 		`SELECT id FROM ziti_identities WHERE user_id = $1`, userID).Scan(&existingID)
 	if err == nil {
 		// Already has identity — just sync group attributes
@@ -76,10 +78,13 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 		return &SyncResult{UserID: userID, Created: false}, nil
 	}
 
-	// Fetch user info to verify user exists
-	var username string
+	// Fetch user info to verify user exists; capture the user's org so the Ziti
+	// identity row is tagged with it (org is derived from the user, since this
+	// runs from the background poller without a request context).
+	var username, userOrgID string
 	err = zm.db.Pool.QueryRow(ctx,
-		`SELECT username FROM users WHERE id = $1 AND enabled = true`, userID).Scan(&username)
+		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id, org_id is selected and propagated to the identity row below
+		`SELECT username, org_id FROM users WHERE id = $1 AND enabled = true`, userID).Scan(&username, &userOrgID)
 	if err != nil {
 		return nil, fmt.Errorf("user %s not found or disabled: %w", userID, err)
 	}
@@ -100,9 +105,9 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 	// Persist to DB
 	attrsJSON, _ := json.Marshal(attrs)
 	_, err = zm.db.Pool.Exec(ctx,
-		`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrollment_jwt, attributes, group_attrs_synced_at)
-		 VALUES ($1, $2, 'User', $3, $4, $5, NOW())`,
-		zitiID, userID, userID, enrollmentJWT, attrsJSON)
+		`INSERT INTO ziti_identities (ziti_id, name, identity_type, user_id, enrollment_jwt, attributes, group_attrs_synced_at, org_id)
+		 VALUES ($1, $2, 'User', $3, $4, $5, NOW(), $6)`,
+		zitiID, userID, userID, enrollmentJWT, attrsJSON, userOrgID)
 	if err != nil {
 		return nil, fmt.Errorf("persist ziti identity for user %s: %w", userID, err)
 	}
@@ -131,6 +136,7 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 
 	// Find all enabled users without Ziti identities
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background sweep across all orgs (install-wide users -> Ziti mirror)
 		`SELECT u.id FROM users u
 		 LEFT JOIN ziti_identities zi ON zi.user_id = u.id
 		 WHERE zi.id IS NULL AND u.enabled = true`)
@@ -188,6 +194,7 @@ func (zm *ZitiManager) SyncAllUsersToZiti(ctx context.Context) (*BatchSyncResult
 func (zm *ZitiManager) hasUserTrustedDevice(ctx context.Context, userID string) (bool, error) {
 	var exists bool
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore Ziti user-sync engine; keyed by globally-unique user_id, so the device set is org-bounded
 		`SELECT EXISTS(SELECT 1 FROM known_devices WHERE user_id = $1 AND trusted = true)`,
 		userID).Scan(&exists)
 	if err != nil {
@@ -223,6 +230,7 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 	// Get the user's Ziti identity
 	var zitiIdentityID, zitiID string
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore Ziti user-sync engine; one identity per globally-unique user_id, so the lookup is org-bounded
 		`SELECT id, ziti_id FROM ziti_identities WHERE user_id = $1`, userID).Scan(&zitiIdentityID, &zitiID)
 	if err != nil {
 		return fmt.Errorf("no ziti identity for user %s: %w", userID, err)
@@ -242,6 +250,7 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 	// Update local DB
 	attrsJSON, _ := json.Marshal(attrs)
 	zm.db.Pool.Exec(ctx,
+		//orgscope:ignore Ziti user-sync engine; updates the identity by its primary key resolved from the org-bounded user_id lookup above
 		`UPDATE ziti_identities SET attributes=$1, group_attrs_synced_at=NOW(), updated_at=NOW()
 		 WHERE id=$2`, attrsJSON, zitiIdentityID)
 
@@ -265,6 +274,7 @@ func (zm *ZitiManager) SyncDeviceTrustForUser(ctx context.Context, userID string
 // SyncAllGroupAttributes updates role attributes for all identities linked to users.
 func (zm *ZitiManager) SyncAllGroupAttributes(ctx context.Context) (*BatchSyncResult, error) {
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background sweep across all orgs; refreshes attributes for every linked identity
 		`SELECT user_id FROM ziti_identities WHERE user_id IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query linked identities: %w", err)
@@ -294,6 +304,7 @@ func (zm *ZitiManager) GetSyncStatus(ctx context.Context) (*SyncStatus, error) {
 	var lastFull, lastAuto *time.Time
 
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore install-wide Ziti sync status; counts the whole users->Ziti mirror across all orgs
 		`SELECT zus.status, zus.last_full_sync_at, zus.last_auto_sync_at,
 		        zus.users_synced, zus.users_failed, zus.groups_synced,
 		        (SELECT COUNT(*) FROM users u LEFT JOIN ziti_identities zi ON zi.user_id = u.id
@@ -346,6 +357,7 @@ func (zm *ZitiManager) StartUserSyncPoller(ctx context.Context) {
 func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 	// Find up to 10 users without Ziti identities
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background poller sweep across all orgs (install-wide users -> Ziti mirror)
 		`SELECT u.id FROM users u
 		 LEFT JOIN ziti_identities zi ON zi.user_id = u.id
 		 WHERE zi.id IS NULL AND u.enabled = true
@@ -378,6 +390,7 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 
 	// Re-sync stale group attributes (older than 5 minutes)
 	staleRows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background poller sweep across all orgs; refreshes stale identity attributes
 		`SELECT zi.user_id FROM ziti_identities zi
 		 WHERE zi.user_id IS NOT NULL
 		 AND (zi.group_attrs_synced_at IS NULL OR zi.group_attrs_synced_at < NOW() - INTERVAL '5 minutes')

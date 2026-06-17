@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -88,6 +89,11 @@ func (s *Service) GetUserRiskProfile(ctx context.Context, userID string) (*UserR
 // UpdateUserRiskBaseline calculates and upserts a user's behavioral baseline
 // from the last 30 days of audit_events.
 func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Updating risk baseline for user", zap.String("user_id", userID))
 
 	// Gather typical login hours from last 30 days
@@ -99,9 +105,10 @@ func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) err
 		  AND event_type = 'authentication'
 		  AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '30 days'
+		  AND org_id = $2
 		GROUP BY hour
 		ORDER BY cnt DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to query login hours: %w", err)
 	}
@@ -156,9 +163,10 @@ func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) err
 		  AND success = true
 		  AND created_at > NOW() - INTERVAL '30 days'
 		  AND location IS NOT NULL AND location != ''
+		  AND org_id = $2
 		ORDER BY location
 		LIMIT 10
-	`, userID)
+	`, userID, org.ID)
 	if err == nil {
 		for countryRows.Next() {
 			var loc string
@@ -188,10 +196,11 @@ func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) err
 		WHERE user_id = $1
 		  AND success = true
 		  AND created_at > NOW() - INTERVAL '30 days'
+		  AND org_id = $2
 		GROUP BY ip_address
 		ORDER BY cnt DESC
 		LIMIT 20
-	`, userID)
+	`, userID, org.ID)
 	if err == nil {
 		for ipRows.Next() {
 			var ip string
@@ -212,7 +221,8 @@ func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) err
 		WHERE user_id = $1
 		  AND success = true
 		  AND created_at > NOW() - INTERVAL '30 days'
-	`, userID).Scan(&avgRisk, &loginCount)
+		  AND org_id = $2
+	`, userID, org.ID).Scan(&avgRisk, &loginCount)
 	if err != nil {
 		return fmt.Errorf("failed to query avg risk score: %w", err)
 	}
@@ -253,6 +263,11 @@ func (s *Service) UpdateUserRiskBaseline(ctx context.Context, userID string) err
 // CalculateEnhancedRiskScore computes a detailed risk score by comparing the
 // current login context against the user's learned behavioral baseline.
 func (s *Service) CalculateEnhancedRiskScore(ctx context.Context, userID, ip, country, userAgent string, loginHour int) (*RiskScoreBreakdown, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	breakdown := &RiskScoreBreakdown{
 		Factors:   make(map[string]int),
 		Anomalies: []string{},
@@ -309,8 +324,8 @@ func (s *Service) CalculateEnhancedRiskScore(ctx context.Context, userID, ip, co
 		fingerprint := s.ComputeDeviceFingerprint(ip, userAgent)
 		var deviceCount int
 		s.db.Pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-			userID, fingerprint).Scan(&deviceCount)
+			`SELECT COUNT(*) FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+			userID, fingerprint, org.ID).Scan(&deviceCount)
 		if deviceCount == 0 {
 			breakdown.Factors["new_device"] = 10
 			breakdown.Anomalies = append(breakdown.Anomalies, "Login from unrecognized device")
@@ -320,7 +335,7 @@ func (s *Service) CalculateEnhancedRiskScore(ctx context.Context, userID, ip, co
 	// Factor 5: No MFA configured (+20)
 	var mfaCount int
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM mfa_totp WHERE user_id = $1 AND enabled = true`, userID).Scan(&mfaCount)
+		`SELECT COUNT(*) FROM mfa_totp WHERE user_id = $1 AND enabled = true AND org_id = $2`, userID, org.ID).Scan(&mfaCount)
 	var webauthnCount int
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1`, userID).Scan(&webauthnCount)
@@ -400,15 +415,20 @@ func (s *Service) DetectAnomalousLoginTime(ctx context.Context, userID string, l
 // DetectCredentialStuffing checks if there are more than 10 distinct usernames
 // attempting login from the same IP address within the given time window.
 func (s *Service) DetectCredentialStuffing(ctx context.Context, ip string, window time.Duration) (bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
 	var distinctUsers int
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(DISTINCT actor_id)
 		FROM audit_events
 		WHERE actor_ip = $1
 		  AND event_type = 'authentication'
 		  AND outcome = 'failure'
 		  AND timestamp > NOW() - $2::interval
-	`, ip, fmt.Sprintf("%d seconds", int(window.Seconds()))).Scan(&distinctUsers)
+		  AND org_id = $3
+	`, ip, fmt.Sprintf("%d seconds", int(window.Seconds())), org.ID).Scan(&distinctUsers)
 	if err != nil {
 		return false, fmt.Errorf("failed to check credential stuffing: %w", err)
 	}
@@ -428,6 +448,11 @@ func (s *Service) DetectCredentialStuffing(ctx context.Context, ip string, windo
 // GetUserLoginPatterns queries audit_events for login events and aggregates
 // the results into behavioral patterns for a user.
 func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*LoginPatterns, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	patterns := &LoginPatterns{
 		HourlyDistribution:  make(map[int]int),
 		DailyDistribution:   make(map[string]int),
@@ -443,9 +468,10 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 		  AND event_type = 'authentication'
 		  AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '90 days'
+		  AND org_id = $2
 		GROUP BY hour
 		ORDER BY hour
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query hourly distribution: %w", err)
 	}
@@ -465,9 +491,10 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 		  AND event_type = 'authentication'
 		  AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '90 days'
+		  AND org_id = $2
 		GROUP BY day_name
 		ORDER BY cnt DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query daily distribution: %w", err)
 	}
@@ -487,10 +514,11 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 		WHERE user_id = $1
 		  AND success = true
 		  AND created_at > NOW() - INTERVAL '90 days'
+		  AND org_id = $2
 		GROUP BY loc
 		ORDER BY cnt DESC
 		LIMIT 20
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query country distribution: %w", err)
 	}
@@ -509,9 +537,10 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 		SELECT COALESCE(name, 'Unknown') AS device_name, COUNT(*) AS cnt
 		FROM known_devices
 		WHERE user_id = $1
+		  AND org_id = $2
 		GROUP BY device_name
 		ORDER BY cnt DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query device types: %w", err)
 	}
@@ -531,7 +560,8 @@ func (s *Service) GetUserLoginPatterns(ctx context.Context, userID string) (*Log
 		FROM sessions
 		WHERE user_id = $1
 		  AND created_at > NOW() - INTERVAL '90 days'
-	`, userID).Scan(&avgDuration)
+		  AND org_id = $2
+	`, userID, org.ID).Scan(&avgDuration)
 	if avgDuration != nil {
 		patterns.AvgSessionDuration = *avgDuration
 	}
@@ -546,6 +576,11 @@ func (s *Service) GetRiskTimeline(ctx context.Context, days int) ([]map[string]i
 		days = 30
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(created_at) AS day,
 		       AVG(risk_score) AS avg_score,
@@ -553,9 +588,10 @@ func (s *Service) GetRiskTimeline(ctx context.Context, days int) ([]map[string]i
 		       COUNT(*) AS login_count
 		FROM login_history
 		WHERE created_at > NOW() - ($1::int || ' days')::interval
+		  AND org_id = $2
 		GROUP BY day
 		ORDER BY day
-	`, days)
+	`, days, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query risk timeline: %w", err)
 	}

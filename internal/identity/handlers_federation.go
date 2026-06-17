@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // validDomainPattern validates email domains to prevent SQL injection
@@ -57,14 +59,20 @@ func (s *Service) handleFederationDiscover(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"found": false, "message": "No federation rule for this domain"})
+		return
+	}
+
 	var providerID, providerName, issuerURL string
 	var autoRedirect bool
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT fr.provider_id, ip.name, ip.issuer_url, fr.auto_redirect
 		 FROM federation_rules fr
-		 JOIN identity_providers ip ON fr.provider_id = ip.id
+		 JOIN identity_providers ip ON fr.provider_id = ip.id AND ip.org_id = $2
 		 WHERE fr.email_domain = $1 AND fr.enabled = true
-		 ORDER BY fr.priority LIMIT 1`, domain).Scan(&providerID, &providerName, &issuerURL, &autoRedirect)
+		 ORDER BY fr.priority LIMIT 1`, domain, org.ID).Scan(&providerID, &providerName, &issuerURL, &autoRedirect)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"found": false, "message": "No federation rule for this domain"})
 		return
@@ -87,13 +95,19 @@ func (s *Service) handleGetMyIdentityLinks(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list identity links"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT uil.id, uil.provider_id, ip.name as provider_name,
 			uil.external_id, uil.external_email, uil.external_username,
 			uil.display_name, uil.profile_data, uil.is_primary, uil.linked_at, uil.last_used_at
 		 FROM user_identity_links uil
-		 LEFT JOIN identity_providers ip ON uil.provider_id = ip.id
-		 WHERE uil.user_id = $1 ORDER BY uil.linked_at`, userID)
+		 LEFT JOIN identity_providers ip ON uil.provider_id = ip.id AND ip.org_id = $2
+		 WHERE uil.user_id = $1 ORDER BY uil.linked_at`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list identity links", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list identity links"})

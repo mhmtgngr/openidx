@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
 )
 
@@ -129,9 +130,14 @@ func (s *Service) isNotificationEnabled(ctx context.Context, userID, channel, ev
 
 // GetUserNotifications returns a paginated list of notifications for a user, along with the total count.
 func (s *Service) GetUserNotifications(ctx context.Context, userID, channel string, unreadOnly bool, limit, offset int) ([]Notification, int, error) {
-	baseWhere := "WHERE user_id = $1"
-	args := []interface{}{userID}
-	argIdx := 2
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	baseWhere := "WHERE user_id = $1 AND org_id = $2"
+	args := []interface{}{userID, org.ID}
+	argIdx := 3
 
 	if channel != "" {
 		baseWhere += fmt.Sprintf(" AND channel = $%d", argIdx)
@@ -144,6 +150,7 @@ func (s *Service) GetUserNotifications(ctx context.Context, userID, channel stri
 
 	// Count query.
 	// SECURITY: baseWhere is built from hardcoded string literals and parameterized query values only
+	//orgscope:ignore org filter (org_id) is applied via the interpolated baseWhere, which the linter can't see
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM notifications %s", baseWhere)
 	var total int
 	if err := s.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
@@ -480,8 +487,14 @@ func (s *Service) handleDeleteNotification(c *gin.Context) {
 	}
 	notifID := c.Param("id")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete notification"})
+		return
+	}
+
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM notifications WHERE id = $1 AND user_id = $2", notifID, userID)
+		"DELETE FROM notifications WHERE id = $1 AND user_id = $2 AND org_id = $3", notifID, userID, org.ID)
 	if err != nil {
 		s.logger.Error("failed to delete notification", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete notification"})

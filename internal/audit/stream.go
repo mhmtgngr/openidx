@@ -13,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // EventStreamer manages real-time streaming of audit events
@@ -405,11 +407,16 @@ func (es *EventStreamer) handleRegisterWebhook(c *gin.Context) {
 	// Store subscription in database
 	if es.service.db != nil && es.service.db.Pool != nil {
 		ctx := c.Request.Context()
-		_, err := es.service.db.Pool.Exec(ctx, `
-			INSERT INTO webhook_subscriptions (id, url, secret, enabled, filters, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
+		org, err := orgctx.From(ctx)
+		if err != nil {
+			c.JSON(403, gin.H{"error": "organization context required"})
+			return
+		}
+		_, err = es.service.db.Pool.Exec(ctx, `
+			INSERT INTO webhook_subscriptions (id, url, secret, enabled, filters, created_at, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`, subscription.ID, subscription.URL, subscription.Secret, subscription.Enabled,
-			subscription.Filters, subscription.CreatedAt)
+			subscription.Filters, subscription.CreatedAt, org.ID)
 
 		if err != nil {
 			es.logger.Error("Failed to store webhook subscription", zap.Error(err))
@@ -429,11 +436,17 @@ func (es *EventStreamer) handleListWebhooks(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(403, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := es.service.db.Pool.Query(ctx, `
 		SELECT id, url, enabled, filters, created_at, last_delivery, failure_count
 		FROM webhook_subscriptions
+		WHERE org_id = $1
 		ORDER BY created_at DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to query webhooks"})
 		return
@@ -467,9 +480,14 @@ func (es *EventStreamer) handleDeleteWebhook(c *gin.Context) {
 
 	id := c.Param("id")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(403, gin.H{"error": "organization context required"})
+		return
+	}
 
-	_, err := es.service.db.Pool.Exec(ctx,
-		"DELETE FROM webhook_subscriptions WHERE id = $1", id)
+	_, err = es.service.db.Pool.Exec(ctx,
+		"DELETE FROM webhook_subscriptions WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to delete webhook"})
 		return
@@ -487,10 +505,15 @@ func (es *EventStreamer) handleTestWebhook(c *gin.Context) {
 
 	id := c.Param("id")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(403, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var url string
-	err := es.service.db.Pool.QueryRow(ctx,
-		"SELECT url FROM webhook_subscriptions WHERE id = $1", id).Scan(&url)
+	err = es.service.db.Pool.QueryRow(ctx,
+		"SELECT url FROM webhook_subscriptions WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&url)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "webhook not found"})
 		return
@@ -608,6 +631,7 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 		// Update last delivery time
 		if es.service.db != nil && es.service.db.Pool != nil {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			//orgscope:ignore background webhook-delivery bookkeeping; keyed by webhook url, no request context
 			_, _ = es.service.db.Pool.Exec(updateCtx, `
 				UPDATE webhook_subscriptions
 				SET last_delivery = NOW(), failure_count = 0
@@ -627,6 +651,7 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 	// Increment failure count
 	if es.service.db != nil && es.service.db.Pool != nil {
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		//orgscope:ignore background webhook-delivery bookkeeping; keyed by webhook url, no request context
 		_, _ = es.service.db.Pool.Exec(updateCtx, `
 			UPDATE webhook_subscriptions
 			SET failure_count = failure_count + 1

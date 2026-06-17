@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // NotificationRoutingRule represents a rule for routing notifications to channels
@@ -399,9 +400,15 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 	id := c.Param("id")
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Fetch the broadcast
 	var b BroadcastMessage
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, title, body, channel, target_type, target_ids, priority, status
 		 FROM broadcast_messages WHERE id = $1`, id,
 	).Scan(&b.ID, &b.Title, &b.Body, &b.Channel, &b.TargetType, &b.TargetIDs, &b.Priority, &b.Status)
@@ -423,7 +430,7 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 	var recipientCount int
 	switch b.TargetType {
 	case "all":
-		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&recipientCount)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&recipientCount)
 	case "role":
 		var roleIDs []string
 		if err := json.Unmarshal(b.TargetIDs, &roleIDs); err != nil {
@@ -435,7 +442,7 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 			return
 		}
 		err = s.db.Pool.QueryRow(ctx,
-			`SELECT COUNT(DISTINCT user_id) FROM user_roles WHERE role_id = ANY($1::uuid[])`, roleIDs,
+			`SELECT COUNT(DISTINCT user_id) FROM user_roles WHERE role_id = ANY($1::uuid[]) AND org_id = $2`, roleIDs, org.ID,
 		).Scan(&recipientCount)
 	case "group":
 		var groupIDs []string
@@ -448,7 +455,7 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 			return
 		}
 		err = s.db.Pool.QueryRow(ctx,
-			`SELECT COUNT(DISTINCT user_id) FROM group_memberships WHERE group_id = ANY($1::uuid[])`, groupIDs,
+			`SELECT COUNT(DISTINCT user_id) FROM group_memberships WHERE group_id = ANY($1::uuid[]) AND org_id = $2`, groupIDs, org.ID,
 		).Scan(&recipientCount)
 	default:
 		respondError(c, nil, apperrors.BadRequest("Invalid target_type"))
@@ -465,24 +472,24 @@ func (s *Service) handleSendBroadcast(c *gin.Context) {
 
 	switch b.TargetType {
 	case "all":
-		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata)
-			SELECT id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4)
-			FROM users`
-		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID}
+		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+			SELECT id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4), $5
+			FROM users WHERE org_id = $5`
+		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, org.ID}
 	case "role":
 		var roleIDs []string
 		_ = json.Unmarshal(b.TargetIDs, &roleIDs)
-		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata)
-			SELECT DISTINCT ur.user_id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4)
-			FROM user_roles ur WHERE ur.role_id = ANY($5::uuid[])`
-		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, roleIDs}
+		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+			SELECT DISTINCT ur.user_id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4), $6
+			FROM user_roles ur WHERE ur.role_id = ANY($5::uuid[]) AND ur.org_id = $6`
+		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, roleIDs, org.ID}
 	case "group":
 		var groupIDs []string
 		_ = json.Unmarshal(b.TargetIDs, &groupIDs)
-		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata)
-			SELECT DISTINCT gm.user_id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4)
-			FROM group_memberships gm WHERE gm.group_id = ANY($5::uuid[])`
-		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, groupIDs}
+		insertQuery = `INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+			SELECT DISTINCT gm.user_id, $1, 'broadcast', $2, $3, jsonb_build_object('broadcast_id', $4), $6
+			FROM group_memberships gm WHERE gm.group_id = ANY($5::uuid[]) AND gm.org_id = $6`
+		insertArgs = []interface{}{b.Channel, b.Title, b.Body, b.ID, groupIDs, org.ID}
 	}
 
 	_, err = s.db.Pool.Exec(ctx, insertQuery, insertArgs...)
@@ -551,19 +558,25 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Total counts
 	var totalSent, totalRead, totalUnread int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications").Scan(&totalSent)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE org_id = $1", org.ID).Scan(&totalSent)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = true").Scan(&totalRead)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = true AND org_id = $1", org.ID).Scan(&totalRead)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
 	}
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = false").Scan(&totalUnread)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM notifications WHERE read = false AND org_id = $1", org.ID).Scan(&totalUnread)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return
@@ -571,7 +584,7 @@ func (s *Service) handleNotificationStats(c *gin.Context) {
 
 	// Channel breakdown
 	channelRows, err := s.db.Pool.Query(ctx,
-		"SELECT channel, COUNT(*) FROM notifications GROUP BY channel")
+		"SELECT channel, COUNT(*) FROM notifications WHERE org_id = $1 GROUP BY channel", org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to get notification stats", err))
 		return

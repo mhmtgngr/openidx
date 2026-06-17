@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // handleBrowZerStatus returns the current BrowZer configuration state
@@ -84,6 +86,12 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 
 	zitiServiceID := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Parse optional path and/or domain from request body
 	var body struct {
 		Path   string `json:"path"`
@@ -130,7 +138,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		var serviceName, serviceHost string
 		var servicePort int
 		err := s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT name, host, port FROM ziti_services WHERE ziti_id = $1`, zitiServiceID,
+			`SELECT name, host, port FROM ziti_services WHERE ziti_id = $1 AND org_id = $2`, zitiServiceID, org.ID,
 		).Scan(&serviceName, &serviceHost, &servicePort)
 		if err != nil {
 			s.logger.Warn("Could not look up service details for BrowZer path route", zap.Error(err))
@@ -148,11 +156,11 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 
 			// Delete any existing route for this service, then insert fresh
 			_, _ = s.db.Pool.Exec(c.Request.Context(),
-				`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
+				`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
 			_, dbErr := s.db.Pool.Exec(c.Request.Context(),
-				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled)
-				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true)`,
-				routeName, fmt.Sprintf("BrowZer path route for %s", serviceName), fromURL, toURL, serviceName,
+				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled, org_id)
+				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
+				routeName, fmt.Sprintf("BrowZer path route for %s", serviceName), fromURL, toURL, serviceName, org.ID,
 			)
 			if dbErr != nil {
 				s.logger.Warn("Failed to create BrowZer path route", zap.Error(dbErr))
@@ -171,7 +179,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		var serviceName, serviceHost string
 		var servicePort int
 		err := s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT name, host, port FROM ziti_services WHERE ziti_id = $1`, zitiServiceID,
+			`SELECT name, host, port FROM ziti_services WHERE ziti_id = $1 AND org_id = $2`, zitiServiceID, org.ID,
 		).Scan(&serviceName, &serviceHost, &servicePort)
 		if err != nil {
 			s.logger.Warn("Could not look up service details for BrowZer vhost route", zap.Error(err))
@@ -181,11 +189,11 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 			routeName := fmt.Sprintf("browzer-vhost-%s", serviceName)
 
 			_, _ = s.db.Pool.Exec(c.Request.Context(),
-				`DELETE FROM proxy_routes WHERE name = $1 AND browzer_enabled = true`, routeName)
+				`DELETE FROM proxy_routes WHERE name = $1 AND browzer_enabled = true AND org_id = $2`, routeName, org.ID)
 			_, dbErr := s.db.Pool.Exec(c.Request.Context(),
-				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled)
-				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true)`,
-				routeName, fmt.Sprintf("BrowZer vhost route for %s", serviceName), fromURL, toURL, serviceName,
+				`INSERT INTO proxy_routes (name, description, from_url, to_url, require_auth, enabled, priority, ziti_enabled, ziti_service_name, browzer_enabled, org_id)
+				 VALUES ($1, $2, $3, $4, true, true, 10, true, $5, true, $6)`,
+				routeName, fmt.Sprintf("BrowZer vhost route for %s", serviceName), fromURL, toURL, serviceName, org.ID,
 			)
 			if dbErr != nil {
 				s.logger.Warn("Failed to create BrowZer vhost route", zap.Error(dbErr))
@@ -225,6 +233,12 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 
 	zitiServiceID := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	attrs, err := s.zitiManager.GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
@@ -248,10 +262,10 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 	// Clean up any BrowZer proxy_route for this service
 	var serviceName string
 	if err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT name FROM ziti_services WHERE ziti_id = $1`, zitiServiceID,
+		`SELECT name FROM ziti_services WHERE ziti_id = $1 AND org_id = $2`, zitiServiceID, org.ID,
 	).Scan(&serviceName); err == nil {
 		_, _ = s.db.Pool.Exec(c.Request.Context(),
-			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true`, serviceName)
+			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
 	}
 
 	// Regenerate BrowZer bootstrapper targets and router config with timeout

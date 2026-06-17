@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // UserImportRow represents a single row in the user import CSV
@@ -202,15 +204,20 @@ func (s *Service) validateUserImportRow(ctx context.Context, row *UserImportRow)
 		return nil
 	}
 
-	// Check if username already exists
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Check if username already exists (uniqueness is per-org)
 	var exists bool
-	err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", row.Username).Scan(&exists)
+	err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 AND org_id = $2)", row.Username, org.ID).Scan(&exists)
 	if err == nil && exists {
 		return fmt.Errorf("username already exists")
 	}
 
 	// Check if email already exists
-	err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)", row.Email).Scan(&exists)
+	err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND org_id = $2)", row.Email, org.ID).Scan(&exists)
 	if err == nil && exists {
 		return fmt.Errorf("email already exists")
 	}
@@ -223,7 +230,7 @@ func (s *Service) validateUserImportRow(ctx context.Context, row *UserImportRow)
 			if role != "" {
 				// Check if role exists
 				var roleExists bool
-				err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM roles WHERE name = $1)", role).Scan(&roleExists)
+				err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM roles WHERE name = $1 AND org_id = $2)", role, org.ID).Scan(&roleExists)
 				if err != nil || !roleExists {
 					return fmt.Errorf("role '%s' does not exist", role)
 				}
@@ -236,6 +243,11 @@ func (s *Service) validateUserImportRow(ctx context.Context, row *UserImportRow)
 
 // importUser imports a single user
 func (s *Service) importUser(ctx context.Context, row *UserImportRow) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
+
 	// Generate user ID
 	userID := uuid.New().String()
 
@@ -247,12 +259,12 @@ func (s *Service) importUser(ctx context.Context, row *UserImportRow) (string, e
 
 	// Insert user
 	now := time.Now()
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO users (id, username, email, first_name, last_name, enabled,
-		                   password_hash, password_must_change, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $8)
+		                   password_hash, password_must_change, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $8, $9)
 	`, userID, row.Username, row.Email, row.FirstName, row.LastName,
-		enabled, tempPassword, now)
+		enabled, tempPassword, now, org.ID)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to create user: %w", err)
@@ -269,7 +281,7 @@ func (s *Service) importUser(ctx context.Context, row *UserImportRow) (string, e
 
 			// Get role ID
 			var roleID string
-			err := s.db.Pool.QueryRow(ctx, "SELECT id FROM roles WHERE name = $1", roleName).Scan(&roleID)
+			err := s.db.Pool.QueryRow(ctx, "SELECT id FROM roles WHERE name = $1 AND org_id = $2", roleName, org.ID).Scan(&roleID)
 			if err != nil {
 				s.logger.Warn("Failed to find role for assignment",
 					zap.String("role", roleName),
@@ -279,10 +291,10 @@ func (s *Service) importUser(ctx context.Context, row *UserImportRow) (string, e
 
 			// Assign role
 			_, err = s.db.Pool.Exec(ctx, `
-				INSERT INTO user_roles (user_id, role_id, assigned_at)
-				VALUES ($1, $2, $3)
+				INSERT INTO user_roles (user_id, role_id, assigned_at, org_id)
+				VALUES ($1, $2, $3, $4)
 				ON CONFLICT (user_id, role_id) DO NOTHING
-			`, userID, roleID, now)
+			`, userID, roleID, now, org.ID)
 			if err != nil {
 				s.logger.Warn("Failed to assign role",
 					zap.String("user_id", userID),
@@ -303,7 +315,7 @@ func (s *Service) importUser(ctx context.Context, row *UserImportRow) (string, e
 
 			// Get group ID
 			var groupID string
-			err := s.db.Pool.QueryRow(ctx, "SELECT id FROM groups WHERE name = $1", groupName).Scan(&groupID)
+			err := s.db.Pool.QueryRow(ctx, "SELECT id FROM groups WHERE name = $1 AND org_id = $2", groupName, org.ID).Scan(&groupID)
 			if err != nil {
 				s.logger.Warn("Failed to find group for membership",
 					zap.String("group", groupName),
@@ -313,10 +325,10 @@ func (s *Service) importUser(ctx context.Context, row *UserImportRow) (string, e
 
 			// Add to group
 			_, err = s.db.Pool.Exec(ctx, `
-				INSERT INTO group_memberships (user_id, group_id, joined_at)
-				VALUES ($1, $2, $3)
+				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id)
+				VALUES ($1, $2, $3, $4)
 				ON CONFLICT (user_id, group_id) DO NOTHING
-			`, userID, groupID, now)
+			`, userID, groupID, now, org.ID)
 			if err != nil {
 				s.logger.Warn("Failed to add user to group",
 					zap.String("user_id", userID),
@@ -340,6 +352,11 @@ func (s *Service) ExportUsersToCSV(ctx context.Context, writer io.Writer) error 
 		return fmt.Errorf("failed to write CSV header: %w", err)
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Query users with roles and groups
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.enabled,
@@ -347,14 +364,14 @@ func (s *Service) ExportUsersToCSV(ctx context.Context, writer io.Writer) error 
 		       COALESCE(string_agg(DISTINCT r.name, ','), '') as roles,
 		       COALESCE(string_agg(DISTINCT g.name, ','), '') as groups
 		FROM users u
-		LEFT JOIN user_roles ur ON u.id = ur.user_id
-		LEFT JOIN roles r ON ur.role_id = r.id
-		LEFT JOIN group_memberships gm ON u.id = gm.user_id
-		LEFT JOIN groups g ON gm.group_id = g.id
-		WHERE u.deleted_at IS NULL
+		LEFT JOIN user_roles ur ON u.id = ur.user_id AND ur.org_id = u.org_id
+		LEFT JOIN roles r ON ur.role_id = r.id AND r.org_id = u.org_id
+		LEFT JOIN group_memberships gm ON u.id = gm.user_id AND gm.org_id = u.org_id
+		LEFT JOIN groups g ON gm.group_id = g.id AND g.org_id = u.org_id
+		WHERE u.deleted_at IS NULL AND u.org_id = $1
 		GROUP BY u.id
 		ORDER BY u.username
-	`)
+	`, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to query users: %w", err)
 	}
@@ -397,20 +414,24 @@ func (s *Service) ExportUsersToCSV(ctx context.Context, writer io.Writer) error 
 
 // ExportUsersToCSVStreaming exports users with streaming response for large datasets
 func (s *Service) ExportUsersToCSVStreaming(ctx context.Context) (<-chan []string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.enabled,
 		       u.email_verified, u.created_at, u.last_login_at,
 		       COALESCE(string_agg(DISTINCT r.name, ','), '') as roles,
 		       COALESCE(string_agg(DISTINCT g.name, ','), '') as groups
 		FROM users u
-		LEFT JOIN user_roles ur ON u.id = ur.user_id
-		LEFT JOIN roles r ON ur.role_id = r.id
-		LEFT JOIN group_memberships gm ON u.id = gm.user_id
-		LEFT JOIN groups g ON gm.group_id = g.id
-		WHERE u.deleted_at IS NULL
+		LEFT JOIN user_roles ur ON u.id = ur.user_id AND ur.org_id = u.org_id
+		LEFT JOIN roles r ON ur.role_id = r.id AND r.org_id = u.org_id
+		LEFT JOIN group_memberships gm ON u.id = gm.user_id AND gm.org_id = u.org_id
+		LEFT JOIN groups g ON gm.group_id = g.id AND g.org_id = u.org_id
+		WHERE u.deleted_at IS NULL AND u.org_id = $1
 		GROUP BY u.id
 		ORDER BY u.username
-	`)
+	`, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query users: %w", err)
 	}
@@ -508,10 +529,14 @@ func (s *Service) handleImportUsersCSV(c *gin.Context) {
 		"total_rows":    result.TotalRows,
 	})
 	userID, _ := c.Get("user_id")
+	auditOrgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
+		auditOrgID = org.ID
+	}
 	_, _ = s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome, actor_id, details)
-		VALUES ($1, NOW(), 'admin', 'bulk_import', 'users_import', 'success', $2, $3)
-	`, uuid.New().String(), nilIfEmpty(userID.(string)), auditJSON)
+		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome, actor_id, details, org_id)
+		VALUES ($1, NOW(), 'admin', 'bulk_import', 'users_import', 'success', $2, $3, $4)
+	`, uuid.New().String(), nilIfEmpty(userID.(string)), auditJSON, auditOrgID)
 
 	c.JSON(http.StatusOK, result)
 }

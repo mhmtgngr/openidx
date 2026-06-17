@@ -166,12 +166,13 @@ func (s *Service) getUserAccessData(ctx context.Context, orgID string) ([]map[st
 		       COALESCE(r.name, '') AS role_name,
 		       COALESCE(g.name, '') AS group_name
 		FROM users u
-		LEFT JOIN user_roles ur ON u.id = ur.user_id
-		LEFT JOIN roles r ON ur.role_id = r.id
-		LEFT JOIN group_memberships gm ON u.id = gm.user_id
-		LEFT JOIN groups g ON gm.group_id = g.id
+		LEFT JOIN user_roles ur ON u.id = ur.user_id AND ur.org_id = u.org_id
+		LEFT JOIN roles r ON ur.role_id = r.id AND r.org_id = u.org_id
+		LEFT JOIN group_memberships gm ON u.id = gm.user_id AND gm.org_id = u.org_id
+		LEFT JOIN groups g ON gm.group_id = g.id AND g.org_id = u.org_id
+		WHERE u.org_id = $1
 		ORDER BY u.username
-	`)
+	`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query user access data: %w", err)
 	}
@@ -200,9 +201,10 @@ func (s *Service) getComplianceData(ctx context.Context, orgID string) ([]map[st
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT event_type, category, outcome, COUNT(*) AS event_count
 		FROM audit_events
+		WHERE org_id = $1
 		GROUP BY event_type, category, outcome
 		ORDER BY event_count DESC
-	`)
+	`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query compliance data: %w", err)
 	}
@@ -234,13 +236,13 @@ func (s *Service) getEntitlementData(ctx context.Context, orgID string) ([]map[s
 		       COALESCE(g.name, '') AS group_name,
 		       COALESCE(ur.assigned_at, gm.joined_at, NOW()) AS assigned_at
 		FROM users u
-		LEFT JOIN user_roles ur ON u.id = ur.user_id
-		LEFT JOIN roles r ON ur.role_id = r.id
-		LEFT JOIN group_memberships gm ON u.id = gm.user_id
-		LEFT JOIN groups g ON gm.group_id = g.id
-		WHERE ur.role_id IS NOT NULL OR gm.group_id IS NOT NULL
+		LEFT JOIN user_roles ur ON u.id = ur.user_id AND ur.org_id = u.org_id
+		LEFT JOIN roles r ON ur.role_id = r.id AND r.org_id = u.org_id
+		LEFT JOIN group_memberships gm ON u.id = gm.user_id AND gm.org_id = u.org_id
+		LEFT JOIN groups g ON gm.group_id = g.id AND g.org_id = u.org_id
+		WHERE u.org_id = $1 AND (ur.role_id IS NOT NULL OR gm.group_id IS NOT NULL)
 		ORDER BY u.username
-	`)
+	`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query entitlement data: %w", err)
 	}
@@ -270,9 +272,10 @@ func (s *Service) getActivityData(ctx context.Context, orgID string) ([]map[stri
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT action, COUNT(*) AS event_count, MAX(timestamp) AS last_occurred
 		FROM audit_events
+		WHERE org_id = $1
 		GROUP BY action
 		ORDER BY event_count DESC
-	`)
+	`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query activity data: %w", err)
 	}

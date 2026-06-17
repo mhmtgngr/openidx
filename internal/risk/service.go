@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // GeoResult represents a geo-IP lookup result
@@ -91,17 +92,22 @@ func (s *Service) ComputeDeviceFingerprint(ipAddress, userAgent string) string {
 
 // RegisterDevice registers or updates a known device for a user
 func (s *Service) RegisterDevice(ctx context.Context, userID, fingerprint, ipAddress, userAgent, location string) (string, bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", false, err
+	}
+
 	// Try to find existing device
 	var deviceID string
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&deviceID)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&deviceID)
 
 	if err == nil {
 		// Device exists — update last seen
 		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE known_devices SET last_seen_at = NOW(), ip_address = $3, location = $4 WHERE id = $1`,
-			deviceID, userID, ipAddress, location); err != nil {
+			`UPDATE known_devices SET last_seen_at = NOW(), ip_address = $3, location = $4 WHERE id = $1 AND org_id = $5`,
+			deviceID, userID, ipAddress, location, org.ID); err != nil {
 			return deviceID, false, fmt.Errorf("failed to update device: %w", err)
 		}
 		return deviceID, false, nil
@@ -110,11 +116,11 @@ func (s *Service) RegisterDevice(ctx context.Context, userID, fingerprint, ipAdd
 	// New device — insert
 	name := parseDeviceName(userAgent)
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO known_devices (user_id, fingerprint, name, ip_address, user_agent, location)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO known_devices (user_id, fingerprint, name, ip_address, user_agent, location, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (user_id, fingerprint) DO UPDATE SET last_seen_at = NOW()
 		 RETURNING id`,
-		userID, fingerprint, name, ipAddress, userAgent, location).Scan(&deviceID)
+		userID, fingerprint, name, ipAddress, userAgent, location, org.ID).Scan(&deviceID)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to register device: %w", err)
 	}
@@ -131,10 +137,14 @@ func (s *Service) RegisterDevice(ctx context.Context, userID, fingerprint, ipAdd
 
 // IsDeviceTrusted checks if a device is trusted for a user
 func (s *Service) IsDeviceTrusted(ctx context.Context, userID, fingerprint string) bool {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false
+	}
 	var trusted bool
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT trusted FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&trusted)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT trusted FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&trusted)
 	if err != nil {
 		return false
 	}
@@ -143,18 +153,22 @@ func (s *Service) IsDeviceTrusted(ctx context.Context, userID, fingerprint strin
 
 // GetDeviceTrustLevel returns the trust level for a device fingerprint
 func (s *Service) GetDeviceTrustLevel(ctx context.Context, userID, fingerprint string) TrustLevel {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return TrustLevelUnknown
+	}
 	var seenCount int
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(seen_count, 0) FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&seenCount)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(seen_count, 0) FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&seenCount)
 	if err != nil {
 		return TrustLevelUnknown
 	}
 
 	var trusted bool
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(trusted, false) FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&trusted)
+		`SELECT COALESCE(trusted, false) FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&trusted)
 	if err == nil && trusted {
 		return TrustLevelTrusted
 	}
@@ -171,10 +185,14 @@ func (s *Service) GetDeviceTrustLevel(ctx context.Context, userID, fingerprint s
 
 // GetUserDevices returns all known devices for a user
 func (s *Service) GetUserDevices(ctx context.Context, userID string) ([]Device, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, user_id, fingerprint, COALESCE(name,''), COALESCE(ip_address,''), COALESCE(user_agent,''),
 		        COALESCE(location,''), trusted, last_seen_at, created_at
-		 FROM known_devices WHERE user_id = $1 ORDER BY last_seen_at DESC`, userID)
+		 FROM known_devices WHERE user_id = $1 AND org_id = $2 ORDER BY last_seen_at DESC`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -194,13 +212,17 @@ func (s *Service) GetUserDevices(ctx context.Context, userID string) ([]Device, 
 
 // GetAllDevices returns all known devices (admin)
 func (s *Service) GetAllDevices(ctx context.Context, limit, offset int) ([]Device, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices`).Scan(&total)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&total)
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT d.id, d.user_id, d.fingerprint, COALESCE(d.name,''), COALESCE(d.ip_address,''),
 		        COALESCE(d.user_agent,''), COALESCE(d.location,''), d.trusted, d.last_seen_at, d.created_at
-		 FROM known_devices d ORDER BY d.last_seen_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+		 FROM known_devices d WHERE d.org_id = $3 ORDER BY d.last_seen_at DESC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -220,24 +242,37 @@ func (s *Service) GetAllDevices(ctx context.Context, limit, offset int) ([]Devic
 
 // TrustDevice marks a device as trusted
 func (s *Service) TrustDevice(ctx context.Context, deviceID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`UPDATE known_devices SET trusted = true WHERE id = $1`, deviceID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE known_devices SET trusted = true WHERE id = $1 AND org_id = $2`, deviceID, org.ID)
 	return err
 }
 
 // RevokeDevice removes trust or deletes a device
 func (s *Service) RevokeDevice(ctx context.Context, deviceID string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM known_devices WHERE id = $1`, deviceID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`DELETE FROM known_devices WHERE id = $1 AND org_id = $2`, deviceID, org.ID)
 	return err
 }
 
 // RecordLogin records a login attempt in history
 func (s *Service) RecordLogin(ctx context.Context, userID, ip, userAgent, location string, lat, lon float64, fingerprint string, success bool, authMethods []string, riskScore int) {
-	_, err := s.db.Pool.Exec(ctx,
-		`INSERT INTO login_history (user_id, ip_address, user_agent, location, latitude, longitude, device_fingerprint, risk_score, success, auth_methods)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		userID, ip, userAgent, location, lat, lon, fingerprint, riskScore, success, authMethods)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Error("Failed to record login: no org context", zap.Error(err))
+		return
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO login_history (user_id, ip_address, user_agent, location, latitude, longitude, device_fingerprint, risk_score, success, auth_methods, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		userID, ip, userAgent, location, lat, lon, fingerprint, riskScore, success, authMethods, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to record login", zap.Error(err))
 	}
@@ -245,14 +280,19 @@ func (s *Service) RecordLogin(ctx context.Context, userID, ip, userAgent, locati
 
 // GetLoginHistory returns recent login history
 func (s *Service) GetLoginHistory(ctx context.Context, userID string, limit int) ([]LoginRecord, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `SELECT id, user_id, ip_address, COALESCE(user_agent,''), COALESCE(location,''),
 	                 COALESCE(latitude,0), COALESCE(longitude,0), COALESCE(device_fingerprint,''),
 	                 risk_score, success, COALESCE(auth_methods,'{}'), created_at
-	          FROM login_history`
-	args := []interface{}{}
+	          FROM login_history WHERE org_id = $1`
+	args := []interface{}{org.ID}
 
 	if userID != "" {
-		query += ` WHERE user_id = $1`
+		query += ` AND user_id = $2`
 		args = append(args, userID)
 	}
 	query += ` ORDER BY created_at DESC`
@@ -285,11 +325,16 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 	score := 0
 	var factors []string
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0, factors
+	}
+
 	// Factor 1: New device (+30)
 	var deviceCount int
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM known_devices WHERE user_id = $1 AND fingerprint = $2`,
-		userID, fingerprint).Scan(&deviceCount)
+		`SELECT COUNT(*) FROM known_devices WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
+		userID, fingerprint, org.ID).Scan(&deviceCount)
 	if deviceCount == 0 {
 		score += 30
 		factors = append(factors, "new_device")
@@ -300,8 +345,8 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 		country := extractCountry(location)
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT DISTINCT location FROM login_history
-			 WHERE user_id = $1 AND success = true
-			 ORDER BY location LIMIT 5`, userID)
+			 WHERE user_id = $1 AND success = true AND org_id = $2
+			 ORDER BY location LIMIT 5`, userID, org.ID)
 		if err == nil {
 			defer rows.Close()
 			knownCountries := make(map[string]bool)
@@ -322,8 +367,8 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 	var failedCount int
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour'`,
-		userID).Scan(&failedCount)
+		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour' AND org_id = $2`,
+		userID, org.ID).Scan(&failedCount)
 	if failedCount > 0 {
 		addition := failedCount * 10
 		if addition > 50 {
@@ -353,8 +398,8 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 		country := extractCountry(location)
 		var countryCount int
 		s.db.Pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM login_history WHERE user_id = $1 AND location LIKE $2 AND success = true`,
-			userID, "%"+country).Scan(&countryCount)
+			`SELECT COUNT(*) FROM login_history WHERE user_id = $1 AND location LIKE $2 AND success = true AND org_id = $3`,
+			userID, "%"+country, org.ID).Scan(&countryCount)
 		if countryCount == 0 {
 			score += 15
 			factors = append(factors, "first_country_login")
@@ -377,13 +422,18 @@ func (s *Service) CalculateRiskScore(ctx context.Context, userID, ip, userAgent,
 
 // detectImpossibleTravel checks if the user could have physically traveled from their last login location
 func (s *Service) detectImpossibleTravel(ctx context.Context, userID string, lat, lon float64) bool {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false
+	}
+
 	var lastLat, lastLon float64
 	var lastTime time.Time
 
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT latitude, longitude, created_at FROM login_history
-		 WHERE user_id = $1 AND success = true AND latitude != 0 AND longitude != 0
-		 ORDER BY created_at DESC LIMIT 1`, userID).Scan(&lastLat, &lastLon, &lastTime)
+		 WHERE user_id = $1 AND success = true AND latitude != 0 AND longitude != 0 AND org_id = $2
+		 ORDER BY created_at DESC LIMIT 1`, userID, org.ID).Scan(&lastLat, &lastLon, &lastTime)
 	if err != nil {
 		return false
 	}
@@ -449,40 +499,45 @@ func (s *Service) GeoIPLookup(ctx context.Context, ip string) (*GeoResult, error
 
 // GetRiskStats returns risk statistics for the dashboard
 func (s *Service) GetRiskStats(ctx context.Context) (map[string]interface{}, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	stats := make(map[string]interface{})
 
 	// High-risk logins today
 	var highRiskToday int
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history WHERE risk_score >= 50 AND created_at > CURRENT_DATE`).Scan(&highRiskToday)
+		`SELECT COUNT(*) FROM login_history WHERE risk_score >= 50 AND created_at > CURRENT_DATE AND org_id = $1`, org.ID).Scan(&highRiskToday)
 	stats["high_risk_logins_today"] = highRiskToday
 
 	// New devices today
 	var newDevicesToday int
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM known_devices WHERE created_at > CURRENT_DATE`).Scan(&newDevicesToday)
+		`SELECT COUNT(*) FROM known_devices WHERE created_at > CURRENT_DATE AND org_id = $1`, org.ID).Scan(&newDevicesToday)
 	stats["new_devices_today"] = newDevicesToday
 
 	// Total known devices
 	var totalDevices int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices`).Scan(&totalDevices)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE org_id = $1`, org.ID).Scan(&totalDevices)
 	stats["total_devices"] = totalDevices
 
 	// Trusted devices
 	var trustedDevices int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE trusted = true`).Scan(&trustedDevices)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM known_devices WHERE trusted = true AND org_id = $1`, org.ID).Scan(&trustedDevices)
 	stats["trusted_devices"] = trustedDevices
 
 	// Failed logins today
 	var failedToday int
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history WHERE success = false AND created_at > CURRENT_DATE`).Scan(&failedToday)
+		`SELECT COUNT(*) FROM login_history WHERE success = false AND created_at > CURRENT_DATE AND org_id = $1`, org.ID).Scan(&failedToday)
 	stats["failed_logins_today"] = failedToday
 
 	// Average risk score today
 	var avgRisk *float64
 	s.db.Pool.QueryRow(ctx,
-		`SELECT AVG(risk_score) FROM login_history WHERE created_at > CURRENT_DATE AND success = true`).Scan(&avgRisk)
+		`SELECT AVG(risk_score) FROM login_history WHERE created_at > CURRENT_DATE AND success = true AND org_id = $1`, org.ID).Scan(&avgRisk)
 	if avgRisk != nil {
 		stats["avg_risk_score_today"] = int(*avgRisk)
 	} else {
@@ -494,12 +549,16 @@ func (s *Service) GetRiskStats(ctx context.Context) (map[string]interface{}, err
 
 // CreateStepUpChallenge creates a step-up MFA challenge for a session
 func (s *Service) CreateStepUpChallenge(ctx context.Context, userID, sessionID, reason string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
 	var challengeID string
-	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO stepup_challenges (user_id, session_id, reason, expires_at)
-		 VALUES ($1, $2, $3, NOW() + INTERVAL '5 minutes')
+	err = s.db.Pool.QueryRow(ctx,
+		`INSERT INTO stepup_challenges (user_id, session_id, reason, expires_at, org_id)
+		 VALUES ($1, $2, $3, NOW() + INTERVAL '5 minutes', $4)
 		 RETURNING id`,
-		userID, sessionID, reason).Scan(&challengeID)
+		userID, sessionID, reason, org.ID).Scan(&challengeID)
 	if err != nil {
 		return "", fmt.Errorf("failed to create step-up challenge: %w", err)
 	}
@@ -512,13 +571,18 @@ func (s *Service) CreateStepUpChallenge(ctx context.Context, userID, sessionID, 
 
 // CompleteStepUpChallenge marks a step-up challenge as completed
 func (s *Service) CompleteStepUpChallenge(ctx context.Context, challengeID, userID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Verify challenge belongs to user and is pending
 	var status string
 	var storedUserID string
 	var expiresAt time.Time
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT user_id, status, expires_at FROM stepup_challenges WHERE id = $1`,
-		challengeID).Scan(&storedUserID, &status, &expiresAt)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT user_id, status, expires_at FROM stepup_challenges WHERE id = $1 AND org_id = $2`,
+		challengeID, org.ID).Scan(&storedUserID, &status, &expiresAt)
 	if err != nil {
 		return fmt.Errorf("challenge not found")
 	}
@@ -529,12 +593,12 @@ func (s *Service) CompleteStepUpChallenge(ctx context.Context, challengeID, user
 		return fmt.Errorf("challenge already %s", status)
 	}
 	if time.Now().After(expiresAt) {
-		s.db.Pool.Exec(ctx, `UPDATE stepup_challenges SET status = 'expired' WHERE id = $1`, challengeID)
+		s.db.Pool.Exec(ctx, `UPDATE stepup_challenges SET status = 'expired' WHERE id = $1 AND org_id = $2`, challengeID, org.ID)
 		return fmt.Errorf("challenge expired")
 	}
 
 	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE stepup_challenges SET status = 'completed', completed_at = NOW() WHERE id = $1`, challengeID)
+		`UPDATE stepup_challenges SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2`, challengeID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -592,11 +656,15 @@ func parseDeviceName(userAgent string) string {
 
 // GetRecentFailedAttempts returns the count of recent failed login attempts for a user
 func (s *Service) GetRecentFailedAttempts(ctx context.Context, userID string) int {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0
+	}
 	var count int
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM login_history
-		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour'`,
-		userID).Scan(&count)
+		 WHERE user_id = $1 AND success = false AND created_at > NOW() - INTERVAL '1 hour' AND org_id = $2`,
+		userID, org.ID).Scan(&count)
 	if err != nil {
 		return 0
 	}

@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // FeatureName represents a toggleable feature
@@ -256,11 +257,16 @@ func (fm *FeatureManager) DisableFeature(ctx context.Context, routeID string, fe
 
 // GetServiceStatus returns the complete status of a service
 func (fm *FeatureManager) GetServiceStatus(ctx context.Context, routeID string) (*ServiceStatus, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get route info
 	var routeName, routeType string
-	err := fm.db.Pool.QueryRow(ctx,
-		`SELECT name, COALESCE(route_type, 'http') FROM proxy_routes WHERE id = $1`,
-		routeID).Scan(&routeName, &routeType)
+	err = fm.db.Pool.QueryRow(ctx,
+		`SELECT name, COALESCE(route_type, 'http') FROM proxy_routes WHERE id = $1 AND org_id = $2`,
+		routeID, org.ID).Scan(&routeName, &routeType)
 	if err != nil {
 		return nil, fmt.Errorf("route not found: %w", err)
 	}
@@ -449,10 +455,14 @@ func (fm *FeatureManager) validateFeatureDependencies(ctx context.Context, route
 }
 
 func (fm *FeatureManager) validateRouteTypeCompatibility(ctx context.Context, routeID string, feature FeatureName) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	var routeType string
-	err := fm.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(route_type, 'http') FROM proxy_routes WHERE id = $1`,
-		routeID).Scan(&routeType)
+	err = fm.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(route_type, 'http') FROM proxy_routes WHERE id = $1 AND org_id = $2`,
+		routeID, org.ID).Scan(&routeType)
 	if err != nil {
 		return fmt.Errorf("route not found")
 	}
@@ -486,6 +496,11 @@ func (fm *FeatureManager) getDependentFeatures(ctx context.Context, routeID stri
 func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, feature FeatureName, config *FeatureConfig) (map[string]string, error) {
 	resourceIDs := make(map[string]string)
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	switch feature {
 	case FeatureZiti:
 		if fm.zitiManager == nil || !fm.zitiManager.IsInitialized() {
@@ -497,8 +512,8 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		var remoteHost *string
 		var remotePort *int
 		err := fm.db.Pool.QueryRow(ctx,
-			`SELECT name, to_url, remote_host, remote_port FROM proxy_routes WHERE id = $1`,
-			routeID).Scan(&routeName, &toURL, &remoteHost, &remotePort)
+			`SELECT name, to_url, remote_host, remote_port FROM proxy_routes WHERE id = $1 AND org_id = $2`,
+			routeID, org.ID).Scan(&routeName, &toURL, &remoteHost, &remotePort)
 		if err != nil {
 			return nil, fmt.Errorf("route not found: %w", err)
 		}
@@ -537,10 +552,10 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 			fm.logger.Warn("Failed to create Bind policy", zap.Error(err))
 		} else {
 			fm.db.Pool.Exec(ctx,
-				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
-				 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
+				 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (ziti_id) DO NOTHING`,
 				bindPolicyID, fmt.Sprintf("openidx-bind-%s", serviceName), "Bind",
-				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`, org.ID)
 		}
 
 		// Create Dial policy so access-proxy can dial this service
@@ -553,10 +568,10 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 			fm.logger.Warn("Failed to create Dial policy", zap.Error(err))
 		} else {
 			fm.db.Pool.Exec(ctx,
-				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles)
-				 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ziti_id) DO NOTHING`,
+				`INSERT INTO ziti_service_policies (ziti_id, name, policy_type, service_roles, identity_roles, org_id)
+				 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (ziti_id) DO NOTHING`,
 				dialPolicyID, fmt.Sprintf("openidx-dial-%s", serviceName), "Dial",
-				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`)
+				`["#`+serviceName+`"]`, `["#access-proxy-clients"]`, org.ID)
 		}
 
 		// Create Service Edge Router Policy so the service is available on all edge routers
@@ -573,8 +588,8 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 
 		// Update proxy route with Ziti service name
 		fm.db.Pool.Exec(ctx,
-			"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2",
-			serviceName, routeID)
+			"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
+			serviceName, routeID, org.ID)
 
 		// Host the service so it has a terminator
 		if err := fm.zitiManager.HostService(serviceName, host, port); err != nil {
@@ -590,8 +605,8 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		var zitiServiceID string
 		err := fm.db.Pool.QueryRow(ctx,
 			`SELECT zs.ziti_id FROM ziti_services zs
-			 JOIN proxy_routes pr ON pr.ziti_service_name = zs.name
-			 WHERE pr.id = $1`, routeID).Scan(&zitiServiceID)
+			 JOIN proxy_routes pr ON pr.ziti_service_name = zs.name AND zs.org_id = pr.org_id
+			 WHERE pr.id = $1 AND pr.org_id = $2`, routeID, org.ID).Scan(&zitiServiceID)
 		if err != nil {
 			return nil, fmt.Errorf("no Ziti service found for route (enable Ziti first): %w", err)
 		}
@@ -638,8 +653,8 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		var remoteHost *string
 		var remotePort *int
 		err := fm.db.Pool.QueryRow(ctx,
-			`SELECT name, remote_host, remote_port FROM proxy_routes WHERE id = $1`,
-			routeID).Scan(&routeName, &remoteHost, &remotePort)
+			`SELECT name, remote_host, remote_port FROM proxy_routes WHERE id = $1 AND org_id = $2`,
+			routeID, org.ID).Scan(&routeName, &remoteHost, &remotePort)
 		if err != nil {
 			return nil, fmt.Errorf("route not found: %w", err)
 		}
@@ -731,6 +746,10 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 }
 
 func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID string, feature FeatureName, enabled bool, resourceIDs map[string]string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	switch feature {
 	case FeatureZiti:
 		var serviceName *string
@@ -740,14 +759,14 @@ func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID string, fe
 			}
 		}
 		_, err := fm.db.Pool.Exec(ctx,
-			`UPDATE proxy_routes SET ziti_enabled = $1, ziti_service_name = $2, updated_at = NOW() WHERE id = $3`,
-			enabled, serviceName, routeID)
+			`UPDATE proxy_routes SET ziti_enabled = $1, ziti_service_name = $2, updated_at = NOW() WHERE id = $3 AND org_id = $4`,
+			enabled, serviceName, routeID, org.ID)
 		return err
 
 	case FeatureBrowZer:
 		_, err := fm.db.Pool.Exec(ctx,
-			`UPDATE proxy_routes SET browzer_enabled = $1, updated_at = NOW() WHERE id = $2`,
-			enabled, routeID)
+			`UPDATE proxy_routes SET browzer_enabled = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+			enabled, routeID, org.ID)
 		return err
 
 	case FeatureGuacamole:
@@ -758,8 +777,8 @@ func (fm *FeatureManager) syncRouteFlags(ctx context.Context, routeID string, fe
 			}
 		}
 		_, err := fm.db.Pool.Exec(ctx,
-			`UPDATE proxy_routes SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2`,
-			connID, routeID)
+			`UPDATE proxy_routes SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+			connID, routeID, org.ID)
 		return err
 	}
 	return nil

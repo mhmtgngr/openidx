@@ -16,6 +16,8 @@ import (
 	adminhandlers "github.com/openidx/openidx/internal/admin/handlers"
 	"github.com/openidx/openidx/internal/api"
 	"github.com/openidx/openidx/internal/apikeys"
+	"github.com/openidx/openidx/internal/audit"
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
@@ -212,6 +214,18 @@ func main() {
 
 	// Resolve permissions from roles (cached in Redis)
 	v1.Use(middleware.PermissionResolver(db.Pool, redis.Client))
+
+	// Resolve the tenant for every request and attach it to the request
+	// context (v1.7.0 #2). Group-level and after Auth, so unlike the
+	// other services the JWT org_id claim path is live here, not just
+	// X-Org-Slug. DefaultOrgFallback keeps single-tenant installs on
+	// the default org — the final v1.7.0 PR flips it off.
+	v1.Use(middleware.TenantResolver(organization.NewOrgLookup(orgService), middleware.TenantResolverConfig{
+		DefaultOrgFallback:     cfg.DefaultOrgFallback,
+		DefaultOrgID:           cfg.DefaultOrgID,
+		PlatformAdminPredicate: auth.SuperAdminPredicate,
+		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool),
+	}))
 
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)
 	if cfg.EnableOPAAuthz {

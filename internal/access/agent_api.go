@@ -699,7 +699,9 @@ func (h *AgentAPIHandler) loadIntegrityPolicy(ctx context.Context) IntegrityPoli
 		return IntegrityPolicy{}
 	}
 	var raw []byte
-	err := h.db.Pool.QueryRow(ctx, `
+	err := h.db.Pool.QueryRow(ctx,
+		//orgscope:ignore agent posture-report verification; loads the install-wide play_integrity policy by check_type during an agent callback that carries no tenant context
+		`
         SELECT COALESCE(parameters, '{}'::jsonb)
           FROM posture_checks
          WHERE check_type = 'play_integrity'

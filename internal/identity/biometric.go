@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // BiometricPreferences represents user's biometric authentication preferences
@@ -258,6 +260,11 @@ func (s *Service) DeleteBiometricPolicy(ctx context.Context, policyID string) er
 
 // GetApplicableBiometricPolicy returns the policy applicable to a user
 func (s *Service) GetApplicableBiometricPolicy(ctx context.Context, userID string) (*BiometricPolicy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get user's groups and roles
 	var userGroups []string
 	var userRoles []string
@@ -274,8 +281,8 @@ func (s *Service) GetApplicableBiometricPolicy(ctx context.Context, userID strin
 	rows.Close()
 
 	s.db.Pool.QueryRow(ctx,
-		"SELECT roles FROM users WHERE id = $1",
-		userID,
+		"SELECT roles FROM users WHERE id = $1 AND org_id = $2",
+		userID, org.ID,
 	).Scan(&userRoles)
 
 	// Find applicable policy

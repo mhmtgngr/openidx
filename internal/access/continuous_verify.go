@@ -55,12 +55,15 @@ func (cv *ContinuousVerifier) Start(ctx context.Context) {
 func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 	// Find sessions that belong to routes with reverify_interval > 0
 	// and whose last_verified_at is older than the route's interval
+	// Background cross-org sweep: re-verify due sessions across all orgs. s.org_id
+	// is selected so each session's revoke/audit writes below stay scoped to its
+	// own org (the ticker has no request context to read org from).
 	rows, err := cv.svc.db.Pool.Query(ctx,
 		`SELECT s.id, s.user_id, s.ip_address, s.user_agent, s.route_id,
 		        s.device_fingerprint, s.risk_score, s.device_trusted,
-		        r.id as route_id, r.reverify_interval
+		        r.id as route_id, r.reverify_interval, s.org_id
 		 FROM proxy_sessions s
-		 JOIN proxy_routes r ON s.route_id = r.id
+		 JOIN proxy_routes r ON s.route_id = r.id AND r.org_id = s.org_id
 		 WHERE s.revoked = false
 		   AND s.expires_at > NOW()
 		   AND r.reverify_interval > 0
@@ -83,6 +86,7 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		RiskScore         int
 		DeviceTrusted     bool
 		ReverifyInterval  int
+		OrgID             string
 	}
 
 	var sessions []sessionToVerify
@@ -91,7 +95,7 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		var devFP *string
 		err := rows.Scan(&s.SessionID, &s.UserID, &s.IPAddress, &s.UserAgent,
 			&s.RouteID, &devFP, &s.RiskScore, &s.DeviceTrusted,
-			&s.RouteID, &s.ReverifyInterval)
+			&s.RouteID, &s.ReverifyInterval, &s.OrgID)
 		if err != nil {
 			cv.logger.Warn("Failed to scan session for reverification", zap.Error(err))
 			continue
@@ -133,6 +137,7 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		// Load session data from Redis for roles/email
 		tokenHash := ""
 		cv.svc.db.Pool.QueryRow(ctx,
+			//orgscope:ignore continuous-verification background sweep; session looked up by its globally-unique primary key from the org-tagged driver query above
 			"SELECT session_token FROM proxy_sessions WHERE id=$1", sess.SessionID).
 			Scan(&tokenHash)
 		if tokenHash != "" {
@@ -179,8 +184,8 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		if !decision.Allowed {
 			// Revoke the session
 			cv.svc.db.Pool.Exec(ctx,
-				"UPDATE proxy_sessions SET revoked=true, last_verified_at=$1 WHERE id=$2",
-				now, sess.SessionID)
+				"UPDATE proxy_sessions SET revoked=true, last_verified_at=$1 WHERE id=$2 AND org_id=$3",
+				now, sess.SessionID, sess.OrgID)
 
 			// Remove from Redis
 			if tokenHash != "" {
@@ -194,10 +199,10 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 
 			// Log audit event
 			cv.svc.db.Pool.Exec(ctx,
-				`INSERT INTO audit_events (id, event_type, actor, resource_type, resource_id, details, created_at)
-				 VALUES (gen_random_uuid(), 'session.revoked.continuous_verify', $1, 'proxy_session', $2, $3, NOW())`,
+				`INSERT INTO audit_events (id, event_type, actor, resource_type, resource_id, details, created_at, org_id)
+				 VALUES (gen_random_uuid(), 'session.revoked.continuous_verify', $1, 'proxy_session', $2, $3, NOW(), $4)`,
 				sess.UserID, sess.SessionID,
-				fmt.Sprintf(`{"reason":"%s","risk_score":%d}`, decision.Reason, decision.RiskScore))
+				fmt.Sprintf(`{"reason":"%s","risk_score":%d}`, decision.Reason, decision.RiskScore), sess.OrgID)
 
 			revoked++
 			continue
@@ -213,8 +218,8 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 
 		// Update verification timestamp and risk score
 		cv.svc.db.Pool.Exec(ctx,
-			`UPDATE proxy_sessions SET last_verified_at=$1, risk_score=$2 WHERE id=$3`,
-			now, decision.RiskScore, sess.SessionID)
+			`UPDATE proxy_sessions SET last_verified_at=$1, risk_score=$2 WHERE id=$3 AND org_id=$4`,
+			now, decision.RiskScore, sess.SessionID, sess.OrgID)
 	}
 
 	if revoked > 0 || stepUpRequired > 0 {

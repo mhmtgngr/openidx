@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // LoginAnalytics contains comprehensive login statistics
@@ -138,54 +140,63 @@ func (s *Service) handleGetLoginAnalytics(c *gin.Context) {
 func (s *Service) getLoginSummary(ctx context.Context, start, end time.Time) LoginSummary {
 	var summary LoginSummary
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return summary
+	}
+
 	// Total and successful logins
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0)
-		 FROM login_history WHERE created_at BETWEEN $1 AND $2`,
-		start, end).Scan(&summary.TotalLogins, &summary.SuccessfulLogins)
+		 FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+		start, end, org.ID).Scan(&summary.TotalLogins, &summary.SuccessfulLogins)
 
 	summary.FailedLogins = summary.TotalLogins - summary.SuccessfulLogins
 
 	// Unique users
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(DISTINCT user_id) FROM login_history WHERE created_at BETWEEN $1 AND $2`,
-		start, end).Scan(&summary.UniqueUsers)
+		`SELECT COUNT(DISTINCT user_id) FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+		start, end, org.ID).Scan(&summary.UniqueUsers)
 
 	// New devices
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM known_devices WHERE created_at BETWEEN $1 AND $2`,
-		start, end).Scan(&summary.NewDevices)
+		`SELECT COUNT(*) FROM known_devices WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+		start, end, org.ID).Scan(&summary.NewDevices)
 
 	// High risk logins
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM login_history WHERE risk_score >= 70 AND created_at BETWEEN $1 AND $2`,
-		start, end).Scan(&summary.HighRiskLogins)
+		`SELECT COUNT(*) FROM login_history WHERE risk_score >= 70 AND created_at BETWEEN $1 AND $2 AND org_id = $3`,
+		start, end, org.ID).Scan(&summary.HighRiskLogins)
 
 	// Average risk score
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(AVG(risk_score), 0) FROM login_history WHERE created_at BETWEEN $1 AND $2`,
-		start, end).Scan(&summary.AverageRiskScore)
+		`SELECT COALESCE(AVG(risk_score), 0) FROM login_history WHERE created_at BETWEEN $1 AND $2 AND org_id = $3`,
+		start, end, org.ID).Scan(&summary.AverageRiskScore)
 
 	// MFA challenges (approximation from audit events)
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM audit_events
-		 WHERE event_type = 'mfa_verified' AND timestamp BETWEEN $1 AND $2`,
-		start, end).Scan(&summary.MFAChallenges)
+		 WHERE event_type = 'mfa_verified' AND timestamp BETWEEN $1 AND $2 AND org_id = $3`,
+		start, end, org.ID).Scan(&summary.MFAChallenges)
 
 	return summary
 }
 
 func (s *Service) getDailyLoginTrends(ctx context.Context, start, end time.Time) []DailyLoginStats {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT DATE(created_at) as date,
 		        COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) as successful,
 		        COALESCE(SUM(CASE WHEN NOT success THEN 1 ELSE 0 END), 0) as failed,
 		        COALESCE(SUM(CASE WHEN risk_score >= 70 THEN 1 ELSE 0 END), 0) as high_risk
 		 FROM login_history
-		 WHERE created_at BETWEEN $1 AND $2
+		 WHERE created_at BETWEEN $1 AND $2 AND org_id = $3
 		 GROUP BY DATE(created_at)
 		 ORDER BY date`,
-		start, end)
+		start, end, org.ID)
 	if err != nil {
 		return nil
 	}
@@ -204,15 +215,19 @@ func (s *Service) getDailyLoginTrends(ctx context.Context, start, end time.Time)
 }
 
 func (s *Service) getHourlyPattern(ctx context.Context, start, end time.Time) []HourlyStats {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT EXTRACT(HOUR FROM created_at)::int as hour,
 		        COALESCE(SUM(CASE WHEN success THEN 1 ELSE 0 END), 0) as successful,
 		        COALESCE(SUM(CASE WHEN NOT success THEN 1 ELSE 0 END), 0) as failed
 		 FROM login_history
-		 WHERE created_at BETWEEN $1 AND $2
+		 WHERE created_at BETWEEN $1 AND $2 AND org_id = $3
 		 GROUP BY hour
 		 ORDER BY hour`,
-		start, end)
+		start, end, org.ID)
 	if err != nil {
 		return nil
 	}
@@ -242,17 +257,21 @@ func (s *Service) getHourlyPattern(ctx context.Context, start, end time.Time) []
 }
 
 func (s *Service) getGeoDistribution(ctx context.Context, start, end time.Time) []GeoLoginStats {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT COALESCE(location, 'Unknown') as location,
 		        COUNT(*) as count,
 		        COALESCE(SUM(CASE WHEN NOT success THEN 1 ELSE 0 END), 0) as failed,
 		        COALESCE(AVG(risk_score), 0) as avg_risk
 		 FROM login_history
-		 WHERE created_at BETWEEN $1 AND $2
+		 WHERE created_at BETWEEN $1 AND $2 AND org_id = $3
 		 GROUP BY location
 		 ORDER BY count DESC
 		 LIMIT 10`,
-		start, end)
+		start, end, org.ID)
 	if err != nil {
 		return nil
 	}
@@ -284,13 +303,18 @@ func (s *Service) getRiskDistribution(ctx context.Context, start, end time.Time)
 		{"Critical (70-100)", 70, 100},
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
+
 	var stats []RiskBucketStats
 	for _, b := range buckets {
 		var count int
 		s.db.Pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM login_history
-			 WHERE risk_score >= $1 AND risk_score <= $2 AND created_at BETWEEN $3 AND $4`,
-			b.min, b.max, start, end).Scan(&count)
+			 WHERE risk_score >= $1 AND risk_score <= $2 AND created_at BETWEEN $3 AND $4 AND org_id = $5`,
+			b.min, b.max, start, end, org.ID).Scan(&count)
 
 		stats = append(stats, RiskBucketStats{
 			Bucket: b.name,
@@ -303,13 +327,17 @@ func (s *Service) getRiskDistribution(ctx context.Context, start, end time.Time)
 }
 
 func (s *Service) getAuthMethodStats(ctx context.Context, start, end time.Time) []AuthMethodStats {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return []AuthMethodStats{{Method: "password", Count: 0}}
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT UNNEST(auth_methods) as method, COUNT(*) as count
 		 FROM login_history
-		 WHERE created_at BETWEEN $1 AND $2 AND auth_methods IS NOT NULL
+		 WHERE created_at BETWEEN $1 AND $2 AND auth_methods IS NOT NULL AND org_id = $3
 		 GROUP BY method
 		 ORDER BY count DESC`,
-		start, end)
+		start, end, org.ID)
 	if err != nil {
 		return []AuthMethodStats{
 			{Method: "password", Count: 0},
@@ -332,16 +360,20 @@ func (s *Service) getAuthMethodStats(ctx context.Context, start, end time.Time) 
 }
 
 func (s *Service) getTopFailedUsers(ctx context.Context, start, end time.Time) []FailedUserStats {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT lh.user_id, COALESCE(u.email, lh.user_id) as email,
 		        COUNT(*) as failed_count, MAX(lh.created_at) as last_attempt
 		 FROM login_history lh
 		 LEFT JOIN users u ON lh.user_id = u.id
-		 WHERE lh.success = false AND lh.created_at BETWEEN $1 AND $2
+		 WHERE lh.success = false AND lh.created_at BETWEEN $1 AND $2 AND lh.org_id = $3
 		 GROUP BY lh.user_id, u.email
 		 ORDER BY failed_count DESC
 		 LIMIT 10`,
-		start, end)
+		start, end, org.ID)
 	if err != nil {
 		return nil
 	}
@@ -360,6 +392,10 @@ func (s *Service) getTopFailedUsers(ctx context.Context, start, end time.Time) [
 }
 
 func (s *Service) getDeviceTypeStats(ctx context.Context, start, end time.Time) []DeviceTypeStats {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT
 		   CASE
@@ -376,10 +412,10 @@ func (s *Service) getDeviceTypeStats(ctx context.Context, start, end time.Time) 
 		   END as browser,
 		   COUNT(*) as count
 		 FROM login_history
-		 WHERE created_at BETWEEN $1 AND $2
+		 WHERE created_at BETWEEN $1 AND $2 AND org_id = $3
 		 GROUP BY device_type, browser
 		 ORDER BY count DESC`,
-		start, end)
+		start, end, org.ID)
 	if err != nil {
 		return nil
 	}

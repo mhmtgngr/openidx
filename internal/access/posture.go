@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PostureCheck represents a device posture check configuration
@@ -150,11 +152,15 @@ func (zm *ZitiManager) CreatePostureCheck(ctx context.Context, check *PostureChe
 	check.ZitiID = resp.Data.ID
 
 	// Insert into database
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	_, err = zm.db.Pool.Exec(ctx,
-		`INSERT INTO posture_checks (id, ziti_id, name, check_type, parameters, enabled, severity, remediation_hint, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		`INSERT INTO posture_checks (id, ziti_id, name, check_type, parameters, enabled, severity, remediation_hint, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		check.ID, check.ZitiID, check.Name, check.CheckType, paramsJSON,
-		check.Enabled, check.Severity, check.RemediationHint, check.CreatedAt, check.UpdatedAt)
+		check.Enabled, check.Severity, check.RemediationHint, check.CreatedAt, check.UpdatedAt, orgID)
 	if err != nil {
 		// Attempt to clean up the Ziti resource on DB failure
 		zm.mgmtRequest("DELETE", fmt.Sprintf("/edge/management/v1/posture-checks/%s", check.ZitiID), nil)
@@ -170,9 +176,13 @@ func (zm *ZitiManager) CreatePostureCheck(ctx context.Context, check *PostureChe
 
 // ListPostureChecks returns all posture checks from the database
 func (zm *ZitiManager) ListPostureChecks(ctx context.Context) ([]PostureCheck, error) {
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	rows, err := zm.db.Pool.Query(ctx,
 		`SELECT id, ziti_id, name, check_type, parameters, enabled, severity, remediation_hint, created_at, updated_at
-		 FROM posture_checks ORDER BY created_at DESC`)
+		 FROM posture_checks WHERE org_id = $1 ORDER BY created_at DESC`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posture checks: %w", err)
 	}
@@ -206,10 +216,14 @@ func (zm *ZitiManager) ListPostureChecks(ctx context.Context) ([]PostureCheck, e
 
 // DeletePostureCheck removes a posture check from the database and the Ziti controller
 func (zm *ZitiManager) DeletePostureCheck(ctx context.Context, id string) error {
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	// Look up the Ziti ID before deleting
 	var zitiID string
 	err := zm.db.Pool.QueryRow(ctx,
-		"SELECT ziti_id FROM posture_checks WHERE id=$1", id).Scan(&zitiID)
+		"SELECT ziti_id FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID).Scan(&zitiID)
 	if err != nil {
 		return fmt.Errorf("failed to find posture check %s: %w", id, err)
 	}
@@ -228,7 +242,7 @@ func (zm *ZitiManager) DeletePostureCheck(ctx context.Context, id string) error 
 	}
 
 	// Delete from database
-	_, err = zm.db.Pool.Exec(ctx, "DELETE FROM posture_checks WHERE id=$1", id)
+	_, err = zm.db.Pool.Exec(ctx, "DELETE FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID)
 	if err != nil {
 		return fmt.Errorf("failed to delete posture check from database: %w", err)
 	}
@@ -247,9 +261,13 @@ func (zm *ZitiManager) UpdatePostureCheck(ctx context.Context, id string, check 
 	}
 
 	// Get current Ziti ID
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	var zitiID string
 	err = zm.db.Pool.QueryRow(ctx,
-		"SELECT ziti_id FROM posture_checks WHERE id=$1", id).Scan(&zitiID)
+		"SELECT ziti_id FROM posture_checks WHERE id=$1 AND org_id=$2", id, orgID).Scan(&zitiID)
 	if err != nil {
 		return fmt.Errorf("failed to find posture check %s: %w", id, err)
 	}
@@ -277,9 +295,9 @@ func (zm *ZitiManager) UpdatePostureCheck(ctx context.Context, id string, check 
 	_, err = zm.db.Pool.Exec(ctx,
 		`UPDATE posture_checks
 		 SET name=$1, check_type=$2, parameters=$3, enabled=$4, severity=$5, remediation_hint=$6, updated_at=$7
-		 WHERE id=$8`,
+		 WHERE id=$8 AND org_id=$9`,
 		check.Name, check.CheckType, paramsJSON, check.Enabled, check.Severity,
-		check.RemediationHint, check.UpdatedAt, id)
+		check.RemediationHint, check.UpdatedAt, id, orgID)
 	if err != nil {
 		return fmt.Errorf("failed to update posture check in database: %w", err)
 	}
@@ -302,11 +320,18 @@ func (zm *ZitiManager) RecordPostureResult(ctx context.Context, result *PostureC
 		return fmt.Errorf("failed to marshal posture result details: %w", err)
 	}
 
+	// Device posture results may be submitted by an agent without a normal
+	// request org; capture best-effort with a default-org fallback so the
+	// row is never dropped.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	_, err = zm.db.Pool.Exec(ctx,
-		`INSERT INTO device_posture_results (id, identity_id, check_id, passed, details, checked_at, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		`INSERT INTO device_posture_results (id, identity_id, check_id, passed, details, checked_at, expires_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		result.ID, result.IdentityID, result.CheckID, result.Passed,
-		detailsJSON, result.CheckedAt, result.ExpiresAt)
+		detailsJSON, result.CheckedAt, result.ExpiresAt, orgID)
 	if err != nil {
 		return fmt.Errorf("failed to insert posture result: %w", err)
 	}
@@ -320,11 +345,15 @@ func (zm *ZitiManager) RecordPostureResult(ctx context.Context, result *PostureC
 
 // GetIdentityPostureStatus returns the latest posture check result per check for a given identity
 func (zm *ZitiManager) GetIdentityPostureStatus(ctx context.Context, identityID string) ([]PostureCheckResult, error) {
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	rows, err := zm.db.Pool.Query(ctx,
 		`SELECT DISTINCT ON (check_id) id, identity_id, check_id, passed, details, checked_at, expires_at
 		 FROM device_posture_results
-		 WHERE identity_id=$1
-		 ORDER BY check_id, checked_at DESC`, identityID)
+		 WHERE identity_id=$1 AND org_id=$2
+		 ORDER BY check_id, checked_at DESC`, identityID, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posture status for identity %s: %w", identityID, err)
 	}
@@ -717,6 +746,7 @@ func (zm *ZitiManager) StartPostureResultExpiryChecker(ctx context.Context) {
 // cleanExpiredPostureResults deletes posture check results that have passed their expiry time.
 func (zm *ZitiManager) cleanExpiredPostureResults(ctx context.Context) {
 	result, err := zm.db.Pool.Exec(ctx,
+		//orgscope:ignore background expiry sweep across all orgs; deletes posture results purely by expires_at, no tenant context on the ticker
 		"DELETE FROM device_posture_results WHERE expires_at IS NOT NULL AND expires_at < NOW()")
 	if err != nil {
 		zm.logger.Error("Failed to clean expired posture results", zap.Error(err))
@@ -741,11 +771,15 @@ type GovernancePolicy struct {
 
 // FetchGovernancePolicy reads a governance policy and its rules from the shared PostgreSQL database.
 func (zm *ZitiManager) FetchGovernancePolicy(ctx context.Context, policyID string) (*GovernancePolicy, error) {
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
 	var p GovernancePolicy
 	var rulesJSON []byte
 	err := zm.db.Pool.QueryRow(ctx,
 		`SELECT id, name, COALESCE(description,''), type, enabled, priority, COALESCE(rules, '[]')
-		 FROM policies WHERE id=$1`, policyID).
+		 FROM policies WHERE id=$1 AND org_id=$2`, policyID, orgID).
 		Scan(&p.ID, &p.Name, &p.Description, &p.Type, &p.Enabled, &p.Priority, &rulesJSON)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch governance policy %s: %w", policyID, err)
@@ -759,7 +793,7 @@ func (zm *ZitiManager) FetchGovernancePolicy(ctx context.Context, policyID strin
 
 	// Also fetch linked policy_rules rows
 	rows, err := zm.db.Pool.Query(ctx,
-		`SELECT rule_type, conditions, actions FROM policy_rules WHERE policy_id=$1`, policyID)
+		`SELECT rule_type, conditions, actions FROM policy_rules WHERE policy_id=$1 AND org_id=$2`, policyID, orgID)
 	if err != nil {
 		zm.logger.Warn("Failed to fetch policy_rules", zap.String("policy_id", policyID), zap.Error(err))
 	} else {
@@ -906,10 +940,15 @@ func TransformGovernancePolicyToZiti(policy *GovernancePolicy) map[string]interf
 func (zm *ZitiManager) GetPostureCheckSummary(ctx context.Context) (map[string]interface{}, error) {
 	summary := map[string]interface{}{}
 
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
+
 	// Counts by severity
 	severityCounts := map[string]int{}
 	rows, err := zm.db.Pool.Query(ctx,
-		"SELECT severity, COUNT(*) FROM posture_checks GROUP BY severity")
+		"SELECT severity, COUNT(*) FROM posture_checks WHERE org_id=$1 GROUP BY severity", orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posture check severity counts: %w", err)
 	}
@@ -927,7 +966,7 @@ func (zm *ZitiManager) GetPostureCheckSummary(ctx context.Context) (map[string]i
 
 	// Total checks
 	var totalChecks int
-	err = zm.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM posture_checks").Scan(&totalChecks)
+	err = zm.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM posture_checks WHERE org_id=$1", orgID).Scan(&totalChecks)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count posture checks: %w", err)
 	}
@@ -935,7 +974,7 @@ func (zm *ZitiManager) GetPostureCheckSummary(ctx context.Context) (map[string]i
 
 	// Enabled checks
 	var enabledChecks int
-	err = zm.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM posture_checks WHERE enabled=true").Scan(&enabledChecks)
+	err = zm.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM posture_checks WHERE enabled=true AND org_id=$1", orgID).Scan(&enabledChecks)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count enabled posture checks: %w", err)
 	}
@@ -946,7 +985,7 @@ func (zm *ZitiManager) GetPostureCheckSummary(ctx context.Context) (map[string]i
 	err = zm.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN passed THEN 1 ELSE 0 END), 0)
 		 FROM device_posture_results
-		 WHERE checked_at > NOW() - INTERVAL '24 hours'`).
+		 WHERE checked_at > NOW() - INTERVAL '24 hours' AND org_id=$1`, orgID).
 		Scan(&totalResults, &passedResults)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pass/fail rates: %w", err)

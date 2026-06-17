@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // SocialProvider represents a social/external identity provider configuration
@@ -86,6 +87,12 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT sp.id, sp.provider_id, sp.provider_key, sp.display_name, sp.icon_url,
 		        sp.button_color, sp.button_text, sp.auto_create_users, sp.auto_link_by_email,
@@ -93,8 +100,8 @@ func (s *Service) handleListSocialProviders(c *gin.Context) {
 		        sp.sort_order, sp.created_at, sp.updated_at,
 		        COALESCE(ip.name, '') as idp_name
 		 FROM social_providers sp
-		 LEFT JOIN identity_providers ip ON sp.provider_id = ip.id
-		 ORDER BY sp.sort_order`)
+		 LEFT JOIN identity_providers ip ON sp.provider_id = ip.id AND ip.org_id = $1
+		 ORDER BY sp.sort_order`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list social providers", err))
 		return
@@ -326,14 +333,20 @@ func (s *Service) handleListFederationRules(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT fr.id, fr.name, fr.email_domain, fr.provider_id,
 		        COALESCE(ip.name, '') as provider_name,
 		        fr.priority, fr.auto_redirect, fr.enabled, fr.metadata,
 		        fr.created_at, fr.updated_at
 		 FROM federation_rules fr
-		 LEFT JOIN identity_providers ip ON fr.provider_id = ip.id
-		 ORDER BY fr.priority, fr.email_domain`)
+		 LEFT JOIN identity_providers ip ON fr.provider_id = ip.id AND ip.org_id = $1
+		 ORDER BY fr.priority, fr.email_domain`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list federation rules", err))
 		return
@@ -495,6 +508,12 @@ func (s *Service) handleListUserIdentityLinks(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	userID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT uil.id, uil.user_id, uil.provider_id,
@@ -503,9 +522,9 @@ func (s *Service) handleListUserIdentityLinks(c *gin.Context) {
 		        uil.display_name, uil.profile_data, uil.is_primary,
 		        uil.linked_at, uil.last_used_at
 		 FROM user_identity_links uil
-		 LEFT JOIN identity_providers ip ON uil.provider_id = ip.id
+		 LEFT JOIN identity_providers ip ON uil.provider_id = ip.id AND ip.org_id = $2
 		 WHERE uil.user_id = $1
-		 ORDER BY uil.linked_at`, userID)
+		 ORDER BY uil.linked_at`, userID, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list identity links", err))
 		return

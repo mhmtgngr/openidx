@@ -29,7 +29,22 @@
       "Bash(cat:*)",
       "Bash(git checkout:*)",
       "Bash(./showcase.sh scan:*)",
-      "Bash(./showcase.sh build:*)"
+      "Bash(./showcase.sh build:*)",
+      "Bash(gofmt -l tools/orgscope/)",
+      "Bash(go test *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'feat\\(orgscope\\): //orgscope:ignore directive for intentional exceptions \\(v1.7.0\\) *)",
+      "Bash(go run *)",
+      "Bash(gofmt -w internal/identity/orgscope_test.go internal/identity/orgscope_handlers_test.go)",
+      "Bash(go vet *)",
+      "Bash(echo \"VET:$?\")",
+      "Bash(gofmt -l internal/identity/*.go)",
+      "Bash(echo \"repo: $\\(go run ./tools/orgscope ./internal)",
+      "Bash(go build *)",
+      "Bash(echo \"BUILD: $?\")",
+      "Bash(gofmt -w internal/identity/service_crud.go internal/identity/role_expiry.go)",
+      "Bash(echo \"VET: $?\")",
+      "Bash(echo \"identity: $\\(go run ./tools/orgscope ./internal/identity)"
     ]
   }
 }

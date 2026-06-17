@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // systemActorID is the actor recorded on data_subject_requests.processed_by
@@ -69,8 +71,11 @@ func (s *Service) processPendingDSARs(ctx context.Context) {
 	tickCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
+	// Background cross-org sweep: process pending DSARs across all orgs. org_id is
+	// selected so each request is executed under its own org's context (the ticker
+	// has no request org), keeping the shared ExecuteDSAR path correctly scoped.
 	rows, err := s.db.Pool.Query(tickCtx,
-		`SELECT id, user_id, request_type FROM data_subject_requests
+		`SELECT id, user_id, request_type, org_id FROM data_subject_requests
 		 WHERE status = 'pending'
 		 ORDER BY created_at ASC
 		 LIMIT 100`)
@@ -81,12 +86,12 @@ func (s *Service) processPendingDSARs(ctx context.Context) {
 	defer rows.Close()
 
 	type job struct {
-		id, userID, requestType string
+		id, userID, requestType, orgID string
 	}
 	var batch []job
 	for rows.Next() {
 		var j job
-		if err := rows.Scan(&j.id, &j.userID, &j.requestType); err != nil {
+		if err := rows.Scan(&j.id, &j.userID, &j.requestType, &j.orgID); err != nil {
 			s.logger.Warn("DSAR processor: failed to scan pending row", zap.Error(err))
 			continue
 		}
@@ -121,6 +126,8 @@ func (s *Service) processPendingDSARs(ctx context.Context) {
 		// Use a per-request context with a shorter deadline so one stuck
 		// request can't burn the whole tick budget.
 		reqCtx, reqCancel := context.WithTimeout(ctx, 2*time.Minute)
+		// Execute under the DSAR's own org so the shared executor stays scoped.
+		reqCtx = orgctx.With(reqCtx, orgctx.Org{ID: j.orgID})
 		_, err := s.ExecuteDSAR(reqCtx, &dsar, systemActorID)
 		reqCancel()
 		if err != nil {

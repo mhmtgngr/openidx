@@ -32,9 +32,11 @@ func (s *Service) StartJITExpirationChecker(ctx context.Context) {
 // revokeExpiredJITAccess finds fulfilled access requests that have passed their
 // expiration time, revokes the granted access, and marks them as expired.
 func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
-	// Find all fulfilled requests that have expired
+	// Background cross-org sweep: find expired fulfilled requests across all orgs.
+	// org_id is selected so each request's revocation/audit writes below stay scoped
+	// to its own org (the ticker has no request context to read org from).
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, requester_id, resource_type, resource_id, resource_name
+		`SELECT id, requester_id, resource_type, resource_id, resource_name, org_id
 		 FROM access_requests
 		 WHERE status = 'fulfilled' AND expires_at IS NOT NULL AND expires_at < NOW()`)
 	if err != nil {
@@ -45,8 +47,8 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 
 	var revokedCount int
 	for rows.Next() {
-		var id, requesterID, resourceType, resourceID, resourceName string
-		if err := rows.Scan(&id, &requesterID, &resourceType, &resourceID, &resourceName); err != nil {
+		var id, requesterID, resourceType, resourceID, resourceName, orgID string
+		if err := rows.Scan(&id, &requesterID, &resourceType, &resourceID, &resourceName, &orgID); err != nil {
 			s.logger.Error("Failed to scan expired access request", zap.Error(err))
 			continue
 		}
@@ -55,8 +57,8 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 		switch resourceType {
 		case "role":
 			_, err := s.db.Pool.Exec(ctx,
-				`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`,
-				requesterID, resourceID)
+				`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3`,
+				requesterID, resourceID, orgID)
 			if err != nil {
 				s.logger.Error("Failed to revoke expired role assignment",
 					zap.String("request_id", id),
@@ -67,8 +69,8 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			}
 		case "group":
 			_, err := s.db.Pool.Exec(ctx,
-				`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2`,
-				requesterID, resourceID)
+				`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3`,
+				requesterID, resourceID, orgID)
 			if err != nil {
 				s.logger.Error("Failed to revoke expired group membership",
 					zap.String("request_id", id),
@@ -84,7 +86,7 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 
 		// Mark the access request as expired
 		_, err := s.db.Pool.Exec(ctx,
-			`UPDATE access_requests SET status = 'expired', updated_at = NOW() WHERE id = $1`, id)
+			`UPDATE access_requests SET status = 'expired', updated_at = NOW() WHERE id = $1 AND org_id = $2`, id, orgID)
 		if err != nil {
 			s.logger.Error("Failed to mark access request as expired",
 				zap.String("request_id", id),
@@ -98,9 +100,9 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			"resource_name": resourceName,
 		})
 		s.db.Pool.Exec(ctx,
-			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at)
-			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_access_expired', 'success', $1, '0.0.0.0', $2, $3, $4, NOW())`,
-			requesterID, resourceID, resourceType, string(details))
+			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_access_expired', 'success', $1, '0.0.0.0', $2, $3, $4, NOW(), $5)`,
+			requesterID, resourceID, resourceType, string(details), orgID)
 
 		revokedCount++
 		s.logger.Info("Revoked expired JIT access",

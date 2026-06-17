@@ -34,6 +34,26 @@ type OrgLookup interface {
 // error; not-found is a 400 client error).
 var ErrOrgNotFound = errors.New("organization not found")
 
+// DefaultOrgID is the canonical UUID of the install's default
+// organization. Migration v25 creates the row with this exact UUID
+// (slug "default") and v35 backfills it into every pre-multitenancy
+// row, so the Auth middleware, the tenant resolver's fallback, and
+// the service mains all reference the same value.
+const DefaultOrgID = "00000000-0000-0000-0000-000000000010"
+
+// tenantSkipPaths are infrastructure endpoints the resolver passes
+// through without resolving an org. Probes and scrapers are not
+// org-scoped, and — more importantly — Kubernetes liveness probes
+// must keep answering while the database (and therefore the org
+// lookup) is down. Matches whole path segments: "/health" and
+// "/health/ready" skip, "/healthcheck-export" does not.
+var tenantSkipPaths = []string{
+	"/health",
+	"/metrics",
+	"/ready",
+	"/live",
+}
+
 // TenantResolverConfig governs how the middleware resolves the org.
 //
 // The defaults are tuned for the v1.6.0 ship gate: existing single
@@ -57,10 +77,16 @@ type TenantResolverConfig struct {
 	// the X-Org-ID header is honored and whether the platform-admin
 	// marker should be attached to the context. It receives the gin
 	// context and should return true if the actor is a platform admin
-	// (typically: users.is_platform_admin == true). When nil, the
-	// X-Org-ID header is ignored and the platform-admin marker is
-	// never set.
+	// (typically: a super_admin role). When nil, the X-Org-ID header is
+	// ignored and the platform-admin marker is never set.
 	PlatformAdminPredicate func(*gin.Context) bool
+
+	// OnPlatformCrossOrg, when set, is invoked exactly when a platform
+	// admin resolves a request to an org via the X-Org-ID header (a
+	// deliberate cross-org access). It MUST record an audit entry — this
+	// is the mandatory audit trail for platform-admin org-boundary
+	// crossings. It runs synchronously before the request proceeds.
+	OnPlatformCrossOrg func(c *gin.Context, target orgctx.Org)
 }
 
 // TenantResolver returns the gin middleware that resolves the
@@ -86,6 +112,11 @@ type TenantResolverConfig struct {
 // That is the v1.7.0 surface; v1.6.0 only plumbs the context.
 func TenantResolver(lookup OrgLookup, cfg TenantResolverConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if isTenantSkipPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+
 		org, err := resolveOrgFromRequest(c, lookup, cfg)
 		if err != nil {
 			if errors.Is(err, ErrOrgNotFound) {
@@ -107,6 +138,18 @@ func TenantResolver(lookup OrgLookup, cfg TenantResolverConfig) gin.HandlerFunc 
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
+}
+
+// isTenantSkipPath reports whether path is an infrastructure endpoint
+// exempt from tenant resolution. Whole-segment matching: the skip
+// entry must equal the path or be followed by "/".
+func isTenantSkipPath(path string) bool {
+	for _, sp := range tenantSkipPaths {
+		if path == sp || strings.HasPrefix(path, sp+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverConfig) (orgctx.Org, error) {
@@ -141,7 +184,8 @@ func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverC
 		}
 	}
 
-	// 3. X-Org-ID header (platform-admin only).
+	// 3. X-Org-ID header (platform-admin only). This is a deliberate
+	// cross-org access; emit the mandatory audit entry via the hook.
 	if cfg.PlatformAdminPredicate != nil && cfg.PlatformAdminPredicate(c) {
 		if id := strings.TrimSpace(c.GetHeader("X-Org-ID")); id != "" {
 			org, err := lookup.ByID(ctx, id)
@@ -150,6 +194,9 @@ func resolveOrgFromRequest(c *gin.Context, lookup OrgLookup, cfg TenantResolverC
 					return orgctx.Org{}, fmt.Errorf("unknown organization in X-Org-ID header: %w", ErrOrgNotFound)
 				}
 				return orgctx.Org{}, err
+			}
+			if cfg.OnPlatformCrossOrg != nil {
+				cfg.OnPlatformCrossOrg(c, org)
 			}
 			return org, nil
 		}

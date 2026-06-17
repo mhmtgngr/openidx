@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // CampaignStatus represents the state of a certification campaign
@@ -300,6 +301,11 @@ func (s *CertificationService) generateReviewItems(ctx context.Context, campaign
 
 // resolveReviewer determines which reviewer should review a specific item
 func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *CertificationCampaign, userID, resourceID string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
+
 	// For each reviewer type in the campaign, find the actual reviewer
 	for _, reviewerConfig := range campaign.Reviewers {
 		switch reviewerConfig.Type {
@@ -307,7 +313,7 @@ func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *Ce
 			// Get user's manager
 			var managerID string
 			err := s.db.Pool.QueryRow(ctx,
-				`SELECT manager_id FROM users WHERE id = $1`, userID).Scan(&managerID)
+				`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&managerID)
 			if err == nil && managerID != "" {
 				return managerID, nil
 			}
@@ -330,8 +336,8 @@ func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *Ce
 			// For simplicity, return the first user with this role
 			var reviewerUserID string
 			err := s.db.Pool.QueryRow(ctx,
-				`SELECT user_id FROM user_roles WHERE role_id = $1 LIMIT 1`,
-				reviewerConfig.ID).Scan(&reviewerUserID)
+				`SELECT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2 LIMIT 1`,
+				reviewerConfig.ID, org.ID).Scan(&reviewerUserID)
 			if err == nil && reviewerUserID != "" {
 				return reviewerUserID, nil
 			}
@@ -348,13 +354,18 @@ func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *Ce
 // out: campaigns looked like they were doing work but the user kept their
 // role/group/application.
 func (s *CertificationService) ReviewItem(ctx context.Context, itemID string, decision CertificationDecision, reviewerID, comments string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Verify the item exists and is pending; pull the (user, resource)
 	// pair while we're here so we can act on revoke decisions without
 	// re-querying.
 	var currentReviewerID string
 	var currentStatus string
 	var userID, resourceType, resourceID string
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT reviewer_id, decision, user_id, resource_type, resource_id FROM certification_items WHERE id = $1`,
 		itemID).Scan(&currentReviewerID, &currentStatus, &userID, &resourceType, &resourceID)
 	if err != nil {
@@ -366,8 +377,8 @@ func (s *CertificationService) ReviewItem(ctx context.Context, itemID string, de
 		// Check if requester is an admin
 		var isAdmin bool
 		s.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND r.name = 'admin')`,
-			reviewerID).Scan(&isAdmin)
+			`SELECT EXISTS(SELECT 1 FROM user_roles ur INNER JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = $1 AND r.name = 'admin' AND ur.org_id = $2 AND r.org_id = $2)`,
+			reviewerID, org.ID).Scan(&isAdmin)
 		if !isAdmin {
 			return fmt.Errorf("user is not authorized to review this item")
 		}
@@ -489,16 +500,20 @@ func (s *CertificationService) GetCampaignItems(ctx context.Context, campaignID 
 
 // GetReviewerItems retrieves all pending items for a specific reviewer
 func (s *CertificationService) GetReviewerItems(ctx context.Context, reviewerID string) ([]CertificationItem, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT ci.id, ci.campaign_id, ci.user_id, u.username, ci.resource_type, ci.resource_id, r.name as resource_name,
 		        ci.reviewer_id, rev.username as reviewer_name, ci.decision, ci.comments, ci.reviewed_at, ci.created_at
 		 FROM certification_items ci
-		 LEFT JOIN users u ON u.id = ci.user_id
-		 LEFT JOIN roles r ON r.id = ci.resource_id
-		 LEFT JOIN users rev ON rev.id = ci.reviewer_id
+		 LEFT JOIN users u ON u.id = ci.user_id AND u.org_id = $2
+		 LEFT JOIN roles r ON r.id = ci.resource_id AND r.org_id = $2
+		 LEFT JOIN users rev ON rev.id = ci.reviewer_id AND rev.org_id = $2
 		 WHERE ci.reviewer_id = $1 AND ci.decision = 'pending'
 		 ORDER BY ci.created_at ASC`,
-		reviewerID)
+		reviewerID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query reviewer items: %w", err)
 	}
@@ -643,25 +658,33 @@ func (s *CertificationService) ProcessExpiredCampaigns(ctx context.Context) erro
 // error for unknown types rather than silently treating them as already-
 // revoked.
 func (s *CertificationService) revokeAccess(ctx context.Context, resourceType, userID, resourceID string) error {
+	// Scope to the request's org when present. The background expiry sweep
+	// (revokeUnreviewedItems) calls this with no org context; user_id is globally
+	// unique to a single org, so the (user_id, resource_id) key is org-bounded
+	// either way, but the explicit filter is applied for request-path callers.
+	filter := ""
+	args := []interface{}{userID, resourceID}
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		filter = " AND org_id = $3"
+		args = append(args, org.ID)
+	}
+
 	switch resourceType {
 	case "role":
 		_, err := s.db.Pool.Exec(ctx,
-			`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`,
-			userID, resourceID)
+			`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`+filter, args...)
 		if err != nil {
 			return fmt.Errorf("revoke role: %w", err)
 		}
 	case "group":
 		_, err := s.db.Pool.Exec(ctx,
-			`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2`,
-			userID, resourceID)
+			`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2`+filter, args...)
 		if err != nil {
 			return fmt.Errorf("revoke group: %w", err)
 		}
 	case "application":
 		_, err := s.db.Pool.Exec(ctx,
-			`DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2`,
-			userID, resourceID)
+			`DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2`+filter, args...)
 		if err != nil {
 			return fmt.Errorf("revoke application: %w", err)
 		}

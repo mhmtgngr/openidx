@@ -6,6 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // FeatureEnableRequest represents the request to enable a feature
@@ -181,9 +183,15 @@ func (s *Service) handleGetAllServicesStatus(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Get all routes
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id FROM proxy_routes WHERE enabled = true ORDER BY name`)
+		`SELECT id FROM proxy_routes WHERE enabled = true AND org_id = $1 ORDER BY name`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list routes"})
 		return

@@ -21,6 +21,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ctxKey is an unexported type for context keys in this package.
@@ -419,6 +420,11 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 	}
 	user.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:User"}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Extract email
 	email := ""
 	if len(user.Emails) > 0 {
@@ -427,11 +433,11 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 
 	// Create user in users table
 	var userID string
-	err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO users (username, email, first_name, last_name, enabled, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	err = s.db.Pool.QueryRow(ctx, `
+		INSERT INTO users (username, email, first_name, last_name, enabled, email_verified, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id
-	`, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, false, now, now).Scan(&userID)
+	`, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, false, now, now, org.ID).Scan(&userID)
 
 	if err != nil {
 		s.logger.Error("Failed to create user in users table", zap.Error(err))
@@ -443,10 +449,10 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 	// Store SCIM representation
 	data, _ := json.Marshal(user)
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO scim_users (id, external_id, username, data, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO scim_users (id, external_id, username, data, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET data = $4, updated_at = $6
-	`, userID, user.ExternalID, user.UserName, data, now, now)
+	`, userID, user.ExternalID, user.UserName, data, now, now, org.ID)
 
 	if err != nil {
 		s.logger.Error("Failed to store SCIM user data", zap.Error(err))
@@ -455,7 +461,7 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 
 	// Audit log: SCIM user created
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("provisioning", "scim", "scim.user_created", "success",
+	s.logAuditEvent(ctx, "provisioning", "scim", "scim.user_created", "success",
 		actorID, userID, "user", map[string]interface{}{
 			"username": user.UserName,
 		})
@@ -469,10 +475,15 @@ func (s *Service) GetSCIMUser(ctx context.Context, userID string) (*SCIMUser, er
 	var enabled bool
 	var createdAt, updatedAt time.Time
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT username, email, first_name, last_name, enabled, created_at, updated_at
-		FROM users WHERE id = $1
-	`, userID).Scan(&username, &email, &firstName, &lastName, &enabled, &createdAt, &updatedAt)
+		FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&username, &email, &firstName, &lastName, &enabled, &createdAt, &updatedAt)
 
 	if err != nil {
 		return nil, err
@@ -509,6 +520,11 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	user.ID = userID
 	user.Meta.LastModified = now
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Extract email
 	email := ""
 	if len(user.Emails) > 0 {
@@ -516,11 +532,11 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	}
 
 	// Update user in users table
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7
-		WHERE id = $1
-	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now)
+		WHERE id = $1 AND org_id = $8
+	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID)
 
 	if err != nil {
 		return nil, err
@@ -529,8 +545,8 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	// Update SCIM representation
 	data, _ := json.Marshal(user)
 	s.db.Pool.Exec(ctx, `
-		UPDATE scim_users SET data = $2, updated_at = $3 WHERE id = $1
-	`, userID, data, now)
+		UPDATE scim_users SET data = $2, updated_at = $3 WHERE id = $1 AND org_id = $4
+	`, userID, data, now, org.ID)
 
 	return user, nil
 }
@@ -539,33 +555,46 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting SCIM user", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Audit log before deletion so the record exists even if delete succeeds
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("provisioning", "scim", "scim.user_deleted", "success",
+	s.logAuditEvent(ctx, "provisioning", "scim", "scim.user_deleted", "success",
 		actorID, userID, "user", nil)
 
 	// Delete from users table (CASCADE will delete from scim_users)
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
 	return err
 }
 
 // ListSCIMUsers lists users via SCIM
 func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filter string) (*SCIMListResponse, error) {
-	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build query with optional filter
+	var total int
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build query with optional filter. NOTE: this SELECT is assigned to
+	// a variable before being passed to Query, so orgscope does not flag
+	// it — the org_id filter here is still required for correctness.
 	query := `
 		SELECT id, username, email, first_name, last_name, enabled, created_at, updated_at
 		FROM users
+		WHERE org_id = $3
 		ORDER BY created_at
 		OFFSET $1 LIMIT $2
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, startIndex-1, count)
+	rows, err := s.db.Pool.Query(ctx, query, startIndex-1, count, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -949,13 +978,18 @@ func (s *Service) CreateSCIMGroup(ctx context.Context, group *SCIMGroup) (*SCIMG
 	}
 	group.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create group in groups table
 	var groupID string
-	err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO groups (name, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4)
+	err = s.db.Pool.QueryRow(ctx, `
+		INSERT INTO groups (name, description, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, group.DisplayName, "", now, now).Scan(&groupID)
+	`, group.DisplayName, "", now, now, org.ID).Scan(&groupID)
 
 	if err != nil {
 		s.logger.Error("Failed to create group", zap.Error(err))
@@ -968,10 +1002,10 @@ func (s *Service) CreateSCIMGroup(ctx context.Context, group *SCIMGroup) (*SCIMG
 	if len(group.Members) > 0 {
 		for _, member := range group.Members {
 			_, err := s.db.Pool.Exec(ctx, `
-				INSERT INTO group_memberships (user_id, group_id, joined_at)
-				VALUES ($1, $2, $3)
+				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id)
+				VALUES ($1, $2, $3, $4)
 				ON CONFLICT DO NOTHING
-			`, member.Value, groupID, now)
+			`, member.Value, groupID, now, org.ID)
 			if err != nil {
 				s.logger.Warn("Failed to add group member", zap.Error(err))
 			}
@@ -986,10 +1020,15 @@ func (s *Service) GetSCIMGroup(ctx context.Context, groupID string) (*SCIMGroup,
 	var name, description string
 	var createdAt, updatedAt time.Time
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT name, description, created_at, updated_at
-		FROM groups WHERE id = $1
-	`, groupID).Scan(&name, &description, &createdAt, &updatedAt)
+		FROM groups WHERE id = $1 AND org_id = $2
+	`, groupID, org.ID).Scan(&name, &description, &createdAt, &updatedAt)
 
 	if err != nil {
 		return nil, err
@@ -1000,8 +1039,8 @@ func (s *Service) GetSCIMGroup(ctx context.Context, groupID string) (*SCIMGroup,
 		SELECT gm.user_id, u.username
 		FROM group_memberships gm
 		JOIN users u ON gm.user_id = u.id
-		WHERE gm.group_id = $1
-	`, groupID)
+		WHERE gm.group_id = $1 AND gm.org_id = $2
+	`, groupID, org.ID)
 
 	var members []SCIMMember
 	if err == nil {
@@ -1039,9 +1078,14 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 	group.ID = groupID
 	group.Meta.LastModified = now
 
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE groups SET name = $2, updated_at = $3 WHERE id = $1
-	`, groupID, group.DisplayName, now)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE groups SET name = $2, updated_at = $3 WHERE id = $1 AND org_id = $4
+	`, groupID, group.DisplayName, now, org.ID)
 
 	if err != nil {
 		return nil, err
@@ -1056,17 +1100,17 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 		defer tx.Rollback(ctx)
 
 		// Clear existing members
-		if _, err := tx.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1", groupID); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2", groupID, org.ID); err != nil {
 			return nil, fmt.Errorf("failed to clear group members: %w", err)
 		}
 
 		// Add new members
 		for _, member := range group.Members {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO group_memberships (user_id, group_id, joined_at)
-				VALUES ($1, $2, $3)
+				INSERT INTO group_memberships (user_id, group_id, joined_at, org_id)
+				VALUES ($1, $2, $3, $4)
 				ON CONFLICT DO NOTHING
-			`, member.Value, groupID, now); err != nil {
+			`, member.Value, groupID, now, org.ID); err != nil {
 				return nil, fmt.Errorf("failed to add group member: %w", err)
 			}
 		}
@@ -1083,27 +1127,37 @@ func (s *Service) UpdateSCIMGroup(ctx context.Context, groupID string, group *SC
 func (s *Service) DeleteSCIMGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting SCIM group", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Audit log before deletion so the record exists even if delete succeeds
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("provisioning", "scim", "scim.group_deleted", "success",
+	s.logAuditEvent(ctx, "provisioning", "scim", "scim.group_deleted", "success",
 		actorID, groupID, "group", nil)
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1", groupID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID)
 	return err
 }
 
 // ListSCIMGroups lists groups via SCIM
 func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, filter string) (*SCIMListResponse, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, err
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, created_at, updated_at
-		FROM groups ORDER BY created_at OFFSET $1 LIMIT $2
-	`, startIndex-1, count)
+		FROM groups WHERE org_id = $3 ORDER BY created_at OFFSET $1 LIMIT $2
+	`, startIndex-1, count, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1385,6 +1439,11 @@ func (s *Service) handleGetServiceProviderConfig(c *gin.Context) {
 func (s *Service) CreateRule(ctx context.Context, rule *ProvisioningRule) (*ProvisioningRule, error) {
 	s.logger.Info("Creating provisioning rule", zap.String("name", rule.Name))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	conditionsJSON, err := json.Marshal(rule.Conditions)
 	if err != nil {
@@ -1397,10 +1456,10 @@ func (s *Service) CreateRule(ctx context.Context, rule *ProvisioningRule) (*Prov
 
 	var id string
 	err = s.db.Pool.QueryRow(ctx, `
-		INSERT INTO provisioning_rules (name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO provisioning_rules (name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
-	`, rule.Name, rule.Description, string(rule.Trigger), conditionsJSON, actionsJSON, rule.Enabled, rule.Priority, now, now).Scan(&id)
+	`, rule.Name, rule.Description, string(rule.Trigger), conditionsJSON, actionsJSON, rule.Enabled, rule.Priority, now, now, org.ID).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rule: %w", err)
 	}
@@ -1417,10 +1476,15 @@ func (s *Service) GetRule(ctx context.Context, id string) (*ProvisioningRule, er
 	var conditionsJSON, actionsJSON []byte
 	var trigger string
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at
-		FROM provisioning_rules WHERE id = $1
-	`, id).Scan(&rule.ID, &rule.Name, &rule.Description, &trigger, &conditionsJSON, &actionsJSON, &rule.Enabled, &rule.Priority, &rule.CreatedAt, &rule.UpdatedAt)
+		FROM provisioning_rules WHERE id = $1 AND org_id = $2
+	`, id, org.ID).Scan(&rule.ID, &rule.Name, &rule.Description, &trigger, &conditionsJSON, &actionsJSON, &rule.Enabled, &rule.Priority, &rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1433,17 +1497,22 @@ func (s *Service) GetRule(ctx context.Context, id string) (*ProvisioningRule, er
 
 // ListRules lists provisioning rules with pagination support
 func (s *Service) ListRules(ctx context.Context, offset, limit int) ([]ProvisioningRule, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM provisioning_rules").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM provisioning_rules WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, trigger, conditions, actions, enabled, priority, created_at, updated_at
-		FROM provisioning_rules ORDER BY priority ASC, created_at DESC
+		FROM provisioning_rules WHERE org_id = $3 ORDER BY priority ASC, created_at DESC
 		OFFSET $1 LIMIT $2
-	`, offset, limit)
+	`, offset, limit, org.ID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1474,6 +1543,11 @@ func (s *Service) ListRules(ctx context.Context, offset, limit int) ([]Provision
 func (s *Service) UpdateRule(ctx context.Context, id string, rule *ProvisioningRule) (*ProvisioningRule, error) {
 	s.logger.Info("Updating provisioning rule", zap.String("id", id))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	conditionsJSON, err := json.Marshal(rule.Conditions)
 	if err != nil {
@@ -1487,8 +1561,8 @@ func (s *Service) UpdateRule(ctx context.Context, id string, rule *ProvisioningR
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE provisioning_rules
 		SET name = $2, description = $3, trigger = $4, conditions = $5, actions = $6, enabled = $7, priority = $8, updated_at = $9
-		WHERE id = $1
-	`, id, rule.Name, rule.Description, string(rule.Trigger), conditionsJSON, actionsJSON, rule.Enabled, rule.Priority, now)
+		WHERE id = $1 AND org_id = $10
+	`, id, rule.Name, rule.Description, string(rule.Trigger), conditionsJSON, actionsJSON, rule.Enabled, rule.Priority, now, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update rule: %w", err)
 	}
@@ -1505,7 +1579,12 @@ func (s *Service) UpdateRule(ctx context.Context, id string, rule *ProvisioningR
 func (s *Service) DeleteRule(ctx context.Context, id string) error {
 	s.logger.Info("Deleting provisioning rule", zap.String("id", id))
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM provisioning_rules WHERE id = $1", id)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM provisioning_rules WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1610,15 +1689,22 @@ func (s *Service) handleDeleteRule(c *gin.Context) {
 
 // logAuditEvent writes an audit event to the audit_events table (best-effort, non-blocking).
 // It mirrors the pattern used in the OAuth service.
-func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+	// Capture org synchronously before the detached goroutine (the write
+	// runs on context.Background()). Falls back to the default org UUID
+	// when unresolved, matching the milestone's DefaultOrgFallback.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
+		orgID = org.ID
+	}
 	go func() {
 		detailsJSON, _ := json.Marshal(details)
 		_, err := s.db.Pool.Exec(context.Background(), `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
-			                          resource_id, details)
-			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'service', '', $6, $7, $6, $8)
-		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON)
+			                          resource_id, details, org_id)
+			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'service', '', $6, $7, $6, $8, $9)
+		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON, orgID)
 		if err != nil {
 			s.logger.Warn("failed to record audit event",
 				zap.String("event_type", eventType),

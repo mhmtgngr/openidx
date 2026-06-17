@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // RequestStatus represents the state of an access request
@@ -123,6 +124,11 @@ func (s *RequestService) SubmitRequest(ctx context.Context, requesterID, request
 		return nil, fmt.Errorf("approval chain must have at least one step")
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Set default escalation time if not configured
 	escalateHours := approvalChain.EscalateAfterHours
 	if escalateHours == 0 {
@@ -144,9 +150,9 @@ func (s *RequestService) SubmitRequest(ctx context.Context, requesterID, request
 
 	// Create the request
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, justification, status, priority, created_at, updated_at)
-		 VALUES ($1, $2, 'role', $3, $4, $5, 'pending', 'normal', $6, $6)`,
-		id, requesterID, requestedRole, requestedRole, justification, now)
+		`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, justification, status, priority, created_at, updated_at, org_id)
+		 VALUES ($1, $2, 'role', $3, $4, $5, 'pending', 'normal', $6, $6, $7)`,
+		id, requesterID, requestedRole, requestedRole, justification, now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create access request",
 			zap.String("requester_id", requesterID),
@@ -165,7 +171,7 @@ func (s *RequestService) SubmitRequest(ctx context.Context, requesterID, request
 			zap.String("request_id", id),
 			zap.Error(err))
 		// Clean up the request
-		s.db.Pool.Exec(ctx, `DELETE FROM access_requests WHERE id = $1`, id)
+		s.db.Pool.Exec(ctx, `DELETE FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID)
 		return nil, fmt.Errorf("failed to store approval chain: %w", err)
 	}
 
@@ -187,9 +193,9 @@ func (s *RequestService) SubmitRequest(ctx context.Context, requesterID, request
 		}
 
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO access_request_approvals (request_id, approver_id, step_order, decision, created_at)
-			 VALUES ($1, $2, $3, 'pending', $4)`,
-			id, approverID, i+1, now)
+			`INSERT INTO access_request_approvals (request_id, approver_id, step_order, decision, created_at, org_id)
+			 VALUES ($1, $2, $3, 'pending', $4, $5)`,
+			id, approverID, i+1, now, org.ID)
 		if err != nil {
 			s.logger.Error("Failed to create approval record",
 				zap.String("request_id", id),
@@ -231,6 +237,11 @@ func (s *RequestService) SubmitRequest(ctx context.Context, requesterID, request
 
 // ApproveRequest processes an approval decision for a request
 func (s *RequestService) ApproveRequest(ctx context.Context, requestID, approverID, comments string) (*AccessRequestDetail, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get the request and approval chain
 	detail, err := s.getRequestDetail(ctx, requestID)
 	if err != nil {
@@ -246,9 +257,9 @@ func (s *RequestService) ApproveRequest(ctx context.Context, requestID, approver
 	var stepOrder int
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id, step_order FROM access_request_approvals
-		 WHERE request_id = $1 AND approver_id = $2 AND decision = 'pending'
+		 WHERE request_id = $1 AND approver_id = $2 AND decision = 'pending' AND org_id = $3
 		 ORDER BY step_order ASC LIMIT 1`,
-		requestID, approverID).Scan(&approvalID, &stepOrder)
+		requestID, approverID, org.ID).Scan(&approvalID, &stepOrder)
 	if err != nil {
 		return nil, fmt.Errorf("no pending approval found for this approver: %w", err)
 	}
@@ -257,8 +268,8 @@ func (s *RequestService) ApproveRequest(ctx context.Context, requestID, approver
 
 	// Update the approval
 	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE access_request_approvals SET decision = 'approved', comments = $1, decided_at = $2 WHERE id = $3`,
-		comments, now, approvalID)
+		`UPDATE access_request_approvals SET decision = 'approved', comments = $1, decided_at = $2 WHERE id = $3 AND org_id = $4`,
+		comments, now, approvalID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update approval: %w", err)
 	}
@@ -266,8 +277,8 @@ func (s *RequestService) ApproveRequest(ctx context.Context, requestID, approver
 	// Check if all required approvals are complete
 	var pendingCount int
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM access_request_approvals WHERE request_id = $1 AND decision = 'pending'`,
-		requestID).Scan(&pendingCount)
+		`SELECT COUNT(*) FROM access_request_approvals WHERE request_id = $1 AND decision = 'pending' AND org_id = $2`,
+		requestID, org.ID).Scan(&pendingCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check pending approvals: %w", err)
 	}
@@ -275,8 +286,8 @@ func (s *RequestService) ApproveRequest(ctx context.Context, requestID, approver
 	if pendingCount == 0 {
 		// All approvals complete - mark request as approved
 		_, err = s.db.Pool.Exec(ctx,
-			`UPDATE access_requests SET status = 'approved', updated_at = $1 WHERE id = $2`,
-			now, requestID)
+			`UPDATE access_requests SET status = 'approved', updated_at = $1 WHERE id = $2 AND org_id = $3`,
+			now, requestID, org.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update request status: %w", err)
 		}
@@ -304,6 +315,11 @@ func (s *RequestService) ApproveRequest(ctx context.Context, requestID, approver
 
 // DenyRequest denies an access request
 func (s *RequestService) DenyRequest(ctx context.Context, requestID, approverID, comments string) (*AccessRequestDetail, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get the request
 	detail, err := s.getRequestDetail(ctx, requestID)
 	if err != nil {
@@ -318,8 +334,8 @@ func (s *RequestService) DenyRequest(ctx context.Context, requestID, approverID,
 	var approvalID string
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id FROM access_request_approvals
-		 WHERE request_id = $1 AND approver_id = $2 AND decision = 'pending' LIMIT 1`,
-		requestID, approverID).Scan(&approvalID)
+		 WHERE request_id = $1 AND approver_id = $2 AND decision = 'pending' AND org_id = $3 LIMIT 1`,
+		requestID, approverID, org.ID).Scan(&approvalID)
 	if err != nil {
 		return nil, fmt.Errorf("no pending approval found for this approver: %w", err)
 	}
@@ -328,16 +344,16 @@ func (s *RequestService) DenyRequest(ctx context.Context, requestID, approverID,
 
 	// Update the approval
 	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE access_request_approvals SET decision = 'denied', comments = $1, decided_at = $2 WHERE id = $3`,
-		comments, now, approvalID)
+		`UPDATE access_request_approvals SET decision = 'denied', comments = $1, decided_at = $2 WHERE id = $3 AND org_id = $4`,
+		comments, now, approvalID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update approval: %w", err)
 	}
 
 	// Mark request as denied
 	_, err = s.db.Pool.Exec(ctx,
-		`UPDATE access_requests SET status = 'denied', updated_at = $1 WHERE id = $2`,
-		now, requestID)
+		`UPDATE access_requests SET status = 'denied', updated_at = $1 WHERE id = $2 AND org_id = $3`,
+		now, requestID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update request status: %w", err)
 	}
@@ -358,10 +374,14 @@ func (s *RequestService) DenyRequest(ctx context.Context, requestID, approverID,
 
 // CancelRequest cancels a pending request (only by requester)
 func (s *RequestService) CancelRequest(ctx context.Context, requestID, requesterID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	result, err := s.db.Pool.Exec(ctx,
 		`UPDATE access_requests SET status = 'cancelled', updated_at = $1
-		 WHERE id = $2 AND requester_id = $3 AND status = 'pending'`,
-		time.Now(), requestID, requesterID)
+		 WHERE id = $2 AND requester_id = $3 AND status = 'pending' AND org_id = $4`,
+		time.Now(), requestID, requesterID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to cancel request: %w", err)
 	}
@@ -405,9 +425,11 @@ func (s *RequestService) StartEscalationChecker(ctx context.Context, checkInterv
 
 // checkEscalations finds pending requests that need escalation and processes them
 func (s *RequestService) checkEscalations(ctx context.Context) {
-	// Find pending requests past their escalation due time that haven't been notified
+	// Background cross-org sweep: find pending requests past their escalation due
+	// time across all orgs. r.org_id is selected so each request's writes below stay
+	// scoped to its own org (escalation has no request context to read org from).
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT r.id, r.requester_id, r.resource_id, ac.steps, ac.escalate_to
+		`SELECT r.id, r.requester_id, r.resource_id, r.org_id, ac.steps, ac.escalate_to
 		 FROM access_requests r
 		 INNER JOIN request_approval_chains ac ON ac.request_id = r.id
 		 WHERE r.status = 'pending'
@@ -423,6 +445,7 @@ func (s *RequestService) checkEscalations(ctx context.Context) {
 		RequestID   string
 		RequesterID string
 		ResourceID  string
+		OrgID       string
 		Steps       []ApprovalStep
 		EscalateTo  []string
 	}
@@ -433,7 +456,7 @@ func (s *RequestService) checkEscalations(ctx context.Context) {
 		var stepsJSON, escalateJSON []byte
 
 		if err := rows.Scan(&info.RequestID, &info.RequesterID, &info.ResourceID,
-			&stepsJSON, &escalateJSON); err != nil {
+			&info.OrgID, &stepsJSON, &escalateJSON); err != nil {
 			continue
 		}
 
@@ -459,14 +482,14 @@ func (s *RequestService) checkEscalations(ctx context.Context) {
 			// Check if approver already exists
 			var exists bool
 			s.db.Pool.QueryRow(ctx,
-				`SELECT EXISTS(SELECT 1 FROM access_request_approvals WHERE request_id = $1 AND approver_id = $2)`,
-				info.RequestID, escalatorID).Scan(&exists)
+				`SELECT EXISTS(SELECT 1 FROM access_request_approvals WHERE request_id = $1 AND approver_id = $2 AND org_id = $3)`,
+				info.RequestID, escalatorID, info.OrgID).Scan(&exists)
 
 			if !exists {
 				s.db.Pool.Exec(ctx,
-					`INSERT INTO access_request_approvals (request_id, approver_id, step_order, decision, created_at)
-					 VALUES ($1, $2, 999, 'pending', $3)`,
-					info.RequestID, escalatorID, now)
+					`INSERT INTO access_request_approvals (request_id, approver_id, step_order, decision, created_at, org_id)
+					 VALUES ($1, $2, 999, 'pending', $3, $4)`,
+					info.RequestID, escalatorID, now, info.OrgID)
 			}
 		}
 
@@ -496,6 +519,20 @@ func (s *RequestService) getRequestDetail(ctx context.Context, requestID string)
 	var stepsJSON []byte
 	var escalationDueAt *time.Time
 
+	// Scope to the request's org when a request context carries one. The background
+	// escalation checker calls this with no org context (requests are looked up by
+	// their globally-unique id), so the filter is applied conditionally.
+	reqFilter := ""
+	apprFilter := ""
+	reqArgs := []interface{}{requestID}
+	apprArgs := []interface{}{requestID}
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		reqFilter = " AND r.org_id = $2"
+		apprFilter = " AND org_id = $2"
+		reqArgs = append(reqArgs, org.ID)
+		apprArgs = append(apprArgs, org.ID)
+	}
+
 	// Get request and approval chain in one query
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT r.id, r.requester_id, r.resource_type, r.resource_id, r.resource_name,
@@ -503,8 +540,8 @@ func (s *RequestService) getRequestDetail(ctx context.Context, requestID string)
 		        ac.steps, ac.current_step, ac.escalation_due_at, ac.escalation_notified
 		 FROM access_requests r
 		 LEFT JOIN request_approval_chains ac ON ac.request_id = r.id
-		 WHERE r.id = $1`,
-		requestID).Scan(
+		 WHERE r.id = $1`+reqFilter,
+		reqArgs...).Scan(
 		&detail.ID, &detail.RequesterID, &detail.ResourceType, &detail.ResourceID,
 		&detail.ResourceName, &detail.Justification, &detail.Status, &detail.Priority,
 		&detail.ExpiresAt, &detail.CreatedAt, &detail.UpdatedAt,
@@ -524,8 +561,8 @@ func (s *RequestService) getRequestDetail(ctx context.Context, requestID string)
 	// Get approvals status
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, approver_id, step_order, decision, comments, decided_at, created_at
-		 FROM access_request_approvals WHERE request_id = $1 ORDER BY step_order ASC`,
-		requestID)
+		 FROM access_request_approvals WHERE request_id = $1`+apprFilter+` ORDER BY step_order ASC`,
+		apprArgs...)
 	if err == nil {
 		defer rows.Close()
 
@@ -545,9 +582,13 @@ func (s *RequestService) getRequestDetail(ctx context.Context, requestID string)
 
 // resolveManager finds the manager of a user
 func (s *RequestService) resolveManager(ctx context.Context, userID string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
 	var managerID string
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT manager_id FROM users WHERE id = $1`, userID).Scan(&managerID)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&managerID)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve manager: %w", err)
 	}
@@ -571,16 +612,20 @@ func (s *RequestService) notifyHooks(ctx context.Context, eventType RequestEvent
 
 // GetPendingApprovalsForUser returns all pending approvals for a specific approver
 func (s *RequestService) GetPendingApprovalsForUser(ctx context.Context, userID string) ([]AccessRequestDetail, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT r.id, r.requester_id, r.resource_type, r.resource_id, r.resource_name,
 		        r.justification, r.status, r.priority, r.created_at, r.updated_at,
 		        ac.steps, ac.current_step
 		 FROM access_request_approvals a
-		 INNER JOIN access_requests r ON r.id = a.request_id
+		 INNER JOIN access_requests r ON r.id = a.request_id AND r.org_id = a.org_id
 		 LEFT JOIN request_approval_chains ac ON ac.request_id = r.id
-		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND r.status = 'pending'
+		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND r.status = 'pending' AND a.org_id = $2
 		 ORDER BY r.created_at ASC`,
-		userID)
+		userID, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pending approvals: %w", err)
 	}

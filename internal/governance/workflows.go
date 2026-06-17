@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AccessRequest represents a request for access to a role, group, or application
@@ -118,6 +120,12 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	if body.ResourceID == "" {
 		body.ResourceID = uuid.New().String()
 	}
@@ -137,11 +145,11 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 	id := uuid.New().String()
 	now := time.Now()
 
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, justification, status, priority, expires_at, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		`INSERT INTO access_requests (id, requester_id, resource_type, resource_id, resource_name, justification, status, priority, expires_at, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		id, requesterID, body.ResourceType, body.ResourceID, body.ResourceName,
-		body.Justification, "pending", body.Priority, expiresAt, now, now,
+		body.Justification, "pending", body.Priority, expiresAt, now, now, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to create access request", zap.Error(err))
@@ -169,21 +177,27 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 
 // createApprovalRows looks up approval policies and creates approval rows for a request
 func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceType, resourceID string) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Error("createApprovalRows: no org context", zap.Error(err))
+		return
+	}
+
 	// Try to find a matching policy (specific resource first, then generic)
 	var stepsJSON []byte
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT approval_steps FROM approval_policies
-		 WHERE resource_type = $1 AND (resource_id = $2 OR resource_id IS NULL) AND enabled = true
+		 WHERE resource_type = $1 AND (resource_id = $2 OR resource_id IS NULL) AND enabled = true AND org_id = $3
 		 ORDER BY resource_id NULLS LAST LIMIT 1`,
-		resourceType, resourceID,
+		resourceType, resourceID, org.ID,
 	).Scan(&stepsJSON)
 	if err != nil {
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
 		_, _ = s.db.Pool.Exec(ctx,
-			`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			uuid.New().String(), requestID, adminID, 1, "pending", time.Now(),
+			`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			uuid.New().String(), requestID, adminID, 1, "pending", time.Now(), org.ID,
 		)
 		return
 	}
@@ -199,15 +213,15 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		case ApprovalStepTypeSpecificUser:
 			if step.ApproverID != "" {
 				_, _ = s.db.Pool.Exec(ctx,
-					`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
-					 VALUES ($1, $2, $3, $4, $5, $6)`,
-					uuid.New().String(), requestID, step.ApproverID, step.Order, "pending", time.Now(),
+					`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+					uuid.New().String(), requestID, step.ApproverID, step.Order, "pending", time.Now(), org.ID,
 				)
 			}
 		case ApprovalStepTypeRole:
 			if step.RoleID != "" {
 				roleRows, err := s.db.Pool.Query(ctx,
-					`SELECT id FROM users WHERE $1 = ANY(roles)`, step.RoleID,
+					`SELECT id FROM users WHERE $1 = ANY(roles) AND org_id = $2`, step.RoleID, org.ID,
 				)
 				if err != nil {
 					s.logger.Error("Failed to query users by role", zap.Error(err), zap.String("role_id", step.RoleID))
@@ -220,9 +234,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 							continue
 						}
 						_, _ = s.db.Pool.Exec(ctx,
-							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
-							 VALUES ($1, $2, $3, $4, $5, $6)`,
-							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(),
+							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+							 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(), org.ID,
 						)
 					}
 				}
@@ -230,7 +244,7 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 		case ApprovalStepTypeGroup:
 			if step.GroupID != "" {
 				groupRows, err := s.db.Pool.Query(ctx,
-					`SELECT user_id FROM group_memberships WHERE group_id = $1`, step.GroupID,
+					`SELECT user_id FROM group_memberships WHERE group_id = $1 AND org_id = $2`, step.GroupID, org.ID,
 				)
 				if err != nil {
 					s.logger.Error("Failed to query group members", zap.Error(err), zap.String("group_id", step.GroupID))
@@ -243,9 +257,9 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 							continue
 						}
 						_, _ = s.db.Pool.Exec(ctx,
-							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
-							 VALUES ($1, $2, $3, $4, $5, $6)`,
-							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(),
+							`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+							 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+							uuid.New().String(), requestID, userID, step.Order, "pending", time.Now(), org.ID,
 						)
 					}
 				}
@@ -254,22 +268,22 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			// Look up the requester's manager from the access request
 			var requesterID string
 			err := s.db.Pool.QueryRow(ctx,
-				`SELECT requester_id FROM access_requests WHERE id = $1`, requestID,
+				`SELECT requester_id FROM access_requests WHERE id = $1 AND org_id = $2`, requestID, org.ID,
 			).Scan(&requesterID)
 			if err != nil {
 				s.logger.Error("Failed to get requester for manager approval", zap.Error(err))
 			} else {
 				var managerID *string
 				err = s.db.Pool.QueryRow(ctx,
-					`SELECT manager_id FROM users WHERE id = $1`, requesterID,
+					`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2`, requesterID, org.ID,
 				).Scan(&managerID)
 				if err != nil {
 					s.logger.Error("Failed to get manager for requester", zap.Error(err), zap.String("requester_id", requesterID))
 				} else if managerID != nil {
 					_, _ = s.db.Pool.Exec(ctx,
-						`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at)
-						 VALUES ($1, $2, $3, $4, $5, $6)`,
-						uuid.New().String(), requestID, *managerID, step.Order, "pending", time.Now(),
+						`INSERT INTO access_request_approvals (id, request_id, approver_id, step_order, decision, created_at, org_id)
+						 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+						uuid.New().String(), requestID, *managerID, step.Order, "pending", time.Now(), org.ID,
 					)
 				}
 			}
@@ -316,16 +330,26 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	baseQuery := `SELECT ar.id, ar.requester_id, COALESCE(u.display_name, u.username, ''),
 		ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		ar.status, ar.priority, ar.expires_at, ar.created_at, ar.updated_at
 		FROM access_requests ar
-		LEFT JOIN users u ON u.id = ar.requester_id`
+		LEFT JOIN users u ON u.id = ar.requester_id AND u.org_id = ar.org_id`
 	countQuery := `SELECT COUNT(*) FROM access_requests ar`
 
 	conditions := []string{}
 	args := []interface{}{}
 	argIdx := 1
+
+	conditions = append(conditions, fmt.Sprintf("ar.org_id = $%d", argIdx))
+	args = append(args, org.ID)
+	argIdx++
 
 	if status != "" {
 		conditions = append(conditions, fmt.Sprintf("ar.status = $%d", argIdx))
@@ -350,7 +374,7 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 	}
 
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery+whereClause, args...).Scan(&total)
 	if err != nil {
 		s.logger.Error("Failed to count access requests", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count access requests"})
@@ -398,17 +422,23 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 func (s *Service) handleGetAccessRequest(c *gin.Context) {
 	id := c.Param("id")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var r AccessRequest
 	var requesterName *string
 	var expiresAt *time.Time
 
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT ar.id, ar.requester_id, COALESCE(u.display_name, u.username, ''),
 		 ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		 ar.status, ar.priority, ar.expires_at, ar.created_at, ar.updated_at
 		 FROM access_requests ar
-		 LEFT JOIN users u ON u.id = ar.requester_id
-		 WHERE ar.id = $1`, id,
+		 LEFT JOIN users u ON u.id = ar.requester_id AND u.org_id = ar.org_id
+		 WHERE ar.id = $1 AND ar.org_id = $2`, id, org.ID,
 	).Scan(&r.ID, &r.RequesterID, &requesterName,
 		&r.ResourceType, &r.ResourceID, &r.ResourceName, &r.Justification,
 		&r.Status, &r.Priority, &expiresAt, &r.CreatedAt, &r.UpdatedAt)
@@ -431,9 +461,9 @@ func (s *Service) handleGetAccessRequest(c *gin.Context) {
 	approvalRows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT a.id, a.request_id, a.approver_id, COALESCE(u.display_name, u.username, ''), a.step_order, a.decision, a.comments, a.decided_at, a.created_at
 		 FROM access_request_approvals a
-		 LEFT JOIN users u ON u.id = a.approver_id
-		 WHERE a.request_id = $1
-		 ORDER BY a.step_order ASC`, id,
+		 LEFT JOIN users u ON u.id = a.approver_id AND u.org_id = a.org_id
+		 WHERE a.request_id = $1 AND a.org_id = $2
+		 ORDER BY a.step_order ASC`, id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to query approvals", zap.Error(err))
@@ -482,13 +512,19 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	now := time.Now()
 
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE access_request_approvals
 		 SET decision = 'approved', comments = $1, decided_at = $2
-		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending'`,
-		body.Comments, now, id, approverID,
+		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending' AND org_id = $5`,
+		body.Comments, now, id, approverID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to approve request", zap.Error(err))
@@ -503,8 +539,8 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 	// Check if ALL approvals for this request are now approved
 	var pendingCount int
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT COUNT(*) FROM access_request_approvals WHERE request_id = $1 AND decision = 'pending'`,
-		id,
+		`SELECT COUNT(*) FROM access_request_approvals WHERE request_id = $1 AND decision = 'pending' AND org_id = $2`,
+		id, org.ID,
 	).Scan(&pendingCount)
 	if err != nil {
 		s.logger.Error("Failed to check pending approvals", zap.Error(err))
@@ -514,8 +550,8 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 
 	if pendingCount == 0 {
 		_, err = s.db.Pool.Exec(c.Request.Context(),
-			`UPDATE access_requests SET status = 'approved', updated_at = $1 WHERE id = $2`,
-			time.Now(), id,
+			`UPDATE access_requests SET status = 'approved', updated_at = $1 WHERE id = $2 AND org_id = $3`,
+			time.Now(), id, org.ID,
 		)
 		if err != nil {
 			s.logger.Error("Failed to update request status", zap.Error(err))
@@ -523,7 +559,7 @@ func (s *Service) handleApproveRequest(c *gin.Context) {
 
 		var request AccessRequest
 		err = s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT id, requester_id, resource_type, resource_id, resource_name, status FROM access_requests WHERE id = $1`, id,
+			`SELECT id, requester_id, resource_type, resource_id, resource_name, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
 		).Scan(&request.ID, &request.RequesterID, &request.ResourceType, &request.ResourceID, &request.ResourceName, &request.Status)
 		if err == nil {
 			if fulfillErr := s.fulfillRequest(c.Request.Context(), &request); fulfillErr != nil {
@@ -550,13 +586,19 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	now := time.Now()
 
 	result, err := s.db.Pool.Exec(c.Request.Context(),
 		`UPDATE access_request_approvals
 		 SET decision = 'denied', comments = $1, decided_at = $2
-		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending'`,
-		body.Comments, now, id, approverID,
+		 WHERE request_id = $3 AND approver_id = $4 AND decision = 'pending' AND org_id = $5`,
+		body.Comments, now, id, approverID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to deny request", zap.Error(err))
@@ -569,8 +611,8 @@ func (s *Service) handleDenyRequest(c *gin.Context) {
 	}
 
 	_, err = s.db.Pool.Exec(c.Request.Context(),
-		`UPDATE access_requests SET status = 'denied', updated_at = $1 WHERE id = $2`,
-		time.Now(), id,
+		`UPDATE access_requests SET status = 'denied', updated_at = $1 WHERE id = $2 AND org_id = $3`,
+		time.Now(), id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to update request status to denied", zap.Error(err))
@@ -589,9 +631,15 @@ func (s *Service) handleCancelRequest(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var requesterID, status string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT requester_id, status FROM access_requests WHERE id = $1`, id,
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT requester_id, status FROM access_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&requesterID, &status)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -614,8 +662,8 @@ func (s *Service) handleCancelRequest(c *gin.Context) {
 	}
 
 	_, err = s.db.Pool.Exec(c.Request.Context(),
-		`UPDATE access_requests SET status = 'cancelled', updated_at = $1 WHERE id = $2`,
-		time.Now(), id,
+		`UPDATE access_requests SET status = 'cancelled', updated_at = $1 WHERE id = $2 AND org_id = $3`,
+		time.Now(), id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to cancel request", zap.Error(err))
@@ -634,15 +682,21 @@ func (s *Service) handleListPendingApprovals(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT ar.id, ar.requester_id, COALESCE(ru.display_name, ru.username, ''),
 		        ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		        ar.status, ar.priority, ar.created_at, ar.updated_at
 		 FROM access_request_approvals a
-		 JOIN access_requests ar ON ar.id = a.request_id
-		 LEFT JOIN users ru ON ru.id = ar.requester_id
-		 WHERE a.approver_id = $1 AND a.decision = 'pending'
-		 ORDER BY ar.created_at DESC`, userID,
+		 JOIN access_requests ar ON ar.id = a.request_id AND ar.org_id = a.org_id
+		 LEFT JOIN users ru ON ru.id = ar.requester_id AND ru.org_id = ar.org_id
+		 WHERE a.approver_id = $1 AND a.decision = 'pending' AND a.org_id = $2
+		 ORDER BY ar.created_at DESC`, userID, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to query pending approvals", zap.Error(err))
@@ -679,10 +733,16 @@ func (s *Service) handleListPendingApprovals(c *gin.Context) {
 
 // handleListApprovalPolicies returns all approval policies
 func (s *Service) handleListApprovalPolicies(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, resource_type, resource_id, approval_steps, auto_approve_conditions, max_wait_hours, enabled, created_at, updated_at
 		 FROM approval_policies
-		 ORDER BY created_at DESC`,
+		 WHERE org_id = $1
+		 ORDER BY created_at DESC`, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to query approval policies", zap.Error(err))
@@ -742,6 +802,12 @@ func (s *Service) handleCreateApprovalPolicy(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	stepsJSON, err := json.Marshal(body.ApprovalSteps)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid approval_steps"})
@@ -761,10 +827,10 @@ func (s *Service) handleCreateApprovalPolicy(c *gin.Context) {
 	now := time.Now()
 
 	_, err = s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO approval_policies (id, name, resource_type, resource_id, approval_steps, auto_approve_conditions, max_wait_hours, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		`INSERT INTO approval_policies (id, name, resource_type, resource_id, approval_steps, auto_approve_conditions, max_wait_hours, enabled, created_at, updated_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		id, body.Name, body.ResourceType, body.ResourceID, stepsJSON, autoApproveJSON,
-		body.MaxWaitHours, body.Enabled, now, now,
+		body.MaxWaitHours, body.Enabled, now, now, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to create approval policy", zap.Error(err))
@@ -804,6 +870,12 @@ func (s *Service) handleUpdateApprovalPolicy(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	stepsJSON, err := json.Marshal(body.ApprovalSteps)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid approval_steps"})
@@ -824,9 +896,9 @@ func (s *Service) handleUpdateApprovalPolicy(c *gin.Context) {
 		`UPDATE approval_policies
 		 SET name = $1, resource_type = $2, resource_id = $3, approval_steps = $4,
 		     auto_approve_conditions = $5, max_wait_hours = $6, enabled = $7, updated_at = $8
-		 WHERE id = $9`,
+		 WHERE id = $9 AND org_id = $10`,
 		body.Name, body.ResourceType, body.ResourceID, stepsJSON,
-		autoApproveJSON, body.MaxWaitHours, body.Enabled, now, id,
+		autoApproveJSON, body.MaxWaitHours, body.Enabled, now, id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to update approval policy", zap.Error(err))
@@ -856,8 +928,14 @@ func (s *Service) handleUpdateApprovalPolicy(c *gin.Context) {
 func (s *Service) handleDeleteApprovalPolicy(c *gin.Context) {
 	id := c.Param("id")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	result, err := s.db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM approval_policies WHERE id = $1`, id,
+		`DELETE FROM approval_policies WHERE id = $1 AND org_id = $2`, id, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("Failed to delete approval policy", zap.Error(err))
@@ -881,27 +959,31 @@ func (s *Service) handleDeleteApprovalPolicy(c *gin.Context) {
 // shipped approved-but-empty requests to production (the P1.1 gap the
 // roadmap called out).
 func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	switch request.ResourceType {
 	case "role":
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			request.RequesterID, request.ResourceID,
+			`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+			request.RequesterID, request.ResourceID, org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to assign role: %w", err)
 		}
 	case "group":
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO group_memberships (user_id, group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			request.RequesterID, request.ResourceID,
+			`INSERT INTO group_memberships (user_id, group_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+			request.RequesterID, request.ResourceID, org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to add to group: %w", err)
 		}
 	case "application":
 		_, err := s.db.Pool.Exec(ctx,
-			`INSERT INTO user_application_assignments (user_id, application_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			request.RequesterID, request.ResourceID,
+			`INSERT INTO user_application_assignments (user_id, application_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+			request.RequesterID, request.ResourceID, org.ID,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to assign application: %w", err)
@@ -913,9 +995,9 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 		return fmt.Errorf("unsupported access-request resource type %q", request.ResourceType)
 	}
 
-	_, err := s.db.Pool.Exec(ctx,
-		`UPDATE access_requests SET status = 'fulfilled', updated_at = $1 WHERE id = $2`,
-		time.Now(), request.ID,
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE access_requests SET status = 'fulfilled', updated_at = $1 WHERE id = $2 AND org_id = $3`,
+		time.Now(), request.ID, org.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update request status to fulfilled: %w", err)

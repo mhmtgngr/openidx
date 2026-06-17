@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/resilience"
 )
 
@@ -68,12 +69,21 @@ func (zm *ZitiManager) circuitBreaker() *resilience.CircuitBreaker {
 
 // ListZitiCertificates returns all tracked Ziti certificates with computed days until expiry
 func (zm *ZitiManager) ListZitiCertificates(ctx context.Context) ([]ZitiCertificate, error) {
+	// Scope to the request's org for admin callers; the background expiry monitor
+	// calls this with no org context and reconciles certs across all orgs.
+	orgFilter := ""
+	args := []interface{}{}
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgFilter = " WHERE org_id = $1"
+		args = append(args, org.ID)
+	}
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore org filter applied via orgFilter when a request org is present; background expiry monitor reconciles all orgs
 		`SELECT id, name, cert_type, subject, issuer, serial_number, fingerprint,
 		        not_before, not_after, auto_renew, renewal_threshold_days, status,
 		        associated_identity_id, created_at, updated_at
-		 FROM ziti_certificates
-		 ORDER BY not_after ASC`)
+		 FROM ziti_certificates`+orgFilter+`
+		 ORDER BY not_after ASC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ziti_certificates: %w", err)
 	}
@@ -112,13 +122,22 @@ func (zm *ZitiManager) ListZitiCertificates(ctx context.Context) ([]ZitiCertific
 func (zm *ZitiManager) GetCertificateExpiryAlerts(ctx context.Context, thresholdDays int) ([]ZitiCertificate, error) {
 	threshold := time.Now().Add(time.Duration(thresholdDays) * 24 * time.Hour)
 
+	// Scope to the request's org for admin callers; the background expiry monitor
+	// calls this with no org context and alerts across all orgs.
+	orgFilter := ""
+	args := []interface{}{threshold}
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgFilter = " AND org_id = $2"
+		args = append(args, org.ID)
+	}
 	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore org filter applied via orgFilter when a request org is present; background expiry monitor alerts across all orgs
 		`SELECT id, name, cert_type, subject, issuer, serial_number, fingerprint,
 		        not_before, not_after, auto_renew, renewal_threshold_days, status,
 		        associated_identity_id, created_at, updated_at
 		 FROM ziti_certificates
-		 WHERE not_after IS NOT NULL AND not_after <= $1 AND status = 'active'
-		 ORDER BY not_after ASC`, threshold)
+		 WHERE not_after IS NOT NULL AND not_after <= $1 AND status = 'active'`+orgFilter+`
+		 ORDER BY not_after ASC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query expiring certificates: %w", err)
 	}
@@ -159,6 +178,7 @@ func (zm *ZitiManager) GetCertificateExpiryAlerts(ctx context.Context, threshold
 func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) error {
 	// Mark the old certificate as rotating
 	tag, err := zm.db.Pool.Exec(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; keyed by globally-unique Ziti controller cert id
 		`UPDATE ziti_certificates SET status = 'rotating', updated_at = NOW() WHERE id = $1 AND status = 'active'`,
 		certID)
 	if err != nil {
@@ -172,6 +192,7 @@ func (zm *ZitiManager) RotateCertificate(ctx context.Context, certID string) err
 	var name, certType string
 	var associatedIdentityID *string
 	err = zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; keyed by globally-unique Ziti controller cert id
 		`SELECT name, cert_type, associated_identity_id FROM ziti_certificates WHERE id = $1`, certID).
 		Scan(&name, &certType, &associatedIdentityID)
 	if err != nil {
@@ -217,6 +238,7 @@ func (zm *ZitiManager) rotateIdentityCert(ctx context.Context, certID, associate
 	// Look up the Ziti controller identity ID from our internal identity table
 	var zitiID string
 	err := zm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; identity keyed by globally-unique Ziti controller identity id
 		"SELECT ziti_id FROM ziti_identities WHERE id = $1", associatedIdentityID).
 		Scan(&zitiID)
 	if err != nil {
@@ -235,6 +257,7 @@ func (zm *ZitiManager) rotateIdentityCert(ctx context.Context, certID, associate
 
 	// Mark old certificate as rotated
 	_, err = zm.db.Pool.Exec(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; keyed by globally-unique Ziti controller cert id
 		`UPDATE ziti_certificates SET status = 'rotated', updated_at = NOW() WHERE id = $1`,
 		certID)
 	if err != nil {
@@ -244,6 +267,7 @@ func (zm *ZitiManager) rotateIdentityCert(ctx context.Context, certID, associate
 	// Create a new active certificate record (real cert data will be synced by SyncCertificatesFromController)
 	newID := uuid.New().String()
 	_, err = zm.db.Pool.Exec(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; placeholder cert keyed by globally-unique Ziti controller identity id
 		`INSERT INTO ziti_certificates (id, name, cert_type, subject, issuer, serial_number, fingerprint,
 		                                auto_renew, renewal_threshold_days, status, associated_identity_id,
 		                                created_at, updated_at)
@@ -255,6 +279,7 @@ func (zm *ZitiManager) rotateIdentityCert(ctx context.Context, certID, associate
 
 	// Log the rotation event to audit
 	_, err = zm.db.Pool.Exec(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; system actor, keyed by globally-unique Ziti controller cert id
 		`INSERT INTO audit_events (id, event_type, actor, resource_type, resource_id, details, created_at)
 		 VALUES ($1, 'certificate.rotate', 'system', 'ziti_certificate', $2, $3, NOW())`,
 		uuid.New().String(), certID,
@@ -276,6 +301,7 @@ func (zm *ZitiManager) rotateIdentityCert(ctx context.Context, certID, associate
 // revertCertStatus reverts a certificate from 'rotating' back to 'active' on failure.
 func (zm *ZitiManager) revertCertStatus(ctx context.Context, certID string) {
 	_, err := zm.db.Pool.Exec(ctx,
+		//orgscope:ignore background/auto cert rotation reachable from expiry monitor; keyed by globally-unique Ziti controller cert id
 		`UPDATE ziti_certificates SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'rotating'`,
 		certID)
 	if err != nil {
@@ -319,6 +345,7 @@ func (zm *ZitiManager) SyncCertificatesFromController(ctx context.Context) error
 		}
 
 		_, err := zm.db.Pool.Exec(ctx,
+			//orgscope:ignore install-wide Ziti controller certificate sync across all orgs; CA keyed by globally-unique Ziti controller CA id
 			`INSERT INTO ziti_certificates (id, name, cert_type, subject, issuer, serial_number,
 			                                fingerprint, auto_renew, renewal_threshold_days,
 			                                status, created_at, updated_at)
@@ -356,6 +383,7 @@ func (zm *ZitiManager) SyncCertificatesFromController(ctx context.Context) error
 		identID := ident.ID
 
 		_, err := zm.db.Pool.Exec(ctx,
+			//orgscope:ignore install-wide Ziti controller certificate sync across all orgs; identity cert keyed by globally-unique Ziti controller identity id
 			`INSERT INTO ziti_certificates (id, name, cert_type, subject, issuer, serial_number,
 			                                fingerprint, auto_renew, renewal_threshold_days,
 			                                status, associated_identity_id, created_at, updated_at)

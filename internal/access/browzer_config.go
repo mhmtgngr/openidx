@@ -23,6 +23,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // BrowZerDomainConfig is persisted as JSONB in system_settings under key "browzer_domain_config"
@@ -317,6 +319,12 @@ func (s *Service) handleBrowZerDomainChange(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	domainCfg, _ := s.loadBrowZerDomainConfig(ctx)
 	if domainCfg == nil {
 		domainCfg = &BrowZerDomainConfig{Domain: DefaultBrowZerDomain, CertType: "self_signed"}
@@ -329,10 +337,10 @@ func (s *Service) handleBrowZerDomainChange(c *gin.Context) {
 	}
 
 	// Update proxy_routes: replace old domain in from_url
-	_, err := s.db.Pool.Exec(ctx,
+	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE proxy_routes SET from_url = REPLACE(from_url, $1, $2), updated_at = NOW()
-		 WHERE from_url LIKE '%' || $1 || '%' AND browzer_enabled = true`,
-		oldDomain, newDomain)
+		 WHERE from_url LIKE '%' || $1 || '%' AND browzer_enabled = true AND org_id = $3`,
+		oldDomain, newDomain, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to update proxy_routes domains", zap.Error(err))
 	}
@@ -344,7 +352,7 @@ func (s *Service) handleBrowZerDomainChange(c *gin.Context) {
 			FROM unnest(redirect_uris) AS uri
 		) WHERE EXISTS (
 			SELECT 1 FROM unnest(redirect_uris) AS uri WHERE uri LIKE '%' || $1 || '%'
-		)`, oldDomain, newDomain)
+		) AND org_id = $3`, oldDomain, newDomain, org.ID)
 	if err != nil {
 		s.logger.Warn("Failed to update OAuth redirect URIs", zap.Error(err))
 	}

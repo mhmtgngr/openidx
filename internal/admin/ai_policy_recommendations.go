@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // PolicyRecommendationType represents the type of policy recommendation
@@ -304,16 +305,18 @@ func (s *aiPolicyRecommendationsService) generateSoDRecommendations(ctx context.
 		{"vendor_creator", "vendor_approver", "User can create and approve vendors"},
 	}
 
+	org, _ := orgctx.From(ctx)
+
 	for _, cp := range conflictingPairs {
 		rows, err := s.db.Pool.Query(ctx, `
 			SELECT u.id, u.email
 			FROM users u
-			WHERE u.id IN (
+			WHERE u.org_id = $3 AND u.id IN (
 				SELECT user_id FROM role_assignments WHERE role_id = $1
 			) AND u.id IN (
 				SELECT user_id FROM role_assignments WHERE role_id = $2
 			)
-		`, cp.role1, cp.role2)
+		`, cp.role1, cp.role2, org.ID)
 		if err != nil {
 			continue
 		}
@@ -382,6 +385,11 @@ func (s *aiPolicyRecommendationsService) GetPolicySuggestion(ctx context.Context
 
 // ApplyRecommendedPolicy implements a recommended policy change
 func (s *aiPolicyRecommendationsService) ApplyRecommendedPolicy(ctx context.Context, id string, actorID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -409,8 +417,8 @@ func (s *aiPolicyRecommendationsService) ApplyRecommendedPolicy(ctx context.Cont
 		_, err = tx.Exec(ctx, `
 			UPDATE roles
 			SET max_users = $1, updated_at = NOW()
-			WHERE id = $2
-		`, rec.Metadata, actorID)
+			WHERE id = $2 AND org_id = $3
+		`, rec.Metadata, actorID, org.ID)
 	}
 
 	if err != nil {

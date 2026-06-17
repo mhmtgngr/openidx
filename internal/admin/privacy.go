@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // UserConsent represents a user's consent record for privacy compliance
@@ -90,32 +91,37 @@ func (s *Service) handlePrivacyDashboard(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var totalConsents, activeDSARs, overdueDSARs, totalAssessments int
 
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM user_consents WHERE granted = true`).Scan(&totalConsents)
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM user_consents WHERE granted = true AND org_id = $1`, org.ID).Scan(&totalConsents)
 	if err != nil {
 		s.logger.Error("Failed to count consents", zap.Error(err))
 		totalConsents = 0
 	}
 
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM data_subject_requests WHERE status IN ('pending', 'in_progress')`).Scan(&activeDSARs)
+		`SELECT COUNT(*) FROM data_subject_requests WHERE status IN ('pending', 'in_progress') AND org_id = $1`, org.ID).Scan(&activeDSARs)
 	if err != nil {
 		s.logger.Error("Failed to count active DSARs", zap.Error(err))
 		activeDSARs = 0
 	}
 
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM data_subject_requests WHERE status = 'pending' AND due_date < NOW()`).Scan(&overdueDSARs)
+		`SELECT COUNT(*) FROM data_subject_requests WHERE status = 'pending' AND due_date < NOW() AND org_id = $1`, org.ID).Scan(&overdueDSARs)
 	if err != nil {
 		s.logger.Error("Failed to count overdue DSARs", zap.Error(err))
 		overdueDSARs = 0
 	}
 
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM privacy_assessments`).Scan(&totalAssessments)
+		`SELECT COUNT(*) FROM privacy_assessments WHERE org_id = $1`, org.ID).Scan(&totalAssessments)
 	if err != nil {
 		s.logger.Error("Failed to count assessments", zap.Error(err))
 		totalAssessments = 0
@@ -132,7 +138,7 @@ func (s *Service) handlePrivacyDashboard(c *gin.Context) {
 		`SELECT consent_type,
 			SUM(CASE WHEN granted = true THEN 1 ELSE 0 END) AS granted,
 			SUM(CASE WHEN granted = false THEN 1 ELSE 0 END) AS revoked
-		 FROM user_consents GROUP BY consent_type`)
+		 FROM user_consents WHERE org_id = $1 GROUP BY consent_type`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query consent breakdown", zap.Error(err))
 	} else {
@@ -162,8 +168,9 @@ func (s *Service) handlePrivacyDashboard(c *gin.Context) {
 	dsarRows, err := s.db.Pool.Query(ctx,
 		`SELECT d.id, d.user_id, COALESCE(u.username, ''), d.request_type, d.status, d.created_at
 		 FROM data_subject_requests d
-		 LEFT JOIN users u ON d.user_id = u.id
-		 ORDER BY d.created_at DESC LIMIT 5`)
+		 LEFT JOIN users u ON d.user_id = u.id AND u.org_id = d.org_id
+		 WHERE d.org_id = $1
+		 ORDER BY d.created_at DESC LIMIT 5`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query recent DSARs", zap.Error(err))
 	} else {
@@ -218,16 +225,21 @@ func (s *Service) handleListConsents(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	baseQuery := `SELECT uc.id, uc.user_id, COALESCE(u.username, ''), uc.consent_type, uc.version,
 		uc.granted, uc.ip_address, uc.user_agent, uc.metadata,
 		uc.granted_at, uc.revoked_at, uc.expires_at, uc.created_at
-		FROM user_consents uc LEFT JOIN users u ON uc.user_id = u.id`
+		FROM user_consents uc LEFT JOIN users u ON uc.user_id = u.id AND u.org_id = uc.org_id`
 	countQuery := `SELECT COUNT(*) FROM user_consents uc`
 
-	conditions := []string{}
-	args := []interface{}{}
-	argIdx := 1
+	conditions := []string{"uc.org_id = $1"}
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if consentType != "" {
 		conditions = append(conditions, fmt.Sprintf("uc.consent_type = $%d", argIdx))
@@ -301,11 +313,17 @@ func (s *Service) handleConsentStats(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT consent_type,
 			SUM(CASE WHEN granted = true THEN 1 ELSE 0 END) AS granted,
 			SUM(CASE WHEN granted = false THEN 1 ELSE 0 END) AS revoked
-		 FROM user_consents GROUP BY consent_type ORDER BY consent_type`)
+		 FROM user_consents WHERE org_id = $1 GROUP BY consent_type ORDER BY consent_type`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to query consent stats", err))
 		return
@@ -359,16 +377,21 @@ func (s *Service) handleListDSARs(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	baseQuery := `SELECT d.id, d.user_id, COALESCE(u.username, ''), d.request_type, d.status,
 		d.reason, d.requested_data_categories, d.result_file_path, d.result_file_size,
 		d.processed_by, d.notes, d.due_date, d.created_at, d.updated_at, d.completed_at
-		FROM data_subject_requests d LEFT JOIN users u ON d.user_id = u.id`
+		FROM data_subject_requests d LEFT JOIN users u ON d.user_id = u.id AND u.org_id = d.org_id`
 	countQuery := `SELECT COUNT(*) FROM data_subject_requests d`
 
-	conditions := []string{}
-	args := []interface{}{}
-	argIdx := 1
+	conditions := []string{"d.org_id = $1"}
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if status != "" {
 		conditions = append(conditions, fmt.Sprintf("d.status = $%d", argIdx))
@@ -376,9 +399,12 @@ func (s *Service) handleListDSARs(c *gin.Context) {
 		argIdx++
 	}
 
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = " WHERE " + conditions[0]
+	whereClause := " WHERE "
+	for i, cond := range conditions {
+		if i > 0 {
+			whereClause += " AND "
+		}
+		whereClause += cond
 	}
 
 	var total int
@@ -460,11 +486,17 @@ func (s *Service) handleCreateDSAR(c *gin.Context) {
 
 	dueDate := time.Now().Add(30 * 24 * time.Hour)
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO data_subject_requests (user_id, request_type, reason, requested_data_categories, due_date)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		req.UserID, req.RequestType, req.Reason, categories, dueDate,
+		`INSERT INTO data_subject_requests (user_id, request_type, reason, requested_data_categories, due_date, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		req.UserID, req.RequestType, req.Reason, categories, dueDate, org.ID,
 	).Scan(&id)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to create DSAR", err))
@@ -482,6 +514,11 @@ func (s *Service) handleGetDSAR(c *gin.Context) {
 
 	id := c.Param("id")
 	ctx := c.Request.Context()
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	type dsarDetail struct {
 		DataSubjectRequest
@@ -495,9 +532,9 @@ func (s *Service) handleGetDSAR(c *gin.Context) {
 			d.processed_by, COALESCE(p.username, ''), d.notes, d.due_date,
 			d.created_at, d.updated_at, d.completed_at
 		 FROM data_subject_requests d
-		 LEFT JOIN users u ON d.user_id = u.id
-		 LEFT JOIN users p ON d.processed_by = p.id
-		 WHERE d.id = $1`, id,
+		 LEFT JOIN users u ON d.user_id = u.id AND u.org_id = d.org_id
+		 LEFT JOIN users p ON d.processed_by = p.id AND p.org_id = d.org_id
+		 WHERE d.id = $1 AND d.org_id = $2`, id, org.ID,
 	).Scan(&d.ID, &d.UserID, &d.Username, &d.RequestType, &d.Status,
 		&d.Reason, &d.RequestedDataCategories, &d.ResultFilePath, &d.ResultFileSize,
 		&d.ProcessedBy, &d.ProcessedName, &d.Notes, &d.DueDate,
@@ -517,6 +554,12 @@ func (s *Service) handleUpdateDSAR(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var req struct {
 		Status *string `json:"status"`
@@ -567,7 +610,8 @@ func (s *Service) handleUpdateDSAR(c *gin.Context) {
 	args = append(args, id)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE data_subject_requests SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
+	query := fmt.Sprintf("UPDATE data_subject_requests SET %s WHERE id = $%d AND org_id = $%d", joinSetClauses(sets), argIdx, argIdx+1)
+	args = append(args, org.ID)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -590,10 +634,15 @@ func (s *Service) handleExecuteDSAR(c *gin.Context) {
 
 	id := c.Param("id")
 	ctx := c.Request.Context()
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var dsar DataSubjectRequest
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, user_id, request_type, status FROM data_subject_requests WHERE id = $1`, id,
+		`SELECT id, user_id, request_type, status FROM data_subject_requests WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&dsar.ID, &dsar.UserID, &dsar.RequestType, &dsar.Status)
 	if err != nil {
 		respondError(c, nil, apperrors.NotFound("DSAR"))
@@ -640,6 +689,14 @@ func (s *Service) ExecuteDSAR(ctx context.Context, dsar *DataSubjectRequest, act
 // extending the export when new PII surfaces are added is a one-line entry
 // in `categories` below.
 func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
+	// This executor is also driven by the background DSAR processor, which
+	// runs without a request org. Fall back to the default org so the
+	// completion write still scopes correctly rather than failing.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
+
 	userData := map[string]interface{}{}
 
 	// Each entry is (output key, SQL that returns json_agg or row_to_json).
@@ -717,8 +774,8 @@ func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectReques
 
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE data_subject_requests SET status = 'completed', result_file_path = $1, result_file_size = $2,
-			processed_by = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $4`,
-		filePath, fileSize, nilIfEmpty(actorID), dsar.ID)
+			processed_by = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $4 AND org_id = $5`,
+		filePath, fileSize, nilIfEmpty(actorID), dsar.ID, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("update DSAR record: %w", err)
 	}
@@ -744,6 +801,14 @@ func (s *Service) executeDSARExport(ctx context.Context, dsar *DataSubjectReques
 // MFA enrollments are cleared (no leftover phone numbers / device IDs),
 // consents are cleared, role/group/application assignments are removed.
 func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
+	// This executor is also driven by the background DSAR processor, which
+	// runs without a request org. Fall back to the default org so the
+	// erasure writes still scope correctly rather than failing.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
+
 	// Anonymize the user row. Disable the account so a stale session can't
 	// be revived and the user can't log back in.
 	deletedEmail := fmt.Sprintf("deleted-%s@deleted.local", dsar.UserID)
@@ -758,30 +823,30 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 		    password_hash = NULL,
 		    enabled = false,
 		    updated_at = NOW()
-		WHERE id = $2`, deletedEmail, dsar.UserID); err != nil {
+		WHERE id = $2 AND org_id = $3`, deletedEmail, dsar.UserID, orgID); err != nil {
 		return nil, fmt.Errorf("anonymize user row: %w", err)
 	}
 
 	// Wipe everything that holds PII *about* the subject. Each statement is
-	// idempotent and `DELETE FROM … WHERE user_id = $1` — if the table
-	// doesn't exist on this install, log and continue rather than rolling
-	// back the whole erasure.
+	// idempotent and `DELETE FROM … WHERE user_id = $1 AND org_id = $2` — if
+	// the table doesn't exist on this install, log and continue rather than
+	// rolling back the whole erasure.
 	wipes := []string{
-		`DELETE FROM sessions WHERE user_id = $1`,
-		`DELETE FROM oauth_refresh_tokens WHERE user_id = $1`,
-		`DELETE FROM user_roles WHERE user_id = $1`,
-		`DELETE FROM group_memberships WHERE user_id = $1`,
-		`DELETE FROM user_application_assignments WHERE user_id = $1`,
-		`DELETE FROM mfa_totp WHERE user_id = $1`,
-		`DELETE FROM mfa_webauthn WHERE user_id = $1`,
-		`DELETE FROM mfa_push_devices WHERE user_id = $1`,
-		`DELETE FROM mfa_backup_codes WHERE user_id = $1`,
-		`DELETE FROM user_consents WHERE user_id = $1`,
-		`DELETE FROM api_keys WHERE user_id = $1`,
+		`DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM user_application_assignments WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM mfa_totp WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM mfa_push_devices WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM mfa_backup_codes WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM user_consents WHERE user_id = $1 AND org_id = $2`,
+		`DELETE FROM api_keys WHERE user_id = $1 AND org_id = $2`,
 	}
 	wiped := 0
 	for _, sql := range wipes {
-		if _, err := s.db.Pool.Exec(ctx, sql, dsar.UserID); err != nil {
+		if _, err := s.db.Pool.Exec(ctx, sql, dsar.UserID, orgID); err != nil {
 			s.logger.Debug("DSAR delete skipped table",
 				zap.String("sql", sql), zap.Error(err))
 			continue
@@ -790,8 +855,8 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 	}
 
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
-		nilIfEmpty(actorID), dsar.ID); err != nil {
+		`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+		nilIfEmpty(actorID), dsar.ID, orgID); err != nil {
 		return nil, fmt.Errorf("update DSAR record: %w", err)
 	}
 	s.logger.Info("DSAR delete completed",
@@ -812,19 +877,27 @@ func (s *Service) executeDSARDelete(ctx context.Context, dsar *DataSubjectReques
 // Crucially, we do *not* delete anything — the user can have the restriction
 // lifted later, and `restrict` is supposed to be reversible.
 func (s *Service) executeDSARRestrict(ctx context.Context, dsar *DataSubjectRequest, actorID string) (map[string]interface{}, error) {
-	if _, err := s.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1`, dsar.UserID); err != nil {
+	// This executor is also driven by the background DSAR processor, which
+	// runs without a request org. Fall back to the default org so the
+	// restriction writes still scope correctly rather than failing.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
+
+	if _, err := s.db.Pool.Exec(ctx, `UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		return nil, fmt.Errorf("disable user: %w", err)
 	}
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, dsar.UserID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		s.logger.Warn("DSAR restrict: failed to drop sessions", zap.Error(err))
 	}
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, dsar.UserID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`, dsar.UserID, orgID); err != nil {
 		s.logger.Warn("DSAR restrict: failed to drop refresh tokens", zap.Error(err))
 	}
 
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`,
-		nilIfEmpty(actorID), dsar.ID); err != nil {
+		`UPDATE data_subject_requests SET status = 'completed', processed_by = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+		nilIfEmpty(actorID), dsar.ID, orgID); err != nil {
 		return nil, fmt.Errorf("update DSAR record: %w", err)
 	}
 	s.logger.Info("DSAR restrict completed",
@@ -842,10 +915,16 @@ func (s *Service) handleListPrivacyRetention(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, data_category, retention_days, action, anonymize_fields,
 			enabled, last_executed_at, created_at, updated_at
-		 FROM privacy_retention_policies ORDER BY data_category`)
+		 FROM privacy_retention_policies WHERE org_id = $1 ORDER BY data_category`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list retention policies", err))
 		return
@@ -903,11 +982,17 @@ func (s *Service) handleCreatePrivacyRetention(c *gin.Context) {
 		anonymizeFields = json.RawMessage("[]")
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO privacy_retention_policies (name, data_category, retention_days, action, anonymize_fields, enabled)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		req.Name, req.DataCategory, req.RetentionDays, req.Action, anonymizeFields, req.Enabled,
+		`INSERT INTO privacy_retention_policies (name, data_category, retention_days, action, anonymize_fields, enabled, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		req.Name, req.DataCategory, req.RetentionDays, req.Action, anonymizeFields, req.Enabled, org.ID,
 	).Scan(&id)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to create retention policy", err))
@@ -924,6 +1009,12 @@ func (s *Service) handleUpdatePrivacyRetention(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var req struct {
 		Name            *string          `json:"name"`
@@ -982,7 +1073,8 @@ func (s *Service) handleUpdatePrivacyRetention(c *gin.Context) {
 	args = append(args, id)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE privacy_retention_policies SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
+	query := fmt.Sprintf("UPDATE privacy_retention_policies SET %s WHERE id = $%d AND org_id = $%d", joinSetClauses(sets), argIdx, argIdx+1)
+	args = append(args, org.ID)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -1005,8 +1097,14 @@ func (s *Service) handleDeletePrivacyRetention(c *gin.Context) {
 
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	result, err := s.db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM privacy_retention_policies WHERE id = $1`, id)
+		`DELETE FROM privacy_retention_policies WHERE id = $1 AND org_id = $2`, id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete retention policy", err))
 		return
@@ -1029,15 +1127,20 @@ func (s *Service) handleListPrivacyAssessments(c *gin.Context) {
 	riskLevel := c.Query("risk_level")
 
 	ctx := c.Request.Context()
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	baseQuery := `SELECT id, title, description, data_categories, processing_purposes,
 		risk_level, status, findings, mitigations, assessor_id, reviewer_id,
 		review_notes, approved_at, created_at, updated_at
 		FROM privacy_assessments`
 
-	conditions := []string{}
-	args := []interface{}{}
-	argIdx := 1
+	conditions := []string{"org_id = $1"}
+	args := []interface{}{org.ID}
+	argIdx := 2
 
 	if status != "" {
 		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
@@ -1049,15 +1152,12 @@ func (s *Service) handleListPrivacyAssessments(c *gin.Context) {
 		args = append(args, riskLevel)
 	}
 
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = " WHERE "
-		for i, cond := range conditions {
-			if i > 0 {
-				whereClause += " AND "
-			}
-			whereClause += cond
+	whereClause := " WHERE "
+	for i, cond := range conditions {
+		if i > 0 {
+			whereClause += " AND "
 		}
+		whereClause += cond
 	}
 
 	rows, err := s.db.Pool.Query(ctx, baseQuery+whereClause+" ORDER BY created_at DESC", args...)
@@ -1121,6 +1221,12 @@ func (s *Service) handleCreatePrivacyAssessment(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	dataCategories := req.DataCategories
 	if dataCategories == nil {
 		dataCategories = json.RawMessage("[]")
@@ -1141,10 +1247,10 @@ func (s *Service) handleCreatePrivacyAssessment(c *gin.Context) {
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`INSERT INTO privacy_assessments (title, description, data_categories, processing_purposes,
-			risk_level, findings, mitigations, assessor_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+			risk_level, findings, mitigations, assessor_id, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
 		req.Title, req.Description, dataCategories, processingPurposes,
-		req.RiskLevel, findings, mitigations, nilIfEmpty(userIDStr),
+		req.RiskLevel, findings, mitigations, nilIfEmpty(userIDStr), org.ID,
 	).Scan(&id)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to create privacy assessment", err))
@@ -1162,12 +1268,18 @@ func (s *Service) handleGetPrivacyAssessment(c *gin.Context) {
 
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var a PrivacyAssessment
 	err := s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, title, description, data_categories, processing_purposes,
 			risk_level, status, findings, mitigations, assessor_id, reviewer_id,
 			review_notes, approved_at, created_at, updated_at
-		 FROM privacy_assessments WHERE id = $1`, id,
+		 FROM privacy_assessments WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&a.ID, &a.Title, &a.Description, &a.DataCategories, &a.ProcessingPurposes,
 		&a.RiskLevel, &a.Status, &a.Findings, &a.Mitigations, &a.AssessorID, &a.ReviewerID,
 		&a.ReviewNotes, &a.ApprovedAt, &a.CreatedAt, &a.UpdatedAt)
@@ -1186,6 +1298,12 @@ func (s *Service) handleUpdatePrivacyAssessment(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var req struct {
 		Title              *string          `json:"title"`
@@ -1274,7 +1392,8 @@ func (s *Service) handleUpdatePrivacyAssessment(c *gin.Context) {
 	args = append(args, id)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE privacy_assessments SET %s WHERE id = $%d", joinSetClauses(sets), argIdx)
+	query := fmt.Sprintf("UPDATE privacy_assessments SET %s WHERE id = $%d AND org_id = $%d", joinSetClauses(sets), argIdx, argIdx+1)
+	args = append(args, org.ID)
 
 	result, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -1297,8 +1416,14 @@ func (s *Service) handleDeletePrivacyAssessment(c *gin.Context) {
 
 	id := c.Param("id")
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	result, err := s.db.Pool.Exec(c.Request.Context(),
-		`DELETE FROM privacy_assessments WHERE id = $1`, id)
+		`DELETE FROM privacy_assessments WHERE id = $1 AND org_id = $2`, id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete privacy assessment", err))
 		return

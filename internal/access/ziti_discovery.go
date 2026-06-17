@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // DiscoveredService represents a Ziti service that can be imported
@@ -135,6 +137,11 @@ func (s *Service) handleBulkImportZitiServices(c *gin.Context) {
 }
 
 func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get all services from Ziti controller
 	zitiServices, err := s.zitiManager.ListServices(ctx)
 	if err != nil {
@@ -143,7 +150,7 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 
 	// Get managed services from our database
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT ziti_id FROM ziti_services WHERE ziti_id IS NOT NULL`)
+		`SELECT ziti_id FROM ziti_services WHERE ziti_id IS NOT NULL AND org_id = $1`, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query managed services: %w", err)
 	}
@@ -159,7 +166,7 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 
 	// Also check proxy_routes for ziti_service_name
 	rows2, err := s.db.Pool.Query(ctx,
-		`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled = true AND ziti_service_name IS NOT NULL`)
+		`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled = true AND ziti_service_name IS NOT NULL AND org_id = $1`, org.ID)
 	if err == nil {
 		defer rows2.Close()
 		for rows2.Next() {
@@ -209,6 +216,11 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 }
 
 func (s *Service) importZitiService(ctx context.Context, req *ImportServiceRequest) (*ImportResult, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get service details from Ziti
 	service, err := s.zitiManager.GetService(req.ZitiID)
 	if err != nil {
@@ -219,8 +231,8 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 	var existingRouteID string
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT r.id FROM proxy_routes r
-		 JOIN ziti_services z ON z.route_id = r.id
-		 WHERE z.ziti_id = $1`, req.ZitiID).Scan(&existingRouteID)
+		 JOIN ziti_services z ON z.route_id = r.id AND z.org_id = r.org_id
+		 WHERE z.ziti_id = $1 AND r.org_id = $2`, req.ZitiID, org.ID).Scan(&existingRouteID)
 	if err == nil {
 		return nil, fmt.Errorf("service already imported as route %s", existingRouteID)
 	}
@@ -251,21 +263,21 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO proxy_routes (id, name, description, from_url, to_url,
-		                          ziti_enabled, ziti_service_name, enabled, require_auth)
-		VALUES ($1, $2, $3, $4, $5, true, $6, true, true)
-	`, routeID, routeName, description, fromURL, toURL, service.Name)
+		                          ziti_enabled, ziti_service_name, enabled, require_auth, org_id)
+		VALUES ($1, $2, $3, $4, $5, true, $6, true, true, $7)
+	`, routeID, routeName, description, fromURL, toURL, service.Name, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proxy route: %w", err)
 	}
 
 	// Link in ziti_services table
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO ziti_services (id, ziti_id, name, route_id, enabled)
-		VALUES ($1, $2, $3, $4, true)
-	`, uuid.New().String(), req.ZitiID, service.Name, routeID)
+		INSERT INTO ziti_services (id, ziti_id, name, route_id, enabled, org_id)
+		VALUES ($1, $2, $3, $4, true, $5)
+	`, uuid.New().String(), req.ZitiID, service.Name, routeID, org.ID)
 	if err != nil {
 		// Rollback the route
-		s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id = $1`, routeID)
+		s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id = $1 AND org_id = $2`, routeID, org.ID)
 		return nil, fmt.Errorf("failed to link Ziti service: %w", err)
 	}
 

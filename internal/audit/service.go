@@ -15,7 +15,14 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// defaultOrgID is the fallback organization for audit writes that reach a code
+// path without a resolved request org (the milestone runs with
+// DefaultOrgFallback=on). Audit events must never be dropped, so the writer
+// falls back to the default org rather than failing closed.
+const defaultOrgID = "00000000-0000-0000-0000-000000000010"
 
 // ServiceAuditEvent represents an audit log entry for the service layer
 type ServiceAuditEvent struct {
@@ -202,15 +209,22 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 
 	event.Timestamp = time.Now()
 
+	// Capture the org synchronously. Audit events must never be dropped, so an
+	// unresolved org falls back to the default org rather than failing closed.
+	orgID := defaultOrgID
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
+
 	data, _ := json.Marshal(event)
 	_, err := s.db.Pool.Exec(ctx, `
 		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 		                          actor_id, actor_type, actor_ip, target_id, target_type,
-		                          resource_id, details, session_id, request_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		                          resource_id, details, session_id, request_id, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`, event.ID, event.Timestamp, event.EventType, event.Category, event.Action, event.Outcome,
 		event.ActorID, event.ActorType, event.ActorIP, event.TargetID, event.TargetType,
-		event.ResourceID, data, event.SessionID, event.RequestID)
+		event.ResourceID, data, event.SessionID, event.RequestID, orgID)
 
 	// Dual-write to Elasticsearch (best-effort, non-blocking)
 	if s.es != nil {
@@ -232,6 +246,11 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]ServiceAuditEvent, int, error) {
 	s.logger.Debug("Querying audit events")
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// Build dynamic query with filters
 	baseQuery := `
 		SELECT id, timestamp, event_type, category, action, outcome,
@@ -240,13 +259,13 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]Service
 		       COALESCE(resource_id, ''), COALESCE(details::text, '{}')::jsonb,
 		       COALESCE(session_id, ''), COALESCE(request_id, '')
 		FROM audit_events
-		WHERE 1=1
+		WHERE org_id = $1
 	`
-	countQuery := "SELECT COUNT(*) FROM audit_events WHERE 1=1"
+	countQuery := "SELECT COUNT(*) FROM audit_events WHERE org_id = $1"
 
-	args := []interface{}{}
-	countArgs := []interface{}{}
-	argIndex := 1
+	args := []interface{}{org.ID}
+	countArgs := []interface{}{org.ID}
+	argIndex := 2
 
 	// Time range filtering
 	if query.StartTime != nil {
@@ -303,7 +322,7 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]Service
 
 	// Get total count
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -397,12 +416,13 @@ func (s *Service) GenerateComplianceReport(ctx context.Context, reportType Repor
 }
 
 func (s *Service) evaluateSOC2Controls(ctx context.Context, startDate, endDate time.Time) []ReportFinding {
+	org, _ := orgctx.From(ctx)
 	// Gather evidence counts from the database
 	var totalEvents, failedAuth, mfaUsers, totalUsers int
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2", startDate, endDate).Scan(&totalEvents)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2", startDate, endDate).Scan(&failedAuth)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_totp WHERE enabled = true").Scan(&mfaUsers)
-	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true").Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, org.ID).Scan(&totalEvents)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_events WHERE event_type='authentication' AND outcome='failure' AND timestamp BETWEEN $1 AND $2 AND org_id = $3", startDate, endDate, org.ID).Scan(&failedAuth)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM mfa_totp WHERE enabled = true AND org_id = $1", org.ID).Scan(&mfaUsers)
+	s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1", org.ID).Scan(&totalUsers)
 
 	cc61Status := s.evaluateAccessControlStatus(ctx, startDate, endDate)
 	cc62Status := s.evaluateAuthenticationStatus(ctx, startDate, endDate)
@@ -608,6 +628,7 @@ func (s *Service) evaluatePCIDSSControls(ctx context.Context, startDate, endDate
 }
 
 func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, endDate time.Time) string {
+	org, _ := orgctx.From(ctx)
 	// Check for any unauthorized access attempts
 	var failedCount int
 	err := s.db.Pool.QueryRow(ctx, `
@@ -615,7 +636,8 @@ func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, en
 		WHERE event_type = 'authorization'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedCount)
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&failedCount)
 	if err != nil {
 		s.logger.Error("Failed to evaluate access control status", zap.Error(err))
 		return "not_applicable"
@@ -628,13 +650,15 @@ func (s *Service) evaluateAccessControlStatus(ctx context.Context, startDate, en
 }
 
 func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, endDate time.Time) string {
+	org, _ := orgctx.From(ctx)
 	// Check authentication failure rate
 	var totalAuth, failedAuth int
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalAuth); err != nil {
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&totalAuth); err != nil {
 		s.logger.Error("Failed to evaluate authentication status", zap.Error(err))
 		return "not_applicable"
 	}
@@ -644,7 +668,8 @@ func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, e
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedAuth); err != nil {
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&failedAuth); err != nil {
 		s.logger.Error("Failed to count failed auth events", zap.Error(err))
 		return "not_applicable"
 	}
@@ -659,6 +684,7 @@ func (s *Service) evaluateAuthenticationStatus(ctx context.Context, startDate, e
 }
 
 func (s *Service) evaluateAccessRevocationStatus(ctx context.Context, startDate, endDate time.Time) string {
+	org, _ := orgctx.From(ctx)
 	// Check if user deprovisioning is active
 	var deactivatedCount int
 	if err := s.db.Pool.QueryRow(ctx, `
@@ -666,7 +692,8 @@ func (s *Service) evaluateAccessRevocationStatus(ctx context.Context, startDate,
 		WHERE event_type = 'user_management'
 		AND (action LIKE '%deactivate%' OR action LIKE '%disable%')
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&deactivatedCount); err != nil {
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&deactivatedCount); err != nil {
 		s.logger.Error("Failed to evaluate access revocation status", zap.Error(err))
 		return "not_applicable"
 	}
@@ -678,12 +705,14 @@ func (s *Service) evaluateAccessRevocationStatus(ctx context.Context, startDate,
 }
 
 func (s *Service) evaluateMonitoringStatus(ctx context.Context, startDate, endDate time.Time) string {
+	org, _ := orgctx.From(ctx)
 	// Check if audit logging is working
 	var eventCount int
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&eventCount); err != nil {
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&eventCount); err != nil {
 		s.logger.Error("Failed to evaluate monitoring status", zap.Error(err))
 		return "not_applicable"
 	}
@@ -695,13 +724,15 @@ func (s *Service) evaluateMonitoringStatus(ctx context.Context, startDate, endDa
 }
 
 func (s *Service) evaluatePrivilegedAccessStatus(ctx context.Context, startDate, endDate time.Time) string {
+	org, _ := orgctx.From(ctx)
 	// Check privileged access management
 	var privilegedEvents int
 	if err := s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'role_management'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&privilegedEvents); err != nil {
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&privilegedEvents); err != nil {
 		s.logger.Error("Failed to evaluate privileged access status", zap.Error(err))
 		return "not_applicable"
 	}
@@ -734,6 +765,11 @@ func (s *Service) calculateSummary(findings []ReportFinding) ReportSummary {
 }
 
 func (s *Service) storeComplianceReport(ctx context.Context, report *ComplianceReport) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	summaryJSON, err := json.Marshal(report.Summary)
 	if err != nil {
 		return fmt.Errorf("failed to marshal summary: %w", err)
@@ -744,10 +780,10 @@ func (s *Service) storeComplianceReport(ctx context.Context, report *ComplianceR
 	}
 
 	_, execErr := s.db.Pool.Exec(ctx, `
-		INSERT INTO compliance_reports (id, type, framework, name, status, start_date, end_date, generated_at, summary, findings)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO compliance_reports (id, type, framework, name, status, start_date, end_date, generated_at, summary, findings, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, report.ID, report.Type, report.Framework, report.Name, report.Status,
-		report.StartDate, report.EndDate, report.GeneratedAt, summaryJSON, findingsJSON)
+		report.StartDate, report.EndDate, report.GeneratedAt, summaryJSON, findingsJSON, org.ID)
 
 	return execErr
 }
@@ -768,12 +804,17 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 		"success_rate":      0.0,
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get total events in time range
 	var totalEvents int
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&totalEvents)
+		WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&totalEvents)
 	if err != nil {
 		return nil, err
 	}
@@ -784,9 +825,9 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT event_type, COUNT(*) as count
 		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
+		WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3
 		GROUP BY event_type
-	`, startDate, endDate)
+	`, startDate, endDate, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -807,9 +848,9 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	rows, err = s.db.Pool.Query(ctx, `
 		SELECT outcome, COUNT(*) as count
 		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
+		WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3
 		GROUP BY outcome
-	`, startDate, endDate)
+	`, startDate, endDate, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -830,9 +871,9 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	rows, err = s.db.Pool.Query(ctx, `
 		SELECT category, COUNT(*) as count
 		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
+		WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3
 		GROUP BY category
-	`, startDate, endDate)
+	`, startDate, endDate, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -853,10 +894,10 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 	rows, err = s.db.Pool.Query(ctx, `
 		SELECT DATE(timestamp) as day, COUNT(*) as count
 		FROM audit_events
-		WHERE timestamp BETWEEN $1 AND $2
+		WHERE timestamp BETWEEN $1 AND $2 AND org_id = $3
 		GROUP BY DATE(timestamp)
 		ORDER BY day
-	`, startDate, endDate)
+	`, startDate, endDate, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -882,7 +923,8 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 		WHERE event_type = 'authentication'
 		AND outcome = 'failure'
 		AND timestamp BETWEEN $1 AND $2
-	`, startDate, endDate).Scan(&failedAuthCount)
+		AND org_id = $3
+	`, startDate, endDate, org.ID).Scan(&failedAuthCount)
 	stats["failed_auth_count"] = failedAuthCount
 
 	// Calculate success rate
@@ -896,8 +938,13 @@ func (s *Service) GetEventStatistics(ctx context.Context, startDate, endDate tim
 
 // ListComplianceReports lists all compliance reports
 func (s *Service) ListComplianceReports(ctx context.Context, offset, limit int) ([]ComplianceReport, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM compliance_reports").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM compliance_reports WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		// Table might not exist yet
 		return []ComplianceReport{}, 0, nil
@@ -906,9 +953,10 @@ func (s *Service) ListComplianceReports(ctx context.Context, offset, limit int) 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, type, framework, name, status, start_date, end_date, generated_at, summary, findings
 		FROM compliance_reports
+		WHERE org_id = $1
 		ORDER BY generated_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $2 LIMIT $3
+	`, org.ID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -942,12 +990,16 @@ func (s *Service) ListComplianceReports(ctx context.Context, offset, limit int) 
 
 // GetComplianceReport retrieves a compliance report by ID
 func (s *Service) GetComplianceReport(ctx context.Context, reportID string) (*ComplianceReport, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var r ComplianceReport
 	var summaryJSON, findingsJSON []byte
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, type, framework, name, status, start_date, end_date, generated_at, summary, findings
-		FROM compliance_reports WHERE id = $1
-	`, reportID).Scan(
+		FROM compliance_reports WHERE id = $1 AND org_id = $2
+	`, reportID, org.ID).Scan(
 		&r.ID, &r.Type, &r.Framework, &r.Name, &r.Status,
 		&r.StartDate, &r.EndDate, &r.GeneratedAt, &summaryJSON, &findingsJSON,
 	)
@@ -1166,16 +1218,21 @@ func (s *Service) handleLogEvent(c *gin.Context) {
 
 func (s *Service) handleGetEvent(c *gin.Context) {
 	eventID := c.Param("id")
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(403, gin.H{"error": "organization context required"})
+		return
+	}
 	var e ServiceAuditEvent
 	var details []byte
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
 		SELECT id, timestamp, event_type, category, action, outcome,
 		       COALESCE(actor_id, ''), COALESCE(actor_type, ''), COALESCE(actor_ip, ''),
 		       COALESCE(target_id, ''), COALESCE(target_type, ''),
 		       COALESCE(resource_id, ''), COALESCE(details::text, '{}')::jsonb,
 		       COALESCE(session_id, ''), COALESCE(request_id, '')
-		FROM audit_events WHERE id = $1
-	`, eventID).Scan(
+		FROM audit_events WHERE id = $1 AND org_id = $2
+	`, eventID, org.ID).Scan(
 		&e.ID, &e.Timestamp, &e.EventType, &e.Category, &e.Action, &e.Outcome,
 		&e.ActorID, &e.ActorType, &e.ActorIP, &e.TargetID, &e.TargetType,
 		&e.ResourceID, &details, &e.SessionID, &e.RequestID,

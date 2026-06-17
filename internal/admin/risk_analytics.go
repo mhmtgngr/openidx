@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // LoginAnomaly represents a high-risk or anomalous login event
@@ -57,6 +58,12 @@ func (s *Service) handleLoginAnomalies(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	minScore := 40
 	if v := c.Query("min_score"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
@@ -95,11 +102,12 @@ func (s *Service) handleLoginAnomalies(c *gin.Context) {
 		       COALESCE(lh.device_fingerprint, '') as device_fingerprint,
 		       lh.created_at
 		FROM login_history lh
-		JOIN users u ON u.id = lh.user_id
+		JOIN users u ON u.id = lh.user_id AND u.org_id = lh.org_id
 		WHERE lh.risk_score >= $1 AND lh.created_at > NOW() - make_interval(days => $2)
+		  AND lh.org_id = $5
 		ORDER BY lh.risk_score DESC, lh.created_at DESC
 		LIMIT $3 OFFSET $4
-	`, minScore, days, limit, offset)
+	`, minScore, days, limit, offset, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to query login anomalies", err))
 		return
@@ -131,18 +139,25 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	userID := c.Param("id")
 
 	var profile UserRiskProfile
 	profile.UserID = userID
 
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT urb.user_id, u.username, urb.typical_login_hours, urb.typical_countries,
 		       urb.typical_ips, urb.avg_risk_score, urb.login_count, urb.last_updated_at
 		FROM user_risk_baselines urb
-		JOIN users u ON u.id = urb.user_id
+		JOIN users u ON u.id = urb.user_id AND u.org_id = $2
 		WHERE urb.user_id = $1
-	`, userID).Scan(
+	`, userID, org.ID).Scan(
 		&profile.UserID, &profile.Username,
 		&profile.TypicalLoginHours, &profile.TypicalCountries,
 		&profile.TypicalIPs, &profile.AvgRiskScore,
@@ -159,7 +174,7 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 		profile.LastUpdatedAt = nil
 
 		// Try to get the username
-		_ = s.db.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, userID).Scan(&profile.Username)
+		_ = s.db.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&profile.Username)
 	}
 
 	// Fetch the last 10 login_history entries for this user
@@ -170,11 +185,12 @@ func (s *Service) handleUserRiskProfile(c *gin.Context) {
 		       COALESCE(lh.device_fingerprint, '') as device_fingerprint,
 		       lh.created_at
 		FROM login_history lh
-		JOIN users u ON u.id = lh.user_id
+		JOIN users u ON u.id = lh.user_id AND u.org_id = lh.org_id
 		WHERE lh.user_id = $1
+		  AND lh.org_id = $2
 		ORDER BY lh.created_at DESC
 		LIMIT 10
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query user login history", zap.Error(err), zap.String("user_id", userID))
 		profile.RecentLogins = []LoginAnomaly{}
@@ -208,9 +224,15 @@ func (s *Service) handleRiskOverview(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var overview RiskOverview
 
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT
 		    COUNT(*) as total_logins,
 		    SUM(CASE WHEN risk_score >= 50 THEN 1 ELSE 0 END) as high_risk_logins,
@@ -219,7 +241,8 @@ func (s *Service) handleRiskOverview(c *gin.Context) {
 		    COUNT(DISTINCT user_id) as unique_users
 		FROM login_history
 		WHERE created_at > NOW() - INTERVAL '7 days'
-	`).Scan(
+		  AND org_id = $1
+	`, org.ID).Scan(
 		&overview.TotalLogins,
 		&overview.HighRiskLogins,
 		&overview.AvgRiskScore,
@@ -250,8 +273,9 @@ func (s *Service) handleRiskOverview(c *gin.Context) {
 		    COUNT(*) as cnt
 		FROM login_history
 		WHERE created_at > NOW() - INTERVAL '7 days'
+		  AND org_id = $1
 		GROUP BY risk_level
-	`)
+	`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query risk distribution", zap.Error(err))
 	} else {

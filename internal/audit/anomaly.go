@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AnomalyDetector analyzes audit events for suspicious patterns
@@ -241,15 +243,17 @@ func (ad *AnomalyDetector) detectPrivilegeEscalation(ctx context.Context, event 
 			return nil
 		}
 
+		org, _ := orgctx.From(ctx)
 		rows, err := ad.service.db.Pool.Query(ctx, `
 			SELECT id, action, timestamp, outcome
 			FROM audit_events
 			WHERE actor_id = $1
 			  AND timestamp BETWEEN $2 AND $3
 			  AND id != $4
+			  AND org_id = $5
 			ORDER BY timestamp ASC
 			LIMIT 10
-		`, event.ActorID, windowStart, windowEnd, event.ID)
+		`, event.ActorID, windowStart, windowEnd, event.ID, org.ID)
 
 		if err != nil {
 			ad.logger.Warn("Failed to query for escalation events", zap.Error(err))
@@ -307,6 +311,8 @@ func (ad *AnomalyDetector) detectBulkAccess(ctx context.Context, event *ServiceA
 		return nil
 	}
 
+	org, _ := orgctx.From(ctx)
+
 	// Count resource access events by this actor in the window
 	windowStart := event.Timestamp.Add(-ad.config.BulkAccessWindow)
 	windowEnd := event.Timestamp.Add(ad.config.BulkAccessWindow)
@@ -319,7 +325,8 @@ func (ad *AnomalyDetector) detectBulkAccess(ctx context.Context, event *ServiceA
 		  AND event_type = 'authorization'
 		  AND timestamp BETWEEN $2 AND $3
 		  AND outcome = 'success'
-	`, event.ActorID, windowStart, windowEnd).Scan(&accessCount)
+		  AND org_id = $4
+	`, event.ActorID, windowStart, windowEnd, org.ID).Scan(&accessCount)
 
 	if err != nil {
 		return nil
@@ -334,9 +341,10 @@ func (ad *AnomalyDetector) detectBulkAccess(ctx context.Context, event *ServiceA
 			  AND event_type = 'authorization'
 			  AND timestamp BETWEEN $2 AND $3
 			  AND outcome = 'success'
+			  AND org_id = $4
 			GROUP BY resource_type
 			ORDER BY count DESC
-		`, event.ActorID, windowStart, windowEnd)
+		`, event.ActorID, windowStart, windowEnd, org.ID)
 		defer rows.Close()
 
 		resourceBreakdown := make(map[string]int)
@@ -436,14 +444,21 @@ func (ad *AnomalyDetector) storeAlerts(ctx context.Context, alerts []*AnomalyAle
 		return
 	}
 
+	// Capture the org synchronously; like audit events, anomaly alerts must not be
+	// dropped, so an unresolved org falls back to the default org.
+	orgID := defaultOrgID
+	if org, oerr := orgctx.From(ctx); oerr == nil {
+		orgID = org.ID
+	}
+
 	for _, alert := range alerts {
 		_, err := ad.service.db.Pool.Exec(ctx, `
 			INSERT INTO security_alerts (id, type, severity, title, description, event_id,
-			                              actor_id, timestamp, details, metadata, status)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
+			                              actor_id, timestamp, details, metadata, status, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11)
 		`, alert.ID, string(alert.Type), alert.Severity, alert.Title,
 			alert.Description, alert.EventID, alert.ActorID, alert.Timestamp,
-			alert.Details, alert.Metadata)
+			alert.Details, alert.Metadata, orgID)
 
 		if err != nil {
 			ad.logger.Error("Failed to store anomaly alert",

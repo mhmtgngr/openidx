@@ -38,6 +38,30 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
+    localStorage.removeItem('selected_org_slug')
     set({ user: null })
+  },
+}))
+
+// Multi-tenancy: the org the console is acting as. Regular admins are fixed to
+// their own token org; platform admins (super_admin) can switch via the header
+// selector. The selected slug is persisted so the axios request interceptor
+// (lib/api.ts) can attach it as X-Org-Slug without importing the store.
+const ORG_SLUG_KEY = 'selected_org_slug'
+
+interface OrgState {
+  selectedOrgSlug: string | null
+  setOrg: (slug: string | null) => void
+}
+
+export const useOrgStore = create<OrgState>((set) => ({
+  selectedOrgSlug: localStorage.getItem(ORG_SLUG_KEY),
+  setOrg: (slug) => {
+    if (slug) {
+      localStorage.setItem(ORG_SLUG_KEY, slug)
+    } else {
+      localStorage.removeItem(ORG_SLUG_KEY)
+    }
+    set({ selectedOrgSlug: slug })
   },
 }))

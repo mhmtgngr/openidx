@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // handleAuthAnalyticsDashboard returns detailed authentication analytics for a given period.
@@ -16,6 +18,12 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	// Parse period
 	period := c.DefaultQuery("period", "30d")
@@ -28,7 +36,8 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication'
-		  AND timestamp > NOW() - $1::interval`, interval).Scan(&totalLogins)
+		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2`, interval, org.ID).Scan(&totalLogins)
 	result["total_logins"] = totalLogins
 
 	// Successful logins
@@ -36,14 +45,16 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
-		  AND timestamp > NOW() - $1::interval`, interval).Scan(&successLogins)
+		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2`, interval, org.ID).Scan(&successLogins)
 
 	// Failed logins
 	var failedLogins int
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'failure'
-		  AND timestamp > NOW() - $1::interval`, interval).Scan(&failedLogins)
+		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2`, interval, org.ID).Scan(&failedLogins)
 
 	// Rates
 	if totalLogins > 0 {
@@ -59,7 +70,8 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_events
 		WHERE event_type = 'mfa_verification' AND outcome = 'success'
-		  AND timestamp > NOW() - $1::interval`, interval).Scan(&mfaLogins)
+		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2`, interval, org.ID).Scan(&mfaLogins)
 
 	if successLogins > 0 {
 		result["mfa_usage_rate"] = float64(mfaLogins) / float64(successLogins) * 100
@@ -74,9 +86,10 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 		FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2
 		GROUP BY action
 		ORDER BY COUNT(*) DESC
-	`, interval)
+	`, interval, org.ID)
 	if err == nil {
 		for rows.Next() {
 			var method string
@@ -97,10 +110,11 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 		FROM audit_events
 		WHERE event_type = 'authentication'
 		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2
 		GROUP BY hour
 		ORDER BY cnt DESC
 		LIMIT 1
-	`, interval).Scan(&peakHour, &peakCount)
+	`, interval, org.ID).Scan(&peakHour, &peakCount)
 	if peakHour != nil {
 		result["peak_hour"] = *peakHour
 	} else {
@@ -113,10 +127,11 @@ func (s *Service) handleAuthAnalyticsDashboard(c *gin.Context) {
 		SELECT COALESCE(location, 'Unknown'), COUNT(*) AS cnt
 		FROM login_history
 		WHERE created_at > NOW() - $1::interval
+		  AND org_id = $2
 		GROUP BY location
 		ORDER BY cnt DESC
 		LIMIT 5
-	`, interval)
+	`, interval, org.ID)
 	if err == nil {
 		for geoRows.Next() {
 			var loc string
@@ -144,6 +159,12 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	result := make(map[string]interface{})
 
 	// DAU: distinct actors who authenticated today
@@ -152,7 +173,8 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > CURRENT_DATE
-	`).Scan(&dau)
+		  AND org_id = $1
+	`, org.ID).Scan(&dau)
 	result["dau"] = dau
 
 	// WAU: distinct actors who authenticated in last 7 days
@@ -161,7 +183,8 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '7 days'
-	`).Scan(&wau)
+		  AND org_id = $1
+	`, org.ID).Scan(&wau)
 	result["wau"] = wau
 
 	// MAU: distinct actors who authenticated in last 30 days
@@ -170,7 +193,8 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 		SELECT COUNT(DISTINCT actor_id) FROM audit_events
 		WHERE event_type = 'authentication' AND outcome = 'success'
 		  AND timestamp > NOW() - INTERVAL '30 days'
-	`).Scan(&mau)
+		  AND org_id = $1
+	`, org.ID).Scan(&mau)
 	result["mau"] = mau
 
 	// New users today
@@ -178,20 +202,21 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM users
 		WHERE created_at > CURRENT_DATE
-	`).Scan(&newUsersToday)
+		  AND org_id = $1
+	`, org.ID).Scan(&newUsersToday)
 	result["new_users_today"] = newUsersToday
 
 	// Total counts
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE org_id = $1`, org.ID).Scan(&totalUsers)
 	result["total_users"] = totalUsers
 
 	var totalGroups int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups`).Scan(&totalGroups)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE org_id = $1`, org.ID).Scan(&totalGroups)
 	result["total_groups"] = totalGroups
 
 	var totalApplications int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications`).Scan(&totalApplications)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM applications WHERE org_id = $1`, org.ID).Scan(&totalApplications)
 	result["total_applications"] = totalApplications
 
 	// Active sessions
@@ -199,7 +224,8 @@ func (s *Service) handleUsageAnalytics(c *gin.Context) {
 	s.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM sessions
 		WHERE expires_at > NOW()
-	`).Scan(&activeSessions)
+		  AND org_id = $1
+	`, org.ID).Scan(&activeSessions)
 	result["active_sessions_count"] = activeSessions
 
 	c.JSON(http.StatusOK, result)
@@ -289,9 +315,15 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	// Total enabled users for computing adoption rates
 	var totalUsers int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true`).Scan(&totalUsers)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
 
 	features := []map[string]interface{}{}
 	featureNames := []string{"mfa_totp", "mfa_webauthn", "passkey_login", "magic_link", "api_keys", "social_login"}
@@ -326,21 +358,25 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 	// If no rows exist in the feature_adoption table, compute from live data
 	if len(features) == 0 {
 		// Compute feature usage from actual tables
+		// Each query is scoped to the caller's org. org_id-bearing tables carry an
+		// `AND org_id = $1` predicate with org.ID passed in Args; webauthn_credentials
+		// is not an org-scoped table so it runs without an org filter.
 		featureSources := []struct {
 			Name  string
 			Query string
+			Args  []interface{}
 		}{
-			{"mfa_totp", "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true"},
-			{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM webauthn_credentials"},
-			{"passkey_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'passkey_login' AND timestamp > NOW() - INTERVAL '30 days'"},
-			{"magic_link", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'magic_link_login' AND timestamp > NOW() - INTERVAL '30 days'"},
-			{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE revoked_at IS NULL"},
-			{"social_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'social_login' AND timestamp > NOW() - INTERVAL '30 days'"},
+			{"mfa_totp", "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1", []interface{}{org.ID}},
+			{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM webauthn_credentials", nil},
+			{"passkey_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'passkey_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
+			{"magic_link", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'magic_link_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
+			{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE revoked_at IS NULL AND org_id = $1", []interface{}{org.ID}},
+			{"social_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'social_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
 		}
 
 		for _, fs := range featureSources {
 			var count int
-			s.db.Pool.QueryRow(ctx, fs.Query).Scan(&count)
+			s.db.Pool.QueryRow(ctx, fs.Query, fs.Args...).Scan(&count)
 			var adoptionRate float64
 			if totalUsers > 0 {
 				adoptionRate = float64(count) / float64(totalUsers) * 100
@@ -379,6 +415,13 @@ func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DATE(created_at) AS day,
 		       AVG(risk_score) AS avg_score,
@@ -386,9 +429,10 @@ func (s *Service) handleRiskScoreTimeline(c *gin.Context) {
 		       COUNT(*) AS login_count
 		FROM login_history
 		WHERE created_at > NOW() - make_interval(days => $1)
+		  AND org_id = $2
 		GROUP BY day
 		ORDER BY day
-	`, days)
+	`, days, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query risk timeline", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query risk timeline"})
@@ -431,6 +475,12 @@ func (s *Service) handleUserActivityHeatmap(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	period := c.DefaultQuery("period", "30d")
 	interval := periodToInterval(period)
 
@@ -442,9 +492,10 @@ func (s *Service) handleUserActivityHeatmap(c *gin.Context) {
 		FROM audit_events
 		WHERE event_type = 'authentication'
 		  AND timestamp > NOW() - $1::interval
+		  AND org_id = $2
 		GROUP BY dow, hour
 		ORDER BY dow, hour
-	`, interval)
+	`, interval, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query activity heatmap", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query activity heatmap"})

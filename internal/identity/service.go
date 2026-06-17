@@ -32,6 +32,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/risk"
 )
 
@@ -528,14 +529,21 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	// Query from database - use UserDB for scanning
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Query from database - use UserDB for scanning. A user in another
+	// org reads as not-found (pgx.ErrNoRows) rather than 403, so the
+	// existence of other tenants' users can't be probed.
 	var dbUser UserDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE id = $1
-	`, userID).Scan(
+		FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(
 		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
 		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
 		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
@@ -554,6 +562,11 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...string) ([]User, int, error) {
 	s.logger.Debug("Listing users", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	searchQuery := ""
 	if len(search) > 0 {
 		searchQuery = search[0]
@@ -563,15 +576,16 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 	if searchQuery != "" {
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
 		searchPattern := "%" + escaped + "%"
-		err := s.db.Pool.QueryRow(ctx, `
+		err = s.db.Pool.QueryRow(ctx, `
 			SELECT COUNT(*) FROM users
-			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
-		`, searchPattern).Scan(&total)
+			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			  AND org_id = $2
+		`, searchPattern, org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
 	} else {
-		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -582,7 +596,6 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 		Scan(...interface{}) error
 		Close()
 	}
-	var err error
 	if searchQuery != "" {
 		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(searchQuery)
 		searchPattern := "%" + escaped + "%"
@@ -591,19 +604,21 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
-			WHERE username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\'
+			WHERE (username ILIKE $1 ESCAPE '\\' OR email ILIKE $1 ESCAPE '\\' OR first_name ILIKE $1 ESCAPE '\\' OR last_name ILIKE $1 ESCAPE '\\')
+			  AND org_id = $2
 			ORDER BY created_at DESC
-			OFFSET $2 LIMIT $3
-		`, searchPattern, offset, limit)
+			OFFSET $3 LIMIT $4
+		`, searchPattern, org.ID, offset, limit)
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT id, username, email, first_name, last_name, enabled, email_verified,
 			       created_at, updated_at, last_login_at, password_changed_at,
 			       password_must_change, failed_login_count, last_failed_login_at, locked_until
 			FROM users
+			WHERE org_id = $1
 			ORDER BY created_at DESC
-			OFFSET $1 LIMIT $2
-		`, offset, limit)
+			OFFSET $2 LIMIT $3
+		`, org.ID, offset, limit)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -631,6 +646,11 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *User) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Convert SCIM User to UserDB for database operations
 	dbUser := FromUser(*user)
 
@@ -645,12 +665,12 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 	dbUser.CreatedAt = now
 	dbUser.UpdatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO users (id, username, email, first_name, last_name, enabled,
-		                   email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		                   email_verified, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt)
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt, org.ID)
 
 	if err == nil {
 		// Mirror the generated ID and timestamps back to the caller so the
@@ -662,7 +682,7 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 		user.UpdatedAt = dbUser.UpdatedAt
 
 		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent("identity", "user_management", "user.created", "success",
+		s.logAuditEvent(ctx, "identity", "user_management", "user.created", "success",
 			actorID, dbUser.ID, "user", map[string]interface{}{
 				"username": dbUser.Username,
 				"email":    dbUser.Email,
@@ -677,6 +697,11 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
 
 	// Convert SCIM User to UserDB for database operations
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	dbUser := FromUser(*user)
 
 	dbUser.UpdatedAt = time.Now()
@@ -685,9 +710,9 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 		UPDATE users
 		SET username = $2, email = $3, first_name = $4, last_name = $5,
 		    enabled = $6, email_verified = $7, updated_at = $8
-		WHERE id = $1
+		WHERE id = $1 AND org_id = $9
 	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt)
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID)
 	if err != nil {
 		return err
 	}
@@ -701,12 +726,17 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	s.logger.Info("Deleting user", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Log audit event before deletion so the record exists even if delete succeeds
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("identity", "user_management", "user.deleted", "success",
+	s.logAuditEvent(ctx, "identity", "user_management", "user.deleted", "success",
 		actorID, userID, "user", nil)
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -720,15 +750,20 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
 	s.logger.Info("Creating identity provider", zap.String("name", idp.Name))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	idp.ID = uuid.New()
 	now := time.Now()
 	idp.CreatedAt = now
 	idp.UpdatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt, org.ID)
 
 	return err
 }
@@ -737,11 +772,16 @@ func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvi
 func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*IdentityProvider, error) {
 	s.logger.Debug("Getting identity provider", zap.String("idp_id", idpID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var idp IdentityProvider
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
-		FROM identity_providers WHERE id = $1
-	`, idpID).Scan(
+		FROM identity_providers WHERE id = $1 AND org_id = $2
+	`, idpID, org.ID).Scan(
 		&idp.ID, &idp.Name, &idp.ProviderType, &idp.IssuerURL, &idp.ClientID, &idp.ClientSecret, &idp.Scopes, &idp.Enabled, &idp.CreatedAt, &idp.UpdatedAt,
 	)
 	if err != nil {
@@ -755,8 +795,13 @@ func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*Ident
 func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) ([]IdentityProvider, int, error) {
 	s.logger.Debug("Listing identity providers", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM identity_providers").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM identity_providers WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -764,9 +809,10 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at
 		FROM identity_providers
+		WHERE org_id = $1
 		ORDER BY name
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $2 LIMIT $3
+	`, org.ID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -790,13 +836,18 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvider) error {
 	s.logger.Info("Updating identity provider", zap.String("idp_id", idp.ID.String()))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	idp.UpdatedAt = time.Now()
 
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE identity_providers 
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE identity_providers
 		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9
-		WHERE id = $1
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt)
+		WHERE id = $1 AND org_id = $10
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt, org.ID)
 
 	return err
 }
@@ -805,7 +856,12 @@ func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvi
 func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) error {
 	s.logger.Info("Deleting identity provider", zap.String("idp_id", idpID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM identity_providers WHERE id = $1", idpID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM identity_providers WHERE id = $1 AND org_id = $2", idpID, org.ID)
 	return err
 }
 
@@ -813,13 +869,18 @@ func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) erro
 func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	s.logger.Debug("Getting sessions for user", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, user_id, client_id, ip_address, user_agent, 
+		SELECT id, user_id, client_id, ip_address, user_agent,
 		       started_at, last_seen_at, expires_at
 		FROM sessions
-		WHERE user_id = $1 AND expires_at > NOW()
+		WHERE user_id = $1 AND org_id = $2 AND expires_at > NOW()
 		ORDER BY last_seen_at DESC
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -844,13 +905,23 @@ func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session
 func (s *Service) TerminateSession(ctx context.Context, sessionID string) error {
 	s.logger.Info("Terminating session", zap.String("session_id", sessionID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1", sessionID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1 AND org_id = $2", sessionID, org.ID)
 	return err
 }
 
 // ListGroups retrieves groups with pagination
 func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...string) ([]Group, int, error) {
 	s.logger.Debug("Listing groups", zap.Int("offset", offset), zap.Int("limit", limit))
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	searchQuery := ""
 	if len(search) > 0 {
@@ -860,12 +931,12 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 	var total int
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
-		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE name ILIKE $1 OR description ILIKE $1", searchPattern).Scan(&total)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE (name ILIKE $1 OR description ILIKE $1) AND org_id = $2", searchPattern, org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
 	} else {
-		err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups").Scan(&total)
+		err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&total)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -876,25 +947,25 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 		Scan(...interface{}) error
 		Close()
 	}
-	var err error
 	if searchQuery != "" {
 		searchPattern := "%" + searchQuery + "%"
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count
 			FROM groups g
-			WHERE g.name ILIKE $1 OR g.description ILIKE $1
+			WHERE (g.name ILIKE $2 OR g.description ILIKE $2) AND g.org_id = $1
 			ORDER BY g.name
-			OFFSET $2 LIMIT $3
-		`, searchPattern, offset, limit)
+			OFFSET $3 LIMIT $4
+		`, org.ID, searchPattern, offset, limit)
 	} else {
 		rows, err = s.db.Pool.Query(ctx, `
 			SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+			       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $1), 0) as member_count
 			FROM groups g
+			WHERE g.org_id = $1
 			ORDER BY g.name
-			OFFSET $1 LIMIT $2
-		`, offset, limit)
+			OFFSET $2 LIMIT $3
+		`, org.ID, offset, limit)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -919,12 +990,17 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	s.logger.Debug("Getting group", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var dbGroup GroupDB
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
-		FROM groups g WHERE g.id = $1
-	`, groupID).Scan(
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
+		FROM groups g WHERE g.id = $1 AND g.org_id = $2
+	`, groupID, org.ID).Scan(
 		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
 	)
 	if err != nil {
@@ -938,13 +1014,18 @@ func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) 
 func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupMember, error) {
 	s.logger.Debug("Getting group members", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name, gm.joined_at
 		FROM users u
 		JOIN group_memberships gm ON u.id = gm.user_id
-		WHERE gm.group_id = $1
+		WHERE gm.group_id = $1 AND gm.org_id = $2
 		ORDER BY gm.joined_at
-	`, groupID)
+	`, groupID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -966,6 +1047,11 @@ func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupM
 func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Creating group", zap.String("name", group.GetName()))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Generate UUID if not provided
 	if group.ID == "" {
 		group.ID = uuid.New().String()
@@ -978,10 +1064,10 @@ func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	// Convert SCIM Group to GroupDB for database insert
 	dbGroup := FromGroup(*group)
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID)
 
 	return err
 }
@@ -990,16 +1076,21 @@ func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Updating group", zap.String("group_id", group.ID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	group.UpdatedAt = time.Now()
 
 	// Convert SCIM Group to GroupDB for database update
 	dbGroup := FromGroup(*group)
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE groups
 		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5, require_approval = $6, max_members = $7, updated_at = $8
-		WHERE id = $1
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt)
+		WHERE id = $1 AND org_id = $9
+	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt, org.ID)
 
 	return err
 }
@@ -1008,14 +1099,19 @@ func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting group", zap.String("group_id", groupID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// First remove all group memberships
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1", groupID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2", groupID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove group memberships: %w", err)
 	}
 
 	// Then delete the group
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1", groupID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID)
 	return err
 }
 
@@ -1023,8 +1119,14 @@ func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) error {
 	s.logger.Info("Adding member to group", zap.String("group_id", groupID), zap.String("user_id", userID))
 
-	// Check if group exists
-	_, err := s.GetGroup(ctx, groupID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Check if group exists (GetGroup scopes to the caller's org, so a
+	// group in another org reads as not-found here).
+	_, err = s.GetGroup(ctx, groupID)
 	if err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
@@ -1038,16 +1140,16 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 	// Use a single atomic query that checks the member limit and inserts in one step,
 	// avoiding the TOCTOU race between counting members and inserting.
 	result, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO group_memberships (group_id, user_id, joined_at)
-		SELECT $1, $2, NOW()
-		WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)
+		INSERT INTO group_memberships (group_id, user_id, joined_at, org_id)
+		SELECT $1, $2, NOW(), $3
+		WHERE NOT EXISTS (SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3)
 		AND (
-			SELECT COUNT(*) FROM group_memberships WHERE group_id = $1
+			SELECT COUNT(*) FROM group_memberships WHERE group_id = $1 AND org_id = $3
 		) < COALESCE(
-			(SELECT max_members FROM groups WHERE id = $1),
+			(SELECT max_members FROM groups WHERE id = $1 AND org_id = $3),
 			2147483647
 		)
-	`, groupID, userID)
+	`, groupID, userID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to add member: %w", err)
 	}
@@ -1055,7 +1157,7 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 	if result.RowsAffected() == 0 {
 		// Check why the insert didn't happen: either already a member or limit reached
 		var exists bool
-		err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2)", groupID, userID).Scan(&exists)
+		err = s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3)", groupID, userID, org.ID).Scan(&exists)
 		if err != nil {
 			return err
 		}
@@ -1072,9 +1174,14 @@ func (s *Service) AddGroupMember(ctx context.Context, groupID, userID string) er
 func (s *Service) RemoveGroupMember(ctx context.Context, groupID, userID string) error {
 	s.logger.Info("Removing member from group", zap.String("group_id", groupID), zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
-		DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2
-	`, groupID, userID)
+		DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3
+	`, groupID, userID, org.ID)
 
 	if err != nil {
 		return err
@@ -1095,16 +1202,22 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 		limit = 20
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	searchPattern := "%" + query + "%"
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, username, email, first_name, last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
 		FROM users
-		WHERE username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+		WHERE (username ILIKE $1 OR email ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+		  AND org_id = $2
 		ORDER BY username
-		LIMIT $2
-	`, searchPattern, limit)
+		LIMIT $3
+	`, searchPattern, org.ID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,21 +1244,27 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]U
 func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, search string, offset, limit int) ([]GroupMember, int, error) {
 	s.logger.Debug("Getting group members paginated", zap.String("group_id", groupID))
 
-	// Get total count
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Get total count. Membership rows are scoped by gm.org_id so the
+	// count only reflects members within the caller's org.
 	var total int
 	countQuery := `
 		SELECT COUNT(*) FROM users u
 		JOIN group_memberships gm ON u.id = gm.user_id
-		WHERE gm.group_id = $1
+		WHERE gm.group_id = $1 AND gm.org_id = $2
 	`
-	countArgs := []interface{}{groupID}
+	countArgs := []interface{}{groupID, org.ID}
 
 	if search != "" {
-		countQuery += ` AND (u.username ILIKE $2 OR u.email ILIKE $2 OR u.first_name ILIKE $2 OR u.last_name ILIKE $2)`
+		countQuery += ` AND (u.username ILIKE $3 OR u.email ILIKE $3 OR u.first_name ILIKE $3 OR u.last_name ILIKE $3)`
 		countArgs = append(countArgs, "%"+search+"%")
 	}
 
-	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1155,17 +1274,17 @@ func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, 
 		SELECT u.id, u.username, u.email, u.first_name, u.last_name, gm.joined_at
 		FROM users u
 		JOIN group_memberships gm ON u.id = gm.user_id
-		WHERE gm.group_id = $1
+		WHERE gm.group_id = $1 AND gm.org_id = $2
 	`
-	args := []interface{}{groupID}
+	args := []interface{}{groupID, org.ID}
 
 	if search != "" {
-		query += ` AND (u.username ILIKE $2 OR u.email ILIKE $2 OR u.first_name ILIKE $2 OR u.last_name ILIKE $2)`
+		query += ` AND (u.username ILIKE $3 OR u.email ILIKE $3 OR u.first_name ILIKE $3 OR u.last_name ILIKE $3)`
 		args = append(args, "%"+search+"%")
-		query += ` ORDER BY gm.joined_at DESC OFFSET $3 LIMIT $4`
+		query += ` ORDER BY gm.joined_at DESC OFFSET $4 LIMIT $5`
 		args = append(args, offset, limit)
 	} else {
-		query += ` ORDER BY gm.joined_at DESC OFFSET $2 LIMIT $3`
+		query += ` ORDER BY gm.joined_at DESC OFFSET $3 LIMIT $4`
 		args = append(args, offset, limit)
 	}
 
@@ -1191,13 +1310,18 @@ func (s *Service) GetGroupMembersPaginated(ctx context.Context, groupID string, 
 func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, error) {
 	s.logger.Debug("Getting subgroups", zap.String("parent_id", parentID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id), 0) as member_count
+		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
 		FROM groups g
-		WHERE g.parent_id = $1
+		WHERE g.parent_id = $1 AND g.org_id = $2
 		ORDER BY g.name
-	`, parentID)
+	`, parentID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1221,6 +1345,11 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress, userAgent string, sessionDuration time.Duration) (*Session, error) {
 	s.logger.Info("Creating session", zap.String("user_id", userID), zap.String("client_id", clientID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionID := uuid.New().String()
 	now := time.Now()
 	expiresAt := now.Add(sessionDuration)
@@ -1236,11 +1365,11 @@ func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress
 		ExpiresAt:  expiresAt,
 	}
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, session.ID, session.UserID, session.ClientID, session.IPAddress, session.UserAgent,
-		session.StartedAt, session.LastSeenAt, session.ExpiresAt)
+		session.StartedAt, session.LastSeenAt, session.ExpiresAt, org.ID)
 
 	if err != nil {
 		return nil, err
@@ -1253,11 +1382,16 @@ func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress
 func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) error {
 	s.logger.Debug("Updating session activity", zap.String("session_id", sessionID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE sessions SET last_seen_at = $2
-		WHERE id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, sessionID, now)
+		WHERE id = $1 AND org_id = $3 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+	`, sessionID, now, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1271,11 +1405,16 @@ func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) e
 
 // IsSessionValid checks if a session is not revoked and not expired
 func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	var revoked bool
 	var expiresAt time.Time
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1
-	`, sessionID).Scan(&revoked, &expiresAt)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1 AND org_id = $2
+	`, sessionID, org.ID).Scan(&revoked, &expiresAt)
 	if err != nil {
 		return false, err
 	}
@@ -1284,10 +1423,15 @@ func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, e
 
 // CountActiveSessions returns the number of active (non-revoked, non-expired) sessions for a user
 func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, userID).Scan(&count)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+	`, userID, org.ID).Scan(&count)
 	return count, err
 }
 
@@ -1295,10 +1439,15 @@ func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, 
 func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID string) error {
 	s.logger.Info("Revoking all sessions on password change", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id FROM sessions
-		WHERE user_id = $1 AND (revoked IS NULL OR revoked = false)
-	`, userID)
+		WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
+	`, userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1309,14 +1458,14 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 		if err := rows.Scan(&sessionID); err != nil {
 			continue
 		}
-		if _, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1`, sessionID); err != nil {
+		if _, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE id = $1 AND org_id = $2`, sessionID, org.ID); err != nil {
 			return fmt.Errorf("failed to revoke session %s: %w", sessionID, err)
 		}
 		s.redis.Client.Set(ctx, "revoked_session:"+sessionID, "1", 25*time.Hour)
 	}
 
 	// Also delete all refresh tokens
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`, userID, org.ID); err != nil {
 		return fmt.Errorf("failed to delete refresh tokens: %w", err)
 	}
 
@@ -1327,14 +1476,19 @@ func (s *Service) RevokeUserSessionsOnPasswordChange(ctx context.Context, userID
 func (s *Service) RecordFailedLogin(ctx context.Context, username string) error {
 	s.logger.Info("Recording failed login", zap.String("username", username))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 
 	// Get current user state
 	var user User
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE username = $1
-	`, username).Scan(&user.ID, &user.FailedLoginCount, &user.LastFailedLoginAt, &user.LockedUntil)
+		FROM users WHERE username = $1 AND org_id = $2
+	`, username, org.ID).Scan(&user.ID, &user.FailedLoginCount, &user.LastFailedLoginAt, &user.LockedUntil)
 	if err != nil {
 		return err
 	}
@@ -1371,8 +1525,8 @@ func (s *Service) RecordFailedLogin(ctx context.Context, username string) error 
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = $2, last_failed_login_at = $3, locked_until = $4
-		WHERE username = $1
-	`, username, user.FailedLoginCount, user.LastFailedLoginAt, user.LockedUntil)
+		WHERE username = $1 AND org_id = $5
+	`, username, user.FailedLoginCount, user.LastFailedLoginAt, user.LockedUntil, org.ID)
 
 	return err
 }
@@ -1381,21 +1535,31 @@ func (s *Service) RecordFailedLogin(ctx context.Context, username string) error 
 func (s *Service) ClearFailedLogins(ctx context.Context, username string) error {
 	s.logger.Debug("Clearing failed logins", zap.String("username", username))
 
-	_, err := s.db.Pool.Exec(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = 0, last_failed_login_at = NULL, locked_until = NULL
-		WHERE username = $1
-	`, username)
+		WHERE username = $1 AND org_id = $2
+	`, username, org.ID)
 
 	return err
 }
 
 // IsAccountLocked checks if a user account is currently locked
 func (s *Service) IsAccountLocked(ctx context.Context, username string) (bool, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	var lockedUntil *time.Time
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT locked_until FROM users WHERE username = $1
-	`, username).Scan(&lockedUntil)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT locked_until FROM users WHERE username = $1 AND org_id = $2
+	`, username, org.ID).Scan(&lockedUntil)
 
 	if err != nil {
 		return false, err
@@ -1451,6 +1615,11 @@ func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword
 		return err
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
@@ -1460,12 +1629,12 @@ func (s *Service) UpdatePassword(ctx context.Context, userID string, newPassword
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET password_hash = $2, password_changed_at = $3, password_must_change = false
-		WHERE id = $1
-	`, userID, string(hashedPassword), now)
+		WHERE id = $1 AND org_id = $4
+	`, userID, string(hashedPassword), now, org.ID)
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent("identity", "security", "user.password_changed", "success",
+		s.logAuditEvent(ctx, "identity", "security", "user.password_changed", "success",
 			actorID, userID, "user", nil)
 	}
 
@@ -1477,9 +1646,14 @@ func (s *Service) CheckPasswordExpiry(ctx context.Context, userID string) (bool,
 	var passwordChangedAt *time.Time
 	var mustChange bool
 
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT password_changed_at, password_must_change FROM users WHERE id = $1
-	`, userID).Scan(&passwordChangedAt, &mustChange)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT password_changed_at, password_must_change FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&passwordChangedAt, &mustChange)
 
 	if err != nil {
 		return false, err
@@ -1514,6 +1688,15 @@ var ErrAccountDisabled = errors.New("account is disabled")
 func (s *Service) AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
 	s.logger.Info("Authenticating user", zap.String("username", username))
 
+	// The org is resolved (from subdomain/JWT/default) before the
+	// request reaches here, so authentication is scoped to the
+	// caller's tenant: the same username/email may exist in other
+	// orgs, and they must not satisfy a login against this one.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var userID, passwordHash string
 	var enabled bool
 	var lockedUntil *time.Time
@@ -1521,12 +1704,12 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	var source *string
 	var directoryID *string
 
-	// Get user by username or email
-	err := s.db.Pool.QueryRow(ctx, `
+	// Get user by username or email, within the caller's org
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, password_hash, enabled, locked_until, failed_login_count, source, directory_id
 		FROM users
-		WHERE username = $1 OR email = $1
-	`, username).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount, &source, &directoryID)
+		WHERE (username = $1 OR email = $1) AND org_id = $2
+	`, username, org.ID).Scan(&userID, &passwordHash, &enabled, &lockedUntil, &failedLoginCount, &source, &directoryID)
 
 	if err != nil {
 		s.logger.Debug("User not found", zap.String("username", username))
@@ -1580,8 +1763,8 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = 0, last_login_at = $2, locked_until = NULL
-		WHERE id = $1
-	`, userID, now)
+		WHERE id = $1 AND org_id = $3
+	`, userID, now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update login stats", zap.Error(err))
 	}
@@ -1592,6 +1775,12 @@ func (s *Service) AuthenticateUser(ctx context.Context, username, password strin
 
 // recordFailedLogin records a failed login attempt and locks account if necessary
 func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentCount int) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Error("Failed to record failed login: no org context", zap.Error(err))
+		return
+	}
+
 	newCount := currentCount + 1
 	now := time.Now()
 
@@ -1619,11 +1808,11 @@ func (s *Service) recordFailedLogin(ctx context.Context, userID string, currentC
 		s.logger.Warn("Account locked due to failed attempts", zap.String("user_id", userID))
 	}
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET failed_login_count = $2, last_failed_login_at = $3, locked_until = $4
-		WHERE id = $1
-	`, userID, newCount, now, lockedUntil)
+		WHERE id = $1 AND org_id = $5
+	`, userID, newCount, now, lockedUntil, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to record failed login", zap.Error(err))
 	}
@@ -1638,6 +1827,11 @@ func (s *Service) SetPassword(ctx context.Context, userID string, password strin
 		return err
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -1648,8 +1842,8 @@ func (s *Service) SetPassword(ctx context.Context, userID string, password strin
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
 		SET password_hash = $2, password_changed_at = $3, password_must_change = false
-		WHERE id = $1
-	`, userID, string(hash), now)
+		WHERE id = $1 AND org_id = $4
+	`, userID, string(hash), now, org.ID)
 
 	return err
 }
@@ -1695,19 +1889,24 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 		return fmt.Errorf("invalid TOTP verification code")
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	totpID := uuid.New().String()
 
 	// Remove any existing TOTP records for this user before inserting
-	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1`, userID); err != nil {
+	if _, err := s.db.Pool.Exec(ctx, `DELETE FROM mfa_totp WHERE user_id = $1 AND org_id = $2`, userID, org.ID); err != nil {
 		return fmt.Errorf("failed to remove existing TOTP records: %w", err)
 	}
 
 	// Insert TOTP record
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, totpID, userID, secret, true, now, now, now)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO mfa_totp (id, user_id, secret, enabled, enrolled_at, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, totpID, userID, secret, true, now, now, now, org.ID)
 
 	if err != nil {
 		return fmt.Errorf("failed to enroll TOTP: %w", err)
@@ -1720,12 +1919,17 @@ func (s *Service) EnrollTOTP(ctx context.Context, userID, secret, verificationCo
 func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, error) {
 	s.logger.Debug("Verifying TOTP code", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	// Get user's TOTP secret
 	var secret string
 	var enabled bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT secret, enabled FROM mfa_totp WHERE user_id = $1
-	`, userID).Scan(&secret, &enabled)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT secret, enabled FROM mfa_totp WHERE user_id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&secret, &enabled)
 
 	if err != nil {
 		return false, fmt.Errorf("failed to get TOTP settings: %w", err)
@@ -1741,8 +1945,8 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 		// Update last used timestamp
 		now := time.Now()
 		_, err = s.db.Pool.Exec(ctx, `
-			UPDATE mfa_totp SET last_used_at = $2, updated_at = $2 WHERE user_id = $1
-		`, userID, now)
+			UPDATE mfa_totp SET last_used_at = $2, updated_at = $2 WHERE user_id = $1 AND org_id = $3
+		`, userID, now, org.ID)
 		if err != nil {
 			s.logger.Warn("Failed to update TOTP last used timestamp", zap.Error(err))
 		}
@@ -1755,9 +1959,14 @@ func (s *Service) VerifyTOTP(ctx context.Context, userID, code string) (bool, er
 func (s *Service) DisableTOTP(ctx context.Context, userID string) error {
 	s.logger.Info("Disabling TOTP for user", zap.String("user_id", userID))
 
-	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE mfa_totp SET enabled = false, updated_at = $2 WHERE user_id = $1
-	`, userID, time.Now())
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE mfa_totp SET enabled = false, updated_at = $2 WHERE user_id = $1 AND org_id = $3
+	`, userID, time.Now(), org.ID)
 
 	return err
 }
@@ -1766,11 +1975,16 @@ func (s *Service) DisableTOTP(ctx context.Context, userID string) error {
 func (s *Service) GetTOTPStatus(ctx context.Context, userID string) (*MFATOTP, error) {
 	s.logger.Debug("Getting TOTP status", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var totp MFATOTP
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, user_id, enabled, enrolled_at, last_used_at, created_at, updated_at
-		FROM mfa_totp WHERE user_id = $1
-	`, userID).Scan(
+		FROM mfa_totp WHERE user_id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(
 		&totp.ID, &totp.UserID, &totp.Enabled, &totp.EnrolledAt,
 		&totp.LastUsedAt, &totp.CreatedAt, &totp.UpdatedAt,
 	)
@@ -1789,6 +2003,11 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 
 	if count <= 0 || count > 20 {
 		count = 10 // Default to 10 codes
+	}
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	var codes []string
@@ -1810,9 +2029,9 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 		// Store in database
 		codeID := uuid.New().String()
 		_, err := s.db.Pool.Exec(ctx, `
-			INSERT INTO mfa_backup_codes (id, user_id, code_hash, created_at)
-			VALUES ($1, $2, $3, $4)
-		`, codeID, userID, codeHash, time.Now())
+			INSERT INTO mfa_backup_codes (id, user_id, code_hash, created_at, org_id)
+			VALUES ($1, $2, $3, $4, $5)
+		`, codeID, userID, codeHash, time.Now(), org.ID)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to store backup code: %w", err)
@@ -1826,16 +2045,21 @@ func (s *Service) GenerateBackupCodes(ctx context.Context, userID string, count 
 func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (bool, error) {
 	s.logger.Info("Validating backup code", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, err
+	}
+
 	// Hash the provided code
 	hash := sha256.Sum256([]byte(strings.ToUpper(code)))
 	codeHash := hex.EncodeToString(hash[:])
 
 	// Check if code exists and is unused
 	var codeID string
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id FROM mfa_backup_codes
-		WHERE user_id = $1 AND code_hash = $2 AND used = false
-	`, userID, codeHash).Scan(&codeID)
+		WHERE user_id = $1 AND code_hash = $2 AND used = false AND org_id = $3
+	`, userID, codeHash, org.ID).Scan(&codeID)
 
 	if err != nil {
 		return false, nil // Code not found or already used
@@ -1844,8 +2068,8 @@ func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (
 	// Mark code as used
 	now := time.Now()
 	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE mfa_backup_codes SET used = true, used_at = $2 WHERE id = $1
-	`, codeID, now)
+		UPDATE mfa_backup_codes SET used = true, used_at = $2 WHERE id = $1 AND org_id = $3
+	`, codeID, now, org.ID)
 
 	if err != nil {
 		s.logger.Warn("Failed to mark backup code as used", zap.Error(err))
@@ -1856,10 +2080,15 @@ func (s *Service) ValidateBackupCode(ctx context.Context, userID, code string) (
 
 // GetRemainingBackupCodes returns count of unused backup codes
 func (s *Service) GetRemainingBackupCodes(ctx context.Context, userID string) (int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0, err
+	}
+
 	var count int
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM mfa_backup_codes WHERE user_id = $1 AND used = false
-	`, userID).Scan(&count)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM mfa_backup_codes WHERE user_id = $1 AND used = false AND org_id = $2
+	`, userID, org.ID).Scan(&count)
 
 	return count, err
 }
@@ -1883,14 +2112,19 @@ func (s *Service) GetPushDevices(ctx context.Context, userID string) ([]PushMFAD
 func (s *Service) IsMFARequired(ctx context.Context, userID string, clientIP string) (bool, *MFAPolicy, error) {
 	s.logger.Debug("Checking MFA requirements", zap.String("user_id", userID), zap.String("client_ip", clientIP))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+
 	// Get all active MFA policies ordered by priority
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, enabled, priority, conditions, required_methods, grace_period_hours,
 		       created_at, updated_at
 		FROM mfa_policies
-		WHERE enabled = true
+		WHERE enabled = true AND org_id = $1
 		ORDER BY priority DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to query MFA policies: %w", err)
 	}
@@ -2128,12 +2362,17 @@ func (s *Service) checkUserAttributes(ctx context.Context, userID string, attrib
 
 // getUserGroups retrieves all groups a user belongs to
 func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT g.id, g.name, g.description, g.parent_id, g.created_at, g.updated_at
 		FROM groups g
 		JOIN group_memberships gm ON g.id = gm.group_id
-		WHERE gm.user_id = $1
-	`, userID)
+		WHERE gm.user_id = $1 AND gm.org_id = $2
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2156,8 +2395,13 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) ([]Group, er
 func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int, error) {
 	s.logger.Debug("Listing roles", zap.Int("offset", offset), zap.Int("limit", limit))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM roles WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2165,9 +2409,10 @@ func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, is_composite, created_at
 		FROM roles
+		WHERE org_id = $1
 		ORDER BY name
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $2 LIMIT $3
+	`, org.ID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2190,11 +2435,16 @@ func (s *Service) ListRoles(ctx context.Context, offset, limit int) ([]Role, int
 func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
 	s.logger.Debug("Getting role", zap.String("role_id", roleID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var role Role
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, is_composite, created_at
-		FROM roles WHERE id = $1
-	`, roleID).Scan(&role.ID, &role.Name, &role.Description, &role.IsComposite, &role.CreatedAt)
+		FROM roles WHERE id = $1 AND org_id = $2
+	`, roleID, org.ID).Scan(&role.ID, &role.Name, &role.Description, &role.IsComposite, &role.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2206,6 +2456,11 @@ func (s *Service) GetRole(ctx context.Context, roleID string) (*Role, error) {
 func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 	s.logger.Info("Creating role", zap.String("name", role.Name))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	if role.ID == "" {
 		role.ID = uuid.New().String()
 	}
@@ -2213,14 +2468,14 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 	now := time.Now()
 	role.CreatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO roles (id, name, description, is_composite, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $5)
-	`, role.ID, role.Name, role.Description, role.IsComposite, now)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO roles (id, name, description, is_composite, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $5, $6)
+	`, role.ID, role.Name, role.Description, role.IsComposite, now, org.ID)
 
 	if err == nil {
 		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent("identity", "role_management", "role.created", "success",
+		s.logAuditEvent(ctx, "identity", "role_management", "role.created", "success",
 			actorID, role.ID, "role", map[string]interface{}{
 				"role_name": role.Name,
 			})
@@ -2233,11 +2488,16 @@ func (s *Service) CreateRole(ctx context.Context, role *Role) error {
 func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 	s.logger.Info("Updating role", zap.String("role_id", role.ID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
 		UPDATE roles
 		SET name = $2, description = $3, is_composite = $4, updated_at = $5
-		WHERE id = $1
-	`, role.ID, role.Name, role.Description, role.IsComposite, time.Now())
+		WHERE id = $1 AND org_id = $6
+	`, role.ID, role.Name, role.Description, role.IsComposite, time.Now(), org.ID)
 
 	if err != nil {
 		return err
@@ -2248,7 +2508,7 @@ func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 	}
 
 	actorID := actorIDFromContext(ctx)
-	s.logAuditEvent("identity", "role_management", "role.updated", "success",
+	s.logAuditEvent(ctx, "identity", "role_management", "role.updated", "success",
 		actorID, role.ID, "role", map[string]interface{}{
 			"role_name": role.Name,
 		})
@@ -2260,20 +2520,25 @@ func (s *Service) UpdateRole(ctx context.Context, role *Role) error {
 func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 	s.logger.Info("Deleting role", zap.String("role_id", roleID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// First remove all user-role assignments
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1", roleID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove role assignments: %w", err)
 	}
 
 	// Remove composite role relationships
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM composite_roles WHERE parent_role_id = $1 OR child_role_id = $1", roleID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM composite_roles WHERE (parent_role_id = $1 OR child_role_id = $1) AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to remove composite role relationships: %w", err)
 	}
 
 	// Delete the role
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM roles WHERE id = $1", roleID)
+	result, err := s.db.Pool.Exec(ctx, "DELETE FROM roles WHERE id = $1 AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -2289,14 +2554,20 @@ func (s *Service) DeleteRole(ctx context.Context, roleID string) error {
 func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, error) {
 	s.logger.Debug("Getting user roles", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.name, r.description, r.is_composite, r.created_at
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
+		AND ur.org_id = $2
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		ORDER BY r.name
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2319,15 +2590,21 @@ func (s *Service) GetUserRoles(ctx context.Context, userID string) ([]Role, erro
 func (s *Service) GetUserRoleAssignments(ctx context.Context, userID string) ([]UserRoleAssignment, error) {
 	s.logger.Debug("Getting user role assignments", zap.String("user_id", userID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.name, r.description, r.is_composite, r.created_at,
 		       COALESCE(ur.assigned_by::text, ''), ur.assigned_at, ur.expires_at
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
+		AND ur.org_id = $2
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
 		ORDER BY r.name
-	`, userID)
+	`, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2377,18 +2654,23 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 		zap.String("action", action),
 		zap.Int("target_roles", len(targetRoleIDs)))
 
-	// Query all enabled policies with their rules
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil // Fail open: no org context, don't block
+	}
+
+	// Query all enabled policies (for this org) with their rules
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT p.id, p.name, p.type, p.priority,
 		       COALESCE(json_agg(json_build_object(
 		           'id', pr.id, 'condition', pr.condition, 'effect', pr.effect, 'priority', pr.priority
 		       )) FILTER (WHERE pr.id IS NOT NULL), '[]'::json) as rules
 		FROM policies p
-		LEFT JOIN policy_rules pr ON pr.policy_id = p.id
-		WHERE p.enabled = true
+		LEFT JOIN policy_rules pr ON pr.policy_id = p.id AND pr.org_id = p.org_id
+		WHERE p.enabled = true AND p.org_id = $1
 		GROUP BY p.id, p.name, p.type, p.priority
 		ORDER BY p.priority DESC
-	`)
+	`, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to query policies", zap.Error(err))
 		return nil // Fail open: don't block if we can't check policies
@@ -2409,8 +2691,8 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 	targetRoleNames := make(map[string]string) // id -> name
 	if len(targetRoleIDs) > 0 {
 		roleRows, err := s.db.Pool.Query(ctx, `
-			SELECT id, name FROM roles WHERE id = ANY($1)
-		`, targetRoleIDs)
+			SELECT id, name FROM roles WHERE id = ANY($1) AND org_id = $2
+		`, targetRoleIDs, org.ID)
 		if err == nil {
 			defer roleRows.Close()
 			for roleRows.Next() {
@@ -2619,11 +2901,16 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 	s.logger.Info("Assigning role to user",
 		zap.String("user_id", userID), zap.String("role_id", roleID), zap.String("assigned_by", assignedBy))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Check if role assignment already exists (only non-expired)
 	var exists bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2 AND (expires_at IS NULL OR expires_at > NOW()))
-	`, userID, roleID).Scan(&exists)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3 AND (expires_at IS NULL OR expires_at > NOW()))
+	`, userID, roleID, org.ID).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -2634,9 +2921,9 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 
 	// Insert role assignment
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at, expires_at)
-		VALUES ($1, $2, $3, NOW(), $4)
-	`, userID, roleID, assignedBy, expiresAt)
+		INSERT INTO user_roles (user_id, role_id, assigned_by, assigned_at, expires_at, org_id)
+		VALUES ($1, $2, $3, NOW(), $4, $5)
+	`, userID, roleID, assignedBy, expiresAt, org.ID)
 
 	return err
 }
@@ -2645,9 +2932,14 @@ func (s *Service) AssignUserRole(ctx context.Context, userID, roleID string, ass
 func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) error {
 	s.logger.Info("Removing role from user", zap.String("user_id", userID), zap.String("role_id", roleID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.db.Pool.Exec(ctx, `
-		DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2
-	`, userID, roleID)
+		DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3
+	`, userID, roleID, org.ID)
 
 	if err != nil {
 		return err
@@ -2665,6 +2957,11 @@ func (s *Service) RemoveUserRole(ctx context.Context, userID, roleID string) err
 func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []string, assignedBy string) error {
 	s.logger.Info("Updating user roles", zap.String("user_id", userID), zap.Int("role_count", len(roleIDs)))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Start transaction
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
@@ -2673,7 +2970,7 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 	defer tx.Rollback(ctx)
 
 	// Remove all existing roles
-	_, err = tx.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1", userID)
+	_, err = tx.Exec(ctx, "DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -2681,9 +2978,9 @@ func (s *Service) UpdateUserRoles(ctx context.Context, userID string, roleIDs []
 	// Insert new roles
 	for _, roleID := range roleIDs {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO user_roles (user_id, role_id, assigned_at)
-			VALUES ($1, $2, NOW())
-		`, userID, roleID)
+			INSERT INTO user_roles (user_id, role_id, assigned_at, org_id)
+			VALUES ($1, $2, NOW(), $3)
+		`, userID, roleID, org.ID)
 		if err != nil {
 			return err
 		}
@@ -3026,9 +3323,15 @@ func (s *Service) handleCreateUser(c *gin.Context) {
 	// Send verification email (best-effort)
 	if s.emailService != nil {
 		token := uuid.New().String()
-		_, err := s.db.Pool.Exec(c.Request.Context(),
-			"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
-			user.ID, token)
+		org, oerr := orgctx.From(ctx)
+		var err error
+		if oerr != nil {
+			err = oerr
+		} else {
+			_, err = s.db.Pool.Exec(ctx,
+				"INSERT INTO email_verification_tokens (user_id, token, expires_at, org_id) VALUES ($1, $2, NOW() + INTERVAL '24 hours', $3)",
+				user.ID, token, org.ID)
+		}
 		if err == nil {
 			baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
 			s.emailService.SendVerificationEmail(c.Request.Context(), user.GetEmail(), user.GetFirstName(), token, baseURL)
@@ -3896,14 +4199,20 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to verify password"})
+		return
+	}
+
 	// Check if user is from an LDAP directory
 	var source *string
 	var directoryID *string
 	var username string
 	var passwordHash string
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT username, source, directory_id, password_hash FROM users WHERE id = $1
-	`, userID).Scan(&username, &source, &directoryID, &passwordHash)
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT username, source, directory_id, password_hash FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&username, &source, &directoryID, &passwordHash)
 
 	if err != nil {
 		s.logger.Error("Failed to get user info", zap.String("user_id", userID), zap.Error(err))
@@ -3924,7 +4233,7 @@ func (s *Service) handleChangePassword(c *gin.Context) {
 			return
 		}
 		// Update password_changed_at in local DB (but NOT the hash — password stays in directory)
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1`, userID)
+		s.db.Pool.Exec(ctx, `UPDATE users SET password_changed_at = NOW(), password_must_change = false WHERE id = $1 AND org_id = $2`, userID, org.ID)
 		c.JSON(200, gin.H{"status": "password changed"})
 		return
 	}
@@ -3952,12 +4261,18 @@ func (s *Service) handleGetPasswordInfo(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
 	var source *string
 	var passwordChangedAt *time.Time
 	var passwordMustChange bool
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
-		SELECT source, password_changed_at, password_must_change FROM users WHERE id = $1
-	`, userID).Scan(&source, &passwordChangedAt, &passwordMustChange)
+	err = s.db.Pool.QueryRow(c.Request.Context(), `
+		SELECT source, password_changed_at, password_must_change FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&source, &passwordChangedAt, &passwordMustChange)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
@@ -4188,15 +4503,25 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Opportunistic cleanup of expired/used tokens
-	s.db.Pool.Exec(c.Request.Context(), "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL")
+	ctx := c.Request.Context()
+	// The org is resolved (subdomain/default) before this public
+	// endpoint runs, so reset is scoped to the caller's tenant: the
+	// same email in another org must not yield a token here.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
+		return
+	}
+
+	// Opportunistic cleanup of this org's expired/used tokens
+	s.db.Pool.Exec(ctx, "DELETE FROM password_reset_tokens WHERE (expires_at < NOW() OR used_at IS NOT NULL) AND org_id = $1", org.ID)
 
 	// Always return success to prevent email enumeration
 	// Look up user by email, including source
 	var userID string
 	var source *string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT id, source FROM users WHERE email = $1 AND enabled = true", req.Email).Scan(&userID, &source)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT id, source FROM users WHERE email = $1 AND enabled = true AND org_id = $2", req.Email, org.ID).Scan(&userID, &source)
 	if err != nil {
 		// User not found - still return success
 		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
@@ -4222,10 +4547,10 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	token := hex.EncodeToString(tokenBytes)
 
 	// Store token with 1 hour expiry
-	_, err = s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO password_reset_tokens (user_id, token, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, token, time.Now().Add(1*time.Hour))
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO password_reset_tokens (user_id, token, expires_at, org_id)
+		VALUES ($1, $2, $3, $4)
+	`, userID, token, time.Now().Add(1*time.Hour), org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create password reset token", zap.Error(err))
 		c.JSON(200, gin.H{"message": "If an account with that email exists, a password reset link has been sent."})
@@ -4241,10 +4566,10 @@ func (s *Service) handleForgotPassword(c *gin.Context) {
 	// Send password reset email
 	if s.emailService != nil {
 		var firstName string
-		s.db.Pool.QueryRow(c.Request.Context(),
-			"SELECT first_name FROM users WHERE id = $1", userID).Scan(&firstName)
+		s.db.Pool.QueryRow(ctx,
+			"SELECT first_name FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&firstName)
 		baseURL := "http://localhost:3000"
-		if err := s.emailService.SendPasswordResetEmail(c.Request.Context(), req.Email, firstName, token, baseURL); err != nil {
+		if err := s.emailService.SendPasswordResetEmail(ctx, req.Email, firstName, token, baseURL); err != nil {
 			s.logger.Error("Failed to send password reset email", zap.Error(err))
 		}
 	}
@@ -4267,13 +4592,20 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid or expired reset token"})
+		return
+	}
+
 	// Validate token
 	var userID string
 	var usedAt *time.Time
-	err := s.db.Pool.QueryRow(c.Request.Context(), `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT user_id, used_at FROM password_reset_tokens
-		WHERE token = $1 AND expires_at > NOW()
-	`, req.Token).Scan(&userID, &usedAt)
+		WHERE token = $1 AND org_id = $2 AND expires_at > NOW()
+	`, req.Token, org.ID).Scan(&userID, &usedAt)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid or expired reset token"})
 		return
@@ -4291,17 +4623,17 @@ func (s *Service) handleResetPassword(c *gin.Context) {
 	}
 
 	// Update password
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2",
-		string(hashedPassword), userID)
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2 AND org_id = $3",
+		string(hashedPassword), userID, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
 
 	// Mark token as used
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1", req.Token)
+	s.db.Pool.Exec(ctx,
+		"UPDATE password_reset_tokens SET used_at = NOW() WHERE token = $1 AND org_id = $2", req.Token, org.ID)
 
 	c.JSON(200, gin.H{"message": "Password has been reset successfully"})
 }
@@ -4312,13 +4644,19 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	userID := c.Param("id")
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
 	// Get user info including source
 	var email, firstName, username string
 	var source *string
 	var directoryID *string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT email, first_name, username, source, directory_id FROM users WHERE id = $1 AND enabled = true",
-		userID).Scan(&email, &firstName, &username, &source, &directoryID)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT email, first_name, username, source, directory_id FROM users WHERE id = $1 AND org_id = $2 AND enabled = true",
+		userID, org.ID).Scan(&email, &firstName, &username, &source, &directoryID)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
@@ -4351,7 +4689,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 		}
 
 		// Mark password_must_change so user is prompted at next login
-		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1`, userID)
+		s.db.Pool.Exec(ctx, `UPDATE users SET password_must_change = true, password_changed_at = NOW() WHERE id = $1 AND org_id = $2`, userID, org.ID)
 
 		s.logger.Info("Admin reset directory password",
 			zap.String("admin_id", fmt.Sprintf("%v", adminID)),
@@ -4371,9 +4709,9 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 	token := hex.EncodeToString(tokenBytes)
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO password_reset_tokens (user_id, token, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, token, time.Now().Add(24*time.Hour))
+		INSERT INTO password_reset_tokens (user_id, token, expires_at, org_id)
+		VALUES ($1, $2, $3, $4)
+	`, userID, token, time.Now().Add(24*time.Hour), org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create password reset token", zap.Error(err))
 		c.JSON(500, gin.H{"error": "Failed to create reset token"})
@@ -4433,11 +4771,17 @@ func (s *Service) handleAdminSetPassword(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
 	// Confirm the user exists and is a local account; directory-managed
 	// passwords must be changed via the directory, not here.
 	var source *string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT source FROM users WHERE id = $1 AND enabled = true", userIDStr,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT source FROM users WHERE id = $1 AND org_id = $2 AND enabled = true", userIDStr, org.ID,
 	).Scan(&source)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
@@ -4566,13 +4910,18 @@ func (s *Service) ListPermissions(ctx context.Context) ([]Permission, error) {
 
 // GetRolePermissions returns permissions assigned to a role
 func (s *Service) GetRolePermissions(ctx context.Context, roleID string) ([]Permission, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT p.id, p.name, p.description, p.resource, p.action, p.created_at
 		FROM permissions p
 		JOIN role_permissions rp ON p.id = rp.permission_id
-		WHERE rp.role_id = $1
+		WHERE rp.role_id = $1 AND rp.org_id = $2
 		ORDER BY p.resource, p.action
-	`, roleID)
+	`, roleID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -4591,19 +4940,24 @@ func (s *Service) GetRolePermissions(ctx context.Context, roleID string) ([]Perm
 
 // SetRolePermissions replaces all permissions for a role
 func (s *Service) SetRolePermissions(ctx context.Context, roleID string, permissionIDs []string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, "DELETE FROM role_permissions WHERE role_id = $1", roleID)
+	_, err = tx.Exec(ctx, "DELETE FROM role_permissions WHERE role_id = $1 AND org_id = $2", roleID, org.ID)
 	if err != nil {
 		return err
 	}
 
 	for _, permID := range permissionIDs {
-		_, err = tx.Exec(ctx, "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)", roleID, permID)
+		_, err = tx.Exec(ctx, "INSERT INTO role_permissions (role_id, permission_id, org_id) VALUES ($1, $2, $3)", roleID, permID, org.ID)
 		if err != nil {
 			return err
 		}
@@ -4621,8 +4975,12 @@ func (s *Service) invalidatePermissionCache(ctx context.Context, roleID string) 
 	if s.redis == nil || s.redis.Client == nil {
 		return
 	}
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return
+	}
 	var roleName string
-	_ = s.db.Pool.QueryRow(ctx, "SELECT name FROM roles WHERE id = $1", roleID).Scan(&roleName)
+	_ = s.db.Pool.QueryRow(ctx, "SELECT name FROM roles WHERE id = $1 AND org_id = $2", roleID, org.ID).Scan(&roleName)
 	if roleName == "" {
 		return
 	}
@@ -4680,23 +5038,30 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 		return
 	}
 
-	var userID string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT user_id FROM email_verification_tokens WHERE token = $1 AND expires_at > NOW() AND used_at IS NULL",
-		req.Token).Scan(&userID)
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired token"})
 		return
 	}
 
-	_, err = s.db.Pool.Exec(c.Request.Context(), "UPDATE users SET email_verified = true WHERE id = $1", userID)
+	var userID string
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id FROM email_verification_tokens WHERE token = $1 AND org_id = $2 AND expires_at > NOW() AND used_at IS NULL",
+		req.Token, org.ID).Scan(&userID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired token"})
+		return
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "UPDATE users SET email_verified = true WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to verify email"})
 		return
 	}
 
-	if _, err := s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1", req.Token); err != nil {
+	if _, err := s.db.Pool.Exec(ctx,
+		"UPDATE email_verification_tokens SET used_at = NOW() WHERE token = $1 AND org_id = $2", req.Token, org.ID); err != nil {
 		s.logger.Error("failed to mark verification token as used", zap.String("token", req.Token), zap.Error(err))
 	}
 
@@ -4707,18 +5072,25 @@ func (s *Service) handleVerifyEmail(c *gin.Context) {
 func (s *Service) handleResendVerification(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
 	var email, firstName string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT email, first_name FROM users WHERE id = $1", userID).Scan(&email, &firstName)
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT email, first_name FROM users WHERE id = $1 AND org_id = $2", userID, org.ID).Scan(&email, &firstName)
 	if err != nil {
 		c.JSON(404, gin.H{"error": "user not found"})
 		return
 	}
 
 	token := uuid.New().String()
-	_, err = s.db.Pool.Exec(c.Request.Context(),
-		"INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')",
-		userID, token)
+	_, err = s.db.Pool.Exec(ctx,
+		"INSERT INTO email_verification_tokens (user_id, token, expires_at, org_id) VALUES ($1, $2, NOW() + INTERVAL '24 hours', $3)",
+		userID, token, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to create verification token"})
 		return
@@ -4734,9 +5106,14 @@ func (s *Service) handleResendVerification(c *gin.Context) {
 
 // handleListInvitations lists pending invitations
 func (s *Service) handleListInvitations(c *gin.Context) {
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, email, invited_by, roles, groups, token, status, expires_at, accepted_at, created_at
-		 FROM user_invitations ORDER BY created_at DESC LIMIT 50`)
+		 FROM user_invitations WHERE org_id = $1 ORDER BY created_at DESC LIMIT 50`, org.ID)
 	if err != nil {
 		s.logger.Error("failed to list invitations", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -4788,11 +5165,17 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 	invitedBy, _ := c.Get("user_id")
 	token := uuid.New().String()
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+
 	var id string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days') RETURNING id`,
-		req.Email, invitedBy, req.Roles, req.Groups, token).Scan(&id)
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO user_invitations (email, invited_by, roles, groups, token, expires_at, org_id)
+		 VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days', $6) RETURNING id`,
+		req.Email, invitedBy, req.Roles, req.Groups, token, org.ID).Scan(&id)
 	if err != nil {
 		s.logger.Error("failed to create invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -4816,8 +5199,13 @@ func (s *Service) handleCreateInvitation(c *gin.Context) {
 // handleDeleteInvitation revokes an invitation
 func (s *Service) handleDeleteInvitation(c *gin.Context) {
 	id := c.Param("id")
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_invitations WHERE id = $1", id)
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(500, gin.H{"error": "internal server error"})
+		return
+	}
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		"DELETE FROM user_invitations WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		s.logger.Error("failed to delete invitation", zap.String("id", id), zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
@@ -4841,19 +5229,27 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 		return
 	}
 
-	// Look up invitation
-	var invID, email string
-	var roles, groups []string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT id, email, roles, groups FROM user_invitations
-		 WHERE token = $1 AND status = 'pending' AND expires_at > NOW()`,
-		token).Scan(&invID, &email, &roles, &groups)
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
 		return
 	}
 
-	// Create user
+	// Look up invitation within the caller's org (the invite link is
+	// org-specific via the subdomain it was sent for)
+	var invID, email string
+	var roles, groups []string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id, email, roles, groups FROM user_invitations
+		 WHERE token = $1 AND org_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+		token, org.ID).Scan(&invID, &email, &roles, &groups)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid or expired invitation"})
+		return
+	}
+
+	// Create user (CreateUser scopes to the org carried on ctx)
 	user := &User{
 		UserName: req.Username,
 		Emails:   []Email{{Value: email, Primary: boolPtr(true), Verified: boolPtr(true)}},
@@ -4861,7 +5257,7 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 		Enabled:  true,
 	}
 
-	if err := s.CreateUser(c.Request.Context(), user); err != nil {
+	if err := s.CreateUser(ctx, user); err != nil {
 		s.logger.Error("failed to create user from invitation", zap.Error(err))
 		c.JSON(500, gin.H{"error": "internal server error"})
 		return
@@ -4870,28 +5266,28 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 	// Set password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err == nil {
-		s.db.Pool.Exec(c.Request.Context(),
-			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2",
-			string(hashedPassword), user.ID)
+		s.db.Pool.Exec(ctx,
+			"UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2 AND org_id = $3",
+			string(hashedPassword), user.ID, org.ID)
 	}
 
-	// Assign roles
+	// Assign roles (only roles within the caller's org)
 	for _, role := range roles {
-		s.db.Pool.Exec(c.Request.Context(),
-			"INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE name = $2 ON CONFLICT DO NOTHING",
-			user.ID, role)
+		s.db.Pool.Exec(ctx,
+			"INSERT INTO user_roles (user_id, role_id, org_id) SELECT $1, id, $3 FROM roles WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			user.ID, role, org.ID)
 	}
 
-	// Add to groups
+	// Add to groups (only groups within the caller's org)
 	for _, group := range groups {
-		s.db.Pool.Exec(c.Request.Context(),
-			"INSERT INTO group_memberships (user_id, group_id) SELECT $1, id FROM groups WHERE name = $2 ON CONFLICT DO NOTHING",
-			user.ID, group)
+		s.db.Pool.Exec(ctx,
+			"INSERT INTO group_memberships (user_id, group_id, org_id) SELECT $1, id, $3 FROM groups WHERE name = $2 AND org_id = $3 ON CONFLICT DO NOTHING",
+			user.ID, group, org.ID)
 	}
 
 	// Mark invitation as accepted
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1", invID)
+	s.db.Pool.Exec(ctx,
+		"UPDATE user_invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1 AND org_id = $2", invID, org.ID)
 
 	// Send welcome email
 	if s.emailService != nil {
@@ -4912,29 +5308,36 @@ func (s *Service) handleAcceptInvitation(c *gin.Context) {
 func (s *Service) handleOffboardUser(c *gin.Context) {
 	userID := c.Param("id")
 
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to disable user"})
+		return
+	}
+
 	// Disable user
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1", userID)
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "failed to disable user"})
 		return
 	}
 
 	// Revoke all API keys
-	s.db.Pool.Exec(c.Request.Context(),
-		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Remove from all groups
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM group_memberships WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"DELETE FROM group_memberships WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Remove all role assignments
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM user_roles WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Terminate all sessions
-	s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM sessions WHERE user_id = $1", userID)
+	s.db.Pool.Exec(ctx,
+		"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2", userID, org.ID)
 
 	// Publish webhook
 	if s.webhookService != nil {
@@ -5262,6 +5665,11 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 		return fmt.Errorf("action missing 'type' field")
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	switch actionType {
 	case "assign_role":
 		roleID, ok := action["role_id"].(string)
@@ -5269,8 +5677,8 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("assign_role action missing 'role_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"INSERT INTO user_roles (user_id, role_id, created_at) VALUES ($1, $2, NOW()) ON CONFLICT DO NOTHING",
-			userID, roleID)
+			"INSERT INTO user_roles (user_id, role_id, created_at, org_id) VALUES ($1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
+			userID, roleID, org.ID)
 		return err
 
 	case "remove_role":
@@ -5279,8 +5687,8 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("remove_role action missing 'role_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2",
-			userID, roleID)
+			"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3",
+			userID, roleID, org.ID)
 		return err
 
 	case "assign_group":
@@ -5289,8 +5697,8 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("assign_group action missing 'group_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"INSERT INTO group_memberships (id, group_id, user_id, created_at) VALUES (gen_random_uuid(), $1, $2, NOW()) ON CONFLICT DO NOTHING",
-			groupID, userID)
+			"INSERT INTO group_memberships (id, group_id, user_id, created_at, org_id) VALUES (gen_random_uuid(), $1, $2, NOW(), $3) ON CONFLICT DO NOTHING",
+			groupID, userID, org.ID)
 		return err
 
 	case "remove_group":
@@ -5299,26 +5707,26 @@ func (s *Service) executeLifecycleAction(ctx context.Context, userID string, act
 			return fmt.Errorf("remove_group action missing 'group_id'")
 		}
 		_, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2",
-			groupID, userID)
+			"DELETE FROM group_memberships WHERE group_id = $1 AND user_id = $2 AND org_id = $3",
+			groupID, userID, org.ID)
 		return err
 
 	case "enable_user":
 		_, err := s.db.Pool.Exec(ctx,
-			"UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1",
-			userID)
+			"UPDATE users SET enabled = true, updated_at = NOW() WHERE id = $1 AND org_id = $2",
+			userID, org.ID)
 		return err
 
 	case "disable_user":
 		_, err := s.db.Pool.Exec(ctx,
-			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1",
-			userID)
+			"UPDATE users SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2",
+			userID, org.ID)
 		return err
 
 	case "revoke_sessions":
 		_, err := s.db.Pool.Exec(ctx,
-			"DELETE FROM sessions WHERE user_id = $1",
-			userID)
+			"DELETE FROM sessions WHERE user_id = $1 AND org_id = $2",
+			userID, org.ID)
 		return err
 
 	default:
@@ -5667,7 +6075,16 @@ func (s *Service) handleGetLifecycleExecution(c *gin.Context) {
 
 // logAuditEvent writes an audit event to the audit_events table (best-effort, non-blocking).
 // It mirrors the pattern used in the OAuth service.
-func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, outcome, actorID, targetID, targetType string, details map[string]interface{}) {
+	// Capture the org synchronously from the request context: the
+	// write runs on a detached background context (audit is
+	// fire-and-forget), so the tenant must be read before we leave the
+	// request. Falls back to the default org UUID when none is
+	// resolved, matching the milestone's DefaultOrgFallback semantics.
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
+		orgID = org.ID
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -5675,9 +6092,9 @@ func (s *Service) logAuditEvent(eventType, category, action, outcome, actorID, t
 		_, err := s.db.Pool.Exec(ctx, `
 			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
 			                          actor_id, actor_type, actor_ip, target_id, target_type,
-			                          resource_id, details)
-			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', '', $6, $7, $6, $8)
-		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON)
+			                          resource_id, details, org_id)
+			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', '', $6, $7, $6, $8, $9)
+		`, eventType, category, action, outcome, actorID, targetID, targetType, detailsJSON, orgID)
 		if err != nil {
 			s.logger.Warn("failed to record audit event",
 				zap.String("event_type", eventType),

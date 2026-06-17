@@ -201,6 +201,7 @@ type browzerRouteInfo struct {
 // queryBrowZerRoutes fetches all BrowZer-enabled routes from the database
 func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browzerRouteInfo, error) {
 	rows, err := tm.db.Pool.Query(ctx,
+		//orgscope:ignore install-wide BrowZer bootstrapper config generation; the shared bootstrapper serves every ziti+browzer-enabled route across all orgs into one config file
 		`SELECT from_url, to_url, ziti_service_name
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true

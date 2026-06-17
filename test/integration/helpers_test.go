@@ -102,6 +102,58 @@ func apiRequest(t *testing.T, method, url string, body string, token string) (in
 	return resp.StatusCode, result
 }
 
+// apiRequestWithHeaders is apiRequest plus arbitrary extra headers (used by the
+// tenant-aware helpers to set X-Org-Slug / X-Org-ID).
+func apiRequestWithHeaders(t *testing.T, method, url, body, token string, headers map[string]string) (int, map[string]interface{}) {
+	t.Helper()
+
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+	var result map[string]interface{}
+	if len(respBody) > 0 {
+		json.Unmarshal(respBody, &result)
+	}
+	return resp.StatusCode, result
+}
+
+// apiRequestWithOrg scopes the request to an org via the X-Org-Slug header
+// (the gateway/subdomain signal the tenant resolver honors first).
+func apiRequestWithOrg(t *testing.T, method, url, body, token, orgSlug string) (int, map[string]interface{}) {
+	return apiRequestWithHeaders(t, method, url, body, token, map[string]string{"X-Org-Slug": orgSlug})
+}
+
+// apiRequestWithOrgID scopes the request to an org via the X-Org-ID header,
+// which the resolver only honors for platform admins (super_admin).
+func apiRequestWithOrgID(t *testing.T, method, url, body, token, orgID string) (int, map[string]interface{}) {
+	return apiRequestWithHeaders(t, method, url, body, token, map[string]string{"X-Org-ID": orgID})
+}
+
 // apiRequestList is the bare-array sibling of apiRequest, for endpoints whose
 // JSON body is a top-level array (e.g. `[…credentials…]` rather than `{…}`).
 // apiRequest's parse target is `map[string]interface{}` and silently swallows

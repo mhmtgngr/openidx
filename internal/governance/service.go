@@ -22,6 +22,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AccessReview represents an access certification review
@@ -401,6 +402,11 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 
 // CreateAccessReview creates a new access review campaign
 func (s *Service) CreateAccessReview(ctx context.Context, review *AccessReview) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Creating access review", zap.String("name", review.Name))
 
 	if review.ID == "" {
@@ -410,24 +416,29 @@ func (s *Service) CreateAccessReview(ctx context.Context, review *AccessReview) 
 	review.CreatedAt = now
 	review.Status = ReviewStatusPending
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO access_reviews (id, name, description, type, status, reviewer_id,
-		                           start_date, end_date, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		                           start_date, end_date, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, review.ID, review.Name, review.Description, review.Type, review.Status,
-		review.ReviewerID, review.StartDate, review.EndDate, review.CreatedAt)
+		review.ReviewerID, review.StartDate, review.EndDate, review.CreatedAt, org.ID)
 
 	return err
 }
 
 // GetAccessReview retrieves an access review by ID
 func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*AccessReview, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var review AccessReview
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, type, status, reviewer_id,
 		       start_date, end_date, created_at, completed_at
-		FROM access_reviews WHERE id = $1
-	`, reviewID).Scan(
+		FROM access_reviews WHERE id = $1 AND org_id = $2
+	`, reviewID, org.ID).Scan(
 		&review.ID, &review.Name, &review.Description, &review.Type, &review.Status,
 		&review.ReviewerID, &review.StartDate, &review.EndDate, &review.CreatedAt, &review.CompletedAt,
 	)
@@ -436,16 +447,21 @@ func (s *Service) GetAccessReview(ctx context.Context, reviewID string) (*Access
 
 // ListAccessReviews retrieves all access reviews, optionally filtered by status
 func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, status string) ([]AccessReview, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	countArgs := []interface{}{}
-	countQuery := "SELECT COUNT(*) FROM access_reviews"
+	countArgs := []interface{}{org.ID}
+	countQuery := "SELECT COUNT(*) FROM access_reviews WHERE org_id = $1"
 
 	if status != "" {
-		countQuery += " WHERE status = $1"
+		countQuery += " AND status = $2"
 		countArgs = append(countArgs, status)
 	}
 
-	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -456,14 +472,15 @@ func (s *Service) ListAccessReviews(ctx context.Context, offset, limit int, stat
 		       COUNT(ri.id) as total_items,
 		       COUNT(CASE WHEN ri.decision != 'pending' THEN 1 END) as reviewed_items
 		FROM access_reviews ar
-		LEFT JOIN review_items ri ON ar.id = ri.review_id
+		LEFT JOIN review_items ri ON ar.id = ri.review_id AND ri.org_id = ar.org_id
+		WHERE ar.org_id = $1
 	`
 
-	args := []interface{}{}
-	paramIdx := 1
+	args := []interface{}{org.ID}
+	paramIdx := 2
 
 	if status != "" {
-		baseQuery += " WHERE ar.status = $" + strconv.Itoa(paramIdx)
+		baseQuery += " AND ar.status = $" + strconv.Itoa(paramIdx)
 		args = append(args, status)
 		paramIdx++
 	}
@@ -503,18 +520,28 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 		zap.String("item_id", itemID),
 		zap.String("decision", string(decision)))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE review_items
 		SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
-		WHERE id = $1
-	`, itemID, decision, comments, decidedBy, now)
+		WHERE id = $1 AND org_id = $6
+	`, itemID, decision, comments, decidedBy, now, org.ID)
 
 	return err
 }
 
 // CreatePolicy creates a new policy
 func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Creating policy", zap.String("name", policy.Name))
 
 	if policy.ID == "" {
@@ -524,11 +551,11 @@ func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 	policy.CreatedAt = now
 	policy.UpdatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO policies (id, name, description, type, enabled, priority, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO policies (id, name, description, type, enabled, priority, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, policy.ID, policy.Name, policy.Description, policy.Type, policy.Enabled,
-		policy.Priority, policy.CreatedAt, policy.UpdatedAt)
+		policy.Priority, policy.CreatedAt, policy.UpdatedAt, org.ID)
 	if err != nil {
 		return err
 	}
@@ -541,9 +568,9 @@ func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 		ruleCondition, _ := json.Marshal(rule.Condition)
 		ruleActions, _ := json.Marshal(map[string]interface{}{"effect": rule.Effect, "priority": rule.Priority})
 		_, err = s.db.Pool.Exec(ctx, `
-			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, rule.ID, policy.ID, rule.Effect, ruleCondition, ruleActions, time.Now())
+			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, rule.ID, policy.ID, rule.Effect, ruleCondition, ruleActions, time.Now(), org.ID)
 		if err != nil {
 			s.logger.Error("Failed to insert policy rule", zap.Error(err))
 		}
@@ -554,11 +581,16 @@ func (s *Service) CreatePolicy(ctx context.Context, policy *Policy) error {
 
 // GetPolicy retrieves a policy by ID
 func (s *Service) GetPolicy(ctx context.Context, policyID string) (*Policy, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var policy Policy
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, description, type, enabled, priority, created_at, updated_at
-		FROM policies WHERE id = $1
-	`, policyID).Scan(
+		FROM policies WHERE id = $1 AND org_id = $2
+	`, policyID, org.ID).Scan(
 		&policy.ID, &policy.Name, &policy.Description, &policy.Type,
 		&policy.Enabled, &policy.Priority, &policy.CreatedAt, &policy.UpdatedAt,
 	)
@@ -570,8 +602,13 @@ func (s *Service) GetPolicy(ctx context.Context, policyID string) (*Policy, erro
 
 // ListPolicies retrieves all policies
 func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM policies").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM policies WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -579,9 +616,10 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, description, type, enabled, priority, created_at, updated_at
 		FROM policies
+		WHERE org_id = $1
 		ORDER BY priority DESC, created_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit)
+		OFFSET $2 LIMIT $3
+	`, org.ID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -604,9 +642,9 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 		ruleRows, err := s.db.Pool.Query(ctx, `
 			SELECT id, condition, effect, priority
 			FROM policy_rules
-			WHERE policy_id = $1
+			WHERE policy_id = $1 AND org_id = $2
 			ORDER BY priority DESC
-		`, policies[i].ID)
+		`, policies[i].ID, org.ID)
 		if err != nil {
 			s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policies[i].ID), zap.Error(err))
 			continue
@@ -633,22 +671,27 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 
 // UpdatePolicy updates an existing policy
 func (s *Service) UpdatePolicy(ctx context.Context, policyID string, policy *Policy) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Updating policy", zap.String("policy_id", policyID))
 
 	now := time.Now()
 	policy.UpdatedAt = now
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE policies
 		SET name = $2, description = $3, type = $4, enabled = $5, priority = $6, updated_at = $7
-		WHERE id = $1
-	`, policyID, policy.Name, policy.Description, policy.Type, policy.Enabled, policy.Priority, now)
+		WHERE id = $1 AND org_id = $8
+	`, policyID, policy.Name, policy.Description, policy.Type, policy.Enabled, policy.Priority, now, org.ID)
 	if err != nil {
 		return err
 	}
 
 	// Delete old rules and re-insert new ones
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1", policyID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1 AND org_id = $2", policyID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete old policy rules: %w", err)
 	}
@@ -659,9 +702,9 @@ func (s *Service) UpdatePolicy(ctx context.Context, policyID string, policy *Pol
 		ruleCondition, _ := json.Marshal(rule.Condition)
 		ruleActions, _ := json.Marshal(map[string]interface{}{"effect": rule.Effect, "priority": rule.Priority})
 		_, err = s.db.Pool.Exec(ctx, `
-			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, rule.ID, policyID, rule.Effect, ruleCondition, ruleActions, time.Now())
+			INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, created_at, org_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, rule.ID, policyID, rule.Effect, ruleCondition, ruleActions, time.Now(), org.ID)
 		if err != nil {
 			s.logger.Error("Failed to insert policy rule", zap.Error(err))
 		}
@@ -672,14 +715,19 @@ func (s *Service) UpdatePolicy(ctx context.Context, policyID string, policy *Pol
 
 // DeletePolicy deletes a policy
 func (s *Service) DeletePolicy(ctx context.Context, policyID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Deleting policy", zap.String("policy_id", policyID))
 
 	// Delete associated rules first
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1", policyID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policy_rules WHERE policy_id = $1 AND org_id = $2", policyID, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete policy rules: %w", err)
 	}
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1", policyID)
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM policies WHERE id = $1 AND org_id = $2", policyID, org.ID)
 	return err
 }
 
@@ -1006,6 +1054,11 @@ func (s *Service) evaluateConditionalAccessPolicy(ctx context.Context, policy *P
 
 // UpdateAccessReview updates an existing access review
 func (s *Service) UpdateAccessReview(ctx context.Context, reviewID string, update *AccessReview) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Updating access review", zap.String("review_id", reviewID))
 
 	// Check if review exists and is not completed
@@ -1021,14 +1074,19 @@ func (s *Service) UpdateAccessReview(ctx context.Context, reviewID string, updat
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE access_reviews
 		SET name = $2, description = $3, start_date = $4, end_date = $5
-		WHERE id = $1
-	`, reviewID, update.Name, update.Description, update.StartDate, update.EndDate)
+		WHERE id = $1 AND org_id = $6
+	`, reviewID, update.Name, update.Description, update.StartDate, update.EndDate, org.ID)
 
 	return err
 }
 
 // UpdateReviewStatus updates the status of an access review
 func (s *Service) UpdateReviewStatus(ctx context.Context, reviewID string, newStatus ReviewStatus) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Updating review status",
 		zap.String("review_id", reviewID),
 		zap.String("new_status", string(newStatus)))
@@ -1061,8 +1119,8 @@ func (s *Service) UpdateReviewStatus(ctx context.Context, reviewID string, newSt
 	_, err = tx.Exec(ctx, `
 		UPDATE access_reviews
 		SET status = $2, completed_at = $3
-		WHERE id = $1
-	`, reviewID, newStatus, completedAt)
+		WHERE id = $1 AND org_id = $4
+	`, reviewID, newStatus, completedAt, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1081,6 +1139,11 @@ func (s *Service) UpdateReviewStatus(ctx context.Context, reviewID string, newSt
 func (s *Service) ListReviewItems(ctx context.Context, reviewID string, offset, limit int, decisionFilter string) ([]ReviewItem, int, error) {
 	s.logger.Debug("Listing review items", zap.String("review_id", reviewID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// Build query based on filter
 	baseQuery := `
 		SELECT ri.id, ri.review_id, ri.user_id, ri.resource_type, ri.resource_id,
@@ -1089,17 +1152,17 @@ func (s *Service) ListReviewItems(ctx context.Context, reviewID string, offset, 
 		       COALESCE(u.first_name || ' ' || u.last_name, u.username, '') as user_name,
 		       COALESCE(u.email, '') as user_email
 		FROM review_items ri
-		LEFT JOIN users u ON ri.user_id = u.id
-		WHERE ri.review_id = $1
+		LEFT JOIN users u ON ri.user_id = u.id AND u.org_id = ri.org_id
+		WHERE ri.review_id = $1 AND ri.org_id = $2
 	`
-	countQuery := "SELECT COUNT(*) FROM review_items WHERE review_id = $1"
+	countQuery := "SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND org_id = $2"
 
-	args := []interface{}{reviewID}
-	countArgs := []interface{}{reviewID}
+	args := []interface{}{reviewID, org.ID}
+	countArgs := []interface{}{reviewID, org.ID}
 
 	if decisionFilter != "" {
-		baseQuery += " AND ri.decision = $2"
-		countQuery += " AND decision = $2"
+		baseQuery += " AND ri.decision = $3"
+		countQuery += " AND decision = $3"
 		args = append(args, decisionFilter)
 		countArgs = append(countArgs, decisionFilter)
 	}
@@ -1109,7 +1172,7 @@ func (s *Service) ListReviewItems(ctx context.Context, reviewID string, offset, 
 
 	// Get total count
 	var total int
-	err := s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1149,6 +1212,11 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 		return nil
 	}
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 
 	// Use a transaction for batch update
@@ -1163,8 +1231,8 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 		_, err := tx.Exec(ctx, `
 			UPDATE review_items
 			SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
-			WHERE id = $1 AND review_id = $6
-		`, itemID, decision, comments, decidedBy, now, reviewID)
+			WHERE id = $1 AND review_id = $6 AND org_id = $7
+		`, itemID, decision, comments, decidedBy, now, reviewID, org.ID)
 		if err != nil {
 			return err
 		}
@@ -1196,14 +1264,19 @@ func (s *Service) populateReviewItems(ctx context.Context, tx pgx.Tx, review *Ac
 }
 
 func (s *Service) populateUserAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Get all user-role assignments
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT ur.user_id, r.id as role_id, r.name as role_name
 		FROM user_roles ur
 		JOIN roles r ON ur.role_id = r.id
 		JOIN users u ON ur.user_id = u.id
-		WHERE u.enabled = true
-	`)
+		WHERE u.enabled = true AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1
+	`, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1216,9 +1289,9 @@ func (s *Service) populateUserAccessItems(ctx context.Context, tx pgx.Tx, review
 		}
 
 		_, err := tx.Exec(ctx, `
-			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision)
-			VALUES (gen_random_uuid(), $1, $2, 'role', $3, $4, 'pending')
-		`, reviewID, userID, roleID, roleName)
+			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision, org_id)
+			VALUES (gen_random_uuid(), $1, $2, 'role', $3, $4, 'pending', $5)
+		`, reviewID, userID, roleID, roleName, org.ID)
 		if err != nil {
 			return err
 		}
@@ -1233,14 +1306,19 @@ func (s *Service) populateRoleAssignmentItems(ctx context.Context, tx pgx.Tx, re
 }
 
 func (s *Service) populateApplicationAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Get all users with their group memberships (groups often map to app access)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT gm.user_id, g.id as group_id, g.name as group_name
 		FROM group_memberships gm
 		JOIN groups g ON gm.group_id = g.id
 		JOIN users u ON gm.user_id = u.id
-		WHERE u.enabled = true
-	`)
+		WHERE u.enabled = true AND u.org_id = $1 AND gm.org_id = $1 AND g.org_id = $1
+	`, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1253,9 +1331,9 @@ func (s *Service) populateApplicationAccessItems(ctx context.Context, tx pgx.Tx,
 		}
 
 		_, err := tx.Exec(ctx, `
-			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision)
-			VALUES (gen_random_uuid(), $1, $2, 'group', $3, $4, 'pending')
-		`, reviewID, userID, groupID, groupName)
+			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision, org_id)
+			VALUES (gen_random_uuid(), $1, $2, 'group', $3, $4, 'pending', $5)
+		`, reviewID, userID, groupID, groupName, org.ID)
 		if err != nil {
 			return err
 		}
@@ -1265,6 +1343,11 @@ func (s *Service) populateApplicationAccessItems(ctx context.Context, tx pgx.Tx,
 }
 
 func (s *Service) populatePrivilegedAccessItems(ctx context.Context, tx pgx.Tx, reviewID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Get privileged role assignments (admin, manager, etc.)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT ur.user_id, r.id as role_id, r.name as role_name
@@ -1273,7 +1356,8 @@ func (s *Service) populatePrivilegedAccessItems(ctx context.Context, tx pgx.Tx, 
 		JOIN users u ON ur.user_id = u.id
 		WHERE u.enabled = true
 		AND r.name IN ('admin', 'manager', 'auditor')
-	`)
+		AND u.org_id = $1 AND ur.org_id = $1 AND r.org_id = $1
+	`, org.ID)
 	if err != nil {
 		return err
 	}
@@ -1286,9 +1370,9 @@ func (s *Service) populatePrivilegedAccessItems(ctx context.Context, tx pgx.Tx, 
 		}
 
 		_, err := tx.Exec(ctx, `
-			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision)
-			VALUES (gen_random_uuid(), $1, $2, 'privileged_role', $3, $4, 'pending')
-		`, reviewID, userID, roleID, roleName)
+			INSERT INTO review_items (id, review_id, user_id, resource_type, resource_id, resource_name, decision, org_id)
+			VALUES (gen_random_uuid(), $1, $2, 'privileged_role', $3, $4, 'pending', $5)
+		`, reviewID, userID, roleID, roleName, org.ID)
 		if err != nil {
 			return err
 		}
@@ -1870,6 +1954,11 @@ func (s *Service) DeleteCampaign(ctx context.Context, id string) error {
 
 // RunCampaign triggers a single run of a certification campaign
 func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*CampaignRun, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	s.logger.Info("Running certification campaign", zap.String("campaign_id", campaignID))
 
 	campaign, err := s.GetCampaign(ctx, campaignID)
@@ -1890,8 +1979,9 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 			JOIN user_roles ur ON u.id = ur.user_id
 			JOIN roles r ON ur.role_id = r.id
 			WHERE r.name = $1 AND u.enabled = true
+			AND u.org_id = $2 AND ur.org_id = $2 AND r.org_id = $2
 			LIMIT 1
-		`, *campaign.ReviewerRole).Scan(&reviewerID)
+		`, *campaign.ReviewerRole, org.ID).Scan(&reviewerID)
 		if err != nil {
 			s.logger.Warn("No user found for reviewer role, using empty reviewer",
 				zap.String("role", *campaign.ReviewerRole), zap.Error(err))
@@ -1924,7 +2014,7 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 
 	// Count total items generated
 	var totalItems int
-	_ = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM review_items WHERE review_id = $1", review.ID).Scan(&totalItems)
+	_ = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND org_id = $2", review.ID, org.ID).Scan(&totalItems)
 
 	// Create campaign run
 	run := &CampaignRun{
@@ -2136,9 +2226,15 @@ func (s *Service) checkCampaignSchedules(ctx context.Context) {
 		campaignIDs = append(campaignIDs, id)
 	}
 
+	// certification_campaigns/campaign_runs are global, install-wide tables with
+	// no org_id (the feature predates multi-tenancy). The scheduler has no request
+	// context, so it runs each campaign under the default org; the access reviews it
+	// generates are org-scoped to the default org. Per-campaign org targeting is a
+	// future enhancement once campaigns carry an org_id.
+	runCtx := orgctx.With(ctx, orgctx.Org{ID: "00000000-0000-0000-0000-000000000010"})
 	for _, id := range campaignIDs {
 		s.logger.Info("Scheduler triggering campaign run", zap.String("campaign_id", id))
-		if _, err := s.RunCampaign(ctx, id); err != nil {
+		if _, err := s.RunCampaign(runCtx, id); err != nil {
 			s.logger.Error("Scheduler failed to run campaign",
 				zap.String("campaign_id", id), zap.Error(err))
 		}
@@ -2192,9 +2288,11 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 			// Count pending (unreviewed) items and mark them as revoked
 			var pending int
 			err := s.db.Pool.QueryRow(ctx,
+				//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
 				"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND decision = 'pending'",
 				*er.reviewID).Scan(&pending)
 			if err == nil && pending > 0 {
+				//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
 				_, updateErr := s.db.Pool.Exec(ctx, `
 					UPDATE review_items
 					SET decision = 'revoked', comments = 'Auto-revoked: campaign deadline expired', decided_at = $2
@@ -2209,6 +2307,7 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 			}
 
 			// Also mark the access review itself as expired
+			//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
 			_, _ = s.db.Pool.Exec(ctx, `
 				UPDATE access_reviews SET status = 'expired', completed_at = $2 WHERE id = $1
 			`, *er.reviewID, now)
@@ -2218,6 +2317,7 @@ func (s *Service) checkCampaignDeadlines(ctx context.Context) {
 		var reviewedItems int
 		if er.reviewID != nil {
 			_ = s.db.Pool.QueryRow(ctx,
+				//orgscope:ignore cross-org background deadline sweep; keyed by globally-unique review_id
 				"SELECT COUNT(*) FROM review_items WHERE review_id = $1 AND decision != 'pending'",
 				*er.reviewID).Scan(&reviewedItems)
 		}

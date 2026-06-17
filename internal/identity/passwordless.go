@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // MagicLink represents a magic link token
@@ -60,9 +62,14 @@ type PasswordlessPreferences struct {
 
 // CreateMagicLink generates a magic link for passwordless login
 func (s *Service) CreateMagicLink(ctx context.Context, email, purpose, redirectURL, ipAddress, userAgent string) (*MagicLink, error) {
-	// Find user by email
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find user by email, within the caller's org
 	var userID string
-	err := s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND enabled = true", email).Scan(&userID)
+	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM users WHERE email = $1 AND enabled = true AND org_id = $2", email, org.ID).Scan(&userID)
 	if err != nil {
 		return nil, errors.New("user not found or disabled")
 	}
@@ -197,20 +204,25 @@ func (s *Service) CreateQRLoginSession(ctx context.Context, ipAddress string, br
 	}
 	qrDataJSON, _ := json.Marshal(qrData)
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionID := uuid.New().String()
 	expiresAt := time.Now().Add(5 * time.Minute)
 
 	query := `
 		INSERT INTO qr_login_sessions (
 			id, session_token, qr_code_data, status, browser_info,
-			ip_address, created_at, expires_at
-		) VALUES ($1, $2, $3, 'pending', $4, $5, NOW(), $6)
+			ip_address, created_at, expires_at, org_id
+		) VALUES ($1, $2, $3, 'pending', $4, $5, NOW(), $6, $7)
 		RETURNING created_at
 	`
 
 	var createdAt time.Time
-	err := s.db.Pool.QueryRow(ctx, query,
-		sessionID, sessionToken, string(qrDataJSON), browserInfo, ipAddress, expiresAt,
+	err = s.db.Pool.QueryRow(ctx, query,
+		sessionID, sessionToken, string(qrDataJSON), browserInfo, ipAddress, expiresAt, org.ID,
 	).Scan(&createdAt)
 	if err != nil {
 		return nil, err
@@ -230,13 +242,18 @@ func (s *Service) CreateQRLoginSession(ctx context.Context, ipAddress string, br
 
 // ScanQRLoginSession marks a QR session as scanned (called from mobile app)
 func (s *Service) ScanQRLoginSession(ctx context.Context, sessionToken, userID string, mobileInfo map[string]interface{}) (*QRLoginSession, error) {
-	// Find session
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find session within the caller's org
 	var sessionID, status string
 	var expiresAt time.Time
 
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT id, status, expires_at FROM qr_login_sessions WHERE session_token = $1",
-		sessionToken,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT id, status, expires_at FROM qr_login_sessions WHERE session_token = $1 AND org_id = $2",
+		sessionToken, org.ID,
 	).Scan(&sessionID, &status, &expiresAt)
 	if err != nil {
 		return nil, errors.New("session not found")
@@ -247,7 +264,7 @@ func (s *Service) ScanQRLoginSession(ctx context.Context, sessionToken, userID s
 	}
 
 	if time.Now().After(expiresAt) {
-		s.db.Pool.Exec(ctx, "UPDATE qr_login_sessions SET status = 'expired' WHERE id = $1", sessionID)
+		s.db.Pool.Exec(ctx, "UPDATE qr_login_sessions SET status = 'expired' WHERE id = $1 AND org_id = $2", sessionID, org.ID)
 		return nil, errors.New("session expired")
 	}
 
@@ -261,8 +278,8 @@ func (s *Service) ScanQRLoginSession(ctx context.Context, sessionToken, userID s
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE qr_login_sessions
 		SET status = 'scanned', user_id = $1, mobile_info = $2, scanned_at = NOW()
-		WHERE id = $3`,
-		userID, mobileInfo, sessionID,
+		WHERE id = $3 AND org_id = $4`,
+		userID, mobileInfo, sessionID, org.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -273,12 +290,17 @@ func (s *Service) ScanQRLoginSession(ctx context.Context, sessionToken, userID s
 
 // ApproveQRLoginSession approves a QR login from mobile app
 func (s *Service) ApproveQRLoginSession(ctx context.Context, sessionToken, userID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	var sessionID, status string
 	var sessionUserID *string
 
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT id, status, user_id FROM qr_login_sessions WHERE session_token = $1",
-		sessionToken,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT id, status, user_id FROM qr_login_sessions WHERE session_token = $1 AND org_id = $2",
+		sessionToken, org.ID,
 	).Scan(&sessionID, &status, &sessionUserID)
 	if err != nil {
 		return errors.New("session not found")
@@ -293,8 +315,8 @@ func (s *Service) ApproveQRLoginSession(ctx context.Context, sessionToken, userI
 	}
 
 	_, err = s.db.Pool.Exec(ctx,
-		"UPDATE qr_login_sessions SET status = 'approved', approved_at = NOW() WHERE id = $1",
-		sessionID,
+		"UPDATE qr_login_sessions SET status = 'approved', approved_at = NOW() WHERE id = $1 AND org_id = $2",
+		sessionID, org.ID,
 	)
 
 	return err
@@ -302,25 +324,34 @@ func (s *Service) ApproveQRLoginSession(ctx context.Context, sessionToken, userI
 
 // RejectQRLoginSession rejects a QR login
 func (s *Service) RejectQRLoginSession(ctx context.Context, sessionToken string) error {
-	_, err := s.db.Pool.Exec(ctx,
-		"UPDATE qr_login_sessions SET status = 'rejected' WHERE session_token = $1",
-		sessionToken,
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx,
+		"UPDATE qr_login_sessions SET status = 'rejected' WHERE session_token = $1 AND org_id = $2",
+		sessionToken, org.ID,
 	)
 	return err
 }
 
 // GetQRLoginSession returns the current state of a QR session
 func (s *Service) GetQRLoginSession(ctx context.Context, sessionToken string) (*QRLoginSession, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, session_token, qr_code_data, status, user_id,
 			browser_info, mobile_info, ip_address, created_at, expires_at,
 			scanned_at, approved_at
 		FROM qr_login_sessions
-		WHERE session_token = $1
+		WHERE session_token = $1 AND org_id = $2
 	`
 
 	var session QRLoginSession
-	err := s.db.Pool.QueryRow(ctx, query, sessionToken).Scan(
+	err = s.db.Pool.QueryRow(ctx, query, sessionToken, org.ID).Scan(
 		&session.ID, &session.SessionToken, &session.QRCodeData, &session.Status,
 		&session.UserID, &session.BrowserInfo, &session.MobileInfo, &session.IPAddress,
 		&session.CreatedAt, &session.ExpiresAt, &session.ScannedAt, &session.ApprovedAt,
@@ -331,7 +362,7 @@ func (s *Service) GetQRLoginSession(ctx context.Context, sessionToken string) (*
 
 	// Check expiration
 	if time.Now().After(session.ExpiresAt) && session.Status == "pending" {
-		s.db.Pool.Exec(ctx, "UPDATE qr_login_sessions SET status = 'expired' WHERE id = $1", session.ID)
+		s.db.Pool.Exec(ctx, "UPDATE qr_login_sessions SET status = 'expired' WHERE id = $1 AND org_id = $2", session.ID, org.ID)
 		session.Status = "expired"
 	}
 
@@ -453,7 +484,11 @@ func (s *Service) CanLoginPasswordless(ctx context.Context, userID string) (bool
 	return false, "", nil
 }
 
-// CleanupExpiredSessions removes old expired sessions
+// CleanupExpiredPasswordlessSessions removes old expired sessions. This is a
+// time-based maintenance sweep that runs across all orgs (e.g. from a
+// background job with no request/tenant context), so its queries are
+// intentionally org-unscoped: they only touch already-expired or week-old
+// rows and expose no tenant data.
 func (s *Service) CleanupExpiredPasswordlessSessions(ctx context.Context) error {
 	// Expire old magic links
 	s.db.Pool.Exec(ctx,
@@ -462,6 +497,7 @@ func (s *Service) CleanupExpiredPasswordlessSessions(ctx context.Context) error 
 
 	// Expire old QR sessions
 	s.db.Pool.Exec(ctx,
+		//orgscope:ignore cross-org maintenance sweep of expired sessions; no request/tenant context
 		"UPDATE qr_login_sessions SET status = 'expired' WHERE status = 'pending' AND expires_at < NOW()",
 	)
 
@@ -470,6 +506,7 @@ func (s *Service) CleanupExpiredPasswordlessSessions(ctx context.Context) error 
 		"DELETE FROM magic_links WHERE created_at < NOW() - INTERVAL '7 days'",
 	)
 	s.db.Pool.Exec(ctx,
+		//orgscope:ignore cross-org maintenance sweep of week-old sessions; no request/tenant context
 		"DELETE FROM qr_login_sessions WHERE created_at < NOW() - INTERVAL '7 days'",
 	)
 

@@ -91,11 +91,18 @@ const axiosInstance = axios.create({
   },
 })
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token + tenant selection
 axiosInstance.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  // Multi-tenancy: when a platform admin has selected an org, scope every
+  // request to it via X-Org-Slug (the signal the backend tenant resolver
+  // honors first). Regular admins never set this — their token's org applies.
+  const orgSlug = localStorage.getItem('selected_org_slug')
+  if (orgSlug) {
+    config.headers['X-Org-Slug'] = orgSlug
   }
   return config
 })

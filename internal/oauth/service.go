@@ -29,6 +29,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
 )
@@ -145,6 +146,7 @@ type Service struct {
 	publicKey        *rsa.PublicKey
 	keyManager       *KeyManager // KeyManager for Ed25519 and RSA key management
 	issuer           string
+	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
 	identityService  *identity.Service
 	riskService      *risk.Service
 	webhookService   WebhookPublisher
@@ -236,14 +238,15 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 	}
 
 	svc := &Service{
-		db:              db,
-		redis:           redis,
-		config:          cfg,
-		logger:          logger.With(zap.String("service", "oauth")),
-		privateKey:      privateKey,
-		publicKey:       &privateKey.PublicKey,
-		issuer:          issuer,
-		identityService: idSvc,
+		db:               db,
+		redis:            redis,
+		config:           cfg,
+		logger:           logger.With(zap.String("service", "oauth")),
+		privateKey:       privateKey,
+		publicKey:        &privateKey.PublicKey,
+		issuer:           issuer,
+		tenantBaseDomain: cfg.TenantBaseDomain,
+		identityService:  idSvc,
 	}
 
 	// Initialize authorize handler
@@ -349,6 +352,11 @@ func (s *Service) checkCountryBlock(ctx context.Context, clientIP, userID, usern
 func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 	s.logger.Info("Creating OAuth client", zap.String("name", client.Name))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	client.CreatedAt = now
 	client.UpdatedAt = now
@@ -370,19 +378,19 @@ func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 	dbCtx, cancel := s.withDBTimeout(ctx)
 	defer cancel()
 
-	_, err := s.db.Pool.Exec(dbCtx, `
+	_, err = s.db.Pool.Exec(dbCtx, `
 		INSERT INTO oauth_clients (
 			id, client_id, client_secret, name, description, type,
 			redirect_uris, grant_types, response_types, scopes,
 			logo_uri, policy_uri, tos_uri, pkce_required,
 			allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+			created_at, updated_at, org_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 	`, client.ID, client.ClientID, client.ClientSecret, client.Name, client.Description,
 		client.Type, redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON,
 		client.LogoURI, client.PolicyURI, client.TOSUri, client.PKCERequired,
 		client.AllowRefreshToken, client.AccessTokenLifetime, client.RefreshTokenLifetime,
-		client.CreatedAt, client.UpdatedAt)
+		client.CreatedAt, client.UpdatedAt, org.ID)
 
 	return err
 }
@@ -394,18 +402,23 @@ func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient,
 	var clientSecret, description, logoURI, policyURI, tosURI *string
 	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Use timeout context for database operation
 	dbCtx, cancel := s.withDBTimeout(ctx)
 	defer cancel()
 
-	err := s.db.Pool.QueryRow(dbCtx, `
+	err = s.db.Pool.QueryRow(dbCtx, `
 		SELECT id, client_id, client_secret, name, description, type,
 		       redirect_uris, grant_types, response_types, scopes,
 		       logo_uri, policy_uri, tos_uri, pkce_required,
 		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
 		       created_at, updated_at
-		FROM oauth_clients WHERE client_id = $1
-	`, clientID).Scan(
+		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
+	`, clientID, org.ID).Scan(
 		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
 		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
 		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
@@ -450,7 +463,12 @@ func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthCl
 	dbCtx, cancel := s.withDBTimeout(ctx)
 	defer cancel()
 
-	err := s.db.Pool.QueryRow(dbCtx, "SELECT COUNT(*) FROM oauth_clients").Scan(&total)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	err = s.db.Pool.QueryRow(dbCtx, "SELECT COUNT(*) FROM oauth_clients WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -458,9 +476,10 @@ func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthCl
 	rows, err := s.db.Pool.Query(dbCtx, `
 		SELECT id, client_id, name, description, type, created_at, updated_at
 		FROM oauth_clients
+		WHERE org_id = $3
 		ORDER BY created_at DESC
 		OFFSET $1 LIMIT $2
-	`, offset, limit)
+	`, offset, limit, org.ID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -486,6 +505,11 @@ func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthCl
 func (s *Service) UpdateClient(ctx context.Context, clientID string, client *OAuthClient) error {
 	s.logger.Info("Updating OAuth client", zap.String("client_id", clientID))
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	client.UpdatedAt = now
 
@@ -494,16 +518,16 @@ func (s *Service) UpdateClient(ctx context.Context, clientID string, client *OAu
 	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
 	scopesJSON, _ := json.Marshal(client.Scopes)
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE oauth_clients
 		SET name = $2, description = $3, redirect_uris = $4, grant_types = $5,
 		    response_types = $6, scopes = $7, pkce_required = $8,
 		    allow_refresh_token = $9, access_token_lifetime = $10,
 		    refresh_token_lifetime = $11, updated_at = $12
-		WHERE client_id = $1
+		WHERE client_id = $1 AND org_id = $13
 	`, clientID, client.Name, client.Description, redirectURIsJSON, grantTypesJSON,
 		responseTypesJSON, scopesJSON, client.PKCERequired, client.AllowRefreshToken,
-		client.AccessTokenLifetime, client.RefreshTokenLifetime, now)
+		client.AccessTokenLifetime, client.RefreshTokenLifetime, now, org.ID)
 
 	return err
 }
@@ -512,7 +536,12 @@ func (s *Service) UpdateClient(ctx context.Context, clientID string, client *OAu
 func (s *Service) DeleteClient(ctx context.Context, clientID string) error {
 	s.logger.Info("Deleting OAuth client", zap.String("client_id", clientID))
 
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM oauth_clients WHERE client_id = $1", clientID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_clients WHERE client_id = $1 AND org_id = $2", clientID, org.ID)
 	return err
 }
 
@@ -520,17 +549,22 @@ func (s *Service) DeleteClient(ctx context.Context, clientID string) error {
 
 // CreateAuthorizationCode creates an authorization code
 func (s *Service) CreateAuthorizationCode(ctx context.Context, code *AuthorizationCode) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	code.ExpiresAt = time.Now().Add(10 * time.Minute)
 	code.CreatedAt = time.Now()
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO oauth_authorization_codes (
 			code, client_id, user_id, redirect_uri, scope, state, nonce,
-			code_challenge, code_challenge_method, expires_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			code_challenge, code_challenge_method, expires_at, created_at, org_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, code.Code, code.ClientID, code.UserID, code.RedirectURI, code.Scope,
 		code.State, code.Nonce, code.CodeChallenge, code.CodeChallengeMethod,
-		code.ExpiresAt, code.CreatedAt)
+		code.ExpiresAt, code.CreatedAt, org.ID)
 
 	return err
 }
@@ -539,11 +573,16 @@ func (s *Service) CreateAuthorizationCode(ctx context.Context, code *Authorizati
 func (s *Service) GetAuthorizationCode(ctx context.Context, code string) (*AuthorizationCode, error) {
 	var authCode AuthorizationCode
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT code, client_id, user_id, redirect_uri, scope, state, nonce,
 		       code_challenge, code_challenge_method, expires_at, created_at
-		FROM oauth_authorization_codes WHERE code = $1
-	`, code).Scan(
+		FROM oauth_authorization_codes WHERE code = $1 AND org_id = $2
+	`, code, org.ID).Scan(
 		&authCode.Code, &authCode.ClientID, &authCode.UserID, &authCode.RedirectURI,
 		&authCode.Scope, &authCode.State, &authCode.Nonce, &authCode.CodeChallenge,
 		&authCode.CodeChallengeMethod, &authCode.ExpiresAt, &authCode.CreatedAt,
@@ -565,11 +604,15 @@ func (s *Service) GetAuthorizationCode(ctx context.Context, code string) (*Autho
 // This prevents replay attacks by ensuring the code can only be used once.
 func (s *Service) ConsumeAuthorizationCode(ctx context.Context, code string) (*AuthorizationCode, error) {
 	var authCode AuthorizationCode
-	err := s.db.Pool.QueryRow(ctx, `
-		DELETE FROM oauth_authorization_codes WHERE code = $1
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+	err = s.db.Pool.QueryRow(ctx, `
+		DELETE FROM oauth_authorization_codes WHERE code = $1 AND org_id = $2
 		RETURNING code, client_id, user_id, redirect_uri, scope, state, nonce,
 		          code_challenge, code_challenge_method, expires_at, created_at
-	`, code).Scan(
+	`, code, org.ID).Scan(
 		&authCode.Code, &authCode.ClientID, &authCode.UserID, &authCode.RedirectURI,
 		&authCode.Scope, &authCode.State, &authCode.Nonce, &authCode.CodeChallenge,
 		&authCode.CodeChallengeMethod, &authCode.ExpiresAt, &authCode.CreatedAt,
@@ -588,7 +631,11 @@ func (s *Service) ConsumeAuthorizationCode(ctx context.Context, code string) (*A
 
 // DeleteAuthorizationCode deletes an authorization code (single use)
 func (s *Service) DeleteAuthorizationCode(ctx context.Context, code string) error {
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM oauth_authorization_codes WHERE code = $1", code)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_authorization_codes WHERE code = $1 AND org_id = $2", code, org.ID)
 	return err
 }
 
@@ -598,10 +645,15 @@ func (s *Service) DeleteAuthorizationCode(ctx context.Context, code string) erro
 func (s *Service) CreateAccessToken(ctx context.Context, token *AccessToken) error {
 	token.CreatedAt = time.Now()
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO oauth_access_tokens (token, client_id, user_id, scope, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, token.Token, token.ClientID, token.UserID, token.Scope, token.ExpiresAt, token.CreatedAt)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO oauth_access_tokens (token, client_id, user_id, scope, expires_at, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, token.Token, token.ClientID, token.UserID, token.Scope, token.ExpiresAt, token.CreatedAt, org.ID)
 
 	return err
 }
@@ -610,16 +662,21 @@ func (s *Service) CreateAccessToken(ctx context.Context, token *AccessToken) err
 func (s *Service) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	token.CreatedAt = time.Now()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Store NULL for empty session_id
 	var sessionID interface{}
 	if token.SessionID != "" {
 		sessionID = token.SessionID
 	}
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO oauth_refresh_tokens (token, client_id, user_id, scope, session_id, expires_at, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, token.Token, token.ClientID, token.UserID, token.Scope, sessionID, token.ExpiresAt, token.CreatedAt, org.ID)
 
 	return err
 }
@@ -629,10 +686,15 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 	var refreshToken RefreshToken
 	var sessionID *string
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT token, client_id, user_id, scope, session_id, expires_at, created_at
-		FROM oauth_refresh_tokens WHERE token = $1
-	`, token).Scan(
+		FROM oauth_refresh_tokens WHERE token = $1 AND org_id = $2
+	`, token, org.ID).Scan(
 		&refreshToken.Token, &refreshToken.ClientID, &refreshToken.UserID,
 		&refreshToken.Scope, &sessionID, &refreshToken.ExpiresAt, &refreshToken.CreatedAt,
 	)
@@ -654,7 +716,11 @@ func (s *Service) GetRefreshToken(ctx context.Context, token string) (*RefreshTo
 
 // RevokeRefreshToken revokes a refresh token
 func (s *Service) RevokeRefreshToken(ctx context.Context, token string) error {
-	_, err := s.db.Pool.Exec(ctx, "DELETE FROM oauth_refresh_tokens WHERE token = $1", token)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_refresh_tokens WHERE token = $1 AND org_id = $2", token, org.ID)
 	return err
 }
 
@@ -749,17 +815,34 @@ func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID
 
 // JWT Token Generation
 
+// issuerForOrg returns the JWT issuer for the given org. In a multi-tenant
+// subdomain deployment (tenantBaseDomain set) each tenant gets its own issuer
+// (https://<slug>.<base>) so tokens are bound to the tenant that minted them.
+// The default org and single-tenant installs (no base domain) keep the global
+// issuer, so this is a no-op unless subdomain tenancy is configured.
+func (s *Service) issuerForOrg(org orgctx.Org) string {
+	if s.tenantBaseDomain != "" && org.Slug != "" && org.Slug != "default" {
+		return "https://" + org.Slug + "." + s.tenantBaseDomain
+	}
+	return s.issuer
+}
+
 // GenerateJWT generates a signed JWT access token
 func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope string, expiresIn int, sessionID ...string) (string, error) {
 	now := time.Now()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
 
 	// Get user info for access token
 	var email, firstName, lastName string
 	if userID != "" {
 		_ = s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(email, ''), COALESCE(first_name, ''), COALESCE(last_name, '')
-			FROM users WHERE id = $1
-		`, userID).Scan(&email, &firstName, &lastName)
+			FROM users WHERE id = $1 AND org_id = $2
+		`, userID, org.ID).Scan(&email, &firstName, &lastName)
 	}
 
 	name := firstName
@@ -774,9 +857,9 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 			SELECT r.name
 			FROM roles r
 			JOIN user_roles ur ON r.id = ur.role_id
-			WHERE ur.user_id = $1
+			WHERE ur.user_id = $1 AND ur.org_id = $2
 			AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-		`, userID)
+		`, userID, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -794,8 +877,8 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		gRows, err := s.db.Pool.Query(ctx, `
 			SELECT g.name FROM groups g
 			JOIN group_memberships gm ON g.id = gm.group_id
-			WHERE gm.user_id = $1
-		`, userID)
+			WHERE gm.user_id = $1 AND gm.org_id = $2
+		`, userID, org.ID)
 		if err == nil {
 			defer gRows.Close()
 			for gRows.Next() {
@@ -815,9 +898,9 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 			FROM permissions p
 			JOIN role_permissions rp ON p.id = rp.permission_id
 			JOIN user_roles ur ON ur.role_id = rp.role_id
-			WHERE ur.user_id = $1
+			WHERE ur.user_id = $1 AND ur.org_id = $2
 			AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-		`, userID)
+		`, userID, org.ID)
 		if err == nil {
 			defer pRows.Close()
 			for pRows.Next() {
@@ -834,7 +917,7 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		"aud":         clientID,
 		"client_id":   clientID,
 		"scope":       scope,
-		"iss":         s.issuer,
+		"iss":         s.issuerForOrg(org),
 		"iat":         now.Unix(),
 		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 		"email":       email,
@@ -858,11 +941,16 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce string, expiresIn int, sessionID ...string) (string, error) {
 	now := time.Now()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
+
 	// Get user info
 	var email, firstName, lastName string
 	_ = s.db.Pool.QueryRow(ctx, `
-		SELECT email, first_name, last_name FROM users WHERE id = $1
-	`, userID).Scan(&email, &firstName, &lastName)
+		SELECT email, first_name, last_name FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&email, &firstName, &lastName)
 
 	name := firstName
 	if lastName != "" {
@@ -875,9 +963,9 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		SELECT r.name
 		FROM roles r
 		JOIN user_roles ur ON r.id = ur.role_id
-		WHERE ur.user_id = $1
+		WHERE ur.user_id = $1 AND ur.org_id = $2
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-	`, userID)
+	`, userID, org.ID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -893,8 +981,8 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 	gRows, gErr := s.db.Pool.Query(ctx, `
 		SELECT g.name FROM groups g
 		JOIN group_memberships gm ON g.id = gm.group_id
-		WHERE gm.user_id = $1
-	`, userID)
+		WHERE gm.user_id = $1 AND gm.org_id = $2
+	`, userID, org.ID)
 	if gErr == nil {
 		defer gRows.Close()
 		for gRows.Next() {
@@ -912,9 +1000,9 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		FROM permissions p
 		JOIN role_permissions rp ON p.id = rp.permission_id
 		JOIN user_roles ur ON ur.role_id = rp.role_id
-		WHERE ur.user_id = $1
+		WHERE ur.user_id = $1 AND ur.org_id = $2
 		AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-	`, userID)
+	`, userID, org.ID)
 	if pErr == nil {
 		defer pRows.Close()
 		for pRows.Next() {
@@ -928,7 +1016,7 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 	claims := jwt.MapClaims{
 		"sub":         userID,
 		"aud":         clientID,
-		"iss":         s.issuer,
+		"iss":         s.issuerForOrg(org),
 		"iat":         now.Unix(),
 		"exp":         now.Add(time.Duration(expiresIn) * time.Second).Unix(),
 		"email":       email,
@@ -959,10 +1047,15 @@ func (s *Service) GetUserInfo(ctx context.Context, userID string) (*UserInfo, er
 	var email, firstName, lastName string
 	var emailVerified bool
 
-	err := s.db.Pool.QueryRow(ctx, `
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT email, first_name, last_name, email_verified
-		FROM users WHERE id = $1
-	`, userID).Scan(&email, &firstName, &lastName, &emailVerified)
+		FROM users WHERE id = $1 AND org_id = $2
+	`, userID, org.ID).Scan(&email, &firstName, &lastName, &emailVerified)
 
 	if err != nil {
 		return nil, err
@@ -1162,12 +1255,21 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		return
 	}
 
+	// Per-tenant discovery: when subdomain tenancy is configured the issuer and
+	// all endpoints are served under the tenant's own host so the document a
+	// tenant fetches matches the issuer its tokens carry. Falls back to the
+	// global issuer for the default org / single-tenant installs.
+	base := s.issuer
+	if org, err := orgctx.From(c.Request.Context()); err == nil {
+		base = s.issuerForOrg(org)
+	}
+
 	discovery := OIDCDiscovery{
-		Issuer:                            s.issuer,
-		AuthorizationEndpoint:             s.issuer + "/oauth/authorize",
-		TokenEndpoint:                     s.issuer + "/oauth/token",
-		UserInfoEndpoint:                  s.issuer + "/oauth/userinfo",
-		JwksURI:                           s.issuer + "/.well-known/jwks.json",
+		Issuer:                            base,
+		AuthorizationEndpoint:             base + "/oauth/authorize",
+		TokenEndpoint:                     base + "/oauth/token",
+		UserInfoEndpoint:                  base + "/oauth/userinfo",
+		JwksURI:                           base + "/.well-known/jwks.json",
 		ScopesSupported:                   []string{"openid", "profile", "email", "offline_access"},
 		ResponseTypesSupported:            []string{"code", "id_token", "token id_token", "code id_token"},
 		GrantTypesSupported:               []string{"authorization_code", "refresh_token", "client_credentials"},
@@ -1176,7 +1278,7 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
 		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "email", "email_verified", "name", "given_name", "family_name", "sid"},
 		CodeChallengeMethodsSupported:     []string{"S256", "plain"},
-		EndSessionEndpoint:                s.issuer + "/oauth/logout",
+		EndSessionEndpoint:                base + "/oauth/logout",
 		BackchannelLogoutSupported:        true,
 		BackchannelLogoutSessionSupported: true,
 	}
@@ -2483,15 +2585,18 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 		// Defense in depth: if for any reason the Redis bridge missed,
 		// fall back to the user's most-recently-started active session
 		// so the access token still carries a usable sid claim.
-		_ = s.db.Pool.QueryRow(c.Request.Context(), `
-			SELECT id FROM sessions
-			WHERE user_id = $1
-			  AND client_id = $2
-			  AND (revoked IS NULL OR revoked = false)
-			  AND expires_at > NOW()
-			ORDER BY started_at DESC
-			LIMIT 1
-		`, authCode.UserID, clientID).Scan(&sessionID)
+		if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
+			_ = s.db.Pool.QueryRow(c.Request.Context(), `
+				SELECT id FROM sessions
+				WHERE user_id = $1
+				  AND client_id = $2
+				  AND org_id = $3
+				  AND (revoked IS NULL OR revoked = false)
+				  AND expires_at > NOW()
+				ORDER BY started_at DESC
+				LIMIT 1
+			`, authCode.UserID, clientID, org.ID).Scan(&sessionID)
+		}
 	}
 
 	// Generate tokens (with session ID linkage)
@@ -2663,12 +2768,17 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		return s.publicKey, nil
 	})
 	if err != nil || !parsed.Valid {
-		// Check if it's a refresh token
+		// Check if it's a refresh token (scoped to the caller's org)
+		org, oerr := orgctx.From(c.Request.Context())
+		if oerr != nil {
+			c.JSON(200, gin.H{"active": false})
+			return
+		}
 		var userID, clientID, scope string
 		err := s.db.Pool.QueryRow(c.Request.Context(), `
 			SELECT user_id, client_id, scope FROM oauth_refresh_tokens
-			WHERE token = $1 AND expires_at > NOW()
-		`, token).Scan(&userID, &clientID, &scope)
+			WHERE token = $1 AND org_id = $2 AND expires_at > NOW()
+		`, token, org.ID).Scan(&userID, &clientID, &scope)
 		if err != nil {
 			c.JSON(200, gin.H{"active": false})
 			return
@@ -2889,8 +2999,12 @@ func (s *Service) handleDeleteClient(c *gin.Context) {
 }
 
 func (s *Service) RegenerateClientSecret(ctx context.Context, clientID string) (string, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
 	newSecret := GenerateRandomToken(32)
-	_, err := s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1", clientID, newSecret)
+	_, err = s.db.Pool.Exec(ctx, "UPDATE oauth_clients SET client_secret = $2, updated_at = NOW() WHERE client_id = $1 AND org_id = $3", clientID, newSecret, org.ID)
 	if err != nil {
 		return "", err
 	}
@@ -2911,6 +3025,11 @@ func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 // checkConcurrentSessions checks if the user has reached the concurrent session limit
 // and returns the action to take based on the session policy.
 func (s *Service) checkConcurrentSessions(ctx context.Context, userID, clientID string) (string, []map[string]interface{}, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
 	policy := s.getEffectiveSessionPolicy(ctx, clientID)
 	if policy.MaxConcurrentSessions <= 0 {
 		return "", nil, nil // unlimited
@@ -2931,9 +3050,9 @@ func (s *Service) checkConcurrentSessions(ctx context.Context, userID, clientID 
 		var oldestID string
 		err := s.db.Pool.QueryRow(ctx, `
 			SELECT id FROM sessions
-			WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+			WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
 			ORDER BY started_at ASC LIMIT 1
-		`, userID).Scan(&oldestID)
+		`, userID, org.ID).Scan(&oldestID)
 		if err == nil && oldestID != "" {
 			s.revokeSessionWithRedis(ctx, oldestID)
 		}
@@ -2943,9 +3062,9 @@ func (s *Service) checkConcurrentSessions(ctx context.Context, userID, clientID 
 		rows, err := s.db.Pool.Query(ctx, `
 			SELECT id, ip_address, user_agent, started_at, last_seen_at
 			FROM sessions
-			WHERE user_id = $1 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
+			WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
 			ORDER BY last_seen_at DESC
-		`, userID)
+		`, userID, org.ID)
 		if err != nil {
 			return "", nil, err
 		}
@@ -3021,10 +3140,14 @@ func (s *Service) handleForceLogin(c *gin.Context) {
 
 // revokeAllUserSessions revokes all active sessions for a user
 func (s *Service) revokeAllUserSessions(ctx context.Context, userID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id FROM sessions
-		WHERE user_id = $1 AND (revoked IS NULL OR revoked = false)
-	`, userID)
+		WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)
+	`, userID, org.ID)
 	if err != nil {
 		return err
 	}
@@ -3042,7 +3165,11 @@ func (s *Service) revokeAllUserSessions(ctx context.Context, userID string) erro
 
 // revokeAllUserRefreshTokens deletes all refresh tokens for a user
 func (s *Service) revokeAllUserRefreshTokens(ctx context.Context, userID string) error {
-	_, err := s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1`, userID)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `DELETE FROM oauth_refresh_tokens WHERE user_id = $1 AND org_id = $2`, userID, org.ID)
 	return err
 }
 
@@ -3234,6 +3361,7 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, clientID string, scopes []string) (*TokenFlowResponse, error) {
 	now := time.Now()
 	accessLifetime := 1 * time.Hour
+	org, _ := orgctx.From(ctx) // best-effort: per-tenant issuer when subdomain tenancy is on
 
 	// Generate access token
 	accessToken := generateRandomToken(32)
@@ -3258,7 +3386,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	claims := jwt.MapClaims{
 		"sub": user.ID,
 		"aud": clientID,
-		"iss": s.issuer,
+		"iss": s.issuerForOrg(org),
 		"exp": accessExpiry.Unix(),
 		"iat": now.Unix(),
 	}
@@ -3288,7 +3416,7 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 	// Generate ID token for openid scope
 	if containsScope(scopes, "openid") {
 		idClaims := jwt.MapClaims{
-			"iss":            s.issuer,
+			"iss":            s.issuerForOrg(org),
 			"sub":            user.ID,
 			"aud":            clientID,
 			"exp":            accessExpiry.Unix(),

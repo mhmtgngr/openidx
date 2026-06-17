@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	apperrors "github.com/openidx/openidx/internal/common/errors"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // MFAPolicy represents an MFA enforcement policy
@@ -85,9 +86,15 @@ func (s *Service) handleListMFAPolicies(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, name, description, enabled, priority, conditions, required_methods, grace_period_hours, created_at, updated_at
-		 FROM mfa_policies ORDER BY priority, name`)
+		 FROM mfa_policies WHERE org_id = $1 ORDER BY priority, name`, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list MFA policies", err))
 		return
@@ -142,12 +149,18 @@ func (s *Service) handleCreateMFAPolicy(c *gin.Context) {
 		requiredMethods = json.RawMessage("[]")
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var policy MFAPolicy
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO mfa_policies (name, description, enabled, priority, conditions, required_methods, grace_period_hours)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO mfa_policies (name, description, enabled, priority, conditions, required_methods, grace_period_hours, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id, name, description, enabled, priority, conditions, required_methods, grace_period_hours, created_at, updated_at`,
-		req.Name, req.Description, req.Enabled, req.Priority, conditions, requiredMethods, req.GracePeriodHours,
+		req.Name, req.Description, req.Enabled, req.Priority, conditions, requiredMethods, req.GracePeriodHours, org.ID,
 	).Scan(&policy.ID, &policy.Name, &policy.Description, &policy.Enabled, &policy.Priority,
 		&policy.Conditions, &policy.RequiredMethods, &policy.GracePeriodHours, &policy.CreatedAt, &policy.UpdatedAt)
 	if err != nil {
@@ -163,11 +176,17 @@ func (s *Service) handleGetMFAPolicy(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var p MFAPolicy
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, description, enabled, priority, conditions, required_methods, grace_period_hours, created_at, updated_at
-		 FROM mfa_policies WHERE id = $1`, id,
+		 FROM mfa_policies WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &p.Priority,
 		&p.Conditions, &p.RequiredMethods, &p.GracePeriodHours, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
@@ -179,6 +198,12 @@ func (s *Service) handleGetMFAPolicy(c *gin.Context) {
 
 func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -238,10 +263,12 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 	}
 
 	args = append(args, id)
+	orgArgIdx := argIdx + 1
+	args = append(args, org.ID)
 	// SECURITY: Column names in 'sets' are hardcoded string literals from the if-blocks above,
 	// not user input. This is safe from SQL injection.
-	query := fmt.Sprintf("UPDATE mfa_policies SET %s WHERE id = $%d",
-		joinSetClauses(sets), argIdx)
+	query := fmt.Sprintf("UPDATE mfa_policies SET %s WHERE id = $%d AND org_id = $%d",
+		joinSetClauses(sets), argIdx, orgArgIdx)
 
 	tag, err := s.db.Pool.Exec(c.Request.Context(), query, args...)
 	if err != nil {
@@ -257,7 +284,7 @@ func (s *Service) handleUpdateMFAPolicy(c *gin.Context) {
 	var p MFAPolicy
 	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, description, enabled, priority, conditions, required_methods, grace_period_hours, created_at, updated_at
-		 FROM mfa_policies WHERE id = $1`, id,
+		 FROM mfa_policies WHERE id = $1 AND org_id = $2`, id, org.ID,
 	).Scan(&p.ID, &p.Name, &p.Description, &p.Enabled, &p.Priority,
 		&p.Conditions, &p.RequiredMethods, &p.GracePeriodHours, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
@@ -272,9 +299,15 @@ func (s *Service) handleDeleteMFAPolicy(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	tag, err := s.db.Pool.Exec(c.Request.Context(),
-		"DELETE FROM mfa_policies WHERE id = $1", id)
+		"DELETE FROM mfa_policies WHERE id = $1 AND org_id = $2", id, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to delete MFA policy", err))
 		return
@@ -308,8 +341,14 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var total int
-	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_mfa_methods").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_mfa_methods").Scan(&total)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to count user MFA records", err))
 		return
@@ -320,9 +359,9 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 		        m.totp_enabled, m.sms_enabled, m.email_otp_enabled,
 		        m.push_enabled, m.webauthn_enabled, m.backup_codes_remaining
 		 FROM user_mfa_methods m
-		 JOIN users u ON u.id = m.user_id
+		 JOIN users u ON u.id = m.user_id AND u.org_id = $3
 		 ORDER BY m.username
-		 LIMIT $1 OFFSET $2`, limit, offset)
+		 LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list user MFA status", err))
 		return
@@ -350,15 +389,21 @@ func (s *Service) handleGetUserMFAStatus(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 	var u UserMFAStatus
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT m.user_id, m.username, u.email,
 		        m.totp_enabled, m.sms_enabled, m.email_otp_enabled,
 		        m.push_enabled, m.webauthn_enabled, m.backup_codes_remaining
 		 FROM user_mfa_methods m
-		 JOIN users u ON u.id = m.user_id
-		 WHERE m.user_id = $1`, id,
+		 JOIN users u ON u.id = m.user_id AND u.org_id = $2
+		 WHERE m.user_id = $1`, id, org.ID,
 	).Scan(&u.UserID, &u.Username, &u.Email,
 		&u.TOTPEnabled, &u.SMSEnabled, &u.EmailOTPEnabled,
 		&u.PushEnabled, &u.WebAuthnEnabled, &u.BackupCodesRemaining)

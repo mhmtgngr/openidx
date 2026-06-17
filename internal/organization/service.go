@@ -357,7 +357,7 @@ func (s *Service) ListMembers(ctx context.Context, orgID string, limit, offset i
 		`SELECT m.id, m.organization_id, m.user_id, m.role, m.joined_at, m.invited_by,
 		        COALESCE(u.email, '') AS user_email, COALESCE(u.username, '') AS user_name
 		 FROM organization_members m
-		 LEFT JOIN users u ON m.user_id = u.id
+		 LEFT JOIN users u ON m.user_id = u.id AND u.org_id = $1
 		 WHERE m.organization_id = $1
 		 ORDER BY m.joined_at ASC
 		 LIMIT $2 OFFSET $3`, orgID, limit, offset,

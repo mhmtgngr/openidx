@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // BreachType represents the type of identity breach detected
@@ -467,11 +468,13 @@ func (s *ibdrService) createAlert(ctx context.Context, incident *BreachIncident)
 func (s *ibdrService) executeFullQuarantine(ctx context.Context, incident *BreachIncident, actorID string) []string {
 	actions := []string{}
 
+	org, _ := orgctx.From(ctx)
+
 	// Disable affected user accounts
 	for _, userID := range incident.AffectedUserIDs {
 		_, _ = s.db.Pool.Exec(ctx, `
-			UPDATE users SET status = 'quarantined', updated_at = NOW() WHERE id = $1
-		`, userID)
+			UPDATE users SET status = 'quarantined', updated_at = NOW() WHERE id = $1 AND org_id = $2
+		`, userID, org.ID)
 		actions = append(actions, fmt.Sprintf("disabled_user_%s", userID))
 	}
 
@@ -483,8 +486,8 @@ func (s *ibdrService) executeFullQuarantine(ctx context.Context, incident *Breac
 	for _, sessionID := range incident.AffectedSessions {
 		var ipAddress string
 		s.db.Pool.QueryRow(ctx, `
-			SELECT ip_address FROM sessions WHERE id = $1
-		`, sessionID).Scan(&ipAddress)
+			SELECT ip_address FROM sessions WHERE id = $1 AND org_id = $2
+		`, sessionID, org.ID).Scan(&ipAddress)
 		if ipAddress != "" {
 			s.blockIPAddress(ctx, ipAddress)
 			actions = append(actions, fmt.Sprintf("blocked_ip_%s", ipAddress))
@@ -514,10 +517,11 @@ func (s *ibdrService) executePartialQuarantine(ctx context.Context, incident *Br
 }
 
 func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) {
+	org, _ := orgctx.From(ctx)
 	for _, userID := range userIDs {
 		_, _ = s.db.Pool.Exec(ctx, `
-			UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1
-		`, userID)
+			UPDATE sessions SET revoked = true, revoked_at = NOW() WHERE user_id = $1 AND org_id = $2
+		`, userID, org.ID)
 	}
 }
 

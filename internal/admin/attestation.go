@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AttestationCampaign represents a certification/attestation campaign
@@ -319,15 +321,20 @@ func (s *Service) handleLaunchAttestationCampaign(c *gin.Context) {
 func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCampaign) int {
 	count := 0
 
+	org, oerr := orgctx.From(ctx)
+	if oerr != nil {
+		return count
+	}
+
 	switch ac.CampaignType {
 	case "role_certification":
 		// Create items for each user-role assignment
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT ur.user_id, u.username, ur.role_id, r.name
 			 FROM user_roles ur
-			 JOIN users u ON ur.user_id = u.id
-			 JOIN roles r ON ur.role_id = r.id
-			 WHERE u.enabled = true`)
+			 JOIN users u ON ur.user_id = u.id AND u.org_id = ur.org_id
+			 JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
+			 WHERE ur.org_id = $1 AND u.enabled = true`, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -336,8 +343,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 					// Use admin as default reviewer
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' LIMIT 1), $2, 'role', $3, $4)`,
-						ac.ID, userID, roleID, roleName)
+						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'role', $3, $4)`,
+						ac.ID, userID, roleID, roleName, org.ID)
 					if err == nil {
 						count++
 					}
@@ -350,9 +357,9 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT uaa.user_id, u.username, uaa.application_id, a.name
 			 FROM user_application_assignments uaa
-			 JOIN users u ON uaa.user_id = u.id
-			 JOIN applications a ON uaa.application_id = a.id
-			 WHERE u.enabled = true`)
+			 JOIN users u ON uaa.user_id = u.id AND u.org_id = uaa.org_id
+			 JOIN applications a ON uaa.application_id = a.id AND a.org_id = uaa.org_id
+			 WHERE uaa.org_id = $1 AND u.enabled = true`, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -360,8 +367,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &appID, &appName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' LIMIT 1), $2, 'application', $3, $4)`,
-						ac.ID, userID, appID, appName)
+						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'application', $3, $4)`,
+						ac.ID, userID, appID, appName, org.ID)
 					if err == nil {
 						count++
 					}
@@ -374,9 +381,9 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT gm.user_id, u.username, gm.group_id, g.name
 			 FROM group_memberships gm
-			 JOIN users u ON gm.user_id = u.id
-			 JOIN groups g ON gm.group_id = g.id
-			 WHERE u.enabled = true`)
+			 JOIN users u ON gm.user_id = u.id AND u.org_id = gm.org_id
+			 JOIN groups g ON gm.group_id = g.id AND g.org_id = gm.org_id
+			 WHERE gm.org_id = $1 AND u.enabled = true`, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -384,8 +391,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &groupID, &groupName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' LIMIT 1), $2, 'group', $3, $4)`,
-						ac.ID, userID, groupID, groupName)
+						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'group', $3, $4)`,
+						ac.ID, userID, groupID, groupName, org.ID)
 					if err == nil {
 						count++
 					}
@@ -398,9 +405,9 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT ur.user_id, u.username, r.id, r.name
 			 FROM user_roles ur
-			 JOIN users u ON ur.user_id = u.id
-			 JOIN roles r ON ur.role_id = r.id
-			 WHERE u.enabled = true AND r.name IN ('admin', 'manager')`)
+			 JOIN users u ON ur.user_id = u.id AND u.org_id = ur.org_id
+			 JOIN roles r ON ur.role_id = r.id AND r.org_id = ur.org_id
+			 WHERE ur.org_id = $1 AND u.enabled = true AND r.name IN ('admin', 'manager')`, org.ID)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -408,8 +415,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &roleID, &roleName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' LIMIT 1), $2, 'entitlement', $3, $4)`,
-						ac.ID, userID, roleID, pf("Role: %s", roleName))
+						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'entitlement', $3, $4)`,
+						ac.ID, userID, roleID, pf("Role: %s", roleName), org.ID)
 					if err == nil {
 						count++
 					}
@@ -426,6 +433,12 @@ func (s *Service) handleListAttestationItems(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	campaignID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT ai.id, ai.campaign_id, ai.reviewer_id, COALESCE(r.username, '') as reviewer_name,
@@ -433,10 +446,10 @@ func (s *Service) handleListAttestationItems(c *gin.Context) {
 		        ai.resource_type, ai.resource_id, ai.resource_name,
 		        ai.decision, ai.delegated_to, ai.delegated_at, ai.comments, ai.decided_at, ai.reminded_at, ai.created_at
 		 FROM attestation_items ai
-		 LEFT JOIN users r ON ai.reviewer_id = r.id
-		 LEFT JOIN users u ON ai.user_id = u.id
+		 LEFT JOIN users r ON ai.reviewer_id = r.id AND r.org_id = $2
+		 LEFT JOIN users u ON ai.user_id = u.id AND u.org_id = $2
 		 WHERE ai.campaign_id = $1
-		 ORDER BY ai.decision = 'pending' DESC, ai.created_at`, campaignID)
+		 ORDER BY ai.decision = 'pending' DESC, ai.created_at`, campaignID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list attestation items", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list items"})
@@ -463,6 +476,12 @@ func (s *Service) handleListAttestationItems(c *gin.Context) {
 
 func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 	if !requireAdmin(c) {
+		return
+	}
+
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -509,13 +528,13 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 			switch resourceType {
 			case "role":
 				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2", *userID, *resourceID)
+					"DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "application":
 				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2", *userID, *resourceID)
+					"DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			case "group":
 				_, _ = s.db.Pool.Exec(c.Request.Context(),
-					"DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2", *userID, *resourceID)
+					"DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
 			}
 		}
 	}

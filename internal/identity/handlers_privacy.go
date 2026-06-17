@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // --- User Self-Service Privacy/GDPR Endpoints ---
@@ -18,10 +20,16 @@ func (s *Service) handleGetMyPrivacyConsents(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list consents"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, consent_type, version, granted, ip_address, user_agent, metadata,
 			granted_at, revoked_at, expires_at, created_at
-		 FROM user_consents WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		 FROM user_consents WHERE user_id = $1 AND org_id = $2 ORDER BY created_at DESC`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list user consents", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list consents"})
@@ -79,12 +87,18 @@ func (s *Service) handleGrantPrivacyConsent(c *gin.Context) {
 		req.Version = "1.0"
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to grant consent"})
+		return
+	}
+
 	now := time.Now()
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO user_consents (user_id, consent_type, version, granted, ip_address, user_agent, metadata, granted_at)
-		 VALUES ($1, $2, $3, true, $4, $5, $6, $7)`,
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		`INSERT INTO user_consents (user_id, consent_type, version, granted, ip_address, user_agent, metadata, granted_at, org_id)
+		 VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8)`,
 		userID, req.ConsentType, req.Version,
-		c.ClientIP(), c.Request.UserAgent(), req.Metadata, now)
+		c.ClientIP(), c.Request.UserAgent(), req.Metadata, now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to grant consent", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to grant consent"})
@@ -101,11 +115,17 @@ func (s *Service) handleRevokePrivacyConsent(c *gin.Context) {
 	}
 	consentType := c.Param("consentType")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke consent"})
+		return
+	}
+
 	now := time.Now()
-	_, err := s.db.Pool.Exec(c.Request.Context(),
-		`INSERT INTO user_consents (user_id, consent_type, version, granted, ip_address, user_agent, revoked_at)
-		 VALUES ($1, $2, '1.0', false, $3, $4, $5)`,
-		userID, consentType, c.ClientIP(), c.Request.UserAgent(), now)
+	_, err = s.db.Pool.Exec(c.Request.Context(),
+		`INSERT INTO user_consents (user_id, consent_type, version, granted, ip_address, user_agent, revoked_at, org_id)
+		 VALUES ($1, $2, '1.0', false, $3, $4, $5, $6)`,
+		userID, consentType, c.ClientIP(), c.Request.UserAgent(), now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to revoke consent", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to revoke consent"})
@@ -131,12 +151,18 @@ func (s *Service) handleSubmitDSAR(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit request"})
+		return
+	}
+
 	var id string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO data_subject_requests (user_id, request_type, reason, requested_data_categories, due_date)
-		 VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 days')
+	err = s.db.Pool.QueryRow(c.Request.Context(),
+		`INSERT INTO data_subject_requests (user_id, request_type, reason, requested_data_categories, due_date, org_id)
+		 VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 days', $5)
 		 RETURNING id`,
-		userID, req.RequestType, req.Reason, req.RequestedDataCategories).Scan(&id)
+		userID, req.RequestType, req.Reason, req.RequestedDataCategories, org.ID).Scan(&id)
 	if err != nil {
 		s.logger.Error("Failed to submit DSAR", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit request"})
@@ -152,9 +178,15 @@ func (s *Service) handleGetMyDSARs(c *gin.Context) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list requests"})
+		return
+	}
+
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, request_type, status, reason, requested_data_categories, due_date, created_at, updated_at, completed_at
-		 FROM data_subject_requests WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		 FROM data_subject_requests WHERE user_id = $1 AND org_id = $2 ORDER BY created_at DESC`, userID, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to list user DSARs", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list requests"})

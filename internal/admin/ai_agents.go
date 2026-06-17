@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AIAgent represents an AI agent identity
@@ -201,16 +203,23 @@ func (s *Service) handleGetAIAgent(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	id := c.Param("id")
 
 	var agent AIAgent
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT a.id, a.name, a.description, a.agent_type, a.owner_id,
 			COALESCE(u.email, ''), a.status, a.capabilities, a.trust_level,
 			a.rate_limits, a.allowed_scopes, a.ip_allowlist, a.metadata,
 			a.last_active_at, a.created_at, a.updated_at
-		FROM ai_agents a LEFT JOIN users u ON a.owner_id = u.id
-		WHERE a.id = $1`, id,
+		FROM ai_agents a LEFT JOIN users u ON a.owner_id = u.id AND u.org_id = $2
+		WHERE a.id = $1`, id, org.ID,
 	).Scan(&agent.ID, &agent.Name, &agent.Description, &agent.AgentType, &agent.OwnerID,
 		&agent.OwnerEmail, &agent.Status, &agent.Capabilities, &agent.TrustLevel,
 		&agent.RateLimits, &agent.AllowedScopes, &agent.IPAllowlist, &agent.Metadata,
