@@ -37,6 +37,11 @@ A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
   endpoint (read and create/update) in `users.tsx`, leaving the rest of the page
   flat. (Backend left unchanged — its SCIM shape is the codified contract used by
   `/scim/v2/Users` and internal oauth/webauthn callers.)
+- **`/groups` showed blank descriptions, wrong type, "Invalid Date"** — same
+  SCIM↔flat mismatch (`displayName`, `attributes.{description,parentId}`,
+  `createdAt`). `groups.tsx` now adapts read and create/update. (Member counts
+  show 0 — the list endpoint doesn't return them; an API enhancement, not a
+  console fix.)
 
 ### gateway-service startup fixes
 

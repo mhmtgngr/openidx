@@ -54,6 +54,37 @@ interface Group {
   updated_at: string
 }
 
+// The /api/v1/identity/groups endpoint speaks SCIM (displayName, members[],
+// attributes.{description,parentId}, createdAt) while this console is flat
+// snake_case. These adapters bridge read/write so the page stays flat; they also
+// accept the flat shape defensively in case the API is ever flattened.
+type RawGroup = Record<string, unknown>
+function toFlatGroup(g: RawGroup): Group {
+  const attrs = (g.attributes ?? {}) as Record<string, unknown>
+  const members = (g.members ?? []) as unknown[]
+  return {
+    id: String(g.id ?? ''),
+    name: String(g.displayName ?? g.name ?? ''),
+    description: String(attrs.description ?? g.description ?? ''),
+    parent_id: (attrs.parentId ?? g.parent_id ?? null) as string | null,
+    allow_self_join: Boolean(g.allow_self_join ?? false),
+    require_approval: Boolean(g.require_approval ?? false),
+    max_members: (g.max_members ?? null) as number | null,
+    member_count: Number(g.member_count ?? members.length ?? 0),
+    created_at: String(g.createdAt ?? g.created_at ?? ''),
+    updated_at: String(g.updatedAt ?? g.updated_at ?? ''),
+  }
+}
+function toApiGroup(d: Partial<Group>): Record<string, unknown> {
+  const attributes: Record<string, string> = {}
+  if (d.description !== undefined) attributes.description = d.description ?? ''
+  if (d.parent_id) attributes.parentId = d.parent_id
+  const body: Record<string, unknown> = {}
+  if (d.name !== undefined) body.displayName = d.name
+  if (Object.keys(attributes).length) body.attributes = attributes
+  return body
+}
+
 interface GroupMember {
   user_id: string
   username: string
@@ -114,10 +145,10 @@ export function GroupsPage() {
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
       if (search) params.set('search', search)
-      const result = await api.getWithHeaders<Group[]>(`/api/v1/identity/groups?${params.toString()}`)
+      const result = await api.getWithHeaders<RawGroup[]>(`/api/v1/identity/groups?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
-      return result.data
+      return (result.data || []).map(toFlatGroup)
     },
   })
 
@@ -138,12 +169,12 @@ export function GroupsPage() {
   // Create group mutation
   const createGroupMutation = useMutation({
     mutationFn: (groupData: Partial<Group>) =>
-      api.post<Group>('/api/v1/identity/groups', groupData),
+      api.post<RawGroup>('/api/v1/identity/groups', toApiGroup(groupData)),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
         title: 'Success',
-        description: `Group ${data.name} created successfully!`,
+        description: `Group ${toFlatGroup(data).name} created successfully!`,
         variant: 'success',
       })
       setCreateGroupModal(false)
@@ -161,12 +192,12 @@ export function GroupsPage() {
   // Update group mutation
   const updateGroupMutation = useMutation({
     mutationFn: ({ id, ...groupData }: Partial<Group> & { id: string }) =>
-      api.put<Group>(`/api/v1/identity/groups/${id}`, groupData),
+      api.put<RawGroup>(`/api/v1/identity/groups/${id}`, toApiGroup(groupData)),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['groups'] })
       toast({
         title: 'Success',
-        description: `Group ${data.name} updated successfully!`,
+        description: `Group ${toFlatGroup(data).name} updated successfully!`,
         variant: 'success',
       })
       setEditGroupModal(false)
