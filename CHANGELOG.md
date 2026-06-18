@@ -49,6 +49,19 @@ A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
   map SCIM→flat too. Audited as already-correct: group members, user roles,
   roles, and `/users/me` (camelCase, which `user-profile` already matches).
 
+### Access-proxy / App Publish schema fix (migration v40)
+
+#### Fixed
+- **App Publish was broken on every migrate-based / RDS / Helm deploy.**
+  `GET /api/v1/access/apps` 500'd because `published_apps`, `discovered_paths`
+  and `service_features` lived only in `init-db.sql`; `GET /api/v1/access/routes`
+  500'd with `column "idp_id" does not exist` because the `proxy_routes` (and
+  `proxy_sessions`) schema had drifted ~12 columns behind `init-db.sql`
+  (`idp_id`, `route_type`, `remote_host/port`, posture/risk/guacamole/browzer …).
+  Migration **v40** creates the missing tables and adds the missing columns
+  (idempotent). Verified by registering→discovering→publishing an internal app
+  end-to-end.
+
 ### gateway-service startup fixes
 
 `gateway-service` panicked on startup under gin v1.11.0 and never began serving

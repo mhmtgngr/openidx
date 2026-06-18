@@ -285,5 +285,12 @@ func allMigrations() []*Migration {
 			UpSQL:       deviceTrustRiskUp,
 			DownSQL:     deviceTrustRiskDown,
 		},
+		{
+			Version:     40,
+			Name:        "access_schema_reconcile",
+			Description: "Fix the access-service App Publish feature on managed-RDS/Helm/migrate deploys: create published_apps, discovered_paths, service_features (init-db.sql-only tables, so /api/v1/access/apps 500'd) and add the ~12 proxy_routes columns the access code SELECTs (idp_id, route_type, remote_host/port, posture/risk/guacamole/browzer, …) that the migrations had drifted behind init-db.sql (so /api/v1/access/routes 500'd with 'column idp_id does not exist'). Idempotent.",
+			UpSQL:       accessSchemaUp,
+			DownSQL:     accessSchemaDown,
+		},
 	}
 }
