@@ -13,3 +13,12 @@ data:
   VITE_API_URL: {{ .Values.config.viteApiUrl | default "https://api.openidx.io" | quote }}
   VITE_OAUTH_URL: {{ .Values.config.viteOauthUrl | default "https://auth.openidx.io" | quote }}
   VITE_OAUTH_CLIENT_ID: {{ .Values.config.viteOauthClientId | default "admin-console" | quote }}
+  # Multi-tenancy (v1.6+). TENANT_BASE_DOMAIN enables per-tenant subdomain/issuer
+  # resolution. DEFAULT_ORG_FALLBACK MUST stay false for multi-tenant installs
+  # (single-tenant installs set it true). See docs/v2-multitenancy-design.md.
+  TENANT_BASE_DOMAIN: {{ .Values.config.tenantBaseDomain | default "" | quote }}
+  DEFAULT_ORG_FALLBACK: {{ .Values.config.defaultOrgFallback | default false | quote }}
+  DEFAULT_ORG_ID: {{ .Values.config.defaultOrgId | default "00000000-0000-0000-0000-000000000010" | quote }}
+  # PostgreSQL TLS mode. Services with APP_ENV=production refuse to start when
+  # this is 'disable' — production must set 'require' or stronger.
+  DATABASE_SSL_MODE: {{ .Values.database.sslMode | default "disable" | quote }}

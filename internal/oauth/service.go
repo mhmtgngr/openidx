@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"html"
 	"net/url"
 	"strconv"
 	"strings"
@@ -1396,39 +1397,147 @@ func (s *Service) handleAuthorizeV2(c *gin.Context) {
 	s.authorizeHandler.HandleAuthorizeRequest(c)
 }
 
-// renderLoginPage serves a minimal HTML login form for standard OIDC clients
+// loginBranding holds the per-tenant branding applied to the server-rendered
+// login page. Mirrors the tenant_branding columns the admin Branding page edits.
+type loginBranding struct {
+	LogoURL            string
+	FaviconURL         string
+	PrimaryColor       string
+	SecondaryColor     string
+	BackgroundColor    string
+	BackgroundImageURL string
+	LoginPageTitle     string
+	LoginPageMessage   string
+	PortalTitle        string
+	CustomCSS          string
+	CustomFooter       string
+	PoweredByVisible   bool
+}
+
+func defaultLoginBranding() loginBranding {
+	return loginBranding{
+		PrimaryColor:     "#3b82f6",
+		SecondaryColor:   "#2563eb",
+		BackgroundColor:  "#0f172a",
+		LoginPageTitle:   "Sign In",
+		PortalTitle:      "OpenIDX Zero Trust Platform",
+		PoweredByVisible: true,
+	}
+}
+
+// loadLoginBranding resolves the request's org (set by the TenantResolver from
+// the subdomain / X-Org-Slug / fallback) and loads its branding from
+// tenant_branding, falling back to defaults when there is no org or no row.
+// tenant_branding is not RLS-scoped, so this unauthenticated read needs no
+// bypass; if it ever becomes org-scoped, switch to orgctx.WithBypassRLS here.
+func (s *Service) loadLoginBranding(ctx context.Context) loginBranding {
+	b := defaultLoginBranding()
+	org, err := orgctx.From(ctx)
+	if err != nil || s.db == nil || s.db.Pool == nil {
+		return b
+	}
+	var logo, fav, primary, secondary, bg, bgImg, title, msg, portal, css, footer string
+	var powered bool
+	if qerr := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(logo_url,''), COALESCE(favicon_url,''), COALESCE(primary_color,''),
+		        COALESCE(secondary_color,''), COALESCE(background_color,''), COALESCE(background_image_url,''),
+		        COALESCE(login_page_title,''), COALESCE(login_page_message,''), COALESCE(portal_title,''),
+		        COALESCE(custom_css,''), COALESCE(custom_footer,''), COALESCE(powered_by_visible,true)
+		 FROM tenant_branding WHERE org_id = $1`, org.ID).Scan(
+		&logo, &fav, &primary, &secondary, &bg, &bgImg, &title, &msg, &portal, &css, &footer, &powered); qerr != nil {
+		return b
+	}
+	// Overlay non-empty values over the defaults so an unset column never blanks the page.
+	b.LogoURL, b.FaviconURL, b.BackgroundImageURL = logo, fav, bgImg
+	b.CustomCSS, b.CustomFooter, b.LoginPageMessage = css, footer, msg
+	b.PoweredByVisible = powered
+	if primary != "" {
+		b.PrimaryColor = primary
+	}
+	if secondary != "" {
+		b.SecondaryColor = secondary
+	}
+	if bg != "" {
+		b.BackgroundColor = bg
+	}
+	if title != "" {
+		b.LoginPageTitle = title
+	}
+	if portal != "" {
+		b.PortalTitle = portal
+	}
+	return b
+}
+
+// renderLoginPage serves a minimal HTML login form for standard OIDC clients,
+// styled with the requesting tenant's branding.
 func (s *Service) renderLoginPage(c *gin.Context, loginSession, errorMsg string) {
+	b := s.loadLoginBranding(c.Request.Context())
+
 	errHTML := ""
 	if errorMsg != "" {
-		errHTML = `<div style="color:#ef4444;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px">` + errorMsg + `</div>`
+		errHTML = `<div style="color:#ef4444;background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px">` + html.EscapeString(errorMsg) + `</div>`
 	}
-	html := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign In — OpenIDX</title>
+
+	// Colors and custom_css are trusted tenant-admin input (same trust level as
+	// the admin Branding page); user-visible text and URL attributes are escaped.
+	logoHTML := ""
+	if b.LogoURL != "" {
+		logoHTML = `<img src="` + html.EscapeString(b.LogoURL) + `" alt="" style="max-height:48px;margin-bottom:16px">`
+	}
+	faviconHTML := ""
+	if b.FaviconURL != "" {
+		faviconHTML = `<link rel="icon" href="` + html.EscapeString(b.FaviconURL) + `">`
+	}
+	bodyBg := b.BackgroundColor
+	if b.BackgroundImageURL != "" {
+		bodyBg = b.BackgroundColor + ` url('` + html.EscapeString(b.BackgroundImageURL) + `') center/cover no-repeat`
+	}
+	footerHTML := ""
+	if b.CustomFooter != "" {
+		footerHTML = `<p class="footer">` + html.EscapeString(b.CustomFooter) + `</p>`
+	} else if b.PoweredByVisible {
+		footerHTML = `<p class="footer">Powered by OpenIDX</p>`
+	}
+	msgHTML := ""
+	if b.LoginPageMessage != "" {
+		msgHTML = `<p class="sub">` + html.EscapeString(b.LoginPageMessage) + `</p>`
+	} else {
+		msgHTML = `<p class="sub">` + html.EscapeString(b.PortalTitle) + `</p>`
+	}
+
+	page := `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>` + html.EscapeString(b.LoginPageTitle) + ` — ` + html.EscapeString(b.PortalTitle) + `</title>` + faviconHTML + `
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.25)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:` + bodyBg + `;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 25px 50px rgba(0,0,0,.25);text-align:center}
 h1{font-size:24px;font-weight:700;margin-bottom:8px;color:#f8fafc}
 .sub{color:#94a3b8;margin-bottom:24px;font-size:14px}
+form{text-align:left}
 label{display:block;font-size:13px;font-weight:500;color:#94a3b8;margin-bottom:6px}
 input{width:100%;padding:10px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:15px;outline:none;transition:border .2s}
-input:focus{border-color:#3b82f6}
+input:focus{border-color:` + b.PrimaryColor + `}
 .field{margin-bottom:16px}
-button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
-button:hover{background:#2563eb}
-</style></head><body>
+button{width:100%;padding:12px;background:` + b.PrimaryColor + `;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s}
+button:hover{background:` + b.SecondaryColor + `}
+.footer{margin-top:20px;font-size:12px;color:#64748b}
+</style>
+<style>` + b.CustomCSS + `</style></head><body>
 <div class="card">
-<h1>Sign In</h1>
-<p class="sub">OpenIDX Zero Trust Platform</p>
+` + logoHTML + `
+<h1>` + html.EscapeString(b.LoginPageTitle) + `</h1>
+` + msgHTML + `
 ` + errHTML + `
 <form method="POST" action="/oauth/authorize/callback">
-<input type="hidden" name="login_session" value="` + loginSession + `">
+<input type="hidden" name="login_session" value="` + html.EscapeString(loginSession) + `">
 <div class="field"><label>Username</label><input type="text" name="username" required autofocus></div>
 <div class="field"><label>Password</label><input type="password" name="password" required></div>
 <button type="submit">Sign In</button>
 </form>
+` + footerHTML + `
 </div></body></html>`
-	c.Data(200, "text/html; charset=utf-8", []byte(html))
+	c.Data(200, "text/html; charset=utf-8", []byte(page))
 }
 
 // handleAuthorizeCallback handles the server-rendered login form submission for standard OIDC clients

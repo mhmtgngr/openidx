@@ -44,6 +44,17 @@ config:
   oauthJwksUrl: "https://auth.openidx.example.com/.well-known/jwks.json"
   viteApiUrl: "https://api.openidx.example.com"
   viteOauthUrl: "https://auth.openidx.example.com"
+  # Multi-tenancy: drive per-tenant subdomains off this base domain and fail
+  # closed (no implicit default org) when a request can't be resolved to a tenant.
+  tenantBaseDomain: "openidx.example.com"
+  defaultOrgFallback: false
+  # defaultOrgId is irrelevant when defaultOrgFallback is false; left at the chart default.
+
+# Require TLS to the managed database. Services run with APP_ENV=production and
+# will refuse to start if this is 'disable'. Use 'verify-full' with a pinned CA
+# (DATABASE_SSL_ROOT_CERT via the external secret) for the strongest posture.
+database:
+  sslMode: require
 
 # ----- Production hardening -----
 networkPolicy:

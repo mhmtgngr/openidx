@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -14,11 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// integrationDB opens a pool against the test database. It reads DATABASE_URL,
-// falling back to the local docker-compose DSN built from POSTGRES_PASSWORD.
-// If neither is usable the cross-org suite is skipped (it needs direct seeding,
-// unlike the HTTP-only helpers).
-func integrationDB(t *testing.T) *pgxpool.Pool {
+// integrationDSN returns the connection string for the test database, reading
+// DATABASE_URL and falling back to the local docker-compose DSN built from
+// POSTGRES_PASSWORD. Skips the suite if neither is usable.
+func integrationDSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -28,6 +28,15 @@ func integrationDB(t *testing.T) *pgxpool.Pool {
 		}
 		dsn = fmt.Sprintf("postgres://openidx:%s@localhost:5432/openidx?sslmode=disable", pw)
 	}
+	return dsn
+}
+
+// integrationDB opens a pool against the test database. If it isn't usable the
+// cross-org suite is skipped (it needs direct seeding, unlike the HTTP-only
+// helpers).
+func integrationDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dsn := integrationDSN(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
@@ -37,6 +46,53 @@ func integrationDB(t *testing.T) *pgxpool.Pool {
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		t.Skipf("test DB not reachable: %v", err)
+	}
+	return pool
+}
+
+// rlsRolePool returns a pool connected as a dedicated NOSUPERUSER role.
+//
+// This matters because Postgres superusers (and roles with BYPASSRLS) ignore
+// Row-Level Security entirely — even FORCE RLS — so a belt test run as the
+// default `openidx` superuser (what the postgres Docker image and CI create)
+// would see across orgs and silently pass nothing. Production RDS connects as a
+// non-superuser master role, where the policies do apply; this role reproduces
+// that. The role is created idempotently via the (superuser) admin pool and
+// granted only what the belt assertions need (SELECT on users/organizations).
+func rlsRolePool(t *testing.T, admin *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	ctx := context.Background()
+	const roleName = "openidx_rls_test"
+	const rolePass = "rls_test_pw"
+
+	// Idempotent role creation + grants (CREATE ROLE has no IF NOT EXISTS).
+	_, err := admin.Exec(ctx, fmt.Sprintf(`DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN
+    CREATE ROLE %s LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '%s';
+  ELSE
+    ALTER ROLE %s LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '%s';
+  END IF;
+END $$;`, roleName, roleName, rolePass, roleName, rolePass))
+	require.NoError(t, err, "create RLS test role")
+	for _, stmt := range []string{
+		`GRANT USAGE ON SCHEMA public TO ` + roleName,
+		`GRANT SELECT ON users TO ` + roleName,
+		`GRANT SELECT ON organizations TO ` + roleName,
+	} {
+		_, err := admin.Exec(ctx, stmt)
+		require.NoError(t, err, "grant to RLS test role: %s", stmt)
+	}
+
+	// Build the role's DSN by swapping the userinfo on the admin DSN.
+	u, err := url.Parse(integrationDSN(t))
+	require.NoError(t, err)
+	u.User = url.UserPassword(roleName, rolePass)
+	pool, err := pgxpool.New(ctx, u.String())
+	require.NoError(t, err, "connect as RLS test role")
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Skipf("RLS test role cannot connect (pg_hba?): %v", err)
 	}
 	return pool
 }
@@ -157,13 +213,16 @@ func crossOrgAuditCount(t *testing.T, db *pgxpool.Pool, orgID string) int {
 
 // TestRLSBelt is the v1.8.0 ship gate: Row-Level Security blocks cross-tenant
 // reads even when the app-layer filter is "broken" (a raw SELECT that forgets to
-// scope by org). It runs as the same DB role the app uses (the table owner), so
-// FORCE ROW LEVEL SECURITY must be active for the policy to apply — the test
-// asserts that and skips with guidance if migration v37 hasn't been applied.
+// scope by org). It asserts FORCE ROW LEVEL SECURITY is active (migration v37)
+// and skips with guidance if not.
 //
-// All statements run on a single acquired connection so the session GUCs
-// (app.org_id / app.bypass_rls) we set with set_config(...,false) persist for
-// the whole test, mimicking what the production pool checkout hook does.
+// Seeding uses the admin (superuser) pool with app.bypass_rls; the read
+// assertions run on a connection from a dedicated NOSUPERUSER role, because a
+// superuser ignores RLS entirely (even FORCE) and would make every assertion
+// vacuous. That non-superuser connection mirrors how production connects to
+// RDS. All assertion statements share one acquired connection so the session
+// GUCs (set with set_config(...,false)) persist, mimicking the production pool
+// checkout hook.
 func TestRLSBelt(t *testing.T) {
 	db := integrationDB(t)
 	defer db.Close()
@@ -178,7 +237,41 @@ func TestRLSBelt(t *testing.T) {
 		t.Skip("FORCE ROW LEVEL SECURITY not active on users — migration v37 not applied to this DB; skipping RLS belt test")
 	}
 
-	conn, err := db.Acquire(ctx)
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	var orgA, orgB, userB string
+
+	// Seed cross-org rows on the admin pool under bypass (FORCE RLS would
+	// otherwise reject the WITH CHECK on the org-B insert from an unset-org
+	// session).
+	seed, err := db.Acquire(ctx)
+	require.NoError(t, err)
+	_, err = seed.Exec(ctx, `select set_config('app.bypass_rls','on',false)`)
+	require.NoError(t, err)
+	require.NoError(t, seed.QueryRow(ctx,
+		`INSERT INTO organizations (name, slug, status) VALUES ($1,$2,'active') RETURNING id`,
+		"RLS A "+suffix, "rls-a-"+suffix).Scan(&orgA))
+	require.NoError(t, seed.QueryRow(ctx,
+		`INSERT INTO organizations (name, slug, status) VALUES ($1,$2,'active') RETURNING id`,
+		"RLS B "+suffix, "rls-b-"+suffix).Scan(&orgB))
+	require.NoError(t, seed.QueryRow(ctx,
+		`INSERT INTO users (username, email, enabled, org_id) VALUES ($1,$2,true,$3) RETURNING id`,
+		"rls-user-"+suffix, "rls-"+suffix+"@example.test", orgB).Scan(&userB))
+	seed.Release()
+	t.Cleanup(func() {
+		c, err := db.Acquire(context.Background())
+		if err != nil {
+			return
+		}
+		defer c.Release()
+		_, _ = c.Exec(context.Background(), `select set_config('app.bypass_rls','on',false)`)
+		_, _ = c.Exec(context.Background(), "DELETE FROM users WHERE id=$1", userB)
+		_, _ = c.Exec(context.Background(), "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB)
+	})
+
+	// Assertions run as a NOSUPERUSER role so the policies actually apply.
+	rolePool := rlsRolePool(t, db)
+	defer rolePool.Close()
+	conn, err := rolePool.Acquire(ctx)
 	require.NoError(t, err)
 	defer conn.Release()
 
@@ -193,32 +286,6 @@ func TestRLSBelt(t *testing.T) {
 		require.NoError(t, conn.QueryRow(ctx, "SELECT count(*) FROM users WHERE "+where, arg).Scan(&n))
 		return n
 	}
-
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	var orgA, orgB, userB string
-
-	// Seed cross-org rows under bypass (FORCE RLS would otherwise reject the
-	// WITH CHECK on the org-B insert from an unset-org session).
-	setScope("", "on")
-	require.NoError(t, conn.QueryRow(ctx,
-		`INSERT INTO organizations (name, slug, status) VALUES ($1,$2,'active') RETURNING id`,
-		"RLS A "+suffix, "rls-a-"+suffix).Scan(&orgA))
-	require.NoError(t, conn.QueryRow(ctx,
-		`INSERT INTO organizations (name, slug, status) VALUES ($1,$2,'active') RETURNING id`,
-		"RLS B "+suffix, "rls-b-"+suffix).Scan(&orgB))
-	require.NoError(t, conn.QueryRow(ctx,
-		`INSERT INTO users (username, email, enabled, org_id) VALUES ($1,$2,true,$3) RETURNING id`,
-		"rls-user-"+suffix, "rls-"+suffix+"@example.test", orgB).Scan(&userB))
-	t.Cleanup(func() {
-		c, err := db.Acquire(context.Background())
-		if err != nil {
-			return
-		}
-		defer c.Release()
-		_, _ = c.Exec(context.Background(), `select set_config('app.bypass_rls','on',false)`)
-		_, _ = c.Exec(context.Background(), "DELETE FROM users WHERE id=$1", userB)
-		_, _ = c.Exec(context.Background(), "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB)
-	})
 
 	t.Run("scoped to org A: cannot see org B's user even by id (404-equivalent)", func(t *testing.T) {
 		setScope(orgA, "off")

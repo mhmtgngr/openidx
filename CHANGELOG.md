@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tenant login branding + production hardening (v1.9.0)
+
+Per-tenant branding on both login surfaces, plus production-readiness fixes —
+three of which were surfaced by a prod-like local docker-compose smoke and would
+otherwise only have failed in a real multi-tenant deploy.
+
+#### Added
+- **OAuth server-rendered login page branding** (`internal/oauth/service.go`):
+  `renderLoginPage` now applies the resolved tenant's `tenant_branding` (logo,
+  favicon, colors, titles, custom CSS, footer, powered-by toggle) with safe
+  defaults on no-org/no-row; text/attrs escaped, `custom_css` treated as trusted
+  admin input. Unit test `internal/oauth/branding_test.go`.
+- **SPA login branding** (`web/admin-console/src/pages/login.tsx`): applies
+  favicon, secondary color, page background (color/image), injected `custom_css`,
+  custom footer, and powered-by visibility — on top of the existing
+  logo/primary/title/message handling.
+- **Migration v38**: creates `tenant_branding`, `tenant_domains` and
+  `tenant_settings` in the versioned migration set. They previously existed only
+  in `deployments/docker/init-db.sql` (docker-compose), so managed-RDS/Helm
+  deploys never had them — branding could not be saved and domain-based tenant
+  resolution silently returned defaults. DDL is idempotent.
+- **`DATABASE_SSL_MODE` plumbed through deploy configs**: parametrized in
+  docker-compose (`${DATABASE_SSL_MODE:-disable}`), the Helm DB-URL secret
+  (`database.sslMode`), and documented in `.env.example`. (The Go config/pool
+  side already honored it.)
+- **`values-prod.yaml` + runbook**: production tenancy env (`TENANT_BASE_DOMAIN`,
+  `DEFAULT_ORG_FALLBACK=false`), `database.sslMode: require`, and the tenancy/RLS
+  sections + multi-tenancy post-deploy smoke in `docs/DEPLOYMENT.md`.
+
+#### Fixed
+- **Public login-branding endpoint blocked in multi-tenant deploys**: the
+  fail-closed `TenantResolver` rejected `GET /api/v1/identity/branding` when
+  `DEFAULT_ORG_FALLBACK=false`, so the login page could never load tenant
+  branding. The endpoint (which self-resolves the tenant from `?org=`/`?domain=`)
+  is now exempt from tenant resolution.
+- **`TestRLSBelt` was inert under a superuser DB role**: PostgreSQL superusers
+  (and `BYPASSRLS` roles) ignore RLS even with FORCE, so the belt test passed
+  vacuously against the default `openidx` superuser used by the postgres image
+  and CI. It now runs its assertions as a dedicated `NOSUPERUSER` role —
+  mirroring how production connects to RDS — making the CI gate meaningful.
+  Documented the non-superuser connection requirement in `docs/DEPLOYMENT.md`.
+
+#### Tenancy env injection (Helm)
+- The `-config` ConfigMap now carries `TENANT_BASE_DOMAIN`, `DEFAULT_ORG_FALLBACK`,
+  `DEFAULT_ORG_ID` and `DATABASE_SSL_MODE`, and every backend deployment mounts it
+  via `envFrom` so the settings actually reach the pods.
+
 ### Multi-tenancy — RLS belt + per-org primitives (v1.8.0)
 
 Defense-in-depth: Postgres Row-Level Security so a missing app-layer org filter

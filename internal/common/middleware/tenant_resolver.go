@@ -47,11 +47,21 @@ const DefaultOrgID = "00000000-0000-0000-0000-000000000010"
 // must keep answering while the database (and therefore the org
 // lookup) is down. Matches whole path segments: "/health" and
 // "/health/ready" skip, "/healthcheck-export" does not.
+//
+// The login-branding endpoint is also exempt: it is a public,
+// pre-authentication, pre-tenant bootstrap call (the SPA login page
+// fetches it from the API host, where no tenant subdomain/JWT/
+// X-Org-Slug signal exists yet) and it resolves the tenant itself from
+// its ?org=/?domain= query parameters, returning safe defaults on a
+// miss. Without this exemption, an install with DefaultOrgFallback off
+// (the multi-tenant posture) would reject the call and the login page
+// could never render tenant branding.
 var tenantSkipPaths = []string{
 	"/health",
 	"/metrics",
 	"/ready",
 	"/live",
+	"/api/v1/identity/branding",
 }
 
 // TenantResolverConfig governs how the middleware resolves the org.

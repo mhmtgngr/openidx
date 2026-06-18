@@ -82,6 +82,8 @@ spec:
                 name: {{ include "openidx.fullname" . }}-db-url
             - secretRef:
                 name: {{ include "openidx.fullname" . }}-secrets
+            - configMapRef:
+                name: {{ include "openidx.fullname" . }}-config
           livenessProbe:
             httpGet:
               path: /health

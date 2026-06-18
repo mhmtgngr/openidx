@@ -167,6 +167,55 @@ NetworkPolicies, and turns on external secrets.
 
 ---
 
+## Step 4b — Multi-tenancy and Row-Level Security (v1.6+)
+
+OpenIDX enforces tenant isolation in two layers: an **application layer**
+(`orgctx` + the `TenantResolver` middleware scopes every query to the caller's
+`org_id`) and a **Postgres RLS belt** (migration **v37** enables and *forces*
+RLS on all org-scoped tables, so even a query that forgets to filter returns
+zero cross-tenant rows). Configure the tenancy env via `config.*` in
+`values-prod.yaml` (rendered into the `-config` ConfigMap, mounted by every
+backend):
+
+| Env var | Chart value | Single-tenant | Multi-tenant |
+|---------|-------------|---------------|--------------|
+| `TENANT_BASE_DOMAIN` | `config.tenantBaseDomain` | empty | your base domain (drives `tenant.<base>` subdomain + per-tenant JWT `iss`) |
+| `DEFAULT_ORG_FALLBACK` | `config.defaultOrgFallback` | `true` | **`false`** — unresolved requests fail closed |
+| `DEFAULT_ORG_ID` | `config.defaultOrgId` | the single org's UUID | unused when fallback is `false` |
+
+> **Fail-closed warning:** with `DEFAULT_ORG_FALLBACK=false` and the RLS belt
+> active, any request the `TenantResolver` can't map to an org sees **no rows**,
+> and any background job that queries without establishing an org context (or
+> `orgctx.WithBypassRLS`) silently returns zero rows. This is intended — it is
+> the isolation guarantee — but it means a misconfigured tenant resolver looks
+> like "empty database," not an error. Verify with the cross-org smoke below.
+
+> **The app must connect as a non-superuser role.** PostgreSQL superusers — and
+> any role with the `BYPASSRLS` attribute — ignore Row-Level Security entirely,
+> *even with FORCE*. The RLS belt therefore only protects you when the runtime
+> connection uses an ordinary role. AWS RDS master users are **not** true
+> superusers and lack `BYPASSRLS`, so the belt engages on RDS out of the box.
+> Self-managed Postgres must connect the services as a dedicated
+> `NOSUPERUSER NOBYPASSRLS` role (not the bootstrap superuser). Note the local
+> `docker-compose` stack connects as the `openidx` *superuser* the postgres image
+> creates, so **RLS is advisory-only locally** — verify isolation against a
+> non-superuser role (the `TestRLSBelt` integration test does exactly this).
+
+### Migrations and the RLS belt
+
+Migrations are **forward-only** and run automatically at service startup when
+`AUTO_MIGRATE=true` (the default); they can also be applied out-of-band with the
+`cmd/migrate` CLI (`go run ./cmd/migrate` against `DATABASE_URL`). Migration
+**v37** is the RLS cutover — after it applies, every org-scoped table is
+`ENABLE`+`FORCE ROW LEVEL SECURITY` with a `pol_<table>_org_scope` policy keyed
+on the `app.org_id` GUC. The pool's `BeforeAcquire` hook stamps that GUC from
+`orgctx` on every checkout. For an existing cluster, follow the ordered cutover
+in [`multitenancy-upgrade-runbook.md`](./multitenancy-upgrade-runbook.md) (backfill
+`org_id` → v36 NOT NULL/FK → v37 FORCE RLS) before flipping `DEFAULT_ORG_FALLBACK`
+off.
+
+---
+
 ## Step 5 — Verify
 
 ```bash
@@ -180,6 +229,37 @@ error — it lists exactly which checklist item is wrong.
 
 Health endpoints: each service serves `GET /health` (liveness) and exposes
 Prometheus metrics at `GET /metrics`.
+
+### Multi-tenancy post-deploy smoke
+
+After the pods are healthy, confirm isolation and branding actually engaged:
+
+```bash
+# 1. Force RLS is ON for an org-scoped table (psql against the prod DB).
+#    Expect "Force row security: on" and a pol_users_org_scope policy.
+psql "$DATABASE_URL" -c '\d+ users' | grep -i "row security"
+
+# 2. Login-page branding resolves per tenant (public, unauthenticated endpoint).
+#    Returns the tenant's row, or safe defaults on miss — never an error.
+curl -s "https://api.openidx.example.com/api/v1/identity/branding?org=<slug>" | jq .
+curl -s "https://api.openidx.example.com/api/v1/identity/branding?domain=<tenant-domain>" | jq .
+
+# 3. The OAuth login page renders that branding (server-rendered HTML reflects
+#    portal_title / colors / logo for the resolved tenant):
+curl -s "https://auth.openidx.example.com/oauth/authorize?client_id=<public-client>&..." | grep -i "<title>\|portal"
+
+# 4. Cross-org isolation: a token scoped to org A must not see org B's data.
+#    Expect 404/empty, never another tenant's row.
+curl -s -H "Authorization: Bearer <orgA-token>" \
+  "https://api.openidx.example.com/api/v1/identity/users/<orgB-user-id>"
+```
+
+Also confirm background workers are alive (they must establish org context or
+`orgctx.WithBypassRLS`; a silent stall shows as zero processed rows, not errors):
+
+```bash
+kubectl -n openidx logs deploy/openidx-provisioning-service | grep -i "worker\|reconcile"
+```
 
 ---
 
@@ -205,6 +285,15 @@ are the development defaults that are unsafe for prod.
 
 There are also non-blocking advisories from `ProductionWarnings()` covering the
 same surface; check service logs at startup.
+
+Multi-tenancy settings (not gated by `ValidateProduction()`, but
+deployment-critical — see [Step 4b](#step-4b--multi-tenancy-and-row-level-security-v16)):
+
+| Env var | Single-tenant | Multi-tenant |
+|---------|---------------|--------------|
+| `TENANT_BASE_DOMAIN` | empty | your base domain |
+| `DEFAULT_ORG_FALLBACK` | `true` | `false` (fail closed) |
+| `DEFAULT_ORG_ID` | the single org's UUID | unused |
 
 ---
 
@@ -236,5 +325,9 @@ helm upgrade openidx . -n openidx -f values-prod.yaml   # after bumping image.ta
 helm rollback openidx -n openidx
 ```
 
-Database migrations run on service startup; deploy is forward-only — take an RDS
-snapshot before major upgrades.
+Database migrations run on service startup (`AUTO_MIGRATE=true`) or via
+`go run ./cmd/migrate`; deploy is forward-only — take an RDS snapshot before
+major upgrades. Crossing the **v37 RLS** boundary on an existing cluster has an
+ordered cutover (backfill → NOT NULL/FK → FORCE RLS); follow
+[`multitenancy-upgrade-runbook.md`](./multitenancy-upgrade-runbook.md) rather than
+letting AutoMigrate jump straight to FORCE RLS on partially-backfilled data.

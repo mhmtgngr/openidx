@@ -43,6 +43,12 @@ config:
   viteApiUrl: "https://api.openidx.io"
   viteOauthUrl: "https://auth.openidx.io"
   viteOauthClientId: "admin-console"
+  # Multi-tenancy. Leave tenantBaseDomain empty for single-tenant installs (and
+  # set defaultOrgFallback: true). Multi-tenant installs set the base domain and
+  # keep defaultOrgFallback: false so unresolved requests fail closed.
+  tenantBaseDomain: ""
+  defaultOrgFallback: true
+  defaultOrgId: "00000000-0000-0000-0000-000000000010"
 
 # Identity Service
 identityService:
@@ -353,6 +359,13 @@ apisix:
 opa:
   enabled: true
   replicas: 2
+
+# Database connection options (applied to the generated DATABASE_URL secret)
+database:
+  # TLS mode for the PostgreSQL connection: disable | require | verify-ca | verify-full.
+  # Defaults to 'disable' for in-cluster dev. Production MUST set 'require' or stronger —
+  # services started with APP_ENV=production refuse to boot when this is 'disable'.
+  sslMode: disable
 
 # PostgreSQL
 postgresql:
