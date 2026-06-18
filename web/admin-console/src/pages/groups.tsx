@@ -102,6 +102,20 @@ interface User {
   last_name: string
 }
 
+// /api/v1/identity/users/search returns the SCIM user shape (userName,
+// name.givenName, emails[].value); flatten it for the add-member dropdown.
+function searchUserToFlat(u: RawGroup): User {
+  const name = (u.name ?? {}) as Record<string, unknown>
+  const emails = (u.emails ?? []) as Array<{ value?: string }>
+  return {
+    id: String(u.id ?? ''),
+    username: String(u.userName ?? u.username ?? ''),
+    email: String(emails[0]?.value ?? u.email ?? ''),
+    first_name: String(name.givenName ?? u.first_name ?? ''),
+    last_name: String(name.familyName ?? u.last_name ?? ''),
+  }
+}
+
 export function GroupsPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -162,7 +176,10 @@ export function GroupsPage() {
   // Search users for adding to group
   const { data: searchedUsers, isLoading: searchingUsers } = useQuery({
     queryKey: ['userSearch', debouncedUserSearch],
-    queryFn: () => api.get<User[]>(`/api/v1/identity/users/search?q=${encodeURIComponent(debouncedUserSearch)}&limit=10`),
+    queryFn: async () => {
+      const raw = await api.get<RawGroup[]>(`/api/v1/identity/users/search?q=${encodeURIComponent(debouncedUserSearch)}&limit=10`)
+      return (raw || []).map(searchUserToFlat)
+    },
     enabled: debouncedUserSearch.length >= 2,
   })
 

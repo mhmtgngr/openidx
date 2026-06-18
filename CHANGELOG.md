@@ -42,6 +42,12 @@ A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
   `createdAt`). `groups.tsx` now adapts read and create/update. (Member counts
   show 0 — the list endpoint doesn't return them; an API enhancement, not a
   console fix.)
+- **Other SCIM-shaped consumers** (found by auditing every console call to the
+  identity user/group endpoints): the group "add member" user-search dropdown
+  (`/users/search`, SCIM) and the bulk-operations group selector
+  (`/groups`, a bare SCIM array — the code expected `{data:[{id,name}]}`) now
+  map SCIM→flat too. Audited as already-correct: group members, user roles,
+  roles, and `/users/me` (camelCase, which `user-profile` already matches).
 
 ### gateway-service startup fixes
 
