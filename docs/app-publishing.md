@@ -290,14 +290,16 @@ idempotent (route keyed by `from_url`, tile keyed by `client_id=proxy-app-<id>`)
 ### Wildcard edge (one cert for every app)
 
 Point the wildcard domain at the gateway and terminate TLS with a **single
-wildcard cert** that forwards everything to the access service:
+wildcard cert** that forwards everything to the access service. With a real
+wildcard cert for your apex (e.g. a GlobalSign `*.tdv.org`), apps live directly
+at `<slug>.tdv.org` with no browser warning and no per-app cert:
 
 ```nginx
 server {
   listen 443 ssl;
-  server_name *.apps.tdv.org;             # one block covers every published app
-  ssl_certificate     /etc/nginx/cert.pem;   # SAN includes DNS:*.apps.tdv.org
-  ssl_certificate_key /etc/nginx/key.pem;
+  server_name *.tdv.org;                       # one block covers every published app
+  ssl_certificate     /etc/nginx/tdv-fullchain.pem;   # real *.tdv.org wildcard
+  ssl_certificate_key /etc/nginx/tdv-key.pem;
   location / {
     proxy_pass http://127.0.0.1:8007;
     proxy_set_header Host              $host;
@@ -307,18 +309,21 @@ server {
     proxy_http_version 1.1;
   }
 }
-server { listen 80; server_name *.apps.tdv.org; return 301 https://$host$request_uri; }
+server { listen 80; server_name *.tdv.org; return 301 https://$host$request_uri; }
 ```
 
-Generate the wildcard cert with a matching SAN, e.g.:
+Exact-match server blocks (e.g. `openidx.tdv.org` for the admin console) win
+over this wildcard, so the console and any host with its own block are
+unaffected. Set `ACCESS_APPS_DOMAIN=tdv.org` on the access service so a bare
+label resolves to `<slug>.tdv.org`.
+
+No real wildcard cert? Generate a self-signed one for a dedicated apps subdomain
+and trust it once on each client:
 
 ```sh
 openssl req -x509 -newkey rsa:2048 -nodes -days 825 -keyout key.pem -out cert.pem \
-  -subj "/CN=apps.tdv.org" -addext "subjectAltName=DNS:*.apps.tdv.org"
+  -subj "/CN=apps.example.com" -addext "subjectAltName=DNS:*.apps.example.com"
 ```
-
-Set `ACCESS_APPS_DOMAIN=apps.tdv.org` on the access service so the slug default
-works.
 
 ### Notes
 
