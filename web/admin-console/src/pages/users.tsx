@@ -439,7 +439,7 @@ export function UsersPage() {
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                             <span className="text-blue-700 font-medium">
-                              {user.first_name?.[0] || user.username[0]?.toUpperCase()}
+                              {user.first_name?.[0] || user.username?.[0]?.toUpperCase() || '?'}
                               {user.last_name?.[0] || ''}
                             </span>
                           </div>

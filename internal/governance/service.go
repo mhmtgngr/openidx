@@ -353,10 +353,13 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 	if n.Sign() <= 0 {
 		return nil, fmt.Errorf("invalid RSA modulus: must be positive")
 	}
-	if !n.ProbablyPrime(0) {
-		// Note: This is a basic check. In production, full primality testing should be done.
-		// For JWKS, we trust the source but validate format.
-		return nil, fmt.Errorf("invalid RSA modulus: not a probable prime")
+	// An RSA modulus is n = p*q, the product of two large primes — so it is
+	// composite (never prime) and odd. The previous code ran ProbablyPrime(n)
+	// here, which rejects EVERY valid RSA key and made all governance JWT
+	// verification fail (401 on every endpoint). Validate oddness instead, which
+	// is the actual invariant of a well-formed RSA modulus.
+	if n.Bit(0) == 0 {
+		return nil, fmt.Errorf("invalid RSA modulus: must be odd")
 	}
 
 	// Decode e (exponent)

@@ -212,7 +212,7 @@ func (s *Service) handleListUserConsents(c *gin.Context) {
 		SELECT rt.client_id,
 		       COALESCE(oc.name, rt.client_id) AS client_name,
 		       COALESCE(oc.logo_uri, '') AS logo_uri,
-		       rt.scope,
+		       string_agg(DISTINCT rt.scope, ' ') AS scope,
 		       MIN(rt.created_at) AS authorized_at,
 		       MAX(rt.created_at) AS last_used_at
 		FROM oauth_refresh_tokens rt

@@ -278,5 +278,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tenantTablesUp,
 			DownSQL:     tenantTablesDown,
 		},
+		{
+			Version:     39,
+			Name:        "device_trust_risk_tables",
+			Description: "Create device_trust_requests, device_trust_settings, trusted_browsers and risk_policies in the versioned migration set. Their internal/identity handlers returned 500 on managed-RDS/Helm/migrate deploys because the tables existed only in deployments/docker/init-db.sql (same gap class as v38's tenant_* tables). DDL is idempotent. A wider init-db.sql↔migrations gap (~70 more tables) is tracked as separate follow-up.",
+			UpSQL:       deviceTrustRiskUp,
+			DownSQL:     deviceTrustRiskDown,
+		},
 	}
 }

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Admin console bug fixes (found via Playwright page sweep)
+
+A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
+
+#### Fixed
+- **Governance endpoints returned 401 for every valid token** — governance's
+  JWKS key parser ran `ProbablyPrime()` on the RSA *modulus*, which is `p×q`
+  (composite by definition), so it rejected every key. All governance pages
+  (access-reviews/requests, policies, abac-policies, approval-policies,
+  campaigns) were unusable. Replaced with the correct odd-modulus check.
+- **`GET /users/me/consents` 500** — the query selected `rt.scope` without
+  including it in `GROUP BY` (SQLSTATE 42803). Now aggregates with
+  `string_agg(DISTINCT rt.scope, ' ')`.
+- **Migration v39** — creates `device_trust_requests`, `device_trust_settings`,
+  `trusted_browsers`, `risk_policies`, which existed only in `init-db.sql` (the
+  same gap class as v38), so their handlers 500'd on RDS/Helm/`migrate` deploys.
+  Also made `GetDeviceTrustSettings` return defaults on no-rows instead of 500.
+  *(A wider audit found ~70 more tables only in `init-db.sql`; closing that whole
+  gap — and reconciling init-db.sql's own duplicate `lifecycle_executions` — is
+  tracked as follow-up.)*
+- **`/users` client crash** — avatar initials read `user.username[0]` without a
+  null guard (`Cannot read properties of undefined`). Now uses optional chaining
+  with a `'?'` fallback.
+
 ### gateway-service startup fixes
 
 `gateway-service` panicked on startup under gin v1.11.0 and never began serving
