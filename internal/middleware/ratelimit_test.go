@@ -107,7 +107,14 @@ func TestSlidingWindowRateLimit_UserBased(t *testing.T) {
 	cfg := DefaultRateLimitConfig()
 	cfg.IPRequestsPerMin = 3
 	cfg.UserRequestsPerMin = 10 // Higher limit for authenticated users
-	cfg.Window = time.Second
+	// The limiter timestamps requests at second granularity (time.Now().Unix())
+	// and counts ts > now-Window. A 1s window means only the *current* second
+	// counts, so if the burst straddles a second boundary the window resets
+	// mid-test and the 11th request is wrongly allowed — a flake that surfaces
+	// under -race's slowdown. Use a wide window so all 11 requests fall in it
+	// regardless of boundaries; this test asserts the user-vs-IP limit, not
+	// window expiry (TestSlidingWindowRateLimit_SlidingWindow covers that).
+	cfg.Window = time.Minute
 	cfg.PerUser = true
 
 	router := gin.New()
