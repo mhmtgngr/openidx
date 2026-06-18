@@ -39,6 +39,7 @@ var dsarAutoExecutableTypes = map[string]struct{}{
 // destructive types (delete, restrict) stay manual and the processor logs
 // a count of how many were skipped so admins can spot a queue building up.
 func (s *Service) StartDSARProcessor(ctx context.Context, interval time.Duration) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}

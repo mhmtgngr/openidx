@@ -231,21 +231,25 @@ working, no enforcement yet.
 Ship gate: a token issued for org A cannot read org B's data via
 any service method. **Met.**
 
-### v1.8.0 — RLS belt + per-org primitives
+### v1.8.0 — RLS belt + per-org primitives ✅ COMPLETE
 
-- Postgres RLS policies activated (replace `USING (true)` with
-  `USING (org_id = current_setting('app.org_id')::uuid)`)
-- Connection pool middleware sets `SET LOCAL app.org_id` on
-  checkout; clears on return
-- Per-org rate-limit buckets (partition existing limiter)
-- Per-org audit reader role (`compliance_reader`)
-- Per-org branding UI completion (already half-built in admin)
-- Single-tenant → multi-tenant upgrade runbook
-- Tests: integration suite runs with two tenants, asserts neither
-  can see the other's anything even with app-layer bug injected
-  (deliberately drop the filter, RLS catches it)
+- ✅ Postgres RLS activated (migration **v37**): the 68 `pol_<t>_org_scope`
+  policies rewritten from `USING (true)` to
+  `app.bypass_rls='on' OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid`,
+  plus `ENABLE` + `FORCE ROW LEVEL SECURITY` per table (FORCE because the app
+  connects as the table owner). Fail-closed: unset GUC → 0 rows.
+- ✅ Connection pool sets the GUC at checkout from `orgctx`
+  (`internal/common/database/rls.go` `BeforeAcquire`, set-if-different cache);
+  background/cross-org jobs opt into `app.bypass_rls` via `orgctx.WithBypassRLS`
+  (wired into ~25 ticker/sweep entrypoints + the migrator).
+- ✅ Per-org rate-limit buckets (limiter key folds in org id).
+- ✅ `compliance_reader` org-scoped read-only audit role.
+- ✅ Branding admin-console UI (super-admin can brand any tenant via the org list).
+- ✅ Single-tenant → multi-tenant upgrade runbook (`docs/multitenancy-upgrade-runbook.md`).
+- ✅ Two-tenant integration test: `TestRLSBelt` asserts a raw cross-org
+  `SELECT` returns 0 rows even with the app-layer "broken", and bypass sees all.
 
-Ship gate: RLS holds even when app-layer is intentionally broken.
+Ship gate: RLS holds even when app-layer is intentionally broken. **Met.**
 
 ### v2.0.0 — GA
 

@@ -4,6 +4,8 @@ package metrics
 import (
 	"context"
 	"time"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AuditMetricsCollector collects audit-specific business metrics
@@ -29,6 +31,7 @@ func NewAuditMetricsCollector(serviceName string, db AuditDBStats) *AuditMetrics
 
 // Start starts the metrics collection loop
 func (a *AuditMetricsCollector) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	// Initial collection
 	a.collectMetrics(ctx)
 

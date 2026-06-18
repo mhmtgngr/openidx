@@ -5,11 +5,14 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // StartRoleExpirationChecker starts a background goroutine that periodically
 // cleans up expired role assignments from the user_roles table.
 func (s *Service) StartRoleExpirationChecker(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()

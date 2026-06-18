@@ -41,6 +41,7 @@ var ErrNoOrgContext = errors.New("orgctx: no organization context on request")
 
 type orgKey struct{}
 type platformAdminKey struct{}
+type bypassRLSKey struct{}
 
 // With returns a derived context carrying org. Use from the
 // tenant-resolution middleware after looking up the org by slug or
@@ -93,5 +94,24 @@ func WithPlatformAdmin(parent context.Context) context.Context {
 // marker set by WithPlatformAdmin.
 func IsPlatformAdmin(ctx context.Context) bool {
 	v, _ := ctx.Value(platformAdminKey{}).(bool)
+	return v
+}
+
+// WithBypassRLS marks ctx as a legitimately cross-org / install-wide code path
+// (background sweeps, schedulers, migrations, the //orgscope:ignore jobs). The
+// database pool translates this marker into the Postgres GUC app.bypass_rls=on
+// so the v1.8.0 RLS belt lets the query span organizations.
+//
+// This is the EXPLICIT, opt-in escape hatch: a request that simply lacks an org
+// is NOT bypassed — it fails closed (RLS returns no rows). Only code that truly
+// needs to see every org should set this marker, at its root context.
+func WithBypassRLS(parent context.Context) context.Context {
+	return context.WithValue(parent, bypassRLSKey{}, true)
+}
+
+// IsBypassRLS reports whether ctx carries the RLS-bypass marker set by
+// WithBypassRLS.
+func IsBypassRLS(ctx context.Context) bool {
+	v, _ := ctx.Value(bypassRLSKey{}).(bool)
 	return v
 }

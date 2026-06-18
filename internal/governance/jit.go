@@ -318,6 +318,7 @@ func (s *JITService) RevokeGrant(ctx context.Context, grantID, revokedBy, reason
 // StartExpiryChecker starts the background goroutine that checks for expired grants
 // and revokes them. Runs every 30 seconds by default.
 func (s *JITService) StartExpiryChecker(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ticker := time.NewTicker(JITExpiryCheckInterval)
 	defer ticker.Stop()
 

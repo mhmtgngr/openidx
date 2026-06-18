@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // RateLimitConfig configures the distributed rate limiter
@@ -91,8 +93,16 @@ func DistributedRateLimit(redisClient *redis.Client, cfg RateLimitConfig, logger
 			}
 		}
 
+		// v1.8.0: partition buckets by org so one tenant's traffic can't exhaust
+		// another's budget. Falls back to a shared "_" segment when no org is
+		// resolved (infra/unauthenticated paths).
+		orgSeg := "_"
+		if org, err := orgctx.From(c.Request.Context()); err == nil && org.ID != "" {
+			orgSeg = org.ID
+		}
+
 		windowEpoch := time.Now().Unix() / int64(window.Seconds())
-		key := fmt.Sprintf("ratelimit:%s:%s:%d", scope, identifier, windowEpoch)
+		key := fmt.Sprintf("ratelimit:%s:%s:%s:%d", scope, orgSeg, identifier, windowEpoch)
 
 		// If Redis is nil, the limiter can't enforce. Fail closed for auth
 		// paths (unless explicitly opted out) so brute-force protection isn't

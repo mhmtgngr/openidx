@@ -12,6 +12,8 @@ import (
 
 	"github.com/openziti/sdk-golang/ziti"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ZitiEdgeRouterInfo represents a Ziti edge router from the management API
@@ -269,6 +271,7 @@ func (zm *ZitiManager) HealthCheck(ctx context.Context) (*FabricHealthStatus, er
 // StartHealthMonitor launches a background goroutine that periodically checks fabric health,
 // re-authenticates if the controller becomes unreachable, and records metrics
 func (zm *ZitiManager) StartHealthMonitor(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()

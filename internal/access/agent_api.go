@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AgentAPIHandler handles HTTP endpoints for agent communication.
@@ -773,6 +774,7 @@ func defaultAgentConfig() agentConfigResponse {
 // StartGracePeriodEnforcer runs a background goroutine that periodically
 // checks for expired grace periods and escalates to suspended status.
 func (h *AgentAPIHandler) StartGracePeriodEnforcer(ctx context.Context, interval time.Duration) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 var (
@@ -443,6 +445,7 @@ func (ss *SessionService) userSessionsKey(userID string) string {
 
 // StartCleanup starts a background goroutine to clean expired sessions
 func (ss *SessionService) StartCleanup(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ticker := time.NewTicker(ss.config.CleanupInterval)
 	go func() {
 		defer ticker.Stop()

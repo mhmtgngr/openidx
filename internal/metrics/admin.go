@@ -4,6 +4,8 @@ package metrics
 import (
 	"context"
 	"time"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AdminMetricsCollector collects admin-specific business metrics
@@ -31,6 +33,7 @@ func NewAdminMetricsCollector(serviceName string, db AdminDBStats) *AdminMetrics
 
 // Start starts the metrics collection loop
 func (g *AdminMetricsCollector) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	// Initial collection
 	g.collectMetrics(ctx)
 

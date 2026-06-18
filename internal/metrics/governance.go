@@ -4,6 +4,8 @@ package metrics
 import (
 	"context"
 	"time"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // GovernanceMetricsCollector collects governance-specific business metrics
@@ -29,6 +31,7 @@ func NewGovernanceMetricsCollector(serviceName string, db GovernanceDBStats) *Go
 
 // Start starts the metrics collection loop
 func (g *GovernanceMetricsCollector) Start(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	// Initial collection
 	g.collectMetrics(ctx)
 

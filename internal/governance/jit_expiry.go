@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // StartJITExpirationChecker runs a background goroutine that periodically
 // revokes expired JIT (just-in-time) access grants.
 func (s *Service) StartJITExpirationChecker(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()

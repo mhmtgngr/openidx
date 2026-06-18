@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // TracedPool wraps pgxpool.Pool to collect metrics
@@ -74,6 +76,7 @@ func (t *TracedPool) CollectPoolStats() {
 
 // StartPoolStatsCollector starts a background goroutine to collect pool stats
 func (t *TracedPool) StartPoolStatsCollector(ctx context.Context) {
+	ctx = orgctx.WithBypassRLS(ctx)
 	ticker := time.NewTicker(30 * time.Second)
 	go func() {
 		defer ticker.Stop()

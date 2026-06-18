@@ -72,6 +72,7 @@ import {
   APIDocs,
   SystemHealth,
   Organizations,
+  Branding,
   Delegations,
   Webhooks,
   TenantManagement,
@@ -264,6 +265,7 @@ function App() {
         {/* System - Admin Protected */}
         <Route path="system-health" element={<SystemHealth />} />
         <Route path="organizations" element={<Organizations />} />
+        <Route path="branding" element={<Branding />} />
         <Route path="delegations" element={<Delegations />} />
         <Route path="webhooks" element={<Webhooks />} />
         <Route path="settings" element={<Settings />} />
