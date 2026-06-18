@@ -3104,7 +3104,8 @@ func (s *Service) ListDelegations(ctx context.Context, offset, limit int, scopeT
 		argCount++
 		countConditions = append(countConditions, fmt.Sprintf("ad.scope_type = $%d", countArgCount))
 		countArgs = append(countArgs, scopeType)
-		countArgCount++
+		// scope_type is the only filter on the count query, so countArgCount is
+		// not advanced further (the count query has no LIMIT/OFFSET).
 	}
 
 	whereClause := ""

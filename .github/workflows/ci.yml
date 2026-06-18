@@ -321,6 +321,12 @@ jobs:
           export APP_ENV=test
           export JWT_SECRET=integration-test-jwt-secret-do-not-use-in-prod
           export OAUTH_ISSUER=http://localhost:8006
+          # The suite is single-org: most tests log in the seeded admin via the
+          # OAuth flow without an X-Org-Slug/subdomain signal, so they need the
+          # default-org fallback on (config default is false as of v1.7.0). The
+          # cross-org test sends X-Org-Slug explicitly, so it still validates
+          # isolation under this posture.
+          export DEFAULT_ORG_FALLBACK=true
           # Tests hammer /oauth/login from a single IP — the production-default
           # auth-path limit of 20/min (RATE_LIMIT_AUTH_REQUESTS) hits 429 partway
           # through the suite. Raise the limit only for the integration test

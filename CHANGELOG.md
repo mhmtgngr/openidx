@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### CI green-up + GetUser NULL-name fix
+
+#### Fixed
+- **`GetUser` 404'd on users with no name**: `users.first_name`/`last_name` are
+  nullable, but the read scanned them into non-pointer strings, so any name-less
+  user (valid per SCIM) errored the scan and surfaced as 404. The read now
+  `COALESCE`s both to `''`.
+- **CI Lint**: removed an ineffectual `countArgCount++` in `internal/admin/service.go`.
+- **CI Integration job**: set `DEFAULT_ORG_FALLBACK=true` for the suite. It is
+  single-org (most tests log in the seeded admin without an `X-Org-Slug`/subdomain
+  signal); the config default flipped to `false` in v1.7.0, which had been failing
+  every admin-token-dependent test. The cross-org test still sends `X-Org-Slug`
+  explicitly, so isolation is still validated.
+
 ### Tenant login branding + production hardening (v1.9.0)
 
 Per-tenant branding on both login surfaces, plus production-readiness fixes —

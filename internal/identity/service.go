@@ -536,10 +536,13 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 
 	// Query from database - use UserDB for scanning. A user in another
 	// org reads as not-found (pgx.ErrNoRows) rather than 403, so the
-	// existence of other tenants' users can't be probed.
+	// existence of other tenants' users can't be probed. first_name/last_name
+	// are nullable in the schema (SCIM users may have no name), so COALESCE to
+	// '' — UserDB scans them into plain strings and a raw NULL errors the scan.
 	var dbUser UserDB
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
+		SELECT id, username, email, COALESCE(first_name, '') AS first_name,
+		       COALESCE(last_name, '') AS last_name, enabled, email_verified,
 		       created_at, updated_at, last_login_at, password_changed_at,
 		       password_must_change, failed_login_count, last_failed_login_at, locked_until
 		FROM users WHERE id = $1 AND org_id = $2
