@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,7 +25,6 @@ import (
 	"github.com/openidx/openidx/internal/gateway"
 	gwmiddleware "github.com/openidx/openidx/internal/gateway/middleware"
 	"github.com/openidx/openidx/internal/gateway/routes"
-	newhealth "github.com/openidx/openidx/internal/health"
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/server"
 )
@@ -135,14 +136,12 @@ func main() {
 	// Register service routes through the routes package
 	registerServiceRoutes(router, provider)
 
-	// Initialize health service
-	healthService := newhealth.NewHealthService(log)
-	healthService.SetVersion(Version)
-	healthService.RegisterCheck(newhealth.NewRedisChecker(redisClient))
-	healthService.RegisterStandardRoutes(router, "")
-
-	// Keep legacy /ready endpoint for backward compatibility
-	router.GET("/ready", healthService.ReadyHandler())
+	// Health endpoints (/health, /ready) are registered by
+	// gatewayService.RegisterRoutes above; the gateway's k8s liveness/readiness
+	// probes and the compose healthcheck all hit /health. We deliberately do NOT
+	// also register the standardized newhealth routes or the routes-package
+	// health set here — registering /health (or /ready) twice on the same gin
+	// engine panics ("handlers are already registered for path '/health'").
 
 	// Create HTTP server
 	httpServer := &http.Server{
@@ -339,20 +338,25 @@ func (w *zapLoggerWrapper) Sync() error {
 type serviceURLProvider struct{}
 
 func (p *serviceURLProvider) GetServiceURL(serviceName string) (string, error) {
-	// Default URLs
+	// Default URLs match the services' actual listen ports (see docker-compose).
+	// Override any of them with <SERVICE>_SERVICE_URL, e.g. IDENTITY_SERVICE_URL.
 	urls := map[string]string{
-		"identity":   "http://localhost:8501",
-		"oauth":      "http://localhost:8502",
-		"governance": "http://localhost:8503",
-		"audit":      "http://localhost:8504",
-		"admin":      "http://localhost:8505",
-		"risk":       "http://localhost:8506",
+		"identity":   "http://localhost:8001",
+		"oauth":      "http://localhost:8006",
+		"governance": "http://localhost:8002",
+		"audit":      "http://localhost:8004",
+		"admin":      "http://localhost:8005",
+		"risk":       "http://localhost:8005",
 	}
 
-	if url, ok := urls[serviceName]; ok {
-		return url, nil
+	def, ok := urls[serviceName]
+	if !ok {
+		return "", fmt.Errorf("unknown service: %s", serviceName)
 	}
-	return "", fmt.Errorf("unknown service: %s", serviceName)
+	if v := os.Getenv(strings.ToUpper(serviceName) + "_SERVICE_URL"); v != "" {
+		return v, nil
+	}
+	return def, nil
 }
 
 // registerServiceRoutes registers all service routes
@@ -373,7 +377,7 @@ func registerServiceRoutes(router *gin.Engine, provider *serviceURLProvider) {
 	routes.RegisterAdminRoutes(adminGroup, provider)
 	routes.RegisterRiskRoutes(riskGroup, provider)
 
-	// Register health and docs routes
-	routes.RegisterHealthRoutes(router, provider)
+	// Docs routes only. Health endpoints come from gatewayService.RegisterRoutes
+	// (see main) — registering them here too would panic on duplicate paths.
 	routes.RegisterDocsRoutes(router, provider)
 }
