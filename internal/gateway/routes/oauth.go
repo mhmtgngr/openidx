@@ -18,32 +18,12 @@ func RegisterOAuthRoutes(router *gin.RouterGroup, provider ServiceURLProvider) {
 	target, _ := url.Parse(serviceURL)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
-	// Public OAuth routes (no authentication)
-	router.GET("/.well-known/openid-configuration", proxyRequest(proxy))
-	router.GET("/.well-known/jwks.json", proxyRequest(proxy))
-	router.GET("/authorize", proxyRequest(proxy))
-	router.POST("/token", proxyRequest(proxy))
-
-	// OAuth device authorization flow
-	router.POST("/device/code", proxyRequest(proxy))
-
-	// OAuth introspection and revocation (require client authentication)
-	router.POST("/introspect", proxyRequest(proxy))
-	router.POST("/revoke", proxyRequest(proxy))
-
-	// UserInfo endpoint (requires access token)
-	router.GET("/userinfo", proxyRequest(proxy))
-	router.POST("/userinfo", proxyRequest(proxy))
-
-	// Session management
-	router.POST("/logout", proxyRequest(proxy))
-
-	// Consent management (authenticated)
-	router.GET("/consent", proxyRequest(proxy))
-	router.POST("/consent", proxyRequest(proxy))
-	router.POST("/consent/deny", proxyRequest(proxy))
-
-	// Catch-all for other OAuth routes
+	// Proxy every path under this service prefix straight to the backend. All
+	// routes share one handler and the groups carry no distinct middleware, so a
+	// single catch-all is behaviourally identical to mirroring each endpoint —
+	// and it avoids gin's static-vs-wildcard conflict (a catch-all "/*path"
+	// cannot coexist with explicit siblings like "/users"). The backend owns
+	// auth and routing; the gateway stays a thin pass-through.
 	router.Any("/*path", proxyRequest(proxy))
 }
 

@@ -32,7 +32,9 @@ type GatewayHealth struct {
 	Version string `json:"version"`
 }
 
-// RegisterHealthRoutes registers health check endpoints
+// RegisterHealthRoutes registers the full health endpoint set on a standalone
+// engine (base /health + probes + legacy /ready). Use when the gateway Service
+// is not also registering utility routes on the same engine.
 func RegisterHealthRoutes(router *gin.Engine, provider ServiceURLProvider) {
 	// Simple health check
 	router.GET("/health", healthCheckHandler())

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### gateway-service startup fixes
+
+`gateway-service` panicked on startup under gin v1.11.0 and never began serving
+(installs fronting it with APISIX wouldn't have noticed). Three stacked bugs,
+each masked by the previous panic:
+
+#### Fixed
+- **Route catch-all conflict**: each service's route file registered ~dozens of
+  explicit routes *plus* a `/*path` catch-all with the identical proxy handler;
+  gin v1.11.0 rejects a catch-all alongside explicit siblings (`/users`).
+  Collapsed each service to the single catch-all — behaviourally identical (one
+  handler, no per-route middleware) and the correct shape for a pass-through.
+- **Duplicate `/health` registration**: the gateway `Service`, the standardized
+  `newhealth` service, and the routes package each registered `/health` (and
+  `/ready`) on the same engine → `handlers are already registered for path
+  '/health'`. The gateway now uses the `Service`'s health routes only (which is
+  what the k8s probes and compose healthcheck hit at `/health`).
+- **Wrong proxy targets**: `serviceURLProvider` hardcoded `localhost:8501–8506`
+  (ignoring env), so the gateway proxied to non-existent/incorrect ports. Fixed
+  the defaults to the services' real ports (`8001/8002/8004/8005/8006`) and added
+  `<SERVICE>_SERVICE_URL` env overrides (e.g. `IDENTITY_SERVICE_URL`).
+
 ### CI green-up + GetUser NULL-name fix
 
 #### Fixed

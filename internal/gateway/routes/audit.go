@@ -2,7 +2,6 @@
 package routes
 
 import (
-	"net/http"
 	"net/http/httputil"
 	"net/url"
 
@@ -19,58 +18,12 @@ func RegisterAuditRoutes(router *gin.RouterGroup, provider ServiceURLProvider) {
 	target, _ := url.Parse(serviceURL)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
-	// Audit event queries
-	router.GET("/events", proxyRequest(proxy))
-	router.GET("/events/:id", proxyRequest(proxy))
-
-	// Audit event export
-	router.GET("/events/export", proxyRequest(proxy))
-	router.POST("/events/export", proxyRequest(proxy))
-
-	// Audit logs (legacy endpoint)
-	router.GET("/logs", proxyRequest(proxy))
-
-	// Compliance reports
-	router.GET("/reports", proxyRequest(proxy))
-	router.POST("/reports", proxyRequest(proxy))
-	router.GET("/reports/:id", proxyRequest(proxy))
-	router.GET("/reports/:id/download", proxyRequest(proxy))
-	router.DELETE("/reports/:id", proxyRequest(proxy))
-
-	// Specific report types
-	router.POST("/reports/compliance", proxyRequest(proxy))
-	router.POST("/reports/access", proxyRequest(proxy))
-	router.POST("/reports/security", proxyRequest(proxy))
-	router.POST("/reports/activity", proxyRequest(proxy))
-
-	// Audit statistics
-	router.GET("/statistics", proxyRequest(proxy))
-	router.GET("/statistics/summary", proxyRequest(proxy))
-	router.GET("/statistics/timeline", proxyRequest(proxy))
-
-	// Audit retention policies
-	router.GET("/retention-policies", proxyRequest(proxy))
-	router.POST("/retention-policies", proxyRequest(proxy))
-	router.GET("/retention-policies/:id", proxyRequest(proxy))
-	router.PUT("/retention-policies/:id", proxyRequest(proxy))
-	router.DELETE("/retention-policies/:id", proxyRequest(proxy))
-
-	// Audit alerts
-	router.GET("/alerts", proxyRequest(proxy))
-	router.POST("/alerts", proxyRequest(proxy))
-	router.GET("/alerts/:id", proxyRequest(proxy))
-	router.PUT("/alerts/:id", proxyRequest(proxy))
-	router.DELETE("/alerts/:id", proxyRequest(proxy))
-
-	// Audit search
-	router.POST("/search", proxyRequest(proxy))
-
-	// Health check for audit service
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "audit"})
-	})
-
-	// Catch-all for other audit routes
+	// Proxy every path under this service prefix straight to the backend. All
+	// routes share one handler and the groups carry no distinct middleware, so a
+	// single catch-all is behaviourally identical to mirroring each endpoint —
+	// and it avoids gin's static-vs-wildcard conflict (a catch-all "/*path"
+	// cannot coexist with explicit siblings like "/users"). The backend owns
+	// auth and routing; the gateway stays a thin pass-through.
 	router.Any("/*path", proxyRequest(proxy))
 }
 

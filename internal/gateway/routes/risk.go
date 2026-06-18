@@ -2,7 +2,6 @@
 package routes
 
 import (
-	"net/http"
 	"net/http/httputil"
 	"net/url"
 
@@ -19,51 +18,12 @@ func RegisterRiskRoutes(router *gin.RouterGroup, provider ServiceURLProvider) {
 	target, _ := url.Parse(serviceURL)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
-	// Risk scoring
-	router.POST("/score", proxyRequest(proxy))
-	router.GET("/score/:user_id", proxyRequest(proxy))
-
-	// Anomaly detection
-	router.POST("/anomalies/check", proxyRequest(proxy))
-	router.GET("/anomalies", proxyRequest(proxy))
-	router.GET("/anomalies/:id", proxyRequest(proxy))
-
-	// Threat intelligence
-	router.GET("/threats/ip/:ip_address", proxyRequest(proxy))
-	router.POST("/threats/check-ip", proxyRequest(proxy))
-
-	// Risk policies
-	router.GET("/policies", proxyRequest(proxy))
-	router.POST("/policies", proxyRequest(proxy))
-	router.GET("/policies/:id", proxyRequest(proxy))
-	router.PUT("/policies/:id", proxyRequest(proxy))
-	router.DELETE("/policies/:id", proxyRequest(proxy))
-
-	// Risk events
-	router.GET("/events", proxyRequest(proxy))
-	router.GET("/events/:id", proxyRequest(proxy))
-	router.PUT("/events/:id", proxyRequest(proxy))
-
-	// Risk alerts
-	router.GET("/alerts", proxyRequest(proxy))
-	router.GET("/alerts/:id", proxyRequest(proxy))
-	router.POST("/alerts/:id/acknowledge", proxyRequest(proxy))
-	router.POST("/alerts/:id/dismiss", proxyRequest(proxy))
-
-	// User risk profile
-	router.GET("/profiles/:user_id", proxyRequest(proxy))
-	router.PUT("/profiles/:user_id", proxyRequest(proxy))
-
-	// Risk statistics
-	router.GET("/statistics", proxyRequest(proxy))
-	router.GET("/statistics/summary", proxyRequest(proxy))
-
-	// Health check for risk service
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "risk"})
-	})
-
-	// Catch-all for other risk routes
+	// Proxy every path under this service prefix straight to the backend. All
+	// routes share one handler and the groups carry no distinct middleware, so a
+	// single catch-all is behaviourally identical to mirroring each endpoint —
+	// and it avoids gin's static-vs-wildcard conflict (a catch-all "/*path"
+	// cannot coexist with explicit siblings like "/users"). The backend owns
+	// auth and routing; the gateway stays a thin pass-through.
 	router.Any("/*path", proxyRequest(proxy))
 }
 
