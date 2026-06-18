@@ -176,6 +176,82 @@ Options:
 }
 ```
 
+## Custom-Domain TLS Edge (reverse-proxy deployment)
+
+When you front a published app with its own hostname and a real certificate
+(e.g. `netgraph.tdv.org` → an internal app on `:8088`), put a TLS-terminating
+reverse proxy in front of the access service. The access service
+(`handleProxy`) matches the route by `Host`, enforces the auth gate, then
+proxies to the internal target. The edge only terminates TLS and forwards.
+
+The following nginx config is the reference for that deployment. The OpenIDX
+admin console + APIs and the published app are served from the same nginx, each
+on its own `server` block / cert.
+
+```nginx
+# --- Published internal app on its own hostname + real cert ---
+# TLS-terminate here; forward everything to the access service, which gates
+# auth (redirect to the OpenIDX login) and proxies to the internal target.
+server {
+  listen 443 ssl;
+  server_name netgraph.tdv.org;
+
+  ssl_certificate     /etc/nginx/tdv-fullchain.pem;
+  ssl_certificate_key /etc/nginx/tdv-key.pem;
+
+  # If the app serves its UI under a sub-path (e.g. /ui/), redirect the bare
+  # root so visitors hitting the plain hostname land on the app instead of the
+  # upstream's own 404. The target is still behind the auth gate.
+  location = / { return 302 /ui/; }
+
+  location / {
+    proxy_pass http://127.0.0.1:8007;   # access service
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;   # REQUIRED — see gotchas
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_http_version 1.1;
+    proxy_read_timeout 60s;
+  }
+}
+
+# Upgrade plain HTTP to HTTPS for the published host.
+server {
+  listen 80;
+  server_name netgraph.tdv.org;
+  return 301 https://$host$request_uri;
+}
+```
+
+### Gotchas (each of these was a real bug)
+
+1. **`X-Forwarded-Proto https` is mandatory.** The access service builds its
+   OAuth callback (`/access/.auth/callback`) from this header — it falls back to
+   the request scheme only when the header is absent. Omit it behind TLS
+   termination and the emitted `redirect_uri` is `http://`, which won't match
+   the registered/public HTTPS URL and the browser callback lands on a non-TLS
+   port. (Code: `callbackScheme()` in `internal/access/service.go`.)
+
+2. **Set `preserve_host = true` on the proxy route** when the upstream emits
+   absolute redirects (trailing-slash normalization, login bounces, etc.).
+   With `preserve_host = false` the access service sends the *upstream's* own
+   host, so the app echoes its internal address (e.g.
+   `http://10.0.0.5:8088/ui/`) in `Location` and the user leaks off the public
+   hostname. Toggle it on the Proxy Routes page or
+   `UPDATE proxy_routes SET preserve_host = true WHERE from_url LIKE '%<host>%'`.
+
+3. **Redirect the bare root** (`location = / { return 302 /ui/; }`) when the app
+   serves its UI under a sub-path — the upstream root often 404s. The redirect
+   target stays behind the auth gate, so nothing is exposed unauthenticated.
+
+### Registering the public callback / redirect URI
+
+The published host must be allowed as an OAuth redirect target. Add
+`https://<host>/access/.auth/callback` (and `https://<host>/login` if the SPA
+login is used) to the redirect URIs of the `access-proxy` and `admin-console`
+OAuth clients, or the gate's `/oauth/authorize` will 400.
+
 ## Architecture
 
 ```
