@@ -49,6 +49,17 @@ A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
   map SCIM→flat too. Audited as already-correct: group members, user roles,
   roles, and `/users/me` (camelCase, which `user-profile` already matches).
 
+### Access-proxy forward-auth: honor X-Forwarded-Proto
+
+#### Fixed
+- The access-service built its OAuth callback (`/access/.auth/callback`) as
+  `http://` from `c.Request.Host`, ignoring `X-Forwarded-Proto`. Behind a
+  TLS-terminating proxy (nginx/APISIX) the public URL is HTTPS, so the emitted
+  `redirect_uri` didn't match the registered/public `https://` URL and the
+  browser callback hit a non-TLS port. Added a `callbackScheme()` helper
+  (X-Forwarded-Proto → request TLS → http) and applied it to all four callback
+  builders (the built-in access-proxy login/exchange + the external-IDP paths).
+
 ### Access-proxy / App Publish schema fix (migration v40)
 
 #### Fixed

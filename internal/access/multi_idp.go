@@ -218,8 +218,8 @@ func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 	s.redis.Client.Set(ctx, "access_oauth_state:"+state, sessionData, 10*time.Minute)
 
 	// Build callback URL
-	callbackURL := fmt.Sprintf("http://%s:%d/access/.auth/callback",
-		s.config.AccessProxyDomain, s.config.Port)
+	callbackURL := fmt.Sprintf("%s://%s:%d/access/.auth/callback",
+		callbackScheme(c), s.config.AccessProxyDomain, s.config.Port)
 
 	// Build auth URL using the external IDP
 	scopeStr := url.QueryEscape(joinScopes(idp.Scopes))
@@ -255,8 +255,8 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		return
 	}
 
-	callbackURL := fmt.Sprintf("http://%s:%d/access/.auth/callback",
-		s.config.AccessProxyDomain, s.config.Port)
+	callbackURL := fmt.Sprintf("%s://%s:%d/access/.auth/callback",
+		callbackScheme(c), s.config.AccessProxyDomain, s.config.Port)
 
 	// Exchange code with the external IDP
 	tokenResp, err := s.exchangeCodeWithIDP(c.Request.Context(), idpIssuer, clientID, clientSecret, code, verifier, callbackURL)
