@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-06-18
+
+This release bundles all work since v1.6.0 (no v1.7.0/v1.8.0 tags were cut):
+the v1.7.0 app-layer multi-tenancy enforcement, the v1.8.0 RLS belt, and the
+v1.9.0 tenant login branding + production hardening, plus the CI and
+gateway-service fixes below.
+
 ### gateway-service startup fixes
 
 `gateway-service` panicked on startup under gin v1.11.0 and never began serving
