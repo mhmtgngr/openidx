@@ -58,6 +58,8 @@ interface PublishedApp {
   discovery_strategies: string[]
   total_paths_discovered: number
   total_paths_published: number
+  public_host?: string
+  landing_path?: string
   created_at: string
   updated_at: string
 }
@@ -137,6 +139,10 @@ export function AppPublishPage() {
     enable_ziti: false,
     enable_browzer: false,
   })
+  const [publishAppOpen, setPublishAppOpen] = useState(false)
+  const [publishAppTarget, setPublishAppTarget] = useState<PublishedApp | null>(null)
+  const [publicHost, setPublicHost] = useState('')
+  const [landingPath, setLandingPath] = useState('/')
 
   // ---- Queries ----
 
@@ -238,6 +244,29 @@ export function AppPublishPage() {
       toast({ title: 'Paths Published', description: `${selected.size} paths published as proxy routes.` })
       setPublishOpen(false)
       setSelected(new Set())
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Publish Failed', description: error.message, variant: 'destructive' })
+    },
+  })
+
+  // One-click publish: expose the whole app at a public host + launcher tile.
+  const publishApp = useMutation({
+    mutationFn: (data: { public_host?: string; landing_path?: string }) =>
+      api.post<{ public_url: string; public_host: string }>(
+        `/api/v1/access/apps/${publishAppTarget!.id}/publish-app`,
+        data,
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['published-apps'] })
+      queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })
+      queryClient.invalidateQueries({ queryKey: ['my-applications'] })
+      toast({
+        title: 'App Published',
+        description: `${res.public_url} — now available in My Apps.`,
+      })
+      setPublishAppOpen(false)
+      setPublicHost('')
     },
     onError: (error: Error) => {
       toast({ title: 'Publish Failed', description: error.message, variant: 'destructive' })
@@ -396,6 +425,24 @@ export function AppPublishPage() {
                       >
                         <ArrowRight className="h-4 w-4 mr-1" />
                         Paths
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setPublishAppTarget(app)
+                          setPublicHost(
+                            app.public_host ||
+                              app.name
+                                .toLowerCase()
+                                .replace(/[^a-z0-9]+/g, '-')
+                                .replace(/^-+|-+$/g, ''),
+                          )
+                          setLandingPath(app.landing_path || '/')
+                          setPublishAppOpen(true)
+                        }}
+                      >
+                        <ExternalLink className="h-4 w-4 mr-1" />
+                        {app.public_host ? 'Published' : 'Publish App'}
                       </Button>
                       <Button
                         size="sm"
@@ -833,6 +880,73 @@ export function AppPublishPage() {
             >
               {publishPaths.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Publish {selected.size} Path{selected.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============ ONE-CLICK PUBLISH APP ============ */}
+      <Dialog open={publishAppOpen} onOpenChange={setPublishAppOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Publish as one-click app</DialogTitle>
+            <DialogDescription>
+              Expose <span className="font-medium">{publishAppTarget?.name}</span> at its own
+              HTTPS host behind OpenIDX SSO and add it to every user's My Apps launcher.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="public-host">Public host</Label>
+              <Input
+                id="public-host"
+                placeholder="netgraph.apps.tdv.org"
+                value={publicHost}
+                onChange={(e) => setPublicHost(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                The hostname users will open. If you enter just a label (e.g. <code>netgraph</code>)
+                the server appends the configured apps domain. Point a DNS/hosts entry at this
+                gateway; the wildcard TLS cert covers it.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="landing-path">Landing path</Label>
+              <Input
+                id="landing-path"
+                placeholder="/"
+                value={landingPath}
+                onChange={(e) => setLandingPath(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Where the launcher tile opens. Use <code>/</code> unless the app's UI lives
+                elsewhere (e.g. <code>/ui/</code>).
+              </p>
+            </div>
+            <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+              Internal target:{' '}
+              <span className="font-mono">{publishAppTarget?.target_url}</span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPublishAppOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                publishApp.mutate({
+                  public_host: publicHost.trim() || undefined,
+                  landing_path: landingPath.trim() || '/',
+                })
+              }
+              disabled={publishApp.isPending}
+            >
+              {publishApp.isPending ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <ExternalLink className="h-4 w-4 mr-1" />
+              )}
+              Publish
             </Button>
           </DialogFooter>
         </DialogContent>

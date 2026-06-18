@@ -49,6 +49,22 @@ A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
   map SCIM→flat too. Audited as already-correct: group members, user roles,
   roles, and `/users/me` (camelCase, which `user-profile` already matches).
 
+### One-click "open internal app" — published apps as launcher tiles
+
+#### Added
+- `POST /api/v1/access/apps/:id/publish-app` publishes a registered app as a
+  one-click tile: it creates a single host-level proxy route, auto-creates a
+  **My Apps** launcher tile (`applications` row, `base_url` = the gated public
+  URL), and registers the per-host `…/access/.auth/callback` on the
+  `access-proxy` OAuth client so SSO round-trips without a manual OAuth edit.
+- `ACCESS_APPS_DOMAIN` config: bare-label hosts (e.g. `netgraph`) resolve to
+  `<label>.<ACCESS_APPS_DOMAIN>` so every app lives under one wildcard domain
+  with a single wildcard TLS cert.
+- Migration **v41**: `published_apps.public_host` + `landing_path` (where the
+  tile opens, default `/`, e.g. `/ui/` for apps not served at the site root).
+- Admin console **App Publish → Publish App** dialog (public host + landing
+  path). Docs: `docs/app-publishing.md` "One-Click Publishing" section.
+
 ### Access-proxy forward-auth: honor X-Forwarded-Proto
 
 #### Fixed

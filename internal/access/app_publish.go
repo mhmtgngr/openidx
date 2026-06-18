@@ -530,6 +530,151 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// PublishAppRequest is the body for the one-click publish endpoint: expose the
+// whole app at a public host behind SSO, and surface it as a launcher tile.
+type PublishAppRequest struct {
+	// PublicHost is the externally reachable host, e.g. "netgraph.apps.tdv.org".
+	// If empty, it is derived as "<slug(app.name)>.<ACCESS_APPS_DOMAIN>".
+	PublicHost string `json:"public_host"`
+	// PreserveHost controls whether the upstream sees the public Host header
+	// (defaults true — required when the upstream emits absolute redirects).
+	PreserveHost *bool `json:"preserve_host"`
+	// LandingPath is where the launcher tile opens (e.g. "/ui/") for apps whose
+	// UI is not at the site root. Defaults to "/".
+	LandingPath string `json:"landing_path"`
+}
+
+type PublishAppResult struct {
+	PublicHost string `json:"public_host"`
+	PublicURL  string `json:"public_url"`
+	RouteID    string `json:"route_id"`
+	TileID     string `json:"tile_id"`
+	Message    string `json:"message"`
+}
+
+// handlePublishApp publishes a whole registered app as a single host-level
+// proxy route, auto-creates a "My Apps" launcher tile pointing at the gated
+// public URL, and registers the per-host OAuth callback so SSO works without a
+// manual OAuth-client edit. This is the "one-click open internal app" path;
+// handlePublishPaths remains for fine-grained per-path publishing.
+func (s *Service) handlePublishApp(c *gin.Context) {
+	appID := c.Param("appId")
+	ctx := c.Request.Context()
+
+	var req PublishAppRequest
+	// Body is optional; ignore decode errors on empty bodies.
+	_ = c.ShouldBindJSON(&req)
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	var appName, appDesc, targetURL string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT name, COALESCE(description,''), target_url FROM published_apps WHERE id=$1`, appID).
+		Scan(&appName, &appDesc, &targetURL)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
+		return
+	}
+
+	// Resolve the public host: explicit request value, else slug + base domain.
+	publicHost := strings.TrimSpace(req.PublicHost)
+	if publicHost == "" {
+		if s.config == nil || s.config.AccessAppsDomain == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "no public_host provided and ACCESS_APPS_DOMAIN is not configured",
+			})
+			return
+		}
+		publicHost = sanitizeName(appName) + "." + strings.TrimPrefix(s.config.AccessAppsDomain, ".")
+	}
+	// Strip any scheme the caller may have included.
+	publicHost = strings.TrimPrefix(strings.TrimPrefix(publicHost, "https://"), "http://")
+	publicHost = strings.Trim(publicHost, "/")
+
+	preserveHost := true
+	if req.PreserveHost != nil {
+		preserveHost = *req.PreserveHost
+	}
+
+	// Landing path the tile opens at — "/" unless the app's UI lives elsewhere.
+	landingPath := strings.TrimSpace(req.LandingPath)
+	if landingPath == "" {
+		landingPath = "/"
+	}
+	if !strings.HasPrefix(landingPath, "/") {
+		landingPath = "/" + landingPath
+	}
+
+	fromURL := "https://" + publicHost
+	publicURL := fromURL + landingPath
+
+	// Upsert the host-level proxy route (delete-then-insert keyed by from_url so
+	// re-publishing the same host is idempotent). One-click routes get a higher
+	// priority than auto-published per-path routes for the same host substring.
+	s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE from_url=$1 AND org_id=$2`, fromURL, org.ID)
+
+	routeID := uuid.New().String()
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO proxy_routes (id, name, description, from_url, to_url,
+			preserve_host, require_auth, allowed_roles, enabled, priority, route_type,
+			inline_policy, require_device_trust, max_risk_score,
+			allowed_groups, policy_ids, cors_allowed_origins, custom_headers,
+			posture_check_ids, allowed_countries, idle_timeout, absolute_timeout, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, true, '[]', true, 50, 'http',
+			'', false, 100,
+			'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200, $7)`,
+		routeID, appName, fmt.Sprintf("One-click published app %q", appName),
+		fromURL, strings.TrimSuffix(targetURL, "/"), preserveHost, org.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route: " + err.Error()})
+		return
+	}
+
+	// Upsert the launcher tile. client_id is deterministic per app so a
+	// re-publish updates the same row rather than colliding on the UNIQUE key.
+	tileClientID := "proxy-app-" + appID
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, org_id)
+		VALUES ($1, $2, $3, $4, 'proxy', 'proxy', $5, '{}', true, $6)
+		ON CONFLICT (client_id) DO UPDATE SET
+			name = EXCLUDED.name, description = EXCLUDED.description,
+			base_url = EXCLUDED.base_url, enabled = true, updated_at = NOW()`,
+		uuid.New().String(), tileClientID, appName, appDesc, publicURL, org.ID)
+	if err != nil {
+		s.logger.Warn("one-click publish: failed to upsert launcher tile", zap.Error(err))
+	}
+
+	// Register the per-host OAuth callback on the access-proxy client so the
+	// forward-auth login round-trips without a manual OAuth-client edit.
+	callback := fmt.Sprintf(`["https://%s/access/.auth/callback"]`, publicHost)
+	if _, err := s.db.Pool.Exec(ctx, `
+		UPDATE oauth_clients SET redirect_uris = redirect_uris || $1::jsonb
+		WHERE client_id='access-proxy' AND NOT (redirect_uris @> $1::jsonb)`, callback); err != nil {
+		s.logger.Warn("one-click publish: failed to register callback URI", zap.Error(err))
+	}
+
+	// Record the public host / landing path on the app for display + idempotency.
+	s.db.Pool.Exec(ctx,
+		`UPDATE published_apps SET public_host=$1, landing_path=$2, status='published', updated_at=NOW() WHERE id=$3`,
+		publicHost, landingPath, appID)
+
+	s.logAuditEvent(c, "app_published_oneclick", appID, "published_app", map[string]interface{}{
+		"public_host": publicHost, "route_id": routeID,
+	})
+
+	c.JSON(http.StatusOK, PublishAppResult{
+		PublicHost: publicHost,
+		PublicURL:  publicURL,
+		RouteID:    routeID,
+		TileID:     tileClientID,
+		Message:    "App published. It now appears in My Apps.",
+	})
+}
+
 // ---- Discovery engine ----
 
 func (s *Service) runAppDiscovery(ctx context.Context, appID string) {

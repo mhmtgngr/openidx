@@ -59,6 +59,12 @@ type Config struct {
 	AccessSessionSecret string `mapstructure:"access_session_secret"`
 	AccessProxyDomain   string `mapstructure:"access_proxy_domain"`
 
+	// AccessAppsDomain is the wildcard base domain that one-click published
+	// apps live under (e.g. "apps.tdv.org" → "<slug>.apps.tdv.org"). When set,
+	// publishing an app as a one-click tile derives its public host from this.
+	// Empty disables the slug default (a public_host must be given explicitly).
+	AccessAppsDomain string `mapstructure:"access_apps_domain"`
+
 	// Multi-tenancy: the wildcard domain tenants live under
 	// (e.g. "openidx.io" for acme.openidx.io). When set, the gateway
 	// derives the X-Org-Slug header from the request's subdomain.
@@ -521,6 +527,7 @@ func bindEnvVars(v *viper.Viper) {
 		"audit_url":                  "AUDIT_URL",
 		"access_session_secret":      "ACCESS_SESSION_SECRET",
 		"access_proxy_domain":        "ACCESS_PROXY_DOMAIN",
+		"access_apps_domain":         "ACCESS_APPS_DOMAIN",
 		"ziti_enabled":               "ZITI_ENABLED",
 		"ziti_ctrl_url":              "ZITI_CTRL_URL",
 		"ziti_admin_user":            "ZITI_ADMIN_USER",

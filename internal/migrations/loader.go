@@ -292,5 +292,12 @@ func allMigrations() []*Migration {
 			UpSQL:       accessSchemaUp,
 			DownSQL:     accessSchemaDown,
 		},
+		{
+			Version:     41,
+			Name:        "published_apps_public_host",
+			Description: "Adds public_host + landing_path to published_apps for the one-click 'open internal app' publish flow (POST /api/v1/access/apps/:id/publish-app): public_host records the external host assigned to an app (UI display + idempotent re-publish); landing_path is where the launcher tile points for apps whose UI is not at the site root (default '/'). Idempotent (ADD COLUMN IF NOT EXISTS).",
+			UpSQL:       oneClickAppsUp,
+			DownSQL:     oneClickAppsDown,
+		},
 	}
 }
