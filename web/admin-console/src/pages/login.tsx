@@ -77,7 +77,18 @@ export function LoginPage() {
 
   // Tenant branding state
   const [branding, setBranding] = useState<{
-    logo_url?: string; primary_color?: string; login_page_title?: string; login_page_message?: string
+    logo_url?: string
+    favicon_url?: string
+    primary_color?: string
+    secondary_color?: string
+    background_color?: string
+    background_image_url?: string
+    login_page_title?: string
+    login_page_message?: string
+    portal_title?: string
+    custom_css?: string
+    custom_footer?: string
+    powered_by_visible?: boolean
   }>({})
 
   // Fetch tenant branding based on domain
@@ -85,10 +96,82 @@ export function LoginPage() {
     const domain = window.location.hostname
     if (domain && domain !== 'localhost') {
       api.get<Record<string, unknown>>(`/api/v1/identity/branding?domain=${domain}`)
-        .then(data => { if (data?.logo_url || data?.primary_color) setBranding(data as typeof branding) })
+        .then(data => { if (data) setBranding(data as typeof branding) })
         .catch(() => {})
     }
   }, [])
+
+  // Apply tenant branding to the document (favicon, custom CSS, page background,
+  // document title). These are document-level side effects, so we apply/clean
+  // them up here rather than threading them through every login sub-screen's JSX.
+  useEffect(() => {
+    const cleanups: Array<() => void> = []
+
+    // Favicon
+    if (branding.favicon_url) {
+      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']")
+      const created = !link
+      if (!link) {
+        link = document.createElement('link')
+        link.rel = 'icon'
+        document.head.appendChild(link)
+      }
+      const prevHref = link.href
+      link.href = branding.favicon_url
+      cleanups.push(() => {
+        if (created) link?.remove()
+        else if (link) link.href = prevHref
+      })
+    }
+
+    // Document title from portal title
+    if (branding.portal_title) {
+      const prevTitle = document.title
+      document.title = branding.portal_title
+      cleanups.push(() => { document.title = prevTitle })
+    }
+
+    // Tenant-supplied custom CSS (trusted admin input, same trust level as the
+    // admin Branding page). Injected as a dedicated <style> element.
+    if (branding.custom_css) {
+      const style = document.createElement('style')
+      style.setAttribute('data-tenant-branding', 'true')
+      style.textContent = branding.custom_css
+      document.head.appendChild(style)
+      cleanups.push(() => { style.remove() })
+    }
+
+    // Page background (color + optional image). Applied to <body> so it covers
+    // every login screen variant uniformly.
+    const body = document.body
+    const prevBg = body.style.background
+    const prevBgColor = body.style.backgroundColor
+    if (branding.background_image_url) {
+      body.style.background = `url("${branding.background_image_url}") center / cover no-repeat fixed`
+      if (branding.background_color) body.style.backgroundColor = branding.background_color
+      cleanups.push(() => { body.style.background = prevBg; body.style.backgroundColor = prevBgColor })
+    } else if (branding.background_color) {
+      body.style.backgroundColor = branding.background_color
+      cleanups.push(() => { body.style.backgroundColor = prevBgColor })
+    }
+
+    return () => { cleanups.forEach(fn => fn()) }
+  }, [branding.favicon_url, branding.portal_title, branding.custom_css, branding.background_image_url, branding.background_color])
+
+  // Branded header pieces shared across the login sub-screens. When the tenant
+  // sets a primary (and optional secondary) color we recolor the gradient title;
+  // a tenant logo replaces the default Shield badge.
+  const brandTitleStyle = branding.primary_color
+    ? { backgroundImage: `linear-gradient(to right, ${branding.primary_color}, ${branding.secondary_color || branding.primary_color})` }
+    : undefined
+  const renderBrandLogo = () =>
+    branding.logo_url ? (
+      <img src={branding.logo_url} alt="" className="h-16 w-auto max-w-[12rem] object-contain mx-auto" />
+    ) : (
+      <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
+        <Shield className="h-9 w-9 text-white" />
+      </div>
+    )
 
   // Check if passkeys/WebAuthn are supported
   useEffect(() => {
@@ -1034,16 +1117,14 @@ export function LoginPage() {
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="text-center space-y-4">
             <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
-                <Shield className="h-9 w-9 text-white" />
-              </div>
+              {renderBrandLogo()}
             </div>
             <div>
-              <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                OpenIDX
+              <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent" style={brandTitleStyle}>
+                {branding.portal_title || 'OpenIDX'}
               </CardTitle>
               <CardDescription className="text-base mt-2">
-                Sign in with your credentials
+                {branding.login_page_message || 'Sign in with your credentials'}
               </CardDescription>
             </div>
           </CardHeader>
@@ -1231,16 +1312,14 @@ export function LoginPage() {
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
-            <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
-              <Shield className="h-9 w-9 text-white" />
-            </div>
+            {renderBrandLogo()}
           </div>
           <div>
-            <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-              OpenIDX
+            <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent" style={brandTitleStyle}>
+              {branding.portal_title || 'OpenIDX'}
             </CardTitle>
             <CardDescription className="text-base mt-2">
-              Identity & Access Management Platform
+              {branding.login_page_message || 'Identity & Access Management Platform'}
             </CardDescription>
           </div>
         </CardHeader>
@@ -1364,10 +1443,15 @@ export function LoginPage() {
       )}
 
       {/* Footer branding */}
-      <div className="absolute bottom-4 text-center w-full">
-        <p className="text-sm text-gray-500">
-          Powered by <span className="font-semibold text-gray-700">OpenIDX</span>
-        </p>
+      <div className="absolute bottom-4 text-center w-full space-y-1">
+        {branding.custom_footer && (
+          <p className="text-sm text-gray-600">{branding.custom_footer}</p>
+        )}
+        {branding.powered_by_visible !== false && (
+          <p className="text-sm text-gray-500">
+            Powered by <span className="font-semibold text-gray-700">OpenIDX</span>
+          </p>
+        )}
       </div>
     </div>
   )

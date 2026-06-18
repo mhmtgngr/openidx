@@ -2,7 +2,7 @@
 
 **Refreshed:** 2026-06-08 (commit `bd2faa4`, branch `main`)
 **Released version:** v1.0.0 (2026-05-22)
-**Verdict:** **Ready to deploy as a hardened, single-tenant, self-hosted IAM/ZTNA platform.** A handful of integration-test failures track real but narrow product gaps (documented in §6) — they do not block a production install, but the affected flows should be exercised manually until follow-up PRs land.
+**Verdict:** **Ready to deploy as a hardened, self-hosted IAM/ZTNA platform — single- or multi-tenant.** Multi-tenancy (app-layer `org_id` scoping + Postgres RLS belt) landed in v1.6–v1.8; see [DEPLOYMENT.md §4b](./DEPLOYMENT.md#step-4b--multi-tenancy-and-row-level-security-v16). A handful of integration-test failures track real but narrow product gaps (documented in §6) — they do not block a production install, but the affected flows should be exercised manually until follow-up PRs land.
 
 ---
 
@@ -12,7 +12,7 @@
 |---|---|---|
 | **Self-host one org on Kubernetes (production)** | ✅ Yes | Helm chart with `values-prod.yaml`, pinned tags, NetworkPolicies, autoscaling. Run through §5 first. |
 | **Self-host on a single VM via Docker Compose** | ✅ Yes | `deployments/docker/docker-compose.yml` — convenient for staging or small deployments. |
-| **Multi-tenant SaaS** | ❌ No | Out of scope for v1. Identity service has zero tenant scoping. Run one deployment per organization. |
+| **Multi-tenant SaaS** | ✅ Yes (v1.6+) | App-layer `org_id` scoping (`orgctx` + `TenantResolver`) **and** a Postgres RLS belt (migration v37, FORCE RLS on org-scoped tables). Set `TENANT_BASE_DOMAIN`, `DEFAULT_ORG_FALLBACK=false`. See [DEPLOYMENT.md §4b](./DEPLOYMENT.md#step-4b--multi-tenancy-and-row-level-security-v16) and `v2-multitenancy-design.md`. |
 | **Cloud deploy via Terraform (AWS EKS)** | ✅ Yes | `deployments/terraform/` is wired with remote-state bootstrap. |
 | **Production with PII / regulated data** | ⚠️ Yes, with the hardening checklist (§5) | The `ValidateProduction()` startup gate enforces TLS, real secrets, CSRF, no debug OTP, etc. — refuse to start in prod with insecure defaults. |
 

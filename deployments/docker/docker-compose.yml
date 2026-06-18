@@ -175,7 +175,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -215,7 +215,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -250,7 +250,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -284,7 +284,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
@@ -317,7 +317,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OPA_URL=http://opa:8281
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
@@ -357,7 +357,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json
@@ -395,7 +395,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - LOG_LEVEL=debug
       - OPENIDX_ENABLE_RATE_LIMIT=false
@@ -1130,7 +1130,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=disable
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-disable}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required - run scripts/generate-secrets.sh}@redis:6379
       - OAUTH_ISSUER=https://oauth.localtest.me:8446
       - OAUTH_JWKS_URL=http://oauth-service:8006/.well-known/jwks.json

@@ -456,6 +456,30 @@ func TestTenantResolver_infraPaths_skipResolution(t *testing.T) {
 	}
 }
 
+func TestTenantResolver_brandingPath_skipResolution(t *testing.T) {
+	// The public login-branding endpoint must pass through without a resolved
+	// org even when DefaultOrgFallback is off (the multi-tenant posture) and the
+	// org lookup is failing: the SPA login page fetches it pre-auth/pre-tenant
+	// and it resolves the tenant itself from its query params. Without this
+	// exemption the login page could never render tenant branding.
+	lookup := newFakeLookup()
+	lookup.fail = errors.New("database is down")
+	cfg := TenantResolverConfig{DefaultOrgFallback: false}
+
+	got := &capturedRequest{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/identity/branding?org=acme", nil)
+
+	rec := runResolver(t, lookup, cfg, got, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (branding path must bypass resolver); body=%s",
+			rec.Code, rec.Body.String())
+	}
+	if !errors.Is(got.orgErr, orgctx.ErrNoOrgContext) {
+		t.Errorf("orgctx err = %v, want ErrNoOrgContext (resolver must not attach an org)", got.orgErr)
+	}
+}
+
 func TestTenantResolver_nonInfraPath_withInfraPrefixInName_isResolved(t *testing.T) {
 	// "/healthcheck-export" is NOT an infra path: the skip must match
 	// whole path segments, not raw string prefixes.

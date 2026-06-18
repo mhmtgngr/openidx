@@ -271,5 +271,12 @@ func allMigrations() []*Migration {
 			UpSQL:       rlsActivateUp,
 			DownSQL:     rlsActivateDown,
 		},
+		{
+			Version:     38,
+			Name:        "tenant_tables",
+			Description: "Create tenant_branding, tenant_domains and tenant_settings in the versioned migration set. These back the multi-tenant login (per-org branding read by the public branding endpoint + OAuth login page) and domain-based tenant resolution. They previously lived only in deployments/docker/init-db.sql (docker-compose only), so managed-RDS/Helm deploys never had them. DDL is idempotent (IF NOT EXISTS) — a no-op on init-db.sql-bootstrapped clusters. Not placed under the RLS belt: both are read before any org context exists.",
+			UpSQL:       tenantTablesUp,
+			DownSQL:     tenantTablesDown,
+		},
 	}
 }
