@@ -30,6 +30,13 @@ A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
 - **`/users` client crash** — avatar initials read `user.username[0]` without a
   null guard (`Cannot read properties of undefined`). Now uses optional chaining
   with a `'?'` fallback.
+- **`/users` showed blank names/emails + "Invalid Date"** — the admin users API
+  speaks SCIM (`userName`, `name.givenName`, `emails[].value`, `createdAt`,
+  `active`) per the identity models + SCIM integration tests, but the console is
+  flat snake_case throughout. The console now adapts SCIM↔flat for the users
+  endpoint (read and create/update) in `users.tsx`, leaving the rest of the page
+  flat. (Backend left unchanged — its SCIM shape is the codified contract used by
+  `/scim/v2/Users` and internal oauth/webauthn callers.)
 
 ### gateway-service startup fixes
 
