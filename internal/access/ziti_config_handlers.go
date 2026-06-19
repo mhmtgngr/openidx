@@ -16,7 +16,7 @@ func (s *Service) handleListConfigTypes(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/config-types?limit=500", nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/config-types?limit=500", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -52,7 +52,7 @@ func (s *Service) handleListConfigs(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/configs?limit=500", nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/configs?limit=500", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -110,7 +110,7 @@ func (s *Service) handleCreateConfig(c *gin.Context) {
 		"data":         req.Data,
 	}
 	body, _ := json.Marshal(payload)
-	respData, statusCode, err := s.zitiManager.MgmtRequest("POST", "/edge/management/v1/configs", body)
+	respData, statusCode, err := s.ziti().MgmtRequest("POST", "/edge/management/v1/configs", body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -141,7 +141,7 @@ func (s *Service) handleUpdateConfig(c *gin.Context) {
 		"data": req.Data,
 	}
 	body, _ := json.Marshal(payload)
-	respData, statusCode, err := s.zitiManager.MgmtRequest("PUT", "/edge/management/v1/configs/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/configs/"+id, body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -158,7 +158,7 @@ func (s *Service) handleDeleteConfig(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/configs/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/configs/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -119,6 +119,9 @@ module "rds" {
   identifier     = "openidx-${var.environment}"
   engine_version = "16.1"
   instance_class = var.environment == "prod" ? "db.r6g.large" : "db.t3.medium"
+  # Multi-AZ (synchronous standby + automatic failover) in prod; single-AZ in
+  # dev to save cost. Mirrors the instance_class / NAT-gateway env conditionals.
+  multi_az = var.environment == "prod"
 
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.private_subnets

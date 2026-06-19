@@ -245,13 +245,13 @@ func (s *Service) checkZitiHealth(ctx context.Context) *ZitiHealth {
 		LastCheck: time.Now(),
 	}
 
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		health.ErrorMessage = "Ziti manager not configured"
 		return health
 	}
 
 	// Check controller connectivity
-	controllerReachable, err := s.zitiManager.CheckControllerHealth(ctx)
+	controllerReachable, err := s.ziti().CheckControllerHealth(ctx)
 	health.ControllerReachable = controllerReachable
 	if !controllerReachable {
 		health.Status = "unhealthy"
@@ -262,13 +262,13 @@ func (s *Service) checkZitiHealth(ctx context.Context) *ZitiHealth {
 	}
 
 	// Get counts
-	services, _ := s.zitiManager.ListServices(ctx)
+	services, _ := s.ziti().ListServices(ctx)
 	health.ServicesCount = len(services)
 
-	identities, _ := s.zitiManager.ListIdentities(ctx)
+	identities, _ := s.ziti().ListIdentities(ctx)
 	health.IdentitiesCount = len(identities)
 
-	routers, _ := s.zitiManager.ListEdgeRouters(ctx)
+	routers, _ := s.ziti().ListEdgeRouters(ctx)
 	health.RoutersTotal = len(routers)
 	for _, r := range routers {
 		if r.IsOnline {
@@ -422,14 +422,14 @@ func (s *Service) checkZitiServiceHealth(ctx context.Context, serviceName string
 		Details: make(map[string]interface{}),
 	}
 
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		health.Status = "unavailable"
 		health.ErrorMessage = "Ziti manager not available"
 		return health
 	}
 
 	// Check if service exists and is reachable
-	service, err := s.zitiManager.GetServiceByName(serviceName)
+	service, err := s.ziti().GetServiceByName(serviceName)
 	if err != nil {
 		health.Status = "unhealthy"
 		health.ErrorMessage = "Service not found in Ziti"

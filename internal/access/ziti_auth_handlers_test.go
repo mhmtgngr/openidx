@@ -558,9 +558,9 @@ func TestZitiAuthHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create service with mock configuration
 			svc := &Service{
-				zitiManager: tt.setupMock(),
-				logger:      MockLogger(t),
-				config:      MockConfig(t),
+				zitiProvider: newZitiProviderWith(tt.setupMock()),
+				logger:       MockLogger(t),
+				config:       MockConfig(t),
 			}
 
 			// Setup router and handler
@@ -733,9 +733,9 @@ func TestValidateZitiToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &Service{
-				zitiManager: tt.setupMock(),
-				logger:      MockLogger(t),
-				config:      MockConfig(t),
+				zitiProvider: newZitiProviderWith(tt.setupMock()),
+				logger:       MockLogger(t),
+				config:       MockConfig(t),
 			}
 
 			router := gin.New()
@@ -753,13 +753,13 @@ func TestValidateZitiToken(t *testing.T) {
 				}
 
 				// Validate token using ZitiManager
-				if svc.zitiManager == nil {
+				if svc.ziti() == nil {
 					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti manager is not available"})
 					return
 				}
 
 				// Simulate token validation
-				body, status, err := svc.zitiManager.MgmtRequest("POST", "/edge/management/v1/validate", nil)
+				body, status, err := svc.ziti().MgmtRequest("POST", "/edge/management/v1/validate", nil)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate token"})
 					return
@@ -1049,15 +1049,15 @@ func TestHandleZitiCallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &Service{
-				zitiManager: tt.setupMock(),
-				logger:      MockLogger(t),
-				config:      MockConfig(t),
+				zitiProvider: newZitiProviderWith(tt.setupMock()),
+				logger:       MockLogger(t),
+				config:       MockConfig(t),
 			}
 
 			router := gin.New()
 			router.GET("/callback", func(c *gin.Context) {
 				// Check if Ziti manager is available
-				if svc.zitiManager == nil {
+				if svc.ziti() == nil {
 					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti manager is not available"})
 					return
 				}
@@ -1072,7 +1072,7 @@ func TestHandleZitiCallback(t *testing.T) {
 				}
 
 				// Simulate callback processing
-				body, status, err := svc.zitiManager.MgmtRequest("GET", "/edge/management/v1/callback?code="+code+"&state="+state, nil)
+				body, status, err := svc.ziti().MgmtRequest("GET", "/edge/management/v1/callback?code="+code+"&state="+state, nil)
 				if err != nil || status >= 400 {
 					if status == http.StatusUnauthorized {
 						var resp map[string]interface{}
@@ -1129,8 +1129,8 @@ func TestZitiAuthHandlerEdgeCases(t *testing.T) {
 
 	t.Run("handleUpdateAuthPolicy with nil ZitiManager", func(t *testing.T) {
 		svc := &Service{
-			zitiManager: nil,
-			logger:      MockLogger(t),
+			zitiProvider: newZitiProviderWith(nil),
+			logger:       MockLogger(t),
 		}
 
 		router := gin.New()
@@ -1171,8 +1171,8 @@ func TestZitiAuthHandlerEdgeCases(t *testing.T) {
 		}
 
 		svc := &Service{
-			zitiManager: zm,
-			logger:      MockLogger(t),
+			zitiProvider: newZitiProviderWith(zm),
+			logger:       MockLogger(t),
 		}
 
 		router := gin.New()
@@ -1210,8 +1210,8 @@ func TestZitiAuthHandlerEdgeCases(t *testing.T) {
 		}
 
 		svc := &Service{
-			zitiManager: zm,
-			logger:      MockLogger(t),
+			zitiProvider: newZitiProviderWith(zm),
+			logger:       MockLogger(t),
 		}
 
 		router := gin.New()

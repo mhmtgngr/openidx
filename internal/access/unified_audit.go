@@ -35,9 +35,12 @@ type UnifiedAuditEvent struct {
 type UnifiedAuditService struct {
 	db              *database.PostgresDB
 	logger          *zap.Logger
-	zitiManager     *ZitiManager
+	zitiProvider    *ZitiProvider
 	guacamoleClient *GuacamoleClient
 }
+
+// ziti returns the live OpenZiti manager (nil when disconnected).
+func (uas *UnifiedAuditService) ziti() *ZitiManager { return uas.zitiProvider.Get() }
 
 // NewUnifiedAuditService creates a new UnifiedAuditService
 func NewUnifiedAuditService(db *database.PostgresDB, logger *zap.Logger) *UnifiedAuditService {
@@ -47,9 +50,15 @@ func NewUnifiedAuditService(db *database.PostgresDB, logger *zap.Logger) *Unifie
 	}
 }
 
-// SetZitiManager sets the Ziti manager for audit sync
+// SetZitiProvider wires the shared provider.
+func (uas *UnifiedAuditService) SetZitiProvider(p *ZitiProvider) { uas.zitiProvider = p }
+
+// SetZitiManager installs a manager into the provider (compat shim for tests).
 func (uas *UnifiedAuditService) SetZitiManager(zm *ZitiManager) {
-	uas.zitiManager = zm
+	if uas.zitiProvider == nil {
+		uas.zitiProvider = NewZitiProvider()
+	}
+	uas.zitiProvider.Store(zm)
 }
 
 // SetGuacamoleClient sets the Guacamole client for audit sync
@@ -226,7 +235,7 @@ type AuditQueryResult struct {
 // SyncExternalAuditEvents syncs audit events from Ziti and Guacamole
 func (uas *UnifiedAuditService) SyncExternalAuditEvents(ctx context.Context) error {
 	// Sync Ziti events
-	if uas.zitiManager != nil && uas.zitiManager.IsInitialized() {
+	if uas.ziti() != nil && uas.ziti().IsInitialized() {
 		if err := uas.syncZitiAuditEvents(ctx); err != nil {
 			uas.logger.Warn("Failed to sync Ziti audit events", zap.Error(err))
 		}
@@ -252,7 +261,7 @@ func (uas *UnifiedAuditService) syncZitiAuditEvents(ctx context.Context) error {
 
 	// Fetch events from Ziti (this would call the Ziti management API for audit logs)
 	// Note: This is a placeholder - actual Ziti audit API integration would go here
-	events, err := uas.zitiManager.GetAuditEvents(ctx, lastSyncAt)
+	events, err := uas.ziti().GetAuditEvents(ctx, lastSyncAt)
 	if err != nil {
 		return err
 	}

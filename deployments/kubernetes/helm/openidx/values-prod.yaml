@@ -148,7 +148,10 @@ adminConsole:
         hosts:
           - admin.openidx.example.com
 
-# Public API ingress
+# Public API ingress.
+# HA note: these Ingresses use ingressClassName "nginx"; the controller that
+# serves them must be installed HA (≥2 replicas behind an AWS NLB) — see
+# deployments/kubernetes/ingress-nginx-values.yaml (`make helm-ingress-nginx`).
 ingress:
   enabled: true
   hosts:

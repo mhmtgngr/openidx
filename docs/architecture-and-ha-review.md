@@ -194,9 +194,11 @@ OpenZiti zero-trust overlay for app access.
 **Roadmap (by priority):**
 
 - **P0 (correctness / SPOF — do first):**
-  1. Leader election (or a `replicas:1` worker Deployment) for the §3 background loops.
-  2. RDS `multi_az = true`.
-  3. Explicit ingress HA: ≥2 controller replicas behind an AWS NLB.
+  1. ✅ **Done** — leader election for the §3 background loops (`internal/common/leader`, PR #181).
+  2. ✅ **Done** — RDS `multi_az = true` in prod (`deployments/terraform/main.tf`).
+  3. ✅ **Done** — ingress HA: `deployments/kubernetes/ingress-nginx-values.yaml`
+     (≥2 controller replicas + HPA + AZ topology spread + PDB, behind an AWS NLB;
+     `make helm-ingress-nginx`).
 - **P1 (resilience / hardening):**
   4. Collapse the three proxy layers → NLB + APISIX (drop gateway-service from the hot path).
   5. AWS WAF at the edge.

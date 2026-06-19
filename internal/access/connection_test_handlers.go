@@ -240,7 +240,7 @@ func (s *Service) testZitiConnectivity(ctx context.Context, route *ProxyRoute) *
 		Details: make(map[string]interface{}),
 	}
 
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		result.Success = false
 		result.ErrorMessage = "Ziti manager not available"
 		return result
@@ -249,7 +249,7 @@ func (s *Service) testZitiConnectivity(ctx context.Context, route *ProxyRoute) *
 	start := time.Now()
 
 	// Check if service exists
-	service, err := s.zitiManager.GetServiceByName(route.ZitiServiceName)
+	service, err := s.ziti().GetServiceByName(route.ZitiServiceName)
 	if err != nil {
 		result.Success = false
 		result.ErrorMessage = fmt.Sprintf("Service not found: %s", err.Error())
@@ -261,7 +261,7 @@ func (s *Service) testZitiConnectivity(ctx context.Context, route *ProxyRoute) *
 	result.Details["service_name"] = service.Name
 
 	// Check if service is reachable through Ziti
-	reachable, dialErr := s.zitiManager.TestServiceDial(ctx, route.ZitiServiceName)
+	reachable, dialErr := s.ziti().TestServiceDial(ctx, route.ZitiServiceName)
 	result.LatencyMs = time.Since(start).Milliseconds()
 
 	if reachable {

@@ -80,6 +80,22 @@ type ZitiIdentityInfo struct {
 	} `json:"enrollment,omitempty"`
 }
 
+// NewZitiManagerWithConn builds a ZitiManager against an explicit connection
+// (controller URL / admin creds / identity dir / insecure), overriding whatever
+// is in base cfg. Used for the admin-panel runtime connect path so the
+// connection can come from DB settings rather than env. base provides all the
+// non-Ziti config the manager needs.
+func NewZitiManagerWithConn(base *config.Config, ctrlURL, adminUser, adminPwd, identityDir string, insecure bool, db *database.PostgresDB, logger *zap.Logger) (*ZitiManager, error) {
+	c := *base // shallow copy; we only override the Ziti connection fields
+	c.ZitiEnabled = true
+	c.ZitiCtrlURL = ctrlURL
+	c.ZitiAdminUser = adminUser
+	c.ZitiAdminPassword = adminPwd
+	c.ZitiIdentityDir = identityDir
+	c.ZitiInsecureSkipVerify = insecure
+	return NewZitiManager(&c, db, logger)
+}
+
 // NewZitiManager creates and initializes the ZitiManager
 func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*ZitiManager, error) {
 	zm := &ZitiManager{
@@ -1185,12 +1201,18 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 	zitiServiceID := svcResp.Data.ID
 	zm.logger.Info("Created Ziti service", zap.String("name", serviceName), zap.String("id", zitiServiceID))
 
-	// 2. Persist to ziti_services table
+	// 2. Persist to ziti_services table. route_id is a UUID column; internal
+	// services (e.g. browzer-router-zt) have no owning route, so pass NULL
+	// rather than "" (which errors as invalid uuid, SQLSTATE 22P02).
+	var routeIDArg interface{}
+	if routeID != "" {
+		routeIDArg = routeID
+	}
 	_, err = zm.db.Pool.Exec(ctx,
 		//orgscope:ignore startup/infra Ziti provisioning reachable from cross-org seeded-route reconciliation; keyed by globally-unique ziti service name
 		`INSERT INTO ziti_services (ziti_id, name, host, port, route_id) VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (name) DO UPDATE SET ziti_id=$1, host=$3, port=$4, route_id=$5, updated_at=NOW()`,
-		zitiServiceID, serviceName, host, port, routeID)
+		zitiServiceID, serviceName, host, port, routeIDArg)
 	if err != nil {
 		zm.logger.Error("Failed to persist ziti service to DB", zap.Error(err))
 	}

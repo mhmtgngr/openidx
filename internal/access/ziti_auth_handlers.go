@@ -16,7 +16,7 @@ func (s *Service) handleListAuthPolicies(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/auth-policies?limit=500", nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/auth-policies?limit=500", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -68,7 +68,7 @@ func (s *Service) handleCreateAuthPolicy(c *gin.Context) {
 	}
 
 	body, _ := json.Marshal(req)
-	respData, statusCode, err := s.zitiManager.MgmtRequest("POST", "/edge/management/v1/auth-policies", body)
+	respData, statusCode, err := s.ziti().MgmtRequest("POST", "/edge/management/v1/auth-policies", body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -96,7 +96,7 @@ func (s *Service) handleUpdateAuthPolicy(c *gin.Context) {
 	}
 
 	body, _ := json.Marshal(req)
-	respData, statusCode, err := s.zitiManager.MgmtRequest("PUT", "/edge/management/v1/auth-policies/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/auth-policies/"+id, body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -113,7 +113,7 @@ func (s *Service) handleDeleteAuthPolicy(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/auth-policies/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/auth-policies/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -133,7 +133,7 @@ func (s *Service) handleListJWTSigners(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/external-jwt-signers?limit=500", nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/external-jwt-signers?limit=500", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -195,7 +195,7 @@ func (s *Service) handleCreateJWTSigner(c *gin.Context) {
 	}
 
 	body, _ := json.Marshal(req)
-	respData, statusCode, err := s.zitiManager.MgmtRequest("POST", "/edge/management/v1/external-jwt-signers", body)
+	respData, statusCode, err := s.ziti().MgmtRequest("POST", "/edge/management/v1/external-jwt-signers", body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -228,7 +228,7 @@ func (s *Service) handleUpdateJWTSigner(c *gin.Context) {
 	}
 
 	body, _ := json.Marshal(req)
-	respData, statusCode, err := s.zitiManager.MgmtRequest("PUT", "/edge/management/v1/external-jwt-signers/"+id, body)
+	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/external-jwt-signers/"+id, body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -245,7 +245,7 @@ func (s *Service) handleDeleteJWTSigner(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/external-jwt-signers/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/external-jwt-signers/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

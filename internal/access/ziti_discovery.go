@@ -53,7 +53,7 @@ type ImportResult struct {
 
 // handleDiscoverZitiServices discovers unmanaged Ziti services
 func (s *Service) handleDiscoverZitiServices(c *gin.Context) {
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti manager not available"})
 		return
 	}
@@ -70,7 +70,7 @@ func (s *Service) handleDiscoverZitiServices(c *gin.Context) {
 
 // handleImportZitiService imports a discovered Ziti service as a proxy route
 func (s *Service) handleImportZitiService(c *gin.Context) {
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti manager not available"})
 		return
 	}
@@ -99,7 +99,7 @@ func (s *Service) handleImportZitiService(c *gin.Context) {
 
 // handleBulkImportZitiServices imports multiple discovered services
 func (s *Service) handleBulkImportZitiServices(c *gin.Context) {
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Ziti manager not available"})
 		return
 	}
@@ -143,7 +143,7 @@ func (s *Service) discoverZitiServices(ctx context.Context) (*DiscoveryResult, e
 	}
 
 	// Get all services from Ziti controller
-	zitiServices, err := s.zitiManager.ListServices(ctx)
+	zitiServices, err := s.ziti().ListServices(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list Ziti services: %w", err)
 	}
@@ -222,7 +222,7 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 	}
 
 	// Get service details from Ziti
-	service, err := s.zitiManager.GetService(req.ZitiID)
+	service, err := s.ziti().GetService(req.ZitiID)
 	if err != nil {
 		return nil, fmt.Errorf("service not found in Ziti: %w", err)
 	}
@@ -308,7 +308,7 @@ func (s *Service) importZitiService(ctx context.Context, req *ImportServiceReque
 
 // handleGetUnmanagedServicesCount returns a quick count of importable services
 func (s *Service) handleGetUnmanagedServicesCount(c *gin.Context) {
-	if s.zitiManager == nil || !s.zitiManager.IsInitialized() {
+	if s.ziti() == nil || !s.ziti().IsInitialized() {
 		c.JSON(http.StatusOK, gin.H{"count": 0, "available": false})
 		return
 	}

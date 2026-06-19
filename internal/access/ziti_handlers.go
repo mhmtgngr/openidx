@@ -16,7 +16,7 @@ import (
 // ---- Ziti Status ----
 
 func (s *Service) handleZitiStatus(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled":   false,
 			"message":   "OpenZiti integration is not configured",
@@ -27,11 +27,11 @@ func (s *Service) handleZitiStatus(c *gin.Context) {
 
 	status := gin.H{
 		"enabled":   true,
-		"sdk_ready": s.zitiManager.IsInitialized(),
+		"sdk_ready": s.ziti().IsInitialized(),
 	}
 
 	// Check controller connectivity
-	version, err := s.zitiManager.GetControllerVersion(c.Request.Context())
+	version, err := s.ziti().GetControllerVersion(c.Request.Context())
 	if err != nil {
 		status["controller_reachable"] = false
 		status["controller_error"] = err.Error()
@@ -135,7 +135,7 @@ func (s *Service) handleListZitiServices(c *gin.Context) {
 }
 
 func (s *Service) handleCreateZitiService(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
@@ -177,7 +177,7 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 		return
 	}
 
-	zitiID, err := s.zitiManager.CreateService(c.Request.Context(), req.Name, attrs)
+	zitiID, err := s.ziti().CreateService(c.Request.Context(), req.Name, attrs)
 	if err != nil {
 		s.logger.Error("Failed to create ziti service", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -205,7 +205,7 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteZitiService(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
@@ -228,7 +228,7 @@ func (s *Service) handleDeleteZitiService(c *gin.Context) {
 	}
 
 	// Delete from Ziti controller
-	if err := s.zitiManager.DeleteService(c.Request.Context(), zitiID); err != nil {
+	if err := s.ziti().DeleteService(c.Request.Context(), zitiID); err != nil {
 		s.logger.Error("Failed to delete ziti service from controller", zap.Error(err))
 		// Continue to delete from DB anyway
 	}
@@ -295,7 +295,7 @@ func (s *Service) handleListZitiIdentities(c *gin.Context) {
 }
 
 func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
@@ -322,7 +322,7 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 		return
 	}
 
-	zitiID, enrollmentJWT, err := s.zitiManager.CreateIdentity(c.Request.Context(), req.Name, req.IdentityType, req.Attributes)
+	zitiID, enrollmentJWT, err := s.ziti().CreateIdentity(c.Request.Context(), req.Name, req.IdentityType, req.Attributes)
 	if err != nil {
 		s.logger.Error("Failed to create ziti identity", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -353,7 +353,7 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 }
 
 func (s *Service) handleDeleteZitiIdentity(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
@@ -374,7 +374,7 @@ func (s *Service) handleDeleteZitiIdentity(c *gin.Context) {
 		return
 	}
 
-	if err := s.zitiManager.DeleteIdentity(c.Request.Context(), zitiID); err != nil {
+	if err := s.ziti().DeleteIdentity(c.Request.Context(), zitiID); err != nil {
 		s.logger.Error("Failed to delete ziti identity from controller", zap.Error(err))
 	}
 
@@ -410,8 +410,8 @@ func (s *Service) handleGetEnrollmentJWT(c *gin.Context) {
 	}
 
 	// Try to fetch from controller
-	if s.zitiManager != nil {
-		jwt, err := s.zitiManager.GetIdentityEnrollmentJWT(c.Request.Context(), zitiID)
+	if s.ziti() != nil {
+		jwt, err := s.ziti().GetIdentityEnrollmentJWT(c.Request.Context(), zitiID)
 		if err == nil && jwt != "" {
 			// Update DB
 			s.db.Pool.Exec(c.Request.Context(),
@@ -433,7 +433,7 @@ func (s *Service) handleGetEnrollmentJWT(c *gin.Context) {
 // ---- Enable/Disable Ziti on Routes ----
 
 func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
@@ -458,7 +458,7 @@ func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
 		return
 	}
 
-	if err := s.zitiManager.SetupZitiForRoute(c.Request.Context(), routeID, req.ServiceName, req.Host, req.Port); err != nil {
+	if err := s.ziti().SetupZitiForRoute(c.Request.Context(), routeID, req.ServiceName, req.Host, req.Port); err != nil {
 		s.logger.Error("Failed to enable Ziti on route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -474,7 +474,7 @@ func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
 }
 
 func (s *Service) handleDisableZitiOnRoute(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OpenZiti is not configured"})
 		return
 	}
@@ -488,7 +488,7 @@ func (s *Service) handleDisableZitiOnRoute(c *gin.Context) {
 		return
 	}
 
-	if err := s.zitiManager.TeardownZitiForRoute(c.Request.Context(), routeID); err != nil {
+	if err := s.ziti().TeardownZitiForRoute(c.Request.Context(), routeID); err != nil {
 		s.logger.Error("Failed to disable Ziti on route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -97,7 +97,7 @@ type Service struct {
 	oauthIssuer          string
 	oauthInternalURL     string // Docker-internal URL for server-to-server calls
 	oauthJWKSURL         string
-	zitiManager          *ZitiManager
+	zitiProvider         *ZitiProvider
 	guacamoleClient      *GuacamoleClient
 	featureManager       *FeatureManager
 	auditService         *UnifiedAuditService
@@ -129,22 +129,39 @@ func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	}
 }
 
-// SetZitiManager sets the OpenZiti manager for the service
-func (s *Service) SetZitiManager(zm *ZitiManager) {
-	s.zitiManager = zm
+// ziti returns the live OpenZiti manager (nil when disconnected). All call
+// sites read through this accessor so the manager can be swapped at runtime.
+func (s *Service) ziti() *ZitiManager { return s.zitiProvider.Get() }
+
+// ZitiProvider exposes the shared provider (for the connect/disconnect handlers).
+func (s *Service) ZitiProvider() *ZitiProvider { return s.zitiProvider }
+
+// SetZitiProvider wires the shared provider and fans it to the child services so
+// a runtime Swap is visible everywhere.
+func (s *Service) SetZitiProvider(p *ZitiProvider) {
+	s.zitiProvider = p
 	if s.featureManager != nil {
-		s.featureManager.SetZitiManager(zm)
+		s.featureManager.SetZitiProvider(p)
 	}
 	if s.auditService != nil {
-		s.auditService.SetZitiManager(zm)
+		s.auditService.SetZitiProvider(p)
 	}
+}
+
+// SetZitiManager installs a manager into the shared provider (compat shim for
+// boot/tests). Creates+fans a provider if one isn't wired yet.
+func (s *Service) SetZitiManager(zm *ZitiManager) {
+	if s.zitiProvider == nil {
+		s.SetZitiProvider(NewZitiProvider())
+	}
+	s.zitiProvider.Store(zm)
 }
 
 // SetFeatureManager sets the feature manager for the service
 func (s *Service) SetFeatureManager(fm *FeatureManager) {
 	s.featureManager = fm
-	if s.zitiManager != nil {
-		fm.SetZitiManager(s.zitiManager)
+	if s.zitiProvider != nil {
+		fm.SetZitiProvider(s.zitiProvider)
 	}
 	if s.guacamoleClient != nil {
 		fm.SetGuacamoleClient(s.guacamoleClient)
@@ -164,8 +181,8 @@ func (s *Service) SetAPISIXConfigPath(path string) {
 // SetAuditService sets the unified audit service
 func (s *Service) SetAuditService(as *UnifiedAuditService) {
 	s.auditService = as
-	if s.zitiManager != nil {
-		as.SetZitiManager(s.zitiManager)
+	if s.zitiProvider != nil {
+		as.SetZitiProvider(s.zitiProvider)
 	}
 	if s.guacamoleClient != nil {
 		as.SetGuacamoleClient(s.guacamoleClient)
@@ -233,6 +250,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// OpenZiti management endpoints
 		api.GET("/ziti/status", svc.handleZitiStatus)
+		// Runtime connection control (admin-only): configure + connect/disconnect
+		// the OpenZiti controller from the admin panel with no restart.
+		api.GET("/ziti/settings", svc.requireAdminRole(), svc.handleGetZitiSettings)
+		api.PUT("/ziti/settings", svc.requireAdminRole(), svc.handlePutZitiSettings)
+		api.POST("/ziti/settings/test", svc.requireAdminRole(), svc.handleTestZitiSettings)
+		api.POST("/ziti/connect", svc.requireAdminRole(), svc.handleZitiConnect)
+		api.POST("/ziti/disconnect", svc.requireAdminRole(), svc.handleZitiDisconnect)
 		api.GET("/ziti/services", svc.handleListZitiServices)
 		api.POST("/ziti/services", svc.handleCreateZitiService)
 		api.DELETE("/ziti/services/:id", svc.handleDeleteZitiService)
@@ -422,7 +446,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Agent admin surface (enrollment-token CRUD, agent list / approve /
 		// revoke, OAuth-based mobile enrollment, Android QR helpers). Inherits
 		// the auth middleware applied to `api`.
-		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.zitiManager)
+		agentHandler := NewAgentAPIHandler(svc.logger, svc.db, svc.ziti())
 		agentHandler.RegisterAgentAdminRoutes(api)
 		agentHandler.StartGracePeriodEnforcer(context.Background(), 5*time.Minute)
 		svc.agentHandler = agentHandler
@@ -1549,8 +1573,8 @@ func (s *Service) handleProxy(c *gin.Context) {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
 	// Use Ziti transport if the route has Ziti enabled and ZitiManager is available
-	if route.ZitiEnabled && route.ZitiServiceName != "" && s.zitiManager != nil && s.zitiManager.IsInitialized() {
-		proxy.Transport = s.zitiManager.ZitiTransport(route.ZitiServiceName)
+	if route.ZitiEnabled && route.ZitiServiceName != "" && s.ziti() != nil && s.ziti().IsInitialized() {
+		proxy.Transport = s.ziti().ZitiTransport(route.ZitiServiceName)
 		s.logger.Debug("Proxying through Ziti overlay",
 			zap.String("service", route.ZitiServiceName),
 			zap.String("route", route.Name))

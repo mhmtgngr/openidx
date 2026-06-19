@@ -301,6 +301,16 @@ helm-uninstall:
 	@echo "🗑️  Uninstalling OpenIDX..."
 	$(HELM) uninstall openidx --namespace $(NAMESPACE)
 
+helm-ingress-nginx:
+	@echo "🌐 Installing HA ingress-nginx controller (≥2 replicas behind an NLB)..."
+	$(HELM) repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+	$(HELM) repo update ingress-nginx
+	$(HELM) upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+		--namespace ingress-nginx \
+		--create-namespace \
+		--values deployments/kubernetes/ingress-nginx-values.yaml \
+		--wait
+
 k8s-apply:
 	@echo "📦 Applying Kubernetes manifests..."
 	$(KUBECTL) apply -k deployments/kubernetes/overlays/development

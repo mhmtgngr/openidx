@@ -16,7 +16,7 @@ import (
 
 // handleBrowZerStatus returns the current BrowZer configuration state
 func (s *Service) handleBrowZerStatus(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled": false,
 			"reason":  "ziti not initialized",
@@ -24,7 +24,7 @@ func (s *Service) handleBrowZerStatus(c *gin.Context) {
 		return
 	}
 
-	cfg, err := s.zitiManager.GetBrowZerConfig(c.Request.Context())
+	cfg, err := s.ziti().GetBrowZerConfig(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled":          false,
@@ -39,12 +39,12 @@ func (s *Service) handleBrowZerStatus(c *gin.Context) {
 
 // handleEnableBrowZer creates all BrowZer resources on the Ziti controller
 func (s *Service) handleEnableBrowZer(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
 		return
 	}
 
-	err := s.zitiManager.BootstrapBrowZer(
+	err := s.ziti().BootstrapBrowZer(
 		c.Request.Context(),
 		s.oauthIssuer,
 		s.oauthJWKSURL,
@@ -61,12 +61,12 @@ func (s *Service) handleEnableBrowZer(c *gin.Context) {
 
 // handleDisableBrowZer removes BrowZer resources from the Ziti controller
 func (s *Service) handleDisableBrowZer(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
 		return
 	}
 
-	err := s.zitiManager.DisableBrowZer(c.Request.Context())
+	err := s.ziti().DisableBrowZer(c.Request.Context())
 	if err != nil {
 		s.logger.Error("Failed to disable BrowZer", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -79,7 +79,7 @@ func (s *Service) handleDisableBrowZer(c *gin.Context) {
 // handleEnableBrowZerOnService adds the "browzer-enabled" role attribute to a Ziti service
 // and optionally creates a proxy_route for path-based BrowZer access.
 func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
 		return
 	}
@@ -102,7 +102,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	browzerDomain := strings.TrimSpace(body.Domain)
 
 	// Get current attributes
-	attrs, err := s.zitiManager.GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
+	attrs, err := s.ziti().GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 		return
@@ -120,7 +120,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		attrs = append(attrs, "browzer-enabled")
 	}
 
-	if err := s.zitiManager.PatchServiceRoleAttributes(c.Request.Context(), zitiServiceID, attrs); err != nil {
+	if err := s.ziti().PatchServiceRoleAttributes(c.Request.Context(), zitiServiceID, attrs); err != nil {
 		s.logger.Error("Failed to enable BrowZer on service", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -226,7 +226,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 
 // handleDisableBrowZerOnService removes the "browzer-enabled" role attribute from a Ziti service
 func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
-	if s.zitiManager == nil {
+	if s.ziti() == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ziti not initialized"})
 		return
 	}
@@ -239,7 +239,7 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 		return
 	}
 
-	attrs, err := s.zitiManager.GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
+	attrs, err := s.ziti().GetServiceRoleAttributes(c.Request.Context(), zitiServiceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 		return
@@ -253,7 +253,7 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 		}
 	}
 
-	if err := s.zitiManager.PatchServiceRoleAttributes(c.Request.Context(), zitiServiceID, filtered); err != nil {
+	if err := s.ziti().PatchServiceRoleAttributes(c.Request.Context(), zitiServiceID, filtered); err != nil {
 		s.logger.Error("Failed to disable BrowZer on service", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
