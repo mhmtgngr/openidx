@@ -1836,19 +1836,36 @@ func (s *Service) ensureBrowZerAttribute(ctx context.Context, zm *ZitiManager, z
 
 // EnsureBrowZerRouterService creates the browzer-router-zt Ziti service with all required policies
 // and ensures it's hosted. All operations are idempotent; safe to call on every startup.
+// browzerRouterHostPort returns where the access-proxy dials the BrowZer
+// path/vhost router: the configured BROWZER_ROUTER_HOST/PORT, else the compose
+// defaults (browzer-router:80).
+func (s *Service) browzerRouterHostPort() (string, int) {
+	host, port := BrowZerRouterHost, BrowZerRouterPort
+	if s.config != nil {
+		if s.config.BrowZerRouterHost != "" {
+			host = s.config.BrowZerRouterHost
+		}
+		if s.config.BrowZerRouterPort != 0 {
+			port = s.config.BrowZerRouterPort
+		}
+	}
+	return host, port
+}
+
 func (s *Service) EnsureBrowZerRouterService(ctx context.Context, zm *ZitiManager) {
 	if zm == nil {
 		return
 	}
 
+	routerHost, routerPort := s.browzerRouterHostPort()
 	s.logger.Info("Ensuring BrowZer router Ziti service",
 		zap.String("service", BrowZerRouterServiceName),
-		zap.String("host", BrowZerRouterHost),
-		zap.Int("port", BrowZerRouterPort))
+		zap.String("host", routerHost),
+		zap.Int("port", routerPort))
 
 	// 1. Create or find the service
 	var serviceID string
-	err := zm.SetupZitiForRoute(ctx, "", BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort)
+	err := zm.SetupZitiForRoute(ctx, "", BrowZerRouterServiceName, routerHost, routerPort)
 	if err != nil {
 		s.logger.Debug("SetupZitiForRoute returned (service may already exist)", zap.Error(err))
 	}
@@ -1921,7 +1938,7 @@ func (s *Service) EnsureBrowZerRouterService(ctx context.Context, zm *ZitiManage
 	s.logger.Info("Waiting for Ziti SDK to discover browzer-router-zt service...")
 	time.Sleep(10 * time.Second)
 
-	if hostErr := zm.HostService(BrowZerRouterServiceName, BrowZerRouterHost, BrowZerRouterPort); hostErr != nil {
+	if hostErr := zm.HostService(BrowZerRouterServiceName, routerHost, routerPort); hostErr != nil {
 		s.logger.Error("Failed to host BrowZer router Ziti service", zap.Error(hostErr))
 	} else {
 		s.logger.Info("BrowZer router Ziti service hosted successfully")
