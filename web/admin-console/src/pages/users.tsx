@@ -45,6 +45,38 @@ interface User {
   created_at: string
 }
 
+// The /api/v1/identity/users endpoint speaks SCIM (userName, name.givenName,
+// emails[].value, active, createdAt) — see internal/identity models + the SCIM
+// integration tests — while this console is flat snake_case throughout. These
+// adapters bridge the two so the rest of the page stays flat. They also accept
+// the flat shape defensively, so they keep working if the API is ever flattened.
+type RawUser = Record<string, unknown>
+function toFlatUser(u: RawUser): User {
+  const name = (u.name ?? {}) as Record<string, unknown>
+  const emails = (u.emails ?? []) as Array<{ value?: string; primary?: boolean }>
+  return {
+    id: String(u.id ?? ''),
+    username: String(u.userName ?? u.username ?? ''),
+    email: String(emails[0]?.value ?? u.email ?? ''),
+    first_name: String(name.givenName ?? u.first_name ?? ''),
+    last_name: String(name.familyName ?? u.last_name ?? ''),
+    enabled: Boolean(u.enabled ?? u.active ?? false),
+    email_verified: Boolean(u.emailVerified ?? u.email_verified ?? false),
+    created_at: String(u.createdAt ?? u.created_at ?? ''),
+  }
+}
+function toApiUser(d: Partial<User> & { password?: string }): Record<string, unknown> {
+  const body: Record<string, unknown> = {}
+  if (d.username !== undefined) body.userName = d.username
+  if (d.email !== undefined) body.emails = [{ value: d.email, primary: true }]
+  if (d.first_name !== undefined || d.last_name !== undefined) {
+    body.name = { givenName: d.first_name ?? '', familyName: d.last_name ?? '' }
+  }
+  if (d.enabled !== undefined) { body.enabled = d.enabled; body.active = d.enabled }
+  if (d.password) body.password = d.password
+  return body
+}
+
 interface Role {
   id: string
   name: string
@@ -113,10 +145,10 @@ export function UsersPage() {
       params.set('offset', String(page * PAGE_SIZE))
       params.set('limit', String(PAGE_SIZE))
       if (search) params.set('search', search)
-      const result = await api.getWithHeaders<User[]>(`/api/v1/identity/users?${params.toString()}`)
+      const result = await api.getWithHeaders<RawUser[]>(`/api/v1/identity/users?${params.toString()}`)
       const total = parseInt(result.headers['x-total-count'] || '0', 10)
       if (!isNaN(total)) setTotalCount(total)
-      return result.data
+      return (result.data || []).map(toFlatUser)
     },
   })
 
@@ -128,13 +160,13 @@ export function UsersPage() {
 
   // Create user mutation
   const createUserMutation = useMutation({
-    mutationFn: (userData: Partial<User>) =>
-      api.post<User>('/api/v1/identity/users', userData),
+    mutationFn: (userData: Partial<User> & { password?: string }) =>
+      api.post<RawUser>('/api/v1/identity/users', toApiUser(userData)),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
         title: 'Success',
-        description: `User ${data.username} created successfully!`,
+        description: `User ${toFlatUser(data).username} created successfully!`,
         variant: 'success',
       })
       setAddUserModal(false)
@@ -151,13 +183,13 @@ export function UsersPage() {
 
   // Update user mutation
   const updateUserMutation = useMutation({
-    mutationFn: ({ id, ...userData }: Partial<User> & { id: string }) =>
-      api.put<User>(`/api/v1/identity/users/${id}`, userData),
+    mutationFn: ({ id, ...userData }: Partial<User> & { id: string; password?: string }) =>
+      api.put<RawUser>(`/api/v1/identity/users/${id}`, toApiUser(userData)),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       toast({
         title: 'Success',
-        description: `User ${data.username} updated successfully!`,
+        description: `User ${toFlatUser(data).username} updated successfully!`,
         variant: 'success',
       })
       setEditUserModal(false)
@@ -439,7 +471,7 @@ export function UsersPage() {
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                             <span className="text-blue-700 font-medium">
-                              {user.first_name?.[0] || user.username[0]?.toUpperCase()}
+                              {user.first_name?.[0] || user.username?.[0]?.toUpperCase() || '?'}
                               {user.last_name?.[0] || ''}
                             </span>
                           </div>

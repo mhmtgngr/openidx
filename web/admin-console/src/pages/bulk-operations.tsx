@@ -86,7 +86,12 @@ export function BulkOperationsPage() {
 
   const { data: groupsData } = useQuery({
     queryKey: ['groups-for-bulk'],
-    queryFn: () => api.get<{ data: Array<{ id: string; name: string }> }>('/api/v1/identity/groups'),
+    // /api/v1/identity/groups returns a bare SCIM array (displayName), not
+    // { data: [{id,name}] } — flatten it for the group selector.
+    queryFn: async () => {
+      const raw = await api.get<Array<Record<string, unknown>>>('/api/v1/identity/groups')
+      return (raw || []).map(g => ({ id: String(g.id ?? ''), name: String(g.displayName ?? g.name ?? '') }))
+    },
   })
 
   const createMutation = useMutation({
@@ -128,7 +133,7 @@ export function BulkOperationsPage() {
   const detail = detailData?.operation
   const items = detailData?.items || []
   const roles = rolesData?.data || []
-  const groups = groupsData?.data || []
+  const groups = groupsData || []
 
   return (
     <div className="space-y-6">

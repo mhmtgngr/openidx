@@ -407,6 +407,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/apps/:appId/paths", svc.handleListDiscoveredPaths)
 		api.PUT("/apps/:appId/paths/:pathId", svc.handleUpdatePathClassification)
 		api.POST("/apps/:appId/publish", svc.handlePublishPaths)
+		api.POST("/apps/:appId/publish-app", svc.handlePublishApp)
 		api.GET("/apps/:appId/ziti-services", svc.handleGetAppZitiServices)
 
 		// Unified audit log
@@ -1108,6 +1109,26 @@ func (s *Service) handleRevokeSession(c *gin.Context) {
 
 // ---- OAuth Login Flow ----
 
+// callbackScheme returns the external URL scheme for building OAuth callback /
+// redirect URLs. Behind a TLS-terminating proxy (nginx/APISIX) the public
+// request is HTTPS but reaches this service as HTTP, so honor X-Forwarded-Proto
+// first; fall back to the request's own TLS state, then http. Without this the
+// emitted redirect_uri is http:// and won't match the public https:// URL.
+func callbackScheme(c *gin.Context) string {
+	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
+		if i := strings.IndexByte(proto, ','); i >= 0 { // may be a list; take the first
+			proto = proto[:i]
+		}
+		if p := strings.TrimSpace(proto); p != "" {
+			return p
+		}
+	}
+	if c.Request != nil && c.Request.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
 func (s *Service) handleLogin(c *gin.Context) {
 	// Check if a specific IDP is requested
 	if idpID := c.Query("idp"); idpID != "" && idpID != "default" {
@@ -1148,7 +1169,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 	if callbackHost == "" {
 		callbackHost = fmt.Sprintf("%s:%d", s.config.AccessProxyDomain, s.config.Port)
 	}
-	callbackURL := fmt.Sprintf("http://%s/access/.auth/callback", callbackHost)
+	callbackURL := fmt.Sprintf("%s://%s/access/.auth/callback", callbackScheme(c), callbackHost)
 
 	authURL := fmt.Sprintf("%s/oauth/authorize?client_id=access-proxy&response_type=code&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&state=%s&scope=openid+profile+email",
 		s.oauthIssuer,
@@ -1210,7 +1231,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	if callbackHost == "" {
 		callbackHost = fmt.Sprintf("%s:%d", s.config.AccessProxyDomain, s.config.Port)
 	}
-	callbackURL := fmt.Sprintf("http://%s/access/.auth/callback", callbackHost)
+	callbackURL := fmt.Sprintf("%s://%s/access/.auth/callback", callbackScheme(c), callbackHost)
 
 	tokenResp, err := s.exchangeCode(c.Request.Context(), code, storedState.Verifier, callbackURL)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
@@ -311,6 +312,17 @@ func (s *Service) GetDeviceTrustSettings(ctx context.Context) (*DeviceTrustSetti
 		&settings.AutoApproveCorporateDevs, &settings.RequestExpiryHours, &settings.NotifyAdmins,
 		&settings.NotifyUserOnDecision, &settings.UpdatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No settings row configured yet — return sensible defaults rather than
+		// 500ing the device-trust page on a fresh install.
+		return &DeviceTrustSettings{
+			RequireApproval:      false,
+			RequestExpiryHours:   72,
+			NotifyAdmins:         true,
+			NotifyUserOnDecision: true,
+			UpdatedAt:            time.Now(),
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

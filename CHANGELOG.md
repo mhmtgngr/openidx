@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Admin console bug fixes (found via Playwright page sweep)
+
+A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
+
+#### Fixed
+- **Governance endpoints returned 401 for every valid token** — governance's
+  JWKS key parser ran `ProbablyPrime()` on the RSA *modulus*, which is `p×q`
+  (composite by definition), so it rejected every key. All governance pages
+  (access-reviews/requests, policies, abac-policies, approval-policies,
+  campaigns) were unusable. Replaced with the correct odd-modulus check.
+- **`GET /users/me/consents` 500** — the query selected `rt.scope` without
+  including it in `GROUP BY` (SQLSTATE 42803). Now aggregates with
+  `string_agg(DISTINCT rt.scope, ' ')`.
+- **Migration v39** — creates `device_trust_requests`, `device_trust_settings`,
+  `trusted_browsers`, `risk_policies`, which existed only in `init-db.sql` (the
+  same gap class as v38), so their handlers 500'd on RDS/Helm/`migrate` deploys.
+  Also made `GetDeviceTrustSettings` return defaults on no-rows instead of 500.
+  *(A wider audit found ~70 more tables only in `init-db.sql`; closing that whole
+  gap — and reconciling init-db.sql's own duplicate `lifecycle_executions` — is
+  tracked as follow-up.)*
+- **`/users` client crash** — avatar initials read `user.username[0]` without a
+  null guard (`Cannot read properties of undefined`). Now uses optional chaining
+  with a `'?'` fallback.
+- **`/users` showed blank names/emails + "Invalid Date"** — the admin users API
+  speaks SCIM (`userName`, `name.givenName`, `emails[].value`, `createdAt`,
+  `active`) per the identity models + SCIM integration tests, but the console is
+  flat snake_case throughout. The console now adapts SCIM↔flat for the users
+  endpoint (read and create/update) in `users.tsx`, leaving the rest of the page
+  flat. (Backend left unchanged — its SCIM shape is the codified contract used by
+  `/scim/v2/Users` and internal oauth/webauthn callers.)
+- **`/groups` showed blank descriptions, wrong type, "Invalid Date"** — same
+  SCIM↔flat mismatch (`displayName`, `attributes.{description,parentId}`,
+  `createdAt`). `groups.tsx` now adapts read and create/update. (Member counts
+  show 0 — the list endpoint doesn't return them; an API enhancement, not a
+  console fix.)
+- **Other SCIM-shaped consumers** (found by auditing every console call to the
+  identity user/group endpoints): the group "add member" user-search dropdown
+  (`/users/search`, SCIM) and the bulk-operations group selector
+  (`/groups`, a bare SCIM array — the code expected `{data:[{id,name}]}`) now
+  map SCIM→flat too. Audited as already-correct: group members, user roles,
+  roles, and `/users/me` (camelCase, which `user-profile` already matches).
+
+### One-click "open internal app" — published apps as launcher tiles
+
+#### Added
+- `POST /api/v1/access/apps/:id/publish-app` publishes a registered app as a
+  one-click tile: it creates a single host-level proxy route, auto-creates a
+  **My Apps** launcher tile (`applications` row, `base_url` = the gated public
+  URL), and registers the per-host `…/access/.auth/callback` on the
+  `access-proxy` OAuth client so SSO round-trips without a manual OAuth edit.
+- `ACCESS_APPS_DOMAIN` config: bare-label hosts (e.g. `netgraph`) resolve to
+  `<label>.<ACCESS_APPS_DOMAIN>` so every app lives under one wildcard domain
+  with a single wildcard TLS cert.
+- Migration **v41**: `published_apps.public_host` + `landing_path` (where the
+  tile opens, default `/`, e.g. `/ui/` for apps not served at the site root).
+- Admin console **App Publish → Publish App** dialog (public host + landing
+  path). Docs: `docs/app-publishing.md` "One-Click Publishing" section.
+
+### Access-proxy forward-auth: honor X-Forwarded-Proto
+
+#### Fixed
+- The access-service built its OAuth callback (`/access/.auth/callback`) as
+  `http://` from `c.Request.Host`, ignoring `X-Forwarded-Proto`. Behind a
+  TLS-terminating proxy (nginx/APISIX) the public URL is HTTPS, so the emitted
+  `redirect_uri` didn't match the registered/public `https://` URL and the
+  browser callback hit a non-TLS port. Added a `callbackScheme()` helper
+  (X-Forwarded-Proto → request TLS → http) and applied it to all four callback
+  builders (the built-in access-proxy login/exchange + the external-IDP paths).
+
+### Access-proxy / App Publish schema fix (migration v40)
+
+#### Fixed
+- **App Publish was broken on every migrate-based / RDS / Helm deploy.**
+  `GET /api/v1/access/apps` 500'd because `published_apps`, `discovered_paths`
+  and `service_features` lived only in `init-db.sql`; `GET /api/v1/access/routes`
+  500'd with `column "idp_id" does not exist` because the `proxy_routes` (and
+  `proxy_sessions`) schema had drifted ~12 columns behind `init-db.sql`
+  (`idp_id`, `route_type`, `remote_host/port`, posture/risk/guacamole/browzer …).
+  Migration **v40** creates the missing tables and adds the missing columns
+  (idempotent). Verified by registering→discovering→publishing an internal app
+  end-to-end.
+
 ### gateway-service startup fixes
 
 `gateway-service` panicked on startup under gin v1.11.0 and never began serving
