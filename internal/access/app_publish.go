@@ -651,6 +651,7 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 	// Register the per-host OAuth callback on the access-proxy client so the
 	// forward-auth login round-trips without a manual OAuth-client edit.
 	callback := fmt.Sprintf(`["https://%s/access/.auth/callback"]`, publicHost)
+	//orgscope:ignore access-proxy is a single install-wide OAuth client (client_id='access-proxy', no org_id); the reverse proxy shares it across all tenants
 	if _, err := s.db.Pool.Exec(ctx, `
 		UPDATE oauth_clients SET redirect_uris = redirect_uris || $1::jsonb
 		WHERE client_id='access-proxy' AND NOT (redirect_uris @> $1::jsonb)`, callback); err != nil {
