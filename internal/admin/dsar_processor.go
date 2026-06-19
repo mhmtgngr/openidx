@@ -4,8 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -43,25 +45,22 @@ func (s *Service) StartDSARProcessor(ctx context.Context, interval time.Duration
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		s.logger.Info("DSAR processor started",
-			zap.Duration("interval", interval),
-			zap.Any("auto_execute_types", keys(dsarAutoExecutableTypes)))
-		// Process once on startup so a restarted service drains the backlog
-		// immediately rather than waiting a full interval.
+	s.logger.Info("DSAR processor started",
+		zap.Duration("interval", interval),
+		zap.Any("auto_execute_types", keys(dsarAutoExecutableTypes)))
+
+	// Leader-gated: process pending data-subject requests once per interval
+	// cluster-wide (avoids N replicas each executing the same DSAR).
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
+	}
+	// Drain the backlog once on startup, but only on the instance that wins the
+	// tick lock so a restart doesn't trigger N concurrent drains.
+	if leader.IsLeaderForTick(ctx, rdb, "admin:dsar", interval) {
 		s.processPendingDSARs(ctx)
-		for {
-			select {
-			case <-ctx.Done():
-				s.logger.Info("DSAR processor stopped")
-				return
-			case <-ticker.C:
-				s.processPendingDSARs(ctx)
-			}
-		}
-	}()
+	}
+	leader.RunPeriodic(ctx, rdb, s.logger, "admin:dsar", interval, s.processPendingDSARs)
 }
 
 // processPendingDSARs is the per-tick body: enumerate pending requests,

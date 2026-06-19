@@ -4,8 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -13,20 +15,15 @@ import (
 // cleans up expired role assignments from the user_roles table.
 func (s *Service) StartRoleExpirationChecker(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		s.logger.Info("Role expiration checker started")
-		for {
-			select {
-			case <-ctx.Done():
-				s.logger.Info("Role expiration checker stopped")
-				return
-			case <-ticker.C:
-				s.cleanupExpiredRoles(ctx)
-			}
-		}
-	}()
+	s.logger.Info("Role expiration checker started")
+
+	// Leader-gated: clean up expired role assignments once per interval
+	// cluster-wide.
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
+	}
+	leader.RunPeriodic(ctx, rdb, s.logger, "identity:role-expiry", 1*time.Minute, s.cleanupExpiredRoles)
 }
 
 func (s *Service) cleanupExpiredRoles(ctx context.Context) {

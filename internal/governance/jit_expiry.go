@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -14,22 +16,14 @@ import (
 // revokes expired JIT (just-in-time) access grants.
 func (s *Service) StartJITExpirationChecker(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
+	s.logger.Info("JIT access expiration checker started")
 
-		s.logger.Info("JIT access expiration checker started")
-
-		for {
-			select {
-			case <-ctx.Done():
-				s.logger.Info("JIT access expiration checker stopped")
-				return
-			case <-ticker.C:
-				s.revokeExpiredJITAccess(ctx)
-			}
-		}
-	}()
+	// Leader-gated: revoke expired JIT grants once per interval cluster-wide.
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
+	}
+	leader.RunPeriodic(ctx, rdb, s.logger, "governance:jit-expiry", 5*time.Minute, s.revokeExpiredJITAccess)
 }
 
 // revokeExpiredJITAccess finds fulfilled access requests that have passed their
