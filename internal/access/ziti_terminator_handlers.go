@@ -16,7 +16,7 @@ func (s *Service) handleListTerminators(c *gin.Context) {
 	if s.zitiUnavailable(c) {
 		return
 	}
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/terminators?limit=500", nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators?limit=500", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -67,7 +67,7 @@ func (s *Service) handleGetTerminator(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/terminators/"+id, nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/terminators/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -91,7 +91,7 @@ func (s *Service) handleDeleteTerminator(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/terminators/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/terminators/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

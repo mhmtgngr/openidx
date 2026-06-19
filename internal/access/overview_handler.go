@@ -208,9 +208,9 @@ func (s *Service) handleAccessOverview(c *gin.Context) {
 
 	// Install-wide OpenZiti control-plane status (two booleans, no DB recount).
 	ziti := OverviewZitiStatus{}
-	if s.zitiManager != nil {
+	if s.ziti() != nil {
 		ziti.Configured = true
-		if _, verr := s.zitiManager.GetControllerVersion(ctx); verr == nil {
+		if _, verr := s.ziti().GetControllerVersion(ctx); verr == nil {
 			ziti.ControllerReachable = true
 		}
 	}

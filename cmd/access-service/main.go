@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	newhealth "github.com/openidx/openidx/internal/health"
@@ -220,6 +221,13 @@ func main() {
 	accessService.SetAuditService(auditService)
 	log.Info("Unified Audit Service initialized")
 
+	// Shared Ziti provider: the admin panel connects/reconnects/disconnects the
+	// OpenZiti controller at runtime by swapping the manager held here. Wired to
+	// all three services BEFORE routes are registered so the settings handlers
+	// and every read site see the same provider.
+	zitiProvider := access.NewZitiProvider()
+	accessService.SetZitiProvider(zitiProvider)
+
 	// Initialize Apache Guacamole client if configured
 	if cfg.GuacamoleURL != "" {
 		log.Info("Initializing Apache Guacamole integration...", zap.String("url", cfg.GuacamoleURL))
@@ -240,21 +248,27 @@ func main() {
 		accessService.StartContinuousVerification(bgCtx, cfg.ContinuousVerifyInterval)
 	}
 
-	// Initialize OpenZiti if enabled
-	if cfg.ZitiEnabled {
+	// Resolve the OpenZiti connection: persisted admin-panel settings win, else
+	// env (cfg.Ziti*). Lets a box that booted disabled be connected later from
+	// the panel with no restart, and vice-versa.
+	bootCtx := orgctx.WithBypassRLS(context.Background())
+	zCtrlURL, zUser, zPwd, zDir, zInsecure, zEnabled, zErr := access.ResolveBootZitiConn(
+		bootCtx, db, cfg.EncryptionKey,
+		cfg.ZitiCtrlURL, cfg.ZitiAdminUser, cfg.ZitiAdminPassword, cfg.ZitiIdentityDir,
+		cfg.ZitiEnabled, cfg.ZitiInsecureSkipVerify)
+	if zErr != nil {
+		log.Error("Failed to resolve Ziti connection settings", zap.Error(zErr))
+	}
+	if zEnabled {
 		log.Info("OpenZiti integration enabled, initializing ZitiManager...")
-		zm, err := access.NewZitiManager(cfg, db, log)
+		zm, err := access.NewZitiManagerWithConn(cfg, zCtrlURL, zUser, zPwd, zDir, zInsecure, db, log)
 		if err != nil {
 			log.Error("Failed to initialize ZitiManager -- Ziti features disabled", zap.Error(err))
 		} else {
-			accessService.SetZitiManager(zm)
-			featureManager.SetZitiManager(zm)
-			auditService.SetZitiManager(zm)
-			defer zm.Close()
-
-			// Start background monitors
+			// Start background monitors on a context owned by the provider slot
+			// so a runtime reconnect can cancel them.
 			zitiCtx, zitiCancel := context.WithCancel(context.Background())
-			defer zitiCancel()
+			zitiProvider.Swap(zm, zitiCancel)
 			zm.StartHealthMonitor(zitiCtx)
 			zm.StartCertificateMonitor(zitiCtx)
 			zm.StartUserSyncPoller(zitiCtx)

@@ -388,6 +388,10 @@ export function ZitiNetworkPage() {
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
+          <TabsTrigger value="connection" className="gap-1.5">
+            <Settings className="h-4 w-4" />
+            Connection
+          </TabsTrigger>
           <TabsTrigger value="overview" className="gap-1.5">
             <LayoutDashboard className="h-4 w-4" />
             Overview
@@ -410,6 +414,9 @@ export function ZitiNetworkPage() {
           </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="connection">
+          <ConnectionTab />
+        </TabsContent>
         <TabsContent value="overview">
           <OverviewTab onNavigate={setActiveTab} />
         </TabsContent>
@@ -431,6 +438,136 @@ export function ZitiNetworkPage() {
 }
 
 // ─── Overview Tab ────────────────────────────────────────────────────────────
+
+interface ZitiConnSettings {
+  enabled: boolean
+  controller_url: string
+  admin_user: string
+  admin_password: string
+  identity_dir: string
+  insecure_skip_verify: boolean
+}
+
+// ConnectionTab manages the OpenZiti controller connection from the admin panel:
+// view/edit the URL + admin creds, test reachability, and connect/disconnect the
+// live manager at runtime (no service restart).
+function ConnectionTab() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const [form, setForm] = useState<ZitiConnSettings | null>(null)
+
+  const { data: status } = useQuery({
+    queryKey: ['ziti-status'],
+    queryFn: () => api.get<ZitiStatus>('/api/v1/access/ziti/status'),
+    refetchInterval: 10000,
+  })
+  const { isLoading } = useQuery({
+    queryKey: ['ziti-settings'],
+    queryFn: async () => {
+      const s = await api.get<ZitiConnSettings>('/api/v1/access/ziti/settings')
+      setForm(s)
+      return s
+    },
+  })
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['ziti-status'] })
+    queryClient.invalidateQueries({ queryKey: ['ziti-fabric-overview'] })
+    queryClient.invalidateQueries({ queryKey: ['access-overview'] })
+  }
+
+  const save = useMutation({
+    mutationFn: (s: ZitiConnSettings) => api.put('/api/v1/access/ziti/settings', s),
+    onSuccess: () => toast({ title: 'Saved', description: 'Ziti connection settings stored.' }),
+    onError: (e: Error) => toast({ title: 'Save failed', description: e.message, variant: 'destructive' }),
+  })
+  const test = useMutation({
+    mutationFn: (s: ZitiConnSettings) =>
+      api.post<{ reachable: boolean; authenticated: boolean; error?: string; controller_version?: { data?: { version?: string } } }>(
+        '/api/v1/access/ziti/settings/test', s),
+    onSuccess: (r) =>
+      toast({
+        title: r.reachable ? 'Connection OK' : 'Connection failed',
+        description: r.reachable
+          ? `Controller ${r.controller_version?.data?.version || 'reachable'}`
+          : r.error || 'unreachable',
+        variant: r.reachable ? undefined : 'destructive',
+      }),
+    onError: (e: Error) => toast({ title: 'Test failed', description: e.message, variant: 'destructive' }),
+  })
+  const connect = useMutation({
+    mutationFn: async (s: ZitiConnSettings) => { await api.put('/api/v1/access/ziti/settings', s); return api.post('/api/v1/access/ziti/connect', {}) },
+    onSuccess: () => { invalidate(); toast({ title: 'Connected', description: 'OpenZiti controller connected.' }) },
+    onError: (e: Error) => toast({ title: 'Connect failed', description: e.message, variant: 'destructive' }),
+  })
+  const disconnect = useMutation({
+    mutationFn: () => api.post('/api/v1/access/ziti/disconnect', {}),
+    onSuccess: () => { invalidate(); toast({ title: 'Disconnected', description: 'OpenZiti controller disconnected.' }) },
+    onError: (e: Error) => toast({ title: 'Disconnect failed', description: e.message, variant: 'destructive' }),
+  })
+
+  if (isLoading || !form) return <div className="py-8 text-center text-muted-foreground">Loading…</div>
+
+  const reachable = !!status?.controller_reachable
+  const ctrlVer = (status?.controller_version as { data?: { version?: string } } | undefined)?.data?.version
+  const set = (k: keyof ZitiConnSettings, v: string | boolean) => setForm({ ...form, [k]: v })
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="h-5 w-5" />
+            Controller Connection
+            <Badge className={`ml-auto ${reachable ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+              {!status?.enabled ? 'not configured' : reachable ? 'connected' : 'unreachable'}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="ctrl">Controller URL</Label>
+            <Input id="ctrl" placeholder="https://ziti-controller.example.com:1280"
+              value={form.controller_url} onChange={(e) => set('controller_url', e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="user">Admin user</Label>
+              <Input id="user" value={form.admin_user} onChange={(e) => set('admin_user', e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pw">Admin password</Label>
+              <Input id="pw" type="password" placeholder="••••••••"
+                value={form.admin_password} onChange={(e) => set('admin_password', e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dir">Identity directory</Label>
+            <Input id="dir" value={form.identity_dir} onChange={(e) => set('identity_dir', e.target.value)} />
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="insecure" checked={form.insecure_skip_verify}
+              onCheckedChange={(v) => set('insecure_skip_verify', v)} />
+            <Label htmlFor="insecure" className="text-sm">Skip TLS verification (dev only)</Label>
+          </div>
+          {ctrlVer && (
+            <p className="text-xs text-muted-foreground">Controller version: {ctrlVer}</p>
+          )}
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Button variant="outline" disabled={test.isPending} onClick={() => test.mutate(form)}>Test</Button>
+            <Button variant="outline" disabled={save.isPending} onClick={() => save.mutate(form)}>Save</Button>
+            <Button disabled={connect.isPending} onClick={() => connect.mutate(form)}>Save &amp; Connect</Button>
+            <Button variant="ghost" className="text-red-600" disabled={disconnect.isPending}
+              onClick={() => disconnect.mutate()}>Disconnect</Button>
+          </div>
+        </CardContent>
+      </Card>
+      <p className="text-xs text-muted-foreground">
+        Connect / disconnect takes effect immediately — no service restart. The password is stored encrypted and shown masked.
+      </p>
+    </div>
+  )
+}
 
 function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { toast } = useToast()

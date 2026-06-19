@@ -65,7 +65,7 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 	ac.DeviceTrusted = session.DeviceTrusted
 
 	// Posture evaluation (if ZitiManager is available and route has posture check IDs)
-	if s.zitiManager != nil && len(route.PostureCheckIDs) > 0 {
+	if s.ziti() != nil && len(route.PostureCheckIDs) > 0 {
 		// Find the Ziti identity for this user
 		var zitiIdentityID string
 		s.db.Pool.QueryRow(ctx,
@@ -74,7 +74,7 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 			session.UserID).Scan(&zitiIdentityID)
 
 		if zitiIdentityID != "" {
-			passed, results, err := s.zitiManager.EvaluateIdentityPosture(ctx, zitiIdentityID)
+			passed, results, err := s.ziti().EvaluateIdentityPosture(ctx, zitiIdentityID)
 			if err != nil {
 				s.logger.Warn("Posture evaluation failed during context build", zap.Error(err))
 			} else {

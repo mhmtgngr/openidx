@@ -91,10 +91,13 @@ type FeatureConfig struct {
 type FeatureManager struct {
 	db                   *database.PostgresDB
 	logger               *zap.Logger
-	zitiManager          *ZitiManager
+	zitiProvider         *ZitiProvider
 	guacamoleClient      *GuacamoleClient
 	browzerTargetManager *BrowZerTargetManager
 }
+
+// ziti returns the live OpenZiti manager (nil when disconnected).
+func (fm *FeatureManager) ziti() *ZitiManager { return fm.zitiProvider.Get() }
 
 // NewFeatureManager creates a new FeatureManager
 func NewFeatureManager(db *database.PostgresDB, logger *zap.Logger) *FeatureManager {
@@ -104,9 +107,15 @@ func NewFeatureManager(db *database.PostgresDB, logger *zap.Logger) *FeatureMana
 	}
 }
 
-// SetZitiManager sets the Ziti manager
+// SetZitiProvider wires the shared provider.
+func (fm *FeatureManager) SetZitiProvider(p *ZitiProvider) { fm.zitiProvider = p }
+
+// SetZitiManager installs a manager into the provider (compat shim for tests).
 func (fm *FeatureManager) SetZitiManager(zm *ZitiManager) {
-	fm.zitiManager = zm
+	if fm.zitiProvider == nil {
+		fm.zitiProvider = NewZitiProvider()
+	}
+	fm.zitiProvider.Store(zm)
 }
 
 // SetGuacamoleClient sets the Guacamole client
@@ -503,7 +512,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 
 	switch feature {
 	case FeatureZiti:
-		if fm.zitiManager == nil || !fm.zitiManager.IsInitialized() {
+		if fm.ziti() == nil || !fm.ziti().IsInitialized() {
 			return nil, fmt.Errorf("Ziti manager not available")
 		}
 
@@ -534,7 +543,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 			serviceName = fmt.Sprintf("openidx-%s", routeName)
 		}
 
-		zitiService, err := fm.zitiManager.CreateServiceWithConfig(ctx, serviceName, host, port)
+		zitiService, err := fm.ziti().CreateServiceWithConfig(ctx, serviceName, host, port)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Ziti service: %w", err)
 		}
@@ -543,7 +552,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		resourceIDs["ziti_service_name"] = zitiService.Name
 
 		// Create Bind policy so access-proxy can host this service
-		bindPolicyID, err := fm.zitiManager.CreateServicePolicy(ctx,
+		bindPolicyID, err := fm.ziti().CreateServicePolicy(ctx,
 			fmt.Sprintf("openidx-bind-%s", serviceName),
 			"Bind",
 			[]string{"#" + serviceName},
@@ -559,7 +568,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		}
 
 		// Create Dial policy so access-proxy can dial this service
-		dialPolicyID, err := fm.zitiManager.CreateServicePolicy(ctx,
+		dialPolicyID, err := fm.ziti().CreateServicePolicy(ctx,
 			fmt.Sprintf("openidx-dial-%s", serviceName),
 			"Dial",
 			[]string{"#" + serviceName},
@@ -581,7 +590,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 			"serviceRoles":    []string{"#" + serviceName},
 			"edgeRouterRoles": []string{"#all"},
 		})
-		_, serpStatus, serpErr := fm.zitiManager.mgmtRequest("POST", "/edge/management/v1/service-edge-router-policies", serBody)
+		_, serpStatus, serpErr := fm.ziti().mgmtRequest("POST", "/edge/management/v1/service-edge-router-policies", serBody)
 		if serpErr != nil || (serpStatus != http.StatusCreated && serpStatus != http.StatusOK) {
 			fm.logger.Warn("Failed to create service edge router policy", zap.Error(serpErr), zap.Int("status", serpStatus))
 		}
@@ -591,13 +600,30 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 			"UPDATE proxy_routes SET ziti_enabled=true, ziti_service_name=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3",
 			serviceName, routeID, org.ID)
 
-		// Host the service so it has a terminator
-		if err := fm.zitiManager.HostService(serviceName, host, port); err != nil {
-			fm.logger.Warn("Failed to host Ziti service (no terminator)", zap.String("service", serviceName), zap.Error(err))
+		// Host the service so it has a terminator. The controller has just
+		// created the service; the access-proxy SDK may not have synced it
+		// yet, so an immediate Listen fails with "service not found in ziti
+		// network". Retry in the background (the handler returns 200 now) until
+		// the SDK discovers it, mirroring the startup HostAllServices path.
+		if zm := fm.ziti(); zm != nil {
+			go func() {
+				for attempt := 1; attempt <= 8; attempt++ {
+					if _, e := zm.GetServiceByName(serviceName); e == nil {
+						if he := zm.HostService(serviceName, host, port); he == nil {
+							fm.logger.Info("Hosted Ziti service after discovery",
+								zap.String("service", serviceName), zap.Int("attempt", attempt))
+							return
+						}
+					}
+					time.Sleep(2 * time.Second)
+				}
+				fm.logger.Warn("Failed to host Ziti service after retries (no terminator)",
+					zap.String("service", serviceName))
+			}()
 		}
 
 	case FeatureBrowZer:
-		if fm.zitiManager == nil || !fm.zitiManager.IsInitialized() {
+		if fm.ziti() == nil || !fm.ziti().IsInitialized() {
 			return nil, fmt.Errorf("Ziti manager not available")
 		}
 
@@ -612,7 +638,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		}
 
 		// Add browzer-enabled role attribute to the Ziti service on the controller
-		attrs, err := fm.zitiManager.GetServiceRoleAttributes(ctx, zitiServiceID)
+		attrs, err := fm.ziti().GetServiceRoleAttributes(ctx, zitiServiceID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get service attributes: %w", err)
 		}
@@ -625,7 +651,7 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		}
 		if !hasBrowzer {
 			attrs = append(attrs, "browzer-enabled")
-			if err := fm.zitiManager.PatchServiceRoleAttributes(ctx, zitiServiceID, attrs); err != nil {
+			if err := fm.ziti().PatchServiceRoleAttributes(ctx, zitiServiceID, attrs); err != nil {
 				return nil, fmt.Errorf("failed to add browzer-enabled attribute: %w", err)
 			}
 		}
@@ -696,9 +722,9 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string, feature FeatureName, resourceIDs map[string]string) error {
 	switch feature {
 	case FeatureZiti:
-		if fm.zitiManager != nil && fm.zitiManager.IsInitialized() {
+		if fm.ziti() != nil && fm.ziti().IsInitialized() {
 			if serviceID, ok := resourceIDs["ziti_service_id"]; ok && serviceID != "" {
-				if err := fm.zitiManager.DeleteService(ctx, serviceID); err != nil {
+				if err := fm.ziti().DeleteService(ctx, serviceID); err != nil {
 					fm.logger.Warn("Failed to delete Ziti service", zap.Error(err))
 				}
 			}
@@ -706,9 +732,9 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 
 	case FeatureBrowZer:
 		// Remove browzer-enabled role attribute from Ziti service
-		if fm.zitiManager != nil && fm.zitiManager.IsInitialized() {
+		if fm.ziti() != nil && fm.ziti().IsInitialized() {
 			if zitiServiceID, ok := resourceIDs["ziti_service_id"]; ok && zitiServiceID != "" {
-				attrs, err := fm.zitiManager.GetServiceRoleAttributes(ctx, zitiServiceID)
+				attrs, err := fm.ziti().GetServiceRoleAttributes(ctx, zitiServiceID)
 				if err == nil {
 					filtered := make([]string, 0, len(attrs))
 					for _, a := range attrs {
@@ -716,7 +742,7 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 							filtered = append(filtered, a)
 						}
 					}
-					if err := fm.zitiManager.PatchServiceRoleAttributes(ctx, zitiServiceID, filtered); err != nil {
+					if err := fm.ziti().PatchServiceRoleAttributes(ctx, zitiServiceID, filtered); err != nil {
 						fm.logger.Warn("Failed to remove browzer-enabled attribute", zap.Error(err))
 					}
 				}

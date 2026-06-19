@@ -22,7 +22,7 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 		path += "&filter=type%3D%22" + sessionType + "%22"
 	}
 
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", path, nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", path, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -116,7 +116,7 @@ func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	_, statusCode, err := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/sessions/"+id, nil)
+	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -147,7 +147,7 @@ func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 	}
 
 	// List all sessions
-	respData, statusCode, err := s.zitiManager.MgmtRequest("GET", "/edge/management/v1/sessions?limit=500", nil)
+	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/sessions?limit=500", nil)
 	if err != nil || statusCode != http.StatusOK {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list sessions"})
 		return
@@ -184,7 +184,7 @@ func (s *Service) handleBatchDeleteZitiSessions(c *gin.Context) {
 		}
 
 		if matchedIdentity == req.IdentityID {
-			_, sc, delErr := s.zitiManager.MgmtRequest("DELETE", "/edge/management/v1/sessions/"+entry.ID, nil)
+			_, sc, delErr := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+entry.ID, nil)
 			if delErr == nil && (sc == http.StatusOK || sc == http.StatusNoContent) {
 				terminated++
 			}
