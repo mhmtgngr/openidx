@@ -306,5 +306,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tableGapV42Up,
 			DownSQL:     tableGapV42Down,
 		},
+		{
+			Version:     43,
+			Name:        "reconcile_agent_recommendation_digest_tables",
+			Description: "Create the Agent Fleet / AI Recommendations / Notification Digest tables missing on managed-RDS/Helm/migrate installs (same init-db↔migrations gap as v38–v42): enrolled_agents (+ agent_posture_results, agent_enrollment_tokens) from the loose 2025*_enrolled_agents files; ai_recommendations + recommendation_history and the ai_agents children ai_agent_credentials/permissions/activity (v42 created ai_agents but not its children) from init-db.sql; notification_digests from init-db.sql. Fixes 500s on the Agent Fleet, AI Recommendations and Notification Center digest pages. Idempotent; verbatim DDL; not org-scoped (matches source + handlers).",
+			UpSQL:       agentRecoDigestUp,
+			DownSQL:     agentRecoDigestDown,
+		},
 	}
 }
