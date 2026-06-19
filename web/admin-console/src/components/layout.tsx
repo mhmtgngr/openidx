@@ -134,6 +134,7 @@ const navigationSections: NavSection[] = [
     label: 'Network & Access',
     adminOnly: true,
     items: [
+      { name: 'Zero Trust Access', href: '/zero-trust', icon: Shield, adminOnly: true },
       { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
       { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
       { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },

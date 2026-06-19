@@ -228,6 +228,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/sessions", svc.handleListSessions)
 		api.DELETE("/sessions/:id", svc.handleRevokeSession)
 
+		// Unified Zero Trust Access overview (resource spine + coverage gaps).
+		api.GET("/overview", svc.handleAccessOverview)
+
 		// OpenZiti management endpoints
 		api.GET("/ziti/status", svc.handleZitiStatus)
 		api.GET("/ziti/services", svc.handleListZitiServices)

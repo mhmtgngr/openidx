@@ -32,6 +32,7 @@ import {
   Applications,
   AppLauncher,
   AppPublish,
+  ZeroTrust,
   IdentityProviders,
   ProvisioningRules,
   LifecycleWorkflows,
@@ -195,6 +196,7 @@ function App() {
         <Route path="federation-config" element={<FederationConfig />} />
 
         {/* Network & Access - Admin Protected */}
+        <Route path="zero-trust" element={<ZeroTrust />} />
         <Route path="proxy-routes" element={<ProxyRoutes />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="ziti-discovery" element={<ZitiDiscovery />} />

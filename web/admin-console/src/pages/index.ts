@@ -19,6 +19,7 @@ export { IdentityProvidersPage as IdentityProviders } from './identity-providers
 export { ApplicationsPage as Applications } from './applications'
 export { AppLauncherPage as AppLauncher } from './app-launcher'
 export { AppPublishPage as AppPublish } from './app-publish'
+export { ZeroTrustPage as ZeroTrust } from './zero-trust'
 export { ProvisioningRulesPage as ProvisioningRules } from './provisioning-rules'
 export { LifecycleWorkflowsPage as LifecycleWorkflows } from './lifecycle-workflows'
 export { FederationConfigPage as FederationConfig } from './federation-config'
