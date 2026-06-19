@@ -320,5 +320,12 @@ func allMigrations() []*Migration {
 			UpSQL:       kioskPolicyV44Up,
 			DownSQL:     kioskPolicyV44Down,
 		},
+		{
+			Version:     45,
+			Name:        "ziti_browzer_config",
+			Description: "Create ziti_browzer_config (init-db.sql-only) so BrowZer bootstrap can persist its external-JWT-signer / auth-policy / dial-policy IDs + OIDC settings and GET /ziti/browzer/status reports configured state. Same init-db↔migrations gap as v42–v44. Idempotent.",
+			UpSQL:       zitiBrowzerConfigUp,
+			DownSQL:     zitiBrowzerConfigDown,
+		},
 	}
 }
