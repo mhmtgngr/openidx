@@ -299,5 +299,12 @@ func allMigrations() []*Migration {
 			UpSQL:       oneClickAppsUp,
 			DownSQL:     oneClickAppsDown,
 		},
+		{
+			Version:     42,
+			Name:        "reconcile_table_gap",
+			Description: "Create init-db.sql-only / loose-SQL tables missing on managed-RDS/Helm/migrate installs (same class as v38–v40): abac_policies, certification_campaigns, ai_agents (init-db.sql), saml_sessions (010_add_saml_idp_tables.sql), remote_support_sessions (202605150004_remote_support.up.sql) — fixes 500s on the ABAC Policies / AI Agents / Certification Campaigns / Remote Support pages and the saml_sessions session-worker errors. Also adds certification_campaigns started_at/completed_at/total_items that the run code writes but no source created. Idempotent. (agents, recommendations, notification_digest_settings have no schema anywhere — genuinely unimplemented, tracked separately.)",
+			UpSQL:       tableGapV42Up,
+			DownSQL:     tableGapV42Down,
+		},
 	}
 }
