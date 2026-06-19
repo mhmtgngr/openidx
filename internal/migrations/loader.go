@@ -313,5 +313,12 @@ func allMigrations() []*Migration {
 			UpSQL:       agentRecoDigestUp,
 			DownSQL:     agentRecoDigestDown,
 		},
+		{
+			Version:     44,
+			Name:        "reconcile_kiosk_policy_tables",
+			Description: "Final init-db↔migrations reconcile pass (after v38–v43): create kiosk_policies + kiosk_policy_assignments (loose file 202605150003) — fixes 500 on GET /api/v1/access/kiosk/policies — and policy_recommendations + compliance_gaps (loose file 017_add_genai_and_advanced_auth_tables) for the AI policy-suggestion / compliance-gap endpoints. Idempotent; verbatim DDL; not org-scoped (matches source + handlers).",
+			UpSQL:       kioskPolicyV44Up,
+			DownSQL:     kioskPolicyV44Down,
+		},
 	}
 }
