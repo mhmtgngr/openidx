@@ -1,0 +1,80 @@
+# HA values for the ingress-nginx controller that fronts OpenIDX.
+#
+# The OpenIDX app chart (deployments/kubernetes/helm/openidx) emits Ingress
+# resources with `ingressClassName: nginx` but does NOT manage the controller —
+# it's expected to live in the `ingress-nginx` namespace (see the chart's
+# NetworkPolicy). A single controller pod is a SPOF and a throughput ceiling, so
+# install the upstream controller chart with these values to run it HA:
+#
+#   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+#   helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+#     --namespace ingress-nginx --create-namespace \
+#     -f deployments/kubernetes/ingress-nginx-values.yaml
+#
+# (Or: make helm-ingress-nginx)
+#
+# The controller is stateless, so the pattern is N≥2 replicas behind a single
+# cloud L4 load balancer (AWS NLB): the NLB is the one stable entry point and any
+# controller pod can die without dropping traffic.
+controller:
+  # Two-layer HA: a floor of 2 replicas, autoscaled up under load.
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # Don't co-locate replicas on one node or in one AZ — survive a node/zone loss.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+
+  # Keep at least one controller serving during voluntary disruptions (drains,
+  # upgrades).
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Single stable entry point: an AWS NLB (L4), cross-zone, in front of the
+  # replicas. Uses the AWS Load Balancer Controller's "external" mode.
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local # preserve client source IP
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: external
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+
+  # The class the OpenIDX app-chart Ingresses select (ingressClassName: nginx).
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: false
+  ingressClass: nginx
+
+  # Surface controller metrics for the same Prometheus stack the services use.
+  metrics:
+    enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
