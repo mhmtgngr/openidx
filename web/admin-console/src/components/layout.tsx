@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Users,
@@ -67,6 +67,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
 import { NotificationBell } from './notification-bell'
+import { ErrorBoundary } from './error-boundary'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Avatar, AvatarFallback } from './ui/avatar'
@@ -283,6 +284,7 @@ export function Layout() {
   const { user, logout, hasRole } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const navigate = useNavigate()
+  const location = useLocation()
 
   const initials = user?.name
     ?.split(' ')
@@ -411,7 +413,12 @@ export function Layout() {
         </header>
         <main className="flex-1 overflow-auto">
           <div className="p-8">
-            <Outlet />
+            {/* Keyed by route so a page-level render error shows a fallback
+                instead of white-screening the whole console, and clears when
+                the user navigates away. */}
+            <ErrorBoundary key={location.pathname}>
+              <Outlet />
+            </ErrorBoundary>
           </div>
         </main>
       </div>
