@@ -16,9 +16,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/resilience"
 )
 
@@ -524,18 +526,17 @@ func (s *Service) RetryDelivery(ctx context.Context, deliveryID string) error {
 
 // ProcessRetries periodically checks for pending deliveries that are due for retry
 func (s *Service) ProcessRetries(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Info("stopping webhook retry processor")
-			return
-		case <-ticker.C:
-			s.processRetryBatch(ctx)
-		}
+	// Leader-gated: the retry sweep re-enqueues due deliveries by scanning the
+	// DB, so across replicas it must run once per interval cluster-wide to avoid
+	// duplicate re-enqueues. (Delivery itself uses a BRPop queue and is already
+	// safe for competing consumers.)
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
 	}
+	leader.RunPeriodic(ctx, rdb, s.logger, "webhooks:retry", 30*time.Second, s.processRetryBatch)
+	<-ctx.Done()
+	s.logger.Info("stopping webhook retry processor")
 }
 
 // processRetryBatch finds and re-queues pending deliveries that are due for retry

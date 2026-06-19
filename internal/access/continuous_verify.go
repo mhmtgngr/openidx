@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -36,22 +38,15 @@ func NewContinuousVerifier(svc *Service, interval time.Duration, logger *zap.Log
 // Start launches the background verification goroutine
 func (cv *ContinuousVerifier) Start(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
-	go func() {
-		ticker := time.NewTicker(cv.interval)
-		defer ticker.Stop()
+	cv.logger.Info("Continuous session verifier started", zap.Duration("interval", cv.interval))
 
-		cv.logger.Info("Continuous session verifier started", zap.Duration("interval", cv.interval))
-
-		for {
-			select {
-			case <-ctx.Done():
-				cv.logger.Info("Continuous session verifier stopped")
-				return
-			case <-ticker.C:
-				cv.verifyActiveSessions(ctx)
-			}
-		}
-	}()
+	// Leader-gated: across replicas, re-verify each session once per interval
+	// cluster-wide rather than N times.
+	var rdb *redis.Client
+	if cv.svc != nil && cv.svc.redis != nil {
+		rdb = cv.svc.redis.Client
+	}
+	leader.RunPeriodic(ctx, rdb, cv.logger, "access:continuous-verify", cv.interval, cv.verifyActiveSessions)
 }
 
 // verifyActiveSessions re-evaluates all sessions that need reverification

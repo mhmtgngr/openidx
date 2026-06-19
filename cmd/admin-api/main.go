@@ -160,6 +160,9 @@ func main() {
 
 	// Initialize directory service
 	dirService := directory.NewService(db, log)
+	if redis != nil {
+		dirService.SetRedis(redis.Client) // leader-gate the sync tick across replicas
+	}
 	if err := dirService.Start(context.Background()); err != nil {
 		log.Error("Directory service failed to start", zap.Error(err))
 	}

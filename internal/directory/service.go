@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -30,6 +31,15 @@ func NewService(db *database.PostgresDB, logger *zap.Logger) *Service {
 		logger:    logger.With(zap.String("service", "directory")),
 		scheduler: scheduler,
 		engine:    engine,
+	}
+}
+
+// SetRedis wires a Redis client so the scheduler's tick is leader-gated across
+// replicas. Optional — with no client set, the scheduler runs on every instance
+// (correct for a single-instance deployment). Call before Start.
+func (s *Service) SetRedis(rdb *redis.Client) {
+	if s.scheduler != nil {
+		s.scheduler.redis = rdb
 	}
 }
 

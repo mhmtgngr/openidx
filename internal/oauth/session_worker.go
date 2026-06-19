@@ -5,8 +5,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -16,20 +18,13 @@ func (s *Service) StartSessionWorker(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
 	s.logger.Info("Starting session expiry worker")
 
-	go func() {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				s.logger.Info("Session expiry worker stopped")
-				return
-			case <-ticker.C:
-				s.processExpiredSessions(ctx)
-			}
-		}
-	}()
+	// Leader-gated: across replicas this sweep runs once per interval
+	// cluster-wide (avoids revoking each session N times).
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
+	}
+	leader.RunPeriodic(ctx, rdb, s.logger, "oauth:session-expiry", 60*time.Second, s.processExpiredSessions)
 }
 
 // processExpiredSessions finds and revokes sessions that have exceeded their timeouts

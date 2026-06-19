@@ -6,9 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -17,6 +19,7 @@ type Scheduler struct {
 	db      *database.PostgresDB
 	logger  *zap.Logger
 	engine  *SyncEngine
+	redis   *redis.Client // optional; gates the tick so only one replica syncs
 	stopCh  chan struct{}
 	running map[string]bool
 	mu      sync.Mutex
@@ -38,18 +41,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
 	s.logger.Info("Directory sync scheduler started")
 
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
+	// Leader-gated: across replicas only one runs the scheduled syncs each tick,
+	// so an LDAP/AD directory isn't synced by every replica simultaneously.
+	leader.RunPeriodic(ctx, s.redis, s.logger, "directory:sync", 60*time.Second, s.checkAndRunSyncs)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.stopCh:
-			return
-		case <-ticker.C:
-			s.checkAndRunSyncs(ctx)
-		}
+	select {
+	case <-ctx.Done():
+	case <-s.stopCh:
 	}
 }
 

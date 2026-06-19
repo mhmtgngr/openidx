@@ -18,10 +18,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -2195,17 +2197,17 @@ func (s *Service) handleGetCampaignRuns(c *gin.Context) {
 // and for campaign runs that have exceeded their deadline.
 func (s *Service) StartCampaignScheduler(ctx context.Context) {
 	ctx = orgctx.WithBypassRLS(ctx)
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.checkCampaignSchedules(ctx)
-			s.checkCampaignDeadlines(ctx)
-		}
+	// Leader-gated: trigger due campaigns + deadline checks once per interval
+	// cluster-wide (avoids launching each campaign N times across replicas).
+	var rdb *redis.Client
+	if s.redis != nil {
+		rdb = s.redis.Client
 	}
+	leader.RunPeriodic(ctx, rdb, s.logger, "governance:campaign-scheduler", 1*time.Hour, func(ctx context.Context) {
+		s.checkCampaignSchedules(ctx)
+		s.checkCampaignDeadlines(ctx)
+	})
+	<-ctx.Done()
 }
 
 // checkCampaignSchedules finds active campaigns whose next_run_at has passed and triggers them.
