@@ -336,7 +336,7 @@ func (s *Service) handleListAccessRequests(c *gin.Context) {
 		return
 	}
 
-	baseQuery := `SELECT ar.id, ar.requester_id, COALESCE(u.display_name, u.username, ''),
+	baseQuery := `SELECT ar.id, ar.requester_id, COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, ''),
 		ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		ar.status, ar.priority, ar.expires_at, ar.created_at, ar.updated_at
 		FROM access_requests ar
@@ -433,7 +433,7 @@ func (s *Service) handleGetAccessRequest(c *gin.Context) {
 	var expiresAt *time.Time
 
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT ar.id, ar.requester_id, COALESCE(u.display_name, u.username, ''),
+		`SELECT ar.id, ar.requester_id, COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, ''),
 		 ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		 ar.status, ar.priority, ar.expires_at, ar.created_at, ar.updated_at
 		 FROM access_requests ar
@@ -459,7 +459,7 @@ func (s *Service) handleGetAccessRequest(c *gin.Context) {
 
 	// Fetch approvals
 	approvalRows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT a.id, a.request_id, a.approver_id, COALESCE(u.display_name, u.username, ''), a.step_order, a.decision, a.comments, a.decided_at, a.created_at
+		`SELECT a.id, a.request_id, a.approver_id, COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, ''), a.step_order, a.decision, a.comments, a.decided_at, a.created_at
 		 FROM access_request_approvals a
 		 LEFT JOIN users u ON u.id = a.approver_id AND u.org_id = a.org_id
 		 WHERE a.request_id = $1 AND a.org_id = $2
@@ -689,7 +689,7 @@ func (s *Service) handleListPendingApprovals(c *gin.Context) {
 	}
 
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT ar.id, ar.requester_id, COALESCE(ru.display_name, ru.username, ''),
+		`SELECT ar.id, ar.requester_id, COALESCE(NULLIF(TRIM(CONCAT(ru.first_name, ' ', ru.last_name)), ''), ru.username, ''),
 		        ar.resource_type, ar.resource_id, ar.resource_name, ar.justification,
 		        ar.status, ar.priority, ar.created_at, ar.updated_at
 		 FROM access_request_approvals a
