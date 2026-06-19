@@ -18,13 +18,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button'
 import { api } from '../lib/api'
 
-interface ActivityItem {
+// Matches the /api/v1/dashboard recent_events item.
+interface RecentEvent {
   id: string
   type: string
-  message: string
-  actor_id?: string
-  actor_name?: string
   timestamp: string
+  actor?: string
+  action?: string
+  outcome?: string
+  // tolerated legacy shape
+  message?: string
+}
+
+interface SystemMetrics {
+  cpu_usage?: number
+  memory_usage?: number
+  disk_usage?: number
+  uptime_seconds?: number
 }
 
 interface ZitiStatus {
@@ -41,25 +51,49 @@ interface ZitiSyncStatus {
   total_identities: number
 }
 
-interface AuthStatistics {
-  total_logins: number
-  successful_logins: number
-  failed_logins: number
-  mfa_usage: number
-  logins_by_method: Record<string, number>
-}
-
 interface DashboardStats {
   total_users: number
   active_users: number
-  total_groups: number
-  total_applications: number
   active_sessions: number
   pending_reviews: number
-  security_alerts: number
-  recent_activity: ActivityItem[]
-  auth_stats: AuthStatistics
-  security_alert_details?: { message: string; count: number; timestamp: string }[]
+  recent_events?: RecentEvent[]
+  system_metrics?: SystemMetrics
+  // The backend returns security_alerts as an object; older builds returned a
+  // bare count. Typed as unknown and normalized so neither shape can crash the
+  // render (rendering an object as a React child throws — error #31).
+  security_alerts?: unknown
+  // Optional / not always present in the current backend response.
+  total_applications?: number
+  recent_activity?: RecentEvent[]
+}
+
+// normalizeAlerts accepts either the object form
+// {failed_logins_24h, suspicious_ips, active_threats} or a bare number and
+// returns a consistent breakdown + total.
+function normalizeAlerts(sa: unknown): {
+  failed: number
+  suspicious: number
+  threats: number
+  total: number
+} {
+  if (typeof sa === 'number') {
+    return { failed: sa, suspicious: 0, threats: 0, total: sa }
+  }
+  if (sa && typeof sa === 'object') {
+    const o = sa as Record<string, unknown>
+    const failed = Number(o.failed_logins_24h) || 0
+    const suspicious = Number(o.suspicious_ips) || 0
+    const threats = Number(o.active_threats) || 0
+    return { failed, suspicious, threats, total: failed + suspicious + threats }
+  }
+  return { failed: 0, suspicious: 0, threats: 0, total: 0 }
+}
+
+// eventLabel renders a recent event regardless of which field carries the text.
+function eventLabel(e: RecentEvent): string {
+  if (e.message) return e.message
+  const parts = [e.actor, e.action, e.outcome].filter(Boolean)
+  return parts.length ? parts.join(' · ') : e.type || 'event'
 }
 
 function relativeTime(timestamp: string): string {
@@ -155,7 +189,8 @@ export function DashboardPage() {
     },
   ]
 
-  const recentActivity = stats?.recent_activity || []
+  const recentActivity: RecentEvent[] = stats?.recent_events || stats?.recent_activity || []
+  const alerts = normalizeAlerts(stats?.security_alerts)
 
   return (
     <div className="space-y-6">
@@ -197,21 +232,29 @@ export function DashboardPage() {
             <CardDescription>Recent security events requiring attention</CardDescription>
           </CardHeader>
           <CardContent>
-            {stats?.security_alerts === 0 ? (
+            {alerts.total === 0 ? (
               <div className="flex items-center gap-2 text-green-600">
                 <CheckCircle className="h-5 w-5" />
                 <span>No active alerts</span>
               </div>
             ) : (
               <div className="space-y-2">
-                {stats?.security_alert_details?.map((alert, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
-                    <span className="text-sm">{alert.message} ({alert.count}x)</span>
-                    <span className="text-xs text-orange-600">{relativeTime(alert.timestamp)}</span>
-                  </div>
-                )) || (
+                {alerts.failed > 0 && (
                   <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
-                    <span className="text-sm">{stats?.security_alerts} failed authentication attempts (24h)</span>
+                    <span className="text-sm">Failed authentication attempts (24h)</span>
+                    <span className="text-sm font-semibold text-orange-600">{alerts.failed}</span>
+                  </div>
+                )}
+                {alerts.suspicious > 0 && (
+                  <div className="flex items-center justify-between p-2 bg-orange-50 rounded-lg">
+                    <span className="text-sm">Suspicious IP addresses</span>
+                    <span className="text-sm font-semibold text-orange-600">{alerts.suspicious}</span>
+                  </div>
+                )}
+                {alerts.threats > 0 && (
+                  <div className="flex items-center justify-between p-2 bg-red-50 rounded-lg">
+                    <span className="text-sm">Active threats</span>
+                    <span className="text-sm font-semibold text-red-600">{alerts.threats}</span>
                   </div>
                 )}
               </div>
@@ -238,7 +281,7 @@ export function DashboardPage() {
                     <div key={item.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
                       <div className="flex items-center gap-2">
                         <Icon className="h-4 w-4 text-gray-500" />
-                        <span className="text-sm">{item.message}</span>
+                        <span className="text-sm">{eventLabel(item)}</span>
                       </div>
                       <span className="text-xs text-gray-500">{relativeTime(item.timestamp)}</span>
                     </div>
