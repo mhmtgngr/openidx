@@ -327,5 +327,12 @@ func allMigrations() []*Migration {
 			UpSQL:       zitiBrowzerConfigUp,
 			DownSQL:     zitiBrowzerConfigDown,
 		},
+		{
+			Version:     46,
+			Name:        "ziti_identities_group_attrs_synced_at",
+			Description: "Add ziti_identities.group_attrs_synced_at (init-db.sql-only column) so the Ziti user-sync INSERT/resync works on migrated installs; its absence blocked BrowZer identity provisioning (externalId + auth-policy wiring). Same init-db↔migrations gap as v42–v45. Idempotent.",
+			UpSQL:       zitiIdentitiesGroupSyncUp,
+			DownSQL:     zitiIdentitiesGroupSyncDown,
+		},
 	}
 }
