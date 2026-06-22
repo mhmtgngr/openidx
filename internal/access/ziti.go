@@ -18,9 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	edge_apis "github.com/openziti/sdk-golang/edge-apis"
 	"github.com/openziti/sdk-golang/ziti"
 	"github.com/openziti/sdk-golang/ziti/edge"
 	"github.com/openziti/sdk-golang/ziti/enroll"
@@ -46,6 +48,11 @@ type ZitiManager struct {
 	hostedMu       sync.Mutex
 	hostedServices map[string]*hostedService // keyed by service name
 
+	// authFulls counts EventAuthenticationStateFull emissions. The first is the
+	// initial login (hosting is driven by HostAllServices at startup); every
+	// subsequent one is a reconnect/re-auth that triggers a re-host.
+	authFulls atomic.Int32
+
 	// Config type name → ID cache (e.g. "host.v1" → "NH5p4FpGR")
 	configTypeCacheMu sync.RWMutex
 	configTypeCache   map[string]string
@@ -53,8 +60,10 @@ type ZitiManager struct {
 
 // hostedService tracks a Ziti service listener that forwards to an upstream target
 type hostedService struct {
-	listener edge.Listener
-	cancel   context.CancelFunc
+	listener   edge.Listener
+	cancel     context.CancelFunc
+	targetHost string
+	targetPort int
 }
 
 // ZitiServiceInfo represents a Ziti service from the management API
@@ -169,6 +178,20 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 		zm.zitiCtx = zitiCtx
 		zm.initialized = true
 		zm.logger.Info("Ziti SDK context initialized from identity file", zap.String("file", identityFile))
+
+		// Re-host services whenever the SDK re-authenticates. A dropped/expired
+		// edge session can leave terminators registered on the controller but
+		// dead — every dial then faults with "no destination for circuit" until
+		// a manual restart. The first emission is the initial login (startup
+		// HostAllServices covers it); subsequent ones are reconnects, on which we
+		// rebind all hosted services to guarantee live terminators.
+		zm.zitiCtx.Events().AddAuthenticationStateFullListener(func(_ ziti.Context, _ edge_apis.ApiSession) {
+			if zm.authFulls.Add(1) <= 1 {
+				return
+			}
+			zm.logger.Info("Ziti SDK re-authenticated; reconciling hosted services")
+			go zm.reconcileHosting()
+		})
 	} else {
 		zm.logger.Warn("Ziti identity file not found, SDK dialing unavailable (management API still functional)",
 			zap.String("file", identityFile))
@@ -201,8 +224,12 @@ func (zm *ZitiManager) Close() {
 	}
 }
 
-// HostService binds a Ziti service and forwards incoming connections to the upstream target.
-// This creates a terminator so that Dial calls can reach the service.
+// HostService binds a Ziti service and forwards incoming connections to the
+// upstream target, creating a terminator so Dial calls can reach the service.
+// Establishment is asynchronous and self-retrying (see serveHostedService): the
+// call registers intent and returns immediately, so a not-yet-ready router or
+// freshly-restarted controller no longer makes hosting fail outright — it keeps
+// retrying until a live terminator is registered.
 func (zm *ZitiManager) HostService(serviceName, targetHost string, targetPort int) error {
 	if !zm.initialized {
 		return fmt.Errorf("ziti SDK not initialized, cannot host service")
@@ -214,54 +241,91 @@ func (zm *ZitiManager) HostService(serviceName, targetHost string, targetPort in
 		zm.logger.Info("Service already hosted", zap.String("service", serviceName))
 		return nil
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	hs := &hostedService{cancel: cancel, targetHost: targetHost, targetPort: targetPort}
+	zm.hostedServices[serviceName] = hs
 	zm.hostedMu.Unlock()
 
+	go zm.serveHostedService(ctx, hs, serviceName, fmt.Sprintf("%s:%d", targetHost, targetPort))
+	return nil
+}
+
+// listenEdge opens a Ziti listener (terminator) for a service and asserts the
+// edge.Listener type.
+func (zm *ZitiManager) listenEdge(serviceName string) (edge.Listener, error) {
 	netListener, err := zm.zitiCtx.Listen(serviceName)
 	if err != nil {
-		return fmt.Errorf("failed to listen on ziti service %q: %w", serviceName, err)
+		return nil, err
 	}
-
 	edgeListener, ok := netListener.(edge.Listener)
 	if !ok {
 		netListener.Close()
-		return fmt.Errorf("listener for %q does not implement edge.Listener", serviceName)
+		return nil, fmt.Errorf("listener for %q does not implement edge.Listener", serviceName)
 	}
+	return edgeListener, nil
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
+// serveHostedService owns a hosted service's full lifecycle: it (re-)establishes
+// the listener with backoff, accepts overlay connections, and rebinds whenever
+// the listener fails. This unifies initial hosting and re-hosting — both retry
+// Listen until it succeeds, so neither a router that isn't ready yet nor a
+// freshly-restarted controller leaves a registered-but-dead terminator (which
+// faults every dial with "no destination for circuit" until a manual restart).
+func (zm *ZitiManager) serveHostedService(ctx context.Context, hs *hostedService, serviceName, targetAddr string) {
+	backoff := time.Second
+	const maxBackoff = 15 * time.Second
 
-	zm.hostedMu.Lock()
-	zm.hostedServices[serviceName] = &hostedService{
-		listener: edgeListener,
-		cancel:   cancel,
-	}
-	zm.hostedMu.Unlock()
-
-	targetAddr := fmt.Sprintf("%s:%d", targetHost, targetPort)
-	zm.logger.Info("Hosting Ziti service",
-		zap.String("service", serviceName),
-		zap.String("target", targetAddr))
-
-	// Accept connections in a background goroutine
-	go func() {
-		for {
-			conn, err := edgeListener.AcceptEdge()
-			if err != nil {
-				select {
-				case <-ctx.Done():
-					zm.logger.Info("Stopped hosting service", zap.String("service", serviceName))
-					return
-				default:
-					zm.logger.Error("Accept failed on hosted service",
-						zap.String("service", serviceName), zap.Error(err))
-					return
-				}
+	for {
+		// (Re-)establish the listener, retrying until the SDK/router is ready.
+		listener, err := zm.listenEdge(serviceName)
+		if err != nil {
+			zm.logger.Debug("Listen pending (SDK not ready)",
+				zap.String("service", serviceName), zap.Error(err))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
 			}
-
-			go zm.forwardHTTPConnection(conn, targetAddr, serviceName)
+			if backoff *= 2; backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
 		}
-	}()
 
-	return nil
+		// Publish the live listener (bail if stopped mid-establish).
+		zm.hostedMu.Lock()
+		if cur, exists := zm.hostedServices[serviceName]; !exists || cur != hs {
+			zm.hostedMu.Unlock()
+			listener.Close()
+			return
+		}
+		hs.listener = listener
+		zm.hostedMu.Unlock()
+
+		backoff = time.Second
+		zm.logger.Info("Hosting Ziti service",
+			zap.String("service", serviceName), zap.String("target", targetAddr))
+
+		// Accept loop — runs until the listener fails or we're stopped.
+		for {
+			conn, err := listener.AcceptEdge()
+			if err == nil {
+				go zm.forwardHTTPConnection(conn, targetAddr, serviceName)
+				continue
+			}
+			select {
+			case <-ctx.Done():
+				listener.Close()
+				zm.logger.Info("Stopped hosting service", zap.String("service", serviceName))
+				return
+			default:
+			}
+			zm.logger.Warn("Hosted service listener failed; rebinding",
+				zap.String("service", serviceName), zap.Error(err))
+			listener.Close()
+			break // re-establish
+		}
+	}
 }
 
 // StopHostingService stops hosting a specific service
@@ -312,6 +376,68 @@ func (zm *ZitiManager) HostAllServices(ctx context.Context) {
 		if err := zm.HostService(serviceName, host, port); err != nil {
 			zm.logger.Error("Failed to host Ziti service",
 				zap.String("service", serviceName), zap.Error(err))
+		}
+	}
+}
+
+// serviceHasTerminator reports whether the controller currently has at least one
+// terminator for the service — i.e. whether our hosting is actually live. Used
+// to reconcile after a reconnect without disturbing healthy terminators.
+func (zm *ZitiManager) serviceHasTerminator(serviceName string) bool {
+	path := fmt.Sprintf("/edge/management/v1/terminators?filter=%s&limit=1",
+		url.QueryEscape(fmt.Sprintf("service.name=\"%s\"", serviceName)))
+	respData, status, err := zm.mgmtRequest("GET", path, nil)
+	if err != nil || status != http.StatusOK {
+		// Unknown — assume present so we don't needlessly rebind on a transient
+		// management-API hiccup.
+		return true
+	}
+	var resp struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(respData, &resp) != nil {
+		return true
+	}
+	return len(resp.Data) > 0
+}
+
+// reconcileHosting re-hosts only the services whose terminator has gone missing.
+// Called when the SDK re-authenticates after a reconnect: a dropped session can
+// leave a hosted service with no live terminator (every dial then faults with
+// "no destination for circuit"). We deliberately do NOT blindly re-Listen every
+// service — periodic session refresh also re-authenticates, and force-closing a
+// healthy terminator risks a failed rebind turning a working service broken. So
+// we only act on services the controller shows as having no terminator.
+func (zm *ZitiManager) reconcileHosting() {
+	zm.hostedMu.Lock()
+	snapshot := make(map[string]*hostedService, len(zm.hostedServices))
+	for name, hs := range zm.hostedServices {
+		snapshot[name] = hs
+	}
+	zm.hostedMu.Unlock()
+
+	for name, hs := range snapshot {
+		if zm.serviceHasTerminator(name) {
+			continue // healthy — leave it alone
+		}
+		zm.logger.Warn("Hosted service lost its terminator after reconnect; re-hosting",
+			zap.String("service", name))
+
+		// Tear down the stale entry (stops its accept goroutine via ctx) and
+		// re-host with a fresh, self-retrying listener.
+		hs.cancel()
+		if hs.listener != nil {
+			hs.listener.Close()
+		}
+		zm.hostedMu.Lock()
+		if cur, ok := zm.hostedServices[name]; ok && cur == hs {
+			delete(zm.hostedServices, name)
+		}
+		zm.hostedMu.Unlock()
+
+		if err := zm.HostService(name, hs.targetHost, hs.targetPort); err != nil {
+			zm.logger.Error("Failed to re-host service after reconnect",
+				zap.String("service", name), zap.Error(err))
 		}
 	}
 }
