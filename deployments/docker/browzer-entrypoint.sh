@@ -67,33 +67,81 @@ load_config() {
     return 1
 }
 
+LISTEN_PORT="${ZITI_BROWZER_BOOTSTRAPPER_LISTEN_PORT:-8445}"
+
+# port_free: succeeds (0) when LISTEN_PORT is bindable, fails (1) when in use.
+# Only bash + node are present in this image (no ss/lsof/fuser), so probe with
+# node by attempting a throwaway listen.
+port_free() {
+    node -e "const n=require('net');const s=n.createServer();s.once('error',()=>process.exit(1));s.once('listening',()=>s.close(()=>process.exit(0)));s.listen(${LISTEN_PORT},'0.0.0.0')" 2>/dev/null
+}
+
+# kill_stray_node: last-resort cleanup of orphaned bootstrapper processes that
+# still hold the port (e.g. a restart whose PID we lost track of). Scans /proc
+# since pkill isn't available. Never targets this shell.
+kill_stray_node() {
+    for d in /proc/[0-9]*; do
+        pid="${d##*/}"
+        [ "$pid" = "$$" ] && continue
+        if [ "$(cat "$d/comm" 2>/dev/null)" = "node" ]; then
+            echo "[entrypoint] killing stray node pid $pid holding :$LISTEN_PORT"
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+}
+
+# wait_for_port_free: block until LISTEN_PORT is released, so we never launch a
+# new node while the previous one (or an orphan) still holds it — that was the
+# EADDRINUSE crash-loop. After a grace period, forcibly clear any stray holder.
+wait_for_port_free() {
+    local n=0
+    while ! port_free; do
+        n=$((n + 1))
+        if [ "$n" -gt 20 ]; then
+            echo "[entrypoint] :$LISTEN_PORT still busy after ${n}s"
+            kill_stray_node
+            sleep 2
+            return 0
+        fi
+        sleep 1
+    done
+    return 0
+}
+
 start_node() {
-    load_config
+    load_config || true
+    wait_for_port_free
     echo "[entrypoint] Starting bootstrapper..."
     cd /home/node/ziti-browzer-bootstrapper && node index.js &
     NODE_PID=$!
     echo "[entrypoint] Bootstrapper started with PID $NODE_PID"
 }
 
-restart_node() {
-    echo "[entrypoint] Restarting bootstrapper due to config change..."
+# stop_node: terminate the bootstrapper and wait until the port is actually
+# free. node forks a child that holds the listening socket, so killing only the
+# tracked NODE_PID (the parent) leaves the child holding :LISTEN_PORT — that was
+# the EADDRINUSE crash-loop. We TERM the parent for a graceful shutdown, then
+# sweep any remaining node procs (this container runs only the bootstrapper).
+stop_node() {
     if [ -n "$NODE_PID" ] && kill -0 "$NODE_PID" 2>/dev/null; then
-        kill -TERM "$NODE_PID"
-        # Wait up to 10 seconds for graceful shutdown
+        kill -TERM "$NODE_PID" 2>/dev/null || true
         WAIT_COUNT=0
         while kill -0 "$NODE_PID" 2>/dev/null && [ $WAIT_COUNT -lt 10 ]; do
             sleep 1
             WAIT_COUNT=$((WAIT_COUNT + 1))
         done
-        # Force kill if still running
-        if kill -0 "$NODE_PID" 2>/dev/null; then
-            echo "[entrypoint] Force killing bootstrapper..."
-            kill -9 "$NODE_PID" 2>/dev/null
-        fi
         wait "$NODE_PID" 2>/dev/null || true
     fi
-    # Wait for port 443 to be released (TCP TIME_WAIT)
-    sleep 3
+    # Reap the listener child (and any orphan) so the port frees immediately.
+    if ! port_free; then
+        kill_stray_node
+    fi
+}
+
+restart_node() {
+    echo "[entrypoint] Restarting bootstrapper due to config change..."
+    stop_node
+    # start_node blocks on wait_for_port_free, so we never race the old listener.
     start_node
 }
 
@@ -124,7 +172,8 @@ while true; do
     # Check if node process crashed
     if ! kill -0 "$NODE_PID" 2>/dev/null; then
         echo "[entrypoint] Node process died unexpectedly, restarting..."
-        sleep 3
+        # start_node waits for the port to free before relaunching, so a
+        # lingering listener can't trigger an EADDRINUSE crash-loop.
         start_node
         continue
     fi
@@ -133,9 +182,11 @@ while true; do
     CURR_MTIME=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || echo "0")
     if [ "$CURR_MTIME" != "$LAST_MTIME" ] && [ "$CURR_MTIME" != "0" ]; then
         echo "[entrypoint] Config file changed (mtime: $LAST_MTIME -> $CURR_MTIME)"
-        LAST_MTIME="$CURR_MTIME"
-        # Small delay to ensure file write is complete
+        # Settle delay: lets a burst of successive writes (e.g. several feature
+        # toggles) finish, then adopt the latest mtime so they coalesce into a
+        # single restart instead of a restart storm.
         sleep 1
+        LAST_MTIME=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || echo "$CURR_MTIME")
         restart_node
     fi
 done
