@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 const (
@@ -308,13 +309,18 @@ func (tm *BrowZerTargetManager) GenerateBrowZerTargets(ctx context.Context) (*Br
 // WriteBrowZerTargets generates the target config and writes it to the shared config file.
 // The file is written in the nconf config.json format where the targets JSON is a string value.
 func (tm *BrowZerTargetManager) WriteBrowZerTargets(ctx context.Context) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	return tm.writeTargetsLocked(ctx)
+}
+
+// writeTargetsLocked is the lock-free body of WriteBrowZerTargets. The caller
+// must hold tm.mu (so target + router-config regeneration can share one lock).
+func (tm *BrowZerTargetManager) writeTargetsLocked(ctx context.Context) error {
 	if tm.targetsPath == "" {
 		tm.logger.Debug("No targets path configured, skipping write")
 		return nil
 	}
-
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
 
 	targets, err := tm.GenerateBrowZerTargets(ctx)
 	if err != nil {
@@ -598,6 +604,14 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 
 // WriteBrowZerRouterConfig generates the nginx router config and writes it to the shared config file.
 func (tm *BrowZerTargetManager) WriteBrowZerRouterConfig(ctx context.Context) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	return tm.writeRouterConfigLocked(ctx)
+}
+
+// writeRouterConfigLocked is the lock-free body of WriteBrowZerRouterConfig. The
+// caller must hold tm.mu.
+func (tm *BrowZerTargetManager) writeRouterConfigLocked(ctx context.Context) error {
 	if tm.routerConfigPath == "" {
 		tm.logger.Debug("No router config path configured, skipping write")
 		return nil
@@ -615,6 +629,26 @@ func (tm *BrowZerTargetManager) WriteBrowZerRouterConfig(ctx context.Context) er
 	tm.logger.Info("BrowZer router config written",
 		zap.String("path", tm.routerConfigPath))
 	return nil
+}
+
+// RegenerateConfigs rewrites BOTH the bootstrapper targets and the nginx router
+// config under a single lock, so the two files are always mutually consistent
+// and concurrent callers serialize (whichever runs last reflects the latest
+// committed proxy_routes state). Always queries install-wide (RLS bypassed),
+// matching the shared bootstrapper's all-orgs view.
+//
+// Call this SYNCHRONOUSLY and AFTER the proxy_routes feature flags are
+// committed. The previous fire-and-forget goroutines were spawned mid-toggle,
+// before the flag commit, so they raced it and intermittently wrote empty
+// (0-route) configs even when the DB was correct.
+func (tm *BrowZerTargetManager) RegenerateConfigs(ctx context.Context) error {
+	ctx = orgctx.WithBypassRLS(ctx)
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if err := tm.writeTargetsLocked(ctx); err != nil {
+		return err
+	}
+	return tm.writeRouterConfigLocked(ctx)
 }
 
 // writeFileAtomic writes data to a file using a temp file + rename pattern for atomicity.

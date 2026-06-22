@@ -2,11 +2,9 @@
 package access
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -204,14 +202,13 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		}
 	}
 
-	// Regenerate BrowZer bootstrapper targets and router config with timeout
+	// Regenerate BrowZer configs synchronously (the proxy_routes rows above are
+	// already committed). RegenerateConfigs serializes + writes both files
+	// atomically under one lock, so concurrent toggles can't clobber each other.
 	if s.browzerTargetManager != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			s.browzerTargetManager.WriteBrowZerTargets(bgCtx)
-			s.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
-		}()
+		if err := s.browzerTargetManager.RegenerateConfigs(c.Request.Context()); err != nil {
+			s.logger.Warn("Failed to regenerate BrowZer configs", zap.Error(err))
+		}
 	}
 
 	resp := gin.H{"message": "BrowZer enabled on service", "role_attributes": attrs}
@@ -268,14 +265,12 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 			`DELETE FROM proxy_routes WHERE ziti_service_name = $1 AND browzer_enabled = true AND org_id = $2`, serviceName, org.ID)
 	}
 
-	// Regenerate BrowZer bootstrapper targets and router config with timeout
+	// Regenerate BrowZer configs synchronously (the proxy_routes cleanup above is
+	// already committed). RegenerateConfigs serializes + writes both files atomically.
 	if s.browzerTargetManager != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			s.browzerTargetManager.WriteBrowZerTargets(bgCtx)
-			s.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
-		}()
+		if err := s.browzerTargetManager.RegenerateConfigs(c.Request.Context()); err != nil {
+			s.logger.Warn("Failed to regenerate BrowZer configs", zap.Error(err))
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer disabled on service", "role_attributes": filtered})
