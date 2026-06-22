@@ -196,6 +196,11 @@ func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, fea
 		fm.logger.Warn("Failed to sync route flags", zap.Error(err))
 	}
 
+	// Regenerate BrowZer configs now that the route flags are committed (so
+	// queryBrowZerRoutes sees the new state). Synchronous + serialized — see
+	// regenerateBrowZerConfigs.
+	fm.regenerateBrowZerConfigs(ctx, feature)
+
 	fm.logger.Info("Feature enabled",
 		zap.String("route_id", routeID),
 		zap.String("feature", string(feature)),
@@ -257,11 +262,35 @@ func (fm *FeatureManager) DisableFeature(ctx context.Context, routeID string, fe
 		fm.logger.Warn("Failed to sync route flags", zap.Error(err))
 	}
 
+	// Regenerate BrowZer configs now that the route flags are committed.
+	fm.regenerateBrowZerConfigs(ctx, feature)
+
 	fm.logger.Info("Feature disabled",
 		zap.String("route_id", routeID),
 		zap.String("feature", string(feature)))
 
 	return nil
+}
+
+// regenerateBrowZerConfigs rewrites the BrowZer bootstrapper target + nginx
+// router configs to match the current committed proxy_routes state. Only the
+// Ziti/BrowZer features affect those configs (queryBrowZerRoutes gates on both
+// ziti_enabled and browzer_enabled), so it's a no-op for other features.
+//
+// Must be called AFTER syncRouteFlags commits, synchronously: the regeneration
+// query reads the proxy_routes flags, so running it before the commit (as the
+// old fire-and-forget goroutine did, spawned inside provision/deprovisionFeature)
+// races the commit and intermittently writes empty configs.
+func (fm *FeatureManager) regenerateBrowZerConfigs(ctx context.Context, feature FeatureName) {
+	if fm.browzerTargetManager == nil {
+		return
+	}
+	if feature != FeatureBrowZer && feature != FeatureZiti {
+		return
+	}
+	if err := fm.browzerTargetManager.RegenerateConfigs(ctx); err != nil {
+		fm.logger.Warn("Failed to regenerate BrowZer configs", zap.Error(err))
+	}
 }
 
 // GetServiceStatus returns the complete status of a service
@@ -659,15 +688,12 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		resourceIDs["browzer_enabled"] = "true"
 		resourceIDs["ziti_service_id"] = zitiServiceID
 
-		// Regenerate BrowZer bootstrapper targets and router config with timeout
-		if fm.browzerTargetManager != nil {
-			go func() {
-				bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				fm.browzerTargetManager.WriteBrowZerTargets(bgCtx)
-				fm.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
-			}()
-		}
+		// NOTE: BrowZer config regeneration is deliberately NOT done here.
+		// queryBrowZerRoutes reads proxy_routes.browzer_enabled, which isn't
+		// committed until syncRouteFlags runs later in EnableFeature — so
+		// regenerating now (the old fire-and-forget goroutine did) races the
+		// commit and can write empty configs. EnableFeature regenerates
+		// synchronously after the flag is committed.
 
 	case FeatureGuacamole:
 		if fm.guacamoleClient == nil {
@@ -748,15 +774,8 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 				}
 			}
 		}
-		// Regenerate BrowZer bootstrapper targets and router config with timeout
-		if fm.browzerTargetManager != nil {
-			go func() {
-				bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				fm.browzerTargetManager.WriteBrowZerTargets(bgCtx)
-				fm.browzerTargetManager.WriteBrowZerRouterConfig(bgCtx)
-			}()
-		}
+		// NOTE: regeneration happens in DisableFeature after syncRouteFlags
+		// commits browzer_enabled=false (see provisionFeature note above).
 
 	case FeatureGuacamole:
 		if fm.guacamoleClient != nil {
