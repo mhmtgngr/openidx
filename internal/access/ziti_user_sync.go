@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"go.uber.org/zap"
@@ -98,10 +99,24 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 		attrs = []string{}
 	}
 
-	// Create Ziti identity (name = userID for unique linking)
+	// Create Ziti identity (name = userID for unique linking). If the controller
+	// already has an identity with this name — e.g. seeded out-of-band, or a DB
+	// reset left the controller ahead of the ziti_identities table — adopt it
+	// rather than failing on the duplicate-name unique constraint. This keeps the
+	// sync convergent when the controller and DB drift apart.
 	zitiID, enrollmentJWT, err := zm.CreateIdentity(ctx, userID, "User", attrs)
 	if err != nil {
-		return nil, fmt.Errorf("create ziti identity for user %s: %w", userID, err)
+		existing := zm.findResourceByName("identities", userID)
+		if existing == "" {
+			return nil, fmt.Errorf("create ziti identity for user %s: %w", userID, err)
+		}
+		zm.logger.Info("Adopting pre-existing Ziti identity for user",
+			zap.String("user_id", userID), zap.String("ziti_id", existing))
+		zitiID = existing
+		if perr := zm.PatchIdentityRoleAttributes(ctx, zitiID, attrs); perr != nil {
+			zm.logger.Warn("Failed to patch attributes on adopted identity",
+				zap.String("user_id", userID), zap.Error(perr))
+		}
 	}
 
 	// Persist to DB
@@ -113,6 +128,11 @@ func (zm *ZitiManager) SyncUserToZiti(ctx context.Context, userID string) (*Sync
 	if err != nil {
 		return nil, fmt.Errorf("persist ziti identity for user %s: %w", userID, err)
 	}
+
+	// When BrowZer is enabled, wire the fresh identity for external-JWT (OIDC)
+	// auth so the user can reach BrowZer-enabled services immediately, rather
+	// than waiting for the next group-attribute reconcile.
+	zm.applyBrowZerAuth(ctx, zitiID, userID)
 
 	zm.logger.Info("Auto-synced user to Ziti identity",
 		zap.String("user_id", userID),
@@ -223,7 +243,59 @@ func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) (
 		attrs = append(attrs, "device-trusted")
 	}
 
+	// When BrowZer is enabled, every synced identity carries the #browzer-users
+	// role so the BrowZer Dial policy (#browzer-users → #browzer-enabled) applies.
+	// It must be part of the canonical attribute set, otherwise the periodic
+	// group-attribute reconcile (which replaces roleAttributes wholesale) would
+	// strip it back off.
+	if _, ok := zm.browzerAuthPolicy(ctx); ok {
+		attrs = append(attrs, "browzer-users")
+	}
+
 	return attrs, nil
+}
+
+// browzerAuthPolicy returns the BrowZer auth-policy id when BrowZer is enabled,
+// otherwise ("", false). Cheap single-row lookup; returns false (no error) when
+// the ziti_browzer_config table is absent or BrowZer is off, so callers can use
+// it as a fast feature gate without incurring any Ziti API calls.
+func (zm *ZitiManager) browzerAuthPolicy(ctx context.Context) (string, bool) {
+	var authPolicyID string
+	var enabled bool
+	err := zm.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(auth_policy_id,''), COALESCE(enabled,false) FROM ziti_browzer_config LIMIT 1`).
+		Scan(&authPolicyID, &enabled)
+	if err != nil || !enabled || authPolicyID == "" {
+		return "", false
+	}
+	return authPolicyID, true
+}
+
+// applyBrowZerAuth wires a synced identity for BrowZer external-JWT auth: it sets
+// externalId = userID (which must equal the OIDC `sub` claim OpenIDX issues) and
+// assigns the BrowZer auth policy, so the controller will accept the user's OIDC
+// token when the clientless SDK creates an API session. No-op (after one cheap
+// DB read) when BrowZer is disabled; idempotent, so it both provisions new
+// identities and retrofits ones synced before BrowZer was turned on.
+func (zm *ZitiManager) applyBrowZerAuth(ctx context.Context, zitiID, userID string) {
+	authPolicyID, ok := zm.browzerAuthPolicy(ctx)
+	if !ok {
+		return
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"externalId":   userID,
+		"authPolicyId": authPolicyID,
+	})
+	_, statusCode, err := zm.mgmtRequest("PATCH",
+		fmt.Sprintf("/edge/management/v1/identities/%s", zitiID), body)
+	if err != nil || statusCode != http.StatusOK {
+		zm.logger.Warn("Failed to apply BrowZer auth to identity",
+			zap.String("user_id", userID), zap.String("ziti_id", zitiID),
+			zap.Int("status", statusCode), zap.Error(err))
+		return
+	}
+	zm.logger.Debug("Applied BrowZer auth to identity",
+		zap.String("user_id", userID), zap.String("ziti_id", zitiID))
 }
 
 // SyncGroupAttributesForUser fetches the user's current group memberships
@@ -255,6 +327,12 @@ func (zm *ZitiManager) SyncGroupAttributesForUser(ctx context.Context, userID st
 		//orgscope:ignore Ziti user-sync engine; updates the identity by its primary key resolved from the org-bounded user_id lookup above
 		`UPDATE ziti_identities SET attributes=$1, group_attrs_synced_at=NOW(), updated_at=NOW()
 		 WHERE id=$2`, attrsJSON, zitiIdentityID)
+
+	// Reconcile BrowZer external-JWT auth on every attribute sync. This is the
+	// choke point that runs for all linked identities (including ones synced
+	// before BrowZer was enabled), so it retrofits externalId + auth policy on
+	// existing identities, not just freshly created ones.
+	zm.applyBrowZerAuth(ctx, zitiID, userID)
 
 	return nil
 }
