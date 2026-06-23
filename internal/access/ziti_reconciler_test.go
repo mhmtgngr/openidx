@@ -16,6 +16,22 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 )
 
+func TestEffectiveModeHop(t *testing.T) {
+	if (DesiredRoute{HostingMode: "hop", BrowZerEnabled: true}).EffectiveMode() != HostingModeHop {
+		t.Fatalf("explicit hop must win over browzer->direct, got %q", (DesiredRoute{HostingMode: "hop", BrowZerEnabled: true}).EffectiveMode())
+	}
+	if (DesiredRoute{HostingMode: "hop"}).EffectiveMode() != HostingModeHop {
+		t.Fatalf("hop must be honored")
+	}
+	// regression: existing modes unchanged
+	if (DesiredRoute{BrowZerEnabled: true}).EffectiveMode() != HostingModeDirect {
+		t.Fatalf("browzer must still map to direct")
+	}
+	if (DesiredRoute{}).EffectiveMode() != HostingModeIdentity {
+		t.Fatalf("default must still be identity")
+	}
+}
+
 func TestDesiredRouteHostingModeNormalization(t *testing.T) {
 	if got := (DesiredRoute{HostingMode: "identity", BrowZerEnabled: true}).EffectiveMode(); got != "direct" {
 		t.Fatalf("browzer route should be direct, got %q", got)

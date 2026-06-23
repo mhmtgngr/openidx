@@ -20,6 +20,11 @@ const (
 	// HostingModeDirect — the edge router hosts the service via a fixed host.v1
 	// config. Used automatically for all BrowZer routes.
 	HostingModeDirect = "direct"
+	// HostingModeHop — the edge router hosts a per-app service whose host.v1
+	// points at the shared TLS hop nginx; the hop SNI-demuxes and rewrites the
+	// HTTP Host for Host-routed/https upstreams the BrowZer runtime cannot
+	// address directly (it sends a fixed "Host: unknown").
+	HostingModeHop = "hop"
 )
 
 // DesiredRoute is the reconciler's view of a ziti-enabled proxy_route.
@@ -30,9 +35,14 @@ type DesiredRoute struct {
 	BrowZerEnabled bool
 }
 
-// EffectiveMode resolves the hosting mode, forcing "direct" for BrowZer routes
-// and defaulting empty to "identity".
+// EffectiveMode resolves the hosting mode. An explicit "hop" hosting_mode wins
+// over all other rules (including the BrowZer→direct promotion). BrowZer routes
+// without an explicit mode are forced to "direct". Everything else defaults to
+// "identity".
 func (r DesiredRoute) EffectiveMode() string {
+	if r.HostingMode == HostingModeHop {
+		return HostingModeHop
+	}
 	if r.BrowZerEnabled {
 		return HostingModeDirect
 	}
