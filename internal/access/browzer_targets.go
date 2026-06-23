@@ -54,6 +54,8 @@ type BrowZerTargetManager struct {
 	targetsPath      string
 	routerConfigPath string
 	certsPath        string
+	hopConfigPath    string
+	hopPort          int
 	domain           string
 	dnsResolvers     string // nginx resolver addresses (auto-detected from /etc/resolv.conf)
 	mu               sync.Mutex
@@ -141,6 +143,16 @@ func (tm *BrowZerTargetManager) SetRouterConfigPath(path string) {
 // SetCertsPath sets the path for the shared BrowZer certificates directory
 func (tm *BrowZerTargetManager) SetCertsPath(path string) {
 	tm.certsPath = path
+}
+
+// SetHopConfigPath sets the path for the nginx hop config file
+func (tm *BrowZerTargetManager) SetHopConfigPath(path string) {
+	tm.hopConfigPath = path
+}
+
+// SetHopPort sets the TLS port the shared BrowZer hop server listens on
+func (tm *BrowZerTargetManager) SetHopPort(port int) {
+	tm.hopPort = port
 }
 
 // GetCertsPath returns the configured certificates directory path
@@ -676,6 +688,83 @@ func (tm *BrowZerTargetManager) writeRouterConfigLocked(ctx context.Context) err
 
 	tm.logger.Info("BrowZer router config written",
 		zap.String("path", tm.routerConfigPath))
+	return nil
+}
+
+// buildBrowZerHopConfig generates the nginx config for the shared BrowZer hop:
+// one TLS server{} per `hop` route, demuxed by SNI (server_name = vhost). The
+// BrowZer runtime sends "Host: unknown" but its WASM-TLS presents SNI = vhost,
+// so server_name matches; we rewrite Host to the vhost and TLS-proxy to the real
+// upstream. This serves Host-routed / https upstreams that the raw-TCP direct
+// path cannot. Non-hop routes are skipped.
+func buildBrowZerHopConfig(routes []browzerRouteInfo, certPath, keyPath string, port int) string {
+	if port == 0 {
+		port = 8095
+	}
+	var b strings.Builder
+	b.WriteString("# Auto-generated BrowZer hop config — do not edit manually\n")
+	for _, r := range routes {
+		if r.hostingMode != HostingModeHop {
+			continue
+		}
+		fmt.Fprintf(&b, "\nserver {\n")
+		fmt.Fprintf(&b, "    listen %d ssl;\n", port)
+		fmt.Fprintf(&b, "    server_name %s;\n", r.hostname)
+		fmt.Fprintf(&b, "    ssl_certificate %s;\n", certPath)
+		fmt.Fprintf(&b, "    ssl_certificate_key %s;\n", keyPath)
+		b.WriteString("    location / {\n")
+		fmt.Fprintf(&b, "        proxy_pass %s;\n", r.toURL)
+		b.WriteString("        proxy_ssl_server_name on;\n")
+		fmt.Fprintf(&b, "        proxy_ssl_name %s;\n", r.hostname)
+		b.WriteString("        proxy_ssl_verify off;\n")
+		fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", r.hostname)
+		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+		b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		b.WriteString("        proxy_set_header X-Forwarded-Proto https;\n")
+		b.WriteString("        proxy_http_version 1.1;\n")
+		b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
+		b.WriteString("        proxy_set_header Connection \"upgrade\";\n")
+		b.WriteString("        proxy_read_timeout 86400s;\n")
+		b.WriteString("        proxy_set_header Remote-User $http_remote_user;\n")
+		b.WriteString("    }\n}\n")
+	}
+	return b.String()
+}
+
+// GenerateBrowZerHopConfig queries the BrowZer-enabled routes and builds the
+// nginx config for the shared hop server. It is lock-free (mirrors
+// GenerateBrowZerRouterConfig): it only reads tm.certsPath/tm.hopPort and calls
+// queryBrowZerRoutes (which does not take tm.mu), so it is safe to call either
+// under tm.mu (as WriteBrowZerHopConfig does) or without it.
+func (tm *BrowZerTargetManager) GenerateBrowZerHopConfig(ctx context.Context) ([]byte, error) {
+	routes, err := tm.queryBrowZerRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	certDir := tm.certsPath
+	cfg := buildBrowZerHopConfig(routes, certDir+"/tdv-fullchain.pem", certDir+"/tdv-key.pem", tm.hopPort)
+	return []byte(cfg), nil
+}
+
+// WriteBrowZerHopConfig generates the nginx hop config and writes it to the
+// shared config file. Mirrors WriteBrowZerRouterConfig's locking discipline:
+// it holds tm.mu for the duration and calls the lock-free
+// GenerateBrowZerHopConfig under that lock (no double-lock).
+func (tm *BrowZerTargetManager) WriteBrowZerHopConfig(ctx context.Context) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if tm.hopConfigPath == "" {
+		tm.logger.Debug("No hop config path configured, skipping write")
+		return nil
+	}
+	data, err := tm.GenerateBrowZerHopConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to generate hop config: %w", err)
+	}
+	if err := writeFileAtomic(tm.hopConfigPath, data); err != nil {
+		return err
+	}
+	tm.logger.Info("BrowZer hop config written", zap.String("path", tm.hopConfigPath))
 	return nil
 }
 
