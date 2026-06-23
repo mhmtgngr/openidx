@@ -35,6 +35,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { useToast } from '../hooks/use-toast'
 import { ServiceFeaturePanel } from '../components/ServiceFeaturePanel'
+import { RouteFeatureToggles } from '../components/RouteFeatureToggles'
 import { ConnectionTestButton } from '../components/ConnectionTestButton'
 
 interface ProxyRoute {
@@ -498,6 +499,14 @@ export function ProxyRoutesPage() {
                     )}
                     Features
                   </Button>
+                  {(!route.route_type || route.route_type === 'http') && (
+                    <div className="ml-auto">
+                      <RouteFeatureToggles
+                        routeId={route.id}
+                        onUpdate={() => queryClient.invalidateQueries({ queryKey: ['proxy-routes'] })}
+                      />
+                    </div>
+                  )}
                 </div>
                 {expandedRoute === route.id && (
                   <div className="mt-3 pt-3 border-t">
