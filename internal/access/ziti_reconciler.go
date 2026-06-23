@@ -52,7 +52,7 @@ type ZitiReconciler struct {
 	period   time.Duration
 
 	trigger  chan struct{}         // coalescing: buffered size 1
-	runOnce  func(context.Context) // overridable in tests; defaults to reconcileOnce (added in a later task)
+	runOnce  func(context.Context) // overridable in tests; defaults to reconcileOnce
 	mu       sync.Mutex            // serializes runs
 	statusMu sync.Mutex            // protects status map
 	status   map[string]string     // serviceName -> "synced" | "error: ..."
@@ -128,13 +128,16 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	// Surface mid-iteration errors (e.g. a dropped connection) so a partial read
+	// isn't mistaken for the full desired set.
+	return out, rows.Err()
 }
 
 // ensureService makes sure the Ziti service exists with its role attribute.
-// Idempotent: looks up by name, creates the service if absent (using SetupZitiForRoute
-// with routeID "" so no proxy_routes FK is needed — falls back to re-check on creation
-// conflict), then ensures the service-name role attribute is set.
+// Idempotent: looks up by name, creates the service via CreateService if absent
+// (controller-only — the reconciler must NOT write back to proxy_routes/ziti_services;
+// the DB is the source of truth), tolerating a create race, then ensures the
+// service-name role attribute is set.
 func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
 	if existing, _ := zm.GetServiceByName(d.ServiceName); existing == nil {
 		// Service does not exist; create it. Use CreateService (the minimal management-API
@@ -166,6 +169,11 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 // ensurePolicies creates bind/dial/service-edge-router policies for identity mode.
 // CreateServicePolicy returns an error (often a 400) when the policy already exists;
 // that is the idempotent no-op path, so we tolerate and debug-log those errors.
+// ensurePolicies ensures the bind/dial/service-edge-router policies for the
+// route. Phase 1 = identity mode: Bind is granted to #access-proxy-clients (the
+// access-proxy hosts the terminator). Phase 2 (direct mode) must instead grant
+// Bind to the edge-router identities so the router hosts via host.v1 — do NOT
+// reuse this identity-mode policy set for direct routes.
 func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
 	svcRole := "#" + d.ServiceName
 	if _, err := zm.CreateServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",

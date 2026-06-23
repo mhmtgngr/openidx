@@ -787,6 +787,7 @@ func TestConfigDefaults(t *testing.T) {
 	assert.Equal(t, "http://localhost:8281", cfg.OPAURL)
 	assert.False(t, cfg.EnableOPAAuthz)
 	assert.False(t, cfg.ZitiEnabled)
+	assert.False(t, cfg.ZitiReconcilerEnabled)
 	assert.False(t, cfg.ContinuousVerifyEnabled)
 	assert.False(t, cfg.BrowZerEnabled)
 	assert.Equal(t, "*", cfg.CORSAllowedOrigins)
