@@ -357,6 +357,38 @@ func (tm *BrowZerTargetManager) writeTargetsLocked(ctx context.Context) error {
 	return nil
 }
 
+// browzerUpstream rewrites a route's to_url into the address the BrowZer router
+// container must use to reach the target. When the target is bound to the host
+// loopback (a "dark" service published only on 127.0.0.1, reachable over the
+// overlay), the router — which runs in its own network namespace — cannot use
+// 127.0.0.1 directly; it must use the host-loopback alias for its runtime (e.g.
+// slirp4netns exposes the host loopback at 10.0.2.2 with allow_host_loopback).
+//
+// The alias is configured via BROWZER_HOST_LOOPBACK_ALIAS. When unset (the
+// default, e.g. docker-compose where the router shares a bridge with the app),
+// to_url is returned unchanged so behavior is identical to before.
+func browzerUpstream(toURL string) string {
+	alias := os.Getenv("BROWZER_HOST_LOOPBACK_ALIAS")
+	if alias == "" {
+		return toURL
+	}
+	parsed, err := url.Parse(toURL)
+	if err != nil || parsed.Host == "" {
+		return toURL
+	}
+	switch parsed.Hostname() {
+	case "127.0.0.1", "localhost", "::1":
+		if port := parsed.Port(); port != "" {
+			parsed.Host = alias + ":" + port
+		} else {
+			parsed.Host = alias
+		}
+		return parsed.String()
+	default:
+		return toURL
+	}
+}
+
 // GenerateBrowZerRouterConfig generates nginx config for path-based and vhost-based BrowZer routing.
 // Path-based routes on the default domain get location blocks; routes with unique domains get
 // separate server blocks with simple proxy_pass (no sub_filter needed since the app runs at /).
@@ -385,7 +417,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		if r.hostname != domain {
 			vhosts = append(vhosts, vhostMapping{
 				hostname: r.hostname,
-				upstream: r.toURL,
+				upstream: browzerUpstream(r.toURL),
 			})
 			continue
 		}
@@ -394,7 +426,7 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			continue
 		}
 
-		upstream := r.toURL
+		upstream := browzerUpstream(r.toURL)
 		isGuac := false
 
 		// Special case: Guacamole routes use the ZBR proxy for fetch tunnel injection

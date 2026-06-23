@@ -5,7 +5,7 @@ import {
   Shield, Router, Fingerprint, RefreshCw, FileKey, AlertTriangle,
   Monitor, ExternalLink, MoreHorizontal, Search, ChevronDown, ChevronRight,
   LayoutDashboard, Clock, Link2, Key, Terminal, MonitorPlay, Lock, Pencil, ScrollText,
-  Settings, Zap, Upload,
+  Settings, Zap, Upload, Download,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -1387,7 +1387,10 @@ function IdentitiesTab() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Use this JWT to enroll an OpenZiti Desktop Edge tunneler. This is a one-time token.
+              Use this token to enroll a native OpenZiti client (Ziti Desktop Edge,
+              or <code className="text-xs">ziti-edge-tunnel enroll --jwt &lt;file&gt;</code>) so the
+              device reaches dark services directly over the overlay — no browser required.
+              This is a one-time token.
             </p>
             <div className="relative">
               <textarea
@@ -1395,19 +1398,39 @@ function IdentitiesTab() {
                 value={jwtModal?.jwt || ''}
                 className="w-full h-32 rounded-md border bg-muted p-3 text-xs font-mono"
               />
-              <Button
-                variant="outline"
-                size="sm"
-                className="absolute top-2 right-2"
-                onClick={() => {
-                  if (jwtModal) {
-                    navigator.clipboard.writeText(jwtModal.jwt)
-                    toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
-                  }
-                }}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
+              <div className="absolute top-2 right-2 flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Download as .jwt file for ziti-edge-tunnel"
+                  onClick={() => {
+                    if (!jwtModal) return
+                    const blob = new Blob([jwtModal.jwt], { type: 'application/jwt' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `${jwtModal.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}.jwt`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                    toast({ title: 'Downloaded', description: 'Enrollment token saved as a .jwt file.' })
+                  }}
+                >
+                  <Download className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Copy to clipboard"
+                  onClick={() => {
+                    if (jwtModal) {
+                      navigator.clipboard.writeText(jwtModal.jwt)
+                      toast({ title: 'Copied', description: 'Enrollment JWT copied to clipboard.' })
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         </DialogContent>
