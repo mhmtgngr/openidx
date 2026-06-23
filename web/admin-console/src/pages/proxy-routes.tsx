@@ -66,6 +66,7 @@ interface ProxyRoute {
   allowed_countries: string[] | null
   max_risk_score: number
   guacamole_connection_id: string
+  landing_path: string
   created_at: string
   updated_at: string
 }
@@ -121,6 +122,7 @@ export function ProxyRoutesPage() {
     require_device_trust: false,
     allowed_countries: '',
     max_risk_score: 100,
+    landing_path: '/',
   })
 
   const [quickFormData, setQuickFormData] = useState({
@@ -237,6 +239,7 @@ export function ProxyRoutesPage() {
       require_device_trust: false,
       allowed_countries: '',
       max_risk_score: 100,
+      landing_path: '/',
     })
   }
 
@@ -264,6 +267,7 @@ export function ProxyRoutesPage() {
       require_device_trust: route.require_device_trust || false,
       allowed_countries: route.allowed_countries?.join(', ') || '',
       max_risk_score: route.max_risk_score || 100,
+      landing_path: route.landing_path || '/',
     })
     setEditModal(true)
   }
@@ -291,6 +295,7 @@ export function ProxyRoutesPage() {
       require_device_trust: formData.require_device_trust,
       allowed_countries: formData.allowed_countries ? formData.allowed_countries.split(',').map(s => s.trim()).filter(Boolean) : [],
       max_risk_score: formData.max_risk_score,
+      landing_path: formData.landing_path,
     }
   }
 
@@ -740,6 +745,7 @@ function RouteForm({
     require_device_trust: boolean
     allowed_countries: string
     max_risk_score: number
+    landing_path: string
   }
   setFormData: (data: typeof formData) => void
   onSubmit: () => void
@@ -806,6 +812,19 @@ function RouteForm({
             required
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Landing Path</Label>
+        <Input
+          value={formData.landing_path}
+          onChange={(e) => setFormData({ ...formData, landing_path: e.target.value })}
+          placeholder="/"
+        />
+        <p className="text-xs text-muted-foreground">
+          Where the bare host opens (e.g. <code>/ui/</code> for apps not served at the root).
+          Used to 302-redirect <code>/</code> for clientless BrowZer access. Default <code>/</code>.
+        </p>
       </div>
 
       {isRemoteAccess && (

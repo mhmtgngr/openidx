@@ -341,5 +341,12 @@ func allMigrations() []*Migration {
 			UpSQL:       hostingModeUp,
 			DownSQL:     hostingModeDown,
 		},
+		{
+			Version:     48,
+			Name:        "proxy_routes_landing_path",
+			Description: "Add proxy_routes.landing_path (default '/') — where a route's bare host should land; the BrowZer router emits a 302 to it when not '/'. Idempotent.",
+			UpSQL:       landingPathUp,
+			DownSQL:     landingPathDown,
+		},
 	}
 }
