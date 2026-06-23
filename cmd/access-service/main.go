@@ -302,7 +302,7 @@ func main() {
 			}
 
 			if cfg.ZitiReconcilerEnabled {
-				reconciler := access.NewZitiReconciler(db, log, zitiProvider)
+				reconciler := access.NewZitiReconciler(db, log, zitiProvider, cfg.ZitiBrowZerHopAddr)
 				reconciler.Start(zitiCtx)
 				accessService.SetZitiReconciler(reconciler)
 				log.Info("Ziti reconciler started (ZITI_RECONCILER=true); imperative hosting skipped")
