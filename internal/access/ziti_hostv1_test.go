@@ -65,6 +65,35 @@ func TestCreateHostV1ConfigFixedOmitsForwardKeys(t *testing.T) {
 	}
 }
 
+func TestCreateHostV1ConfigFixedReusesExistingByName(t *testing.T) {
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/configs" && r.Method == "GET":
+			// Pretend a config with this name already exists.
+			_, _ = w.Write([]byte(`{"data":[{"id":"existing-cfg","name":"psm-zt-host"}]}`))
+		case r.URL.Path == "/edge/management/v1/configs" && r.Method == "POST":
+			posts++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"new-cfg"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	zm := newTestZitiManager(t, srv.URL)
+	id, err := zm.CreateHostV1ConfigFixed(context.Background(), "psm-zt-host", "192.168.152.112", 443)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "existing-cfg" {
+		t.Fatalf("expected to reuse existing config id, got %q", id)
+	}
+	if posts != 0 {
+		t.Fatalf("expected NO POST when config already exists, got %d", posts)
+	}
+}
+
 func TestEnsureRouterRoleAttributePatchesEachRouter(t *testing.T) {
 	patched := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -17,8 +17,8 @@ const (
 	// HostingModeIdentity — access-proxy is the terminator; it injects identity
 	// headers before forwarding to the upstream.
 	HostingModeIdentity = "identity"
-	// HostingModeDirect — edge router hosts via host.v1 (Phase 2). Used
-	// automatically for all BrowZer routes.
+	// HostingModeDirect — the edge router hosts the service via a fixed host.v1
+	// config. Used automatically for all BrowZer routes.
 	HostingModeDirect = "direct"
 )
 
@@ -202,7 +202,9 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 		// The router hosts the service via host.v1, so Bind goes to the routers;
 		// BrowZer clients (synced users) dial via #browzer-users.
 		if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
-			rec.logger.Debug("tag routers (may already be tagged)", zap.Error(err))
+			// A persistent failure here means the #ziti-routers Bind matches no
+			// router, so the service silently has no host — warn, don't bury it.
+			rec.logger.Warn("failed to tag routers with #ziti-routers", zap.Error(err))
 		}
 		bindIdentity = "#ziti-routers"
 		dialIdentity = "#browzer-users"

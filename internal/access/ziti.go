@@ -1710,6 +1710,29 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 // port so the edge router hosts the service straight to the upstream. Returns
 // the new config's id.
 func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host string, port int) (string, error) {
+	// Get-or-create: OpenZiti enforces unique config names, so if this config
+	// was already created on a prior (partly-failed) reconcile pass, POSTing
+	// again returns a name conflict and wedges the route. Look it up first and
+	// reuse its id if present. A non-200 GET or empty data set is treated as
+	// "not found" — fall through to create.
+	lookupPath := fmt.Sprintf("/edge/management/v1/configs?filter=name=\"%s\"", name)
+	if lookupData, lookupStatus, lookupErr := zm.mgmtRequest("GET", lookupPath, nil); lookupErr == nil && lookupStatus == http.StatusOK {
+		var existing struct {
+			Data []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(lookupData, &existing) == nil {
+			for _, c := range existing.Data {
+				if c.Name == name && c.ID != "" {
+					zm.logger.Info("Reusing existing host.v1 config", zap.String("name", name), zap.String("id", c.ID))
+					return c.ID, nil
+				}
+			}
+		}
+	}
+
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":         name,
 		"configTypeId": zm.resolveConfigTypeID("host.v1"),
@@ -1758,7 +1781,9 @@ func (zm *ZitiManager) createServiceWithConfigID(ctx context.Context, name strin
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	_ = json.Unmarshal(data, &resp)
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse service response: %w", err)
+	}
 	return resp.Data.ID, nil
 }
 
