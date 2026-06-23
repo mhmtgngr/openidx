@@ -1737,6 +1737,31 @@ func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host s
 	return resp.Data.ID, nil
 }
 
+// createServiceWithConfigID creates an encryption-required service with the
+// given role attributes and an attached config id (e.g. a host.v1 config).
+func (zm *ZitiManager) createServiceWithConfigID(ctx context.Context, name string, attrs []string, configID string) (string, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":               name,
+		"roleAttributes":     attrs,
+		"encryptionRequired": true,
+		"configs":            []string{configID},
+	})
+	data, status, err := zm.mgmtRequest("POST", "/edge/management/v1/services", body)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d creating service: %s", status, string(data))
+	}
+	var resp struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(data, &resp)
+	return resp.Data.ID, nil
+}
+
 // EnsureRouterRoleAttribute tags every edge router with the "ziti-routers" role
 // attribute (idempotent), so direct-mode Bind policies can grant the routers as
 // a stable role (#ziti-routers) instead of by id.

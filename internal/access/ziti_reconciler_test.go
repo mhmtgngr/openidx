@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,11 +103,14 @@ func TestEnsureHostingIdentityCallsHostService(t *testing.T) {
 	}
 }
 
-func TestEnsureHostingDirectNotImplemented(t *testing.T) {
+func TestEnsureHostingDirectIsNoop(t *testing.T) {
+	// Phase 2: direct mode hosting is handled by the edge router via host.v1
+	// (created in ensureService) + the router Bind (ensurePolicies), so the
+	// hosting step itself is a no-op and must not error.
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}}
 	if err := rec.ensureHosting(context.Background(), &ZitiManager{logger: zap.NewNop()},
-		DesiredRoute{ServiceName: "x", BrowZerEnabled: true}); err == nil {
-		t.Fatalf("expected direct mode to be not-implemented in Phase 1")
+		DesiredRoute{ServiceName: "x", BrowZerEnabled: true}); err != nil {
+		t.Fatalf("direct mode hosting should be a no-op, got %v", err)
 	}
 }
 
@@ -141,4 +145,77 @@ func TestReconcileRouteRecordsSyncedStatus(t *testing.T) {
 	if got != "synced" && !strings.HasPrefix(got, "error:") {
 		t.Fatalf("unexpected status %q — expected 'synced' or 'error: ...'", got)
 	}
+}
+
+func TestEnsureHostingDirectCreatesHostV1AndRouterBind(t *testing.T) {
+	var createdConfig, createdServiceWithConfig bool
+	var bindIdentityRoles []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/configs" && r.Method == "POST":
+			createdConfig = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"cfg-1"}}`))
+		case r.URL.Path == "/edge/management/v1/services" && r.Method == "GET":
+			if createdServiceWithConfig {
+				// After creation the lookup must resolve so ensureService can
+				// proceed to ensureServiceAttr / ensurePolicies.
+				_, _ = w.Write([]byte(`{"data":[{"id":"svc-1","name":"psm-zt","roleAttributes":["psm-zt"]}]}`))
+			} else {
+				_, _ = w.Write([]byte(`{"data":[]}`)) // not yet present
+			}
+		case r.URL.Path == "/edge/management/v1/services" && r.Method == "POST":
+			b, _ := io.ReadAll(r.Body)
+			createdServiceWithConfig = bytesContains(b, "cfg-1")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"svc-1"}}`))
+		case r.URL.Path == "/edge/management/v1/service-policies" && r.Method == "POST":
+			b, _ := io.ReadAll(r.Body)
+			if bytesContains(b, "Bind") {
+				bindIdentityRoles = extractIdentityRoles(b)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"pol-1"}}`))
+		case r.URL.Path == "/edge/management/v1/edge-routers" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":[]}`)) // EnsureRouterRoleAttribute list
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	// The reconciler's live ZitiManager is supplied directly to reconcileRoute
+	// (there is no rec.provider in the unit harness); per-service status is read
+	// from rec.status under statusMu via setStatus, so we read the map directly.
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true,
+		hostedServices: make(map[string]*hostedService)}
+	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}}
+
+	d := DesiredRoute{ServiceName: "psm-zt", ToURL: "https://192.168.152.112:443", BrowZerEnabled: true}
+	rec.reconcileRoute(context.Background(), zm, d)
+
+	if !createdConfig {
+		t.Fatal("direct mode must create a host.v1 config")
+	}
+	if !createdServiceWithConfig {
+		t.Fatal("direct mode must create the service attached to the host.v1 config")
+	}
+	if len(bindIdentityRoles) != 1 || bindIdentityRoles[0] != "#ziti-routers" {
+		t.Fatalf("direct Bind must grant #ziti-routers, got %+v", bindIdentityRoles)
+	}
+	if got := rec.status["psm-zt"]; got != "synced" {
+		t.Fatalf("want synced, got %q", got)
+	}
+}
+
+func bytesContains(b []byte, s string) bool { return strings.Contains(string(b), s) }
+
+func extractIdentityRoles(b []byte) []string {
+	var p struct {
+		IdentityRoles []string `json:"identityRoles"`
+	}
+	_ = json.Unmarshal(b, &p)
+	return p.IdentityRoles
 }
