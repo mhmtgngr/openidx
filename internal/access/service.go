@@ -98,6 +98,7 @@ type Service struct {
 	oauthInternalURL     string // Docker-internal URL for server-to-server calls
 	oauthJWKSURL         string
 	zitiProvider         *ZitiProvider
+	zitiReconciler       *ZitiReconciler
 	guacamoleClient      *GuacamoleClient
 	featureManager       *FeatureManager
 	auditService         *UnifiedAuditService
@@ -165,6 +166,17 @@ func (s *Service) SetFeatureManager(fm *FeatureManager) {
 	}
 	if s.guacamoleClient != nil {
 		fm.SetGuacamoleClient(s.guacamoleClient)
+	}
+}
+
+// SetZitiReconciler wires the Ziti reconciler so mutation handlers can request
+// a converge after changing desired state. No-op safe when nil.
+func (s *Service) SetZitiReconciler(r *ZitiReconciler) { s.zitiReconciler = r }
+
+// enqueueReconcile asks the reconciler to converge, if one is running.
+func (s *Service) enqueueReconcile() {
+	if s.zitiReconciler != nil {
+		s.zitiReconciler.Enqueue()
 	}
 }
 

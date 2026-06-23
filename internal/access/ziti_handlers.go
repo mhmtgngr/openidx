@@ -464,6 +464,8 @@ func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
 		return
 	}
 
+	s.enqueueReconcile()
+
 	s.logAuditEvent(c, "ziti_enabled_on_route", routeID, "proxy_route", map[string]interface{}{
 		"service_name": req.ServiceName,
 		"host":         req.Host,
@@ -493,6 +495,8 @@ func (s *Service) handleDisableZitiOnRoute(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	s.enqueueReconcile()
 
 	s.logAuditEvent(c, "ziti_disabled_on_route", routeID, "proxy_route", nil)
 

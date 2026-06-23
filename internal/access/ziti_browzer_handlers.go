@@ -211,6 +211,8 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 		}
 	}
 
+	s.enqueueReconcile()
+
 	resp := gin.H{"message": "BrowZer enabled on service", "role_attributes": attrs}
 	if routePath != "" {
 		resp["browzer_path"] = routePath
@@ -272,6 +274,8 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 			s.logger.Warn("Failed to regenerate BrowZer configs", zap.Error(err))
 		}
 	}
+
+	s.enqueueReconcile()
 
 	c.JSON(http.StatusOK, gin.H{"message": "BrowZer disabled on service", "role_attributes": filtered})
 }
