@@ -607,10 +607,20 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 
 	// Generate vhost server blocks for routes with unique domains.
 	// These are simple reverse proxies — no sub_filter needed since the app runs at root /.
-	for _, vh := range vhosts {
+	for i, vh := range vhosts {
 		fmt.Fprintf(&b, "\n# Vhost: %s\n", vh.hostname)
 		b.WriteString("server {\n")
-		b.WriteString("    listen 80;\n")
+		// The first vhost is the default server. BrowZer's WASM runtime fetches the
+		// origin over the overlay (dialing browzer-router-zt), and the Host it
+		// presents to this router does not always match the vhost name — without a
+		// default_server those requests fall through to the static landing block
+		// instead of the app. Making the primary app the default routes any
+		// otherwise-unmatched Host to it; additional vhosts still match by name.
+		if i == 0 {
+			b.WriteString("    listen 80 default_server;\n")
+		} else {
+			b.WriteString("    listen 80;\n")
+		}
 		fmt.Fprintf(&b, "    server_name %s;\n\n", vh.hostname)
 		b.WriteString("    location / {\n")
 		fmt.Fprintf(&b, "        proxy_pass %s;\n", vh.upstream)
