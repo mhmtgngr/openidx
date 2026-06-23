@@ -197,13 +197,14 @@ type browzerRouteInfo struct {
 	serviceName string
 	hostname    string
 	pathPrefix  string
+	landingPath string
 }
 
 // queryBrowZerRoutes fetches all BrowZer-enabled routes from the database
 func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browzerRouteInfo, error) {
 	rows, err := tm.db.Pool.Query(ctx,
 		//orgscope:ignore install-wide BrowZer bootstrapper config generation; the shared bootstrapper serves every ziti+browzer-enabled route across all orgs into one config file
-		`SELECT from_url, to_url, ziti_service_name
+		`SELECT from_url, to_url, ziti_service_name, COALESCE(landing_path, '/')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true
 		   AND browzer_enabled = true
@@ -218,8 +219,8 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 
 	var routes []browzerRouteInfo
 	for rows.Next() {
-		var fromURL, toURL, serviceName string
-		if err := rows.Scan(&fromURL, &toURL, &serviceName); err != nil {
+		var fromURL, toURL, serviceName, landingPath string
+		if err := rows.Scan(&fromURL, &toURL, &serviceName, &landingPath); err != nil {
 			tm.logger.Warn("Failed to scan route row", zap.Error(err))
 			continue
 		}
@@ -230,6 +231,7 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			serviceName: serviceName,
 			hostname:    fromURL,
 			pathPrefix:  "/",
+			landingPath: landingPath,
 		}
 
 		if parsed, err := url.Parse(fromURL); err == nil && parsed.Host != "" {
@@ -405,8 +407,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		isGuac     bool
 	}
 	type vhostMapping struct {
-		hostname string
-		upstream string
+		hostname    string
+		upstream    string
+		landingPath string
 	}
 	var mappings []routeMapping
 	var vhosts []vhostMapping
@@ -416,8 +419,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 		// Vhost routes: different domain, root path
 		if r.hostname != domain {
 			vhosts = append(vhosts, vhostMapping{
-				hostname: r.hostname,
-				upstream: browzerUpstream(r.toURL),
+				hostname:    r.hostname,
+				upstream:    browzerUpstream(r.toURL),
+				landingPath: r.landingPath,
 			})
 			continue
 		}
@@ -622,6 +626,16 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 			b.WriteString("    listen 80;\n")
 		}
 		fmt.Fprintf(&b, "    server_name %s;\n\n", vh.hostname)
+		// Land the bare host on the app's real entry path when it serves under a
+		// subpath (e.g. /ui/). Without this, the BrowZer/OIDC round-trip returns
+		// to "/", which many apps 404. Exact-match so deeper paths proxy normally.
+		// absolute_redirect off keeps the Location relative ("/ui/") — nginx behind
+		// the overlay sees http, so an absolute Location would downgrade the https
+		// page's scheme and break the BrowZer fetch.
+		if lp := vh.landingPath; lp != "" && lp != "/" {
+			b.WriteString("    absolute_redirect off;\n")
+			fmt.Fprintf(&b, "    location = / { return 302 %s; }\n", lp)
+		}
 		b.WriteString("    location / {\n")
 		fmt.Fprintf(&b, "        proxy_pass %s;\n", vh.upstream)
 		b.WriteString("        proxy_http_version 1.1;\n")

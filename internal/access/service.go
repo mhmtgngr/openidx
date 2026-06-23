@@ -59,6 +59,7 @@ type ProxyRoute struct {
 	AllowedCountries      []string          `json:"allowed_countries,omitempty"`
 	MaxRiskScore          int               `json:"max_risk_score"`
 	GuacamoleConnectionID string            `json:"guacamole_connection_id,omitempty"`
+	LandingPath           string            `json:"landing_path,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 }
@@ -646,6 +647,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(reverify_interval, 0), posture_check_ids, inline_policy,
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
+		        COALESCE(landing_path, '/'),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE org_id = $3 ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
@@ -669,6 +671,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
+			&r.LandingPath,
 			&r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			s.logger.Error("Failed to scan route", zap.Error(err))
@@ -779,11 +782,17 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		RequireDeviceTrust bool              `json:"require_device_trust"`
 		AllowedCountries   []string          `json:"allowed_countries"`
 		MaxRiskScore       int               `json:"max_risk_score"`
+		LandingPath        string            `json:"landing_path"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	landingPath := strings.TrimSpace(req.LandingPath)
+	if landingPath == "" {
+		landingPath = "/"
 	}
 
 	id := uuid.New().String()
@@ -841,15 +850,15 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		  cors_allowed_origins, custom_headers, enabled, priority,
 		  idp_id, route_type, remote_host, remote_port,
 		  reverify_interval, posture_check_ids, inline_policy,
-		  require_device_trust, allowed_countries, max_risk_score, org_id)
+		  require_device_trust, allowed_countries, max_risk_score, landing_path, org_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
+		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
 		id, req.Name, req.Description, req.FromURL, req.ToURL, req.PreserveHost,
 		requireAuth, rolesJSON, groupsJSON, policyJSON, req.IdleTimeout, req.AbsoluteTimeout,
 		corsJSON, headersJSON, enabled, req.Priority,
 		idpID, req.RouteType, req.RemoteHost, req.RemotePort,
 		req.ReverifyInterval, postureJSON, req.InlinePolicy,
-		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, org.ID)
+		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
@@ -918,6 +927,7 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		RequireDeviceTrust *bool             `json:"require_device_trust"`
 		AllowedCountries   []string          `json:"allowed_countries"`
 		MaxRiskScore       *int              `json:"max_risk_score"`
+		LandingPath        *string           `json:"landing_path"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1017,6 +1027,12 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 	if req.MaxRiskScore != nil {
 		existing.MaxRiskScore = *req.MaxRiskScore
 	}
+	if req.LandingPath != nil {
+		existing.LandingPath = strings.TrimSpace(*req.LandingPath)
+	}
+	if existing.LandingPath == "" {
+		existing.LandingPath = "/"
+	}
 
 	rolesJSON, _ := json.Marshal(existing.AllowedRoles)
 	groupsJSON, _ := json.Marshal(existing.AllowedGroups)
@@ -1045,15 +1061,16 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		  idp_id=$16, route_type=$17, remote_host=$18, remote_port=$19,
 		  reverify_interval=$20, posture_check_ids=$21, inline_policy=$22,
 		  require_device_trust=$23, allowed_countries=$24, max_risk_score=$25,
-		  updated_at=NOW()
-		 WHERE id=$26 AND org_id=$27`,
+		  landing_path=$26, updated_at=NOW()
+		 WHERE id=$27 AND org_id=$28`,
 		existing.Name, existing.Description, existing.FromURL, existing.ToURL,
 		existing.PreserveHost, existing.RequireAuth, rolesJSON, groupsJSON,
 		policyJSON, existing.IdleTimeout, existing.AbsoluteTimeout, corsJSON,
 		headersJSON, existing.Enabled, existing.Priority,
 		idpID, existing.RouteType, existing.RemoteHost, existing.RemotePort,
 		existing.ReverifyInterval, postureJSON, existing.InlinePolicy,
-		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore, id, org.ID)
+		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore,
+		existing.LandingPath, id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
@@ -1669,6 +1686,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		        COALESCE(reverify_interval, 0), posture_check_ids, inline_policy,
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
+		        COALESCE(landing_path, '/'),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE id=$1`+orgFilter, args...).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
@@ -1679,6 +1697,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
+		&r.LandingPath,
 		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
