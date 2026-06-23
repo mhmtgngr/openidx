@@ -415,14 +415,45 @@ already mints the enrollment token:
 The native client is the **maximally-dark** option: only the edge router's
 listener needs to be reachable, and only by enrolled endpoints.
 
-### 12.4 Caveats
+### 12.4 BrowZer router config delivery (dir-mount, not file-mount)
 
-- The **BrowZer browser WSS last-mile** is still the separate, pre-existing open
-  item (§9) — making netgraph dark does not change it. The native client path
-  above is the reliable way to consume the dark service today.
+The access-service regenerates `browzer-router.conf` with an **atomic write**
+(temp file + rename), so every regeneration produces a **new inode**. The BrowZer
+router must therefore consume the config the way docker-compose does — **dir-mount**
+the shared config directory and run `browzer-router-entrypoint.sh`, which copies
+the file into nginx and polls + `nginx -s reload`s on change:
+
+```sh
+podman run -d --name oidx-browzer-router \
+  --network slirp4netns:allow_host_loopback=true --restart unless-stopped \
+  -p 127.0.0.1:8094:80 \
+  -v /tmp/oidx-ziti/browzer-config:/shared-config:ro \
+  -v <repo>/deployments/docker/browzer-router-entrypoint.sh:/browzer-router-entrypoint.sh:ro \
+  --entrypoint /bin/sh nginx:alpine /browzer-router-entrypoint.sh
+```
+
+**Do NOT bind-mount the config FILE directly** (e.g. as `/etc/nginx/conf.d/default.conf`):
+the atomic rename gives the file a new inode that a *file* bind-mount never sees, so
+a regenerated config (a newly enabled/toggled BrowZer route) silently never reaches
+the running router. With the dir-mount + entrypoint, a route toggle propagates within
+the poll interval (~5 s) and nginx reloads automatically — no container recreate.
+(Verified: an atomic-rename write to the shared config is reflected in the container
+and reloaded within ~5 s.)
+
+### 12.5 Caveats
+
+- The **BrowZer browser WSS last-mile now works** end-to-end — verified in a real
+  headless browser: the full netgraph SPA (HTML + JS + cytoscape + a 1.5 MB graph
+  payload) renders clientlessly over the overlay against the dark app. What made the
+  published site render was marking the primary app the router `default_server`
+  (§12.4), because the WASM runtime's overlay request Host does not reliably match
+  the vhost name.
+- netgraph serves its UI at `/ui/` and 404s at `/`, and the OIDC `redirect_uri`
+  returns to `/`; a per-route landing path (or a `/ → /ui/` redirect at the router)
+  would make browsing the bare host land on the app.
 - `allow_host_loopback=true` widens the slirp container's reach to the host
-  loopback; that's acceptable here (the router only proxies overlay-delivered
-  traffic) but note it for hardening.
+  loopback; acceptable here (the router only proxies overlay-delivered traffic)
+  but note it for hardening.
 
 ---
 
