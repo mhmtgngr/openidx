@@ -1703,3 +1703,36 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 		Name: name,
 	}, nil
 }
+
+// CreateHostV1ConfigFixed creates a host.v1 config that points at a FIXED
+// upstream. Unlike the forward* form (which makes the dialer choose the target
+// and fails BrowZer with "dst_protocol required"), this pins protocol/address/
+// port so the edge router hosts the service straight to the upstream. Returns
+// the new config's id.
+func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host string, port int) (string, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":         name,
+		"configTypeId": zm.resolveConfigTypeID("host.v1"),
+		"data": map[string]interface{}{
+			"protocol": "tcp",
+			"address":  host,
+			"port":     port,
+		},
+	})
+	data, status, err := zm.mgmtRequest("POST", "/edge/management/v1/configs", body)
+	if err != nil {
+		return "", fmt.Errorf("create host.v1 config: %w", err)
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d creating host.v1 config: %s", status, string(data))
+	}
+	var resp struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse host.v1 config response: %w", err)
+	}
+	return resp.Data.ID, nil
+}
