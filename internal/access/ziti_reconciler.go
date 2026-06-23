@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -50,10 +51,11 @@ type ZitiReconciler struct {
 	provider *ZitiProvider // source of the live ZitiManager
 	period   time.Duration
 
-	trigger chan struct{}         // coalescing: buffered size 1
-	runOnce func(context.Context) // overridable in tests; defaults to reconcileOnce (added in a later task)
-	mu      sync.Mutex            // serializes runs
-	status  map[string]string     // serviceName -> "synced" | "error: ..."
+	trigger  chan struct{}         // coalescing: buffered size 1
+	runOnce  func(context.Context) // overridable in tests; defaults to reconcileOnce (added in a later task)
+	mu       sync.Mutex            // serializes runs
+	statusMu sync.Mutex            // protects status map
+	status   map[string]string     // serviceName -> "synced" | "error: ..."
 }
 
 // NewZitiReconciler creates a ZitiReconciler with a 30-second safety-net
@@ -129,7 +131,107 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 	return out, nil
 }
 
-// reconcileOnce is implemented in a later task (Task 7). Stub for now.
-// TODO(Task 7): replace this body with the real convergence logic that calls
-// loadDesiredRoutes, lists live Ziti services, and ensures/deletes as needed.
-func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {}
+// ensureService makes sure the Ziti service exists with its role attribute.
+// Idempotent: looks up by name, creates the service if absent (using SetupZitiForRoute
+// with routeID "" so no proxy_routes FK is needed — falls back to re-check on creation
+// conflict), then ensures the service-name role attribute is set.
+func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
+	if existing, _ := zm.GetServiceByName(d.ServiceName); existing == nil {
+		// Service does not exist; create it. Use CreateService (the minimal management-API
+		// path) rather than SetupZitiForRoute (which also writes to the DB and creates
+		// policies — the reconciler handles those concerns in separate steps).
+		if _, err := zm.CreateService(ctx, d.ServiceName, []string{d.ServiceName}); err != nil {
+			// Tolerate a race where another actor created it between our GET and POST.
+			if again, _ := zm.GetServiceByName(d.ServiceName); again == nil {
+				return err
+			}
+		}
+	}
+	svc, err := zm.GetServiceByName(d.ServiceName)
+	if err != nil || svc == nil {
+		return err
+	}
+	attrs, aerr := zm.GetServiceRoleAttributes(ctx, svc.ID)
+	if aerr != nil {
+		return aerr
+	}
+	for _, a := range attrs {
+		if a == d.ServiceName {
+			return nil
+		}
+	}
+	return zm.PatchServiceRoleAttributes(ctx, svc.ID, append(attrs, d.ServiceName))
+}
+
+// ensurePolicies creates bind/dial/service-edge-router policies for identity mode.
+// CreateServicePolicy returns an error (often a 400) when the policy already exists;
+// that is the idempotent no-op path, so we tolerate and debug-log those errors.
+func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
+	svcRole := "#" + d.ServiceName
+	if _, err := zm.CreateServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
+		[]string{svcRole}, []string{"#access-proxy-clients"}); err != nil {
+		rec.logger.Debug("bind policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+	}
+	if _, err := zm.CreateServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
+		[]string{svcRole}, []string{"#access-proxy-clients"}); err != nil {
+		rec.logger.Debug("dial policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+	}
+	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
+		[]string{svcRole}, []string{"#all"}); err != nil {
+		rec.logger.Debug("serp (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+	}
+	return nil
+}
+
+// ensureHosting starts identity hosting (itself idempotent via HostService);
+// direct mode is a Phase-2 not-implemented error.
+func (rec *ZitiReconciler) ensureHosting(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
+	switch d.EffectiveMode() {
+	case HostingModeIdentity:
+		host, port := parseHostPort(d.ToURL)
+		return zm.HostService(d.ServiceName, host, port)
+	case HostingModeDirect:
+		return fmt.Errorf("direct hosting mode not implemented until Phase 2 (service %s)", d.ServiceName)
+	default:
+		return fmt.Errorf("unknown hosting mode for service %s", d.ServiceName)
+	}
+}
+
+func (rec *ZitiReconciler) setStatus(svc, s string) {
+	rec.statusMu.Lock()
+	defer rec.statusMu.Unlock()
+	rec.status[svc] = s
+}
+
+// reconcileRoute converges one route, error-isolated, recording per-object status.
+func (rec *ZitiReconciler) reconcileRoute(ctx context.Context, zm *ZitiManager, d DesiredRoute) {
+	steps := []func(context.Context, *ZitiManager, DesiredRoute) error{
+		rec.ensureService, rec.ensurePolicies, rec.ensureHosting,
+	}
+	for _, step := range steps {
+		if err := step(ctx, zm, d); err != nil {
+			rec.setStatus(d.ServiceName, "error: "+err.Error())
+			rec.logger.Warn("reconcile route failed", zap.String("svc", d.ServiceName), zap.Error(err))
+			return
+		}
+	}
+	rec.setStatus(d.ServiceName, "synced")
+}
+
+// reconcileOnce loads desired routes and converges each. No live manager → skip.
+func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
+	zm := rec.provider.Get()
+	if zm == nil || !zm.IsInitialized() {
+		rec.logger.Debug("reconcile skipped: no live Ziti manager")
+		return
+	}
+	desired, err := rec.loadDesiredRoutes(ctx)
+	if err != nil {
+		rec.logger.Warn("reconcile: load desired failed", zap.Error(err))
+		return
+	}
+	for _, d := range desired {
+		rec.reconcileRoute(ctx, zm, d)
+	}
+	rec.logger.Info("reconcile pass complete", zap.Int("routes", len(desired)))
+}
