@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dark (loopback-bound) services behind BrowZer + native client (#196)
+
+Publish a service that is **completely dark to the outside** — bound to host
+loopback, reachable only over the OpenZiti overlay — while still serving it
+clientlessly via BrowZer and/or a native client.
+
+#### Added
+- **`BROWZER_HOST_LOOPBACK_ALIAS`** (env, `browzer_targets.go` `browzerUpstream()`).
+  In rootless deployments the native access-proxy (a host process) reaches a dark
+  target at `127.0.0.1`, but the BrowZer router (a separate network namespace,
+  e.g. slirp4netns) cannot. Since both upstreams derive from one route `to_url`,
+  this knob rewrites a `127.0.0.1`/`localhost` `to_url` to the alias (e.g.
+  `10.0.2.2` with `allow_host_loopback`) **for the BrowZer router config only**.
+  Unset (the default, e.g. docker-compose where router and app share a bridge) →
+  no rewrite, behavior unchanged.
+- Admin console **Identities**: a **Download `.jwt`** button on the enrollment
+  modal, so a one-time enrollment token can be fed straight to
+  `ziti-edge-tunnel enroll --jwt` / Ziti Desktop Edge for native (no-browser)
+  access to dark services.
+- `docs/OPENIDX_ZITI_ARCHITECTURE.md`: full OpenIDX + OpenZiti architecture
+  guide, including a "dark services + native client" recipe (and the rootless
+  loopback-alias wrinkle).
+
+### One-click OpenZiti/BrowZer toggles on proxy routes (#195)
+
+#### Added
+- `RouteFeatureToggles` — compact **OpenZiti** and **BrowZer** switches rendered
+  directly in each HTTP proxy route's action bar on the Proxy Routes page, so
+  putting a route behind the overlay (and publishing it clientlessly via BrowZer)
+  is a single click. BrowZer is gated on OpenZiti, matching `ServiceFeaturePanel`.
+  Reuses the existing `/services/:id/features/{ziti,browzer}/{enable,disable}`
+  endpoints (no backend change) and shares the `['service-status', routeId]`
+  query cache with the expand panel so both stay in sync.
+
 ### Admin console bug fixes (found via Playwright page sweep)
 
 A headless logged-in sweep of all ~83 console pages surfaced four real bugs:
