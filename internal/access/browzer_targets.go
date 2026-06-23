@@ -198,13 +198,14 @@ type browzerRouteInfo struct {
 	hostname    string
 	pathPrefix  string
 	landingPath string
+	hostingMode string
 }
 
 // queryBrowZerRoutes fetches all BrowZer-enabled routes from the database
 func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browzerRouteInfo, error) {
 	rows, err := tm.db.Pool.Query(ctx,
 		//orgscope:ignore install-wide BrowZer bootstrapper config generation; the shared bootstrapper serves every ziti+browzer-enabled route across all orgs into one config file
-		`SELECT from_url, to_url, ziti_service_name, COALESCE(landing_path, '/')
+		`SELECT from_url, to_url, ziti_service_name, COALESCE(landing_path, '/'), COALESCE(hosting_mode, 'identity')
 		 FROM proxy_routes
 		 WHERE ziti_enabled = true
 		   AND browzer_enabled = true
@@ -219,8 +220,8 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 
 	var routes []browzerRouteInfo
 	for rows.Next() {
-		var fromURL, toURL, serviceName, landingPath string
-		if err := rows.Scan(&fromURL, &toURL, &serviceName, &landingPath); err != nil {
+		var fromURL, toURL, serviceName, landingPath, hostingMode string
+		if err := rows.Scan(&fromURL, &toURL, &serviceName, &landingPath, &hostingMode); err != nil {
 			tm.logger.Warn("Failed to scan route row", zap.Error(err))
 			continue
 		}
@@ -232,6 +233,7 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			hostname:    fromURL,
 			pathPrefix:  "/",
 			landingPath: landingPath,
+			hostingMode: hostingMode,
 		}
 
 		if parsed, err := url.Parse(fromURL); err == nil && parsed.Host != "" {
@@ -246,10 +248,32 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 	return routes, nil
 }
 
+// buildBrowZerTargets maps each BrowZer route to a bootstrapper target. Each app
+// uses its OWN Ziti service (per-app direct hosting) so the browser dials it
+// directly — no shared Host-demux. Scheme comes from the route's to_url so the
+// runtime's WASM TLS connects end-to-end for https upstreams.
+func buildBrowZerTargets(routes []browzerRouteInfo, domain, idpIssuer, idpClientID string) []BrowZerTarget {
+	targets := make([]BrowZerTarget, 0, len(routes))
+	for _, r := range routes {
+		scheme := "http"
+		if parsed, err := url.Parse(r.toURL); err == nil && parsed.Scheme != "" {
+			scheme = parsed.Scheme
+		}
+		targets = append(targets, BrowZerTarget{
+			VHost:        r.hostname,
+			Service:      r.serviceName,
+			Path:         "/",
+			Scheme:       scheme,
+			IDPIssuerURL: idpIssuer,
+			IDPClientID:  idpClientID,
+		})
+	}
+	return targets
+}
+
 // GenerateBrowZerTargets queries the database for all BrowZer-enabled routes
-// and builds the target configuration JSON for the bootstrapper.
-// Routes with a path prefix on the default BrowZer domain are grouped into a single
-// router target; routes with unique domains get individual targets.
+// and builds the target configuration JSON for the bootstrapper. Each route maps
+// to its own per-app Ziti service so the browser dials it directly.
 func (tm *BrowZerTargetManager) GenerateBrowZerTargets(ctx context.Context) (*BrowZerTargetArray, error) {
 	// Get OIDC settings from BrowZer config
 	var oidcIssuer, oidcClientID string
@@ -266,45 +290,10 @@ func (tm *BrowZerTargetManager) GenerateBrowZerTargets(ctx context.Context) (*Br
 		return nil, err
 	}
 
-	var targets []BrowZerTarget
-	hasRouterTarget := false
-
-	domain := tm.GetDomain()
-	for _, r := range routes {
-		// Routes with a path prefix on the BrowZer domain → router target
-		if r.hostname == domain && r.pathPrefix != "/" {
-			if !hasRouterTarget {
-				targets = append(targets, BrowZerTarget{
-					VHost:        domain,
-					Service:      BrowZerRouterServiceName,
-					Path:         "/",
-					Scheme:       "http",
-					IDPIssuerURL: oidcIssuer,
-					IDPClientID:  oidcClientID,
-				})
-				hasRouterTarget = true
-			}
-			continue
-		}
-
-		// Routes with unique domains → vhost targets routed through browzer-router
-		targets = append(targets, BrowZerTarget{
-			VHost:        r.hostname,
-			Service:      BrowZerRouterServiceName,
-			Path:         "/",
-			Scheme:       "http",
-			IDPIssuerURL: oidcIssuer,
-			IDPClientID:  oidcClientID,
-		})
-	}
-
-	if targets == nil {
-		targets = []BrowZerTarget{}
-	}
+	targets := buildBrowZerTargets(routes, tm.GetDomain(), oidcIssuer, oidcClientID)
 
 	tm.logger.Info("Generated BrowZer targets",
-		zap.Int("count", len(targets)),
-		zap.Bool("router_target", hasRouterTarget))
+		zap.Int("count", len(targets)))
 	return &BrowZerTargetArray{TargetArray: targets}, nil
 }
 
@@ -416,6 +405,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 
 	domain := tm.GetDomain()
 	for _, r := range routes {
+		if r.hostingMode == HostingModeDirect {
+			continue // per-app direct route: hosted by the edge router via host.v1, not the shared browzer-router
+		}
 		// Vhost routes: different domain, root path
 		if r.hostname != domain {
 			vhosts = append(vhosts, vhostMapping{

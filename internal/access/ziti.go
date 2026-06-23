@@ -1703,3 +1703,127 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 		Name: name,
 	}, nil
 }
+
+// CreateHostV1ConfigFixed creates a host.v1 config that points at a FIXED
+// upstream. Unlike the forward* form (which makes the dialer choose the target
+// and fails BrowZer with "dst_protocol required"), this pins protocol/address/
+// port so the edge router hosts the service straight to the upstream. Returns
+// the new config's id.
+func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host string, port int) (string, error) {
+	// Get-or-create: OpenZiti enforces unique config names, so if this config
+	// was already created on a prior (partly-failed) reconcile pass, POSTing
+	// again returns a name conflict and wedges the route. Look it up first and
+	// reuse its id if present. A non-200 GET or empty data set is treated as
+	// "not found" — fall through to create.
+	lookupPath := fmt.Sprintf("/edge/management/v1/configs?filter=name=\"%s\"", name)
+	if lookupData, lookupStatus, lookupErr := zm.mgmtRequest("GET", lookupPath, nil); lookupErr == nil && lookupStatus == http.StatusOK {
+		var existing struct {
+			Data []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(lookupData, &existing) == nil {
+			for _, c := range existing.Data {
+				if c.Name == name && c.ID != "" {
+					zm.logger.Info("Reusing existing host.v1 config", zap.String("name", name), zap.String("id", c.ID))
+					return c.ID, nil
+				}
+			}
+		}
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":         name,
+		"configTypeId": zm.resolveConfigTypeID("host.v1"),
+		"data": map[string]interface{}{
+			"protocol": "tcp",
+			"address":  host,
+			"port":     port,
+		},
+	})
+	data, status, err := zm.mgmtRequest("POST", "/edge/management/v1/configs", body)
+	if err != nil {
+		return "", fmt.Errorf("create host.v1 config: %w", err)
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d creating host.v1 config: %s", status, string(data))
+	}
+	var resp struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse host.v1 config response: %w", err)
+	}
+	return resp.Data.ID, nil
+}
+
+// createServiceWithConfigID creates an encryption-required service with the
+// given role attributes and an attached config id (e.g. a host.v1 config).
+func (zm *ZitiManager) createServiceWithConfigID(ctx context.Context, name string, attrs []string, configID string) (string, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":               name,
+		"roleAttributes":     attrs,
+		"encryptionRequired": true,
+		"configs":            []string{configID},
+	})
+	data, status, err := zm.mgmtRequest("POST", "/edge/management/v1/services", body)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d creating service: %s", status, string(data))
+	}
+	var resp struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse service response: %w", err)
+	}
+	return resp.Data.ID, nil
+}
+
+// EnsureRouterRoleAttribute tags every edge router with the "ziti-routers" role
+// attribute (idempotent), so direct-mode Bind policies can grant the routers as
+// a stable role (#ziti-routers) instead of by id.
+func (zm *ZitiManager) EnsureRouterRoleAttribute(ctx context.Context) error {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/edge-routers?limit=1000", nil)
+	if err != nil {
+		return fmt.Errorf("list edge routers: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d listing edge routers: %s", status, string(data))
+	}
+	var resp struct {
+		Data []struct {
+			ID             string   `json:"id"`
+			RoleAttributes []string `json:"roleAttributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse edge routers: %w", err)
+	}
+	for _, r := range resp.Data {
+		has := false
+		for _, a := range r.RoleAttributes {
+			if a == "ziti-routers" {
+				has = true
+				break
+			}
+		}
+		if has {
+			continue
+		}
+		patch, _ := json.Marshal(map[string]interface{}{
+			"roleAttributes": append(r.RoleAttributes, "ziti-routers"),
+		})
+		if _, s, perr := zm.mgmtRequest("PATCH", "/edge/management/v1/edge-routers/"+r.ID, patch); perr != nil || (s != http.StatusOK && s != http.StatusAccepted) {
+			zm.logger.Warn("failed to tag edge router with #ziti-routers", zap.String("router", r.ID), zap.Int("status", s), zap.Error(perr))
+		}
+	}
+	return nil
+}

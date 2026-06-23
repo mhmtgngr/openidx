@@ -17,8 +17,8 @@ const (
 	// HostingModeIdentity — access-proxy is the terminator; it injects identity
 	// headers before forwarding to the upstream.
 	HostingModeIdentity = "identity"
-	// HostingModeDirect — edge router hosts via host.v1 (Phase 2). Used
-	// automatically for all BrowZer routes.
+	// HostingModeDirect — the edge router hosts the service via a fixed host.v1
+	// config. Used automatically for all BrowZer routes.
 	HostingModeDirect = "direct"
 )
 
@@ -139,31 +139,51 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 // the DB is the source of truth), tolerating a create race, then ensures the
 // service-name role attribute is set.
 func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
-	if existing, _ := zm.GetServiceByName(d.ServiceName); existing == nil {
-		// Service does not exist; create it. Use CreateService (the minimal management-API
-		// path) rather than SetupZitiForRoute (which also writes to the DB and creates
-		// policies — the reconciler handles those concerns in separate steps).
-		if _, err := zm.CreateService(ctx, d.ServiceName, []string{d.ServiceName}); err != nil {
-			// Tolerate a race where another actor created it between our GET and POST.
-			if again, _ := zm.GetServiceByName(d.ServiceName); again == nil {
-				return err
-			}
+	if existing, _ := zm.GetServiceByName(d.ServiceName); existing != nil {
+		return rec.ensureServiceAttr(ctx, zm, existing.ID, d.ServiceName)
+	}
+	// Service does not exist; create it. Use the minimal management-API path
+	// (controller-only — the reconciler must NOT write back to proxy_routes/
+	// ziti_services; the DB is the source of truth). Direct mode attaches a fixed
+	// host.v1 config so the edge router hosts the service itself; identity mode
+	// uses a bare service that the access-proxy terminates via SDK Listen.
+	var err error
+	switch d.EffectiveMode() {
+	case HostingModeDirect:
+		host, port := parseHostPort(d.ToURL)
+		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port)
+		if cerr != nil {
+			return cerr
+		}
+		_, err = zm.createServiceWithConfigID(ctx, d.ServiceName, []string{d.ServiceName}, cfgID)
+	default:
+		_, err = zm.CreateService(ctx, d.ServiceName, []string{d.ServiceName})
+	}
+	if err != nil {
+		// Tolerate a race where another actor created it between our GET and POST.
+		if again, _ := zm.GetServiceByName(d.ServiceName); again == nil {
+			return err
 		}
 	}
-	svc, err := zm.GetServiceByName(d.ServiceName)
-	if err != nil || svc == nil {
+	svc, gerr := zm.GetServiceByName(d.ServiceName)
+	if gerr != nil || svc == nil {
+		return gerr
+	}
+	return rec.ensureServiceAttr(ctx, zm, svc.ID, d.ServiceName)
+}
+
+// ensureServiceAttr ensures the service carries its name as a role attribute.
+func (rec *ZitiReconciler) ensureServiceAttr(ctx context.Context, zm *ZitiManager, svcID, name string) error {
+	attrs, err := zm.GetServiceRoleAttributes(ctx, svcID)
+	if err != nil {
 		return err
 	}
-	attrs, aerr := zm.GetServiceRoleAttributes(ctx, svc.ID)
-	if aerr != nil {
-		return aerr
-	}
 	for _, a := range attrs {
-		if a == d.ServiceName {
+		if a == name {
 			return nil
 		}
 	}
-	return zm.PatchServiceRoleAttributes(ctx, svc.ID, append(attrs, d.ServiceName))
+	return zm.PatchServiceRoleAttributes(ctx, svcID, append(attrs, name))
 }
 
 // ensurePolicies creates bind/dial/service-edge-router policies for identity mode.
@@ -176,12 +196,25 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 // reuse this identity-mode policy set for direct routes.
 func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
 	svcRole := "#" + d.ServiceName
+	bindIdentity := "#access-proxy-clients"
+	dialIdentity := "#access-proxy-clients"
+	if d.EffectiveMode() == HostingModeDirect {
+		// The router hosts the service via host.v1, so Bind goes to the routers;
+		// BrowZer clients (synced users) dial via #browzer-users.
+		if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
+			// A persistent failure here means the #ziti-routers Bind matches no
+			// router, so the service silently has no host — warn, don't bury it.
+			rec.logger.Warn("failed to tag routers with #ziti-routers", zap.Error(err))
+		}
+		bindIdentity = "#ziti-routers"
+		dialIdentity = "#browzer-users"
+	}
 	if _, err := zm.CreateServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
-		[]string{svcRole}, []string{"#access-proxy-clients"}); err != nil {
+		[]string{svcRole}, []string{bindIdentity}); err != nil {
 		rec.logger.Debug("bind policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 	if _, err := zm.CreateServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
-		[]string{svcRole}, []string{"#access-proxy-clients"}); err != nil {
+		[]string{svcRole}, []string{dialIdentity}); err != nil {
 		rec.logger.Debug("dial policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
@@ -191,15 +224,17 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	return nil
 }
 
-// ensureHosting starts identity hosting (itself idempotent via HostService);
-// direct mode is a Phase-2 not-implemented error.
+// ensureHosting starts hosting for the route. identity mode uses SDK Listen
+// (HostService, idempotent). direct mode relies on the host.v1 config created
+// in ensureService and the router Bind created in ensurePolicies, so there is
+// nothing further to do here — the edge router hosts the service itself.
 func (rec *ZitiReconciler) ensureHosting(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
 	switch d.EffectiveMode() {
 	case HostingModeIdentity:
 		host, port := parseHostPort(d.ToURL)
 		return zm.HostService(d.ServiceName, host, port)
 	case HostingModeDirect:
-		return fmt.Errorf("direct hosting mode not implemented until Phase 2 (service %s)", d.ServiceName)
+		return nil // router hosts via host.v1; see ensureService/ensurePolicies
 	default:
 		return fmt.Errorf("unknown hosting mode for service %s", d.ServiceName)
 	}
