@@ -274,41 +274,48 @@ func main() {
 			zm.StartUserSyncPoller(zitiCtx)
 			zm.StartPostureResultExpiryChecker(zitiCtx)
 
-			// Host all Ziti-enabled services (creates terminators so Dial works)
-			zm.HostAllServices(zitiCtx)
+			if cfg.ZitiReconcilerEnabled {
+				reconciler := access.NewZitiReconciler(db, log, zitiProvider)
+				reconciler.Start(zitiCtx)
+				accessService.SetZitiReconciler(reconciler)
+				log.Info("Ziti reconciler started (ZITI_RECONCILER=true); imperative provisioning skipped")
+			} else {
+				// Host all Ziti-enabled services (creates terminators so Dial works)
+				zm.HostAllServices(zitiCtx)
 
-			// Bootstrap BrowZer if enabled
-			if cfg.BrowZerEnabled {
-				log.Info("Bootstrapping BrowZer configuration...")
-				if err := zm.BootstrapBrowZer(zitiCtx, cfg.OAuthIssuer, cfg.OAuthJWKSURL, cfg.BrowZerClientID); err != nil {
-					log.Error("BrowZer bootstrap failed -- BrowZer features disabled", zap.Error(err))
-				} else {
-					log.Info("BrowZer bootstrap complete")
+				// Bootstrap BrowZer if enabled
+				if cfg.BrowZerEnabled {
+					log.Info("Bootstrapping BrowZer configuration...")
+					if err := zm.BootstrapBrowZer(zitiCtx, cfg.OAuthIssuer, cfg.OAuthJWKSURL, cfg.BrowZerClientID); err != nil {
+						log.Error("BrowZer bootstrap failed -- BrowZer features disabled", zap.Error(err))
+					} else {
+						log.Info("BrowZer bootstrap complete")
+					}
 				}
+
+				// Ensure Ziti services exist for seeded routes (e.g., demo-app)
+				// Also create the browzer-router-zt service for path-based routing
+				// After that completes, generate initial BrowZer targets + router config
+				go func() {
+					accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
+
+					// Ensure browzer-router-zt Ziti service exists for path-based routing
+					accessService.EnsureBrowZerRouterService(zitiCtx, zm)
+
+					if browzerTargetManager != nil {
+						if err := browzerTargetManager.WriteBrowZerTargets(zitiCtx); err != nil {
+							log.Warn("Failed to write initial BrowZer targets", zap.Error(err))
+						} else {
+							log.Info("Initial BrowZer targets file generated")
+						}
+						if err := browzerTargetManager.WriteBrowZerRouterConfig(zitiCtx); err != nil {
+							log.Warn("Failed to write initial BrowZer router config", zap.Error(err))
+						} else {
+							log.Info("Initial BrowZer router config generated")
+						}
+					}
+				}()
 			}
-
-			// Ensure Ziti services exist for seeded routes (e.g., demo-app)
-			// Also create the browzer-router-zt service for path-based routing
-			// After that completes, generate initial BrowZer targets + router config
-			go func() {
-				accessService.EnsureZitiServicesForRoutes(zitiCtx, zm)
-
-				// Ensure browzer-router-zt Ziti service exists for path-based routing
-				accessService.EnsureBrowZerRouterService(zitiCtx, zm)
-
-				if browzerTargetManager != nil {
-					if err := browzerTargetManager.WriteBrowZerTargets(zitiCtx); err != nil {
-						log.Warn("Failed to write initial BrowZer targets", zap.Error(err))
-					} else {
-						log.Info("Initial BrowZer targets file generated")
-					}
-					if err := browzerTargetManager.WriteBrowZerRouterConfig(zitiCtx); err != nil {
-						log.Warn("Failed to write initial BrowZer router config", zap.Error(err))
-					} else {
-						log.Info("Initial BrowZer router config generated")
-					}
-				}
-			}()
 
 			log.Info("OpenZiti integration ready (health + certificate monitors started, services hosted)")
 		}
