@@ -176,6 +176,11 @@ func (s *Service) handleZitiConnect(c *gin.Context) {
 	zm.StartCertificateMonitor(mctx)
 	zm.StartUserSyncPoller(mctx)
 	zm.StartPostureResultExpiryChecker(mctx)
+	// TODO(reconciler-reconnect): when ZITI_RECONCILER is on, this admin reconnect
+	// path swaps the manager but the reconciler's loop (bound to the prior context)
+	// has exited — leaving a dead reconciler plus this imperative HostAllServices.
+	// Phase 2 must run the reconciler on a swap-surviving context and Enqueue() here
+	// instead of hosting imperatively, so the reconciler stays the sole mutator.
 	go zm.HostAllServices(mctx)
 	p.Swap(zm, cancel)
 
