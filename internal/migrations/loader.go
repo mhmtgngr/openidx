@@ -334,5 +334,12 @@ func allMigrations() []*Migration {
 			UpSQL:       zitiIdentitiesGroupSyncUp,
 			DownSQL:     zitiIdentitiesGroupSyncDown,
 		},
+		{
+			Version:     47,
+			Name:        "proxy_routes_hosting_mode",
+			Description: "Add proxy_routes.hosting_mode (identity|direct) for the Ziti reconciler; backfill browzer_enabled routes to 'direct', else 'identity'. Idempotent.",
+			UpSQL:       hostingModeUp,
+			DownSQL:     hostingModeDown,
+		},
 	}
 }
