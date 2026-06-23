@@ -417,8 +417,8 @@ func (tm *BrowZerTargetManager) GenerateBrowZerRouterConfig(ctx context.Context)
 
 	domain := tm.GetDomain()
 	for _, r := range routes {
-		if r.hostingMode == HostingModeDirect {
-			continue // per-app direct route: hosted by the edge router via host.v1, not the shared browzer-router
+		if isRouterHosted(r.hostingMode) {
+			continue // per-app direct/hop route: hosted by the edge router (host.v1), not the shared browzer-router
 		}
 		// Vhost routes: different domain, root path
 		if r.hostname != domain {
