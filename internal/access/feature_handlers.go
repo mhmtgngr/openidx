@@ -138,6 +138,11 @@ func (s *Service) enableFeature(c *gin.Context, routeID string, feature FeatureN
 		return
 	}
 
+	// Nudge the reconciler when a ziti/browzer desired-state change was committed.
+	if feature == FeatureZiti || feature == FeatureBrowZer {
+		s.enqueueReconcile()
+	}
+
 	// Log audit event
 	s.logAuditEvent(c, "feature_enabled", routeID, "proxy_route", map[string]interface{}{
 		"feature": string(feature),
@@ -163,6 +168,11 @@ func (s *Service) disableFeature(c *gin.Context, routeID string, feature Feature
 			zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Nudge the reconciler when a ziti/browzer desired-state change was committed.
+	if feature == FeatureZiti || feature == FeatureBrowZer {
+		s.enqueueReconcile()
 	}
 
 	// Log audit event
