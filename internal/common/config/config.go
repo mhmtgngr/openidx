@@ -84,6 +84,7 @@ type Config struct {
 
 	// OpenZiti configuration
 	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
+	ZitiReconcilerEnabled  bool   `mapstructure:"ziti_reconciler"`
 	ZitiCtrlURL            string `mapstructure:"ziti_ctrl_url"`
 	ZitiAdminUser          string `mapstructure:"ziti_admin_user"`
 	ZitiAdminPassword      string `mapstructure:"ziti_admin_password"`
@@ -417,6 +418,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// OpenZiti defaults
 	v.SetDefault("ziti_enabled", false)
+	v.SetDefault("ziti_reconciler", false)
 	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
 	v.SetDefault("ziti_admin_user", "admin")
 	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
@@ -537,6 +539,7 @@ func bindEnvVars(v *viper.Viper) {
 		"access_proxy_domain":        "ACCESS_PROXY_DOMAIN",
 		"access_apps_domain":         "ACCESS_APPS_DOMAIN",
 		"ziti_enabled":               "ZITI_ENABLED",
+		"ziti_reconciler":            "ZITI_RECONCILER",
 		"ziti_ctrl_url":              "ZITI_CTRL_URL",
 		"ziti_admin_user":            "ZITI_ADMIN_USER",
 		"ziti_admin_password":        "ZITI_ADMIN_PASSWORD",

@@ -817,6 +817,14 @@ func TestConfigDefaults(t *testing.T) {
 	assert.Equal(t, 70, cfg.AdaptiveMFA.HighRiskThreshold)
 }
 
+func TestZitiReconcilerFlagDefaultsFalse(t *testing.T) {
+	os.Unsetenv("ZITI_RECONCILER")
+	c := &Config{}
+	if c.ZitiReconcilerEnabled {
+		t.Fatalf("ZitiReconcilerEnabled should default to false")
+	}
+}
+
 func BenchmarkLoad(b *testing.B) {
 	// Save and restore env vars
 	origDB := os.Getenv("DATABASE_URL")
