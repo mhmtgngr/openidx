@@ -108,6 +108,7 @@ type Config struct {
 	BrowZerClientID         string `mapstructure:"browzer_client_id"`
 	BrowZerTargetsPath      string `mapstructure:"browzer_targets_path"`
 	BrowZerRouterConfigPath string `mapstructure:"browzer_router_config_path"`
+	BrowZerHopConfigPath    string `mapstructure:"browzer_hop_config_path"`
 	BrowZerCertsPath        string `mapstructure:"browzer_certs_path"`
 	// Host:port the access-proxy dials for the browzer-router-zt Ziti service —
 	// where the BrowZer path/vhost router (nginx) runs. Defaults to the Docker
@@ -560,6 +561,7 @@ func bindEnvVars(v *viper.Viper) {
 		"browzer_client_id":          "BROWZER_CLIENT_ID",
 		"browzer_targets_path":       "BROWZER_TARGETS_PATH",
 		"browzer_router_config_path": "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_hop_config_path":    "BROWZER_HOP_CONFIG_PATH",
 		"browzer_certs_path":         "BROWZER_CERTS_PATH",
 		"browzer_router_host":        "BROWZER_ROUTER_HOST",
 		"browzer_router_port":        "BROWZER_ROUTER_PORT",
