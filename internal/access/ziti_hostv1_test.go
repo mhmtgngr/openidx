@@ -64,3 +64,29 @@ func TestCreateHostV1ConfigFixedOmitsForwardKeys(t *testing.T) {
 		t.Fatalf("fixed target wrong: %+v", data)
 	}
 }
+
+func TestEnsureRouterRoleAttributePatchesEachRouter(t *testing.T) {
+	patched := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/edge-routers" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":[{"id":"r1","roleAttributes":[]},{"id":"r2","roleAttributes":["x"]}]}`))
+		case r.Method == "PATCH":
+			id := r.URL.Path[len("/edge/management/v1/edge-routers/"):]
+			patched[id] = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	zm := newTestZitiManager(t, srv.URL)
+	if err := zm.EnsureRouterRoleAttribute(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !patched["r1"] || !patched["r2"] {
+		t.Fatalf("expected both routers patched with #ziti-routers, got %+v", patched)
+	}
+}

@@ -1736,3 +1736,44 @@ func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host s
 	}
 	return resp.Data.ID, nil
 }
+
+// EnsureRouterRoleAttribute tags every edge router with the "ziti-routers" role
+// attribute (idempotent), so direct-mode Bind policies can grant the routers as
+// a stable role (#ziti-routers) instead of by id.
+func (zm *ZitiManager) EnsureRouterRoleAttribute(ctx context.Context) error {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/edge-routers?limit=1000", nil)
+	if err != nil {
+		return fmt.Errorf("list edge routers: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d listing edge routers: %s", status, string(data))
+	}
+	var resp struct {
+		Data []struct {
+			ID             string   `json:"id"`
+			RoleAttributes []string `json:"roleAttributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse edge routers: %w", err)
+	}
+	for _, r := range resp.Data {
+		has := false
+		for _, a := range r.RoleAttributes {
+			if a == "ziti-routers" {
+				has = true
+				break
+			}
+		}
+		if has {
+			continue
+		}
+		patch, _ := json.Marshal(map[string]interface{}{
+			"roleAttributes": append(r.RoleAttributes, "ziti-routers"),
+		})
+		if _, s, perr := zm.mgmtRequest("PATCH", "/edge/management/v1/edge-routers/"+r.ID, patch); perr != nil || (s != http.StatusOK && s != http.StatusAccepted) {
+			zm.logger.Warn("failed to tag edge router with #ziti-routers", zap.String("router", r.ID), zap.Int("status", s), zap.Error(perr))
+		}
+	}
+	return nil
+}
