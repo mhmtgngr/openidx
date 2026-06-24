@@ -1,0 +1,84 @@
+v: 3
+
+identity:
+  cert:             "router.cert"
+  server_cert:      "/persistent/router.server.chain.cert"
+  key:              "/persistent/router.key"
+  ca:               "/persistent/router.cas"
+  alt_server_certs:
+    - server_cert: "/persistent/tdv-fullchain.pem"
+      server_key: "/persistent/tdv-key.pem"
+
+ha:
+  enabled: false
+
+ctrl:
+  endpoint:             tls:ziti-controller.localtest.me:1280
+
+link:
+  dialers:
+    - binding: transport
+  listeners:
+    - binding:          transport
+      bind:             tls:0.0.0.0:3022
+      advertise:        tls:ziti-router.localtest.me:3022
+      options:
+        outQueueSize:   4
+
+listeners:
+# bindings of edge and tunnel requires an "edge" section below
+  - binding: edge
+    address: tls:0.0.0.0:3022
+    options:
+      advertise: ziti-router.localtest.me:3022
+      connectTimeoutMs: 5000
+      getSessionTimeout: 60
+  - binding: edge
+    address: wss:0.0.0.0:3023
+    options:
+      advertise: browzer.tdv.org:3023
+      connectTimeoutMs: 5000
+      getSessionTimeout: 60
+  - binding: tunnel
+    options:
+      mode: host #tproxy|host
+
+
+
+edge:
+  csr:
+    country: US
+    province: NC
+    locality: Charlotte
+    organization: NetFoundry
+    organizationalUnit: Ziti
+    sans:
+      dns:
+        - localhost
+        - ziti-router.localtest.me
+        - cmit
+        - browzer.tdv.org
+      ip:
+        - "127.0.0.1"
+        - "::1"
+
+
+
+#transport:
+  ws:
+    writeTimeout: 10
+    readTimeout: 5
+    idleTimeout: 120
+#    pongTimeout: 60
+#    pingInterval: 54
+#    handshakeTimeout: 10
+#    readBufferSize: 4096
+#    writeBufferSize: 4096
+#    enableCompression: true
+
+forwarder:
+  latencyProbeInterval: 0
+  xgressDialQueueLength: 1000
+  xgressDialWorkerCount: 128
+  linkDialQueueLength: 1000
+  linkDialWorkerCount: 32

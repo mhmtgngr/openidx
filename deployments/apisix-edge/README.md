@@ -48,6 +48,7 @@ when `APISIX_EDGE_ENABLED=true` (see `internal/access/apisix_reconciler.go`).
 3. **Backend services**: copy `oidx-common.env.example` → `~/.config/oidx/common.env` (real values); install the `systemd/*.service` units to `~/.config/systemd/user/`; `systemctl --user daemon-reload && systemctl --user enable --now oidx-access oidx-identity oidx-governance oidx-provisioning oidx-audit oidx-admin-api oidx-oauth`.
 4. **BrowZer routes**: set `APISIX_EDGE_ENABLED=true`, `APISIX_ADMIN_URL`, `APISIX_ADMIN_KEY`, `APISIX_BOOTSTRAPPER_NODE` in the access-service env — the reconciler pushes them on start.
 5. **nginx (SPA upstream)** on `:8443` and the bootstrapper/hop/ziti containers: enable as `podman generate systemd --name <c>` user units (start-existing) so they return on reboot under `loginctl enable-linger`.
+6. **OpenZiti edge router — BrowZer WSS**: the router needs a `wss` edge listener + `alt_server_certs` (the `*.tdv.org` cert) for the clientless BrowZer path, which the quickstart bootstrap does NOT generate. See [`ziti-router/README.md`](ziti-router/README.md) + `ziti-router/setup-router-wss.sh`. Without it the BrowZer runtime errors `1007 — No WSS-Enabled Routers found`.
 
 ## Cutover model (APISIX-front + nginx-fallback)
 
