@@ -50,3 +50,17 @@ func TestGenerateHopConfigPerVhost(t *testing.T) {
 		t.Fatalf("non-hop (direct) route must be excluded from hop config:\n%s", cfg)
 	}
 }
+
+func TestHopConfigRequiresHTTPS(t *testing.T) {
+	routes := []browzerRouteInfo{
+		{hostname: "psm.tdv.org", toURL: "https://psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"},
+		{hostname: "plain.tdv.org", toURL: "http://192.168.1.9:8080", serviceName: "plain-zt", hostingMode: "hop"},
+	}
+	cfg := buildBrowZerHopConfig(routes, "/c/fc.pem", "/c/k.pem", 8095)
+	if !strings.Contains(cfg, "server_name psm.tdv.org;") {
+		t.Fatal("https hop route must be emitted")
+	}
+	if strings.Contains(cfg, "plain.tdv.org") {
+		t.Fatal("non-https hop route must be skipped")
+	}
+}

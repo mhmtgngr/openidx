@@ -707,6 +707,13 @@ func buildBrowZerHopConfig(routes []browzerRouteInfo, certPath, keyPath string, 
 		if r.hostingMode != HostingModeHop {
 			continue
 		}
+		// hop SNI-demux only works for an https upstream: the runtime does
+		// WASM-TLS, presenting SNI=vhost, and the listen ... ssl block speaks
+		// TLS. A non-https upstream would send plaintext "Host: unknown" that
+		// matches no server_name and the ssl listener rejects — skip it.
+		if parsed, err := url.Parse(r.toURL); err != nil || parsed.Scheme != "https" {
+			continue
+		}
 		fmt.Fprintf(&b, "\nserver {\n")
 		fmt.Fprintf(&b, "    listen %d ssl;\n", port)
 		fmt.Fprintf(&b, "    server_name %s;\n", r.hostname)
@@ -740,6 +747,21 @@ func (tm *BrowZerTargetManager) GenerateBrowZerHopConfig(ctx context.Context) ([
 	routes, err := tm.queryBrowZerRoutes(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// Surface hop routes that will be skipped: hop mode requires an https
+	// upstream (SNI demux), so a non-https hop route is misconfigured.
+	for _, r := range routes {
+		if r.hostingMode != HostingModeHop {
+			continue
+		}
+		scheme := ""
+		if parsed, perr := url.Parse(r.toURL); perr == nil {
+			scheme = parsed.Scheme
+		}
+		if scheme != "https" {
+			tm.logger.Warn("hop route skipped: hop mode requires an https upstream",
+				zap.String("vhost", r.hostname), zap.String("scheme", scheme))
+		}
 	}
 	certDir := tm.certsPath
 	cfg := buildBrowZerHopConfig(routes, certDir+"/tdv-fullchain.pem", certDir+"/tdv-key.pem", tm.hopPort)

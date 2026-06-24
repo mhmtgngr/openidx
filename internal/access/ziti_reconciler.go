@@ -25,7 +25,9 @@ const (
 	// HostingModeHop — the edge router hosts a per-app service whose host.v1
 	// points at the shared TLS hop nginx; the hop SNI-demuxes and rewrites the
 	// HTTP Host for Host-routed/https upstreams the BrowZer runtime cannot
-	// address directly (it sends a fixed "Host: unknown").
+	// address directly (it sends a fixed "Host: unknown"). REQUIRES an https
+	// upstream: SNI demux only works when the runtime does WASM-TLS, so a
+	// non-https hop route is misconfigured and is skipped (with a warning).
 	HostingModeHop = "hop"
 )
 
