@@ -1709,6 +1709,43 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 // and fails BrowZer with "dst_protocol required"), this pins protocol/address/
 // port so the edge router hosts the service straight to the upstream. Returns
 // the new config's id.
+// EnsureServiceConfig makes sure the service references configID, attaching it
+// if missing (idempotent). The reconciler's create path attaches the host.v1
+// config at create time, but a service that already existed when the reconciler
+// first saw it — e.g. one created in SDK/identity mode by the feature-manager's
+// BrowZer toggle — has NO config attached, so the edge router cannot host it and
+// falls back to a stale SDK terminator (which forwards wrong → 502). This makes
+// the reconciler converge the attachment.
+func (zm *ZitiManager) EnsureServiceConfig(ctx context.Context, serviceID, configID string) error {
+	data, status, err := zm.mgmtRequest("GET", "/edge/management/v1/services/"+serviceID, nil)
+	if err != nil {
+		return fmt.Errorf("get service for config-attach: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d getting service %s: %s", status, serviceID, string(data))
+	}
+	var resp struct {
+		Data struct {
+			Configs []string `json:"configs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse service config list: %w", err)
+	}
+	for _, c := range resp.Data.Configs {
+		if c == configID {
+			return nil
+		}
+	}
+	patch, _ := json.Marshal(map[string]interface{}{"configs": append(resp.Data.Configs, configID)})
+	if _, ps, perr := zm.mgmtRequest("PATCH", "/edge/management/v1/services/"+serviceID, patch); perr != nil || (ps != http.StatusOK && ps != http.StatusAccepted) {
+		return fmt.Errorf("attach config %s to service %s: status %d: %w", configID, serviceID, ps, perr)
+	}
+	zm.logger.Info("Attached host.v1 config to existing service",
+		zap.String("service", serviceID), zap.String("config", configID))
+	return nil
+}
+
 func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host string, port int) (string, error) {
 	desiredData := map[string]interface{}{
 		"protocol": "tcp",
