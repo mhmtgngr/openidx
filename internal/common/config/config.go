@@ -112,6 +112,17 @@ type Config struct {
 	BrowZerHopCertPath      string `mapstructure:"browzer_hop_cert_path"`
 	BrowZerHopKeyPath       string `mapstructure:"browzer_hop_key_path"`
 	BrowZerCertsPath        string `mapstructure:"browzer_certs_path"`
+	// Public per-app vhost generation (front nginx). The access-service renders
+	// one TLS server block per BrowZer route into BrowZerVHostConfigPath; the
+	// front nginx includes it and reloads. Forwards to BrowZerBootstrapperAddr.
+	// SSL cert/key are the paths AS SEEN BY the front nginx container.
+	// OIDCCallbackPaths are the external-IdP form_post callback suffixes routed to
+	// the hop on hop-mode routes (comma-separated).
+	BrowZerVHostConfigPath   string `mapstructure:"browzer_vhost_config_path"`
+	BrowZerBootstrapperAddr  string `mapstructure:"browzer_bootstrapper_addr"`
+	BrowZerVHostSSLCert      string `mapstructure:"browzer_vhost_ssl_cert"`
+	BrowZerVHostSSLKey       string `mapstructure:"browzer_vhost_ssl_key"`
+	BrowZerOIDCCallbackPaths string `mapstructure:"browzer_oidc_callback_paths"`
 	// Host:port the access-proxy dials for the browzer-router-zt Ziti service —
 	// where the BrowZer path/vhost router (nginx) runs. Defaults to the Docker
 	// service name "browzer-router":80; override for non-compose topologies
@@ -447,6 +458,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("browzer_router_host", "browzer-router")
 	v.SetDefault("browzer_router_port", 80)
 	v.SetDefault("ziti_browzer_hop_addr", "127.0.0.1:8095")
+	v.SetDefault("browzer_bootstrapper_addr", "https://127.0.0.1:8445")
+	v.SetDefault("browzer_vhost_ssl_cert", "/etc/nginx/tdv-fullchain.pem")
+	v.SetDefault("browzer_vhost_ssl_key", "/etc/nginx/tdv-key.pem")
+	v.SetDefault("browzer_oidc_callback_paths", "signin-oidc,signout-callback-oidc")
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
@@ -529,66 +544,71 @@ func setDefaults(v *viper.Viper, serviceName string) {
 func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
-		"database_url":               "DATABASE_URL",
-		"redis_url":                  "REDIS_URL",
-		"elasticsearch_url":          "ELASTICSEARCH_URL",
-		"opa_url":                    "OPA_URL",
-		"environment":                "APP_ENV",
-		"log_level":                  "LOG_LEVEL",
-		"port":                       "PORT",
-		"oauth_issuer":               "OAUTH_ISSUER",
-		"tenant_base_domain":         "TENANT_BASE_DOMAIN",
-		"default_org_fallback":       "DEFAULT_ORG_FALLBACK",
-		"default_org_id":             "DEFAULT_ORG_ID",
-		"oauth_jwks_url":             "OAUTH_JWKS_URL",
-		"governance_url":             "GOVERNANCE_URL",
-		"audit_url":                  "AUDIT_URL",
-		"access_session_secret":      "ACCESS_SESSION_SECRET",
-		"access_proxy_domain":        "ACCESS_PROXY_DOMAIN",
-		"access_apps_domain":         "ACCESS_APPS_DOMAIN",
-		"ziti_enabled":               "ZITI_ENABLED",
-		"ziti_reconciler":            "ZITI_RECONCILER",
-		"ziti_ctrl_url":              "ZITI_CTRL_URL",
-		"ziti_admin_user":            "ZITI_ADMIN_USER",
-		"ziti_admin_password":        "ZITI_ADMIN_PASSWORD",
-		"ziti_identity_dir":          "ZITI_IDENTITY_DIR",
-		"ziti_insecure_skip_verify":  "ZITI_INSECURE_SKIP_VERIFY",
-		"continuous_verify_enabled":  "CONTINUOUS_VERIFY_ENABLED",
-		"continuous_verify_interval": "CONTINUOUS_VERIFY_INTERVAL",
-		"geoip_service_url":          "GEOIP_SERVICE_URL",
-		"guacamole_url":              "GUACAMOLE_URL",
-		"guacamole_admin_user":       "GUACAMOLE_ADMIN_USER",
-		"guacamole_admin_password":   "GUACAMOLE_ADMIN_PASSWORD",
-		"browzer_enabled":            "BROWZER_ENABLED",
-		"browzer_client_id":          "BROWZER_CLIENT_ID",
-		"browzer_targets_path":       "BROWZER_TARGETS_PATH",
-		"browzer_router_config_path": "BROWZER_ROUTER_CONFIG_PATH",
-		"browzer_hop_config_path":    "BROWZER_HOP_CONFIG_PATH",
-		"browzer_hop_cert_path":      "BROWZER_HOP_CERT_PATH",
-		"browzer_hop_key_path":       "BROWZER_HOP_KEY_PATH",
-		"browzer_certs_path":         "BROWZER_CERTS_PATH",
-		"browzer_router_host":        "BROWZER_ROUTER_HOST",
-		"browzer_router_port":        "BROWZER_ROUTER_PORT",
-		"ziti_browzer_hop_addr":      "BROWZER_HOP_ADDR",
-		"apisix_config_path":         "APISIX_CONFIG_PATH",
-		"enable_opa_authz":           "ENABLE_OPA_AUTHZ",
-		"jwt_secret":                 "JWT_SECRET",
-		"encryption_key":             "ENCRYPTION_KEY",
-		"smtp_host":                  "SMTP_HOST",
-		"smtp_port":                  "SMTP_PORT",
-		"smtp_username":              "SMTP_USERNAME",
-		"smtp_password":              "SMTP_PASSWORD",
-		"smtp_from":                  "SMTP_FROM",
-		"sms.enabled":                "SMS_ENABLED",
-		"sms.provider":               "SMS_PROVIDER",
-		"sms.twilio_sid":             "TWILIO_ACCOUNT_SID",
-		"sms.twilio_token":           "TWILIO_AUTH_TOKEN",
-		"sms.twilio_from":            "TWILIO_FROM_NUMBER",
-		"sms.aws_region":             "AWS_REGION",
-		"sms.aws_access_key":         "AWS_ACCESS_KEY_ID",
-		"sms.aws_secret_key":         "AWS_SECRET_ACCESS_KEY",
-		"sms.webhook_url":            "SMS_WEBHOOK_URL",
-		"sms.webhook_api_key":        "SMS_WEBHOOK_API_KEY",
+		"database_url":                "DATABASE_URL",
+		"redis_url":                   "REDIS_URL",
+		"elasticsearch_url":           "ELASTICSEARCH_URL",
+		"opa_url":                     "OPA_URL",
+		"environment":                 "APP_ENV",
+		"log_level":                   "LOG_LEVEL",
+		"port":                        "PORT",
+		"oauth_issuer":                "OAUTH_ISSUER",
+		"tenant_base_domain":          "TENANT_BASE_DOMAIN",
+		"default_org_fallback":        "DEFAULT_ORG_FALLBACK",
+		"default_org_id":              "DEFAULT_ORG_ID",
+		"oauth_jwks_url":              "OAUTH_JWKS_URL",
+		"governance_url":              "GOVERNANCE_URL",
+		"audit_url":                   "AUDIT_URL",
+		"access_session_secret":       "ACCESS_SESSION_SECRET",
+		"access_proxy_domain":         "ACCESS_PROXY_DOMAIN",
+		"access_apps_domain":          "ACCESS_APPS_DOMAIN",
+		"ziti_enabled":                "ZITI_ENABLED",
+		"ziti_reconciler":             "ZITI_RECONCILER",
+		"ziti_ctrl_url":               "ZITI_CTRL_URL",
+		"ziti_admin_user":             "ZITI_ADMIN_USER",
+		"ziti_admin_password":         "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":           "ZITI_IDENTITY_DIR",
+		"ziti_insecure_skip_verify":   "ZITI_INSECURE_SKIP_VERIFY",
+		"continuous_verify_enabled":   "CONTINUOUS_VERIFY_ENABLED",
+		"continuous_verify_interval":  "CONTINUOUS_VERIFY_INTERVAL",
+		"geoip_service_url":           "GEOIP_SERVICE_URL",
+		"guacamole_url":               "GUACAMOLE_URL",
+		"guacamole_admin_user":        "GUACAMOLE_ADMIN_USER",
+		"guacamole_admin_password":    "GUACAMOLE_ADMIN_PASSWORD",
+		"browzer_enabled":             "BROWZER_ENABLED",
+		"browzer_client_id":           "BROWZER_CLIENT_ID",
+		"browzer_targets_path":        "BROWZER_TARGETS_PATH",
+		"browzer_router_config_path":  "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_hop_config_path":     "BROWZER_HOP_CONFIG_PATH",
+		"browzer_hop_cert_path":       "BROWZER_HOP_CERT_PATH",
+		"browzer_hop_key_path":        "BROWZER_HOP_KEY_PATH",
+		"browzer_certs_path":          "BROWZER_CERTS_PATH",
+		"browzer_router_host":         "BROWZER_ROUTER_HOST",
+		"browzer_router_port":         "BROWZER_ROUTER_PORT",
+		"ziti_browzer_hop_addr":       "BROWZER_HOP_ADDR",
+		"browzer_vhost_config_path":   "BROWZER_VHOST_CONFIG_PATH",
+		"browzer_bootstrapper_addr":   "BROWZER_BOOTSTRAPPER_ADDR",
+		"browzer_vhost_ssl_cert":      "BROWZER_VHOST_SSL_CERT",
+		"browzer_vhost_ssl_key":       "BROWZER_VHOST_SSL_KEY",
+		"browzer_oidc_callback_paths": "BROWZER_OIDC_CALLBACK_PATHS",
+		"apisix_config_path":          "APISIX_CONFIG_PATH",
+		"enable_opa_authz":            "ENABLE_OPA_AUTHZ",
+		"jwt_secret":                  "JWT_SECRET",
+		"encryption_key":              "ENCRYPTION_KEY",
+		"smtp_host":                   "SMTP_HOST",
+		"smtp_port":                   "SMTP_PORT",
+		"smtp_username":               "SMTP_USERNAME",
+		"smtp_password":               "SMTP_PASSWORD",
+		"smtp_from":                   "SMTP_FROM",
+		"sms.enabled":                 "SMS_ENABLED",
+		"sms.provider":                "SMS_PROVIDER",
+		"sms.twilio_sid":              "TWILIO_ACCOUNT_SID",
+		"sms.twilio_token":            "TWILIO_AUTH_TOKEN",
+		"sms.twilio_from":             "TWILIO_FROM_NUMBER",
+		"sms.aws_region":              "AWS_REGION",
+		"sms.aws_access_key":          "AWS_ACCESS_KEY_ID",
+		"sms.aws_secret_key":          "AWS_SECRET_ACCESS_KEY",
+		"sms.webhook_url":             "SMS_WEBHOOK_URL",
+		"sms.webhook_api_key":         "SMS_WEBHOOK_API_KEY",
 		// Turkish SMS providers
 		"sms.netgsm_usercode":          "NETGSM_USERCODE",
 		"sms.netgsm_password":          "NETGSM_PASSWORD",

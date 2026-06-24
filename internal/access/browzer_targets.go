@@ -61,6 +61,15 @@ type BrowZerTargetManager struct {
 	hopPort          int
 	domain           string
 	dnsResolvers     string // nginx resolver addresses (auto-detected from /etc/resolv.conf)
+	// Public per-app vhost generation (front nginx). vhostConfigPath is where the
+	// generated server blocks are written; bootstrapperPass is the upstream they
+	// forward to; vhostSSLCert/Key are the cert paths as seen by the front nginx;
+	// oidcCallbacks are the form_post callback suffixes routed to the hop.
+	vhostConfigPath  string
+	bootstrapperPass string
+	vhostSSLCert     string
+	vhostSSLKey      string
+	oidcCallbacks    []string
 	mu               sync.Mutex
 }
 
@@ -151,6 +160,30 @@ func (tm *BrowZerTargetManager) SetCertsPath(path string) {
 // SetHopConfigPath sets the path for the nginx hop config file
 func (tm *BrowZerTargetManager) SetHopConfigPath(path string) {
 	tm.hopConfigPath = path
+}
+
+// SetVHostConfigPath sets the path for the generated public per-app nginx vhosts.
+func (tm *BrowZerTargetManager) SetVHostConfigPath(path string) {
+	tm.vhostConfigPath = path
+}
+
+// SetBootstrapperPass sets the upstream the public vhosts forward to (the BrowZer
+// bootstrapper), e.g. "https://127.0.0.1:8445".
+func (tm *BrowZerTargetManager) SetBootstrapperPass(addr string) {
+	tm.bootstrapperPass = addr
+}
+
+// SetVHostSSL sets the cert/key paths the public vhosts present (as seen by the
+// front nginx container).
+func (tm *BrowZerTargetManager) SetVHostSSL(certPath, keyPath string) {
+	tm.vhostSSLCert = certPath
+	tm.vhostSSLKey = keyPath
+}
+
+// SetOIDCCallbacks sets the form_post callback path suffixes (e.g. "signin-oidc")
+// routed straight to the hop on hop-mode routes, bypassing the bootstrapper.
+func (tm *BrowZerTargetManager) SetOIDCCallbacks(suffixes []string) {
+	tm.oidcCallbacks = suffixes
 }
 
 // SetHopPort sets the TLS port the shared BrowZer hop server listens on
@@ -819,6 +852,12 @@ func (tm *BrowZerTargetManager) GenerateBrowZerHopConfig(ctx context.Context) ([
 func (tm *BrowZerTargetManager) WriteBrowZerHopConfig(ctx context.Context) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
+	return tm.writeHopConfigLocked(ctx)
+}
+
+// writeHopConfigLocked writes the hop config; callers must hold tm.mu
+// (RegenerateConfigs reuses it under the lock).
+func (tm *BrowZerTargetManager) writeHopConfigLocked(ctx context.Context) error {
 	if tm.hopConfigPath == "" {
 		tm.logger.Debug("No hop config path configured, skipping write")
 		return nil
@@ -851,7 +890,13 @@ func (tm *BrowZerTargetManager) RegenerateConfigs(ctx context.Context) error {
 	if err := tm.writeTargetsLocked(ctx); err != nil {
 		return err
 	}
-	return tm.writeRouterConfigLocked(ctx)
+	if err := tm.writeRouterConfigLocked(ctx); err != nil {
+		return err
+	}
+	if err := tm.writeHopConfigLocked(ctx); err != nil {
+		return err
+	}
+	return tm.writeVHostConfigLocked(ctx)
 }
 
 // writeFileAtomic writes data to a file using a temp file + rename pattern for atomicity.
