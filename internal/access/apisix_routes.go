@@ -28,6 +28,22 @@ func apisixSlug(host string) string {
 	return strings.Trim(s, "-")
 }
 
+// staleBrowZerRouteNames returns the browzer-* routes that exist but are no longer
+// desired (so they should be deleted). Non-browzer routes are never touched.
+func staleBrowZerRouteNames(existing, desired []string) []string {
+	want := make(map[string]bool, len(desired))
+	for _, d := range desired {
+		want[d] = true
+	}
+	var stale []string
+	for _, e := range existing {
+		if strings.HasPrefix(e, "browzer-") && !want[e] {
+			stale = append(stale, e)
+		}
+	}
+	return stale
+}
+
 // buildBrowZerAPISIXRoutes renders the Admin API route objects for the
 // BrowZer-enabled routes: an overlay route -> bootstrapper for each, plus an OIDC
 // form_post bypass route -> the hop for hop-mode routes. The overlay upstream sets

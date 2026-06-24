@@ -73,6 +73,35 @@ func TestBuildBrowZerAPISIXRoutesSkipsEmptyHost(t *testing.T) {
 	}
 }
 
+func TestStaleBrowZerRouteNames(t *testing.T) {
+	existing := []string{"browzer-a", "browzer-b", "browzer-b-oidc", "identity-service", "other"}
+	desired := []string{"browzer-a"}
+	stale := staleBrowZerRouteNames(existing, desired)
+	// Only browzer-* routes not in desired are stale; non-browzer routes are left alone.
+	want := map[string]bool{"browzer-b": true, "browzer-b-oidc": true}
+	if len(stale) != 2 {
+		t.Fatalf("got %v", stale)
+	}
+	for _, s := range stale {
+		if !want[s] {
+			t.Fatalf("unexpected stale name %s (got %v)", s, stale)
+		}
+	}
+}
+
+// TestStaleBrowZerRouteNames_DesiredOnlyNoPanic verifies that a desired name that
+// does not appear in existing causes no panic and is simply ignored.
+func TestStaleBrowZerRouteNames_DesiredOnlyNoPanic(t *testing.T) {
+	stale := staleBrowZerRouteNames(
+		[]string{"browzer-a", "identity-service"},
+		[]string{"browzer-a", "browzer-ghost"}, // browzer-ghost not in existing
+	)
+	// browzer-a is desired+present → not stale; identity-service non-browzer → not stale
+	if len(stale) != 0 {
+		t.Fatalf("expected no stale routes, got %v", stale)
+	}
+}
+
 func TestAPISIXSlug(t *testing.T) {
 	cases := map[string]string{
 		"psm.tdv.org":     "psm-tdv-org",
