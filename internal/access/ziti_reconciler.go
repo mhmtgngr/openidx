@@ -20,7 +20,19 @@ const (
 	// HostingModeDirect — the edge router hosts the service via a fixed host.v1
 	// config. Used automatically for all BrowZer routes.
 	HostingModeDirect = "direct"
+	// HostingModeHop — the edge router hosts a per-app service whose host.v1
+	// points at the shared TLS hop nginx; the hop SNI-demuxes and rewrites the
+	// HTTP Host for Host-routed/https upstreams the BrowZer runtime cannot
+	// address directly (it sends a fixed "Host: unknown").
+	HostingModeHop = "hop"
 )
+
+// isRouterHosted reports whether the edge router hosts the service itself via a
+// host.v1 config (direct and hop). The two differ only in the host.v1 target:
+// direct points at the route's to_url, hop points at the shared hop nginx addr.
+func isRouterHosted(mode string) bool {
+	return mode == HostingModeDirect || mode == HostingModeHop
+}
 
 // DesiredRoute is the reconciler's view of a ziti-enabled proxy_route.
 type DesiredRoute struct {
@@ -30,9 +42,14 @@ type DesiredRoute struct {
 	BrowZerEnabled bool
 }
 
-// EffectiveMode resolves the hosting mode, forcing "direct" for BrowZer routes
-// and defaulting empty to "identity".
+// EffectiveMode resolves the hosting mode. An explicit "hop" hosting_mode wins
+// over all other rules (including the BrowZer→direct promotion). BrowZer routes
+// without an explicit mode are forced to "direct". Everything else defaults to
+// "identity".
 func (r DesiredRoute) EffectiveMode() string {
+	if r.HostingMode == HostingModeHop {
+		return HostingModeHop
+	}
 	if r.BrowZerEnabled {
 		return HostingModeDirect
 	}
@@ -50,6 +67,7 @@ type ZitiReconciler struct {
 	logger   *zap.Logger
 	provider *ZitiProvider // source of the live ZitiManager
 	period   time.Duration
+	hopAddr  string // host:port of the shared TLS hop nginx (hop-mode host.v1 target)
 
 	trigger  chan struct{}         // coalescing: buffered size 1
 	runOnce  func(context.Context) // overridable in tests; defaults to reconcileOnce
@@ -60,12 +78,13 @@ type ZitiReconciler struct {
 
 // NewZitiReconciler creates a ZitiReconciler with a 30-second safety-net
 // period. Call Start(ctx) to begin the reconcile loop.
-func NewZitiReconciler(db *database.PostgresDB, logger *zap.Logger, provider *ZitiProvider) *ZitiReconciler {
+func NewZitiReconciler(db *database.PostgresDB, logger *zap.Logger, provider *ZitiProvider, hopAddr string) *ZitiReconciler {
 	rec := &ZitiReconciler{
 		db:       db,
 		logger:   logger.With(zap.String("component", "ziti-reconciler")),
 		provider: provider,
 		period:   30 * time.Second,
+		hopAddr:  hopAddr,
 		trigger:  make(chan struct{}, 1),
 		status:   make(map[string]string),
 	}
@@ -148,9 +167,14 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 	// host.v1 config so the edge router hosts the service itself; identity mode
 	// uses a bare service that the access-proxy terminates via SDK Listen.
 	var err error
-	switch d.EffectiveMode() {
-	case HostingModeDirect:
+	switch {
+	case isRouterHosted(d.EffectiveMode()):
+		// Direct points host.v1 at the route's to_url; hop points it at the
+		// shared hop nginx, which SNI-demuxes to the real upstream.
 		host, port := parseHostPort(d.ToURL)
+		if d.EffectiveMode() == HostingModeHop {
+			host, port = parseHostPort(rec.hopAddr)
+		}
 		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port)
 		if cerr != nil {
 			return cerr
@@ -198,7 +222,7 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 	svcRole := "#" + d.ServiceName
 	bindIdentity := "#access-proxy-clients"
 	dialIdentity := "#access-proxy-clients"
-	if d.EffectiveMode() == HostingModeDirect {
+	if isRouterHosted(d.EffectiveMode()) {
 		// The router hosts the service via host.v1, so Bind goes to the routers;
 		// BrowZer clients (synced users) dial via #browzer-users.
 		if err := zm.EnsureRouterRoleAttribute(ctx); err != nil {
@@ -229,11 +253,11 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 // in ensureService and the router Bind created in ensurePolicies, so there is
 // nothing further to do here — the edge router hosts the service itself.
 func (rec *ZitiReconciler) ensureHosting(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
-	switch d.EffectiveMode() {
-	case HostingModeIdentity:
+	switch {
+	case d.EffectiveMode() == HostingModeIdentity:
 		host, port := parseHostPort(d.ToURL)
 		return zm.HostService(d.ServiceName, host, port)
-	case HostingModeDirect:
+	case isRouterHosted(d.EffectiveMode()):
 		return nil // router hosts via host.v1; see ensureService/ensurePolicies
 	default:
 		return fmt.Errorf("unknown hosting mode for service %s", d.ServiceName)

@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,22 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 )
+
+func TestEffectiveModeHop(t *testing.T) {
+	if (DesiredRoute{HostingMode: "hop", BrowZerEnabled: true}).EffectiveMode() != HostingModeHop {
+		t.Fatalf("explicit hop must win over browzer->direct, got %q", (DesiredRoute{HostingMode: "hop", BrowZerEnabled: true}).EffectiveMode())
+	}
+	if (DesiredRoute{HostingMode: "hop"}).EffectiveMode() != HostingModeHop {
+		t.Fatalf("hop must be honored")
+	}
+	// regression: existing modes unchanged
+	if (DesiredRoute{BrowZerEnabled: true}).EffectiveMode() != HostingModeDirect {
+		t.Fatalf("browzer must still map to direct")
+	}
+	if (DesiredRoute{}).EffectiveMode() != HostingModeIdentity {
+		t.Fatalf("default must still be identity")
+	}
+}
 
 func TestDesiredRouteHostingModeNormalization(t *testing.T) {
 	if got := (DesiredRoute{HostingMode: "identity", BrowZerEnabled: true}).EffectiveMode(); got != "direct" {
@@ -204,6 +221,74 @@ func TestEnsureHostingDirectCreatesHostV1AndRouterBind(t *testing.T) {
 	}
 	if len(bindIdentityRoles) != 1 || bindIdentityRoles[0] != "#ziti-routers" {
 		t.Fatalf("direct Bind must grant #ziti-routers, got %+v", bindIdentityRoles)
+	}
+	if got := rec.status["psm-zt"]; got != "synced" {
+		t.Fatalf("want synced, got %q", got)
+	}
+}
+
+func TestEnsureServiceHopUsesHopAddr(t *testing.T) {
+	// hop mode must point the per-app host.v1 config at the shared hop nginx
+	// addr (the reconciler's hopAddr), NOT at the route's to_url.
+	var cfgAddr, cfgPort interface{}
+	var bindIdentityRoles []string
+	createdServiceWithConfig := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/configs" && r.Method == "POST":
+			var body map[string]interface{}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			if data, ok := body["data"].(map[string]interface{}); ok {
+				cfgAddr = data["address"]
+				cfgPort = data["port"]
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"cfg-1"}}`))
+		case r.URL.Path == "/edge/management/v1/services" && r.Method == "GET":
+			if createdServiceWithConfig {
+				_, _ = w.Write([]byte(`{"data":[{"id":"svc-1","name":"psm-zt","roleAttributes":["psm-zt"]}]}`))
+			} else {
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			}
+		case r.URL.Path == "/edge/management/v1/services" && r.Method == "POST":
+			b, _ := io.ReadAll(r.Body)
+			createdServiceWithConfig = bytesContains(b, "cfg-1")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"svc-1"}}`))
+		case r.URL.Path == "/edge/management/v1/service-policies" && r.Method == "POST":
+			b, _ := io.ReadAll(r.Body)
+			if bytesContains(b, "Bind") {
+				bindIdentityRoles = extractIdentityRoles(b)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"pol-1"}}`))
+		case r.URL.Path == "/edge/management/v1/edge-routers" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true,
+		hostedServices: make(map[string]*hostedService)}
+	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}, hopAddr: "127.0.0.1:8095"}
+
+	d := DesiredRoute{ServiceName: "psm-zt", ToURL: "https://psm.tdv.org:443", HostingMode: "hop"}
+	rec.reconcileRoute(context.Background(), zm, d)
+
+	if fmt.Sprint(cfgAddr) != "127.0.0.1" {
+		t.Fatalf("hop host.v1 address must be the hop addr, got %v", cfgAddr)
+	}
+	// JSON numbers decode to float64; compare via Sprint to tolerate "8095".
+	if fmt.Sprint(cfgPort) != "8095" {
+		t.Fatalf("hop host.v1 port must be 8095, got %v", cfgPort)
+	}
+	if len(bindIdentityRoles) != 1 || bindIdentityRoles[0] != "#ziti-routers" {
+		t.Fatalf("hop Bind must grant #ziti-routers (router-hosted), got %+v", bindIdentityRoles)
 	}
 	if got := rec.status["psm-zt"]; got != "synced" {
 		t.Fatalf("want synced, got %q", got)

@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +36,21 @@ var (
 	BuildTime  = "unknown"
 	CommitHash = "unknown"
 )
+
+// browzerHopPort extracts the port from a "host:port" hop address, defaulting
+// to 8095 if unset/unparseable, so the hop nginx listen port matches the
+// reconciler's host.v1 target.
+func browzerHopPort(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 8095
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p == 0 {
+		return 8095
+	}
+	return p
+}
 
 func main() {
 	// Initialize logger
@@ -190,6 +207,8 @@ func main() {
 		if cfg.BrowZerCertsPath != "" {
 			browzerTargetManager.SetCertsPath(cfg.BrowZerCertsPath)
 		}
+		browzerTargetManager.SetHopConfigPath(cfg.BrowZerHopConfigPath)
+		browzerTargetManager.SetHopPort(browzerHopPort(cfg.ZitiBrowZerHopAddr))
 		// Load configured domain from DB
 		if err := browzerTargetManager.LoadDomainFromDB(bgCtx); err != nil {
 			log.Warn("Failed to load BrowZer domain config", zap.Error(err))
@@ -298,11 +317,16 @@ func main() {
 					} else {
 						log.Info("Initial BrowZer router config generated")
 					}
+					if err := browzerTargetManager.WriteBrowZerHopConfig(zitiCtx); err != nil {
+						log.Warn("Failed to write initial BrowZer hop config", zap.Error(err))
+					} else {
+						log.Info("Initial BrowZer hop config generated")
+					}
 				}
 			}
 
 			if cfg.ZitiReconcilerEnabled {
-				reconciler := access.NewZitiReconciler(db, log, zitiProvider)
+				reconciler := access.NewZitiReconciler(db, log, zitiProvider, cfg.ZitiBrowZerHopAddr)
 				reconciler.Start(zitiCtx)
 				accessService.SetZitiReconciler(reconciler)
 				log.Info("Ziti reconciler started (ZITI_RECONCILER=true); imperative hosting skipped")

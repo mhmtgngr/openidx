@@ -108,6 +108,7 @@ type Config struct {
 	BrowZerClientID         string `mapstructure:"browzer_client_id"`
 	BrowZerTargetsPath      string `mapstructure:"browzer_targets_path"`
 	BrowZerRouterConfigPath string `mapstructure:"browzer_router_config_path"`
+	BrowZerHopConfigPath    string `mapstructure:"browzer_hop_config_path"`
 	BrowZerCertsPath        string `mapstructure:"browzer_certs_path"`
 	// Host:port the access-proxy dials for the browzer-router-zt Ziti service —
 	// where the BrowZer path/vhost router (nginx) runs. Defaults to the Docker
@@ -115,7 +116,11 @@ type Config struct {
 	// (e.g. a native deploy running the router on 127.0.0.1:<port>).
 	BrowZerRouterHost string `mapstructure:"browzer_router_host"`
 	BrowZerRouterPort int    `mapstructure:"browzer_router_port"`
-	APISIXConfigPath  string `mapstructure:"apisix_config_path"`
+	// Host:port of the shared TLS hop nginx that "hop"-mode Ziti services target
+	// via their host.v1 config. The hop SNI-demuxes and proxies to the real
+	// upstream. Defaults to 127.0.0.1:8095.
+	ZitiBrowZerHopAddr string `mapstructure:"ziti_browzer_hop_addr"`
+	APISIXConfigPath   string `mapstructure:"apisix_config_path"`
 
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
@@ -439,6 +444,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("browzer_client_id", "browzer-client")
 	v.SetDefault("browzer_router_host", "browzer-router")
 	v.SetDefault("browzer_router_port", 80)
+	v.SetDefault("ziti_browzer_hop_addr", "127.0.0.1:8095")
 
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
@@ -555,9 +561,11 @@ func bindEnvVars(v *viper.Viper) {
 		"browzer_client_id":          "BROWZER_CLIENT_ID",
 		"browzer_targets_path":       "BROWZER_TARGETS_PATH",
 		"browzer_router_config_path": "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_hop_config_path":    "BROWZER_HOP_CONFIG_PATH",
 		"browzer_certs_path":         "BROWZER_CERTS_PATH",
 		"browzer_router_host":        "BROWZER_ROUTER_HOST",
 		"browzer_router_port":        "BROWZER_ROUTER_PORT",
+		"ziti_browzer_hop_addr":      "BROWZER_HOP_ADDR",
 		"apisix_config_path":         "APISIX_CONFIG_PATH",
 		"enable_opa_authz":           "ENABLE_OPA_AUTHZ",
 		"jwt_secret":                 "JWT_SECRET",
