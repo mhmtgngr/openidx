@@ -64,11 +64,15 @@ edge:
 
 
 
-#transport:
-  ws:
+transport:
+  wss:
     writeTimeout: 10
     readTimeout: 5
     idleTimeout: 120
+    identity:
+      server_cert: "/persistent/tdv-fullchain.pem"
+      key: "/persistent/tdv-key.pem"
+      ca: "/persistent/router.cas"
 #    pongTimeout: 60
 #    pingInterval: 54
 #    handshakeTimeout: 10
