@@ -194,6 +194,11 @@ func main() {
 		browzerTargetManager.SetHopCert(cfg.BrowZerHopCertPath, cfg.BrowZerHopKeyPath)
 		_, hopPort := access.ParseHopAddr(cfg.ZitiBrowZerHopAddr)
 		browzerTargetManager.SetHopPort(hopPort)
+		// Public per-app vhost generation (front nginx).
+		browzerTargetManager.SetVHostConfigPath(cfg.BrowZerVHostConfigPath)
+		browzerTargetManager.SetBootstrapperPass(cfg.BrowZerBootstrapperAddr)
+		browzerTargetManager.SetVHostSSL(cfg.BrowZerVHostSSLCert, cfg.BrowZerVHostSSLKey)
+		browzerTargetManager.SetOIDCCallbacks(access.SplitCSV(cfg.BrowZerOIDCCallbackPaths))
 		// Load configured domain from DB
 		if err := browzerTargetManager.LoadDomainFromDB(bgCtx); err != nil {
 			log.Warn("Failed to load BrowZer domain config", zap.Error(err))
@@ -306,6 +311,11 @@ func main() {
 						log.Warn("Failed to write initial BrowZer hop config", zap.Error(err))
 					} else {
 						log.Info("Initial BrowZer hop config generated")
+					}
+					if err := browzerTargetManager.WriteBrowZerVHostConfig(zitiCtx); err != nil {
+						log.Warn("Failed to write initial BrowZer public vhost config", zap.Error(err))
+					} else {
+						log.Info("Initial BrowZer public vhost config generated")
 					}
 				}
 			}
