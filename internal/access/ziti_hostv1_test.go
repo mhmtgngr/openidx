@@ -159,3 +159,62 @@ func TestCreateHostV1ConfigFixedUpdatesDriftedPort(t *testing.T) {
 		t.Fatal("must NOT create a new config when one exists (would name-conflict)")
 	}
 }
+
+func TestEnsureServiceConfigAttachesWhenMissing(t *testing.T) {
+	var patched []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/services/svc-1" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":{"id":"svc-1","configs":[]}}`)) // no config attached
+		case r.URL.Path == "/edge/management/v1/services/svc-1" && r.Method == "PATCH":
+			b, _ := io.ReadAll(r.Body)
+			var p struct {
+				Configs []string `json:"configs"`
+			}
+			_ = json.Unmarshal(b, &p)
+			patched = p.Configs
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	zm := newTestZitiManager(t, srv.URL)
+	if err := zm.EnsureServiceConfig(context.Background(), "svc-1", "cfg-9"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, c := range patched {
+		if c == "cfg-9" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("must PATCH the service to attach cfg-9, got %v", patched)
+	}
+}
+
+func TestEnsureServiceConfigNoopWhenPresent(t *testing.T) {
+	var patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/services/svc-1" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":{"id":"svc-1","configs":["cfg-9"]}}`))
+		case r.Method == "PATCH":
+			patched = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	zm := newTestZitiManager(t, srv.URL)
+	if err := zm.EnsureServiceConfig(context.Background(), "svc-1", "cfg-9"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if patched {
+		t.Fatal("must NOT PATCH when the config is already attached")
+	}
+}

@@ -209,8 +209,15 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 		// self-heals without manual deletion.
 		if isRouterHosted(d.EffectiveMode()) {
 			host, port := rec.hostV1Target(d)
-			if _, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port); cerr != nil {
+			cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port)
+			if cerr != nil {
 				return cerr
+			}
+			// Attach the config to the service if it isn't already — a service
+			// created elsewhere (e.g. the feature-manager's SDK-mode toggle) exists
+			// without it, so the router can't host it (→ 502 via a stale SDK terminator).
+			if aerr := zm.EnsureServiceConfig(ctx, existing.ID, cfgID); aerr != nil {
+				return aerr
 			}
 		}
 		return rec.ensureServiceAttr(ctx, zm, existing.ID, d.ServiceName)
