@@ -183,6 +183,41 @@ func TestSecureByDefaultSettings(t *testing.T) {
 	assert.False(t, cfg.DebugOTPInResponse, "debug_otp_in_response default flipped to true")
 }
 
+func TestAPISIXEdgeEnvBindings(t *testing.T) {
+	envVars := []string{
+		"DATABASE_URL", "APISIX_EDGE_ENABLED", "APISIX_ADMIN_URL",
+		"APISIX_ADMIN_KEY", "APISIX_BOOTSTRAPPER_NODE",
+	}
+	saved := make(map[string]string)
+	for _, e := range envVars {
+		saved[e] = os.Getenv(e)
+		os.Unsetenv(e)
+	}
+	defer func() {
+		for e, v := range saved {
+			if v != "" {
+				os.Setenv(e, v)
+			} else {
+				os.Unsetenv(e)
+			}
+		}
+	}()
+
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	os.Setenv("APISIX_EDGE_ENABLED", "true")
+	os.Setenv("APISIX_ADMIN_URL", "http://apisix.example.com:9180")
+	os.Setenv("APISIX_ADMIN_KEY", "super-secret-key")
+	os.Setenv("APISIX_BOOTSTRAPPER_NODE", "10.0.0.1:8445")
+
+	cfg, err := Load("test-service")
+	require.NoError(t, err)
+
+	assert.True(t, cfg.APISIXEdgeEnabled)
+	assert.Equal(t, "http://apisix.example.com:9180", cfg.APISIXAdminURL)
+	assert.Equal(t, "super-secret-key", cfg.APISIXAdminKey)
+	assert.Equal(t, "10.0.0.1:8445", cfg.APISIXBootstrapperNode)
+}
+
 func TestGetRedisSentinelAddresses(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -790,6 +825,9 @@ func TestConfigDefaults(t *testing.T) {
 	assert.False(t, cfg.ZitiReconcilerEnabled)
 	assert.False(t, cfg.ContinuousVerifyEnabled)
 	assert.False(t, cfg.BrowZerEnabled)
+	assert.False(t, cfg.APISIXEdgeEnabled)
+	assert.Equal(t, "http://127.0.0.1:9180", cfg.APISIXAdminURL)
+	assert.Equal(t, "127.0.0.1:8445", cfg.APISIXBootstrapperNode)
 	assert.Equal(t, "*", cfg.CORSAllowedOrigins)
 	// Secure-by-default after P2.1: CSRF is on by default and the
 	// dev-loop escape hatches (DebugOTPInResponse, skip-verify) are off.

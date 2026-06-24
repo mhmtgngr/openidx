@@ -70,6 +70,7 @@ type BrowZerTargetManager struct {
 	vhostSSLCert     string
 	vhostSSLKey      string
 	oidcCallbacks    []string
+	apisixReconciler *APISIXReconciler
 	mu               sync.Mutex
 }
 
@@ -185,6 +186,10 @@ func (tm *BrowZerTargetManager) SetVHostSSL(certPath, keyPath string) {
 func (tm *BrowZerTargetManager) SetOIDCCallbacks(suffixes []string) {
 	tm.oidcCallbacks = suffixes
 }
+
+// SetAPISIXReconciler wires the APISIX route reconciler so config regeneration
+// (toggles) also re-pushes the BrowZer routes to APISIX's Admin API.
+func (tm *BrowZerTargetManager) SetAPISIXReconciler(r *APISIXReconciler) { tm.apisixReconciler = r }
 
 // SetHopPort sets the TLS port the shared BrowZer hop server listens on
 func (tm *BrowZerTargetManager) SetHopPort(port int) {
@@ -896,7 +901,18 @@ func (tm *BrowZerTargetManager) RegenerateConfigs(ctx context.Context) error {
 	if err := tm.writeHopConfigLocked(ctx); err != nil {
 		return err
 	}
-	return tm.writeVHostConfigLocked(ctx)
+	if err := tm.writeVHostConfigLocked(ctx); err != nil {
+		return err
+	}
+	// When APISIX owns the edge, re-push the BrowZer routes too. Runs under tm.mu
+	// (RegenerateConfigs is infrequent + serialized); the reconciler does NOT take
+	// tm.mu, so there's no deadlock — Reconcile→queryBrowZerRoutes is lock-free.
+	if rec := tm.apisixReconciler; rec != nil {
+		if err := rec.Reconcile(ctx); err != nil {
+			tm.logger.Warn("APISIX reconcile failed", zap.Error(err))
+		}
+	}
+	return nil
 }
 
 // writeFileAtomic writes data to a file using a temp file + rename pattern for atomicity.
