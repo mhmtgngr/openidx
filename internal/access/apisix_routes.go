@@ -14,10 +14,10 @@ type apisixRouteOpts struct {
 	oidcCallbacks    []string // form_post callback suffixes (hop-mode only)
 }
 
-// apisixRoute is a single Admin API route object: PUT .../routes/<Name> with Body.
+// apisixRoute is a single Admin API route object: PUT .../routes/<name> with body.
 type apisixRoute struct {
-	Name string
-	Body []byte
+	name string
+	body []byte
 }
 
 var apisixSlugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -37,6 +37,9 @@ func buildBrowZerAPISIXRoutes(routes []browzerRouteInfo, opts apisixRouteOpts) [
 	if opts.bootstrapperNode == "" {
 		opts.bootstrapperNode = "127.0.0.1:8445"
 	}
+	if opts.hopBasePort == 0 {
+		opts.hopBasePort = 8095
+	}
 	var hopNames []string
 	for _, r := range routes {
 		if r.hostingMode == HostingModeHop {
@@ -51,9 +54,10 @@ func buildBrowZerAPISIXRoutes(routes []browzerRouteInfo, opts apisixRouteOpts) [
 			continue
 		}
 		slug := apisixSlug(r.hostname)
+		name := "browzer-" + slug
 
 		overlay := map[string]interface{}{
-			"name":             "browzer-" + slug,
+			"name":             name,
 			"hosts":            []string{r.hostname},
 			"uri":              "/*",
 			"priority":         0,
@@ -69,12 +73,13 @@ func buildBrowZerAPISIXRoutes(routes []browzerRouteInfo, opts apisixRouteOpts) [
 			},
 		}
 		body, _ := json.Marshal(overlay)
-		out = append(out, apisixRoute{Name: "browzer-" + slug, Body: body})
+		out = append(out, apisixRoute{name: name, body: body})
 
 		if r.hostingMode == HostingModeHop && len(opts.oidcCallbacks) > 0 {
+			oidcName := name + "-oidc"
 			suffix := strings.Join(opts.oidcCallbacks, "|")
 			oidc := map[string]interface{}{
-				"name":     "browzer-" + slug + "-oidc",
+				"name":     oidcName,
 				"hosts":    []string{r.hostname},
 				"uri":      "/*",
 				"vars":     [][]interface{}{{"uri", "~~", fmt.Sprintf("/(%s)$", suffix)}},
@@ -88,7 +93,7 @@ func buildBrowZerAPISIXRoutes(routes []browzerRouteInfo, opts apisixRouteOpts) [
 				},
 			}
 			body, _ := json.Marshal(oidc)
-			out = append(out, apisixRoute{Name: "browzer-" + slug + "-oidc", Body: body})
+			out = append(out, apisixRoute{name: oidcName, body: body})
 		}
 	}
 	return out

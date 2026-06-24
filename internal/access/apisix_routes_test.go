@@ -21,11 +21,11 @@ func TestBuildBrowZerAPISIXRoutes(t *testing.T) {
 	names := []string{}
 	for _, r := range got {
 		var m map[string]interface{}
-		if err := json.Unmarshal(r.Body, &m); err != nil {
-			t.Fatalf("route %s body is not valid JSON: %v", r.Name, err)
+		if err := json.Unmarshal(r.body, &m); err != nil {
+			t.Fatalf("route %s body is not valid JSON: %v", r.name, err)
 		}
-		byName[r.Name] = m
-		names = append(names, r.Name)
+		byName[r.name] = m
+		names = append(names, r.name)
 	}
 	for _, want := range []string{"browzer-psm-tdv-org", "browzer-psm-tdv-org-oidc", "browzer-netgraph-tdv-org"} {
 		if byName[want] == nil {
@@ -58,6 +58,7 @@ func TestBuildBrowZerAPISIXRoutes(t *testing.T) {
 		t.Fatalf("OIDC route must match the callback suffixes: %s", varsJSON)
 	}
 	oup := oidc["upstream"].(map[string]interface{})
+	// sorted hop names: only psm-zt is hop (openidx-Netgraph is direct, excluded), so it lands on base port 8095.
 	if _, ok := oup["nodes"].(map[string]interface{})["127.0.0.1:8095"]; !ok {
 		t.Fatalf("OIDC route must target the hop port 8095: %v", oup["nodes"])
 	}
@@ -73,7 +74,15 @@ func TestBuildBrowZerAPISIXRoutesSkipsEmptyHost(t *testing.T) {
 }
 
 func TestAPISIXSlug(t *testing.T) {
-	if got := apisixSlug("psm.tdv.org"); got != "psm-tdv-org" {
-		t.Fatalf("apisixSlug: got %q", got)
+	cases := map[string]string{
+		"psm.tdv.org":     "psm-tdv-org",
+		"UPPER.Case.org":  "upper-case-org",
+		"host..double":    "host-double",
+		".leading.trail.": "leading-trail",
+	}
+	for in, want := range cases {
+		if got := apisixSlug(in); got != want {
+			t.Errorf("apisixSlug(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
