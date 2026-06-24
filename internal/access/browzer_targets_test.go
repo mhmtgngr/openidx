@@ -87,6 +87,22 @@ func blockFor(cfg, host string) string {
 	return cfg[start : i+end]
 }
 
+func TestHopConfigEmitsLandingRedirect(t *testing.T) {
+	routes := []browzerRouteInfo{
+		{hostname: "netgraph.tdv.org", toURL: "http://127.0.0.1:8088", serviceName: "openidx-Netgraph", hostingMode: "hop", landingPath: "/ui/"},
+		{hostname: "root.tdv.org", toURL: "http://127.0.0.1:9000", serviceName: "root-zt", hostingMode: "hop", landingPath: "/"},
+	}
+	cfg := buildBrowZerHopConfig(routes, 8095)
+	ng := blockFor(cfg, "netgraph.tdv.org")
+	if !strings.Contains(ng, "location = / { return 302 /ui/; }") || !strings.Contains(ng, "absolute_redirect off;") {
+		t.Fatalf("netgraph (landing /ui/) must emit the relative landing redirect:\n%s", ng)
+	}
+	root := blockFor(cfg, "root.tdv.org")
+	if strings.Contains(root, "return 302") {
+		t.Fatal("a route with landing_path '/' must NOT emit a redirect")
+	}
+}
+
 func TestAssignHopPortsDeterministic(t *testing.T) {
 	m := assignHopPorts([]string{"psm-zt", "openidx-Netgraph"}, 8095)
 	if m["openidx-Netgraph"] != 8095 || m["psm-zt"] != 8096 {

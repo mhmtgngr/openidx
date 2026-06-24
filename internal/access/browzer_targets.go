@@ -756,6 +756,14 @@ func buildBrowZerHopConfig(routes []browzerRouteInfo, basePort int) string {
 		fmt.Fprintf(&b, "\nserver {\n")
 		fmt.Fprintf(&b, "    listen %d;\n", ports[r.serviceName])
 		b.WriteString("    server_name _;\n")
+		// Land the bare host on the app's real entry path when it serves under a
+		// subpath (e.g. /ui/). The BrowZer/OIDC round-trip returns to "/", which
+		// many apps 404; the hop now has the correct Host, so a relative 302 (with
+		// absolute_redirect off) sends the browser to the right place.
+		if lp := r.landingPath; lp != "" && lp != "/" {
+			b.WriteString("    absolute_redirect off;\n")
+			fmt.Fprintf(&b, "    location = / { return 302 %s; }\n", lp)
+		}
 		b.WriteString("    location / {\n")
 		// browzerUpstream rewrites a host-loopback upstream (127.0.0.1) to the
 		// host-loopback alias (BROWZER_HOST_LOOPBACK_ALIAS, e.g. 10.0.2.2) so a
