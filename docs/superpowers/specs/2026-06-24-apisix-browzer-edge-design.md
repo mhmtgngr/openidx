@@ -183,8 +183,10 @@ live (kept until then).
 
 ## 5. Phases
 
-**Phase 0 — APISIX takes `:443`, nginx becomes fallback.**
-- Put the `*.tdv.org` wildcard cert in an APISIX `ssl` object; APISIX `:443`.
+**Phase 0 — adopt the live APISIX, give it `:443`, nginx becomes fallback.**
+- Reuse the running `apisix-docker2_apisix_1` (3.15.0, etcd-backed); bring its
+  `config.yaml` under repo management and add a `:443` SSL listener.
+- Put the `*.tdv.org` wildcard cert in an APISIX `ssl` object (Admin API).
 - Demote `oidx-nginx` to an internal port (e.g. `:8443`, plain http or its own TLS).
 - Add catch-all route (`uri:/*`, `priority:-100`, `enable_websocket`, long timeout)
   → nginx. **Verify every current host still works through APISIX→nginx** (admin
@@ -209,8 +211,12 @@ live (kept until then).
   plugin pointing at `handleAuthDecide` (the contract already exists), replacing
   the access-service's inline auth-redirect for edge-gated apps.
 
-**Phase 4 — retire the nginx fallback.** Remove the catch-all + `oidx-nginx` once
-all hosts have native routes.
+**Phase 4 — reduce nginx to the SPA static upstream.** Once all *proxy* hosts have
+native APISIX routes, drop the broad catch-all; `oidx-nginx` shrinks to a single
+internal upstream serving the admin-console `dist` (`try_files … /index.html`) for
+`openidx.tdv.org`'s SPA routes (APISIX handles that host's `/api`, `/oauth`,
+`/.well-known`, `/scim`). nginx is **not** removed — APISIX isn't a static file
+server.
 
 ---
 
@@ -246,17 +252,28 @@ the value is the control plane, not the data plane.
 
 ---
 
-## 8. Open questions (resolve before writing the plan)
+## 8. Resolved decisions
 
-1. ~~**§3.1 SNI spike**~~ — **RESOLVED** (2026-06-24): `pass_host: rewrite` +
+1. **§3.1 SNI spike — RESOLVED** (2026-06-24): `pass_host: rewrite` +
    `upstream_host: H` sets the upstream SNI on APISIX 3.15.0; `upstream.tls.sni`
    is a no-op. Phase 1 unblocked.
-2. **Adopt vs replace** the running `apisix-docker2_*` stack — it is APISIX
-   **3.15.0, host-net**, Admin API on `:9180` (key `add1c9f0…`), `:9080`/`:9443`
-   live but not fronting `:443`. Adopt or stand up fresh?
-3. **SPA delivery** — serve the admin-console `dist` from APISIX, or keep a thin
-   nginx static upstream behind it (Phase 2)?
-4. **forward-auth scope** — move *all* edge auth to the APISIX `forward-auth`
-   plugin, or only the `*.tdv.org` access-proxy hosts (Phase 3)?
-5. **etcd durability** — single-node etcd is fine for the test box; production
-   wants an etcd quorum + backups. In scope here?
+2. **Adopt the running APISIX, manage its config from the repo.** The live
+   `apisix-docker2_apisix_1` is APISIX **3.15.0, host-net, etcd-backed**, Admin
+   API `:9180` (key `add1c9f0…`), `:9080`/`:9443` up but not on `:443`. Reuse it
+   (and its etcd) rather than standing up a second APISIX/etcd — Phase 0 just adds
+   a `:443` SSL listener and brings its `config.yaml` + routes under repo
+   management (the access-service is the route source of truth).
+3. **Keep nginx as the SPA static upstream.** APISIX is not a static file server;
+   the admin-console SPA (`try_files … /index.html`) stays served by a thin
+   `oidx-nginx` **behind** APISIX. So nginx never fully retires — it shrinks to
+   the SPA/static upstream for `openidx.tdv.org`. (Phase 4 = "reduce nginx to the
+   SPA upstream", not "remove nginx".)
+4. **forward-auth only for the `*.tdv.org` access-proxy hosts.** The service APIs
+   (identity/governance/…) each validate their own JWT, and BrowZer routes are
+   gated by BrowZer's OIDC — don't double-gate them. The APISIX `forward-auth`
+   plugin (→ `handleAuthDecide`) applies only to the edge-gated access-proxy
+   wildcard apps (Phase 3).
+5. **etcd durability is a production follow-up, out of scope here.** The test box
+   keeps the existing single-node etcd. Production hardening (3-/5-node etcd
+   quorum + periodic snapshot backups) is tracked separately, not part of this
+   edge migration.
