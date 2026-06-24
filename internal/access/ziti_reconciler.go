@@ -3,6 +3,8 @@ package access
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,7 +25,9 @@ const (
 	// HostingModeHop — the edge router hosts a per-app service whose host.v1
 	// points at the shared TLS hop nginx; the hop SNI-demuxes and rewrites the
 	// HTTP Host for Host-routed/https upstreams the BrowZer runtime cannot
-	// address directly (it sends a fixed "Host: unknown").
+	// address directly (it sends a fixed "Host: unknown"). REQUIRES an https
+	// upstream: SNI demux only works when the runtime does WASM-TLS, so a
+	// non-https hop route is misconfigured and is skipped (with a warning).
 	HostingModeHop = "hop"
 )
 
@@ -40,6 +44,10 @@ type DesiredRoute struct {
 	ToURL          string
 	HostingMode    string
 	BrowZerEnabled bool
+	// HopPort is the per-app hop listen port (base + sorted-index, via
+	// assignHopPorts). For hop routes the host.v1 target is hopHost:HopPort so the
+	// hop demuxes by PORT (the runtime sends no SNI). Stamped in reconcileOnce.
+	HopPort int
 }
 
 // EffectiveMode resolves the hosting mode. An explicit "hop" hosting_mode wins
@@ -59,6 +67,21 @@ func (r DesiredRoute) EffectiveMode() string {
 	return HostingModeIdentity
 }
 
+// ParseHopAddr splits a "host:port" hop address, defaulting the port to 8095
+// when absent/unparseable, so the reconciler's host.v1 target and the hop
+// nginx listen port are always derived identically.
+func ParseHopAddr(addr string) (string, int) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr, 8095
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p == 0 {
+		return host, 8095
+	}
+	return host, p
+}
+
 // ZitiReconciler converges Ziti to the DB's desired state. One worker, a
 // coalescing trigger channel, and a periodic safety-net tick — so concurrent
 // mutation races cannot happen (the reconciler is the only mutator of Ziti).
@@ -67,7 +90,8 @@ type ZitiReconciler struct {
 	logger   *zap.Logger
 	provider *ZitiProvider // source of the live ZitiManager
 	period   time.Duration
-	hopAddr  string // host:port of the shared TLS hop nginx (hop-mode host.v1 target)
+	hopAddr  string // host:basePort of the shared hop nginx (parsed into hopHost + base)
+	hopHost  string // host portion of hopAddr; cached by reconcileOnce for ensureService
 
 	trigger  chan struct{}         // coalescing: buffered size 1
 	runOnce  func(context.Context) // overridable in tests; defaults to reconcileOnce
@@ -173,7 +197,18 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 		// shared hop nginx, which SNI-demuxes to the real upstream.
 		host, port := parseHostPort(d.ToURL)
 		if d.EffectiveMode() == HostingModeHop {
-			host, port = parseHostPort(rec.hopAddr)
+			// Per-app hop: host.v1 points at the hop's per-route plain-HTTP port
+			// (stamped in reconcileOnce via assignHopPorts) so the hop demuxes by
+			// PORT. Fall back to the base hop addr if HopPort wasn't stamped.
+			h, base := ParseHopAddr(rec.hopAddr)
+			if rec.hopHost != "" {
+				h = rec.hopHost
+			}
+			p := d.HopPort
+			if p == 0 {
+				p = base
+			}
+			host, port = h, p
 		}
 		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port)
 		if cerr != nil {
@@ -296,6 +331,23 @@ func (rec *ZitiReconciler) reconcileOnce(ctx context.Context) {
 	if err != nil {
 		rec.logger.Warn("reconcile: load desired failed", zap.Error(err))
 		return
+	}
+	// Stamp each hop route's per-app listen port (base + sorted-index). The hop
+	// nginx config uses the SAME assignHopPorts over the same service names, so a
+	// route's host.v1 port and the hop's listen port are always identical.
+	host, base := ParseHopAddr(rec.hopAddr)
+	rec.hopHost = host
+	var hopNames []string
+	for _, d := range desired {
+		if d.EffectiveMode() == HostingModeHop {
+			hopNames = append(hopNames, d.ServiceName)
+		}
+	}
+	ports := assignHopPorts(hopNames, base)
+	for i := range desired {
+		if desired[i].EffectiveMode() == HostingModeHop {
+			desired[i].HopPort = ports[desired[i].ServiceName]
+		}
 	}
 	for _, d := range desired {
 		rec.reconcileRoute(ctx, zm, d)

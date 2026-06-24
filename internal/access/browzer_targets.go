@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -55,6 +56,8 @@ type BrowZerTargetManager struct {
 	routerConfigPath string
 	certsPath        string
 	hopConfigPath    string
+	hopCertPath      string
+	hopKeyPath       string
 	hopPort          int
 	domain           string
 	dnsResolvers     string // nginx resolver addresses (auto-detected from /etc/resolv.conf)
@@ -155,6 +158,14 @@ func (tm *BrowZerTargetManager) SetHopPort(port int) {
 	tm.hopPort = port
 }
 
+// SetHopCert sets the cert/key paths the shared BrowZer hop server presents.
+// When either is empty, GenerateBrowZerHopConfig falls back to the certsPath
+// defaults (certsPath/tdv-fullchain.pem and certsPath/tdv-key.pem).
+func (tm *BrowZerTargetManager) SetHopCert(certPath, keyPath string) {
+	tm.hopCertPath = certPath
+	tm.hopKeyPath = keyPath
+}
+
 // GetCertsPath returns the configured certificates directory path
 func (tm *BrowZerTargetManager) GetCertsPath() string {
 	return tm.certsPath
@@ -200,6 +211,19 @@ func (tm *BrowZerTargetManager) LoadDomainFromDB(ctx context.Context) error {
 // GetDB returns the database handle
 func (tm *BrowZerTargetManager) GetDB() *database.PostgresDB {
 	return tm.db
+}
+
+// assignHopPorts deterministically maps each hop service name to a listen port,
+// base + sorted-index. Both the reconciler (host.v1 target) and the hop nginx
+// config (listen port) call this so a route's port is identical on both sides.
+func assignHopPorts(serviceNames []string, base int) map[string]int {
+	sorted := append([]string(nil), serviceNames...)
+	sort.Strings(sorted)
+	m := make(map[string]int, len(sorted))
+	for i, n := range sorted {
+		m[n] = base + i
+	}
+	return m
 }
 
 // browzerRouteInfo holds parsed route information for target/router generation
@@ -262,14 +286,21 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 
 // buildBrowZerTargets maps each BrowZer route to a bootstrapper target. Each app
 // uses its OWN Ziti service (per-app direct hosting) so the browser dials it
-// directly — no shared Host-demux. Scheme comes from the route's to_url so the
-// runtime's WASM TLS connects end-to-end for https upstreams.
+// directly — no shared Host-demux. For direct routes the scheme comes from the
+// route's to_url so the runtime's WASM-TLS connects end-to-end. For HOP routes
+// the runtime→hop leg is ALWAYS plain http: the WASM runtime sends no SNI and a
+// fixed "Host: unknown", so the hop demuxes by PORT (each hop route dials its
+// own per-app Ziti service whose host.v1 points at that route's hop port). The
+// hop then rewrites the Host and proxies to the (possibly https) upstream.
 func buildBrowZerTargets(routes []browzerRouteInfo, domain, idpIssuer, idpClientID string) []BrowZerTarget {
 	targets := make([]BrowZerTarget, 0, len(routes))
 	for _, r := range routes {
 		scheme := "http"
 		if parsed, err := url.Parse(r.toURL); err == nil && parsed.Scheme != "" {
 			scheme = parsed.Scheme
+		}
+		if r.hostingMode == HostingModeHop {
+			scheme = "http" // runtime → hop leg is plain HTTP (port demux, no SNI/TLS)
 		}
 		targets = append(targets, BrowZerTarget{
 			VHost:        r.hostname,
@@ -692,34 +723,61 @@ func (tm *BrowZerTargetManager) writeRouterConfigLocked(ctx context.Context) err
 }
 
 // buildBrowZerHopConfig generates the nginx config for the shared BrowZer hop:
-// one TLS server{} per `hop` route, demuxed by SNI (server_name = vhost). The
-// BrowZer runtime sends "Host: unknown" but its WASM-TLS presents SNI = vhost,
-// so server_name matches; we rewrite Host to the vhost and TLS-proxy to the real
-// upstream. This serves Host-routed / https upstreams that the raw-TCP direct
-// path cannot. Non-hop routes are skipped.
-func buildBrowZerHopConfig(routes []browzerRouteInfo, certPath, keyPath string, port int) string {
-	if port == 0 {
-		port = 8095
+// one plain-HTTP server{} per `hop` route, demuxed by PORT (each route listens
+// on base+sorted-index, via assignHopPorts). The BrowZer WASM runtime sends NO
+// SNI and a fixed "Host: unknown", so SNI/server_name demux cannot distinguish
+// apps — only the port can. Each hop route dials its own per-app Ziti service
+// whose host.v1 points at that route's hop port; this block rewrites Host to the
+// vhost and proxies to the upstream. The runtime→hop leg is plain HTTP over the
+// encrypted overlay (no TLS, no cert). The UPSTREAM may be http OR https
+// (proxy_ssl_* is emitted only for https upstreams). Non-hop routes are skipped.
+func buildBrowZerHopConfig(routes []browzerRouteInfo, basePort int) string {
+	if basePort == 0 {
+		basePort = 8095
 	}
+	var hopNames []string
+	for _, r := range routes {
+		if r.hostingMode == HostingModeHop {
+			hopNames = append(hopNames, r.serviceName)
+		}
+	}
+	ports := assignHopPorts(hopNames, basePort)
+
 	var b strings.Builder
 	b.WriteString("# Auto-generated BrowZer hop config — do not edit manually\n")
 	for _, r := range routes {
 		if r.hostingMode != HostingModeHop {
 			continue
 		}
+		upstreamHTTPS := false
+		if parsed, err := url.Parse(r.toURL); err == nil && parsed.Scheme == "https" {
+			upstreamHTTPS = true
+		}
 		fmt.Fprintf(&b, "\nserver {\n")
-		fmt.Fprintf(&b, "    listen %d ssl;\n", port)
-		fmt.Fprintf(&b, "    server_name %s;\n", r.hostname)
-		fmt.Fprintf(&b, "    ssl_certificate %s;\n", certPath)
-		fmt.Fprintf(&b, "    ssl_certificate_key %s;\n", keyPath)
+		fmt.Fprintf(&b, "    listen %d;\n", ports[r.serviceName])
+		b.WriteString("    server_name _;\n")
+		// Land the bare host on the app's real entry path when it serves under a
+		// subpath (e.g. /ui/). The BrowZer/OIDC round-trip returns to "/", which
+		// many apps 404; the hop now has the correct Host, so a relative 302 (with
+		// absolute_redirect off) sends the browser to the right place.
+		if lp := r.landingPath; lp != "" && lp != "/" {
+			b.WriteString("    absolute_redirect off;\n")
+			fmt.Fprintf(&b, "    location = / { return 302 %s; }\n", lp)
+		}
 		b.WriteString("    location / {\n")
-		fmt.Fprintf(&b, "        proxy_pass %s;\n", r.toURL)
-		b.WriteString("        proxy_ssl_server_name on;\n")
-		fmt.Fprintf(&b, "        proxy_ssl_name %s;\n", r.hostname)
-		b.WriteString("        proxy_ssl_verify off;\n")
+		// browzerUpstream rewrites a host-loopback upstream (127.0.0.1) to the
+		// host-loopback alias (BROWZER_HOST_LOOPBACK_ALIAS, e.g. 10.0.2.2) so a
+		// slirp4netns hop container can reach an app bound to the host loopback.
+		fmt.Fprintf(&b, "        proxy_pass %s;\n", browzerUpstream(r.toURL))
+		if upstreamHTTPS {
+			b.WriteString("        proxy_ssl_server_name on;\n")
+			fmt.Fprintf(&b, "        proxy_ssl_name %s;\n", r.hostname)
+			b.WriteString("        proxy_ssl_verify off;\n")
+		}
 		fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", r.hostname)
 		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 		b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+		// The browser's page scheme is https regardless of the plain-HTTP hop leg.
 		b.WriteString("        proxy_set_header X-Forwarded-Proto https;\n")
 		b.WriteString("        proxy_http_version 1.1;\n")
 		b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
@@ -741,8 +799,9 @@ func (tm *BrowZerTargetManager) GenerateBrowZerHopConfig(ctx context.Context) ([
 	if err != nil {
 		return nil, err
 	}
-	certDir := tm.certsPath
-	cfg := buildBrowZerHopConfig(routes, certDir+"/tdv-fullchain.pem", certDir+"/tdv-key.pem", tm.hopPort)
+	// tm.hopPort is the BASE port; assignHopPorts derives each route's listen port.
+	// No cert/TLS at the hop — the runtime→hop leg is plain HTTP over the overlay.
+	cfg := buildBrowZerHopConfig(routes, tm.hopPort)
 	return []byte(cfg), nil
 }
 
