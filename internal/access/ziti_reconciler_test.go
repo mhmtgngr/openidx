@@ -295,7 +295,7 @@ func TestEnsureServiceHopUsesHopAddr(t *testing.T) {
 		hostedServices: make(map[string]*hostedService)}
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}, hopAddr: "127.0.0.1:8095"}
 
-	d := DesiredRoute{ServiceName: "psm-zt", ToURL: "https://psm.tdv.org:443", HostingMode: "hop"}
+	d := DesiredRoute{ServiceName: "psm-zt", ToURL: "https://psm.tdv.org:443", HostingMode: "hop", HopPort: 8095}
 	rec.reconcileRoute(context.Background(), zm, d)
 
 	if fmt.Sprint(cfgAddr) != "127.0.0.1" {

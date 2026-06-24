@@ -24,60 +24,72 @@ func TestBrowZerTargetUsesPerAppServiceAndScheme(t *testing.T) {
 	if byVHost["psm.tdv.org"].IDPIssuerURL != "https://openidx.tdv.org" || byVHost["psm.tdv.org"].IDPClientID != "browzer-client" {
 		t.Fatalf("idp fields not propagated: %+v", byVHost["psm.tdv.org"])
 	}
-}
-
-func TestGenerateHopConfigPerVhost(t *testing.T) {
-	routes := []browzerRouteInfo{
-		{hostname: "psm.tdv.org", toURL: "https://psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"},
-		{hostname: "netgraph.tdv.org", toURL: "http://127.0.0.1:8088", serviceName: "openidx-Netgraph", hostingMode: "direct"},
-	}
-	cfg := buildBrowZerHopConfig(routes, "/certs/tdv-fullchain.pem", "/certs/tdv-key.pem", 8095)
-	for _, want := range []string{
-		"listen 8095 ssl;",
-		"server_name psm.tdv.org;",
-		"ssl_certificate /certs/tdv-fullchain.pem;",
-		"ssl_certificate_key /certs/tdv-key.pem;",
-		"proxy_pass https://psm.tdv.org;",
-		"proxy_ssl_server_name on;",
-		"proxy_ssl_name psm.tdv.org;",
-		"proxy_set_header Host psm.tdv.org;",
-	} {
-		if !strings.Contains(cfg, want) {
-			t.Fatalf("hop config missing %q\n---\n%s", want, cfg)
-		}
-	}
-	if strings.Contains(cfg, "netgraph.tdv.org") {
-		t.Fatalf("non-hop (direct) route must be excluded from hop config:\n%s", cfg)
+	// A hop route yields scheme "http": the runtime→hop leg is plain HTTP,
+	// demuxed by port (the runtime sends no SNI and Host:unknown).
+	hop := buildBrowZerTargets([]browzerRouteInfo{
+		{hostname: "hop.tdv.org", toURL: "https://hop.tdv.org", serviceName: "hop-zt", hostingMode: "hop", pathPrefix: "/"},
+	}, "browzer.localtest.me", "https://openidx.tdv.org", "browzer-client")
+	if len(hop) != 1 || hop[0].Scheme != "http" {
+		t.Fatalf("hop route must yield scheme http, got %+v", hop)
 	}
 }
 
-func TestHopConfigSupportsHTTPAndHTTPSUpstreams(t *testing.T) {
+func TestHopConfigPerAppPorts(t *testing.T) {
 	routes := []browzerRouteInfo{
 		{hostname: "psm.tdv.org", toURL: "https://psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"},
-		{hostname: "plain.tdv.org", toURL: "http://192.168.1.9:8080", serviceName: "plain-zt", hostingMode: "hop"},
+		{hostname: "netgraph.tdv.org", toURL: "http://127.0.0.1:8088", serviceName: "openidx-Netgraph", hostingMode: "hop"},
+		{hostname: "x.tdv.org", toURL: "http://127.0.0.1:9000", serviceName: "x-zt", hostingMode: "direct"}, // not hop -> excluded
 	}
-	cfg := buildBrowZerHopConfig(routes, "/c/fc.pem", "/c/k.pem", 8095)
-	// Both upstreams get a TLS server{} (the runtime→hop leg is always TLS; the
-	// hop rewrites Host and proxies to the upstream, http or https).
-	if !strings.Contains(cfg, "server_name psm.tdv.org;") {
-		t.Fatal("https hop route must be emitted")
+	cfg := buildBrowZerHopConfig(routes, 8095)
+	// sorted by service name: openidx-Netgraph -> 8095, psm-zt -> 8096
+	if !strings.Contains(cfg, "listen 8095;") || !strings.Contains(cfg, "listen 8096;") {
+		t.Fatalf("expected per-app ports 8095/8096:\n%s", cfg)
 	}
-	if !strings.Contains(cfg, "server_name plain.tdv.org;") {
-		t.Fatal("http hop route must ALSO be emitted (the hop fixes Host for http upstreams too)")
+	if strings.Contains(cfg, "listen 8095 ssl;") {
+		t.Fatal("hop must be plain HTTP, no ssl listen")
 	}
-	if !strings.Contains(cfg, "proxy_pass http://192.168.1.9:8080;") {
-		t.Fatal("http upstream proxied as-is")
+	if !strings.Contains(cfg, "proxy_set_header Host netgraph.tdv.org;") {
+		t.Fatal("netgraph Host rewrite missing")
 	}
-	// proxy_ssl_* only for the https upstream block.
-	psm := cfg[strings.Index(cfg, "server_name psm.tdv.org;"):]
-	if i := strings.Index(psm, "server_name plain.tdv.org;"); i >= 0 {
-		psm = psm[:i]
+	if !strings.Contains(cfg, "proxy_set_header Host psm.tdv.org;") {
+		t.Fatal("psm Host rewrite missing")
 	}
-	if !strings.Contains(psm, "proxy_ssl_server_name on;") {
-		t.Fatal("https upstream block must set proxy_ssl_server_name")
+	if strings.Contains(cfg, "x.tdv.org") {
+		t.Fatal("non-hop route must be excluded")
 	}
-	plain := cfg[strings.Index(cfg, "server_name plain.tdv.org;"):]
-	if strings.Contains(plain, "proxy_ssl_server_name on;") {
-		t.Fatal("http upstream block must NOT set proxy_ssl_*")
+	// https upstream (psm) gets proxy_ssl; http upstream (netgraph) does not — check per block
+	psmBlock := blockFor(cfg, "psm.tdv.org")
+	ngBlock := blockFor(cfg, "netgraph.tdv.org")
+	if !strings.Contains(psmBlock, "proxy_ssl_server_name on;") {
+		t.Fatal("https upstream needs proxy_ssl")
+	}
+	if strings.Contains(ngBlock, "proxy_ssl_server_name on;") {
+		t.Fatal("http upstream must NOT have proxy_ssl")
+	}
+}
+
+// blockFor returns the substring of cfg for the server block whose
+// proxy_set_header Host is host.
+func blockFor(cfg, host string) string {
+	marker := "proxy_set_header Host " + host + ";"
+	i := strings.Index(cfg, marker)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndex(cfg[:i], "server {")
+	end := strings.Index(cfg[i:], "}")
+	if start < 0 {
+		start = 0
+	}
+	if end < 0 {
+		return cfg[start:]
+	}
+	return cfg[start : i+end]
+}
+
+func TestAssignHopPortsDeterministic(t *testing.T) {
+	m := assignHopPorts([]string{"psm-zt", "openidx-Netgraph"}, 8095)
+	if m["openidx-Netgraph"] != 8095 || m["psm-zt"] != 8096 {
+		t.Fatalf("got %v", m)
 	}
 }
