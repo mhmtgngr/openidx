@@ -176,6 +176,25 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 	return out, rows.Err()
 }
 
+// hostV1Target returns the address/port the route's host.v1 config should point
+// at. Direct mode targets the route's to_url; hop mode targets the shared hop
+// nginx at the route's per-app port (stamped in reconcileOnce via assignHopPorts),
+// falling back to the base hop addr if HopPort wasn't stamped.
+func (rec *ZitiReconciler) hostV1Target(d DesiredRoute) (string, int) {
+	if d.EffectiveMode() == HostingModeHop {
+		h, base := ParseHopAddr(rec.hopAddr)
+		if rec.hopHost != "" {
+			h = rec.hopHost
+		}
+		p := d.HopPort
+		if p == 0 {
+			p = base
+		}
+		return h, p
+	}
+	return parseHostPort(d.ToURL)
+}
+
 // ensureService makes sure the Ziti service exists with its role attribute.
 // Idempotent: looks up by name, creates the service via CreateService if absent
 // (controller-only — the reconciler must NOT write back to proxy_routes/ziti_services;
@@ -183,6 +202,17 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 // service-name role attribute is set.
 func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d DesiredRoute) error {
 	if existing, _ := zm.GetServiceByName(d.ServiceName); existing != nil {
+		// Converge the host.v1 config of an EXISTING router-hosted service too: the
+		// per-app hop port reshuffles when the hop-route set changes (sorted index),
+		// so a previously-created config can drift. CreateHostV1ConfigFixed patches
+		// the target in place (same config id, still attached), so the route
+		// self-heals without manual deletion.
+		if isRouterHosted(d.EffectiveMode()) {
+			host, port := rec.hostV1Target(d)
+			if _, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port); cerr != nil {
+				return cerr
+			}
+		}
 		return rec.ensureServiceAttr(ctx, zm, existing.ID, d.ServiceName)
 	}
 	// Service does not exist; create it. Use the minimal management-API path
@@ -193,23 +223,7 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 	var err error
 	switch {
 	case isRouterHosted(d.EffectiveMode()):
-		// Direct points host.v1 at the route's to_url; hop points it at the
-		// shared hop nginx, which SNI-demuxes to the real upstream.
-		host, port := parseHostPort(d.ToURL)
-		if d.EffectiveMode() == HostingModeHop {
-			// Per-app hop: host.v1 points at the hop's per-route plain-HTTP port
-			// (stamped in reconcileOnce via assignHopPorts) so the hop demuxes by
-			// PORT. Fall back to the base hop addr if HopPort wasn't stamped.
-			h, base := ParseHopAddr(rec.hopAddr)
-			if rec.hopHost != "" {
-				h = rec.hopHost
-			}
-			p := d.HopPort
-			if p == 0 {
-				p = base
-			}
-			host, port = h, p
-		}
+		host, port := rec.hostV1Target(d)
 		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port)
 		if cerr != nil {
 			return cerr
