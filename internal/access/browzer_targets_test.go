@@ -51,16 +51,33 @@ func TestGenerateHopConfigPerVhost(t *testing.T) {
 	}
 }
 
-func TestHopConfigRequiresHTTPS(t *testing.T) {
+func TestHopConfigSupportsHTTPAndHTTPSUpstreams(t *testing.T) {
 	routes := []browzerRouteInfo{
 		{hostname: "psm.tdv.org", toURL: "https://psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"},
 		{hostname: "plain.tdv.org", toURL: "http://192.168.1.9:8080", serviceName: "plain-zt", hostingMode: "hop"},
 	}
 	cfg := buildBrowZerHopConfig(routes, "/c/fc.pem", "/c/k.pem", 8095)
+	// Both upstreams get a TLS server{} (the runtime→hop leg is always TLS; the
+	// hop rewrites Host and proxies to the upstream, http or https).
 	if !strings.Contains(cfg, "server_name psm.tdv.org;") {
 		t.Fatal("https hop route must be emitted")
 	}
-	if strings.Contains(cfg, "plain.tdv.org") {
-		t.Fatal("non-https hop route must be skipped")
+	if !strings.Contains(cfg, "server_name plain.tdv.org;") {
+		t.Fatal("http hop route must ALSO be emitted (the hop fixes Host for http upstreams too)")
+	}
+	if !strings.Contains(cfg, "proxy_pass http://192.168.1.9:8080;") {
+		t.Fatal("http upstream proxied as-is")
+	}
+	// proxy_ssl_* only for the https upstream block.
+	psm := cfg[strings.Index(cfg, "server_name psm.tdv.org;"):]
+	if i := strings.Index(psm, "server_name plain.tdv.org;"); i >= 0 {
+		psm = psm[:i]
+	}
+	if !strings.Contains(psm, "proxy_ssl_server_name on;") {
+		t.Fatal("https upstream block must set proxy_ssl_server_name")
+	}
+	plain := cfg[strings.Index(cfg, "server_name plain.tdv.org;"):]
+	if strings.Contains(plain, "proxy_ssl_server_name on;") {
+		t.Fatal("http upstream block must NOT set proxy_ssl_*")
 	}
 }
