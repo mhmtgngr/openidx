@@ -126,25 +126,27 @@ higher priority so it wins over (a)):
 Callback suffixes come from `BROWZER_OIDC_CALLBACK_PATHS` (today's config). Only
 hop-mode routes get (b) — direct-mode apps have no host-side upstream.
 
-### 3.1 Key technical risk — SNI to the bootstrapper (SPIKE)
+### 3.1 SNI to the bootstrapper — SPIKE RESOLVED (2026-06-24)
 
 The bootstrapper demuxes the target app **by the TLS SNI** of the upstream
 connection (today: nginx `proxy_ssl_server_name on; proxy_ssl_name $host`).
 APISIX must present **SNI = `H`** on the upstream TLS handshake to `127.0.0.1:8445`.
-Because each app is its own route, the SNI is static per route, so it is
-expressible — but the exact APISIX field needs a spike:
 
-1. **`pass_host: rewrite` + `upstream_host`** — confirm whether APISIX derives the
-   upstream TLS SNI from `upstream_host` (it sets the `Host` header; SNI behavior
-   varies by version). *Most likely path.*
-2. **`upstream.tls.sni`** — if the running APISIX version exposes a per-upstream
-   SNI field, set it to `H` explicitly. *Cleanest if available.*
-3. **Fallback**: a tiny `serverless-pre-function` plugin setting
-   `ngx.var.proxy_ssl_name = H` per route.
+Spiked against the live APISIX (**3.15.0**, host-net) by routing through it to an
+SNI-echo TLS server (`return 200 "$ssl_server_name"`). Results:
 
-Spike against the live `apisix-docker2_apisix_1` version before building the
-reconciler. If none work cleanly, fall back to keeping the BrowZer hosts on nginx
-(Phase 1 deferred) while still migrating the rest.
+| Candidate | Upstream SNI seen | Verdict |
+|---|---|---|
+| **`pass_host: rewrite` + `upstream_host: H`** | **`H`** | ✅ **USE THIS** |
+| `upstream.tls.sni: H` | _(empty)_ | ❌ schema **accepts** the field but it does **not** set the handshake SNI in 3.15.0 — a no-op trap |
+| `pass_host: pass` (SNI follows incoming `Host`) | `H` only if the request `Host` is `H` | ❌ unusable — the BrowZer runtime sends `Host: unknown`, so SNI would be `unknown` |
+
+**Decision:** the per-app overlay route uses **`pass_host: rewrite` +
+`upstream_host: H`**, which deterministically sets BOTH the upstream `Host`
+header AND the TLS SNI to the app vhost, independent of the (always `unknown`)
+incoming Host. This is exactly what the route model in §3 already specifies — so
+**Phase 1 is unblocked**, no fallback or Lua plugin needed. (Do **not** rely on
+`upstream.tls.sni`; it validates but silently does nothing here.)
 
 ### 3.2 Other BrowZer specifics
 
@@ -246,9 +248,12 @@ the value is the control plane, not the data plane.
 
 ## 8. Open questions (resolve before writing the plan)
 
-1. **§3.1 SNI spike** — which APISIX mechanism presents SNI=`H` to the bootstrapper?
-   (Blocks Phase 1; everything else can proceed.)
-2. **Adopt vs replace** the running `apisix-docker2_*` stack (version, etcd, certs).
+1. ~~**§3.1 SNI spike**~~ — **RESOLVED** (2026-06-24): `pass_host: rewrite` +
+   `upstream_host: H` sets the upstream SNI on APISIX 3.15.0; `upstream.tls.sni`
+   is a no-op. Phase 1 unblocked.
+2. **Adopt vs replace** the running `apisix-docker2_*` stack — it is APISIX
+   **3.15.0, host-net**, Admin API on `:9180` (key `add1c9f0…`), `:9080`/`:9443`
+   live but not fronting `:443`. Adopt or stand up fresh?
 3. **SPA delivery** — serve the admin-console `dist` from APISIX, or keep a thin
    nginx static upstream behind it (Phase 2)?
 4. **forward-auth scope** — move *all* edge auth to the APISIX `forward-auth`
