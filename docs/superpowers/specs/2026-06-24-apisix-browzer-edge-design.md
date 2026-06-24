@@ -1,0 +1,257 @@
+# APISIX BrowZer edge — design
+
+**Status:** Draft for review · **Date:** 2026-06-24
+
+**Goal:** Replace the hand-/generated-nginx edge (`oidx-nginx` on `:443`) with
+Apache APISIX as the single TLS front, with the access-service pushing routes to
+APISIX's Admin API (etcd-backed) instead of generating nginx config files. Migrate
+**BrowZer per-app publishing first**, then the rest of the edge, in phases —
+nginx stays a fallback upstream until each surface is moved.
+
+---
+
+## 1. Context & current state
+
+The OpenIDX edge today is `oidx-nginx` (host-net, `:443`), a mix of hand-written
+and access-service-generated nginx config:
+
+| Surface | Host(s) | Upstream |
+|---|---|---|
+| Admin console SPA + API fan-out | `openidx.tdv.org` | static + `:8001/2/3/4/5/6/7` by path |
+| One-click apps (access-proxy) | `*.tdv.org` | access-proxy `:8007` |
+| BrowZer bootstrapper | `browzer.tdv.org` | bootstrapper `:8445` (SNI-passthrough) |
+| Ziti controller edge API | `ctrl.tdv.org` | controller `:1280` |
+| **BrowZer per-app (generated)** | `netgraph/psm.tdv.org` | bootstrapper `:8445`; OIDC `form_post` → hop |
+
+What already exists for APISIX (this is the lever):
+
+- **Live**: `apisix-docker2_apisix_1`, `…_etcd_1`, `…_dashboard_1`, `…_oauth2-proxy_1`
+  are running (3 months), **not** on `:443`. APISIX listens `:9080` (http) /
+  `:9443` (ssl), Admin API `:9180` (key `edd1c9f0…`), etcd at `openidx-etcd:2379`,
+  prefix `/apisix` (`deployments/docker/apisix/config.yaml`).
+- **Declarative routes** for the API fan-out already authored
+  (`deployments/docker/apisix/apisix.yaml`: identity/governance/provisioning/audit/…
+  with `limit-req`, `cors`, `enable_websocket` for audit `/stream`).
+- **Cert management to APISIX**: `internal/access/platform_certs.go`
+  (`APISIXSSLConfig`, `updateAPISIXSSL`) already writes `ssls` entries.
+- **Forward-auth**: `handleAuthDecide` (`context_evaluator.go`) — APISIX sends
+  `X-Forwarded-Host/Uri/Method`; the access-service replies `200` + `X-Forwarded-Route`
+  (allow) or `403`/redirect (deny). This is how the access-proxy wildcard enforces
+  auth at the edge.
+- **Route push pattern**: `load-apisix-routes.sh` →
+  `PUT $ADMIN/apisix/admin/routes/<name>` with `X-API-KEY`.
+
+**Decisions taken (review questions, 2026-06-24):** etcd + Admin API control
+plane · APISIX is the `:443` front with nginx as a fallback upstream · full edge
+migration, phased.
+
+---
+
+## 2. Target architecture
+
+```
+                       :443 (TLS terminate, *.tdv.org wildcard cert in APISIX ssls)
+                                  │
+                          ┌───────▼────────┐        Admin API :9180  ┌──────────────┐
+   browser ──────────────►│     APISIX     │◄───── PUT routes ───────│ access-svc   │
+                          │  (etcd-backed) │                         │ APISIX route │
+                          └───┬───────┬────┘                         │  reconciler  │
+        host=app.tdv.org  ┌───┘       └────┐ everything else         └──────────────┘
+   (BrowZer route)        │                │ (catch-all, priority -100)
+                ┌─────────▼──────┐   ┌──────▼─────────┐
+                │ bootstrapper   │   │  oidx-nginx    │  (demoted: internal :8443,
+                │  :8445 (WSS,   │   │  fallback      │   plain http upstream; serves
+                │  SNI=app)      │   │  upstream      │   admin/API/oauth/ctrl until
+                └────────────────┘   └────────────────┘   migrated)
+   OIDC form_post  (higher-priority route, host=app + uri~signin-oidc$ → hop :80xx)
+```
+
+- **APISIX owns `:443`.** One `ssl` object holds the real `*.tdv.org` wildcard
+  cert (`snis: ["*.tdv.org", "tdv.org"]`), reusing the `platform_certs` writer
+  (Admin API `ssls` instead of `apisix.yaml`).
+- **Per-host routes** are matched by `hosts:`. BrowZer apps get native APISIX
+  routes; **unmigrated hosts fall through to a catch-all** (`uri: /*`,
+  `priority: -100`) whose upstream is the demoted `oidx-nginx` — so admin console,
+  OAuth, ctrl, and the `*.tdv.org` access-proxy keep working untouched.
+- **The access-service is the control plane.** A new **APISIX route reconciler**
+  (sibling of the Ziti reconciler) renders desired route objects from `proxy_routes`
+  and `PUT`s them to the Admin API, idempotent by deterministic name, deleting
+  routes for removed apps. This *replaces* the nginx vhost file generator
+  (`browzer_vhosts.go`) and its poll-reload entrypoint.
+
+---
+
+## 3. BrowZer route model (Phase 1 — the core)
+
+For each `ziti_enabled AND browzer_enabled AND enabled` route with hostname `H`,
+service `S`, hosting_mode `M`, hop port `P`:
+
+**(a) Overlay route → bootstrapper** (name `browzer-<slug>`):
+```jsonc
+{
+  "name": "browzer-<slug>",
+  "hosts": ["H"],
+  "uri": "/*",
+  "priority": 0,
+  "enable_websocket": true,            // BrowZer WSS to the router/bootstrapper
+  "upstream": {
+    "type": "roundrobin",
+    "scheme": "https",
+    "pass_host": "rewrite",
+    "upstream_host": "H",              // Host: H  (bootstrapper demuxes the target vhost)
+    "nodes": { "127.0.0.1:8445": 1 },
+    "tls": { "verify": false },        // bootstrapper cert is self-signed
+    "timeout": { "connect": 60, "send": 86400, "read": 86400 }
+  }
+}
+```
+
+**(b) OIDC `form_post` bypass → hop** (hop-mode only, name `browzer-<slug>-oidc`,
+higher priority so it wins over (a)):
+```jsonc
+{
+  "name": "browzer-<slug>-oidc",
+  "hosts": ["H"],
+  "uri": "/*",
+  "vars": [ ["uri", "~~", "/(signin-oidc|signout-callback-oidc)$"] ],
+  "priority": 10,
+  "upstream": {
+    "type": "roundrobin", "scheme": "http",
+    "pass_host": "rewrite", "upstream_host": "H",
+    "nodes": { "127.0.0.1:<P>": 1 }   // the route's hop port (assignHopPorts)
+  }
+}
+```
+
+Callback suffixes come from `BROWZER_OIDC_CALLBACK_PATHS` (today's config). Only
+hop-mode routes get (b) — direct-mode apps have no host-side upstream.
+
+### 3.1 Key technical risk — SNI to the bootstrapper (SPIKE)
+
+The bootstrapper demuxes the target app **by the TLS SNI** of the upstream
+connection (today: nginx `proxy_ssl_server_name on; proxy_ssl_name $host`).
+APISIX must present **SNI = `H`** on the upstream TLS handshake to `127.0.0.1:8445`.
+Because each app is its own route, the SNI is static per route, so it is
+expressible — but the exact APISIX field needs a spike:
+
+1. **`pass_host: rewrite` + `upstream_host`** — confirm whether APISIX derives the
+   upstream TLS SNI from `upstream_host` (it sets the `Host` header; SNI behavior
+   varies by version). *Most likely path.*
+2. **`upstream.tls.sni`** — if the running APISIX version exposes a per-upstream
+   SNI field, set it to `H` explicitly. *Cleanest if available.*
+3. **Fallback**: a tiny `serverless-pre-function` plugin setting
+   `ngx.var.proxy_ssl_name = H` per route.
+
+Spike against the live `apisix-docker2_apisix_1` version before building the
+reconciler. If none work cleanly, fall back to keeping the BrowZer hosts on nginx
+(Phase 1 deferred) while still migrating the rest.
+
+### 3.2 Other BrowZer specifics
+
+- **WSS**: `enable_websocket: true` on the overlay route (verified pattern — the
+  audit `/stream` route already uses it).
+- **Long-lived**: `timeout.read/send: 86400` (matches nginx `proxy_read_timeout 86400s`).
+- **No auth plugin** on BrowZer routes — BrowZer's own OIDC (OpenIDX) gates overlay
+  access; the edge is a transparent proxy here.
+
+---
+
+## 4. Component design — APISIX route reconciler
+
+`internal/access/apisix_reconciler.go` (mirrors `ziti_reconciler.go`):
+
+- **Desired set**: reuse `queryBrowZerRoutes` (hostname, service, hosting_mode,
+  hop port via `assignHopPorts`) → render the route JSON objects above.
+- **Apply**: `PUT /apisix/admin/routes/browzer-<slug>` (+ `-oidc`) with `X-API-KEY`;
+  idempotent (APISIX PUT-by-name is upsert). Diff against `GET …/routes` and
+  **delete** routes whose app is gone/disabled (`browzer-*` namespace only).
+- **SSL**: ensure one `ssl` object with the wildcard cert (reuse/extend
+  `platform_certs` to target the Admin API).
+- **Triggers**: boot + on feature toggle (`RegenerateConfigs` calls it instead of
+  writing vhost files) + the existing reconcile tick. Behind a flag
+  `APISIX_EDGE_ENABLED` so it's opt-in and the nginx generator remains the default
+  until cutover.
+- **Config**: `APISIX_ADMIN_URL` (`http://127.0.0.1:9180`), `APISIX_ADMIN_KEY`,
+  `APISIX_BOOTSTRAPPER_NODE` (`127.0.0.1:8445`), reuse `BROWZER_OIDC_CALLBACK_PATHS`.
+
+This *retires* `browzer_vhosts.go` + `oidx-nginx-entrypoint.sh` once Phase 1 is
+live (kept until then).
+
+---
+
+## 5. Phases
+
+**Phase 0 — APISIX takes `:443`, nginx becomes fallback.**
+- Put the `*.tdv.org` wildcard cert in an APISIX `ssl` object; APISIX `:443`.
+- Demote `oidx-nginx` to an internal port (e.g. `:8443`, plain http or its own TLS).
+- Add catch-all route (`uri:/*`, `priority:-100`, `enable_websocket`, long timeout)
+  → nginx. **Verify every current host still works through APISIX→nginx** (admin
+  console, API, oauth, ctrl, browzer, both BrowZer apps).
+- *Rollback*: point `:443` back at nginx (stop APISIX `:443` / restore listener).
+
+**Phase 1 — BrowZer per-app routes native in APISIX.** (after the §3.1 spike)
+- Ship the route reconciler; add the per-app overlay + OIDC routes; they win over
+  the catch-all by host match. Verify netgraph + psm render clientlessly and the
+  psm Entra `form_post` login completes. Retire the nginx vhost generator.
+
+**Phase 2 — admin console SPA + API fan-out.**
+- Adopt the existing `apisix.yaml` routes (identity/governance/provisioning/audit/
+  admin) as Admin-API route objects; SPA static via APISIX (or keep nginx serving
+  `/usr/share/nginx/html` as a dedicated upstream). Move host `openidx.tdv.org`
+  off the catch-all.
+
+**Phase 3 — OAuth, ctrl, and the `*.tdv.org` access-proxy wildcard.**
+- `oauth/.well-known` → `:8006`; `ctrl.tdv.org` → controller `:1280` (TLS verify
+  off); `browzer.tdv.org` → bootstrapper.
+- `*.tdv.org` access-proxy: route → access-proxy `:8007` with the **forward-auth**
+  plugin pointing at `handleAuthDecide` (the contract already exists), replacing
+  the access-service's inline auth-redirect for edge-gated apps.
+
+**Phase 4 — retire the nginx fallback.** Remove the catch-all + `oidx-nginx` once
+all hosts have native routes.
+
+---
+
+## 6. Cutover, rollback, verification
+
+- **Per phase**: a host moves from the catch-all (→nginx) to a native APISIX route
+  only after its native route is verified; the catch-all is the safety net the
+  whole time.
+- **Rollback at any point**: native routes are `browzer-*`/per-host names —
+  delete them and the catch-all serves the host via nginx again. Phase 0 rollback
+  = give `:443` back to nginx.
+- **Verify each route**: TLS (cert chain), the right upstream, WSS upgrade (BrowZer
+  overlay), `form_post` POST → hop (psm login), forward-auth allow/deny (access-proxy),
+  long-lived connections survive.
+- **Adopt-or-replace the stale `apisix-docker2` stack**: confirm version
+  (for §3.1), etcd prefix `/apisix`, Admin key; either adopt those containers or
+  stand up a fresh APISIX bound to `:443`. (Operator step; flagged.)
+
+---
+
+## 7. What this buys / costs
+
+**Buys:** one gateway (matches the documented architecture); dynamic API-driven
+routes (no config-file generation, no poll-reload entrypoint, no nginx bind-mount
+inode gotcha); per-route plugins (rate-limit, cors, forward-auth, observability,
+mTLS) available uniformly; the OIDC bypass + access-proxy auth become first-class
+route/plugin objects.
+
+**Costs:** etcd is now load-bearing for the edge (HA/backup matters); a risky
+`:443` cutover (mitigated by the nginx-fallback model); the §3.1 SNI spike is a
+real unknown; APISIX is OpenResty/nginx underneath, so no *raw* capability gain —
+the value is the control plane, not the data plane.
+
+---
+
+## 8. Open questions (resolve before writing the plan)
+
+1. **§3.1 SNI spike** — which APISIX mechanism presents SNI=`H` to the bootstrapper?
+   (Blocks Phase 1; everything else can proceed.)
+2. **Adopt vs replace** the running `apisix-docker2_*` stack (version, etcd, certs).
+3. **SPA delivery** — serve the admin-console `dist` from APISIX, or keep a thin
+   nginx static upstream behind it (Phase 2)?
+4. **forward-auth scope** — move *all* edge auth to the APISIX `forward-auth`
+   plugin, or only the `*.tdv.org` access-proxy hosts (Phase 3)?
+5. **etcd durability** — single-node etcd is fine for the test box; production
+   wants an etcd quorum + backups. In scope here?
