@@ -55,6 +55,8 @@ type BrowZerTargetManager struct {
 	routerConfigPath string
 	certsPath        string
 	hopConfigPath    string
+	hopCertPath      string
+	hopKeyPath       string
 	hopPort          int
 	domain           string
 	dnsResolvers     string // nginx resolver addresses (auto-detected from /etc/resolv.conf)
@@ -153,6 +155,14 @@ func (tm *BrowZerTargetManager) SetHopConfigPath(path string) {
 // SetHopPort sets the TLS port the shared BrowZer hop server listens on
 func (tm *BrowZerTargetManager) SetHopPort(port int) {
 	tm.hopPort = port
+}
+
+// SetHopCert sets the cert/key paths the shared BrowZer hop server presents.
+// When either is empty, GenerateBrowZerHopConfig falls back to the certsPath
+// defaults (certsPath/tdv-fullchain.pem and certsPath/tdv-key.pem).
+func (tm *BrowZerTargetManager) SetHopCert(certPath, keyPath string) {
+	tm.hopCertPath = certPath
+	tm.hopKeyPath = keyPath
 }
 
 // GetCertsPath returns the configured certificates directory path
@@ -763,8 +773,15 @@ func (tm *BrowZerTargetManager) GenerateBrowZerHopConfig(ctx context.Context) ([
 				zap.String("vhost", r.hostname), zap.String("scheme", scheme))
 		}
 	}
-	certDir := tm.certsPath
-	cfg := buildBrowZerHopConfig(routes, certDir+"/tdv-fullchain.pem", certDir+"/tdv-key.pem", tm.hopPort)
+	certPath := tm.hopCertPath
+	if certPath == "" {
+		certPath = tm.certsPath + "/tdv-fullchain.pem"
+	}
+	keyPath := tm.hopKeyPath
+	if keyPath == "" {
+		keyPath = tm.certsPath + "/tdv-key.pem"
+	}
+	cfg := buildBrowZerHopConfig(routes, certPath, keyPath, tm.hopPort)
 	return []byte(cfg), nil
 }
 

@@ -191,6 +191,7 @@ func main() {
 			browzerTargetManager.SetCertsPath(cfg.BrowZerCertsPath)
 		}
 		browzerTargetManager.SetHopConfigPath(cfg.BrowZerHopConfigPath)
+		browzerTargetManager.SetHopCert(cfg.BrowZerHopCertPath, cfg.BrowZerHopKeyPath)
 		_, hopPort := access.ParseHopAddr(cfg.ZitiBrowZerHopAddr)
 		browzerTargetManager.SetHopPort(hopPort)
 		// Load configured domain from DB
