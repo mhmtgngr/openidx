@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenIDX provisioning service (:8003)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cmit/openidx
+EnvironmentFile=/home/cmit/.config/oidx/common.env
+ExecStart=/home/cmit/oidx-runtime/bin/oidx-provisioning-service
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/oidx-logs/provisioning.log
+StandardError=append:/tmp/oidx-logs/provisioning.log
+
+[Install]
+WantedBy=default.target

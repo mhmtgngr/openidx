@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenIDX Access Service (access-proxy + Ziti/APISIX reconcilers)
+After=network-online.target container-oidx-apisix.service container-oidx-ziti-controller.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/cmit/oidx-runtime/run-access.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

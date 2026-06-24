@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Seeds the STATIC OpenIDX edge routes into the fresh APISIX (oidx-apisix, :9280,
+# etcd prefix /apisix-oidx). Idempotent (PUT = upsert). Re-run only if the etcd
+# store is reset — these routes normally persist in etcd across reboots.
+#
+# NOTE: the per-app BrowZer routes (browzer-<app>-tdv-org[-oidc]) are NOT here —
+# the access-service's APISIX reconciler manages those off proxy_routes.
+set -euo pipefail
+ADMIN=${APISIX_ADMIN_URL:-http://127.0.0.1:9280}
+KEY=${APISIX_ADMIN_KEY:-CHANGE_ME_ADMIN_KEY}
+CERT=${TDV_CERT:-/home/cmit/oidx-runtime/oidx-tls/tdv-fullchain.pem}
+KEYF=${TDV_KEY:-/home/cmit/oidx-runtime/oidx-tls/tdv-key.pem}
+
+put() { curl -fsS -o /dev/null -w "  route %-26s -> %{http_code}\n" "$1" \
+        -X PUT -H "X-API-KEY: $KEY" "$ADMIN/apisix/admin/routes/$1" -d "$2"; }
+
+# --- TLS (wildcard *.tdv.org) ---
+python3 - "$ADMIN" "$KEY" "$CERT" "$KEYF" <<'PY'
+import json,sys,urllib.request
+admin,key,certf,keyf=sys.argv[1:5]
+body=json.dumps({"cert":open(certf).read(),"key":open(keyf).read(),"snis":["*.tdv.org","tdv.org"]}).encode()
+r=urllib.request.Request(f"{admin}/apisix/admin/ssls/tdv-wildcard",data=body,method="PUT",
+  headers={"X-API-KEY":key,"Content-Type":"application/json"})
+print("  ssl  tdv-wildcard            ->",urllib.request.urlopen(r).status)
+PY
+
+H='"hosts":["openidx.tdv.org"]'
+# --- openidx.tdv.org: API fan-out + oauth/scim + SPA(->nginx:8443) ---
+put openidx-api-identity     "{$H,\"uri\":\"/api/v1/identity/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8001\":1}}}"
+put openidx-api-governance   "{$H,\"uri\":\"/api/v1/governance/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8002\":1}}}"
+put openidx-api-provisioning "{$H,\"uri\":\"/api/v1/provisioning/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
+put openidx-api-audit        "{$H,\"uri\":\"/api/v1/audit/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8004\":1}}}"
+put openidx-api-access       "{$H,\"uri\":\"/api/v1/access/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
+put openidx-api-admin        "{$H,\"uri\":\"/api/*\",\"priority\":20,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
+put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
+put openidx-scim             "{$H,\"uri\":\"/scim/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
+put openidx-spa              "{$H,\"uri\":\"/*\",\"priority\":10,\"upstream\":{\"type\":\"roundrobin\",\"scheme\":\"https\",\"pass_host\":\"pass\",\"nodes\":{\"127.0.0.1:8443\":1},\"tls\":{\"verify\":false}}}"
+
+# --- infra hosts ---
+put browzer-host '{"hosts":["browzer.tdv.org"],"uri":"/*","priority":20,"enable_websocket":true,"upstream":{"type":"roundrobin","scheme":"https","pass_host":"rewrite","upstream_host":"browzer.tdv.org","nodes":{"127.0.0.1:8445":1},"tls":{"verify":false},"timeout":{"connect":60,"send":86400,"read":86400}}}'
+put ctrl-host    '{"hosts":["ctrl.tdv.org"],"uri":"/*","priority":20,"enable_websocket":true,"upstream":{"type":"roundrobin","scheme":"https","pass_host":"pass","nodes":{"127.0.0.1:1280":1},"tls":{"verify":false},"timeout":{"connect":60,"send":86400,"read":86400}}}'
+
+# --- *.tdv.org one-click apps -> access-proxy (auth enforced by the proxy itself) ---
+put access-proxy-wildcard '{"hosts":["*.tdv.org"],"uri":"/*","priority":-50,"enable_websocket":true,"upstream":{"type":"roundrobin","scheme":"http","pass_host":"pass","nodes":{"127.0.0.1:8007":1},"timeout":{"connect":60,"send":86400,"read":86400}}}'
+
+echo "Edge routes seeded."

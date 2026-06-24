@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenIDX audit service (:8004)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cmit/openidx
+EnvironmentFile=/home/cmit/.config/oidx/common.env
+ExecStart=/home/cmit/oidx-runtime/bin/oidx-audit-service
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/oidx-logs/audit.log
+StandardError=append:/tmp/oidx-logs/audit.log
+
+[Install]
+WantedBy=default.target

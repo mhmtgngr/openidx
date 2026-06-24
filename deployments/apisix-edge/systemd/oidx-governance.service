@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenIDX governance service (:8002)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cmit/openidx
+EnvironmentFile=/home/cmit/.config/oidx/common.env
+ExecStart=/home/cmit/oidx-runtime/bin/oidx-governance-service
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/oidx-logs/governance.log
+StandardError=append:/tmp/oidx-logs/governance.log
+
+[Install]
+WantedBy=default.target
