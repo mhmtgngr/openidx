@@ -2,7 +2,6 @@ package access
 
 import (
 	"context"
-	"fmt"
 
 	"go.uber.org/zap"
 
@@ -41,23 +40,19 @@ func (rec *APISIXReconciler) Reconcile(ctx context.Context) error {
 	return rec.applyRoutes(ctx, desired)
 }
 
-// applyRoutes PUTs the desired routes and prunes stale browzer-* routes.
+// applyRoutes PUTs every desired route and prunes stale browzer-* routes. The
+// prune set is computed from the FULL desired set (what the DB says should exist),
+// NOT from which PUTs happened to succeed: a transient PUT failure on a still-desired
+// route must never make it a prune target, and an all-PUTs-fail pass must never delete
+// still-desired routes. Failed PUTs are logged and re-converge on the next pass.
 func (rec *APISIXReconciler) applyRoutes(ctx context.Context, desired []browzerRouteInfo) error {
 	objs := buildBrowZerAPISIXRoutes(desired, rec.opts)
 	desiredNames := make([]string, 0, len(objs))
 	for _, o := range objs {
-		if err := rec.client.PutRoute(ctx, o.name, o.body); err != nil {
-			rec.logger.Warn("PUT route failed", zap.String("name", o.name), zap.Error(err))
-			continue
-		}
 		desiredNames = append(desiredNames, o.name)
-	}
-	// Safety: if we had routes to apply but none succeeded (e.g. APISIX rejecting
-	// PUTs), do NOT prune — staleBrowZerRouteNames would mark every browzer-* route
-	// stale and the prune would delete them all. Bail so a partial outage can't
-	// become a total one; the next pass converges once PUTs work again.
-	if len(objs) > 0 && len(desiredNames) == 0 {
-		return fmt.Errorf("apisix reconcile: all %d route PUTs failed; skipping prune", len(objs))
+		if err := rec.client.PutRoute(ctx, o.name, o.body); err != nil {
+			rec.logger.Warn("PUT route failed (will retry next reconcile)", zap.String("name", o.name), zap.Error(err))
+		}
 	}
 	existing, err := rec.client.ListRouteNames(ctx)
 	if err != nil {

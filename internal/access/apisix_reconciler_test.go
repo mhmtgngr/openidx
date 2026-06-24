@@ -36,11 +36,13 @@ func (p *putFailAPISIX) DeleteRoute(_ context.Context, name string) error {
 	p.deleted = append(p.deleted, name)
 	return nil
 }
+
+// The desired routes are ALREADY present in APISIX from a prior pass.
 func (p *putFailAPISIX) ListRouteNames(_ context.Context) ([]string, error) {
-	return []string{"browzer-stale-a", "browzer-stale-b"}, nil
+	return []string{"browzer-psm-tdv-org", "browzer-psm-tdv-org-oidc"}, nil
 }
 
-func TestAPISIXReconcilerAllPutsFailSkipsPrune(t *testing.T) {
+func TestAPISIXReconcilerKeepsDesiredRoutesWhenPutFails(t *testing.T) {
 	p := &putFailAPISIX{}
 	rec := &APISIXReconciler{
 		logger: zap.NewNop(),
@@ -48,12 +50,30 @@ func TestAPISIXReconcilerAllPutsFailSkipsPrune(t *testing.T) {
 		opts:   apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095, oidcCallbacks: []string{"signin-oidc"}},
 	}
 	desired := []browzerRouteInfo{{hostname: "psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"}}
-	err := rec.applyRoutes(context.Background(), desired)
-	if err == nil {
-		t.Fatal("expected error when all PUTs fail")
+	if err := rec.applyRoutes(context.Background(), desired); err != nil {
+		t.Fatalf("applyRoutes: %v", err)
 	}
+	// Both routes are still desired (the DB says so) even though their PUTs failed,
+	// so neither may be pruned — pruning them would blackout a live app.
 	if len(p.deleted) != 0 {
-		t.Fatalf("must NOT prune when all PUTs failed; deleted=%v", p.deleted)
+		t.Fatalf("must NOT prune still-desired routes when PUT fails; deleted=%v", p.deleted)
+	}
+}
+
+func TestAPISIXReconcilerPrunesAllWhenNoneDesired(t *testing.T) {
+	// Reuse fakeAPISIX: no put failures, existing has one browzer-* and one non-browzer.
+	f := &fakeAPISIX{existing: []string{"browzer-gone", "identity-service"}}
+	rec := &APISIXReconciler{
+		logger: zap.NewNop(),
+		client: f,
+		opts:   apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095},
+	}
+	if err := rec.applyRoutes(context.Background(), nil); err != nil {
+		t.Fatalf("applyRoutes: %v", err)
+	}
+	// No apps desired -> every browzer-* route pruned; non-browzer left alone.
+	if len(f.deleted) != 1 || f.deleted[0] != "browzer-gone" {
+		t.Fatalf("expected only browzer-gone pruned, got %v", f.deleted)
 	}
 }
 
