@@ -3,6 +3,8 @@ package access
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -57,6 +59,21 @@ func (r DesiredRoute) EffectiveMode() string {
 		return HostingModeDirect
 	}
 	return HostingModeIdentity
+}
+
+// ParseHopAddr splits a "host:port" hop address, defaulting the port to 8095
+// when absent/unparseable, so the reconciler's host.v1 target and the hop
+// nginx listen port are always derived identically.
+func ParseHopAddr(addr string) (string, int) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr, 8095
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p == 0 {
+		return host, 8095
+	}
+	return host, p
 }
 
 // ZitiReconciler converges Ziti to the DB's desired state. One worker, a
@@ -173,7 +190,7 @@ func (rec *ZitiReconciler) ensureService(ctx context.Context, zm *ZitiManager, d
 		// shared hop nginx, which SNI-demuxes to the real upstream.
 		host, port := parseHostPort(d.ToURL)
 		if d.EffectiveMode() == HostingModeHop {
-			host, port = parseHostPort(rec.hopAddr)
+			host, port = ParseHopAddr(rec.hopAddr)
 		}
 		cfgID, cerr := zm.CreateHostV1ConfigFixed(ctx, d.ServiceName+"-host", host, port)
 		if cerr != nil {

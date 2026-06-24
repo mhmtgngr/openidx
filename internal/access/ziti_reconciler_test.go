@@ -33,6 +33,24 @@ func TestEffectiveModeHop(t *testing.T) {
 	}
 }
 
+func TestParseHopAddr(t *testing.T) {
+	cases := []struct {
+		in, host string
+		port     int
+	}{
+		{"127.0.0.1:8095", "127.0.0.1", 8095},
+		{"127.0.0.1", "127.0.0.1", 8095}, // portless → default 8095 (no drift)
+		{"hop.internal:9000", "hop.internal", 9000},
+		{"", "", 8095},
+	}
+	for _, c := range cases {
+		h, p := ParseHopAddr(c.in)
+		if h != c.host || p != c.port {
+			t.Fatalf("ParseHopAddr(%q)=(%q,%d) want (%q,%d)", c.in, h, p, c.host, c.port)
+		}
+	}
+}
+
 func TestDesiredRouteHostingModeNormalization(t *testing.T) {
 	if got := (DesiredRoute{HostingMode: "identity", BrowZerEnabled: true}).EffectiveMode(); got != "direct" {
 		t.Fatalf("browzer route should be direct, got %q", got)
