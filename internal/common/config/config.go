@@ -135,6 +135,13 @@ type Config struct {
 	ZitiBrowZerHopAddr string `mapstructure:"ziti_browzer_hop_addr"`
 	APISIXConfigPath   string `mapstructure:"apisix_config_path"`
 
+	// APISIX edge (opt-in). When APISIXEdgeEnabled, the access-service pushes
+	// BrowZer routes to APISIX's Admin API instead of generating nginx vhosts.
+	APISIXEdgeEnabled      bool   `mapstructure:"apisix_edge_enabled"`
+	APISIXAdminURL         string `mapstructure:"apisix_admin_url"`
+	APISIXAdminKey         string `mapstructure:"apisix_admin_key"`
+	APISIXBootstrapperNode string `mapstructure:"apisix_bootstrapper_node"`
+
 	// WebAuthn configuration
 	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
 
@@ -463,6 +470,11 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("browzer_vhost_ssl_key", "/etc/nginx/tdv-key.pem")
 	v.SetDefault("browzer_oidc_callback_paths", "signin-oidc,signout-callback-oidc")
 
+	// APISIX edge defaults
+	v.SetDefault("apisix_edge_enabled", false)
+	v.SetDefault("apisix_admin_url", "http://127.0.0.1:9180")
+	v.SetDefault("apisix_bootstrapper_node", "127.0.0.1:8445")
+
 	// CORS defaults
 	v.SetDefault("cors_allowed_origins", "*")
 
@@ -591,6 +603,10 @@ func bindEnvVars(v *viper.Viper) {
 		"browzer_vhost_ssl_key":       "BROWZER_VHOST_SSL_KEY",
 		"browzer_oidc_callback_paths": "BROWZER_OIDC_CALLBACK_PATHS",
 		"apisix_config_path":          "APISIX_CONFIG_PATH",
+		"apisix_edge_enabled":         "APISIX_EDGE_ENABLED",
+		"apisix_admin_url":            "APISIX_ADMIN_URL",
+		"apisix_admin_key":            "APISIX_ADMIN_KEY",
+		"apisix_bootstrapper_node":    "APISIX_BOOTSTRAPPER_NODE",
 		"enable_opa_authz":            "ENABLE_OPA_AUTHZ",
 		"jwt_secret":                  "JWT_SECRET",
 		"encryption_key":              "ENCRYPTION_KEY",
