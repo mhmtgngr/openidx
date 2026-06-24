@@ -774,6 +774,13 @@ func buildBrowZerHopConfig(routes []browzerRouteInfo, basePort int) string {
 			fmt.Fprintf(&b, "        proxy_ssl_name %s;\n", r.hostname)
 			b.WriteString("        proxy_ssl_verify off;\n")
 		}
+		// nginx's default proxy_redirect rewrites the upstream's absolute Location
+		// (https://<vhost>/...) back to the proxy's own address — and since the
+		// BrowZer runtime sends Host: unknown on the overlay leg, that becomes
+		// http://unknown:<port>/... and breaks every server-issued redirect (the psm
+		// login 302). Off = pass the upstream's correct <vhost> Location through; the
+		// browser then re-navigates the overlay vhost.
+		b.WriteString("        proxy_redirect off;\n")
 		fmt.Fprintf(&b, "        proxy_set_header Host %s;\n", r.hostname)
 		b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 		b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")

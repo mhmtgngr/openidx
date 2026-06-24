@@ -103,6 +103,24 @@ func TestHopConfigEmitsLandingRedirect(t *testing.T) {
 	}
 }
 
+func TestHopConfigDisablesProxyRedirect(t *testing.T) {
+	// nginx's default proxy_redirect rewrites the upstream's absolute Location
+	// (https://<vhost>/...) back to the proxy's own address. The BrowZer runtime
+	// sends Host: unknown on the overlay leg, so the default rewrite produces
+	// http://unknown:<port>/... and breaks every server-issued redirect (the psm
+	// login 302). The generated block must disable it.
+	routes := []browzerRouteInfo{
+		{hostname: "psm.tdv.org", toURL: "https://psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"},
+		{hostname: "netgraph.tdv.org", toURL: "http://127.0.0.1:8088", serviceName: "openidx-Netgraph", hostingMode: "hop"},
+	}
+	cfg := buildBrowZerHopConfig(routes, 8095)
+	for _, host := range []string{"psm.tdv.org", "netgraph.tdv.org"} {
+		if !strings.Contains(blockFor(cfg, host), "proxy_redirect off;") {
+			t.Fatalf("%s hop block must disable proxy_redirect:\n%s", host, blockFor(cfg, host))
+		}
+	}
+}
+
 func TestAssignHopPortsDeterministic(t *testing.T) {
 	m := assignHopPorts([]string{"psm-zt", "openidx-Netgraph"}, 8095)
 	if m["openidx-Netgraph"] != 8095 || m["psm-zt"] != 8096 {
