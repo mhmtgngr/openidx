@@ -119,3 +119,43 @@ func TestEnsureRouterRoleAttributePatchesEachRouter(t *testing.T) {
 		t.Fatalf("expected both routers patched with #ziti-routers, got %+v", patched)
 	}
 }
+
+func TestCreateHostV1ConfigFixedUpdatesDriftedPort(t *testing.T) {
+	var patched, posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/edge/management/v1/configs" && r.Method == "GET":
+			// existing config with a DIFFERENT port (8095) than desired (8096)
+			_, _ = w.Write([]byte(`{"data":[{"id":"cfg-1","name":"psm-zt-host","data":{"address":"127.0.0.1","port":8095,"protocol":"tcp"}}]}`))
+		case r.URL.Path == "/edge/management/v1/configs/cfg-1" && r.Method == "PATCH":
+			patched = true
+			b, _ := io.ReadAll(r.Body)
+			if !bytesContains(b, "8096") {
+				t.Fatalf("PATCH must carry the new port 8096: %s", b)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.URL.Path == "/edge/management/v1/configs" && r.Method == "POST":
+			posted = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"new-cfg"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	zm := newTestZitiManager(t, srv.URL)
+	id, err := zm.CreateHostV1ConfigFixed(context.Background(), "psm-zt-host", "127.0.0.1", 8096)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id != "cfg-1" {
+		t.Fatalf("want existing id cfg-1 (patched), got %q", id)
+	}
+	if !patched {
+		t.Fatal("a drifted config must be PATCHed to the new port")
+	}
+	if posted {
+		t.Fatal("must NOT create a new config when one exists (would name-conflict)")
+	}
+}

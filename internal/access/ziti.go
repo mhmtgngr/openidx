@@ -1710,25 +1710,51 @@ func (zm *ZitiManager) CreateServiceWithConfig(ctx context.Context, name, host s
 // port so the edge router hosts the service straight to the upstream. Returns
 // the new config's id.
 func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host string, port int) (string, error) {
-	// Get-or-create: OpenZiti enforces unique config names, so if this config
-	// was already created on a prior (partly-failed) reconcile pass, POSTing
-	// again returns a name conflict and wedges the route. Look it up first and
-	// reuse its id if present. A non-200 GET or empty data set is treated as
-	// "not found" — fall through to create.
+	desiredData := map[string]interface{}{
+		"protocol": "tcp",
+		"address":  host,
+		"port":     port,
+	}
+
+	// Ensure (get-or-create-or-update): OpenZiti enforces unique config names, so
+	// POSTing an existing name wedges the route. Look it up first. If it exists
+	// but its target drifted (e.g. the per-app hop port reshuffled when another
+	// hop route was added/removed), PATCH the data so the reconciler self-heals —
+	// otherwise a stale port silently breaks the route. A non-200 GET or empty
+	// data set is treated as "not found" — fall through to create.
 	lookupPath := fmt.Sprintf("/edge/management/v1/configs?filter=name=\"%s\"", name)
 	if lookupData, lookupStatus, lookupErr := zm.mgmtRequest("GET", lookupPath, nil); lookupErr == nil && lookupStatus == http.StatusOK {
 		var existing struct {
 			Data []struct {
 				ID   string `json:"id"`
 				Name string `json:"name"`
+				Data struct {
+					Address  string      `json:"address"`
+					Port     json.Number `json:"port"`
+					Protocol string      `json:"protocol"`
+				} `json:"data"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(lookupData, &existing) == nil {
 			for _, c := range existing.Data {
-				if c.Name == name && c.ID != "" {
+				if c.Name != name || c.ID == "" {
+					continue
+				}
+				if c.Data.Address == host && c.Data.Port.String() == strconv.Itoa(port) && c.Data.Protocol == "tcp" {
 					zm.logger.Info("Reusing existing host.v1 config", zap.String("name", name), zap.String("id", c.ID))
 					return c.ID, nil
 				}
+				// Drifted target — converge by patching the data in place.
+				patch, _ := json.Marshal(map[string]interface{}{"data": desiredData})
+				if _, ps, perr := zm.mgmtRequest("PATCH", "/edge/management/v1/configs/"+c.ID, patch); perr == nil && (ps == http.StatusOK || ps == http.StatusAccepted) {
+					zm.logger.Info("Updated drifted host.v1 config",
+						zap.String("name", name), zap.String("id", c.ID),
+						zap.String("address", host), zap.Int("port", port))
+					return c.ID, nil
+				}
+				zm.logger.Warn("failed to patch drifted host.v1 config; reusing as-is",
+					zap.String("name", name), zap.String("id", c.ID))
+				return c.ID, nil
 			}
 		}
 	}
@@ -1736,11 +1762,7 @@ func (zm *ZitiManager) CreateHostV1ConfigFixed(ctx context.Context, name, host s
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":         name,
 		"configTypeId": zm.resolveConfigTypeID("host.v1"),
-		"data": map[string]interface{}{
-			"protocol": "tcp",
-			"address":  host,
-			"port":     port,
-		},
+		"data":         desiredData,
 	})
 	data, status, err := zm.mgmtRequest("POST", "/edge/management/v1/configs", body)
 	if err != nil {
