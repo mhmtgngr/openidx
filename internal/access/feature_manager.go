@@ -94,6 +94,12 @@ type FeatureManager struct {
 	zitiProvider         *ZitiProvider
 	guacamoleClient      *GuacamoleClient
 	browzerTargetManager *BrowZerTargetManager
+	// reconcilerEnabled reports whether the Ziti reconciler owns all
+	// controller-side Ziti mutations (service/policy/hosting create + teardown).
+	// When true the enable/disable toggle only writes the proxy_routes flags and
+	// leaves convergence to the reconciler (the handler triggers it via
+	// enqueueReconcile). See SetReconcilerEnabled.
+	reconcilerEnabled bool
 }
 
 // ziti returns the live OpenZiti manager (nil when disconnected).
@@ -127,6 +133,15 @@ func (fm *FeatureManager) SetGuacamoleClient(gc *GuacamoleClient) {
 func (fm *FeatureManager) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
 	fm.browzerTargetManager = btm
 }
+
+// SetReconcilerEnabled tells the feature manager that the Ziti reconciler owns
+// every controller-side Ziti mutation. When true, EnableFeature/DisableFeature
+// only write the proxy_routes flags (ziti_enabled / browzer_enabled /
+// ziti_service_name) and defer service/policy/hosting create + teardown to the
+// reconciler — the handler triggers a converge via enqueueReconcile. This
+// eliminates the imperative-vs-reconciler conflict that double-hosted services
+// (SDK edge terminator + router tunnel terminator) and 502'd the route.
+func (fm *FeatureManager) SetReconcilerEnabled(v bool) { fm.reconcilerEnabled = v }
 
 // EnableFeature enables a feature on a route
 func (fm *FeatureManager) EnableFeature(ctx context.Context, routeID string, feature FeatureName, config *FeatureConfig, userID string) error {
@@ -541,11 +556,8 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 
 	switch feature {
 	case FeatureZiti:
-		if fm.ziti() == nil || !fm.ziti().IsInitialized() {
-			return nil, fmt.Errorf("Ziti manager not available")
-		}
-
-		// Get route details
+		// Get route details (the service name derives from the route name, so
+		// this read happens in both the reconciler and imperative paths).
 		var routeName, toURL string
 		var remoteHost *string
 		var remotePort *int
@@ -554,6 +566,25 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 			routeID, org.ID).Scan(&routeName, &toURL, &remoteHost, &remotePort)
 		if err != nil {
 			return nil, fmt.Errorf("route not found: %w", err)
+		}
+
+		serviceName := config.ZitiServiceName
+		if serviceName == "" {
+			serviceName = fmt.Sprintf("openidx-%s", routeName)
+		}
+
+		if fm.reconcilerEnabled {
+			// The reconciler owns service/policy/hosting creation. Record only the
+			// service name so syncRouteFlags writes proxy_routes.ziti_service_name —
+			// loadDesiredRoutes keys on that — and the handler's enqueueReconcile
+			// triggers convergence. Any imperative controller mutation here would
+			// duplicate the reconciler and double-host the service (the psm 502).
+			resourceIDs["ziti_service_name"] = serviceName
+			return resourceIDs, nil
+		}
+
+		if fm.ziti() == nil || !fm.ziti().IsInitialized() {
+			return nil, fmt.Errorf("Ziti manager not available")
 		}
 
 		// Determine host and port
@@ -567,11 +598,6 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		}
 
 		// Create Ziti service
-		serviceName := config.ZitiServiceName
-		if serviceName == "" {
-			serviceName = fmt.Sprintf("openidx-%s", routeName)
-		}
-
 		zitiService, err := fm.ziti().CreateServiceWithConfig(ctx, serviceName, host, port)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Ziti service: %w", err)
@@ -652,6 +678,16 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 		}
 
 	case FeatureBrowZer:
+		if fm.reconcilerEnabled {
+			// BrowZer hosting (host.v1 / hop) is driven by the reconciler off the
+			// proxy_routes.browzer_enabled + hosting_mode flags. The ziti_services
+			// lookup + role-attr patch below would fail here anyway, since the
+			// reconciler may not have created the service yet. Just mark it; the
+			// handler's enqueueReconcile converges.
+			resourceIDs["browzer_enabled"] = "true"
+			return resourceIDs, nil
+		}
+
 		if fm.ziti() == nil || !fm.ziti().IsInitialized() {
 			return nil, fmt.Errorf("Ziti manager not available")
 		}
@@ -748,6 +784,12 @@ func (fm *FeatureManager) provisionFeature(ctx context.Context, routeID string, 
 func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string, feature FeatureName, resourceIDs map[string]string) error {
 	switch feature {
 	case FeatureZiti:
+		if fm.reconcilerEnabled {
+			// Reconciler owns teardown; clearing proxy_routes.ziti_enabled
+			// (syncRouteFlags) drops the route from the desired set. Imperatively
+			// deleting here would race a concurrent converge.
+			return nil
+		}
 		if fm.ziti() != nil && fm.ziti().IsInitialized() {
 			if serviceID, ok := resourceIDs["ziti_service_id"]; ok && serviceID != "" {
 				if err := fm.ziti().DeleteService(ctx, serviceID); err != nil {
@@ -757,6 +799,11 @@ func (fm *FeatureManager) deprovisionFeature(ctx context.Context, routeID string
 		}
 
 	case FeatureBrowZer:
+		if fm.reconcilerEnabled {
+			// Reconciler owns the host.v1/hop hosting tied to browzer_enabled;
+			// clearing the flag (syncRouteFlags) is the whole teardown.
+			return nil
+		}
 		// Remove browzer-enabled role attribute from Ziti service
 		if fm.ziti() != nil && fm.ziti().IsInitialized() {
 			if zitiServiceID, ok := resourceIDs["ziti_service_id"]; ok && zitiServiceID != "" {

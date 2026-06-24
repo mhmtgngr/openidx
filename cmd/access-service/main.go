@@ -314,6 +314,9 @@ func main() {
 				reconciler := access.NewZitiReconciler(db, log, zitiProvider, cfg.ZitiBrowZerHopAddr)
 				reconciler.Start(zitiCtx)
 				accessService.SetZitiReconciler(reconciler)
+				// The admin-console one-click toggle must defer to the reconciler too:
+				// only write proxy_routes flags, never imperatively provision Ziti.
+				featureManager.SetReconcilerEnabled(true)
 				log.Info("Ziti reconciler started (ZITI_RECONCILER=true); imperative hosting skipped")
 				// The reconciler creates/hosts the per-app Ziti services; we still
 				// (re)generate the bootstrapper targets so the browser dials them.
