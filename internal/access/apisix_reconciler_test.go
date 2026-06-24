@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"go.uber.org/zap"
@@ -25,6 +26,36 @@ func (f *fakeAPISIX) DeleteRoute(_ context.Context, name string) error {
 	return nil
 }
 func (f *fakeAPISIX) ListRouteNames(_ context.Context) ([]string, error) { return f.existing, nil }
+
+type putFailAPISIX struct{ deleted []string }
+
+func (p *putFailAPISIX) PutRoute(_ context.Context, name string, _ []byte) error {
+	return fmt.Errorf("put failed: %s", name)
+}
+func (p *putFailAPISIX) DeleteRoute(_ context.Context, name string) error {
+	p.deleted = append(p.deleted, name)
+	return nil
+}
+func (p *putFailAPISIX) ListRouteNames(_ context.Context) ([]string, error) {
+	return []string{"browzer-stale-a", "browzer-stale-b"}, nil
+}
+
+func TestAPISIXReconcilerAllPutsFailSkipsPrune(t *testing.T) {
+	p := &putFailAPISIX{}
+	rec := &APISIXReconciler{
+		logger: zap.NewNop(),
+		client: p,
+		opts:   apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095, oidcCallbacks: []string{"signin-oidc"}},
+	}
+	desired := []browzerRouteInfo{{hostname: "psm.tdv.org", serviceName: "psm-zt", hostingMode: "hop"}}
+	err := rec.applyRoutes(context.Background(), desired)
+	if err == nil {
+		t.Fatal("expected error when all PUTs fail")
+	}
+	if len(p.deleted) != 0 {
+		t.Fatalf("must NOT prune when all PUTs failed; deleted=%v", p.deleted)
+	}
+}
 
 func TestAPISIXReconcilerApplyAndPrune(t *testing.T) {
 	f := &fakeAPISIX{existing: []string{"browzer-old", "identity-service"}}

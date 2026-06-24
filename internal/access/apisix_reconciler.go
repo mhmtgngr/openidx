@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 
@@ -50,6 +51,13 @@ func (rec *APISIXReconciler) applyRoutes(ctx context.Context, desired []browzerR
 			continue
 		}
 		desiredNames = append(desiredNames, o.name)
+	}
+	// Safety: if we had routes to apply but none succeeded (e.g. APISIX rejecting
+	// PUTs), do NOT prune — staleBrowZerRouteNames would mark every browzer-* route
+	// stale and the prune would delete them all. Bail so a partial outage can't
+	// become a total one; the next pass converges once PUTs work again.
+	if len(objs) > 0 && len(desiredNames) == 0 {
+		return fmt.Errorf("apisix reconcile: all %d route PUTs failed; skipping prune", len(objs))
 	}
 	existing, err := rec.client.ListRouteNames(ctx)
 	if err != nil {

@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// APISIXClient satisfies the reconciler's apisixAdmin seam.
+var _ apisixAdmin = (*APISIXClient)(nil)
+
 // APISIXClient is a thin Admin API client for managing routes.
 type APISIXClient struct {
 	adminURL string
