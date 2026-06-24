@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Per-app BrowZer publishing via the OpenZiti reconciler (#201–#208)
+
+Publish multiple apps clientlessly behind BrowZer — each as its own dark Ziti
+service — and toggle them from the admin console without breaking the overlay.
+Motivated by publishing a second BrowZer app (`psm.tdv.org`, an external HTTPS
+IIS/.NET upstream) alongside `netgraph`: the BrowZer WASM runtime sends a fixed
+`Host: unknown` and **no SNI** on every overlay request, so the old shared
+`browzer-router` (which demuxed apps by Host) could only ever serve one app.
+
+#### Added
+- **OpenZiti reconciler** (`internal/access/ziti_reconciler.go`, gated by
+  `ZITI_RECONCILER`): declaratively converges the controller to the desired
+  state read from `proxy_routes` — per-app services, bind/dial/service-edge-router
+  policies, `host.v1` configs, and router/SDK hosting — on boot, a 30s tick, and
+  on demand. Replaces the imperative provisioning path as the single owner of all
+  Ziti mutations. (#201)
+- **Per-app BrowZer services**: each clientless app gets its own Ziti service
+  hosted by the edge **router** via a fixed `host.v1` config (`{protocol,address,
+  port}`), so there is no Host demux — removing the single-app limit of the shared
+  router. (#201)
+- **`hosting_mode = 'hop'`** for Host-routed / HTTPS upstreams (e.g. IIS/.NET):
+  a per-app plain-HTTP hop (nginx) that listens on a deterministic `base+index`
+  port, rewrites the `Host` header, and proxies to the real upstream; emits a
+  per-route landing-path 302 so the post-OIDC `/` lands on the app's entry path.
+  (#202, #203)
+- **Public per-app nginx vhost generator** (`internal/access/browzer_vhosts.go`,
+  `BROWZER_VHOST_CONFIG_PATH`): the access-service renders one TLS `server {}` per
+  `ziti+browzer`-enabled route (`server_name <app>.tdv.org` → bootstrapper
+  `:8445`), so publishing a clientless app needs **no** front-nginx hand-edit.
+  Hop-mode routes additionally get an external-IdP **OIDC `form_post` callback
+  bypass** (`location ~ /(signin-oidc|signout-callback-oidc)$` → the route's hop
+  port). Config: `BROWZER_BOOTSTRAPPER_ADDR`, `BROWZER_VHOST_SSL_CERT/KEY`,
+  `BROWZER_OIDC_CALLBACK_PATHS`. A poll-reload entrypoint
+  (`deployments/docker/oidx-nginx-entrypoint.sh`, wildcard-`include`d from
+  `nginx.conf`) reloads the front nginx when the generated file changes. (#208)
+
+#### Changed
+- **The admin-console one-click feature toggle defers to the reconciler** when
+  `ZITI_RECONCILER` is on: enable/disable only write the `proxy_routes` flags
+  (`ziti_enabled` / `browzer_enabled` / `ziti_service_name`) and enqueue a
+  converge — no imperative service/policy creation or SDK hosting. Imperative
+  behavior is unchanged when the reconciler is off. (#206)
+- `RegenerateConfigs` (the toggle path) now also rewrites the hop and public
+  vhost configs, not just the bootstrapper targets and router config — so a
+  newly-toggled app gets its hop/public block live without a restart. (#208)
+
+#### Fixed
+- **`psm.tdv.org` 502 + feature-manager↔reconciler conflict**: with the
+  reconciler on, the UI toggle still provisioned imperatively (SDK-hosting the
+  service with an `edge` terminator and `#access-proxy-clients` policies, and
+  renaming `ziti_service_name`), colliding with the reconciler's router-hosted
+  `tunnel` terminator — the access-proxy then forwarded plain HTTP to the app's
+  `:443`. Fixed by attaching the `host.v1` config to existing services
+  (`EnsureServiceConfig`, #205) and by making the toggle defer (#206).
+- **BrowZer hop leaked `unknown:<port>` on server redirects**: the hop set the
+  upstream `Host`, so the app emitted a correct absolute `Location`, but nginx's
+  **default `proxy_redirect`** rewrote it back to the proxy's own address — and
+  since the runtime's `Host` is `unknown`, that became
+  `http://unknown:<port>/…` (the psm Entra-login 302). Generated hop blocks now
+  emit `proxy_redirect off;`. (#207)
+- **Reconciler self-heals drifted `host.v1` configs** (create-or-PATCH on data
+  drift) so per-app hop-port reshuffles converge automatically with no manual
+  `ziti edge delete config`. (#204)
+
 ### Dark (loopback-bound) services behind BrowZer + native client (#196)
 
 Publish a service that is **completely dark to the outside** — bound to host
