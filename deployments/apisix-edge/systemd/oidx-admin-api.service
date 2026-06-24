@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenIDX admin-api service (:8005)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cmit/openidx
+EnvironmentFile=/home/cmit/.config/oidx/common.env
+ExecStart=/home/cmit/oidx-runtime/bin/oidx-admin-api
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/oidx-logs/admin.log
+StandardError=append:/tmp/oidx-logs/admin.log
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenIDX identity service (:8001)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cmit/openidx
+EnvironmentFile=/home/cmit/.config/oidx/common.env
+ExecStart=/home/cmit/oidx-runtime/bin/oidx-identity-service
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/oidx-logs/identity.log
+StandardError=append:/tmp/oidx-logs/identity.log
+
+[Install]
+WantedBy=default.target
