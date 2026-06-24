@@ -468,7 +468,14 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("browzer_bootstrapper_addr", "https://127.0.0.1:8445")
 	v.SetDefault("browzer_vhost_ssl_cert", "/etc/nginx/tdv-fullchain.pem")
 	v.SetDefault("browzer_vhost_ssl_key", "/etc/nginx/tdv-key.pem")
-	v.SetDefault("browzer_oidc_callback_paths", "signin-oidc,signout-callback-oidc")
+	// Empty by default: when BrowZer's WSS overlay works, its service worker
+	// tunnels the app's external-IdP form_post callback over the overlay, so the
+	// app's session cookie stays in the overlay's context. A direct edge bypass
+	// for the callback (set this to e.g. "signin-oidc,signout-callback-oidc") then
+	// becomes HARMFUL — the cookie set on the direct path isn't seen on overlay
+	// requests, causing a login loop. Only set it as a fallback when the SW can't
+	// intercept the form_post (e.g. WSS unavailable).
+	v.SetDefault("browzer_oidc_callback_paths", "")
 
 	// APISIX edge defaults
 	v.SetDefault("apisix_edge_enabled", false)

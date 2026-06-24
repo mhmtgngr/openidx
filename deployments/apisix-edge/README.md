@@ -15,7 +15,8 @@ full architecture.
 ```
 Browser ─https:443─► APISIX (oidx-apisix, host-net, etcd prefix /apisix-oidx)
    ├─ <app>.tdv.org           → bootstrapper :8445 (SNI per app; reconciler-managed)
-   │    + /…/signin-oidc POST  → hop port (OIDC form_post bypass; reconciler-managed)
+   │    + /…/signin-oidc POST  → hop port (OIDC form_post bypass; OFF by default —
+   │      see note below; only enable if the BrowZer SW can't tunnel the callback)
    ├─ openidx.tdv.org /api/*  → backend services :8001–8007
    │                 /oauth,/.well-known → :8006 · /scim → :8003
    │                 /* (SPA) → nginx :8443 (static)
@@ -37,9 +38,24 @@ APISIX on the same etcd).
 | `oidx-common.env.example` | Template for the backend services' shared `EnvironmentFile`. |
 | `systemd/*.service` | User units for the access-service + the 6 backend services (`Restart=always`, `EnvironmentFile`, `ExecStart` from `/home/cmit/oidx-runtime/bin`). |
 
-The **per-app BrowZer routes** (`browzer-<app>-tdv-org[-oidc]`) are NOT seeded here —
+The **per-app BrowZer routes** (`browzer-<app>-tdv-org`) are NOT seeded here —
 the access-service's APISIX reconciler creates/prunes them from `proxy_routes`
 when `APISIX_EDGE_ENABLED=true` (see `internal/access/apisix_reconciler.go`).
+
+### OIDC `form_post` bypass — OFF by default
+
+For an app with its own external-IdP login (e.g. Entra, `response_mode=form_post`),
+the IdP does a top-level cross-site POST to `…/signin-oidc`. **Leave this to the
+overlay:** once BrowZer's WSS works, its service worker tunnels that POST over the
+overlay, so the app's session cookie stays in the overlay's cookie context and
+login works. A direct edge bypass route (`browzer-<app>-oidc` → hop) for the
+callback is therefore **disabled by default** (`BROWZER_OIDC_CALLBACK_PATHS=""`).
+Enabling it (e.g. `BROWZER_OIDC_CALLBACK_PATHS=signin-oidc,signout-callback-oidc`)
+is a **fallback only** — and is actively harmful when the SW *can* tunnel the
+callback: the session cookie gets set on the direct path, the overlay never sees
+it, and the app **loops back to login**. Symptom in the hop access log: the
+`POST /fm/signin-oidc` that loops carries an `X-Forwarded-For` (came direct via
+the bypass); the one that succeeds has none (came via the overlay).
 
 ## Bring-up
 
