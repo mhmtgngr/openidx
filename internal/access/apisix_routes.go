@@ -20,6 +20,11 @@ type apisixRoute struct {
 	body []byte
 }
 
+// APISIXRouteOpts builds the route options from exported inputs (main.go wiring).
+func APISIXRouteOpts(bootstrapperNode string, hopBasePort int, oidcCallbacks []string) apisixRouteOpts {
+	return apisixRouteOpts{bootstrapperNode: bootstrapperNode, hopBasePort: hopBasePort, oidcCallbacks: oidcCallbacks}
+}
+
 var apisixSlugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 
 // apisixSlug turns a hostname into a stable, name-safe route slug.

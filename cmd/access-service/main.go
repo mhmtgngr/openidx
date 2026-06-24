@@ -211,6 +211,24 @@ func main() {
 			zap.String("domain", browzerTargetManager.GetDomain()))
 	}
 
+	// APISIX edge (opt-in): push BrowZer public routes to APISIX's Admin API
+	// instead of generating nginx vhosts. Independent of the Ziti reconciler.
+	if cfg.APISIXEdgeEnabled && browzerTargetManager != nil {
+		apisixClient := access.NewAPISIXClient(cfg.APISIXAdminURL, cfg.APISIXAdminKey)
+		_, apisixHopPort := access.ParseHopAddr(cfg.ZitiBrowZerHopAddr)
+		apisixRec := access.NewAPISIXReconciler(db, log, apisixClient, browzerTargetManager,
+			access.APISIXRouteOpts(cfg.APISIXBootstrapperNode, apisixHopPort, access.SplitCSV(cfg.BrowZerOIDCCallbackPaths)))
+		browzerTargetManager.SetAPISIXReconciler(apisixRec)
+		go func() {
+			if err := apisixRec.Reconcile(bgCtx); err != nil {
+				log.Warn("initial APISIX reconcile failed", zap.Error(err))
+			} else {
+				log.Info("APISIX edge routes reconciled")
+			}
+		}()
+		log.Info("APISIX edge enabled (pushing BrowZer routes to Admin API)")
+	}
+
 	// Initialize APISIX SSL management
 	if cfg.APISIXConfigPath != "" {
 		accessService.SetAPISIXConfigPath(cfg.APISIXConfigPath)
