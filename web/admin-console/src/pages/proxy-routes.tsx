@@ -67,9 +67,18 @@ interface ProxyRoute {
   max_risk_score: number
   guacamole_connection_id: string
   landing_path: string
+  hosting_mode: string
   created_at: string
   updated_at: string
 }
+
+// Ziti/BrowZer hosting mode. "identity" (Auto) lets the reconciler auto-select
+// hop vs direct for BrowZer routes from the upstream; hop/direct force it.
+const HOSTING_MODES = [
+  { value: 'identity', label: 'Auto (recommended)', hint: 'BrowZer routes auto-select hop/direct from the upstream; non-Ziti routes use the access-proxy.' },
+  { value: 'hop', label: 'Hop — external / HTTPS', hint: 'Router → shared TLS hop: rewrites Host and relaxes upstream TLS. For external, HTTPS, or Host-routed backends (e.g. *.example.com).' },
+  { value: 'direct', label: 'Direct — local / dark', hint: 'Router hosts the upstream directly (end-to-end WASM TLS). For local/dark services or backends with a browser-trusted cert.' },
+]
 
 const ROUTE_TYPES = [
   { value: 'http', label: 'HTTP Proxy' },
@@ -123,6 +132,7 @@ export function ProxyRoutesPage() {
     allowed_countries: '',
     max_risk_score: 100,
     landing_path: '/',
+    hosting_mode: 'identity',
   })
 
   const [quickFormData, setQuickFormData] = useState({
@@ -240,6 +250,7 @@ export function ProxyRoutesPage() {
       allowed_countries: '',
       max_risk_score: 100,
       landing_path: '/',
+      hosting_mode: 'identity',
     })
   }
 
@@ -268,6 +279,7 @@ export function ProxyRoutesPage() {
       allowed_countries: route.allowed_countries?.join(', ') || '',
       max_risk_score: route.max_risk_score || 100,
       landing_path: route.landing_path || '/',
+      hosting_mode: route.hosting_mode || 'identity',
     })
     setEditModal(true)
   }
@@ -296,6 +308,7 @@ export function ProxyRoutesPage() {
       allowed_countries: formData.allowed_countries ? formData.allowed_countries.split(',').map(s => s.trim()).filter(Boolean) : [],
       max_risk_score: formData.max_risk_score,
       landing_path: formData.landing_path,
+      hosting_mode: formData.hosting_mode,
     }
   }
 
@@ -746,6 +759,7 @@ function RouteForm({
     allowed_countries: string
     max_risk_score: number
     landing_path: string
+    hosting_mode: string
   }
   setFormData: (data: typeof formData) => void
   onSubmit: () => void
@@ -812,6 +826,23 @@ function RouteForm({
             required
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Hosting Mode (Ziti / BrowZer)</Label>
+        <Select value={formData.hosting_mode} onValueChange={(value) => setFormData({ ...formData, hosting_mode: value })}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Select hosting mode" />
+          </SelectTrigger>
+          <SelectContent>
+            {HOSTING_MODES.map(m => (
+              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {HOSTING_MODES.find(m => m.value === formData.hosting_mode)?.hint}
+        </p>
       </div>
 
       <div className="space-y-2">

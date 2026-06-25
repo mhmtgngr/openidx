@@ -438,3 +438,25 @@ func TestEnsureServicePolicyNoopWhenConverged(t *testing.T) {
 		t.Fatalf("EnsureServicePolicy: %v", err)
 	}
 }
+
+func TestNormalizeHostingMode(t *testing.T) {
+	cases := []struct {
+		in     string
+		want   string
+		wantOK bool
+	}{
+		{"", HostingModeIdentity, true}, // empty defaults to identity (reconciler auto-selects)
+		{"identity", HostingModeIdentity, true},
+		{"direct", HostingModeDirect, true},
+		{"hop", HostingModeHop, true},
+		{"HOP", "", false}, // case-sensitive
+		{"bogus", "", false},
+		{"router", "", false},
+	}
+	for _, c := range cases {
+		got, ok := normalizeHostingMode(c.in)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("normalizeHostingMode(%q)=(%q,%v) want (%q,%v)", c.in, got, ok, c.want, c.wantOK)
+		}
+	}
+}
