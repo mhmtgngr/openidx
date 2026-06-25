@@ -23,6 +23,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -3068,7 +3069,10 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 		return
 	}
 
-	// Generate client ID and secret
+	// Generate the primary key + client ID and secret. The INSERT supplies the
+	// id column explicitly, so it must be a valid UUID — leaving it empty makes
+	// Postgres reject "" for the uuid type (500), bypassing the column default.
+	client.ID = uuid.New().String()
 	client.ClientID = "client_" + GenerateRandomToken(16)
 	client.ClientSecret = GenerateRandomToken(32)
 
