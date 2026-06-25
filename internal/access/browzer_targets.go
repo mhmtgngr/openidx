@@ -912,7 +912,67 @@ func (tm *BrowZerTargetManager) RegenerateConfigs(ctx context.Context) error {
 			tm.logger.Warn("APISIX reconcile failed", zap.Error(err))
 		}
 	}
+	// Auto-register each BrowZer app host as a redirect target on the BrowZer
+	// OIDC client, so publishing a clientless app no longer needs a manual
+	// browzer-client edit (the analog of the access-proxy callback auto-register
+	// in the one-click publish flow). Best-effort.
+	if err := tm.ensureBrowZerClientRedirects(ctx); err != nil {
+		tm.logger.Warn("BrowZer client redirect_uri auto-register failed", zap.Error(err))
+	}
 	return nil
+}
+
+// ensureBrowZerClientRedirects makes sure every BrowZer-enabled route's host is
+// an allowed redirect target on the BrowZer OIDC client (https://<host>/,
+// .../auth/callback, and the bare origin). Idempotent: only URIs not already
+// present are appended. No-op if BrowZer OIDC isn't configured. Caller holds
+// tm.mu (RegenerateConfigs); queryBrowZerRoutes is lock-free.
+func (tm *BrowZerTargetManager) ensureBrowZerClientRedirects(ctx context.Context) error {
+	ctx = orgctx.WithBypassRLS(ctx)
+	var clientID string
+	if err := tm.db.Pool.QueryRow(ctx,
+		//orgscope:ignore the BrowZer OIDC client is a single install-wide oauth client shared by every clientless app
+		`SELECT COALESCE(oidc_client_id, '') FROM ziti_browzer_config WHERE enabled = true LIMIT 1`).Scan(&clientID); err != nil || clientID == "" {
+		return nil // BrowZer OIDC not configured — nothing to register
+	}
+	routes, err := tm.queryBrowZerRoutes(ctx)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var desired []string
+	for _, r := range routes {
+		u, perr := url.Parse(r.fromURL)
+		if perr != nil || u.Host == "" {
+			continue
+		}
+		base := u.Scheme + "://" + u.Host
+		for _, uri := range []string{base + "/", base + "/auth/callback", base} {
+			if !seen[uri] {
+				seen[uri] = true
+				desired = append(desired, uri)
+			}
+		}
+	}
+	if len(desired) == 0 {
+		return nil
+	}
+	desiredJSON, _ := json.Marshal(desired)
+	// Append only the URIs not already present (correlated subquery reads the
+	// pre-update redirect_uris). No unique constraint on the array, so the guard
+	// prevents duplicates.
+	_, err = tm.db.Pool.Exec(ctx,
+		//orgscope:ignore install-wide BrowZer OIDC client shared across orgs; keyed by globally-unique client_id
+		`UPDATE oauth_clients SET
+			redirect_uris = redirect_uris || (
+				SELECT COALESCE(jsonb_agg(e), '[]'::jsonb)
+				FROM jsonb_array_elements_text($1::jsonb) e
+				WHERE NOT (redirect_uris @> jsonb_build_array(e))
+			),
+			updated_at = NOW()
+		 WHERE client_id = $2`,
+		desiredJSON, clientID)
+	return err
 }
 
 // writeFileAtomic writes data to a file using a temp file + rename pattern for atomicity.
