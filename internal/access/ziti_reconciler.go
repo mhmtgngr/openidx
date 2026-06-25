@@ -67,19 +67,30 @@ type DesiredRoute struct {
 // Non-BrowZer routes honor an explicit "direct" and otherwise default to
 // "identity" (the access-proxy hosts the terminator).
 func (r DesiredRoute) EffectiveMode() string {
-	if r.HostingMode == HostingModeHop {
+	return effectiveHostingMode(r.HostingMode, r.BrowZerEnabled, r.ToURL)
+}
+
+// effectiveHostingMode resolves a route's stored hosting_mode to the mode that
+// is actually applied. It MUST be the single source of truth used by both the
+// Ziti reconciler (host.v1 target, bind/dial roles, hop-port assignment) AND the
+// bootstrapper/hop/vhost/APISIX config generators — otherwise a route stored as
+// `identity` but auto-promoted to hop gets a hop host.v1 from the reconciler but
+// an https (no hop block) target from the generators, so the runtime does TLS to
+// a plain-HTTP hop port → BrowZer 1010, and hop-port indices diverge.
+func effectiveHostingMode(rawMode string, browzerEnabled bool, toURL string) string {
+	if rawMode == HostingModeHop {
 		return HostingModeHop
 	}
-	if r.BrowZerEnabled {
-		if r.HostingMode == HostingModeDirect {
+	if browzerEnabled {
+		if rawMode == HostingModeDirect {
 			return HostingModeDirect
 		}
-		if needsHopUpstream(r.ToURL) {
+		if needsHopUpstream(toURL) {
 			return HostingModeHop
 		}
 		return HostingModeDirect
 	}
-	if r.HostingMode == HostingModeDirect {
+	if rawMode == HostingModeDirect {
 		return HostingModeDirect
 	}
 	return HostingModeIdentity

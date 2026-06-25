@@ -307,7 +307,12 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 			hostname:    fromURL,
 			pathPrefix:  "/",
 			landingPath: landingPath,
-			hostingMode: hostingMode,
+			// Resolve to the EFFECTIVE mode (these are all browzer_enabled), so the
+			// generators agree with the Ziti reconciler on hop vs direct — a route
+			// stored as identity that auto-promotes to hop must get a hop block,
+			// http target scheme, and a hop port aligned with the reconciler's
+			// host.v1. Using the raw value caused BrowZer 1010 + port cross-wiring.
+			hostingMode: effectiveHostingMode(hostingMode, true, toURL),
 		}
 
 		if parsed, err := url.Parse(fromURL); err == nil && parsed.Host != "" {
