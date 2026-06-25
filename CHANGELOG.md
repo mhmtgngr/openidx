@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Clientless edge on APISIX + console-managed publishing (#211–#221)
+
+Moved the public `:443` edge from nginx to **Apache APISIX** as the single TLS
+terminator, with the access-service pushing per-app BrowZer routes to it
+dynamically; and hardened publishing so a clientless app can be created,
+**edited, renamed, and deleted entirely from the admin console** without leaving
+orphaned overlay/edge state. Resolves a class of failures hit while publishing
+external HTTPS apps (`secops`, `es-dev`): BrowZer `1003`, OAuth/SAML 403s, and
+stranded wiring after a rename/delete.
+
+#### Added
+- **APISIX edge** (`deployments/apisix-edge/`): a dedicated APISIX instance as
+  the sole `:443` edge (TLS via the `*.tdv.org` wildcard), with `seed-edge-routes.sh`
+  for the static routes (API fan-out, `/oauth`, `/scim`, `*.tdv.org` access-proxy)
+  and systemd user units for the access + backend services. nginx is reduced to
+  the admin-console SPA upstream. (#211, #213)
+- **APISIX route reconciler** (`internal/access/apisix_reconciler.go`): the
+  access-service pushes/prunes the per-app `browzer-<app>` edge routes from
+  `proxy_routes` via the Admin API (gated by `APISIX_EDGE_ENABLED`). (#211)
+- **Hosting-mode picker** in the proxy-route create/edit form — **Auto
+  (recommended) / Hop — external·HTTPS / Direct — local·dark** — wired through the
+  proxy-route CRUD (`hosting_mode`). (#220)
+- **Edge routes for the oauth-service's management APIs**: `/api/v1/oauth/*` and
+  `/api/v1/saml/*` now route to `:8006` (were missing, so they fell to the
+  `/api/*` admin catch-all and 404'd). (#218, #219)
+- **Router WSS config artifacts** (`deployments/apisix-edge/ziti-router/`): the
+  edge router serves the clientless BrowZer overlay on `wss:3023` presenting the
+  browser-trusted `*.tdv.org` cert via `transport.wss.identity`. (#214, #215)
+- Docs: clientless edge architecture (`docs/OPENIDX_CLIENTLESS_EDGE_ARCHITECTURE.md`)
+  and a publish-a-service guide with the full certificate matrix
+  (`docs/PUBLISHING_A_SERVICE.md`). (#212, #217)
+
+#### Changed
+- **BrowZer routes auto-select their hosting mode** from the upstream:
+  `EffectiveMode` promotes a BrowZer route off `identity` (never valid for the
+  `#browzer-users` dial) and picks **hop** for external HTTPS / Host-routed
+  upstreams, **direct** for local/HTTP — explicit hop/direct still honored. (#220)
+- **OAuth client management and SAML SP management are now always authenticated**,
+  not just outside `development` — the management groups get the auth middleware
+  unconditionally while the interactive OIDC flow endpoints keep their env-gated
+  behavior. (#218, #219)
+- The external-IdP **OIDC `form_post` bypass is OFF by default**
+  (`BROWZER_OIDC_CALLBACK_PATHS=""`): once the WSS overlay is healthy the service
+  worker tunnels the callback, so a direct bypass splits the cookie context and
+  loops the app back to login. (#216)
+
+#### Fixed
+- **BrowZer `1003` (service not dialable by the overlay)**: the reconciler now
+  **converges** Bind/Dial service policies (upsert by name) instead of
+  create-if-exists, so a route that transitions identity→router-hosted (e.g.
+  BrowZer enabled after OpenZiti) has its stale `#access-proxy-clients` policies
+  corrected to `#ziti-routers` / `#browzer-users`. (#220)
+- **OAuth/SAML management 403/404 through the edge**: routing gap (mis-routed to
+  admin-api) + dev-mode no-auth on the oauth-service. (#218, #219)
+- **Route delete and rename left orphans**: deleting a route now tears down its
+  Ziti service + policies + `host.v1` config + service-edge-router policy, and
+  prunes the APISIX route + bootstrapper target; renaming re-keys the edge wiring
+  to the new host instead of stranding it under the old one. (#221)
+- **BrowZer `1007` (no WSS routers) / `1016` (WSS cert)** on the clientless path,
+  and the **psm Entra login loop** caused by the direct OIDC bypass. (#214, #215, #216)
+
 ### Per-app BrowZer publishing via the OpenZiti reconciler (#201–#208)
 
 Publish multiple apps clientlessly behind BrowZer — each as its own dark Ziti
