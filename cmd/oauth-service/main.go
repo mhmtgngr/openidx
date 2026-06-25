@@ -180,12 +180,17 @@ func main() {
 	// Start background session expiry worker
 	oauthService.StartSessionWorker(ctx)
 
-	// Register routes (apply auth middleware to client management API in non-development environments)
+	// The client-management API (/api/v1/oauth/clients) is ALWAYS authenticated
+	// — it creates/modifies OAuth clients, so it must never be reachable
+	// unauthenticated, including in development. The interactive OIDC flow
+	// endpoints (consent, step-up) are authenticated only outside development,
+	// preserving the friction-free local login flow.
+	authMW := middleware.Auth(cfg.OAuthJWKSURL)
+	var flowAuth []gin.HandlerFunc
 	if cfg.Environment != "development" {
-		oauth.RegisterRoutes(router, oauthService, middleware.Auth(cfg.OAuthJWKSURL))
-	} else {
-		oauth.RegisterRoutes(router, oauthService)
+		flowAuth = append(flowAuth, authMW)
 	}
+	oauth.RegisterRoutes(router, oauthService, authMW, flowAuth...)
 
 	// Initialize health service with database and Redis checks
 	healthService := newhealth.NewHealthService(log)

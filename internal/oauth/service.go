@@ -1126,7 +1126,16 @@ func VerifyPKCE(codeVerifier, codeChallenge, method string) bool {
 
 // RegisterRoutes registers OAuth/OIDC routes.
 // authMiddleware is optional; when provided it protects the client management API and consent endpoint.
-func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.HandlerFunc) {
+// RegisterRoutes wires the oauth-service HTTP routes.
+//
+// clientMgmtAuth guards the /api/v1/oauth/clients management API and is
+// ALWAYS required — these endpoints create and modify OAuth clients, so they
+// must be authenticated in every environment (a nil here is a programmer error
+// and intentionally panics at request time rather than silently exposing the
+// API). The variadic flowAuth is applied to the interactive OIDC flow
+// endpoints (consent, step-up) only when supplied; callers omit it in
+// development to keep the local login flow friction-free.
+func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.HandlerFunc, flowAuth ...gin.HandlerFunc) {
 	// OIDC Discovery - include OPTIONS for CORS preflight (required for BrowZer and browser-based OIDC clients)
 	router.GET("/.well-known/openid-configuration", svc.handleDiscovery)
 	router.OPTIONS("/.well-known/openid-configuration", svc.handleDiscovery)
@@ -1142,15 +1151,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		oauth.GET("/authorize/v2", svc.handleAuthorizeV2)
 
 		// Consent endpoint (requires authentication)
-		if len(authMiddleware) > 0 {
-			oauth.POST("/authorize", append(authMiddleware, svc.handleAuthorizeConsent)...)
+		if len(flowAuth) > 0 {
+			oauth.POST("/authorize", append(flowAuth, svc.handleAuthorizeConsent)...)
 		} else {
 			oauth.POST("/authorize", svc.handleAuthorizeConsent)
 		}
 
 		// Consent endpoint v2 (using new AuthorizeHandler with full PKCE support)
-		if len(authMiddleware) > 0 {
-			oauth.POST("/authorize/v2", append(authMiddleware, svc.handleAuthorizeConsentV2)...)
+		if len(flowAuth) > 0 {
+			oauth.POST("/authorize/v2", append(flowAuth, svc.handleAuthorizeConsentV2)...)
 		} else {
 			oauth.POST("/authorize/v2", svc.handleAuthorizeConsentV2)
 		}
@@ -1180,10 +1189,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// claims. Without the middleware in front, every call sees
 		// empty strings and 401s with "valid session required" even
 		// for a valid bearer — that was the root cause of issue #124.
-		if len(authMiddleware) > 0 {
-			oauth.POST("/stepup-challenge", append(authMiddleware, svc.handleStepUpChallenge)...)
-			oauth.POST("/stepup-verify", append(authMiddleware, svc.handleStepUpVerify)...)
-			oauth.GET("/stepup-status/:id", append(authMiddleware, svc.handleStepUpStatus)...)
+		if len(flowAuth) > 0 {
+			oauth.POST("/stepup-challenge", append(flowAuth, svc.handleStepUpChallenge)...)
+			oauth.POST("/stepup-verify", append(flowAuth, svc.handleStepUpVerify)...)
+			oauth.GET("/stepup-status/:id", append(flowAuth, svc.handleStepUpStatus)...)
 		} else {
 			oauth.POST("/stepup-challenge", svc.handleStepUpChallenge)
 			oauth.POST("/stepup-verify", svc.handleStepUpVerify)
@@ -1226,11 +1235,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		oauth.GET("/session-info", svc.handleSessionInfo)
 	}
 
-	// Client management API (protected by auth middleware when available)
+	// Client management API — always authenticated (creates/modifies OAuth
+	// clients, so it must never be reachable unauthenticated in any env).
 	clients := router.Group("/api/v1/oauth/clients")
-	if len(authMiddleware) > 0 {
-		clients.Use(authMiddleware...)
-	}
+	clients.Use(clientMgmtAuth)
 	{
 		clients.GET("", svc.handleListClients)
 		clients.POST("", svc.handleCreateClient)

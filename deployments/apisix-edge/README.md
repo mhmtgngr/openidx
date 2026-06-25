@@ -18,6 +18,7 @@ Browser ─https:443─► APISIX (oidx-apisix, host-net, etcd prefix /apisix-oi
    │    + /…/signin-oidc POST  → hop port (OIDC form_post bypass; OFF by default —
    │      see note below; only enable if the BrowZer SW can't tunnel the callback)
    ├─ openidx.tdv.org /api/*  → backend services :8001–8007
+   │                 /api/v1/oauth/* → :8006 (client mgmt; beats /api/* admin)
    │                 /oauth,/.well-known → :8006 · /scim → :8003
    │                 /* (SPA) → nginx :8443 (static)
    ├─ browzer.tdv.org → :8445 · ctrl.tdv.org → :1280

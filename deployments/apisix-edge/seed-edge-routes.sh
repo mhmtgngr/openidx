@@ -31,6 +31,9 @@ put openidx-api-governance   "{$H,\"uri\":\"/api/v1/governance/*\",\"priority\":
 put openidx-api-provisioning "{$H,\"uri\":\"/api/v1/provisioning/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8003\":1}}}"
 put openidx-api-audit        "{$H,\"uri\":\"/api/v1/audit/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8004\":1}}}"
 put openidx-api-access       "{$H,\"uri\":\"/api/v1/access/*\",\"priority\":30,\"enable_websocket\":true,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8007\":1}}}"
+# /api/v1/oauth/* (OAuth client management) is owned by the oauth-service :8006,
+# NOT admin-api — it must out-prioritize the /api/* admin catch-all below.
+put openidx-api-oauth        "{$H,\"uri\":\"/api/v1/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
 put openidx-api-admin        "{$H,\"uri\":\"/api/*\",\"priority\":20,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8005\":1}}}"
 put openidx-oauth            "{$H,\"uri\":\"/oauth/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
 put openidx-wellknown        "{$H,\"uri\":\"/.well-known/*\",\"priority\":30,\"upstream\":{\"type\":\"roundrobin\",\"nodes\":{\"127.0.0.1:8006\":1}}}"
