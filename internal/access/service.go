@@ -197,6 +197,43 @@ func (s *Service) enqueueReconcile() {
 	}
 }
 
+// appTileClientID is the deterministic client_id of the Applications launcher
+// tile that mirrors a proxy route, so the route appears on the admin console's
+// Applications page (which reads `applications`, not `proxy_routes`). Matches
+// the one-click publish flow's convention (app_publish.go).
+func appTileClientID(routeID string) string { return "proxy-app-" + routeID }
+
+// upsertAppTile keeps a proxy route's Applications launcher tile in sync, so a
+// route created or edited directly under Proxy Routes shows on the Applications
+// page with working row actions — instead of needing a tile backfilled by hand.
+// Same upsert shape the one-click publish flow produces. Best-effort: a tile
+// failure must not fail the route mutation.
+func (s *Service) upsertAppTile(ctx context.Context, routeID, name, description, fromURL, landingPath string, orgID string) {
+	baseURL := strings.TrimRight(fromURL, "/")
+	if landingPath == "" {
+		landingPath = "/"
+	}
+	baseURL += landingPath
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, org_id)
+		VALUES ($1, $2, $3, $4, 'proxy', 'proxy', $5, '{}', true, $6)
+		ON CONFLICT (client_id) DO UPDATE SET
+			name = EXCLUDED.name, description = EXCLUDED.description,
+			base_url = EXCLUDED.base_url, enabled = true, updated_at = NOW()`,
+		uuid.New().String(), appTileClientID(routeID), name, description, baseURL, orgID)
+	if err != nil {
+		s.logger.Warn("upsert app tile failed", zap.String("route_id", routeID), zap.Error(err))
+	}
+}
+
+// deleteAppTile removes the Applications launcher tile for a deleted proxy route.
+func (s *Service) deleteAppTile(ctx context.Context, routeID string) {
+	if _, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM applications WHERE client_id = $1`, appTileClientID(routeID)); err != nil {
+		s.logger.Warn("delete app tile failed", zap.String("route_id", routeID), zap.Error(err))
+	}
+}
+
 // refreshBrowZerEdge reconverges the clientless edge to the current DB state:
 // it regenerates the bootstrapper/hop/vhost configs (which also reconciles the
 // APISIX BrowZer routes, pruning any keyed to a now-absent or renamed host) and
@@ -913,6 +950,10 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		s.logger.Warn("Guacamole provisioning failed", zap.Error(err))
 	}
 
+	// Mirror the route as an Applications launcher tile so it shows on the
+	// Applications page (which reads `applications`) with working row actions.
+	s.upsertAppTile(c.Request.Context(), id, req.Name, req.Description, req.FromURL, landingPath, org.ID)
+
 	s.logAuditEvent(c, "proxy_route_created", id, "proxy_route", map[string]interface{}{
 		"name":       req.Name,
 		"from_url":   req.FromURL,
@@ -1133,6 +1174,10 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		s.refreshBrowZerEdge(c.Request.Context())
 	}
 
+	// Keep the Applications launcher tile in sync (name/description/base_url),
+	// and backfill one for a route created before tiles were auto-created.
+	s.upsertAppTile(c.Request.Context(), id, existing.Name, existing.Description, existing.FromURL, existing.LandingPath, org.ID)
+
 	c.JSON(http.StatusOK, gin.H{"message": "route updated"})
 }
 
@@ -1170,8 +1215,9 @@ func (s *Service) handleDeleteRoute(c *gin.Context) {
 	}
 
 	// Prune the deleted route's BrowZer edge wiring (APISIX route + bootstrapper
-	// target) and reconcile.
+	// target) and reconcile, and remove its Applications launcher tile.
 	s.refreshBrowZerEdge(c.Request.Context())
+	s.deleteAppTile(c.Request.Context(), id)
 
 	s.logAuditEvent(c, "proxy_route_deleted", id, "proxy_route", nil)
 	c.JSON(http.StatusOK, gin.H{"message": "route deleted"})
