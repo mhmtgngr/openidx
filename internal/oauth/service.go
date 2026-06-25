@@ -3081,6 +3081,27 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 		return
 	}
 
+	// Mirror the new client into the applications table so it shows up in the
+	// admin console's Applications list (which reads `applications`, not
+	// `oauth_clients`) and supports the per-row actions (edit/delete/SSO) that
+	// key off an applications row. Best-effort: the OAuth client is already
+	// created, so a listing-row failure must not fail the registration.
+	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
+		appType := client.Type
+		if appType == "" {
+			appType = "web"
+		}
+		if _, aerr := s.db.Pool.Exec(c.Request.Context(),
+			`INSERT INTO applications (client_id, name, description, type, redirect_uris, org_id)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (client_id) DO NOTHING`,
+			client.ClientID, client.Name, client.Description, appType, client.RedirectURIs, org.ID,
+		); aerr != nil {
+			s.logger.Warn("OAuth client created but applications-list row insert failed",
+				zap.String("client_id", client.ClientID), zap.Error(aerr))
+		}
+	}
+
 	c.JSON(201, client)
 }
 
