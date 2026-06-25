@@ -1498,6 +1498,42 @@ func (zm *ZitiManager) SetupZitiForRoute(ctx context.Context, routeID, serviceNa
 }
 
 // TeardownZitiForRoute removes all Ziti resources for a proxy route
+// deleteEdgeEntityByName deletes every entity in the given management collection
+// (e.g. "configs", "service-edge-router-policies") whose name exactly matches.
+// Used by teardown to remove name-keyed objects we don't track in our own DB.
+func (zm *ZitiManager) deleteEdgeEntityByName(ctx context.Context, collection, name string) error {
+	lookup := fmt.Sprintf("/edge/management/v1/%s?filter=name=%q", collection, name)
+	data, status, err := zm.mgmtRequest("GET", lookup, nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d listing %s", status, collection)
+	}
+	var resp struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return err
+	}
+	for _, e := range resp.Data {
+		if e.Name != name || e.ID == "" {
+			continue
+		}
+		_, ds, derr := zm.mgmtRequest("DELETE", fmt.Sprintf("/edge/management/v1/%s/%s", collection, e.ID), nil)
+		if derr != nil {
+			return derr
+		}
+		if ds != http.StatusOK && ds != http.StatusNoContent {
+			return fmt.Errorf("unexpected status %d deleting %s/%s", ds, collection, e.ID)
+		}
+	}
+	return nil
+}
+
 func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string) error {
 	// Find service for this route
 	var zitiServiceID, serviceName string
@@ -1532,6 +1568,18 @@ func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string)
 		zm.db.Pool.Exec(ctx,
 			//orgscope:ignore Ziti teardown reachable from cross-org reconciliation; service keyed by globally-unique ziti service name / route id
 			"DELETE FROM ziti_services WHERE route_id=$1", routeID)
+
+		// Remove the name-keyed host.v1 config and service-edge-router policy.
+		// These are NOT tracked in ziti_service_policies, so the loop above
+		// misses them — without this they orphan on the controller (the
+		// openidx-<svc>-host config + openidx-serp-<svc> policy left behind by a
+		// route delete or rename).
+		if err := zm.deleteEdgeEntityByName(ctx, "configs", serviceName+"-host"); err != nil {
+			zm.logger.Warn("teardown: delete host.v1 config", zap.String("svc", serviceName), zap.Error(err))
+		}
+		if err := zm.deleteEdgeEntityByName(ctx, "service-edge-router-policies", "openidx-serp-"+serviceName); err != nil {
+			zm.logger.Warn("teardown: delete service-edge-router policy", zap.String("svc", serviceName), zap.Error(err))
+		}
 	}
 
 	// Update the route

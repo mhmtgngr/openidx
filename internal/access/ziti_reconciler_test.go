@@ -460,3 +460,45 @@ func TestNormalizeHostingMode(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteEdgeEntityByName(t *testing.T) {
+	// teardown must look the entity up by name, then DELETE it by id.
+	var deleted string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/configs":
+			_, _ = w.Write([]byte(`{"data":[{"id":"cfg-9","name":"openidx-Foo-host"}]}`))
+		case r.Method == "DELETE" && r.URL.Path == "/edge/management/v1/configs/cfg-9":
+			deleted = "cfg-9"
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	if err := zm.deleteEdgeEntityByName(context.Background(), "configs", "openidx-Foo-host"); err != nil {
+		t.Fatalf("deleteEdgeEntityByName: %v", err)
+	}
+	if deleted != "cfg-9" {
+		t.Fatalf("expected DELETE of cfg-9, got %q", deleted)
+	}
+}
+
+func TestDeleteEdgeEntityByNameNoMatch(t *testing.T) {
+	// No match -> no DELETE issued, no error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			t.Errorf("unexpected DELETE when no entity matches")
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	if err := zm.deleteEdgeEntityByName(context.Background(), "service-edge-router-policies", "openidx-serp-openidx-Missing"); err != nil {
+		t.Fatalf("expected nil error on no match, got %v", err)
+	}
+}

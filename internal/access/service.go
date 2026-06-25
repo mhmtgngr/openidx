@@ -197,6 +197,21 @@ func (s *Service) enqueueReconcile() {
 	}
 }
 
+// refreshBrowZerEdge reconverges the clientless edge to the current DB state:
+// it regenerates the bootstrapper/hop/vhost configs (which also reconciles the
+// APISIX BrowZer routes, pruning any keyed to a now-absent or renamed host) and
+// triggers a Ziti reconcile. Call after a route mutation (create/update/delete)
+// so a deleted route's edge wiring is removed and a renamed route's wiring is
+// re-keyed under the new host instead of stranded under the old one.
+func (s *Service) refreshBrowZerEdge(ctx context.Context) {
+	if s.browzerTargetManager != nil {
+		if err := s.browzerTargetManager.RegenerateConfigs(ctx); err != nil {
+			s.logger.Warn("refreshBrowZerEdge: regenerate configs failed", zap.Error(err))
+		}
+	}
+	s.enqueueReconcile()
+}
+
 // SetBrowZerTargetManager sets the BrowZer target manager
 func (s *Service) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
 	s.browzerTargetManager = btm
@@ -1110,6 +1125,14 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		return
 	}
 
+	// Re-key the clientless edge for Ziti routes: a from_url (host) or hosting-
+	// mode change must move the APISIX BrowZer route + bootstrapper target to the
+	// new host and prune the old, instead of stranding the wiring under the old
+	// host name. No-op for non-Ziti routes.
+	if existing.ZitiEnabled {
+		s.refreshBrowZerEdge(c.Request.Context())
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "route updated"})
 }
 
@@ -1125,6 +1148,16 @@ func (s *Service) handleDeleteRoute(c *gin.Context) {
 	// Deprovision Guacamole connection before deleting route
 	s.deprovisionGuacamoleForRoute(c.Request.Context(), id)
 
+	// Tear down the route's Ziti service + policies + name-keyed edge configs
+	// BEFORE removing the row — the row delete alone leaves them orphaned on the
+	// controller (there is no FK cascade to ziti_services). No-ops if the route
+	// has no Ziti service.
+	if zm := s.ziti(); zm != nil {
+		if err := zm.TeardownZitiForRoute(c.Request.Context(), id); err != nil {
+			s.logger.Warn("ziti teardown on route delete failed", zap.String("route_id", id), zap.Error(err))
+		}
+	}
+
 	result, err := s.db.Pool.Exec(c.Request.Context(), "DELETE FROM proxy_routes WHERE id=$1 AND org_id=$2", id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to delete route", zap.Error(err))
@@ -1135,6 +1168,10 @@ func (s *Service) handleDeleteRoute(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
 		return
 	}
+
+	// Prune the deleted route's BrowZer edge wiring (APISIX route + bootstrapper
+	// target) and reconcile.
+	s.refreshBrowZerEdge(c.Request.Context())
 
 	s.logAuditEvent(c, "proxy_route_deleted", id, "proxy_route", nil)
 	c.JSON(http.StatusOK, gin.H{"message": "route deleted"})
