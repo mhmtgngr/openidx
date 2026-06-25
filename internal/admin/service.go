@@ -685,6 +685,7 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 		argCount++
 	}
 
+	var syncRedirectURIs []string // captured for the backing-OAuth-client sync below
 	if redirectURIsRaw, ok := updates["redirect_uris"]; ok {
 		// Handle both []string and []interface{} types
 		var redirectURIs []string
@@ -701,6 +702,7 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 			setParts = append(setParts, "redirect_uris = $"+fmt.Sprintf("%d", argCount))
 			args = append(args, redirectURIs)
 			argCount++
+			syncRedirectURIs = redirectURIs
 		}
 	}
 
@@ -722,6 +724,44 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 	_, err = s.db.Pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update application: %w", err)
+	}
+
+	// Propagate editable settings to the backing OAuth client. The OAuth flow's
+	// source of truth is oauth_clients, so without this a redirect-URI edit on
+	// the Applications page would update only the listing copy and never take
+	// effect on logins. For a proxy-app tile (client_id="proxy-app-<routeID>")
+	// there is no oauth_clients row, so the UPDATE simply matches nothing.
+	ocSet := []string{}
+	ocArgs := []interface{}{}
+	ocN := 1
+	if name, ok := updates["name"].(string); ok {
+		ocSet = append(ocSet, fmt.Sprintf("name = $%d", ocN))
+		ocArgs = append(ocArgs, name)
+		ocN++
+	}
+	if desc, ok := updates["description"].(string); ok {
+		ocSet = append(ocSet, fmt.Sprintf("description = $%d", ocN))
+		ocArgs = append(ocArgs, desc)
+		ocN++
+	}
+	if len(syncRedirectURIs) > 0 {
+		urisJSON, _ := json.Marshal(syncRedirectURIs)
+		ocSet = append(ocSet, fmt.Sprintf("redirect_uris = $%d", ocN))
+		ocArgs = append(ocArgs, urisJSON)
+		ocN++
+	}
+	if len(ocSet) > 0 {
+		var clientID string
+		if e := s.db.Pool.QueryRow(ctx,
+			"SELECT client_id FROM applications WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&clientID); e == nil {
+			ocSet = append(ocSet, "updated_at = NOW()")
+			ocArgs = append(ocArgs, clientID)
+			ocQuery := fmt.Sprintf("UPDATE oauth_clients SET %s WHERE client_id = $%d", strings.Join(ocSet, ", "), ocN)
+			if _, e := s.db.Pool.Exec(ctx, ocQuery, ocArgs...); e != nil {
+				s.logger.Warn("update application: failed to sync backing OAuth client",
+					zap.String("client_id", clientID), zap.Error(e))
+			}
+		}
 	}
 
 	return nil
