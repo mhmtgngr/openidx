@@ -1,8 +1,11 @@
 # OpenZiti edge router — BrowZer WSS configuration
 
 The BrowZer browser runtime connects to the overlay over a **WSS (secure
-WebSocket) edge listener** on the router. If the router has no WSS listener, the
-BrowZer runtime fails with **`code: 1007 — No WSS-Enabled Routers found`**.
+WebSocket) edge listener** on the router. Two distinct failure modes:
+- **`code: 1007 — No WSS-Enabled Routers found`** → the router has no wss listener.
+- **`code: 1016 — … Connect to Edge Router [wss://…:3023/ws], certificates issue`**
+  → the wss listener presents a cert the browser doesn't trust (the ziti CA cert
+  instead of the public `*.tdv.org` cert). Fixed by `transport.wss.identity` below.
 
 This captures the WSS-specific router config that the OpenZiti quickstart image's
 bootstrap does **not** generate, so it survives router recreation. Reference:
@@ -25,8 +28,27 @@ bootstrap does **not** generate, so it survives router recreation. Reference:
    ```
    plus the `ws:` options block (writeTimeout/readTimeout/idleTimeout).
 
-2. **A browser-trusted server cert for the WSS advertise host**, via
-   `identity.alt_server_certs` — the real `*.tdv.org` GlobalSign cert:
+2. **A browser-trusted server cert presented ON THE WSS BINDING**, via
+   **`transport.wss.identity`** (this is the part that actually makes the wss
+   listener present the public cert). On ziti **v1.6.12** the wss listener does
+   **NOT** honor `identity.alt_server_certs` for SNI selection — verified: even an
+   exact-SAN cert in `alt_server_certs` was ignored and the wss listener kept
+   serving the ziti CA cert, so the browser rejected it (`1016`). The wss binding
+   reads its cert from `transport.wss.identity`:
+   ```yaml
+   transport:
+     wss:                                 # NOTE: "wss", not "ws" (v1.6.12 rejects transport.ws)
+       writeTimeout: 10
+       readTimeout: 5
+       idleTimeout: 120
+       identity:
+         server_cert: "/persistent/tdv-fullchain.pem"  # public *.tdv.org cert (presented to browsers)
+         key:         "/persistent/tdv-key.pem"
+         ca:          "/persistent/router.cas"          # required field; ziti CA bundle is fine
+   ```
+   Keep `identity.alt_server_certs` too (it satisfies the config-load advertise
+   validation for `browzer.tdv.org` and covers the tls edge), but it is
+   `transport.wss.identity` that fixes the browser handshake:
    ```yaml
    identity:
      cert:        "router.cert"                       # ziti-CA client identity (enrolled)
@@ -34,9 +56,16 @@ bootstrap does **not** generate, so it survives router recreation. Reference:
      key:         "/persistent/router.key"
      ca:          "/persistent/router.cas"
      alt_server_certs:
-       - server_cert: "/persistent/tdv-fullchain.pem" # *.tdv.org cert -> valid for browzer.tdv.org
+       - server_cert: "/persistent/tdv-fullchain.pem"
          server_key:  "/persistent/tdv-key.pem"
    ```
+
+   **Ruled out (don't waste time on these):** plain `ws:` listener →
+   `transport.ws not supported. use transport.wss`; nginx/LB TLS-terminating in
+   front of the wss → ziti requires upstream ALPN that nginx won't forward
+   (openziti/ziti#2202, "not planned"); making `identity.server_cert` the public
+   cert → breaks the `tls:3022` SDK edge (the access-proxy validates the router
+   against the ziti CA).
 
 ## Gotcha: the enrolled cert can't carry `browzer.tdv.org`
 
@@ -90,6 +119,14 @@ regenerating `config.yml` and wiping the WSS listener / `alt_server_certs`.
 ```bash
 ss -ltn | grep 3023                                  # WSS listening
 podman exec oidx-ziti-controller ziti edge list edge-routers   # oidx-router online=true
+# the wss listener MUST present the public *.tdv.org cert (not the ziti CA cert):
+openssl s_client -connect 127.0.0.1:3023 -servername browzer.tdv.org -alpn http/1.1 </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer            # expect CN=*.tdv.org, issuer GlobalSign
+# end-to-end WS upgrade with chain validation (expect HTTP/1.1 101, ssl_verify=0):
+curl -s -o /dev/null -w '%{http_code} verify=%{ssl_verify_result}\n' --resolve browzer.tdv.org:3023:127.0.0.1 \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+  -H 'Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==' --cacert /path/to/tdv-fullchain.pem \
+  https://browzer.tdv.org:3023/ws
 ```
 Then load `https://browzer.tdv.org`-fronted apps (psm/netgraph) in a browser and
 confirm no `1007`.
