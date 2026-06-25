@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +22,9 @@ const (
 	// headers before forwarding to the upstream.
 	HostingModeIdentity = "identity"
 	// HostingModeDirect — the edge router hosts the service via a fixed host.v1
-	// config. Used automatically for all BrowZer routes.
+	// config pointing at the route's to_url. Auto-selected for BrowZer routes
+	// whose upstream is local/HTTP (the BrowZer WASM path can reach it directly);
+	// external HTTPS upstreams auto-select hop instead (see EffectiveMode).
 	HostingModeDirect = "direct"
 	// HostingModeHop — the edge router hosts a per-app service whose host.v1
 	// points at the shared TLS hop nginx; the hop SNI-demuxes and rewrites the
@@ -50,21 +54,60 @@ type DesiredRoute struct {
 	HopPort int
 }
 
-// EffectiveMode resolves the hosting mode. An explicit "hop" hosting_mode wins
-// over all other rules (including the BrowZer→direct promotion). BrowZer routes
-// without an explicit mode are forced to "direct". Everything else defaults to
-// "identity".
+// EffectiveMode resolves the hosting mode. identity mode is never valid for a
+// BrowZer route (its dial policy would grant #access-proxy-clients, not
+// #browzer-users → BrowZer error 1003), so a BrowZer route is always promoted
+// to a router-hosted mode:
+//   - an explicit "hop" or "direct" hosting_mode is honored as-is;
+//   - otherwise the mode is auto-selected from the upstream — external HTTPS
+//     upstreams need hop (Host rewrite + relaxed upstream TLS, because the
+//     BrowZer WASM path sends "Host: unknown" with no SNI), local/HTTP
+//     upstreams use direct.
+//
+// Non-BrowZer routes honor an explicit "direct" and otherwise default to
+// "identity" (the access-proxy hosts the terminator).
 func (r DesiredRoute) EffectiveMode() string {
 	if r.HostingMode == HostingModeHop {
 		return HostingModeHop
 	}
 	if r.BrowZerEnabled {
+		if r.HostingMode == HostingModeDirect {
+			return HostingModeDirect
+		}
+		if needsHopUpstream(r.ToURL) {
+			return HostingModeHop
+		}
 		return HostingModeDirect
 	}
 	if r.HostingMode == HostingModeDirect {
 		return HostingModeDirect
 	}
 	return HostingModeIdentity
+}
+
+// needsHopUpstream reports whether a BrowZer upstream requires hop hosting: an
+// https upstream on a non-loopback host. Such upstreams are typically
+// Host-routed and/or present a certificate the direct WASM-TLS path can't
+// satisfy (it sends "Host: unknown" with no SNI), so the hop must rewrite the
+// Host and relax upstream TLS verification. Local or HTTP upstreams use direct.
+func needsHopUpstream(toURL string) bool {
+	u, err := url.Parse(toURL)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	return !isLoopbackHost(u.Hostname())
+}
+
+// isLoopbackHost reports whether host is empty, "localhost", or a loopback IP.
+func isLoopbackHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "", "localhost":
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // ParseHopAddr splits a "host:port" hop address, defaulting the port to 8095

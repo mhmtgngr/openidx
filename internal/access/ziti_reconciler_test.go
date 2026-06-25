@@ -230,7 +230,9 @@ func TestEnsureHostingDirectCreatesHostV1AndRouterBind(t *testing.T) {
 		hostedServices: make(map[string]*hostedService)}
 	rec := &ZitiReconciler{logger: zap.NewNop(), status: map[string]string{}}
 
-	d := DesiredRoute{ServiceName: "psm-zt", ToURL: "https://192.168.152.112:443", BrowZerEnabled: true}
+	// Explicit direct: an external HTTPS upstream would auto-select hop, so the
+	// mode is set explicitly here to exercise the direct-hosting path.
+	d := DesiredRoute{ServiceName: "psm-zt", ToURL: "https://192.168.152.112:443", BrowZerEnabled: true, HostingMode: HostingModeDirect}
 	rec.reconcileRoute(context.Background(), zm, d)
 
 	if !createdConfig {
@@ -327,13 +329,28 @@ func extractIdentityRoles(b []byte) []string {
 	return p.IdentityRoles
 }
 
-func TestEffectiveModeBrowZerIdentityPromotedToDirect(t *testing.T) {
-	// identity mode is never valid for a BrowZer route; the resolver auto-
-	// corrects it to a router-hosted mode (direct) so the dial policy is
-	// granted to #browzer-users rather than #access-proxy-clients.
-	d := DesiredRoute{ServiceName: "openidx-Test", BrowZerEnabled: true, HostingMode: HostingModeIdentity}
-	if got := d.EffectiveMode(); got != HostingModeDirect {
-		t.Fatalf("browzer+identity should promote to direct, got %q", got)
+func TestEffectiveModeBrowZerAutoSelect(t *testing.T) {
+	// identity mode is never valid for a BrowZer route; the resolver auto-selects
+	// a router-hosted mode from the upstream — hop for external HTTPS, direct for
+	// local/HTTP — and honors an explicit hop/direct.
+	cases := []struct {
+		name string
+		d    DesiredRoute
+		want string
+	}{
+		{"external https -> hop", DesiredRoute{BrowZerEnabled: true, HostingMode: HostingModeIdentity, ToURL: "https://secops.tdv.org"}, HostingModeHop},
+		{"external https ip -> hop", DesiredRoute{BrowZerEnabled: true, ToURL: "https://192.168.152.112:443"}, HostingModeHop},
+		{"local http -> direct", DesiredRoute{BrowZerEnabled: true, HostingMode: HostingModeIdentity, ToURL: "http://127.0.0.1:9000"}, HostingModeDirect},
+		{"loopback https -> direct", DesiredRoute{BrowZerEnabled: true, ToURL: "https://localhost:8443"}, HostingModeDirect},
+		{"explicit hop wins", DesiredRoute{BrowZerEnabled: true, HostingMode: HostingModeHop, ToURL: "http://127.0.0.1:9000"}, HostingModeHop},
+		{"explicit direct honored on external https", DesiredRoute{BrowZerEnabled: true, HostingMode: HostingModeDirect, ToURL: "https://secops.tdv.org"}, HostingModeDirect},
+		{"empty toURL -> direct", DesiredRoute{BrowZerEnabled: true, HostingMode: HostingModeIdentity}, HostingModeDirect},
+		{"non-browzer identity stays identity", DesiredRoute{HostingMode: HostingModeIdentity, ToURL: "https://secops.tdv.org"}, HostingModeIdentity},
+	}
+	for _, c := range cases {
+		if got := c.d.EffectiveMode(); got != c.want {
+			t.Errorf("%s: EffectiveMode=%q want %q", c.name, got, c.want)
+		}
 	}
 }
 
