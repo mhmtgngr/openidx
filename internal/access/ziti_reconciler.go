@@ -169,6 +169,16 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 			rec.logger.Warn("reconciler: scan route failed", zap.Error(err))
 			continue
 		}
+		// identity mode is never valid for a BrowZer route — the BrowZer runtime
+		// dials as #browzer-users, which identity-mode policies don't grant
+		// (BrowZer error 1003). EffectiveMode auto-corrects it to direct; warn so
+		// operators see the divergence and pick hop explicitly for external/HTTPS
+		// upstreams (direct does end-to-end WASM TLS the browser must trust).
+		if d.BrowZerEnabled && d.HostingMode == HostingModeIdentity {
+			rec.logger.Warn("BrowZer route stored as identity mode; auto-correcting to router-hosted (direct) — set hosting_mode=hop for external/HTTPS upstreams",
+				zap.String("svc", d.ServiceName),
+				zap.String("effective_mode", d.EffectiveMode()))
+		}
 		out = append(out, d)
 	}
 	// Surface mid-iteration errors (e.g. a dropped connection) so a partial read
@@ -289,13 +299,19 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 		bindIdentity = "#ziti-routers"
 		dialIdentity = "#browzer-users"
 	}
-	if _, err := zm.CreateServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
+	// Use EnsureServicePolicy (upsert) rather than CreateServicePolicy so a
+	// hosting-mode transition self-heals: a route Ziti-provisioned in identity
+	// mode and later flipped to router-hosted (e.g. BrowZer enabled afterwards)
+	// has its stale #access-proxy-clients Bind/Dial corrected to
+	// #ziti-routers/#browzer-users. Plain create-if-exists left them stale,
+	// surfacing as BrowZer error 1003 (service not dialable by #browzer-users).
+	if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
 		[]string{svcRole}, []string{bindIdentity}); err != nil {
-		rec.logger.Debug("bind policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+		rec.logger.Warn("bind policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
-	if _, err := zm.CreateServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
+	if _, err := zm.EnsureServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
 		[]string{svcRole}, []string{dialIdentity}); err != nil {
-		rec.logger.Debug("dial policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
 		[]string{svcRole}, []string{"#all"}); err != nil {

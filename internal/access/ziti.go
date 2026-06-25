@@ -1080,6 +1080,78 @@ func (zm *ZitiManager) CreateServicePolicy(ctx context.Context, name, policyType
 	return resp.Data.ID, nil
 }
 
+// GetServicePolicyByName returns the service policy with the exact name, or
+// (nil, nil) when none matches.
+func (zm *ZitiManager) GetServicePolicyByName(ctx context.Context, name string) (*ZitiServicePolicyInfo, error) {
+	q := url.QueryEscape(fmt.Sprintf(`name="%s"`, name))
+	respData, statusCode, err := zm.mgmtRequest("GET",
+		"/edge/management/v1/service-policies?filter="+q, nil)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d listing service policies", statusCode)
+	}
+	var resp struct {
+		Data []ZitiServicePolicyInfo `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Data) == 0 {
+		return nil, nil
+	}
+	return &resp.Data[0], nil
+}
+
+// EnsureServicePolicy converges a service policy to the desired type and roles.
+// It creates the policy when absent and UPDATES it in place when an existing
+// policy of the same name has a different type/serviceRoles/identityRoles.
+//
+// This is what makes a hosting-mode transition self-heal: when a route flips
+// from identity-mode (Bind/Dial granted to #access-proxy-clients) to
+// router-hosted (#ziti-routers / #browzer-users) — e.g. when BrowZer is enabled
+// on a route that was already Ziti-provisioned in identity mode — the stale
+// policy is corrected rather than left untouched (plain create-if-exists would
+// silently keep the wrong identity roles, which manifests as BrowZer error 1003).
+func (zm *ZitiManager) EnsureServicePolicy(ctx context.Context, name, policyType string, serviceRoles, identityRoles []string) (string, error) {
+	existing, err := zm.GetServicePolicyByName(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if existing == nil {
+		return zm.CreateServicePolicy(ctx, name, policyType, serviceRoles, identityRoles)
+	}
+	if existing.Type == policyType &&
+		sameRoleSet(existing.ServiceRoles, serviceRoles) &&
+		sameRoleSet(existing.IdentityRoles, identityRoles) {
+		return existing.ID, nil // already converged
+	}
+	if err := zm.UpdateServicePolicy(ctx, existing.ID, name, policyType, serviceRoles, identityRoles); err != nil {
+		return "", err
+	}
+	return existing.ID, nil
+}
+
+// sameRoleSet reports whether two role slices contain the same elements,
+// independent of order (Ziti does not guarantee role ordering on read-back).
+func sameRoleSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, r := range a {
+		seen[r]++
+	}
+	for _, r := range b {
+		if seen[r] == 0 {
+			return false
+		}
+		seen[r]--
+	}
+	return true
+}
+
 // DeleteServicePolicy deletes a service policy
 func (zm *ZitiManager) DeleteServicePolicy(ctx context.Context, zitiID string) error {
 	_, statusCode, err := zm.mgmtRequest("DELETE",

@@ -204,6 +204,8 @@ func TestEnsureHostingDirectCreatesHostV1AndRouterBind(t *testing.T) {
 			createdServiceWithConfig = bytesContains(b, "cfg-1")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"data":{"id":"svc-1"}}`))
+		case r.URL.Path == "/edge/management/v1/service-policies" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":[]}`)) // GetServicePolicyByName: none yet -> create
 		case r.URL.Path == "/edge/management/v1/service-policies" && r.Method == "POST":
 			b, _ := io.ReadAll(r.Body)
 			if bytesContains(b, "Bind") {
@@ -274,6 +276,8 @@ func TestEnsureServiceHopUsesHopAddr(t *testing.T) {
 			createdServiceWithConfig = bytesContains(b, "cfg-1")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"data":{"id":"svc-1"}}`))
+		case r.URL.Path == "/edge/management/v1/service-policies" && r.Method == "GET":
+			_, _ = w.Write([]byte(`{"data":[]}`)) // GetServicePolicyByName: none yet -> create
 		case r.URL.Path == "/edge/management/v1/service-policies" && r.Method == "POST":
 			b, _ := io.ReadAll(r.Body)
 			if bytesContains(b, "Bind") {
@@ -321,4 +325,99 @@ func extractIdentityRoles(b []byte) []string {
 	}
 	_ = json.Unmarshal(b, &p)
 	return p.IdentityRoles
+}
+
+func TestEffectiveModeBrowZerIdentityPromotedToDirect(t *testing.T) {
+	// identity mode is never valid for a BrowZer route; the resolver auto-
+	// corrects it to a router-hosted mode (direct) so the dial policy is
+	// granted to #browzer-users rather than #access-proxy-clients.
+	d := DesiredRoute{ServiceName: "openidx-Test", BrowZerEnabled: true, HostingMode: HostingModeIdentity}
+	if got := d.EffectiveMode(); got != HostingModeDirect {
+		t.Fatalf("browzer+identity should promote to direct, got %q", got)
+	}
+}
+
+func TestSameRoleSet(t *testing.T) {
+	cases := []struct {
+		a, b []string
+		want bool
+	}{
+		{[]string{"#browzer-users"}, []string{"#browzer-users"}, true},
+		{[]string{"#a", "#b"}, []string{"#b", "#a"}, true}, // order-insensitive
+		{[]string{"#access-proxy-clients"}, []string{"#browzer-users"}, false},
+		{[]string{"#a"}, []string{"#a", "#b"}, false},
+		{nil, nil, true},
+		{[]string{"#a", "#a"}, []string{"#a", "#b"}, false}, // multiset, not set
+	}
+	for i, c := range cases {
+		if got := sameRoleSet(c.a, c.b); got != c.want {
+			t.Errorf("case %d: sameRoleSet(%v,%v)=%v want %v", i, c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestEnsureServicePolicyUpdatesStaleRoles(t *testing.T) {
+	// An existing identity-mode dial policy (#access-proxy-clients) must be
+	// UPDATED in place (PUT) to the desired #browzer-users when a route flips
+	// to router-hosted — not left stale (the BrowZer-1003 self-heal).
+	var putBody []byte
+	var putHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/service-policies":
+			_, _ = w.Write([]byte(`{"data":[{"id":"pol-1","name":"openidx-dial-openidx-Test","type":"Dial","serviceRoles":["#openidx-Test"],"identityRoles":["#access-proxy-clients"]}]}`))
+		case r.Method == "PUT" && r.URL.Path == "/edge/management/v1/service-policies/pol-1":
+			putHit = true
+			putBody, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{"id":"pol-1"}}`))
+		case r.Method == "POST" && r.URL.Path == "/edge/management/v1/service-policies":
+			t.Errorf("unexpected create POST — an existing policy must be updated in place")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"data":{"id":"pol-x"}}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	id, err := zm.EnsureServicePolicy(context.Background(), "openidx-dial-openidx-Test", "Dial",
+		[]string{"#openidx-Test"}, []string{"#browzer-users"})
+	if err != nil {
+		t.Fatalf("EnsureServicePolicy: %v", err)
+	}
+	if id != "pol-1" {
+		t.Fatalf("expected existing id pol-1, got %q", id)
+	}
+	if !putHit {
+		t.Fatalf("expected a PUT to update the stale policy")
+	}
+	if !bytesContains(putBody, "browzer-users") {
+		t.Fatalf("PUT body must carry the corrected identity role, got %s", putBody)
+	}
+}
+
+func TestEnsureServicePolicyNoopWhenConverged(t *testing.T) {
+	// When the existing policy already matches the desired roles, neither a PUT
+	// nor a create POST is issued.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/edge/management/v1/service-policies":
+			_, _ = w.Write([]byte(`{"data":[{"id":"pol-1","name":"openidx-dial-openidx-Test","type":"Dial","serviceRoles":["#openidx-Test"],"identityRoles":["#browzer-users"]}]}`))
+		case r.Method == "PUT", r.Method == "POST" && r.URL.Path == "/edge/management/v1/service-policies":
+			t.Errorf("unexpected %s — a converged policy should be a no-op", r.Method)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	}))
+	defer srv.Close()
+	zm := &ZitiManager{logger: zap.NewNop(), mgmtToken: "fake", mgmtClient: srv.Client(),
+		cfg: &config.Config{ZitiCtrlURL: srv.URL}, initialized: true}
+	if _, err := zm.EnsureServicePolicy(context.Background(), "openidx-dial-openidx-Test", "Dial",
+		[]string{"#openidx-Test"}, []string{"#browzer-users"}); err != nil {
+		t.Fatalf("EnsureServicePolicy: %v", err)
+	}
 }
