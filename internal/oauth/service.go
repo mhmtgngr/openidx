@@ -1248,8 +1248,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		clients.POST("/:id/regenerate-secret", svc.handleRegenerateClientSecret)
 	}
 
-	// SAML IdP and Service Provider endpoints
-	svc.RegisterSAMLIdPRoutes(router)
+	// SAML IdP and Service Provider endpoints (SP management shares the
+	// always-on client-management auth; public /saml/idp endpoints stay open).
+	svc.RegisterSAMLIdPRoutes(router, clientMgmtAuth)
 
 	// Social login endpoints
 	svc.RegisterSocialLoginRoutes(router)

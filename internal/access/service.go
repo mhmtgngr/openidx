@@ -60,8 +60,24 @@ type ProxyRoute struct {
 	MaxRiskScore          int               `json:"max_risk_score"`
 	GuacamoleConnectionID string            `json:"guacamole_connection_id,omitempty"`
 	LandingPath           string            `json:"landing_path,omitempty"`
+	HostingMode           string            `json:"hosting_mode,omitempty"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
+}
+
+// normalizeHostingMode validates a hosting_mode value from the API. An empty
+// value defaults to identity (the reconciler then auto-selects hop/direct for
+// BrowZer routes — see ZitiReconciler EffectiveMode). Returns ok=false for any
+// other value so the handler can reject it with a 400.
+func normalizeHostingMode(mode string) (string, bool) {
+	switch mode {
+	case "":
+		return HostingModeIdentity, true
+	case HostingModeIdentity, HostingModeDirect, HostingModeHop:
+		return mode, true
+	default:
+		return "", false
+	}
 }
 
 // ProxySession represents an active proxy session
@@ -648,6 +664,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
+		        COALESCE(hosting_mode, 'identity'),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE org_id = $3 ORDER BY priority DESC, name ASC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
@@ -671,7 +688,7 @@ func (s *Service) handleListRoutes(c *gin.Context) {
 			&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 			&r.RequireDeviceTrust, &allowedCountries,
 			&r.MaxRiskScore, &guacConnID,
-			&r.LandingPath,
+			&r.LandingPath, &r.HostingMode,
 			&r.CreatedAt, &r.UpdatedAt)
 		if err != nil {
 			s.logger.Error("Failed to scan route", zap.Error(err))
@@ -783,6 +800,7 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		AllowedCountries   []string          `json:"allowed_countries"`
 		MaxRiskScore       int               `json:"max_risk_score"`
 		LandingPath        string            `json:"landing_path"`
+		HostingMode        string            `json:"hosting_mode"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -793,6 +811,12 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 	landingPath := strings.TrimSpace(req.LandingPath)
 	if landingPath == "" {
 		landingPath = "/"
+	}
+
+	hostingMode, ok := normalizeHostingMode(req.HostingMode)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hosting_mode (expected identity, direct, or hop)"})
+		return
 	}
 
 	id := uuid.New().String()
@@ -850,15 +874,15 @@ func (s *Service) handleCreateRoute(c *gin.Context) {
 		  cors_allowed_origins, custom_headers, enabled, priority,
 		  idp_id, route_type, remote_host, remote_port,
 		  reverify_interval, posture_check_ids, inline_policy,
-		  require_device_trust, allowed_countries, max_risk_score, landing_path, org_id)
+		  require_device_trust, allowed_countries, max_risk_score, landing_path, hosting_mode, org_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
+		         $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
 		id, req.Name, req.Description, req.FromURL, req.ToURL, req.PreserveHost,
 		requireAuth, rolesJSON, groupsJSON, policyJSON, req.IdleTimeout, req.AbsoluteTimeout,
 		corsJSON, headersJSON, enabled, req.Priority,
 		idpID, req.RouteType, req.RemoteHost, req.RemotePort,
 		req.ReverifyInterval, postureJSON, req.InlinePolicy,
-		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, org.ID)
+		req.RequireDeviceTrust, countriesJSON, req.MaxRiskScore, landingPath, hostingMode, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route"})
@@ -928,6 +952,7 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		AllowedCountries   []string          `json:"allowed_countries"`
 		MaxRiskScore       *int              `json:"max_risk_score"`
 		LandingPath        *string           `json:"landing_path"`
+		HostingMode        *string           `json:"hosting_mode"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1033,6 +1058,14 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 	if existing.LandingPath == "" {
 		existing.LandingPath = "/"
 	}
+	if req.HostingMode != nil {
+		mode, ok := normalizeHostingMode(*req.HostingMode)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid hosting_mode (expected identity, direct, or hop)"})
+			return
+		}
+		existing.HostingMode = mode
+	}
 
 	rolesJSON, _ := json.Marshal(existing.AllowedRoles)
 	groupsJSON, _ := json.Marshal(existing.AllowedGroups)
@@ -1061,8 +1094,8 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		  idp_id=$16, route_type=$17, remote_host=$18, remote_port=$19,
 		  reverify_interval=$20, posture_check_ids=$21, inline_policy=$22,
 		  require_device_trust=$23, allowed_countries=$24, max_risk_score=$25,
-		  landing_path=$26, updated_at=NOW()
-		 WHERE id=$27 AND org_id=$28`,
+		  landing_path=$26, hosting_mode=$27, updated_at=NOW()
+		 WHERE id=$28 AND org_id=$29`,
 		existing.Name, existing.Description, existing.FromURL, existing.ToURL,
 		existing.PreserveHost, existing.RequireAuth, rolesJSON, groupsJSON,
 		policyJSON, existing.IdleTimeout, existing.AbsoluteTimeout, corsJSON,
@@ -1070,7 +1103,7 @@ func (s *Service) handleUpdateRoute(c *gin.Context) {
 		idpID, existing.RouteType, existing.RemoteHost, existing.RemotePort,
 		existing.ReverifyInterval, postureJSON, existing.InlinePolicy,
 		existing.RequireDeviceTrust, countriesJSON, existing.MaxRiskScore,
-		existing.LandingPath, id, org.ID)
+		existing.LandingPath, existing.HostingMode, id, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to update route", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update route"})
@@ -1687,6 +1720,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		        COALESCE(require_device_trust, false), allowed_countries,
 		        COALESCE(max_risk_score, 100), guacamole_connection_id,
 		        COALESCE(landing_path, '/'),
+		        COALESCE(hosting_mode, 'identity'),
 		        created_at, updated_at
 		 FROM proxy_routes WHERE id=$1`+orgFilter, args...).Scan(
 		&r.ID, &r.Name, &desc, &r.FromURL, &r.ToURL, &r.PreserveHost,
@@ -1697,7 +1731,7 @@ func (s *Service) getRouteByID(ctx context.Context, id string) (*ProxyRoute, err
 		&r.ReverifyInterval, &postureCheckIDs, &inlinePolicy,
 		&r.RequireDeviceTrust, &allowedCountries,
 		&r.MaxRiskScore, &guacConnID,
-		&r.LandingPath,
+		&r.LandingPath, &r.HostingMode,
 		&r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err

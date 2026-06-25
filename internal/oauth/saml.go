@@ -1116,8 +1116,15 @@ func any(key string, value interface{}) zap.Field {
 	return zap.Any(key, value)
 }
 
-// RegisterSAMLIdPRoutes registers all SAML IdP routes
-func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine) {
+// RegisterSAMLIdPRoutes registers all SAML IdP routes.
+//
+// mgmtAuth guards the /api/v1/saml/service-providers management API and is
+// ALWAYS required — these endpoints create/modify SAML service providers, so
+// they must never be reachable unauthenticated (a nil here is a programmer
+// error and intentionally panics at request time). The public SAML protocol
+// endpoints under /saml/idp (metadata, SSO, SLO) stay unauthenticated by
+// design — they are consumed by relying parties and browsers.
+func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine, mgmtAuth gin.HandlerFunc) {
 	// IdP endpoints
 	idp := router.Group("/saml/idp")
 	{
@@ -1133,8 +1140,9 @@ func (s *Service) RegisterSAMLIdPRoutes(router *gin.Engine) {
 		idp.POST("/slo", s.handleIdPSLO)
 	}
 
-	// SP management API endpoints
+	// SP management API endpoints — always authenticated.
 	spAPI := router.Group("/api/v1/saml/service-providers")
+	spAPI.Use(mgmtAuth)
 	{
 		// List all SPs with pagination
 		spAPI.GET("", s.handleListSAMLServiceProviders)

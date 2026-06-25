@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +22,9 @@ const (
 	// headers before forwarding to the upstream.
 	HostingModeIdentity = "identity"
 	// HostingModeDirect — the edge router hosts the service via a fixed host.v1
-	// config. Used automatically for all BrowZer routes.
+	// config pointing at the route's to_url. Auto-selected for BrowZer routes
+	// whose upstream is local/HTTP (the BrowZer WASM path can reach it directly);
+	// external HTTPS upstreams auto-select hop instead (see EffectiveMode).
 	HostingModeDirect = "direct"
 	// HostingModeHop — the edge router hosts a per-app service whose host.v1
 	// points at the shared TLS hop nginx; the hop SNI-demuxes and rewrites the
@@ -50,21 +54,60 @@ type DesiredRoute struct {
 	HopPort int
 }
 
-// EffectiveMode resolves the hosting mode. An explicit "hop" hosting_mode wins
-// over all other rules (including the BrowZer→direct promotion). BrowZer routes
-// without an explicit mode are forced to "direct". Everything else defaults to
-// "identity".
+// EffectiveMode resolves the hosting mode. identity mode is never valid for a
+// BrowZer route (its dial policy would grant #access-proxy-clients, not
+// #browzer-users → BrowZer error 1003), so a BrowZer route is always promoted
+// to a router-hosted mode:
+//   - an explicit "hop" or "direct" hosting_mode is honored as-is;
+//   - otherwise the mode is auto-selected from the upstream — external HTTPS
+//     upstreams need hop (Host rewrite + relaxed upstream TLS, because the
+//     BrowZer WASM path sends "Host: unknown" with no SNI), local/HTTP
+//     upstreams use direct.
+//
+// Non-BrowZer routes honor an explicit "direct" and otherwise default to
+// "identity" (the access-proxy hosts the terminator).
 func (r DesiredRoute) EffectiveMode() string {
 	if r.HostingMode == HostingModeHop {
 		return HostingModeHop
 	}
 	if r.BrowZerEnabled {
+		if r.HostingMode == HostingModeDirect {
+			return HostingModeDirect
+		}
+		if needsHopUpstream(r.ToURL) {
+			return HostingModeHop
+		}
 		return HostingModeDirect
 	}
 	if r.HostingMode == HostingModeDirect {
 		return HostingModeDirect
 	}
 	return HostingModeIdentity
+}
+
+// needsHopUpstream reports whether a BrowZer upstream requires hop hosting: an
+// https upstream on a non-loopback host. Such upstreams are typically
+// Host-routed and/or present a certificate the direct WASM-TLS path can't
+// satisfy (it sends "Host: unknown" with no SNI), so the hop must rewrite the
+// Host and relax upstream TLS verification. Local or HTTP upstreams use direct.
+func needsHopUpstream(toURL string) bool {
+	u, err := url.Parse(toURL)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	return !isLoopbackHost(u.Hostname())
+}
+
+// isLoopbackHost reports whether host is empty, "localhost", or a loopback IP.
+func isLoopbackHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "", "localhost":
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // ParseHopAddr splits a "host:port" hop address, defaulting the port to 8095
@@ -168,6 +211,16 @@ func (rec *ZitiReconciler) loadDesiredRoutes(ctx context.Context) ([]DesiredRout
 		if err := rows.Scan(&d.ServiceName, &d.ToURL, &d.HostingMode, &d.BrowZerEnabled); err != nil {
 			rec.logger.Warn("reconciler: scan route failed", zap.Error(err))
 			continue
+		}
+		// identity mode is never valid for a BrowZer route — the BrowZer runtime
+		// dials as #browzer-users, which identity-mode policies don't grant
+		// (BrowZer error 1003). EffectiveMode auto-corrects it to direct; warn so
+		// operators see the divergence and pick hop explicitly for external/HTTPS
+		// upstreams (direct does end-to-end WASM TLS the browser must trust).
+		if d.BrowZerEnabled && d.HostingMode == HostingModeIdentity {
+			rec.logger.Warn("BrowZer route stored as identity mode; auto-correcting to router-hosted (direct) — set hosting_mode=hop for external/HTTPS upstreams",
+				zap.String("svc", d.ServiceName),
+				zap.String("effective_mode", d.EffectiveMode()))
 		}
 		out = append(out, d)
 	}
@@ -289,13 +342,19 @@ func (rec *ZitiReconciler) ensurePolicies(ctx context.Context, zm *ZitiManager, 
 		bindIdentity = "#ziti-routers"
 		dialIdentity = "#browzer-users"
 	}
-	if _, err := zm.CreateServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
+	// Use EnsureServicePolicy (upsert) rather than CreateServicePolicy so a
+	// hosting-mode transition self-heals: a route Ziti-provisioned in identity
+	// mode and later flipped to router-hosted (e.g. BrowZer enabled afterwards)
+	// has its stale #access-proxy-clients Bind/Dial corrected to
+	// #ziti-routers/#browzer-users. Plain create-if-exists left them stale,
+	// surfacing as BrowZer error 1003 (service not dialable by #browzer-users).
+	if _, err := zm.EnsureServicePolicy(ctx, "openidx-bind-"+d.ServiceName, "Bind",
 		[]string{svcRole}, []string{bindIdentity}); err != nil {
-		rec.logger.Debug("bind policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+		rec.logger.Warn("bind policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
-	if _, err := zm.CreateServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
+	if _, err := zm.EnsureServicePolicy(ctx, "openidx-dial-"+d.ServiceName, "Dial",
 		[]string{svcRole}, []string{dialIdentity}); err != nil {
-		rec.logger.Debug("dial policy (may already exist)", zap.String("svc", d.ServiceName), zap.Error(err))
+		rec.logger.Warn("dial policy converge failed", zap.String("svc", d.ServiceName), zap.Error(err))
 	}
 	if err := zm.EnsureServiceEdgeRouterPolicy(ctx, "openidx-serp-"+d.ServiceName,
 		[]string{svcRole}, []string{"#all"}); err != nil {
