@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-06-26
+
 ### Governance & devices: policies that enforce + real device trust (#234–#239)
 
 Made the governance and devices domains actually work end-to-end. The policy
@@ -1021,5 +1023,6 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/mhmtgngr/openidx/compare/v1.6.0...v1.7.0
 [1.0.0]: https://github.com/mhmtgngr/openidx/releases/tag/v1.0.0
