@@ -94,6 +94,21 @@ func (e *HealthEngine) ScanAndHeal(ctx context.Context, applySafe bool) Report {
 	return rep
 }
 
+// HealRoute applies the cheap, safe post-mutation heals for a single route:
+// re-sync its launcher tile and enqueue a Ziti reconcile. The mutation flows
+// (publish/consolidate/feature-toggle) already RegenerateConfigs, so this
+// deliberately does NOT — it's a safety net guaranteeing the tile + reconcile
+// happen even if a caller path forgets. Safe to call on a nil engine.
+func (e *HealthEngine) HealRoute(ctx context.Context, routeID string) {
+	if e == nil {
+		return
+	}
+	if err := e.svc.healRouteTile(ctx, routeID); err != nil {
+		e.logger.Debug("post-mutation tile heal", zap.String("route", routeID), zap.Error(err))
+	}
+	e.svc.enqueueReconcile()
+}
+
 // FixOne runs a specific check's Fix for a subject after re-detecting it.
 func (e *HealthEngine) FixOne(ctx context.Context, checkID, subject string) error {
 	for _, c := range e.checks {

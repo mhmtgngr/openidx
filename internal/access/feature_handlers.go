@@ -143,6 +143,8 @@ func (s *Service) enableFeature(c *gin.Context, routeID string, feature FeatureN
 		s.enqueueReconcile()
 	}
 
+	s.healthEngine.HealRoute(c.Request.Context(), routeID)
+
 	// Log audit event
 	s.logAuditEvent(c, "feature_enabled", routeID, "proxy_route", map[string]interface{}{
 		"feature": string(feature),
