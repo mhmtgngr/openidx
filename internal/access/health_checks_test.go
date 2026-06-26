@@ -42,3 +42,12 @@ func TestDedupBrowzerConfigDetectFlagsExtraRows(t *testing.T) {
 		t.Fatalf("1 row should be ok, got %+v", f)
 	}
 }
+
+func TestOrphanZitiServices(t *testing.T) {
+	controller := []string{"openidx-A", "openidx-B", "openidx-Orphan", "non-openidx"}
+	desired := map[string]bool{"openidx-A": true, "openidx-B": true}
+	got := orphanOpenidxServices(controller, desired)
+	if len(got) != 1 || got[0] != "openidx-Orphan" {
+		t.Fatalf("expected [openidx-Orphan], got %v", got)
+	}
+}

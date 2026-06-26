@@ -42,6 +42,18 @@ func dedupBrowzerConfigFinding(rowCount int) Finding {
 	return f
 }
 
+// orphanOpenidxServices returns controller service names that we own (openidx-*)
+// but that no desired route claims. Non-openidx services are left alone.
+func orphanOpenidxServices(controller []string, desired map[string]bool) []string {
+	var out []string
+	for _, n := range controller {
+		if strings.HasPrefix(n, "openidx-") && !desired[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // registerChecks builds the ordered check list. Later tasks (4,5) append more.
 func registerChecks(s *Service) []Check {
 	return []Check{
@@ -71,6 +83,132 @@ func registerChecks(s *Service) []Check {
 					return nil
 				}
 				return s.browzerTargetManager.RegenerateConfigs(ctx)
+			}},
+
+		// route ↔ Ziti service (DB desired vs controller) — safe: reconcile converges.
+		&fnCheck{id: "route-ziti", domain: "ziti",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				rows, err := s.db.Pool.Query(ctx,
+					`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled AND enabled AND ziti_service_name <> ''`)
+				if err != nil {
+					return nil, err
+				}
+				var want []string
+				for rows.Next() {
+					var n string
+					if rows.Scan(&n) == nil {
+						want = append(want, n)
+					}
+				}
+				rows.Close()
+				zm := s.ziti()
+				if zm == nil {
+					return []Finding{{CheckID: "route-ziti", Domain: "ziti", Status: "ok"}}, nil
+				}
+				ents, err := zm.listEdgeEntities(ctx, "services")
+				if err != nil {
+					return nil, err
+				}
+				have := map[string]bool{}
+				for _, e := range ents {
+					have[e.Name] = true
+				}
+				var out []Finding
+				for _, n := range want {
+					if !have[n] {
+						out = append(out, Finding{CheckID: "route-ziti", Domain: "ziti", Severity: "error",
+							Status: "drift", Safe: true, Subject: n, Detail: "route service missing on controller", Action: "reconcile"})
+					}
+				}
+				if len(out) == 0 {
+					out = append(out, Finding{CheckID: "route-ziti", Domain: "ziti", Status: "ok"})
+				}
+				return out, nil
+			},
+			fix: func(ctx context.Context, f Finding) error { s.enqueueReconcile(); return nil }},
+
+		// orphan Ziti controller services (openidx-* with no route) — RISKY: teardown.
+		&fnCheck{id: "ziti-orphan", domain: "ziti",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				zm := s.ziti()
+				if zm == nil {
+					return []Finding{{CheckID: "ziti-orphan", Domain: "ziti", Status: "ok"}}, nil
+				}
+				rows, _ := s.db.Pool.Query(ctx,
+					`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled AND ziti_service_name <> ''`)
+				desired := map[string]bool{}
+				if rows != nil {
+					for rows.Next() {
+						var n string
+						if rows.Scan(&n) == nil {
+							desired[n] = true
+						}
+					}
+					rows.Close()
+				}
+				ents, err := zm.listEdgeEntities(ctx, "services")
+				if err != nil {
+					return nil, err
+				}
+				var names []string
+				for _, e := range ents {
+					names = append(names, e.Name)
+				}
+				var out []Finding
+				for _, n := range orphanOpenidxServices(names, desired) {
+					out = append(out, Finding{CheckID: "ziti-orphan", Domain: "ziti", Severity: "warn",
+						Status: "orphan", Safe: false, Subject: n, Detail: "controller service with no owning route", Action: "tear down service"})
+				}
+				if len(out) == 0 {
+					out = append(out, Finding{CheckID: "ziti-orphan", Domain: "ziti", Status: "ok"})
+				}
+				return out, nil
+			},
+			fix: func(ctx context.Context, f Finding) error {
+				zm := s.ziti()
+				if zm == nil {
+					return nil
+				}
+				return zm.TeardownZitiServiceByName(ctx, f.Subject)
+			}},
+
+		// per-host uniqueness: >1 proxy_route on one host — RISKY: consolidate (subject = host).
+		&fnCheck{id: "host-unique", domain: "access",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				rows, err := s.db.Pool.Query(ctx, `
+					SELECT lower(split_part(split_part(from_url,'//',2),'/',1)) AS host, count(*)
+					FROM proxy_routes WHERE ziti_enabled AND enabled
+					GROUP BY 1 HAVING count(*) > 1`)
+				if err != nil {
+					return nil, err
+				}
+				var out []Finding
+				for rows.Next() {
+					var host string
+					var n int
+					if rows.Scan(&host, &n) == nil {
+						out = append(out, Finding{CheckID: "host-unique", Domain: "access", Severity: "error",
+							Status: "drift", Safe: false, Subject: host,
+							Detail: fmt.Sprintf("%d routes share host %s", n, host), Action: "consolidate app"})
+					}
+				}
+				rows.Close()
+				if len(out) == 0 {
+					out = append(out, Finding{CheckID: "host-unique", Domain: "access", Status: "ok"})
+				}
+				return out, nil
+			},
+			fix: func(ctx context.Context, f Finding) error {
+				var appID, org string
+				err := s.db.Pool.QueryRow(ctx, `
+					SELECT pa.id::text, pa.org_id::text FROM published_apps pa
+					JOIN proxy_routes r ON r.from_url LIKE 'https://'||$1||'%'
+					WHERE pa.public_host = $1 LIMIT 1`, f.Subject).Scan(&appID, &org)
+				if err != nil {
+					return fmt.Errorf("no published_app for host %s: %w", f.Subject, err)
+				}
+				_, _, err = s.consolidateApp(ctx, org, appID, "")
+				return err
 			}},
 	}
 }
