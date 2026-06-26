@@ -70,10 +70,19 @@ func buildBrowZerAPISIXRoutes(routes []browzerRouteInfo, opts apisixRouteOpts) [
 	ports := assignHopPorts(hopNames, opts.hopBasePort)
 
 	var out []apisixRoute
+	seenHost := make(map[string]bool, len(routes))
 	for _, r := range routes {
 		if r.hostname == "" {
 			continue
 		}
+		// One APISIX route per host: the route name is browzer-<host-slug>, so
+		// same-host routes would otherwise overwrite each other on PUT (last
+		// wins). queryBrowZerRoutes already dedups by host; this is a defensive
+		// guard so the pure builder is collision-proof in isolation.
+		if seenHost[r.hostname] {
+			continue
+		}
+		seenHost[r.hostname] = true
 		slug := apisixSlug(r.hostname)
 		name := "browzer-" + slug
 

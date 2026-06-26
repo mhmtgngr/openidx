@@ -324,7 +324,46 @@ func (tm *BrowZerTargetManager) queryBrowZerRoutes(ctx context.Context) ([]browz
 
 		routes = append(routes, info)
 	}
-	return routes, nil
+	return dedupRoutesByHost(routes, tm.logger), nil
+}
+
+// dedupRoutesByHost collapses routes that share a hostname to a single canonical
+// route. Ziti/BrowZer is per-host (the bootstrapper demuxes by SNI, APISIX keys
+// by host slug, the overlay tunnels the whole host), so multiple routes on one
+// host would collide — same APISIX route name (last PUT wins), ambiguous
+// same-vhost bootstrapper targets, and divergent hop-port sets. The canonical
+// route is the host-root (pathPrefix=="/"); otherwise the first seen, which —
+// since queryBrowZerRoutes orders by priority DESC, name — is the highest
+// priority. Input order is preserved for the survivors.
+func dedupRoutesByHost(routes []browzerRouteInfo, logger *zap.Logger) []browzerRouteInfo {
+	type slot struct {
+		idx    int
+		isRoot bool
+	}
+	seen := make(map[string]slot, len(routes))
+	out := make([]browzerRouteInfo, 0, len(routes))
+	for _, r := range routes {
+		if r.hostname == "" {
+			out = append(out, r)
+			continue
+		}
+		isRoot := r.pathPrefix == "" || r.pathPrefix == "/"
+		if s, ok := seen[r.hostname]; ok {
+			// Prefer the host-root route over a path-scoped one.
+			if isRoot && !s.isRoot {
+				out[s.idx] = r
+				seen[r.hostname] = slot{idx: s.idx, isRoot: true}
+			}
+			if logger != nil {
+				logger.Warn("collapsing duplicate same-host BrowZer route (Ziti/BrowZer is per-host)",
+					zap.String("host", r.hostname), zap.String("dropped_service", r.serviceName))
+			}
+			continue
+		}
+		seen[r.hostname] = slot{idx: len(out), isRoot: isRoot}
+		out = append(out, r)
+	}
+	return out
 }
 
 // buildBrowZerTargets maps each BrowZer route to a bootstrapper target. Each app

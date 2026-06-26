@@ -127,3 +127,28 @@ func TestAssignHopPortsDeterministic(t *testing.T) {
 		t.Fatalf("got %v", m)
 	}
 }
+
+func TestDedupRoutesByHost(t *testing.T) {
+	// Multiple routes on one host collapse to a single canonical route (the
+	// host-root wins); distinct hosts are preserved.
+	in := []browzerRouteInfo{
+		{hostname: "kibana-dev.tdv.org", serviceName: "openidx-kibana-devadmin", pathPrefix: "/admin"},
+		{hostname: "kibana-dev.tdv.org", serviceName: "openidx-kibana-dev", pathPrefix: "/"},
+		{hostname: "kibana-dev.tdv.org", serviceName: "openidx-kibana-devapi", pathPrefix: "/api"},
+		{hostname: "psm.tdv.org", serviceName: "openidx-PSM", pathPrefix: "/"},
+	}
+	out := dedupRoutesByHost(in, nil)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 routes (one per host), got %d", len(out))
+	}
+	byHost := map[string]browzerRouteInfo{}
+	for _, r := range out {
+		byHost[r.hostname] = r
+	}
+	if byHost["kibana-dev.tdv.org"].serviceName != "openidx-kibana-dev" {
+		t.Fatalf("host-root route must win, got %q", byHost["kibana-dev.tdv.org"].serviceName)
+	}
+	if _, ok := byHost["psm.tdv.org"]; !ok {
+		t.Fatal("distinct host psm.tdv.org must be preserved")
+	}
+}
