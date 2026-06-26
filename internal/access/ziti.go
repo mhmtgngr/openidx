@@ -1534,6 +1534,34 @@ func (zm *ZitiManager) deleteEdgeEntityByName(ctx context.Context, collection, n
 	return nil
 }
 
+// edgeEntity is the minimal shape of a Ziti management object (service, policy,
+// config, serp) used for orphan detection.
+type edgeEntity struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// listEdgeEntities returns ALL entities in a management collection. ListServices
+// and friends use the default page size (10) and silently truncate; this passes
+// an explicit high limit so orphan detection sees everything at our scale.
+func (zm *ZitiManager) listEdgeEntities(ctx context.Context, collection string) ([]edgeEntity, error) {
+	data, status, err := zm.mgmtRequest("GET",
+		"/edge/management/v1/"+collection+"?limit=1000", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d listing %s", status, collection)
+	}
+	var resp struct {
+		Data []edgeEntity `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
 // TeardownZitiServiceByName deletes a Ziti service and its associated objects
 // (bind/dial service policies, service-edge-router policy, host.v1 config) by
 // name. The reconciler creates controller services declaratively WITHOUT a
