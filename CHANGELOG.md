@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Governance & devices: policies that enforce + real device trust (#234–#239)
+
+Made the governance and devices domains actually work end-to-end. The policy
+engine was a permissive no-op and device-trust signals were never populated, so
+Zero-Trust controls silently passed everything; the device-trust approval
+workflow existed but had no entry point; and a redundant policy engine sat
+unwired. After this work: governance policies evaluate and enforce, device
+posture and per-device trust flow into every access decision (forward-auth and
+continuous re-verification), untrusted devices on trust-required routes file
+approval requests that flip trust on approval, and the dead engine is gone.
+
+#### Added
+- **Device posture bridge** (D1): agent posture reports are written to
+  `device_posture_results` so the access context evaluator enforces posture for
+  the reporting device; migration v50 adds the upsert key. (#234)
+- **Service-to-service auth for policy evaluation** (G1): a shared
+  `INTERNAL_SERVICE_TOKEN`; the access-proxy presents it as `X-Internal-Token`
+  (constant-time, scoped to governance `/evaluate`) so the policy call is
+  authenticated instead of 401-failing-closed. (#235)
+- **Device-trust request auto-creation** (D3): when an untrusted device hits a
+  `require_device_trust` route, the proxy files a deduped pending
+  `device_trust_requests` row — the missing entry point that feeds the existing
+  approval queue. Approve/reject now notify the user, and new requests notify
+  org admins, via the notifications service. (#238)
+- **Migration v52**: reconcile the continuous-verify columns that existed only in
+  `init-db.sql` (`proxy_sessions.{last_verified_at,verification_failures,geo_*,
+  idp_id,device_trusted}`, `user_sessions.device_trusted`) onto migrate-based
+  installs. (#239)
+
+#### Changed
+- **The governance policy engine actually enforces** (G1): `GetPolicy` /
+  `ListPolicies` now load `policy_rules` (via a shared `loadPolicyRules`), so the
+  per-type evaluators (separation-of-duty, risk, timebound, location,
+  conditional-access) and the step-up loop run against real rules instead of an
+  empty set. (#235)
+- **`ProxySession.DeviceTrusted` is populated** from `known_devices.trusted`,
+  matched by the request's device fingerprint (D2) — feeding the context checks,
+  the inline policy DSL, and the governance `/evaluate` call. The continuous
+  verifier re-derives it live each pass rather than reading a stale column.
+  (#237, #239)
+
+#### Fixed
+- **Policy rule loading queried non-existent columns** (`condition/effect/
+  priority` vs the real `rule_type/conditions/actions`); the error was swallowed,
+  so rules silently never loaded — the true root cause behind "policies don't
+  enforce." (#235)
+- **The continuous session verifier errored every run** on migrate-based installs
+  — its driver query referenced `proxy_sessions` columns present only in
+  `init-db.sql`. (#239)
+
+#### Removed
+- **The dead `ZTPolicy` subsystem** (handler, store, model, tests; ~4,900 LOC)
+  — never wired into any service, no table, no UI, its general-ABAC niche already
+  served by the live `abac-policies` surface. Migration v51 drops the (never
+  created) `zt_policies` / `zt_policy_versions` tables as a belt. (#236)
+
 ### Clientless edge on APISIX + console-managed publishing (#211–#221)
 
 Moved the public `:443` edge from nginx to **Apache APISIX** as the single TLS
