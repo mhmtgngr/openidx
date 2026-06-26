@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -212,17 +213,26 @@ func registerChecks(s *Service) []Check {
 				return out, nil
 			},
 			fix: func(ctx context.Context, f Finding) error {
+				// Deterministic pick: if several published_apps somehow share the
+				// host, consolidate the oldest (stable across re-runs) rather than
+				// an arbitrary LIMIT 1. consolidateApp is idempotent, so a second
+				// run on the same host is harmless if the choice ever differs.
 				var appID, org string
 				err := s.db.Pool.QueryRow(ctx, `
-					SELECT pa.id::text, pa.org_id::text FROM published_apps pa
-					JOIN proxy_routes r ON r.from_url LIKE 'https://'||$1||'%'
-					WHERE pa.public_host = $1 LIMIT 1`, f.Subject).Scan(&appID, &org)
+					SELECT id::text, org_id::text FROM published_apps
+					WHERE public_host = $1 ORDER BY created_at, id LIMIT 1`, f.Subject).Scan(&appID, &org)
 				if err != nil {
 					return fmt.Errorf("no published_app for host %s: %w", f.Subject, err)
 				}
 				_, _, err = s.consolidateApp(ctx, org, appID, "")
 				return err
 			}},
+
+		// INVARIANT: the report-only checks below (app-client, identity-ziti,
+		// domain-presence) intentionally have NO fix func and emit Safe:false
+		// findings — they surface a human-judgment situation, not auto-fixable
+		// drift. Keep them Safe:false: a Safe:true finding with no fix would be
+		// reported as "Healed" by ScanAndHeal while doing nothing.
 
 		// app ↔ oauth_client: real OIDC app (non-proxy tile) without a client — report only.
 		&fnCheck{id: "app-client", domain: "apps",
@@ -428,6 +438,20 @@ func hostOf(rawURL string) string {
 	return ""
 }
 
+// bytesContainsHost reports whether any redirect URI in the oauth_clients
+// redirect_uris JSON array has exactly the given host. It parses the array and
+// compares hostnames (rather than a raw substring match, which could false-
+// match a host that is a prefix/substring of another, e.g. app.tdv.org vs
+// app.tdv.org.evil.com). Unparseable input → false.
 func bytesContainsHost(jsonArr []byte, host string) bool {
-	return strings.Contains(string(jsonArr), "//"+host)
+	var uris []string
+	if json.Unmarshal(jsonArr, &uris) != nil {
+		return false
+	}
+	for _, u := range uris {
+		if hostOf(u) == host {
+			return true
+		}
+	}
+	return false
 }
