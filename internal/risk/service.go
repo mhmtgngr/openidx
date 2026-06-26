@@ -74,8 +74,17 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *za
 	}
 }
 
-// ComputeDeviceFingerprint generates a SHA256 fingerprint from IP subnet and User-Agent
+// ComputeDeviceFingerprint generates a SHA256 fingerprint from IP subnet and User-Agent.
+// Method form retained for existing callers; delegates to the package-level function
+// so other services (e.g. the access proxy) can compute an identical fingerprint
+// without constructing a risk.Service.
 func (s *Service) ComputeDeviceFingerprint(ipAddress, userAgent string) string {
+	return ComputeDeviceFingerprint(ipAddress, userAgent)
+}
+
+// ComputeDeviceFingerprint generates a SHA256 fingerprint from the IP's /24 subnet
+// and the User-Agent: sha256("<x.y.z.0/24>|<userAgent>"). Pure and deterministic.
+func ComputeDeviceFingerprint(ipAddress, userAgent string) string {
 	// Extract /24 subnet from IP
 	subnet := ipAddress
 	ip := net.ParseIP(ipAddress)
