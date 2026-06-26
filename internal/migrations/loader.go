@@ -362,5 +362,12 @@ func allMigrations() []*Migration {
 			UpSQL:       devicePostureUpsertKeyUp,
 			DownSQL:     devicePostureUpsertKeyDown,
 		},
+		{
+			Version:     51,
+			Name:        "drop_zt_policies",
+			Description: "Drop the dead ZTPolicy tables (zt_policies, zt_policy_versions). Never wired into any service; absent on real installs. Belt cleanup, idempotent (DROP ... IF EXISTS).",
+			UpSQL:       ztPolicyDropUp,
+			DownSQL:     ztPolicyDropDown,
+		},
 	}
 }
