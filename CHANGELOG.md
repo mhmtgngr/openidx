@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-06-26
+
+### Fixed
+- **A fresh `apisix-edge` install can now stand up the full eight-service stack
+  from a clean checkout.** The `gateway` service (`:8008`) is tracked as a
+  systemd unit and added to the install's `enable --now` list (it had been
+  running as an unmanaged `/tmp` process); the runbook now builds the service
+  binaries into `~/oidx-runtime/bin` (the units' `ExecStart` targets); and the
+  access-service launch wrapper ships as a sanitized `run-access.sh.example`
+  (previously untracked, so a fresh install left the access-proxy with no start
+  script). (#243, #244, #245)
+
 ## [1.7.0] - 2026-06-26
 
 ### Governance & devices: policies that enforce + real device trust (#234–#239)
@@ -1023,6 +1035,7 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/mhmtgngr/openidx/compare/v1.6.0...v1.7.0
 [1.0.0]: https://github.com/mhmtgngr/openidx/releases/tag/v1.0.0
