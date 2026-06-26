@@ -74,17 +74,30 @@ func (zm *ZitiManager) BootstrapBrowZer(ctx context.Context, oauthIssuer, oauthJ
 		}
 	}
 
-	// 6. Persist config to DB
-	_, err = zm.db.Pool.Exec(ctx,
-		`INSERT INTO ziti_browzer_config (id, external_jwt_signer_id, auth_policy_id, dial_policy_id, oidc_issuer, oidc_client_id, enabled)
-		 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true)
-		 ON CONFLICT ON CONSTRAINT ziti_browzer_config_pkey DO UPDATE SET
-		   external_jwt_signer_id=$1, auth_policy_id=$2, dial_policy_id=$3,
-		   oidc_issuer=$4, oidc_client_id=$5, enabled=true, updated_at=NOW()`,
+	// 6. Persist config to DB. ziti_browzer_config is an install-wide SINGLETON,
+	// but the previous upsert generated a fresh gen_random_uuid() id every
+	// bootstrap, so the `ON CONFLICT (id)` never fired and each startup appended
+	// a new row (the table grew to dozens). Update the canonical (kept) row in
+	// place, insert one only if the table is empty, then prune any duplicates
+	// left by the old bug — leaving exactly one row. "Canonical" matches the
+	// health doctor's dedup rule (enabled DESC, updated_at DESC).
+	const canonical = `(SELECT id FROM ziti_browzer_config ORDER BY enabled DESC, updated_at DESC NULLS LAST, id LIMIT 1)`
+	res, err := zm.db.Pool.Exec(ctx,
+		`UPDATE ziti_browzer_config SET external_jwt_signer_id=$1, auth_policy_id=$2, dial_policy_id=$3,
+		   oidc_issuer=$4, oidc_client_id=$5, enabled=true, updated_at=NOW()
+		 WHERE id = `+canonical,
 		signerID, authPolicyID, dialPolicyID, oauthIssuer, browzerClientID)
+	if err == nil && res.RowsAffected() == 0 {
+		_, err = zm.db.Pool.Exec(ctx,
+			`INSERT INTO ziti_browzer_config (id, external_jwt_signer_id, auth_policy_id, dial_policy_id, oidc_issuer, oidc_client_id, enabled)
+			 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, true)`,
+			signerID, authPolicyID, dialPolicyID, oauthIssuer, browzerClientID)
+	}
 	if err != nil {
 		zm.logger.Warn("Failed to persist BrowZer config to DB (non-fatal)", zap.Error(err))
 	}
+	// Collapse any rows the earlier insert-new-uuid bug accumulated.
+	zm.db.Pool.Exec(ctx, `DELETE FROM ziti_browzer_config WHERE id <> `+canonical)
 
 	zm.logger.Info("BrowZer bootstrap complete")
 	return nil
