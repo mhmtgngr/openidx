@@ -306,7 +306,7 @@ func registerChecks(s *Service) []Check {
 			detect: func(ctx context.Context) ([]Finding, error) {
 				var policies, devices int
 				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM policies`).Scan(&policies)
-				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM devices`).Scan(&devices)
+				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM known_devices`).Scan(&devices)
 				return []Finding{presenceFinding("domain-presence", "governance", policies), presenceFinding("domain-presence", "devices", devices)}, nil
 			}},
 	}

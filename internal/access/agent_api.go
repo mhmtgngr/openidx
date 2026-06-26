@@ -469,6 +469,46 @@ func enforcementAction(severity, status string) string {
 	}
 }
 
+// bridgeDevicePostureResult mirrors one agent posture result into
+// device_posture_results — the table the access-proxy posture enforcement reads
+// (agents only write agent_posture_results, so without this every posture check
+// fails closed for lack of data). It keys on the enrolling user's Ziti identity
+// (ziti_identities.id, a uuid), because the enforcement reader resolves posture
+// by the session user's identity, so the bridged row is the one it looks up.
+// Best-effort: a failure is logged and never fails the agent report.
+func (h *AgentAPIHandler) bridgeDevicePostureResult(ctx context.Context, agentID, checkType, status string, detailsJSON []byte) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+	var identityID string
+	if err := h.db.Pool.QueryRow(ctx, `
+		SELECT zi.id::text FROM ziti_identities zi
+		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id
+		WHERE ea.agent_id = $1 LIMIT 1`, agentID).Scan(&identityID); err != nil {
+		h.logger.Debug("posture bridge: no Ziti identity for agent's enrolling user",
+			zap.String("agent_id", agentID), zap.Error(err))
+		return
+	}
+	var checkID, orgID string
+	if err := h.db.Pool.QueryRow(ctx, `
+		SELECT id::text, COALESCE(org_id::text, '') FROM posture_checks
+		WHERE check_type = $1 AND enabled ORDER BY id LIMIT 1`, checkType).Scan(&checkID, &orgID); err != nil {
+		h.logger.Debug("posture bridge: no enabled posture_check for check_type",
+			zap.String("check_type", checkType), zap.Error(err))
+		return
+	}
+	if _, err := h.db.Pool.Exec(ctx, `
+		INSERT INTO device_posture_results (id, identity_id, check_id, passed, details, checked_at, expires_at, org_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW() + INTERVAL '24 hours', NULLIF($5,'')::uuid)
+		ON CONFLICT (identity_id, check_id) DO UPDATE SET
+			passed = EXCLUDED.passed, details = EXCLUDED.details,
+			checked_at = NOW(), expires_at = EXCLUDED.expires_at`,
+		identityID, checkID, status == "pass", string(detailsJSON), orgID); err != nil {
+		h.logger.Warn("posture bridge: failed to write device_posture_results",
+			zap.String("agent_id", agentID), zap.String("check_type", checkType), zap.Error(err))
+	}
+}
+
 // HandleReport accepts a status report from an enrolled agent, persists posture
 // results, updates the agent's compliance score, and returns 202 Accepted.
 func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
@@ -544,6 +584,7 @@ func (h *AgentAPIHandler) HandleReport(c *gin.Context) {
 				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW() + INTERVAL '24 hours', $8, $9)
 			`, agentID, r.CheckType, r.Result.Status, r.Result.Score, r.Severity,
 				string(detailsJSON), r.Result.Message, enforced, action)
+			h.bridgeDevicePostureResult(ctx, agentID, r.CheckType, r.Result.Status, detailsJSON)
 			if dbErr != nil {
 				h.logger.Warn("Failed to persist posture result",
 					zap.String("agent_id", agentID),
