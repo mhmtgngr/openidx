@@ -255,6 +255,12 @@ func main() {
 	zitiProvider := access.NewZitiProvider()
 	accessService.SetZitiProvider(zitiProvider)
 
+	// Wire the Relations & Integrity Doctor engine. Must run after the
+	// browzerTargetManager and zitiProvider setters above, since registerChecks
+	// captures svc.db / svc.browzerTargetManager / svc.zitiProvider / svc.logger.
+	// Checks are lazy (nothing is dialed at construction).
+	accessService.SetHealthEngine(access.NewHealthEngine(accessService))
+
 	// Initialize Apache Guacamole client if configured
 	if cfg.GuacamoleURL != "" {
 		log.Info("Initializing Apache Guacamole integration...", zap.String("url", cfg.GuacamoleURL))
