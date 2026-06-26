@@ -27,6 +27,15 @@ On the box: `POST /api/v1/governance/policies` (a `timebound` policy with a rule
 
 **No seed migration.** A fresh install legitimately has zero policies (the operator authors them); the doctor's "governance has no records" is an accurate informational nudge, not a defect. We do not force an example policy on every deployment.
 
+### 1b. Authenticate the access→governance `/evaluate` call (discovered during live verification)
+
+Live verification surfaced a second, more fundamental break the original scope missed: the access-proxy calls `POST /api/v1/governance/policies/:id/evaluate` (`internal/access/service.go` `evaluatePolicies`) with **no `Authorization` header**, while that route is behind `openIDXAuthMiddleware`, which requires a valid RS256 user JWT. The running governance returns **401** to the unauthenticated call; `evaluatePolicies` then reads the 401 body as `allowed:false` and the proxy **fails closed** — so attaching *any* policy to a route would deny *all* traffic to it, regardless of the rules. Loading the rules (1) is necessary but not sufficient; without auth the evaluators never run.
+
+Fix (chosen approach — internal shared-secret header):
+- Add `InternalServiceToken` to the shared config (`internal_service_token` / `INTERNAL_SERVICE_TOKEN`), read by every participating service. Empty disables the path (JWT-only).
+- `openIDXAuthMiddleware` accepts a matching `X-Internal-Token` (constant-time compare) **only** on the `/evaluate` endpoints — scoped so a leaked token can't drive user-facing governance operations. The org is resolved by the existing global `TenantResolver` (`X-Org-ID` / `DefaultOrgFallback`), which runs before the group's auth middleware. Single-default-org installs resolve the default org; multi-tenant org-passing from the proxy is a follow-on (the proxy's `ProxyRoute`/`ProxySession` carry no org id today).
+- `evaluatePolicies` sends `X-Internal-Token` and treats a non-200 as a *visible* error (logged, fails closed) rather than a silent deny.
+
 ## Out of scope (follow-on)
 - G2 (register or delete the unused `ZTPolicyHandler` / `zt_policies`).
 - A denial `reason` in the `/evaluate` response (the contract stays `{allowed, step_up_required}`).

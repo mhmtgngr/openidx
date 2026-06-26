@@ -4,6 +4,7 @@ package governance
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -154,6 +155,19 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens for governance service
 func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Internal service-to-service path: the access-proxy authenticates its
+		// policy /evaluate call with a shared secret instead of a user JWT.
+		// Scoped to the evaluate endpoints (constant-time compare) so a leaked
+		// token can't drive user-facing governance operations. The org is
+		// resolved by the global TenantResolver (X-Org-ID / default fallback).
+		if tok := s.config.InternalServiceToken; tok != "" &&
+			strings.HasSuffix(c.Request.URL.Path, "/evaluate") &&
+			subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Token")), []byte(tok)) == 1 {
+			c.Set("user_id", "svc:internal")
+			c.Next()
+			return
+		}
+
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
