@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Wrapper that launches the OpenIDX access-service with its full environment.
+# The access unit (systemd/oidx-access.service) runs THIS script instead of an
+# EnvironmentFile, because the access-proxy needs the Ziti/BrowZer/APISIX env
+# that the other services don't.
+#
+# Install: copy to ~/oidx-runtime/run-access.sh, fill in the CHANGE_ME_* values
+# and adapt the paths/hostnames to your box, then `chmod +x`. NEVER commit the
+# filled-in copy — it holds secrets.
+set -euo pipefail
+cd /home/cmit/openidx   # adapt: repo checkout
+
+# --- Shared (keep in sync with ~/.config/oidx/common.env) -------------------
+export DATABASE_URL="postgres://openidx:CHANGE_ME@localhost:55432/openidx?sslmode=disable"
+export REDIS_URL="redis://localhost:56379"
+export APP_ENV=development
+export JWT_SECRET="CHANGE_ME_min_32_chars"
+export ENCRYPTION_KEY="CHANGE_ME_exactly_32_bytes_______"
+export OAUTH_ISSUER="https://openidx.tdv.org"
+export OAUTH_JWKS_URL="http://localhost:8006/.well-known/jwks.json"
+export DEFAULT_ORG_FALLBACK=true
+export CORS_ALLOWED_ORIGINS="https://openidx.tdv.org"
+export LOG_LEVEL=info
+# MUST equal INTERNAL_SERVICE_TOKEN in ~/.config/oidx/common.env — the proxy
+# presents it to the governance /evaluate endpoint (service-to-service auth).
+export INTERNAL_SERVICE_TOKEN="CHANGE_ME_INTERNAL_TOKEN"
+
+# --- Access-proxy domains ---------------------------------------------------
+export ACCESS_PROXY_DOMAIN="openidx.tdv.org"
+export ACCESS_APPS_DOMAIN="tdv.org"
+
+# --- OpenZiti --------------------------------------------------------------
+export ZITI_ENABLED=true
+export ZITI_RECONCILER=true
+export ZITI_CTRL_URL="https://ziti-controller.localtest.me:1280"
+export ZITI_ADMIN_USER=admin
+export ZITI_ADMIN_PASSWORD="$(cat /home/cmit/oidx-runtime/oidx-ziti/ziti_pwd)"  # adapt path
+export ZITI_IDENTITY_DIR="/home/cmit/oidx-runtime/oidx-ziti/identity"
+export ZITI_INSECURE_SKIP_VERIFY=true   # dev only
+
+# --- BrowZer ---------------------------------------------------------------
+export BROWZER_ENABLED=true
+export BROWZER_CLIENT_ID=browzer-client
+export BROWZER_TARGETS_PATH=/home/cmit/oidx-runtime/oidx-ziti/browzer-config/config.json
+export BROWZER_CERTS_PATH=/home/cmit/oidx-runtime/oidx-ziti/browzer-certs
+export BROWZER_HOP_ADDR=127.0.0.1:8095
+export BROWZER_HOP_CONFIG_PATH=/home/cmit/oidx-runtime/oidx-ziti/browzer-config/browzer-hop.conf
+export BROWZER_VHOST_CONFIG_PATH=/home/cmit/oidx-runtime/oidx-ziti/browzer-config/browzer-vhosts.conf
+# slirp4netns host-loopback gateway: lets the slirp hop reach a dark upstream
+# (e.g. a 127.0.0.1 service) on the host. Unset on bridged/compose setups.
+export BROWZER_HOST_LOOPBACK_ALIAS=10.0.2.2
+
+# --- APISIX edge -----------------------------------------------------------
+export APISIX_EDGE_ENABLED=true
+export APISIX_ADMIN_URL=http://127.0.0.1:9280
+export APISIX_ADMIN_KEY=CHANGE_ME_ADMIN_KEY    # must equal config.yaml's admin_key
+export APISIX_BOOTSTRAPPER_NODE=127.0.0.1:8445
+
+mkdir -p /tmp/oidx-logs
+exec /home/cmit/oidx-runtime/bin/oidx-access-service > /tmp/oidx-logs/access.log 2>&1

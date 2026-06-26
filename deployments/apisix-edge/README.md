@@ -37,6 +37,7 @@ APISIX on the same etcd).
 | `config.yaml` | APISIX instance config (traditional/etcd role, `:443`+admin listeners, prefix `/apisix-oidx`). Set a real `admin_key`. |
 | `seed-edge-routes.sh` | Idempotent seeder for the **static** routes (openidx APIs, oauth/scim, browzer/ctrl, `*.tdv.org` access-proxy) + the `*.tdv.org` SSL object. Run only to bootstrap or if etcd is reset. |
 | `oidx-common.env.example` | Template for the backend services' shared `EnvironmentFile`. |
+| `run-access.sh.example` | Template for the access-service launch wrapper (`~/oidx-runtime/run-access.sh`, referenced by `oidx-access.service`). The access-proxy uses a wrapper rather than an `EnvironmentFile` because it needs the Ziti/BrowZer/APISIX env. Fill the `CHANGE_ME_*` values; its `INTERNAL_SERVICE_TOKEN` must equal `common.env`'s. |
 | `systemd/*.service` | User units for the access-service + the 7 backend services, incl. the API gateway (`oidx-gateway`, `:8008`) which also carries inline `GATEWAY_PORT` + upstream `*_SERVICE_URL` env (`Restart=always`, `EnvironmentFile`, `ExecStart` from `/home/cmit/oidx-runtime/bin`). |
 
 The **per-app BrowZer routes** (`browzer-<app>-tdv-org`) are NOT seeded here —
@@ -62,7 +63,12 @@ the bypass); the one that succeeds has none (came via the overlay).
 
 1. **APISIX**: `podman run -d --name oidx-apisix --network host -v <repo>/deployments/apisix-edge/config.yaml:/usr/local/apisix/conf/config.yaml:ro docker.io/apache/apisix:latest` (point `etcd.host` at a running etcd; pick a unique `prefix`).
 2. **TLS + static routes**: `APISIX_ADMIN_KEY=… ./seed-edge-routes.sh`.
-3. **Backend services**: copy `oidx-common.env.example` → `~/.config/oidx/common.env` (real values); install the `systemd/*.service` units to `~/.config/systemd/user/`; `systemctl --user daemon-reload && systemctl --user enable --now oidx-access oidx-identity oidx-governance oidx-provisioning oidx-audit oidx-admin-api oidx-oauth oidx-gateway`.
+3. **Backend services**:
+   - **Build the binaries** into the runtime bin the units' `ExecStart` points at:
+     `mkdir -p ~/oidx-runtime/bin && for s in identity-service governance-service provisioning-service audit-service gateway-service admin-api oauth-service access-service; do go build -o ~/oidx-runtime/bin/oidx-$s ./cmd/$s; done`
+     (yields `oidx-identity-service` … `oidx-admin-api` … `oidx-access-service`, matching the unit names).
+   - **Env**: copy `oidx-common.env.example` → `~/.config/oidx/common.env` and `run-access.sh.example` → `~/oidx-runtime/run-access.sh` (`chmod +x`); fill in real values in both. The access unit launches the wrapper (not an `EnvironmentFile`); its `INTERNAL_SERVICE_TOKEN` must match `common.env`.
+   - **Units**: install `systemd/*.service` to `~/.config/systemd/user/`, then `systemctl --user daemon-reload && systemctl --user enable --now oidx-access oidx-identity oidx-governance oidx-provisioning oidx-audit oidx-admin-api oidx-oauth oidx-gateway`.
 4. **BrowZer routes**: set `APISIX_EDGE_ENABLED=true`, `APISIX_ADMIN_URL`, `APISIX_ADMIN_KEY`, `APISIX_BOOTSTRAPPER_NODE` in the access-service env — the reconciler pushes them on start.
 5. **nginx (SPA upstream)** on `:8443` and the bootstrapper/hop/ziti containers: enable as `podman generate systemd --name <c>` user units (start-existing) so they return on reboot under `loginctl enable-linger`.
 6. **OpenZiti edge router — BrowZer WSS**: the router needs a `wss` edge listener + `alt_server_certs` (the `*.tdv.org` cert) for the clientless BrowZer path, which the quickstart bootstrap does NOT generate. See [`ziti-router/README.md`](ziti-router/README.md) + `ziti-router/setup-router-wss.sh`. Without it the BrowZer runtime errors `1007 — No WSS-Enabled Routers found`.
