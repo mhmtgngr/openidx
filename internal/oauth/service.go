@@ -3092,10 +3092,10 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 			appType = "web"
 		}
 		if _, aerr := s.db.Pool.Exec(c.Request.Context(),
-			`INSERT INTO applications (client_id, name, description, type, redirect_uris, org_id)
-			 VALUES ($1, $2, $3, $4, $5, $6)
+			`INSERT INTO applications (client_id, name, description, type, redirect_uris, oauth_client_id, org_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT (client_id) DO NOTHING`,
-			client.ClientID, client.Name, client.Description, appType, client.RedirectURIs, org.ID,
+			client.ClientID, client.Name, client.Description, appType, client.RedirectURIs, client.ID, org.ID,
 		); aerr != nil {
 			s.logger.Warn("OAuth client created but applications-list row insert failed",
 				zap.String("client_id", client.ClientID), zap.Error(aerr))

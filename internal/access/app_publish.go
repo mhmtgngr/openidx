@@ -441,15 +441,17 @@ func (s *Service) ensureHostRoute(ctx context.Context, orgID, appName, fromURL, 
 }
 
 // upsertAppLauncherTile keeps the My Apps launcher tile in sync for a published
-// app (client_id "proxy-app-<appID>" is deterministic, so this is idempotent).
+// app. appID is the proxy route id (client_id "proxy-app-<appID>" is
+// deterministic, so this is idempotent). route_id ties the tile to its route by
+// FK (ON DELETE CASCADE), so the tile can never outlive the route.
 func (s *Service) upsertAppLauncherTile(ctx context.Context, orgID, appID, appName, appDesc, publicURL string) {
 	if _, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, org_id)
-		VALUES ($1, $2, $3, $4, 'proxy', 'proxy', $5, '{}', true, $6)
+		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, route_id, org_id)
+		VALUES ($1, $2, $3, $4, 'proxy', 'proxy', $5, '{}', true, $6, $7)
 		ON CONFLICT (client_id) DO UPDATE SET
 			name = EXCLUDED.name, description = EXCLUDED.description,
-			base_url = EXCLUDED.base_url, enabled = true, updated_at = NOW()`,
-		uuid.New().String(), "proxy-app-"+appID, appName, appDesc, publicURL, orgID); err != nil {
+			base_url = EXCLUDED.base_url, enabled = true, route_id = EXCLUDED.route_id, updated_at = NOW()`,
+		uuid.New().String(), "proxy-app-"+appID, appName, appDesc, publicURL, appID, orgID); err != nil {
 		s.logger.Warn("publish: failed to upsert launcher tile", zap.Error(err))
 	}
 }

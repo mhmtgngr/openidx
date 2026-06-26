@@ -348,5 +348,12 @@ func allMigrations() []*Migration {
 			UpSQL:       landingPathUp,
 			DownSQL:     landingPathDown,
 		},
+		{
+			Version:     49,
+			Name:        "applications_referential_integrity",
+			Description: "Add applications.route_id (→proxy_routes) and applications.oauth_client_id (→oauth_clients), both ON DELETE CASCADE; backfill from the client_id string conventions so tiles/apps can't orphan. Idempotent, non-destructive.",
+			UpSQL:       appReferentialIntegrityUp,
+			DownSQL:     appReferentialIntegrityDown,
+		},
 	}
 }

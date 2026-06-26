@@ -1295,6 +1295,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(
 ALTER TABLE groups ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
+-- Referential integrity for the launcher tile ↔ route and app ↔ oauth_client
+-- links (migration v49): cascade so an applications row can't outlive what it
+-- represents. Backfill of existing rows lives in the versioned migration.
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS route_id UUID REFERENCES proxy_routes(id) ON DELETE CASCADE;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS oauth_client_id UUID REFERENCES oauth_clients(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_applications_route_id ON applications(route_id);
+CREATE INDEX IF NOT EXISTS idx_applications_oauth_client_id ON applications(oauth_client_id);
 ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
 ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
