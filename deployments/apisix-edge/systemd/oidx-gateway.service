@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenIDX gateway service (:8008)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cmit/openidx
+EnvironmentFile=/home/cmit/.config/oidx/common.env
+# Gateway-specific config (not in common.env): listen port + upstream service URLs.
+Environment=GATEWAY_PORT=8008
+Environment=IDENTITY_SERVICE_URL=http://localhost:8001
+Environment=GOVERNANCE_SERVICE_URL=http://localhost:8002
+Environment=AUDIT_SERVICE_URL=http://localhost:8004
+Environment=ADMIN_SERVICE_URL=http://localhost:8005
+Environment=RISK_SERVICE_URL=http://localhost:8005
+Environment=OAUTH_SERVICE_URL=http://localhost:8006
+ExecStart=/home/cmit/oidx-runtime/bin/oidx-gateway-service
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/oidx-logs/gateway.log
+StandardError=append:/tmp/oidx-logs/gateway.log
+
+[Install]
+WantedBy=default.target
