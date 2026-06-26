@@ -602,7 +602,46 @@ func (s *Service) GetPolicy(ctx context.Context, policyID string) (*Policy, erro
 	if err != nil {
 		return nil, err
 	}
+	// Load the policy's rules — without this policy.Rules is empty and every
+	// EvaluatePolicy silently returns "allow" (the evaluators loop over no rules).
+	rules, rerr := s.loadPolicyRules(ctx, policy.ID, org.ID)
+	if rerr != nil {
+		s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policy.ID), zap.Error(rerr))
+	}
+	policy.Rules = rules
 	return &policy, nil
+}
+
+// loadPolicyRules loads a policy's rules (the `condition` JSONB is unmarshalled
+// into rule.Condition). Shared by GetPolicy and ListPolicies so the policy
+// evaluators always see the rules.
+func (s *Service) loadPolicyRules(ctx context.Context, policyID, orgID string) ([]PolicyRule, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, condition, effect, priority
+		FROM policy_rules
+		WHERE policy_id = $1 AND org_id = $2
+		ORDER BY priority DESC
+	`, policyID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rules []PolicyRule
+	for rows.Next() {
+		var rule PolicyRule
+		var conditionJSON []byte
+		if err := rows.Scan(&rule.ID, &conditionJSON, &rule.Effect, &rule.Priority); err != nil {
+			s.logger.Warn("Failed to scan policy rule", zap.Error(err))
+			continue
+		}
+		if len(conditionJSON) > 0 {
+			if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
+				s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
+			}
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
 }
 
 // ListPolicies retrieves all policies
@@ -642,33 +681,14 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 		policies = append(policies, p)
 	}
 
-	// Load rules for each policy
+	// Load rules for each policy (shared with GetPolicy).
 	for i := range policies {
-		ruleRows, err := s.db.Pool.Query(ctx, `
-			SELECT id, condition, effect, priority
-			FROM policy_rules
-			WHERE policy_id = $1 AND org_id = $2
-			ORDER BY priority DESC
-		`, policies[i].ID, org.ID)
+		rules, err := s.loadPolicyRules(ctx, policies[i].ID, org.ID)
 		if err != nil {
 			s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policies[i].ID), zap.Error(err))
 			continue
 		}
-		for ruleRows.Next() {
-			var rule PolicyRule
-			var conditionJSON []byte
-			if err := ruleRows.Scan(&rule.ID, &conditionJSON, &rule.Effect, &rule.Priority); err != nil {
-				s.logger.Warn("Failed to scan policy rule", zap.Error(err))
-				continue
-			}
-			if len(conditionJSON) > 0 {
-				if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
-					s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
-				}
-			}
-			policies[i].Rules = append(policies[i].Rules, rule)
-		}
-		ruleRows.Close()
+		policies[i].Rules = rules
 	}
 
 	return policies, total, nil
