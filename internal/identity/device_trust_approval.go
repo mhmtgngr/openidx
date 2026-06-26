@@ -8,8 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/notifications"
 )
 
 // DeviceTrustRequest represents a request for device trust approval
@@ -413,12 +415,42 @@ func (s *Service) isCorporateDevice(ctx context.Context, fingerprint string) boo
 	return count > 0
 }
 
+// notifyAdminsOfTrustRequest notifies org admins (the well-known "admin" role)
+// that a device is awaiting trust approval. Best-effort.
 func (s *Service) notifyAdminsOfTrustRequest(ctx context.Context, userID, deviceName string) {
-	// Send notification to admins
-	// This would integrate with the notification system
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Warn("device-trust admin notify: no org in context", zap.Error(err))
+		return
+	}
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO notifications (user_id, channel, type, title, body, metadata, org_id)
+		SELECT DISTINCT ur.user_id, 'in_app', 'device_trust',
+			'New device trust request',
+			'A device ("' || $1 || '") is awaiting trust approval.',
+			jsonb_build_object('requesting_user', $2::text), r.org_id
+		FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+		WHERE r.name = 'admin' AND r.org_id = $3`,
+		deviceName, userID, org.ID); err != nil {
+		s.logger.Warn("failed to notify admins of device-trust request", zap.Error(err))
+	}
 }
 
+// notifyUserOfTrustDecision notifies the requesting user that their device-trust
+// request was approved or rejected. Best-effort.
 func (s *Service) notifyUserOfTrustDecision(ctx context.Context, userID, decision, notes string) {
-	// Send notification to user about decision
-	// This would integrate with the notification system
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Warn("device-trust decision notify: no org in context", zap.Error(err))
+		return
+	}
+	body := "Your device trust request was " + decision + "."
+	if notes != "" {
+		body += " Note: " + notes
+	}
+	notif := notifications.NewService(s.db, s.logger)
+	if err := notif.CreateMultiChannelNotification(ctx, userID, org.ID, "device_trust",
+		"Device trust "+decision, body, "/devices", nil); err != nil {
+		s.logger.Warn("failed to notify user of device-trust decision", zap.String("user_id", userID), zap.Error(err))
+	}
 }

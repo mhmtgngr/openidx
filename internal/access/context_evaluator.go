@@ -67,6 +67,11 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 	trusted := s.deviceTrusted(ctx, session.UserID, ac.ClientIP, ac.UserAgent)
 	ac.DeviceTrusted = trusted
 	session.DeviceTrusted = trusted
+	// If an untrusted device is hitting a route that requires device trust, file a
+	// pending trust request (best-effort, deduped) so an admin can approve it.
+	if !trusted && route.RequireDeviceTrust {
+		s.ensureDeviceTrustRequest(ctx, session.UserID, ac.ClientIP, ac.UserAgent)
+	}
 
 	// Posture evaluation (if ZitiManager is available and route has posture check IDs)
 	if s.ziti() != nil && len(route.PostureCheckIDs) > 0 {
