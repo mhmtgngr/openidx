@@ -1534,6 +1534,33 @@ func (zm *ZitiManager) deleteEdgeEntityByName(ctx context.Context, collection, n
 	return nil
 }
 
+// TeardownZitiServiceByName deletes a Ziti service and its associated objects
+// (bind/dial service policies, service-edge-router policy, host.v1 config) by
+// name. The reconciler creates controller services declaratively WITHOUT a
+// ziti_services DB row, so TeardownZitiForRoute (which is DB-driven) cannot see
+// them — this name-keyed teardown cleans those (e.g. legacy per-path services).
+// Idempotent: missing objects are no-ops.
+func (zm *ZitiManager) TeardownZitiServiceByName(ctx context.Context, serviceName string) error {
+	zm.StopHostingService(serviceName)
+	// All deletes use the name-FILTER endpoint (pagination-safe). The service
+	// itself must NOT be looked up via ListServices/GetServiceByName — that is
+	// paginated (Ziti defaults to 10), so with many services the lookup misses
+	// most of them and they orphan.
+	for _, p := range []struct{ col, name string }{
+		{"service-policies", "openidx-bind-" + serviceName},
+		{"service-policies", "openidx-dial-" + serviceName},
+		{"service-edge-router-policies", "openidx-serp-" + serviceName},
+		{"configs", serviceName + "-host"},
+		{"services", serviceName},
+	} {
+		if err := zm.deleteEdgeEntityByName(ctx, p.col, p.name); err != nil {
+			zm.logger.Warn("teardown-by-name: delete failed",
+				zap.String("collection", p.col), zap.String("name", p.name), zap.Error(err))
+		}
+	}
+	return nil
+}
+
 func (zm *ZitiManager) TeardownZitiForRoute(ctx context.Context, routeID string) error {
 	// Find service for this route
 	var zitiServiceID, serviceName string

@@ -401,6 +401,77 @@ func (s *Service) handleUpdatePathClassification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "classification updated"})
 }
 
+// resolveAppPublicHost picks the public host for an app: an explicit value
+// (scheme stripped) wins, else the slug of the app name + ACCESS_APPS_DOMAIN.
+func (s *Service) resolveAppPublicHost(explicit, appName string) (string, error) {
+	h := strings.TrimSpace(explicit)
+	if h == "" {
+		if s.config == nil || s.config.AccessAppsDomain == "" {
+			return "", fmt.Errorf("no public host provided and ACCESS_APPS_DOMAIN is not configured")
+		}
+		h = sanitizeName(appName) + "." + strings.TrimPrefix(s.config.AccessAppsDomain, ".")
+	}
+	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
+	return strings.Trim(h, "/"), nil
+}
+
+// ensureHostRoute upserts the single host-level proxy route for an app
+// (delete-then-insert keyed by from_url, so re-publishing the same host is
+// idempotent). from_url is always a bare host (no path) — Ziti/BrowZer and the
+// data-plane route match are per-host. Returns the route id.
+func (s *Service) ensureHostRoute(ctx context.Context, orgID, appName, fromURL, targetURL string, preserveHost bool) (string, error) {
+	//orgscope:ignore publish host route upsert; scoped by org_id in the statements
+	s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE from_url=$1 AND org_id=$2`, fromURL, orgID)
+	routeID := uuid.New().String()
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO proxy_routes (id, name, description, from_url, to_url,
+			preserve_host, require_auth, allowed_roles, enabled, priority, route_type,
+			inline_policy, require_device_trust, max_risk_score,
+			allowed_groups, policy_ids, cors_allowed_origins, custom_headers,
+			posture_check_ids, allowed_countries, idle_timeout, absolute_timeout, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, true, '[]', true, 50, 'http',
+			'', false, 100,
+			'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200, $7)`,
+		routeID, appName, fmt.Sprintf("Published app %q", appName),
+		fromURL, strings.TrimSuffix(targetURL, "/"), preserveHost, orgID)
+	if err != nil {
+		return "", err
+	}
+	return routeID, nil
+}
+
+// upsertAppLauncherTile keeps the My Apps launcher tile in sync for a published
+// app (client_id "proxy-app-<appID>" is deterministic, so this is idempotent).
+func (s *Service) upsertAppLauncherTile(ctx context.Context, orgID, appID, appName, appDesc, publicURL string) {
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, org_id)
+		VALUES ($1, $2, $3, $4, 'proxy', 'proxy', $5, '{}', true, $6)
+		ON CONFLICT (client_id) DO UPDATE SET
+			name = EXCLUDED.name, description = EXCLUDED.description,
+			base_url = EXCLUDED.base_url, enabled = true, updated_at = NOW()`,
+		uuid.New().String(), "proxy-app-"+appID, appName, appDesc, publicURL, orgID); err != nil {
+		s.logger.Warn("publish: failed to upsert launcher tile", zap.Error(err))
+	}
+}
+
+// registerAccessProxyCallback adds the per-host forward-auth callback to the
+// shared access-proxy OAuth client (for the authenticated access-proxy path).
+func (s *Service) registerAccessProxyCallback(ctx context.Context, publicHost string) {
+	callback := fmt.Sprintf(`["https://%s/access/.auth/callback"]`, publicHost)
+	//orgscope:ignore access-proxy is a single install-wide OAuth client shared across all tenants
+	if _, err := s.db.Pool.Exec(ctx, `
+		UPDATE oauth_clients SET redirect_uris = redirect_uris || $1::jsonb
+		WHERE client_id='access-proxy' AND NOT (redirect_uris @> $1::jsonb)`, callback); err != nil {
+		s.logger.Warn("publish: failed to register access-proxy callback", zap.Error(err))
+	}
+}
+
+// handlePublishPaths publishes an app as a SINGLE host-level route. Path
+// discovery is advisory: selected paths are linked to the one app route for
+// display, but each path is NOT turned into its own proxy_route (that exploded a
+// single app into dozens of routes that collided with the per-host Ziti/BrowZer
+// model). Ziti/BrowZer is a per-app toggle. Per-path authz is not enforced
+// (per-app authz only; BrowZer authz is the overlay — Ziti dial policy + OIDC).
 func (s *Service) handlePublishPaths(c *gin.Context) {
 	appID := c.Param("appId")
 	ctx := c.Request.Context()
@@ -417,9 +488,12 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 		return
 	}
 
-	// Load app
-	var appName, targetURL string
-	err = s.db.Pool.QueryRow(ctx, `SELECT name, target_url FROM published_apps WHERE id=$1`, appID).Scan(&appName, &targetURL)
+	// Load app (incl. previously-resolved public host / landing path).
+	var appName, appDesc, targetURL, publicHostCol, landingPathCol string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT name, COALESCE(description,''), target_url, COALESCE(public_host,''), COALESCE(landing_path,'/')
+		 FROM published_apps WHERE id=$1`, appID).
+		Scan(&appName, &appDesc, &targetURL, &publicHostCol, &landingPathCol)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return
@@ -430,99 +504,76 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 		userID = uid.(string)
 	}
 
-	result := &PublishResult{TotalRequested: len(req.PathIDs)}
+	// Resolve the single public host: explicit request prefix > stored public_host
+	// > slug + ACCESS_APPS_DOMAIN.
+	explicit := req.FromURLPrefix
+	if explicit == "" {
+		explicit = publicHostCol
+	}
+	publicHost, herr := s.resolveAppPublicHost(explicit, appName)
+	if herr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": herr.Error()})
+		return
+	}
+	landingPath := landingPathCol
+	if landingPath == "" {
+		landingPath = "/"
+	}
+	fromURL := "https://" + publicHost
 
+	// ONE host route for the whole app.
+	appRouteID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create app route: " + err.Error()})
+		return
+	}
+
+	// Link selected discovered paths to the single app route (advisory metadata;
+	// NOT separate routes, NOT per-path authz).
+	result := &PublishResult{TotalRequested: len(req.PathIDs)}
 	for _, pathID := range req.PathIDs {
-		var dp DiscoveredPath
-		var methodsJSON, rolesJSON []byte
-		err := s.db.Pool.QueryRow(ctx, `
-			SELECT id, path, http_methods, classification, suggested_policy,
-			       require_auth, allowed_roles, require_device_trust, published
-			FROM discovered_paths WHERE id=$1 AND app_id=$2`, pathID, appID).
-			Scan(&dp.ID, &dp.Path, &methodsJSON, &dp.Classification, &dp.SuggestedPolicy,
-				&dp.RequireAuth, &rolesJSON, &dp.RequireDeviceTrust, &dp.Published)
-		if err != nil {
+		var pth string
+		if e := s.db.Pool.QueryRow(ctx,
+			`SELECT path FROM discovered_paths WHERE id=$1 AND app_id=$2`, pathID, appID).Scan(&pth); e != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("path %s: not found", pathID))
 			result.TotalFailed++
 			continue
 		}
-		json.Unmarshal(methodsJSON, &dp.HTTPMethods)
-		json.Unmarshal(rolesJSON, &dp.AllowedRoles)
-
-		if dp.Published {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: already published", dp.Path))
-			result.TotalFailed++
-			continue
-		}
-
-		routeName := fmt.Sprintf("%s - %s", appName, dp.Path)
-		toURL := strings.TrimSuffix(targetURL, "/") + dp.Path
-
-		fromURL := toURL
-		if req.FromURLPrefix != "" {
-			fromURL = strings.TrimSuffix(req.FromURLPrefix, "/") + dp.Path
-		}
-
-		routeID := uuid.New().String()
-		if dp.AllowedRoles == nil {
-			dp.AllowedRoles = []string{}
-		}
-		rolesJSON, _ = json.Marshal(dp.AllowedRoles)
-
-		_, err = s.db.Pool.Exec(ctx, `
-			INSERT INTO proxy_routes (id, name, description, from_url, to_url,
-				require_auth, allowed_roles, enabled, priority, route_type,
-				inline_policy, require_device_trust, max_risk_score,
-				allowed_groups, policy_ids, cors_allowed_origins, custom_headers,
-				posture_check_ids, allowed_countries, idle_timeout, absolute_timeout, org_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, true, 0, 'http',
-				$8, $9, 100,
-				'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200, $10)`,
-			routeID, routeName,
-			fmt.Sprintf("Auto-published from %s app discovery", appName),
-			fromURL, toURL, dp.RequireAuth, rolesJSON,
-			dp.SuggestedPolicy, dp.RequireDeviceTrust, org.ID)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", dp.Path, err.Error()))
-			result.TotalFailed++
-			continue
-		}
-
-		// Enable Ziti/BrowZer if requested
-		if req.EnableZiti && s.featureManager != nil {
-			host, port := parseTargetHostPort(targetURL)
-			svcName := fmt.Sprintf("openidx-%s%s", sanitizeName(appName), sanitizeName(dp.Path))
-			cfg := map[string]interface{}{
-				"ziti_service_name": svcName,
-				"ziti_host":         host,
-				"ziti_port":         port,
-			}
-			cfgJSON, _ := json.Marshal(cfg)
-			var fc FeatureConfig
-			json.Unmarshal(cfgJSON, &fc)
-			if err := s.featureManager.EnableFeature(ctx, routeID, FeatureZiti, &fc, userID); err != nil {
-				s.logger.Warn("Failed to enable Ziti on published route", zap.Error(err))
-			} else if req.EnableBrowzer {
-				s.featureManager.EnableFeature(ctx, routeID, FeatureBrowZer, &FeatureConfig{}, userID)
-			}
-		}
-
-		// Mark path as published
-		s.db.Pool.Exec(ctx, `UPDATE discovered_paths SET published=true, route_id=$1, updated_at=NOW() WHERE id=$2`, routeID, pathID)
-
+		s.db.Pool.Exec(ctx,
+			`UPDATE discovered_paths SET published=true, route_id=$1, updated_at=NOW() WHERE id=$2`, appRouteID, pathID)
 		result.Published = append(result.Published, PublishedPathRoute{
-			PathID: pathID, RouteID: routeID, Path: dp.Path, Name: routeName,
+			PathID: pathID, RouteID: appRouteID, Path: pth, Name: appName,
 		})
 		result.TotalPublished++
 	}
 
-	// Update app counters
+	// Ziti/BrowZer as a PER-APP toggle (once, clean service name — no path suffix).
+	if req.EnableZiti && s.featureManager != nil {
+		host, port := parseTargetHostPort(targetURL)
+		cfgJSON, _ := json.Marshal(map[string]interface{}{
+			"ziti_service_name": "openidx-" + sanitizeName(appName),
+			"ziti_host":         host,
+			"ziti_port":         port,
+		})
+		var fc FeatureConfig
+		json.Unmarshal(cfgJSON, &fc)
+		if err := s.featureManager.EnableFeature(ctx, appRouteID, FeatureZiti, &fc, userID); err != nil {
+			s.logger.Warn("Failed to enable Ziti on app route", zap.Error(err))
+		} else if req.EnableBrowzer {
+			s.featureManager.EnableFeature(ctx, appRouteID, FeatureBrowZer, &FeatureConfig{}, userID)
+		}
+	}
+
+	// Launcher tile + access-proxy callback + app record.
+	s.upsertAppLauncherTile(ctx, org.ID, appID, appName, appDesc, fromURL+landingPath)
+	s.registerAccessProxyCallback(ctx, publicHost)
 	s.db.Pool.Exec(ctx, `
-		UPDATE published_apps SET total_paths_published = (
-			SELECT COUNT(*) FROM discovered_paths WHERE app_id=$1 AND published=true
-		), status = 'published', updated_at=NOW() WHERE id=$1`, appID)
+		UPDATE published_apps SET public_host=$1, landing_path=$2, status='published',
+			total_paths_published = (SELECT COUNT(*) FROM discovered_paths WHERE app_id=$3 AND published=true),
+			updated_at=NOW() WHERE id=$3`, publicHost, landingPath, appID)
 
 	s.logAuditEvent(c, "app_paths_published", appID, "published_app", map[string]interface{}{
+		"route_id":        appRouteID,
 		"total_published": result.TotalPublished,
 		"total_failed":    result.TotalFailed,
 	})
@@ -581,19 +632,11 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 	}
 
 	// Resolve the public host: explicit request value, else slug + base domain.
-	publicHost := strings.TrimSpace(req.PublicHost)
-	if publicHost == "" {
-		if s.config == nil || s.config.AccessAppsDomain == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "no public_host provided and ACCESS_APPS_DOMAIN is not configured",
-			})
-			return
-		}
-		publicHost = sanitizeName(appName) + "." + strings.TrimPrefix(s.config.AccessAppsDomain, ".")
+	publicHost, herr := s.resolveAppPublicHost(req.PublicHost, appName)
+	if herr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": herr.Error()})
+		return
 	}
-	// Strip any scheme the caller may have included.
-	publicHost = strings.TrimPrefix(strings.TrimPrefix(publicHost, "https://"), "http://")
-	publicHost = strings.Trim(publicHost, "/")
 
 	preserveHost := true
 	if req.PreserveHost != nil {
@@ -612,51 +655,14 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 	fromURL := "https://" + publicHost
 	publicURL := fromURL + landingPath
 
-	// Upsert the host-level proxy route (delete-then-insert keyed by from_url so
-	// re-publishing the same host is idempotent). One-click routes get a higher
-	// priority than auto-published per-path routes for the same host substring.
-	s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE from_url=$1 AND org_id=$2`, fromURL, org.ID)
-
-	routeID := uuid.New().String()
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO proxy_routes (id, name, description, from_url, to_url,
-			preserve_host, require_auth, allowed_roles, enabled, priority, route_type,
-			inline_policy, require_device_trust, max_risk_score,
-			allowed_groups, policy_ids, cors_allowed_origins, custom_headers,
-			posture_check_ids, allowed_countries, idle_timeout, absolute_timeout, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, true, '[]', true, 50, 'http',
-			'', false, 100,
-			'[]', '[]', '[]', '{}', '[]', '[]', 900, 43200, $7)`,
-		routeID, appName, fmt.Sprintf("One-click published app %q", appName),
-		fromURL, strings.TrimSuffix(targetURL, "/"), preserveHost, org.ID)
+	routeID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, preserveHost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route: " + err.Error()})
 		return
 	}
 
-	// Upsert the launcher tile. client_id is deterministic per app so a
-	// re-publish updates the same row rather than colliding on the UNIQUE key.
-	tileClientID := "proxy-app-" + appID
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO applications (id, client_id, name, description, type, protocol, base_url, redirect_uris, enabled, org_id)
-		VALUES ($1, $2, $3, $4, 'proxy', 'proxy', $5, '{}', true, $6)
-		ON CONFLICT (client_id) DO UPDATE SET
-			name = EXCLUDED.name, description = EXCLUDED.description,
-			base_url = EXCLUDED.base_url, enabled = true, updated_at = NOW()`,
-		uuid.New().String(), tileClientID, appName, appDesc, publicURL, org.ID)
-	if err != nil {
-		s.logger.Warn("one-click publish: failed to upsert launcher tile", zap.Error(err))
-	}
-
-	// Register the per-host OAuth callback on the access-proxy client so the
-	// forward-auth login round-trips without a manual OAuth-client edit.
-	callback := fmt.Sprintf(`["https://%s/access/.auth/callback"]`, publicHost)
-	//orgscope:ignore access-proxy is a single install-wide OAuth client (client_id='access-proxy', no org_id); the reverse proxy shares it across all tenants
-	if _, err := s.db.Pool.Exec(ctx, `
-		UPDATE oauth_clients SET redirect_uris = redirect_uris || $1::jsonb
-		WHERE client_id='access-proxy' AND NOT (redirect_uris @> $1::jsonb)`, callback); err != nil {
-		s.logger.Warn("one-click publish: failed to register callback URI", zap.Error(err))
-	}
+	s.upsertAppLauncherTile(ctx, org.ID, appID, appName, appDesc, publicURL)
+	s.registerAccessProxyCallback(ctx, publicHost)
 
 	// Record the public host / landing path on the app for display + idempotency.
 	s.db.Pool.Exec(ctx,
@@ -671,7 +677,7 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 		PublicHost: publicHost,
 		PublicURL:  publicURL,
 		RouteID:    routeID,
-		TileID:     tileClientID,
+		TileID:     "proxy-app-" + appID,
 		Message:    "App published. It now appears in My Apps.",
 	})
 }
@@ -1169,6 +1175,176 @@ func parseTargetHostPort(targetURL string) (string, int) {
 	return host, port
 }
 
+// handleConsolidateApp collapses an app that was previously exploded into many
+// per-path routes (legacy publish) down to a single host route, tearing down the
+// orphaned per-path Ziti services/policies/configs and stale APISIX routes.
+func (s *Service) handleConsolidateApp(c *gin.Context) {
+	appID := c.Param("appId")
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	userID := ""
+	if uid, exists := c.Get("user_id"); exists {
+		userID = uid.(string)
+	}
+	routeID, paths, err := s.consolidateApp(c.Request.Context(), org.ID, appID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	s.logAuditEvent(c, "app_consolidated", appID, "published_app", map[string]interface{}{
+		"route_id": routeID, "paths_relinked": paths,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"route_id": routeID, "paths_relinked": paths,
+		"message": "App consolidated to a single host route.",
+	})
+}
+
+// consolidateApp collapses all of an app's routes (the legacy per-path explosion)
+// into one canonical host route. It tears down each old route's Ziti service +
+// policies + host.v1 + SERP (via TeardownZitiForRoute, which must run BEFORE the
+// proxy_routes row is deleted — it reads ziti_services.route_id), deletes the old
+// routes + their per-route tiles, repoints discovered_paths to the canonical
+// route, re-enables Ziti/BrowZer once (clean service name), and regenerates the
+// edge (RegenerateConfigs prunes stale browzer-* APISIX routes). Idempotent.
+func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID string) (string, int, error) {
+	var appName, appDesc, targetURL, publicHostCol string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT name, COALESCE(description,''), target_url, COALESCE(public_host,'') FROM published_apps WHERE id=$1`,
+		appID).Scan(&appName, &appDesc, &targetURL, &publicHostCol); err != nil {
+		return "", 0, fmt.Errorf("app not found: %w", err)
+	}
+	publicHost, err := s.resolveAppPublicHost(publicHostCol, appName)
+	if err != nil {
+		return "", 0, err
+	}
+	fromURL := "https://" + publicHost
+
+	// Collect every existing route for this app: those linked from discovered_paths
+	// plus any proxy_route on this host (the exploded per-path ones carry a path).
+	routeIDs := map[string]bool{}
+	if rows, e := s.db.Pool.Query(ctx,
+		`SELECT DISTINCT route_id FROM discovered_paths WHERE app_id=$1 AND route_id IS NOT NULL`, appID); e == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				routeIDs[id] = true
+			}
+		}
+		rows.Close()
+	}
+	if rows, e := s.db.Pool.Query(ctx,
+		//orgscope:ignore scoped by org_id in predicate
+		`SELECT id FROM proxy_routes WHERE org_id=$1 AND (from_url=$2 OR from_url LIKE $3)`,
+		orgID, fromURL, fromURL+"/%"); e == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				routeIDs[id] = true
+			}
+		}
+		rows.Close()
+	}
+
+	// Did the app have Ziti/BrowZer on any route?
+	var hadZiti, hadBrowzer bool
+	for id := range routeIDs {
+		var z, b bool
+		s.db.Pool.QueryRow(ctx,
+			`SELECT COALESCE(ziti_enabled,false), COALESCE(browzer_enabled,false) FROM proxy_routes WHERE id=$1`, id).Scan(&z, &b)
+		hadZiti = hadZiti || z
+		hadBrowzer = hadBrowzer || b
+	}
+
+	// Tear down Ziti for each old route BEFORE deleting the rows (teardown reads
+	// ziti_services.route_id), then delete the routes + their per-route tiles.
+	zm := s.ziti()
+	for id := range routeIDs {
+		if zm != nil {
+			if err := zm.TeardownZitiForRoute(ctx, id); err != nil {
+				s.logger.Warn("consolidate: ziti teardown failed", zap.String("route_id", id), zap.Error(err))
+			}
+		}
+	}
+	// The reconciler creates controller services WITHOUT a ziti_services row, so
+	// the DB-driven teardown above misses them. Sweep the legacy per-path service
+	// names by name — computed precisely from the app's discovered paths
+	// (openidx-<app><path>, the old derivation), excluding the canonical
+	// openidx-<app>. Precise computation avoids matching a different app's prefix.
+	if zm != nil {
+		canonicalSvc := "openidx-" + sanitizeName(appName)
+		if rows, e := s.db.Pool.Query(ctx, `SELECT path FROM discovered_paths WHERE app_id=$1`, appID); e == nil {
+			var paths []string
+			for rows.Next() {
+				var p string
+				if rows.Scan(&p) == nil {
+					paths = append(paths, p)
+				}
+			}
+			rows.Close()
+			for _, p := range paths {
+				legacy := "openidx-" + sanitizeName(appName) + sanitizeName(p)
+				if legacy != canonicalSvc {
+					if err := zm.TeardownZitiServiceByName(ctx, legacy); err != nil {
+						s.logger.Warn("consolidate: legacy ziti service teardown failed", zap.String("svc", legacy), zap.Error(err))
+					}
+				}
+			}
+		}
+	}
+	// Unlink discovered_paths first (FK is ON DELETE SET NULL; unlink keeps it explicit).
+	s.db.Pool.Exec(ctx, `UPDATE discovered_paths SET route_id=NULL WHERE app_id=$1`, appID)
+	for id := range routeIDs {
+		s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id=$1 AND org_id=$2`, id, orgID)
+		s.deleteAppTile(ctx, id)
+	}
+
+	// One canonical host route.
+	canonicalID, err := s.ensureHostRoute(ctx, orgID, appName, fromURL, targetURL, true)
+	if err != nil {
+		return "", 0, err
+	}
+	res, _ := s.db.Pool.Exec(ctx,
+		`UPDATE discovered_paths SET route_id=$1, published=true, updated_at=NOW() WHERE app_id=$2`, canonicalID, appID)
+	pathCount := int(res.RowsAffected())
+
+	// Re-enable Ziti/BrowZer once on the canonical route (clean service name).
+	if hadZiti && s.featureManager != nil {
+		host, port := parseTargetHostPort(targetURL)
+		cfgJSON, _ := json.Marshal(map[string]interface{}{
+			"ziti_service_name": "openidx-" + sanitizeName(appName),
+			"ziti_host":         host,
+			"ziti_port":         port,
+		})
+		var fc FeatureConfig
+		json.Unmarshal(cfgJSON, &fc)
+		if err := s.featureManager.EnableFeature(ctx, canonicalID, FeatureZiti, &fc, userID); err != nil {
+			s.logger.Warn("consolidate: enable ziti failed", zap.Error(err))
+		} else if hadBrowzer {
+			s.featureManager.EnableFeature(ctx, canonicalID, FeatureBrowZer, &FeatureConfig{}, userID)
+		}
+	}
+
+	s.upsertAppLauncherTile(ctx, orgID, appID, appName, appDesc, fromURL+"/")
+	s.registerAccessProxyCallback(ctx, publicHost)
+	s.db.Pool.Exec(ctx, `
+		UPDATE published_apps SET public_host=$1, status='published',
+			total_paths_published=(SELECT COUNT(*) FROM discovered_paths WHERE app_id=$2 AND published=true),
+			updated_at=NOW() WHERE id=$2`, publicHost, appID)
+
+	// Regenerate the edge (prunes stale browzer-* APISIX routes) + reconcile Ziti.
+	if s.browzerTargetManager != nil {
+		if err := s.browzerTargetManager.RegenerateConfigs(ctx); err != nil {
+			s.logger.Warn("consolidate: regenerate configs failed", zap.Error(err))
+		}
+	}
+	s.enqueueReconcile()
+	return canonicalID, pathCount, nil
+}
+
 // handleGetAppZitiServices returns Ziti services linked to a published app
 // via the chain: published_apps → discovered_paths → proxy_routes → ziti_services
 func (s *Service) handleGetAppZitiServices(c *gin.Context) {
@@ -1192,9 +1368,9 @@ func (s *Service) handleGetAppZitiServices(c *gin.Context) {
 		SELECT DISTINCT zs.id, zs.ziti_id, zs.name, COALESCE(zs.description,''), zs.protocol,
 		       zs.host, zs.port, zs.enabled, dp.path, COALESCE(dp.classification,''), pr.name as route_name
 		FROM discovered_paths dp
-		JOIN proxy_routes pr ON pr.id = dp.route_id AND pr.org_id = dp.org_id
+		JOIN proxy_routes pr ON pr.id = dp.route_id
 		JOIN ziti_services zs ON zs.name = pr.ziti_service_name AND zs.org_id = pr.org_id
-		WHERE dp.app_id = $1 AND dp.published = true AND pr.ziti_service_name IS NOT NULL AND dp.org_id = $2
+		WHERE dp.app_id = $1 AND dp.published = true AND pr.ziti_service_name IS NOT NULL AND pr.org_id = $2
 		ORDER BY zs.name`, appID, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -115,3 +115,24 @@ func TestAPISIXSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildBrowZerAPISIXRoutesNoSameHostCollision(t *testing.T) {
+	// Several routes on the SAME host (e.g. an app published per-path) must collapse
+	// to exactly ONE browzer-<slug> APISIX route — names key by host slug, so without
+	// the guard each PUT would overwrite the previous (last wins, the rest lost).
+	routes := []browzerRouteInfo{
+		{hostname: "kibana-dev.tdv.org", serviceName: "openidx-kibana-dev", hostingMode: "hop", pathPrefix: "/"},
+		{hostname: "kibana-dev.tdv.org", serviceName: "openidx-kibana-devadmin", hostingMode: "hop", pathPrefix: "/admin"},
+		{hostname: "kibana-dev.tdv.org", serviceName: "openidx-kibana-devapi", hostingMode: "hop", pathPrefix: "/api"},
+	}
+	got := buildBrowZerAPISIXRoutes(routes, apisixRouteOpts{bootstrapperNode: "127.0.0.1:8445", hopBasePort: 8095})
+	n := 0
+	for _, r := range got {
+		if r.name == "browzer-kibana-dev-tdv-org" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly 1 browzer-kibana-dev-tdv-org route, got %d (same-host collision)", n)
+	}
+}
