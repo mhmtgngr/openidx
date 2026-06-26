@@ -120,6 +120,7 @@ type Service struct {
 	featureManager       *FeatureManager
 	auditService         *UnifiedAuditService
 	browzerTargetManager *BrowZerTargetManager
+	healthEngine         *HealthEngine
 	apisixConfigPath     string
 	agentHandler         *AgentAPIHandler
 	remoteSupportHandler *RemoteSupportHandler
@@ -248,6 +249,9 @@ func (s *Service) refreshBrowZerEdge(ctx context.Context) {
 	}
 	s.enqueueReconcile()
 }
+
+// SetHealthEngine wires the relations/integrity doctor engine.
+func (s *Service) SetHealthEngine(e *HealthEngine) { s.healthEngine = e }
 
 // SetBrowZerTargetManager sets the BrowZer target manager
 func (s *Service) SetBrowZerTargetManager(btm *BrowZerTargetManager) {
@@ -518,6 +522,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/apps/:appId/publish-app", svc.handlePublishApp)
 		api.POST("/apps/:appId/consolidate", svc.handleConsolidateApp)
 		api.GET("/apps/:appId/ziti-services", svc.handleGetAppZitiServices)
+
+		// Relations & Integrity Doctor
+		api.GET("/health/relations", svc.handleHealthRelations)
+		api.POST("/health/fix/:checkId", svc.handleHealthFix)
 
 		// Unified audit log
 		api.GET("/audit/unified", svc.handleGetUnifiedAuditEvents)

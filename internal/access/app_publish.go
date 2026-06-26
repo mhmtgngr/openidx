@@ -578,6 +578,8 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 		"total_failed":    result.TotalFailed,
 	})
 
+	s.healthEngine.HealRoute(ctx, appRouteID)
+
 	c.JSON(http.StatusOK, result)
 }
 
@@ -1342,6 +1344,7 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 		}
 	}
 	s.enqueueReconcile()
+	s.healthEngine.HealRoute(ctx, canonicalID)
 	return canonicalID, pathCount, nil
 }
 

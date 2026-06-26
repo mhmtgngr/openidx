@@ -30,6 +30,10 @@ func NewAPISIXReconciler(db *database.PostgresDB, log *zap.Logger, client apisix
 	return &APISIXReconciler{db: db, logger: log.With(zap.String("component", "apisix-reconciler")), client: client, tm: tm, opts: opts}
 }
 
+// Client exposes the underlying Admin API client (the health doctor reads route
+// names through it). Returns the apisixAdmin seam; may be nil.
+func (r *APISIXReconciler) Client() apisixAdmin { return r.client }
+
 // Reconcile loads the desired BrowZer routes and converges APISIX.
 func (rec *APISIXReconciler) Reconcile(ctx context.Context) error {
 	ctx = orgctx.WithBypassRLS(ctx)

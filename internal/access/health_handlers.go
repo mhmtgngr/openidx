@@ -605,3 +605,41 @@ func (s *Service) GetGuacamoleHealthChecker() health.HealthChecker {
 func (s *Service) GetBrowZerHealthChecker() health.HealthChecker {
 	return &BrowZerHealthChecker{service: s}
 }
+
+// ---------- Relations & Integrity Doctor ----------
+
+// handleHealthRelations runs the relations/integrity doctor.
+// GET /api/v1/access/health/relations[?heal=safe]
+func (s *Service) handleHealthRelations(c *gin.Context) {
+	if s.healthEngine == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "health engine not initialized"})
+		return
+	}
+	if c.Query("heal") == "safe" {
+		c.JSON(http.StatusOK, s.healthEngine.ScanAndHeal(c.Request.Context(), true))
+		return
+	}
+	c.JSON(http.StatusOK, s.healthEngine.Scan(c.Request.Context()))
+}
+
+// handleHealthFix applies a specific check's fix to a subject.
+// POST /api/v1/access/health/fix/:checkId  body: {"subject":"..."}
+func (s *Service) handleHealthFix(c *gin.Context) {
+	if s.healthEngine == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "health engine not initialized"})
+		return
+	}
+	var req struct {
+		Subject string `json:"subject"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.healthEngine.FixOne(c.Request.Context(), c.Param("checkId"), req.Subject); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	s.logAuditEvent(c, "health_fix_applied", c.Param("checkId"), "system_health", map[string]interface{}{"subject": req.Subject})
+	c.JSON(http.StatusOK, gin.H{"message": "fix applied", "check": c.Param("checkId"), "subject": req.Subject})
+}

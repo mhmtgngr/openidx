@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   Database,
@@ -8,6 +8,9 @@ import {
   AlertTriangle,
   XCircle,
   Clock,
+  Wand2,
+  ShieldCheck,
+  Wrench,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -19,7 +22,7 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { useToast } from '../hooks/use-toast'
-import { baseURL } from '../lib/api'
+import { api, baseURL } from '../lib/api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,6 +41,25 @@ interface HealthResponse {
   uptime_seconds: number
   version?: string
   dependencies: DependencyHealth[]
+}
+
+// Relations & Integrity Doctor types — mirrors the backend Finding/Report
+// shape returned by GET /api/v1/access/health/relations.
+interface Finding {
+  check_id: string
+  domain: string
+  severity: string
+  status: string
+  subject: string
+  detail: string
+  safe: boolean
+  action: string
+}
+
+interface RelationsReport {
+  findings: Finding[]
+  healed?: Finding[]
+  remaining?: Finding[]
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +132,140 @@ const DEP_ICONS: Record<string, React.ElementType> = {
   Redis: Server,
   Elasticsearch: Activity,
   OPA: Server,
+}
+
+const SEVERITY_BADGE: Record<string, string> = {
+  critical: 'bg-red-100 text-red-800 border-red-200',
+  high: 'bg-red-100 text-red-800 border-red-200',
+  warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+  medium: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+  info: 'bg-blue-100 text-blue-800 border-blue-200',
+  low: 'bg-blue-100 text-blue-800 border-blue-200',
+}
+
+function severityClass(severity: string): string {
+  return SEVERITY_BADGE[severity?.toLowerCase()] || 'bg-gray-100 text-gray-700 border-gray-200'
+}
+
+// ---------------------------------------------------------------------------
+// Relations & Integrity Doctor
+// ---------------------------------------------------------------------------
+
+function RelationsDoctor() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['health-relations'],
+    queryFn: () => api.get<RelationsReport>('/api/v1/access/health/relations'),
+  })
+
+  const heal = useMutation({
+    mutationFn: () => api.get<RelationsReport>('/api/v1/access/health/relations?heal=safe'),
+    onSuccess: (report) => {
+      toast({
+        title: 'Scan complete',
+        description: `${report.healed?.length ?? 0} safe fix(es) applied, ${report.remaining?.length ?? 0} remaining.`,
+        variant: 'success',
+      })
+      queryClient.invalidateQueries({ queryKey: ['health-relations'] })
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Heal failed', description: e.message, variant: 'destructive' })
+    },
+  })
+
+  const fix = useMutation({
+    mutationFn: (f: Finding) => api.post(`/api/v1/access/health/fix/${f.check_id}`, { subject: f.subject }),
+    onSuccess: () => {
+      toast({ title: 'Fix applied', variant: 'success' })
+      queryClient.invalidateQueries({ queryKey: ['health-relations'] })
+    },
+    onError: (e: Error) => {
+      toast({ title: 'Fix failed', description: e.message, variant: 'destructive' })
+    },
+  })
+
+  // Only surface findings that represent drift (anything not "ok").
+  const findings = (data?.findings ?? []).filter((f) => f.status !== 'ok')
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold">Relations &amp; Integrity</h3>
+          <p className="text-sm text-muted-foreground">
+            Cross-domain relations &amp; referential integrity across the access fabric
+          </p>
+        </div>
+        <Button onClick={() => heal.mutate()} disabled={heal.isPending || isFetching}>
+          <Wand2 className={`mr-2 h-4 w-4 ${heal.isPending ? 'animate-pulse' : ''}`} />
+          {heal.isPending ? 'Healing...' : 'Scan & Heal (safe)'}
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            Scanning relations...
+          </CardContent>
+        </Card>
+      ) : findings.length === 0 ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <ShieldCheck className="h-10 w-10 mx-auto text-green-500 mb-3" />
+            <p className="font-medium">No drift detected</p>
+            <p className="text-sm text-muted-foreground">
+              All cross-domain relations are consistent.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {findings.map((f, i) => (
+            <Card key={`${f.check_id}-${f.subject}-${i}`}>
+              <CardContent className="py-4 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline">{f.domain}</Badge>
+                    <span
+                      className={`text-xs font-medium px-2 py-0.5 rounded-full border ${severityClass(f.severity)}`}
+                    >
+                      {f.severity || f.status}
+                    </span>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{f.check_id}</code>
+                  </div>
+                  <p className="text-sm mt-1.5 break-words">{f.detail || f.subject}</p>
+                  {f.detail && f.subject && (
+                    <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                      Subject: {f.subject}
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0">
+                  {f.safe ? (
+                    <span className="text-xs text-green-600 whitespace-nowrap">
+                      auto-heals on scan
+                    </span>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={fix.isPending}
+                      onClick={() => fix.mutate(f)}
+                    >
+                      <Wrench className="mr-1.5 h-3.5 w-3.5" />
+                      {f.action || 'Fix'}
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +428,9 @@ export function SystemHealthPage() {
           })}
         </div>
       </div>
+
+      {/* Relations & Integrity Doctor */}
+      <RelationsDoctor />
 
       {/* Empty state if no health data */}
       {!health && (
