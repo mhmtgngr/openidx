@@ -1482,6 +1482,8 @@ CREATE TABLE IF NOT EXISTS device_posture_results (
 
 CREATE INDEX IF NOT EXISTS idx_posture_results_identity ON device_posture_results(identity_id, checked_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posture_results_check ON device_posture_results(check_id);
+-- One latest result per (identity, check): the agent→device posture bridge upserts on this key (migration v50).
+CREATE UNIQUE INDEX IF NOT EXISTS device_posture_results_identity_check ON device_posture_results(identity_id, check_id);
 
 -- Policy sync state between governance and Ziti
 CREATE TABLE IF NOT EXISTS policy_sync_state (

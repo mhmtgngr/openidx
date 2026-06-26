@@ -355,5 +355,12 @@ func allMigrations() []*Migration {
 			UpSQL:       appReferentialIntegrityUp,
 			DownSQL:     appReferentialIntegrityDown,
 		},
+		{
+			Version:     50,
+			Name:        "device_posture_results_upsert_key",
+			Description: "Add UNIQUE INDEX device_posture_results(identity_id, check_id) so the agent→device posture bridge upserts one latest row per check. Idempotent.",
+			UpSQL:       devicePostureUpsertKeyUp,
+			DownSQL:     devicePostureUpsertKeyDown,
+		},
 	}
 }
