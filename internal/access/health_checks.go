@@ -42,6 +42,19 @@ func dedupBrowzerConfigFinding(rowCount int) Finding {
 	return f
 }
 
+// presenceFinding flags an empty/unwired domain as report-only drift (info).
+func presenceFinding(checkID, domain string, count int) Finding {
+	f := Finding{CheckID: checkID, Domain: domain, Severity: "info", Subject: domain, Safe: false,
+		Action: "wire up domain (manual)"}
+	if count == 0 {
+		f.Status = "drift"
+		f.Detail = domain + " has no records (not wired up)"
+	} else {
+		f.Status = "ok"
+	}
+	return f
+}
+
 // orphanOpenidxServices returns controller service names that we own (openidx-*)
 // but that no desired route claims. Non-openidx services are left alone.
 func orphanOpenidxServices(controller []string, desired map[string]bool) []string {
@@ -209,6 +222,82 @@ func registerChecks(s *Service) []Check {
 				}
 				_, _, err = s.consolidateApp(ctx, org, appID, "")
 				return err
+			}},
+
+		// app ↔ oauth_client: real OIDC app (non-proxy tile) without a client — report only.
+		&fnCheck{id: "app-client", domain: "apps",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				rows, err := s.db.Pool.Query(ctx, `
+					SELECT a.name, a.client_id FROM applications a
+					WHERE a.client_id NOT LIKE 'proxy-app-%'
+					  AND NOT EXISTS (SELECT 1 FROM oauth_clients oc WHERE oc.client_id=a.client_id)`)
+				if err != nil {
+					return nil, err
+				}
+				var out []Finding
+				for rows.Next() {
+					var name, cid string
+					if rows.Scan(&name, &cid) == nil {
+						out = append(out, Finding{CheckID: "app-client", Domain: "apps", Severity: "warn",
+							Status: "orphan", Safe: false, Subject: cid, Detail: "application " + name + " has no oauth_client", Action: "review (manual)"})
+					}
+				}
+				rows.Close()
+				if len(out) == 0 {
+					out = append(out, Finding{CheckID: "app-client", Domain: "apps", Status: "ok"})
+				}
+				return out, nil
+			}},
+
+		// published_app status consistency — safe: mark published if it has a linked route.
+		&fnCheck{id: "published-app", domain: "apps",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				rows, err := s.db.Pool.Query(ctx, `
+					SELECT pa.id::text, pa.name FROM published_apps pa
+					WHERE pa.status <> 'published'
+					  AND EXISTS (SELECT 1 FROM discovered_paths dp WHERE dp.app_id=pa.id AND dp.route_id IS NOT NULL)`)
+				if err != nil {
+					return nil, err
+				}
+				var out []Finding
+				for rows.Next() {
+					var id, name string
+					if rows.Scan(&id, &name) == nil {
+						out = append(out, Finding{CheckID: "published-app", Domain: "apps", Severity: "info",
+							Status: "drift", Safe: true, Subject: id, Detail: name + " has routes but status<>published", Action: "set status=published"})
+					}
+				}
+				rows.Close()
+				if len(out) == 0 {
+					out = append(out, Finding{CheckID: "published-app", Domain: "apps", Status: "ok"})
+				}
+				return out, nil
+			},
+			fix: func(ctx context.Context, f Finding) error {
+				_, err := s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='published', updated_at=NOW() WHERE id=$1`, f.Subject)
+				return err
+			}},
+
+		// users ↔ ziti_identities — report only.
+		&fnCheck{id: "identity-ziti", domain: "identity",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				var unlinked int
+				s.db.Pool.QueryRow(ctx,
+					`SELECT count(*) FROM ziti_identities zi WHERE zi.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id=zi.user_id)`).Scan(&unlinked)
+				if unlinked > 0 {
+					return []Finding{{CheckID: "identity-ziti", Domain: "identity", Severity: "warn", Status: "orphan",
+						Safe: false, Subject: "ziti_identities", Detail: fmt.Sprintf("%d identities reference a missing user", unlinked), Action: "review (manual)"}}, nil
+				}
+				return []Finding{{CheckID: "identity-ziti", Domain: "identity", Status: "ok"}}, nil
+			}},
+
+		// governance + devices wired? — presence only.
+		&fnCheck{id: "domain-presence", domain: "governance",
+			detect: func(ctx context.Context) ([]Finding, error) {
+				var policies, devices int
+				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM policies`).Scan(&policies)
+				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM devices`).Scan(&devices)
+				return []Finding{presenceFinding("domain-presence", "governance", policies), presenceFinding("domain-presence", "devices", devices)}, nil
 			}},
 	}
 }

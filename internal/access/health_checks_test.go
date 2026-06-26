@@ -51,3 +51,13 @@ func TestOrphanZitiServices(t *testing.T) {
 		t.Fatalf("expected [openidx-Orphan], got %v", got)
 	}
 }
+
+func TestPresenceFinding(t *testing.T) {
+	f := presenceFinding("devices", "devices", 0)
+	if f.Status != "drift" || f.Safe {
+		t.Fatalf("empty domain should be report-only drift, got %+v", f)
+	}
+	if presenceFinding("devices", "devices", 3).Status != "ok" {
+		t.Fatal("non-empty should be ok")
+	}
+}
