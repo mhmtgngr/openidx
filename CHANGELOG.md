@@ -63,6 +63,61 @@ approval requests that flip trust on approval, and the dead engine is gone.
   served by the live `abac-policies` surface. Migration v51 drops the (never
   created) `zt_policies` / `zt_policy_versions` tables as a belt. (#236)
 
+### Relations & Integrity Doctor — cross-domain health + referential integrity (#230, #231, #233)
+
+A self-service "doctor" that scans the relationships *between* domains — proxy
+routes, Applications tiles, OAuth clients, Ziti services, published apps,
+identities — surfaces broken or orphaned wiring, and heals the safe cases
+automatically; plus DB-level referential integrity so the most common orphans
+can't form in the first place.
+
+#### Added
+- **Relations & Integrity Doctor** (`internal/access/health_engine.go`,
+  `health_checks.go`): a check registry that scans cross-domain relations
+  (route↔tile, app↔client, route↔Ziti, host uniqueness, published-app,
+  identity↔Ziti, BrowZer-config dedup, domain presence, …), returns a structured
+  report, auto-heals findings classified Safe, and leaves risky ones for an
+  explicit fix. Exposed at `GET /api/v1/access/health/relations[?heal=safe]` and
+  `POST /api/v1/access/health/fix/:checkId`, with a `HealRoute` after-mutation
+  hook so a route change re-checks its own wiring. (#230)
+- **Referential integrity** (migration v49): `applications.route_id →
+  proxy_routes` and `applications.oauth_client_id → oauth_clients`, both
+  `ON DELETE CASCADE`, backfilled from the existing id conventions — so deleting
+  a route or client can no longer strand an Applications tile/app. (#231)
+
+#### Changed
+- Doctor check polish from review follow-ups: tightened classifications and
+  counts (e.g. domain-presence counts `known_devices`, not a non-existent table).
+  (#233)
+
+### App, OAuth & clientless-publishing fixes (#223–#229, #232)
+
+A run of fixes making OAuth client registration, the Applications view, and
+clientless app publishing mutually consistent — registered clients are visible
+and editable, and a published app maps cleanly to one host / one Ziti service.
+
+#### Added
+- **Applications tiles auto-sync for proxy routes**: creating/registering a
+  client or proxy route surfaces a launcher tile without a manual step.
+  (#224, #225)
+- **App redirect_uris auto-register on the BrowZer OIDC client**, so a freshly
+  published clientless app doesn't 400 on its first OAuth redirect. (#227)
+- **One-app-per-host publishing**: an app publishes as a single host route → one
+  Ziti service → one BrowZer target → one APISIX route, instead of exploding into
+  one route per discovered path (which collided on the per-host BrowZer naming);
+  discovered paths stay as advisory metadata. (#229)
+
+#### Fixed
+- **OAuth client registration 500** — new clients weren't assigned a UUID. (#223)
+- **Registered clients didn't appear** in the Applications list. (#224)
+- **Editing an application** now syncs its backing OAuth client (name/redirects),
+  instead of drifting from it. (#226)
+- **BrowZer config generators use the *effective* hosting mode** (fixing overlay
+  error `1010` when a route's stored mode disagreed with its resolved mode).
+  (#228)
+- **`ziti_browzer_config` is a singleton** — the bootstrap reseed no longer
+  appends a new row on every startup. (#232)
+
 ### Clientless edge on APISIX + console-managed publishing (#211–#221)
 
 Moved the public `:443` edge from nginx to **Apache APISIX** as the single TLS
