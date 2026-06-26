@@ -2497,20 +2497,38 @@ func (s *Service) evaluatePolicies(c *gin.Context, route *ProxyRoute, session *P
 			"device_fingerprint": session.DeviceFingerprint,
 		})
 
-		resp, err := http.Post(
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost,
 			fmt.Sprintf("%s/api/v1/governance/policies/%s/evaluate", s.governanceURL, policyID),
-			"application/json",
 			bytes.NewReader(reqBody))
+		if err != nil {
+			return false, fmt.Errorf("failed to build evaluate request for policy %s: %w", policyID, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		// Service-to-service auth: governance requires a user JWT on /evaluate;
+		// the proxy has no user JWT to forward, so it presents the shared
+		// internal-service secret instead. Without this the call is 401'd and
+		// the policy check fails closed (denies all traffic to the route).
+		if s.config.InternalServiceToken != "" {
+			req.Header.Set("X-Internal-Token", s.config.InternalServiceToken)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return false, fmt.Errorf("failed to evaluate policy %s: %w", policyID, err)
 		}
 		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		// A non-200 (e.g. 401 from a missing/mismatched internal token) is a
+		// misconfiguration, not a policy decision. Surface it as an error so it
+		// fails closed *visibly* in the logs rather than masquerading as a deny.
+		if resp.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("policy %s evaluate returned %d: %s", policyID, resp.StatusCode, string(body))
+		}
 
 		var result struct {
 			Allowed        bool `json:"allowed"`
 			StepUpRequired bool `json:"step_up_required"`
 		}
-		body, _ := io.ReadAll(resp.Body)
 		json.Unmarshal(body, &result)
 
 		if !result.Allowed {

@@ -2,12 +2,14 @@
 package governance
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
 // timePtr returns a pointer to the given time value
@@ -1354,4 +1356,71 @@ func TestJITDurationBounds(t *testing.T) {
 		assert.True(t, d >= MinimumJITDuration)
 		assert.True(t, d <= MaximumJITDuration)
 	}
+}
+
+// TestPolicyEvaluation_ConditionalAccess exercises the conditional_access
+// evaluator directly against loaded Rules — the path the G1 GetPolicy fix
+// unblocks (GetPolicy now populates policy.Rules from policy_rules).
+func TestPolicyEvaluation_ConditionalAccess(t *testing.T) {
+	t.Parallel()
+
+	s := &Service{logger: zap.NewNop()}
+	ctx := context.Background()
+
+	policy := &Policy{
+		Type:    PolicyTypeConditionalAccess,
+		Enabled: true,
+		Rules: []PolicyRule{{
+			Effect: "step_up_mfa",
+			Condition: map[string]interface{}{
+				"require_mfa":           true,
+				"device_trust_required": true,
+			},
+		}},
+	}
+
+	tests := []struct {
+		name        string
+		request     map[string]interface{}
+		wantAllowed bool
+	}{
+		{
+			name: "step-up mfa done and device trusted - allow",
+			request: map[string]interface{}{
+				"auth_methods":   []interface{}{"step_up_mfa"},
+				"device_trusted": true,
+			},
+			wantAllowed: true,
+		},
+		{
+			name: "no mfa - deny",
+			request: map[string]interface{}{
+				"auth_methods":   []interface{}{"password"},
+				"device_trusted": true,
+			},
+			wantAllowed: false,
+		},
+		{
+			name: "mfa present but device untrusted - deny",
+			request: map[string]interface{}{
+				"auth_methods":   []interface{}{"totp"},
+				"device_trusted": false,
+			},
+			wantAllowed: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := s.evaluateConditionalAccessPolicy(ctx, policy, tt.request)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantAllowed, allowed)
+		})
+	}
+
+	// An empty rule set must not deny (no conditions to fail).
+	emptyPolicy := &Policy{Type: PolicyTypeConditionalAccess, Enabled: true}
+	allowed, err := s.evaluateConditionalAccessPolicy(ctx, emptyPolicy, map[string]interface{}{})
+	assert.NoError(t, err)
+	assert.True(t, allowed, "policy with no rules should allow")
 }

@@ -4,6 +4,7 @@ package governance
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -154,6 +155,19 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 // openIDXAuthMiddleware validates OpenIDX OAuth JWT tokens for governance service
 func (s *Service) openIDXAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Internal service-to-service path: the access-proxy authenticates its
+		// policy /evaluate call with a shared secret instead of a user JWT.
+		// Scoped to the evaluate endpoints (constant-time compare) so a leaked
+		// token can't drive user-facing governance operations. The org is
+		// resolved by the global TenantResolver (X-Org-ID / default fallback).
+		if tok := s.config.InternalServiceToken; tok != "" &&
+			strings.HasSuffix(c.Request.URL.Path, "/evaluate") &&
+			subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Token")), []byte(tok)) == 1 {
+			c.Set("user_id", "svc:internal")
+			c.Next()
+			return
+		}
+
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -602,7 +616,68 @@ func (s *Service) GetPolicy(ctx context.Context, policyID string) (*Policy, erro
 	if err != nil {
 		return nil, err
 	}
+	// Load the policy's rules — without this policy.Rules is empty and every
+	// EvaluatePolicy silently returns "allow" (the evaluators loop over no rules).
+	rules, rerr := s.loadPolicyRules(ctx, policy.ID, org.ID)
+	if rerr != nil {
+		s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policy.ID), zap.Error(rerr))
+	}
+	policy.Rules = rules
 	return &policy, nil
+}
+
+// loadPolicyRules loads a policy's rules, mapping the on-disk schema
+// (rule_type, conditions, actions) back onto the PolicyRule the evaluators
+// expect. The write side (CreatePolicy/UpdatePolicy) stores rule.Effect in
+// rule_type, rule.Condition in the conditions JSONB, and {effect, priority} in
+// the actions JSONB — so we read them back from exactly there. Shared by
+// GetPolicy and ListPolicies so the evaluators always see the rules.
+func (s *Service) loadPolicyRules(ctx context.Context, policyID, orgID string) ([]PolicyRule, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, rule_type, conditions, actions
+		FROM policy_rules
+		WHERE policy_id = $1 AND org_id = $2
+		ORDER BY (actions->>'priority')::int DESC NULLS LAST, created_at
+	`, policyID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rules []PolicyRule
+	for rows.Next() {
+		var rule PolicyRule
+		var ruleType string
+		var conditionJSON, actionsJSON []byte
+		if err := rows.Scan(&rule.ID, &ruleType, &conditionJSON, &actionsJSON); err != nil {
+			s.logger.Warn("Failed to scan policy rule", zap.Error(err))
+			continue
+		}
+		if len(conditionJSON) > 0 {
+			if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
+				s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
+			}
+		}
+		// rule_type carries the effect; the actions JSONB carries the canonical
+		// {effect, priority} the write side persisted. Prefer actions.effect
+		// when present, else fall back to rule_type.
+		rule.Effect = ruleType
+		if len(actionsJSON) > 0 {
+			var actions struct {
+				Effect   string `json:"effect"`
+				Priority int    `json:"priority"`
+			}
+			if err := json.Unmarshal(actionsJSON, &actions); err != nil {
+				s.logger.Warn("Failed to parse rule actions", zap.String("rule_id", rule.ID), zap.Error(err))
+			} else {
+				if actions.Effect != "" {
+					rule.Effect = actions.Effect
+				}
+				rule.Priority = actions.Priority
+			}
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
 }
 
 // ListPolicies retrieves all policies
@@ -642,33 +717,14 @@ func (s *Service) ListPolicies(ctx context.Context, offset, limit int) ([]Policy
 		policies = append(policies, p)
 	}
 
-	// Load rules for each policy
+	// Load rules for each policy (shared with GetPolicy).
 	for i := range policies {
-		ruleRows, err := s.db.Pool.Query(ctx, `
-			SELECT id, condition, effect, priority
-			FROM policy_rules
-			WHERE policy_id = $1 AND org_id = $2
-			ORDER BY priority DESC
-		`, policies[i].ID, org.ID)
+		rules, err := s.loadPolicyRules(ctx, policies[i].ID, org.ID)
 		if err != nil {
 			s.logger.Warn("Failed to load rules for policy", zap.String("policy_id", policies[i].ID), zap.Error(err))
 			continue
 		}
-		for ruleRows.Next() {
-			var rule PolicyRule
-			var conditionJSON []byte
-			if err := ruleRows.Scan(&rule.ID, &conditionJSON, &rule.Effect, &rule.Priority); err != nil {
-				s.logger.Warn("Failed to scan policy rule", zap.Error(err))
-				continue
-			}
-			if len(conditionJSON) > 0 {
-				if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
-					s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
-				}
-			}
-			policies[i].Rules = append(policies[i].Rules, rule)
-		}
-		ruleRows.Close()
+		policies[i].Rules = rules
 	}
 
 	return policies, total, nil

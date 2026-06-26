@@ -54,10 +54,16 @@ type Config struct {
 	SMTPFrom     string `mapstructure:"smtp_from"`
 
 	// Access Proxy settings
-	GovernanceURL       string `mapstructure:"governance_url"`
-	AuditURL            string `mapstructure:"audit_url"`
-	AccessSessionSecret string `mapstructure:"access_session_secret"`
-	AccessProxyDomain   string `mapstructure:"access_proxy_domain"`
+	GovernanceURL string `mapstructure:"governance_url"`
+	AuditURL      string `mapstructure:"audit_url"`
+
+	// InternalServiceToken is a shared secret for trusted service-to-service
+	// calls (the access-proxy authenticating its policy /evaluate call to the
+	// governance service). Empty disables the internal-auth path, leaving only
+	// user JWT auth. Set the same value on every service that participates.
+	InternalServiceToken string `mapstructure:"internal_service_token"`
+	AccessSessionSecret  string `mapstructure:"access_session_secret"`
+	AccessProxyDomain    string `mapstructure:"access_proxy_domain"`
 
 	// AccessAppsDomain is the wildcard base domain that one-click published
 	// apps live under (e.g. "apps.tdv.org" → "<slug>.apps.tdv.org"). When set,
@@ -577,6 +583,7 @@ func bindEnvVars(v *viper.Viper) {
 		"oauth_jwks_url":              "OAUTH_JWKS_URL",
 		"governance_url":              "GOVERNANCE_URL",
 		"audit_url":                   "AUDIT_URL",
+		"internal_service_token":      "INTERNAL_SERVICE_TOKEN",
 		"access_session_secret":       "ACCESS_SESSION_SECRET",
 		"access_proxy_domain":         "ACCESS_PROXY_DOMAIN",
 		"access_apps_domain":          "ACCESS_APPS_DOMAIN",
