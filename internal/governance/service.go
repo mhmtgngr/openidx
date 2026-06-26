@@ -626,15 +626,18 @@ func (s *Service) GetPolicy(ctx context.Context, policyID string) (*Policy, erro
 	return &policy, nil
 }
 
-// loadPolicyRules loads a policy's rules (the `condition` JSONB is unmarshalled
-// into rule.Condition). Shared by GetPolicy and ListPolicies so the policy
-// evaluators always see the rules.
+// loadPolicyRules loads a policy's rules, mapping the on-disk schema
+// (rule_type, conditions, actions) back onto the PolicyRule the evaluators
+// expect. The write side (CreatePolicy/UpdatePolicy) stores rule.Effect in
+// rule_type, rule.Condition in the conditions JSONB, and {effect, priority} in
+// the actions JSONB — so we read them back from exactly there. Shared by
+// GetPolicy and ListPolicies so the evaluators always see the rules.
 func (s *Service) loadPolicyRules(ctx context.Context, policyID, orgID string) ([]PolicyRule, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, condition, effect, priority
+		SELECT id, rule_type, conditions, actions
 		FROM policy_rules
 		WHERE policy_id = $1 AND org_id = $2
-		ORDER BY priority DESC
+		ORDER BY (actions->>'priority')::int DESC NULLS LAST, created_at
 	`, policyID, orgID)
 	if err != nil {
 		return nil, err
@@ -643,14 +646,33 @@ func (s *Service) loadPolicyRules(ctx context.Context, policyID, orgID string) (
 	var rules []PolicyRule
 	for rows.Next() {
 		var rule PolicyRule
-		var conditionJSON []byte
-		if err := rows.Scan(&rule.ID, &conditionJSON, &rule.Effect, &rule.Priority); err != nil {
+		var ruleType string
+		var conditionJSON, actionsJSON []byte
+		if err := rows.Scan(&rule.ID, &ruleType, &conditionJSON, &actionsJSON); err != nil {
 			s.logger.Warn("Failed to scan policy rule", zap.Error(err))
 			continue
 		}
 		if len(conditionJSON) > 0 {
 			if err := json.Unmarshal(conditionJSON, &rule.Condition); err != nil {
 				s.logger.Warn("Failed to parse rule condition", zap.String("rule_id", rule.ID), zap.Error(err))
+			}
+		}
+		// rule_type carries the effect; the actions JSONB carries the canonical
+		// {effect, priority} the write side persisted. Prefer actions.effect
+		// when present, else fall back to rule_type.
+		rule.Effect = ruleType
+		if len(actionsJSON) > 0 {
+			var actions struct {
+				Effect   string `json:"effect"`
+				Priority int    `json:"priority"`
+			}
+			if err := json.Unmarshal(actionsJSON, &actions); err != nil {
+				s.logger.Warn("Failed to parse rule actions", zap.String("rule_id", rule.ID), zap.Error(err))
+			} else {
+				if actions.Effect != "" {
+					rule.Effect = actions.Effect
+				}
+				rule.Priority = actions.Priority
 			}
 		}
 		rules = append(rules, rule)

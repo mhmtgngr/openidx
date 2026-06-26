@@ -10,8 +10,12 @@ Settled (no work): the `inline_policy` DSL (`internal/access/policy_dsl.go`) is 
 
 ## Design
 
-### 1. Fix `GetPolicy` to load rules (the core change)
-After loading the `policies` row, load its `policy_rules` exactly as `ListPolicies` does (same SELECT + the same `conditions` JSONB → `rule.Condition` unmarshal), and set `policy.Rules`. This single change activates all five evaluators **and** the step-up loop. Reconcile the policy_rules column names against what `ListPolicies` actually queries (there's an apparent `rule_type/conditions/actions` vs `condition/effect/priority` discrepancy) by reusing `ListPolicies`' working query verbatim — extract it into a shared `loadPolicyRules(ctx, policyID, orgID) ([]PolicyRule, error)` helper used by both `GetPolicy` and `ListPolicies` (DRY; one query to keep correct).
+### 1. Fix rule loading (the core change)
+Extract a shared `loadPolicyRules(ctx, policyID, orgID) ([]PolicyRule, error)` helper, used by both `GetPolicy` and `ListPolicies`, and have `GetPolicy` set `policy.Rules` from it. `GetPolicy` previously never loaded rules at all.
+
+**Root cause found during live verification (corrects the spec's original assumption):** `ListPolicies`' rule query was *not* working — it `SELECT id, condition, effect, priority FROM policy_rules`, but the real table has **`id, policy_id, rule_type, conditions, actions, created_at, org_id`** (no `condition`/`effect`/`priority` columns). The query errored every call (`column "condition" does not exist`), and `ListPolicies` swallowed it (`Warn` + `continue`), so rules came back empty there too. The in-memory evaluator tests never caught this because they bypass the DB. So the engine was starved on *both* paths, not just `GetPolicy`.
+
+The write side (`CreatePolicy`/`UpdatePolicy`) stores `rule.Effect` in `rule_type`, `rule.Condition` in the `conditions` JSONB, and `{effect, priority}` in the `actions` JSONB. `loadPolicyRules` reads them back from exactly there (`rule_type`/`actions.effect` → `Effect`, `conditions` → `Condition`, `actions.priority` → `Priority`), ordered by `(actions->>'priority')::int DESC NULLS LAST, created_at`. This single corrected helper activates all five evaluators **and** the step-up loop on both `GetPolicy` and `ListPolicies`.
 
 ### 2. Verify the evaluators (unit tests)
 The evaluators have never run against loaded rules. Add a focused test per type that builds a `Policy` with `Rules` + an evaluation `request` map and asserts the decision:
@@ -20,7 +24,7 @@ The evaluators have never run against loaded rules. Add a focused test per type 
 - `location`: deny when the IP matches no `allowed_ip_prefixes`.
 - `risk_based`: deny when accumulated risk ≥ `risk_threshold`.
 - `conditional_access`: deny + `step_up_required` when `require_mfa`/`device_trust_required`/`max_risk_score` fail.
-These call the evaluators directly (in-memory `Rules`), so they don't need a DB and pin the logic the `GetPolicy` fix unblocks.
+These call the evaluators directly (in-memory `Rules`), so they don't need a DB and pin the logic the `GetPolicy` fix unblocks. **Plus** a DB-backed round-trip test (`TestPolicyRulesRoundTrip`, testcontainers) that `CreatePolicy` → `GetPolicy` and asserts the rule comes back with its `Condition`/`Effect`/`Priority` intact — the only test that can catch the column-mapping regression that caused this whole defect (the in-memory tests cannot).
 
 ### 3. End-to-end verification (live, not committed)
 On the box: `POST /api/v1/governance/policies` (a `timebound` policy with a rule whose hours exclude "now") → `POST /policies/:id/evaluate` with a context → assert `allowed:false`; flip a condition → `allowed:true`. This proves `GetPolicy` now feeds the evaluators. Confirm the doctor's `domain-presence` governance check flips to `ok` once a policy exists.
