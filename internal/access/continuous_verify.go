@@ -122,6 +122,11 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 		}
 
 		// Build a minimal session for context evaluation
+		// Re-derive device trust from the live known_devices signal (same reader
+		// as the forward-auth path) rather than the persisted column, so a device
+		// that was un-trusted since login is caught on re-verification.
+		trusted := cv.svc.deviceTrusted(ctx, sess.UserID, sess.IPAddress, sess.UserAgent)
+
 		proxySession := &ProxySession{
 			ID:                sess.SessionID,
 			UserID:            sess.UserID,
@@ -129,7 +134,7 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 			UserAgent:         sess.UserAgent,
 			DeviceFingerprint: sess.DeviceFingerprint,
 			RiskScore:         sess.RiskScore,
-			DeviceTrusted:     sess.DeviceTrusted,
+			DeviceTrusted:     trusted,
 		}
 
 		// Load session data from Redis for roles/email
@@ -160,7 +165,7 @@ func (cv *ContinuousVerifier) verifyActiveSessions(ctx context.Context) {
 			Route:         route,
 			ClientIP:      sess.IPAddress,
 			UserAgent:     sess.UserAgent,
-			DeviceTrusted: sess.DeviceTrusted,
+			DeviceTrusted: trusted,
 			Timestamp:     time.Now(),
 		}
 
