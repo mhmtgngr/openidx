@@ -85,6 +85,9 @@ func (e *HealthEngine) ScanAndHeal(ctx context.Context, applySafe bool) Report {
 				rep.Healed = append(rep.Healed, f)
 				continue
 			}
+			// A Safe finding whose CheckID matches no registered check is a
+			// registry bug (don't silently drop it into Remaining).
+			e.logger.Warn("safe finding references unknown check id", zap.String("check", f.CheckID), zap.String("subject", f.Subject))
 		}
 		rep.Remaining = append(rep.Remaining, f)
 	}
