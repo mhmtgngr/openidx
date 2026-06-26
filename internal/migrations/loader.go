@@ -369,5 +369,12 @@ func allMigrations() []*Migration {
 			UpSQL:       ztPolicyDropUp,
 			DownSQL:     ztPolicyDropDown,
 		},
+		{
+			Version:     52,
+			Name:        "reconcile_continuous_verify_columns",
+			Description: "Add the init-db-only continuous-verify columns (proxy_sessions.last_verified_at/verification_failures/geo_country/geo_city/idp_id/device_trusted; user_sessions.device_trusted + index) so the continuous session verifier's query works on migrate-based installs. Idempotent; Down is a no-op.",
+			UpSQL:       continuousVerifyColumnsUp,
+			DownSQL:     continuousVerifyColumnsDown,
+		},
 	}
 }
