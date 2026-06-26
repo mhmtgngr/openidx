@@ -113,8 +113,3 @@ func (e *HealthEngine) FixOne(ctx context.Context, checkID, subject string) erro
 	}
 	return errCheckNotFound
 }
-
-// registerChecks is implemented in health_checks.go (Task 3); temporary stub so
-// the package compiles until then.
-// TODO(task3): remove stub
-func registerChecks(s *Service) []Check { return nil }

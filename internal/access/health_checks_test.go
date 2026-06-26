@@ -29,3 +29,16 @@ func TestListEdgeEntitiesReturnsAll(t *testing.T) {
 		t.Fatalf("expected 2 entities, got %+v", got)
 	}
 }
+
+func TestBaseCheckImplementsInterface(t *testing.T) {
+	var _ Check = &fnCheck{}
+}
+
+func TestDedupBrowzerConfigDetectFlagsExtraRows(t *testing.T) {
+	if f := dedupBrowzerConfigFinding(56); f.Status != "drift" || !f.Safe {
+		t.Fatalf("56 rows should be safe drift, got %+v", f)
+	}
+	if f := dedupBrowzerConfigFinding(1); f.Status != "ok" {
+		t.Fatalf("1 row should be ok, got %+v", f)
+	}
+}
