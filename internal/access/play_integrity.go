@@ -127,7 +127,10 @@ func NewPlayIntegrityVerifier(
 	if len(serviceAccountJSON) == 0 || packageName == "" {
 		return nil, errors.New("play integrity verifier requires both service-account JSON and package name")
 	}
-	creds, err := google.CredentialsFromJSON(ctx, serviceAccountJSON, integrityScope)
+	// serviceAccountJSON is operator-supplied config (validated non-empty above),
+	// not attacker-controlled, so the SA1019 "unvalidated credential config"
+	// risk does not apply here.
+	creds, err := google.CredentialsFromJSON(ctx, serviceAccountJSON, integrityScope) //nolint:staticcheck // SA1019: see comment above
 	if err != nil {
 		return nil, fmt.Errorf("parse service account: %w", err)
 	}
