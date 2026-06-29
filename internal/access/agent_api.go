@@ -481,6 +481,7 @@ func (h *AgentAPIHandler) bridgeDevicePostureResult(ctx context.Context, agentID
 		return
 	}
 	var identityID string
+	//orgscope:ignore posture bridge resolves the reporting agent's own Ziti identity by globally-unique agent_id (data plane)
 	if err := h.db.Pool.QueryRow(ctx, `
 		SELECT zi.id::text FROM ziti_identities zi
 		JOIN enrolled_agents ea ON ea.enrolled_by_user_id = zi.user_id

@@ -1258,6 +1258,7 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 	for id := range routeIDs {
 		var z, b bool
 		s.db.Pool.QueryRow(ctx,
+			//orgscope:ignore app consolidation reads each of the app's own routes by globally-unique primary-key id
 			`SELECT COALESCE(ziti_enabled,false), COALESCE(browzer_enabled,false) FROM proxy_routes WHERE id=$1`, id).Scan(&z, &b)
 		hadZiti = hadZiti || z
 		hadBrowzer = hadBrowzer || b
