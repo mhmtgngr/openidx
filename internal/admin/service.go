@@ -756,6 +756,7 @@ func (s *Service) UpdateApplication(ctx context.Context, id string, updates map[
 			"SELECT client_id FROM applications WHERE id = $1 AND org_id = $2", id, org.ID).Scan(&clientID); e == nil {
 			ocSet = append(ocSet, "updated_at = NOW()")
 			ocArgs = append(ocArgs, clientID)
+			//orgscope:ignore client_id resolved via the org-scoped applications lookup on the line above; oauth_clients keyed by globally-unique client_id
 			ocQuery := fmt.Sprintf("UPDATE oauth_clients SET %s WHERE client_id = $%d", strings.Join(ocSet, ", "), ocN)
 			if _, e := s.db.Pool.Exec(ctx, ocQuery, ocArgs...); e != nil {
 				s.logger.Warn("update application: failed to sync backing OAuth client",

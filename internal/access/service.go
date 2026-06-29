@@ -230,6 +230,7 @@ func (s *Service) upsertAppTile(ctx context.Context, routeID, name, description,
 // deleteAppTile removes the Applications launcher tile for a deleted proxy route.
 func (s *Service) deleteAppTile(ctx context.Context, routeID string) {
 	if _, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore tile cleanup deletes the route's launcher tile by its globally-unique synthetic client_id
 		`DELETE FROM applications WHERE client_id = $1`, appTileClientID(routeID)); err != nil {
 		s.logger.Warn("delete app tile failed", zap.String("route_id", routeID), zap.Error(err))
 	}

@@ -103,6 +103,7 @@ func registerChecks(s *Service) []Check {
 		&fnCheck{id: "route-ziti", domain: "ziti",
 			detect: func(ctx context.Context) ([]Finding, error) {
 				rows, err := s.db.Pool.Query(ctx,
+					//orgscope:ignore Relations & Integrity Doctor: route↔ziti orphan scan across the whole install (all orgs by design)
 					`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled AND enabled AND ziti_service_name <> ''`)
 				if err != nil {
 					return nil, err
@@ -149,6 +150,7 @@ func registerChecks(s *Service) []Check {
 					return []Finding{{CheckID: "ziti-orphan", Domain: "ziti", Status: "ok"}}, nil
 				}
 				rows, _ := s.db.Pool.Query(ctx,
+					//orgscope:ignore Relations & Integrity Doctor: ziti-service orphan scan across the whole install (all orgs by design)
 					`SELECT ziti_service_name FROM proxy_routes WHERE ziti_enabled AND ziti_service_name <> ''`)
 				desired := map[string]bool{}
 				if rows != nil {
@@ -189,6 +191,7 @@ func registerChecks(s *Service) []Check {
 		// per-host uniqueness: >1 proxy_route on one host — RISKY: consolidate (subject = host).
 		&fnCheck{id: "host-unique", domain: "access",
 			detect: func(ctx context.Context) ([]Finding, error) {
+				//orgscope:ignore Relations & Integrity Doctor: host-collision scan across the whole install (all orgs by design)
 				rows, err := s.db.Pool.Query(ctx, `
 					SELECT lower(split_part(split_part(from_url,'//',2),'/',1)) AS host, count(*)
 					FROM proxy_routes WHERE ziti_enabled AND enabled
@@ -237,6 +240,7 @@ func registerChecks(s *Service) []Check {
 		// app ↔ oauth_client: real OIDC app (non-proxy tile) without a client — report only.
 		&fnCheck{id: "app-client", domain: "apps",
 			detect: func(ctx context.Context) ([]Finding, error) {
+				//orgscope:ignore Relations & Integrity Doctor: app↔oauth_client consistency scan across the whole install (all orgs by design)
 				rows, err := s.db.Pool.Query(ctx, `
 					SELECT a.name, a.client_id FROM applications a
 					WHERE a.client_id NOT LIKE 'proxy-app-%'
@@ -293,6 +297,7 @@ func registerChecks(s *Service) []Check {
 			detect: func(ctx context.Context) ([]Finding, error) {
 				var unlinked int
 				s.db.Pool.QueryRow(ctx,
+					//orgscope:ignore Relations & Integrity Doctor: identity↔user orphan scan across the whole install (all orgs by design)
 					`SELECT count(*) FROM ziti_identities zi WHERE zi.user_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id=zi.user_id)`).Scan(&unlinked)
 				if unlinked > 0 {
 					return []Finding{{CheckID: "identity-ziti", Domain: "identity", Severity: "warn", Status: "orphan",
@@ -305,7 +310,9 @@ func registerChecks(s *Service) []Check {
 		&fnCheck{id: "domain-presence", domain: "governance",
 			detect: func(ctx context.Context) ([]Finding, error) {
 				var policies, devices int
+				//orgscope:ignore Relations & Integrity Doctor: domain-presence count across the whole install (all orgs by design)
 				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM policies`).Scan(&policies)
+				//orgscope:ignore Relations & Integrity Doctor: domain-presence count across the whole install (all orgs by design)
 				s.db.Pool.QueryRow(ctx, `SELECT count(*) FROM known_devices`).Scan(&devices)
 				return []Finding{presenceFinding("domain-presence", "governance", policies), presenceFinding("domain-presence", "devices", devices)}, nil
 			}},
@@ -333,6 +340,7 @@ func (s *Service) apisixRouteNames(ctx context.Context) ([]string, error) {
 // (Subject = route id) and proxy-app tiles whose route is gone (Subject = client_id).
 func (s *Service) detectRouteTileDrift(ctx context.Context) ([]Finding, error) {
 	var out []Finding
+	//orgscope:ignore Relations & Integrity Doctor: route↔tile drift scan across the whole install (all orgs by design)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT r.id, r.name FROM proxy_routes r
 		WHERE (r.ziti_enabled OR r.browzer_enabled)
@@ -348,6 +356,7 @@ func (s *Service) detectRouteTileDrift(ctx context.Context) ([]Finding, error) {
 		}
 	}
 	rows.Close()
+	//orgscope:ignore Relations & Integrity Doctor: published-app orphan scan across the whole install (all orgs by design)
 	orphan, err := s.db.Pool.Query(ctx, `
 		SELECT a.client_id FROM applications a
 		WHERE a.client_id LIKE 'proxy-app-%'
@@ -389,6 +398,7 @@ func (s *Service) healRouteTile(ctx context.Context, subject string) error {
 // whose host is absent from the browzer-client redirect_uris. One safe fix
 // (RegenerateConfigs) reconverges all of it, so a single drift finding suffices.
 func (s *Service) detectEdgeConfigDrift(ctx context.Context) ([]Finding, error) {
+	//orgscope:ignore Relations & Integrity Doctor: edge-config drift scan across the whole install (all orgs by design)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT from_url FROM proxy_routes
 		WHERE ziti_enabled AND browzer_enabled AND enabled AND ziti_service_name <> ''`)
@@ -417,6 +427,7 @@ func (s *Service) detectEdgeConfigDrift(ctx context.Context) ([]Finding, error) 
 		}
 	}
 	var redirects []byte
+	//orgscope:ignore Relations & Integrity Doctor: reads the singleton browzer-client by globally-unique client_id
 	s.db.Pool.QueryRow(ctx, `SELECT redirect_uris FROM oauth_clients WHERE client_id='browzer-client'`).Scan(&redirects)
 	for _, u := range hosts {
 		if h := hostOf(u); h != "" && !bytesContainsHost(redirects, h) {
