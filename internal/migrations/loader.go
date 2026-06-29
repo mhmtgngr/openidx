@@ -376,5 +376,12 @@ func allMigrations() []*Migration {
 			UpSQL:       continuousVerifyColumnsUp,
 			DownSQL:     continuousVerifyColumnsDown,
 		},
+		{
+			Version:     53,
+			Name:        "provision_openidx_app_role",
+			Description: "Provision the openidx_app NOSUPERUSER NOBYPASSRLS runtime role with blanket DML grants + default privileges, so the v37 FORCE'd RLS policies enforce once the app cuts its DATABASE_URL over to it. Passwordless (set at deploy). Migrations/DDL stay on the owner. Idempotent.",
+			UpSQL:       rlsAppRoleUp,
+			DownSQL:     rlsAppRoleDown,
+		},
 	}
 }
