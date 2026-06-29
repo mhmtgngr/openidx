@@ -630,7 +630,7 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 
 		// Update last delivery time
 		if es.service.db != nil && es.service.db.Pool != nil {
-			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			updateCtx, cancel := context.WithTimeout(orgctx.WithBypassRLS(context.Background()), 5*time.Second)
 			//orgscope:ignore background webhook-delivery bookkeeping; keyed by webhook url, no request context
 			_, _ = es.service.db.Pool.Exec(updateCtx, `
 				UPDATE webhook_subscriptions
@@ -650,7 +650,7 @@ func (es *EventStreamer) deliverWebhook(delivery *WebhookDelivery) bool {
 
 	// Increment failure count
 	if es.service.db != nil && es.service.db.Pool != nil {
-		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		updateCtx, cancel := context.WithTimeout(orgctx.WithBypassRLS(context.Background()), 5*time.Second)
 		//orgscope:ignore background webhook-delivery bookkeeping; keyed by webhook url, no request context
 		_, _ = es.service.db.Pool.Exec(updateCtx, `
 			UPDATE webhook_subscriptions

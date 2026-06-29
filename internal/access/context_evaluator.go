@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AccessContext holds all contextual data about a request for policy evaluation
@@ -77,7 +79,9 @@ func (s *Service) buildAccessContext(c *gin.Context, route *ProxyRoute, session 
 	if s.ziti() != nil && len(route.PostureCheckIDs) > 0 {
 		// Find the Ziti identity for this user
 		var identityUUID string
-		s.db.Pool.QueryRow(ctx,
+		// Bypass RLS: forward-auth has no resolved org; keyed by the
+		// already-authenticated session user_id (globally unique).
+		s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 			//orgscope:ignore proxy data-plane posture eval; resolves the Ziti identity for the already-authenticated session user by user_id on every forward-auth request
 			"SELECT id FROM ziti_identities WHERE user_id=$1 LIMIT 1", // id (uuid) — device_posture_results.identity_id is a uuid
 			session.UserID).Scan(&identityUUID)

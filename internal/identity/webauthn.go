@@ -12,6 +12,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // WebAuthnCredential represents a registered WebAuthn credential
@@ -235,10 +237,17 @@ func (s *Service) FinishWebAuthnRegistration(ctx context.Context, userID string,
 
 // BeginWebAuthnAuthentication initiates WebAuthn authentication
 func (s *Service) BeginWebAuthnAuthentication(ctx context.Context, username string) (*protocol.CredentialAssertion, error) {
+	// Scope by org: the login page is served on a tenant subdomain, so the
+	// resolver has attached the org. Usernames are unique per org, so the org
+	// filter is both the isolation boundary and (under RLS) the visibility key.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// Get user by username
-	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND enabled = true`
+	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND org_id = $2 AND enabled = true`
 	var userID, uname, email, firstName, lastName string
-	err := s.db.Pool.QueryRow(ctx, query, username).Scan(&userID, &uname, &email, &firstName, &lastName)
+	err = s.db.Pool.QueryRow(ctx, query, username, org.ID).Scan(&userID, &uname, &email, &firstName, &lastName)
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
@@ -302,10 +311,15 @@ func (s *Service) BeginWebAuthnAuthentication(ctx context.Context, username stri
 
 // FinishWebAuthnAuthentication completes WebAuthn authentication
 func (s *Service) FinishWebAuthnAuthentication(ctx context.Context, username string, response *protocol.ParsedCredentialAssertionData) (string, error) {
+	// Scope by org (see BeginWebAuthnAuthentication).
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return "", err
+	}
 	// Get user by username
-	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND enabled = true`
+	query := `SELECT id, username, email, first_name, last_name FROM users WHERE username = $1 AND org_id = $2 AND enabled = true`
 	var userID, uname, email, firstName, lastName string
-	err := s.db.Pool.QueryRow(ctx, query, username).Scan(&userID, &uname, &email, &firstName, &lastName)
+	err = s.db.Pool.QueryRow(ctx, query, username, org.ID).Scan(&userID, &uname, &email, &firstName, &lastName)
 	if err != nil {
 		return "", fmt.Errorf("user not found: %w", err)
 	}

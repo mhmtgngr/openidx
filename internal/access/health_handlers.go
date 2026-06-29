@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/openidx/openidx/internal/common/health"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // IntegrationHealth represents the health of a single integration
@@ -615,11 +616,14 @@ func (s *Service) handleHealthRelations(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "health engine not initialized"})
 		return
 	}
+	// Bypass RLS: the integrity doctor is an install-wide diagnostic that scans
+	// every tenant's relations; an org-scoped admin request must see all rows.
+	ctx := orgctx.WithBypassRLS(c.Request.Context())
 	if c.Query("heal") == "safe" {
-		c.JSON(http.StatusOK, s.healthEngine.ScanAndHeal(c.Request.Context(), true))
+		c.JSON(http.StatusOK, s.healthEngine.ScanAndHeal(ctx, true))
 		return
 	}
-	c.JSON(http.StatusOK, s.healthEngine.Scan(c.Request.Context()))
+	c.JSON(http.StatusOK, s.healthEngine.Scan(ctx))
 }
 
 // handleHealthFix applies a specific check's fix to a subject.
@@ -636,7 +640,7 @@ func (s *Service) handleHealthFix(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := s.healthEngine.FixOne(c.Request.Context(), c.Param("checkId"), req.Subject); err != nil {
+	if err := s.healthEngine.FixOne(orgctx.WithBypassRLS(c.Request.Context()), c.Param("checkId"), req.Subject); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

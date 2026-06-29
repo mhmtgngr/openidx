@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/risk"
 )
 
@@ -19,6 +20,9 @@ func (s *Service) deviceTrusted(ctx context.Context, userID, ip, userAgent strin
 	if userID == "" {
 		return false
 	}
+	// Bypass RLS: forward-auth runs with no resolved org; the device is keyed by
+	// the already-authenticated user_id (globally unique) + fingerprint.
+	ctx = orgctx.WithBypassRLS(ctx)
 	fp := risk.ComputeDeviceFingerprint(ip, userAgent)
 
 	var trusted bool
@@ -44,6 +48,9 @@ func (s *Service) ensureDeviceTrustRequest(ctx context.Context, userID, ip, user
 	if userID == "" {
 		return
 	}
+	// Bypass RLS: forward-auth runs with no resolved org; keyed by the
+	// already-authenticated user_id (globally unique) + fingerprint.
+	ctx = orgctx.WithBypassRLS(ctx)
 	fp := risk.ComputeDeviceFingerprint(ip, userAgent)
 
 	// The device must already be registered (the login/risk path creates the

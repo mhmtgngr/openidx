@@ -317,7 +317,10 @@ func (s *Service) ValidateAPIKey(ctx context.Context, rawKey string) (*APIKeyInf
 	// The key is the identity: looked up by its globally-unique hash
 	// before any tenant is resolved, so org_id is read out of the row
 	// (returned to the caller) rather than filtered on.
-	err = s.db.Pool.QueryRow(ctx,
+	// Bypass RLS: this runs before any tenant is resolved (the key hash IS the
+	// identity), so under the openidx_app role the fail-closed policy would
+	// otherwise return zero rows for every key. org_id is read out of the row.
+	err = s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore auth path — keyed by globally-unique key_hash before tenant resolution
 		`SELECT id, user_id, service_account_id, scopes, status, expires_at, org_id
 		 FROM api_keys WHERE key_hash = $1`,
@@ -458,7 +461,7 @@ func (s *Service) updateLastUsed(keyHash string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := s.db.Pool.Exec(ctx,
+	_, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore background fire-and-forget keyed by globally-unique key_hash; no tenant context
 		`UPDATE api_keys SET last_used_at = $1 WHERE key_hash = $2`,
 		time.Now().UTC(), keyHash,

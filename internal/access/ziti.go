@@ -455,7 +455,9 @@ func (zm *ZitiManager) forwardHTTPConnection(zitiConn edge.Conn, targetAddr, ser
 	// Look up user info from the Ziti identity name (which is the OpenIDX user ID)
 	var email, name, roles string
 	if callerID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Bypass RLS: data-plane edge enrichment runs on a fresh background ctx
+		// with no resolved org; keyed by the globally-unique ziti identity (= user id).
+		ctx, cancel := context.WithTimeout(orgctx.WithBypassRLS(context.Background()), 5*time.Second)
 		defer cancel()
 		err := zm.db.Pool.QueryRow(ctx,
 			//orgscope:ignore data-plane Ziti edge connection identity enrichment; keyed by globally-unique ziti identity name (= user id)

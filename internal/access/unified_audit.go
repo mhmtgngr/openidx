@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // UnifiedAuditEvent represents an audit event from any source
@@ -475,7 +476,10 @@ func (s *Service) handleSyncExternalAuditEvents(c *gin.Context) {
 		return
 	}
 
-	err := s.auditService.SyncExternalAuditEvents(c.Request.Context())
+	// Bypass RLS: external-audit correlation maps controller events to routes by
+	// globally-unique ziti_service_name across all tenants (the background caller
+	// already runs bypassed; this is the admin HTTP trigger).
+	err := s.auditService.SyncExternalAuditEvents(orgctx.WithBypassRLS(c.Request.Context()))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
