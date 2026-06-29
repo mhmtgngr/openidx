@@ -77,8 +77,11 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 	require.NoError(t, err, "create RLS test role")
 	for _, stmt := range []string{
 		`GRANT USAGE ON SCHEMA public TO ` + roleName,
-		`GRANT SELECT ON users TO ` + roleName,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON users TO ` + roleName,
 		`GRANT SELECT ON organizations TO ` + roleName,
+		`GRANT SELECT ON applications TO ` + roleName,
+		`GRANT SELECT ON oauth_clients TO ` + roleName,
+		`GRANT SELECT ON audit_events TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
@@ -307,4 +310,69 @@ func TestRLSBelt(t *testing.T) {
 		setScope("", "on")
 		assert.Equal(t, 1, count("id = $1", userB), "bypass sees org B's user from any session")
 	})
+}
+
+// TestRLSWriteBelt is the write-path counterpart to TestRLSBelt: under RLS, a
+// session scoped to org A cannot plant rows in org B (WITH CHECK) and cannot
+// mutate org B's rows (USING hides them → 0 rows affected). Runs on the
+// NOSUPERUSER role so the policies actually apply.
+func TestRLSWriteBelt(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+	requireForceRLS(t, admin, "users")
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgA := seedOrg(t, admin, "wbelt-a-"+suffix)
+	orgB := seedOrg(t, admin, "wbelt-b-"+suffix)
+	userB := seedUserInOrg(t, admin, orgB, "wbelt-userB-"+suffix, "wbelt-b-"+suffix+"@example.test")
+	t.Cleanup(func() {
+		bypassExec(t, admin, "DELETE FROM users WHERE org_id IN ($1,$2)", orgA, orgB)
+		bypassExec(t, admin, "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB)
+	})
+
+	pool := rlsRolePool(t, admin)
+	defer pool.Close()
+	conn, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+	_, err = conn.Exec(ctx, `select set_config('app.org_id', $1, false), set_config('app.bypass_rls', '', false)`, orgA)
+	require.NoError(t, err)
+
+	t.Run("INSERT into another org is rejected by WITH CHECK", func(t *testing.T) {
+		_, err := conn.Exec(ctx,
+			`INSERT INTO users (username, email, enabled, org_id) VALUES ($1,$2,true,$3)`,
+			"wbelt-evil-"+suffix, "wbelt-evil-"+suffix+"@example.test", orgB)
+		require.Error(t, err, "A-scoped session must not insert a row tagged org B")
+	})
+	t.Run("INSERT into own org succeeds", func(t *testing.T) {
+		tag, err := conn.Exec(ctx,
+			`INSERT INTO users (username, email, enabled, org_id) VALUES ($1,$2,true,$3)`,
+			"wbelt-ok-"+suffix, "wbelt-ok-"+suffix+"@example.test", orgA)
+		require.NoError(t, err, "A-scoped session must insert its own org's row")
+		assert.Equal(t, int64(1), tag.RowsAffected())
+	})
+	t.Run("UPDATE of another org's row affects 0 rows", func(t *testing.T) {
+		tag, err := conn.Exec(ctx, `UPDATE users SET email = 'x@example.test' WHERE id = $1`, userB)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), tag.RowsAffected(), "A-scoped UPDATE must not touch org B's row")
+	})
+	t.Run("DELETE of another org's row affects 0 rows", func(t *testing.T) {
+		tag, err := conn.Exec(ctx, `DELETE FROM users WHERE id = $1`, userB)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), tag.RowsAffected(), "A-scoped DELETE must not touch org B's row")
+	})
+}
+
+// requireForceRLS skips the suite (with guidance) unless FORCE ROW LEVEL
+// SECURITY is active on the table — otherwise the belt assertions are vacuous.
+func requireForceRLS(t *testing.T, db *pgxpool.Pool, table string) {
+	t.Helper()
+	var forced bool
+	err := db.QueryRow(context.Background(),
+		`SELECT relforcerowsecurity FROM pg_class WHERE relname = $1`, table).Scan(&forced)
+	require.NoError(t, err)
+	if !forced {
+		t.Skipf("FORCE ROW LEVEL SECURITY not active on %s (migration v37 not applied?) — skipping belt", table)
+	}
 }
