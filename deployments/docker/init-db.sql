@@ -3433,3 +3433,24 @@ CREATE TABLE IF NOT EXISTS agent_enrollment_tokens (
     revoked     BOOLEAN DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_hash ON agent_enrollment_tokens(token_hash);
+
+-- ============================================================================
+-- v1.8 RLS: non-owner application runtime role (mirrors migration v53)
+-- The app connects as this NOSUPERUSER NOBYPASSRLS role so the FORCE'd RLS
+-- policies enforce. Passwordless here — set the password at deploy time
+-- (ALTER ROLE openidx_app PASSWORD '...') and point the app DATABASE_URL at it.
+-- Migrations/DDL keep using the owner role.
+-- ============================================================================
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
+    CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  END IF;
+END $$;
+GRANT CONNECT ON DATABASE openidx TO openidx_app;
+GRANT USAGE ON SCHEMA public TO openidx_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO openidx_app;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO openidx_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO openidx_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO openidx_app;
