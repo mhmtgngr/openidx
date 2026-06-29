@@ -300,7 +300,9 @@ func main() {
 		} else {
 			// Start background monitors on a context owned by the provider slot
 			// so a runtime reconnect can cancel them.
-			zitiCtx, zitiCancel := context.WithCancel(context.Background())
+			// Bypass RLS: the Ziti/BrowZer startup + monitors host services and
+			// read proxy_routes/ziti_services install-wide, with no request org.
+			zitiCtx, zitiCancel := context.WithCancel(orgctx.WithBypassRLS(context.Background()))
 			zitiProvider.Swap(zm, zitiCancel)
 			zm.StartHealthMonitor(zitiCtx)
 			zm.StartCertificateMonitor(zitiCtx)

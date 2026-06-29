@@ -229,7 +229,7 @@ func (s *Service) upsertAppTile(ctx context.Context, routeID, name, description,
 
 // deleteAppTile removes the Applications launcher tile for a deleted proxy route.
 func (s *Service) deleteAppTile(ctx context.Context, routeID string) {
-	if _, err := s.db.Pool.Exec(ctx,
+	if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore tile cleanup deletes the route's launcher tile by its globally-unique synthetic client_id
 		`DELETE FROM applications WHERE client_id = $1`, appTileClientID(routeID)); err != nil {
 		s.logger.Warn("delete app tile failed", zap.String("route_id", routeID), zap.Error(err))
@@ -1583,11 +1583,11 @@ func (s *Service) handleLogout(c *gin.Context) {
 	if err == nil && cookie != "" {
 		// Find and revoke session
 		var sessionID string
-		err := s.db.Pool.QueryRow(c.Request.Context(),
+		err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(c.Request.Context()),
 			//orgscope:ignore proxy data-plane logout; session looked up by globally-unique session_token hash, pre-org-resolution
 			"SELECT id FROM proxy_sessions WHERE session_token=$1", hashToken(cookie)).Scan(&sessionID)
 		if err == nil {
-			s.db.Pool.Exec(c.Request.Context(),
+			s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
 				//orgscope:ignore proxy data-plane logout; revoke by primary key resolved from the unique session_token above
 				"UPDATE proxy_sessions SET revoked=true WHERE id=$1", sessionID)
 			s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
@@ -2250,8 +2250,12 @@ func (s *Service) findRouteByHost(ctx context.Context, host string) (*ProxyRoute
 	var remotePort *int
 	var allowedRoles, allowedGroups, policyIDs, corsOrigins, customHeaders, postureCheckIDs, allowedCountries []byte
 
-	// Match from_url containing the host
-	err := s.db.Pool.QueryRow(ctx,
+	// Match from_url containing the host.
+	// Bypass RLS: route resolution runs before the org is known — the host IS
+	// what resolves the tenant. Hosts are globally unique across tenants (a
+	// subdomain maps to exactly one org), so the priority-ordered LIMIT 1 stays
+	// unambiguous even with cross-org visibility.
+	err := s.db.Pool.QueryRow(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane route resolution; the reverse proxy matches an inbound request to its route by host before any user/org is resolved
 		`SELECT id, name, description, from_url, to_url, preserve_host, require_auth,
 		        allowed_roles, allowed_groups, policy_ids, idle_timeout, absolute_timeout,
@@ -2476,7 +2480,7 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 }
 
 func (s *Service) updateSessionActivity(ctx context.Context, session *ProxySession) {
-	s.db.Pool.Exec(ctx,
+	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane activity heartbeat; updates the active session by its primary key on every proxied request
 		"UPDATE proxy_sessions SET last_active_at=NOW() WHERE id=$1", session.ID)
 }

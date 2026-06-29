@@ -480,6 +480,9 @@ func (h *AgentAPIHandler) bridgeDevicePostureResult(ctx context.Context, agentID
 	if h.db == nil || h.db.Pool == nil {
 		return
 	}
+	// Bypass RLS: public agent-report callback carries no tenant context; the
+	// reads/writes key on the agent's own globally-unique identity.
+	ctx = orgctx.WithBypassRLS(ctx)
 	var identityID string
 	//orgscope:ignore posture bridge resolves the reporting agent's own Ziti identity by globally-unique agent_id (data plane)
 	if err := h.db.Pool.QueryRow(ctx, `
@@ -741,6 +744,9 @@ func (h *AgentAPIHandler) loadIntegrityPolicy(ctx context.Context) IntegrityPoli
 	if h.db == nil || h.db.Pool == nil {
 		return IntegrityPolicy{}
 	}
+	// Bypass RLS: install-wide posture policy loaded during an agent callback
+	// that carries no tenant context.
+	ctx = orgctx.WithBypassRLS(ctx)
 	var raw []byte
 	err := h.db.Pool.QueryRow(ctx,
 		//orgscope:ignore agent posture-report verification; loads the install-wide play_integrity policy by check_type during an agent callback that carries no tenant context

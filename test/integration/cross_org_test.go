@@ -83,6 +83,8 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 		`GRANT SELECT ON applications TO ` + roleName,
 		`GRANT SELECT ON oauth_clients TO ` + roleName,
 		`GRANT SELECT ON audit_events TO ` + roleName,
+		`GRANT SELECT ON api_keys TO ` + roleName,
+		`GRANT SELECT ON proxy_routes TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
@@ -426,6 +428,82 @@ func requireForceRLS(t *testing.T, db *pgxpool.Pool, table string) {
 	if !forced {
 		t.Skipf("FORCE ROW LEVEL SECURITY not active on %s (migration v37 not applied?) — skipping belt", table)
 	}
+}
+
+// TestPreResolutionLookupsUnderRLS is the P0-2 regression guard. A class of
+// lookups key off a globally-unique credential/host BEFORE the tenant org is
+// known (API-key validation by key_hash, proxy route resolution by host), so
+// they carry no org filter. Under the NOSUPERUSER role with no app.org_id set —
+// exactly how those queries run before tenant resolution — FORCE RLS returns
+// ZERO rows, which is the live break the v1.8 cutover caused (API-key auth and
+// the whole access proxy failed closed). The production fix wraps each in
+// orgctx.WithBypassRLS, which sets app.bypass_rls='on'. This test pins both:
+// the failure mode (no scope → 0 rows) and the remedy (bypass → the row).
+func TestPreResolutionLookupsUnderRLS(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+	requireForceRLS(t, admin, "api_keys")
+	requireForceRLS(t, admin, "proxy_routes")
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgA := seedOrg(t, admin, "preres-a-"+suffix)
+	// api_keys has a CHECK (user_id IS NOT NULL OR service_account_id IS NOT NULL).
+	userA := seedUserInOrg(t, admin, orgA, "preres-user-"+suffix, "preres-"+suffix+"@example.test")
+
+	keyHash := "preres-hash-" + suffix
+	host := "preres-" + suffix + ".example.test"
+	fromURL := "https://" + host
+	bypassExec(t, admin,
+		`INSERT INTO api_keys (name, key_prefix, key_hash, user_id, org_id) VALUES ($1,$2,$3,$4,$5)`,
+		"preres-key-"+suffix, "oidx_pr", keyHash, userA, orgA)
+	bypassExec(t, admin,
+		`INSERT INTO proxy_routes (name, from_url, to_url, org_id) VALUES ($1,$2,$3,$4)`,
+		"preres-route-"+suffix, fromURL, "http://upstream.test", orgA)
+	t.Cleanup(func() {
+		bypassExec(t, admin, "DELETE FROM api_keys WHERE key_hash=$1", keyHash)
+		bypassExec(t, admin, "DELETE FROM proxy_routes WHERE from_url=$1", fromURL)
+		bypassExec(t, admin, "DELETE FROM users WHERE id=$1", userA)
+		bypassExec(t, admin, "DELETE FROM organizations WHERE id=$1", orgA)
+	})
+
+	// One NOSUPERUSER connection; GUCs set with set_config(...,false) persist for
+	// the session, mirroring the production pool checkout hook.
+	rolePool := rlsRolePool(t, admin)
+	defer rolePool.Close()
+	conn, err := rolePool.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+
+	setBypass := func(v string) {
+		_, err := conn.Exec(ctx,
+			`select set_config('app.org_id', '', false), set_config('app.bypass_rls', $1, false)`, v)
+		require.NoError(t, err)
+	}
+	keyCount := func() int {
+		var n int
+		require.NoError(t, conn.QueryRow(ctx,
+			`SELECT count(*) FROM api_keys WHERE key_hash = $1`, keyHash).Scan(&n))
+		return n
+	}
+	routeCount := func() int {
+		var n int
+		require.NoError(t, conn.QueryRow(ctx,
+			`SELECT count(*) FROM proxy_routes WHERE from_url LIKE '%' || $1 || '%' AND enabled=true`, host).Scan(&n))
+		return n
+	}
+
+	t.Run("no scope, no bypass: pre-resolution lookups fail closed (the live break)", func(t *testing.T) {
+		setBypass("off")
+		assert.Equal(t, 0, keyCount(), "api_keys by key_hash must be invisible with no org/bypass")
+		assert.Equal(t, 0, routeCount(), "proxy_routes by host must be invisible with no org/bypass")
+	})
+
+	t.Run("bypass: pre-resolution lookups resolve (the WithBypassRLS remedy)", func(t *testing.T) {
+		setBypass("on")
+		assert.Equal(t, 1, keyCount(), "WithBypassRLS makes the API key visible for validation")
+		assert.Equal(t, 1, routeCount(), "WithBypassRLS makes the route resolvable by host")
+	})
 }
 
 // TestCrossOrgSpoofing proves the gateway is the security boundary for the

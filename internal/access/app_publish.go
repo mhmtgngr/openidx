@@ -460,8 +460,10 @@ func (s *Service) upsertAppLauncherTile(ctx context.Context, orgID, appID, appNa
 // shared access-proxy OAuth client (for the authenticated access-proxy path).
 func (s *Service) registerAccessProxyCallback(ctx context.Context, publicHost string) {
 	callback := fmt.Sprintf(`["https://%s/access/.auth/callback"]`, publicHost)
+	// Bypass RLS: the access-proxy client is install-wide (no single org owns it),
+	// so an org-scoped admin request must still reach it.
 	//orgscope:ignore access-proxy is a single install-wide OAuth client shared across all tenants
-	if _, err := s.db.Pool.Exec(ctx, `
+	if _, err := s.db.Pool.Exec(orgctx.WithBypassRLS(ctx), `
 		UPDATE oauth_clients SET redirect_uris = redirect_uris || $1::jsonb
 		WHERE client_id='access-proxy' AND NOT (redirect_uris @> $1::jsonb)`, callback); err != nil {
 		s.logger.Warn("publish: failed to register access-proxy callback", zap.Error(err))
