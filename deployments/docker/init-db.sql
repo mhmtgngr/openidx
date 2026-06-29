@@ -3447,9 +3447,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
     CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
   END IF;
+  -- current_database() so this works regardless of the DB's name (CI/test DBs
+  -- are not named "openidx"); a hardcoded name fails with 3D000.
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO openidx_app', current_database());
 END
 $$;
-GRANT CONNECT ON DATABASE openidx TO openidx_app;
 GRANT USAGE ON SCHEMA public TO openidx_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO openidx_app;
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO openidx_app;
