@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"testing"
@@ -77,8 +78,11 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 	require.NoError(t, err, "create RLS test role")
 	for _, stmt := range []string{
 		`GRANT USAGE ON SCHEMA public TO ` + roleName,
-		`GRANT SELECT ON users TO ` + roleName,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON users TO ` + roleName,
 		`GRANT SELECT ON organizations TO ` + roleName,
+		`GRANT SELECT ON applications TO ` + roleName,
+		`GRANT SELECT ON oauth_clients TO ` + roleName,
+		`GRANT SELECT ON audit_events TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
@@ -307,4 +311,161 @@ func TestRLSBelt(t *testing.T) {
 		setScope("", "on")
 		assert.Equal(t, 1, count("id = $1", userB), "bypass sees org B's user from any session")
 	})
+}
+
+// TestRLSWriteBelt is the write-path counterpart to TestRLSBelt: under RLS, a
+// session scoped to org A cannot plant rows in org B (WITH CHECK) and cannot
+// mutate org B's rows (USING hides them → 0 rows affected). Runs on the
+// NOSUPERUSER role so the policies actually apply.
+func TestRLSWriteBelt(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+	requireForceRLS(t, admin, "users")
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgA := seedOrg(t, admin, "wbelt-a-"+suffix)
+	orgB := seedOrg(t, admin, "wbelt-b-"+suffix)
+	userB := seedUserInOrg(t, admin, orgB, "wbelt-userB-"+suffix, "wbelt-b-"+suffix+"@example.test")
+	t.Cleanup(func() {
+		bypassExec(t, admin, "DELETE FROM users WHERE org_id IN ($1,$2)", orgA, orgB)
+		bypassExec(t, admin, "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB)
+	})
+
+	pool := rlsRolePool(t, admin)
+	defer pool.Close()
+	conn, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+	_, err = conn.Exec(ctx, `select set_config('app.org_id', $1, false), set_config('app.bypass_rls', '', false)`, orgA)
+	require.NoError(t, err)
+
+	t.Run("INSERT into another org is rejected by WITH CHECK", func(t *testing.T) {
+		_, err := conn.Exec(ctx,
+			`INSERT INTO users (username, email, enabled, org_id) VALUES ($1,$2,true,$3)`,
+			"wbelt-evil-"+suffix, "wbelt-evil-"+suffix+"@example.test", orgB)
+		require.Error(t, err, "A-scoped session must not insert a row tagged org B")
+	})
+	t.Run("INSERT into own org succeeds", func(t *testing.T) {
+		tag, err := conn.Exec(ctx,
+			`INSERT INTO users (username, email, enabled, org_id) VALUES ($1,$2,true,$3)`,
+			"wbelt-ok-"+suffix, "wbelt-ok-"+suffix+"@example.test", orgA)
+		require.NoError(t, err, "A-scoped session must insert its own org's row")
+		assert.Equal(t, int64(1), tag.RowsAffected())
+	})
+	t.Run("UPDATE of another org's row affects 0 rows", func(t *testing.T) {
+		tag, err := conn.Exec(ctx, `UPDATE users SET email = 'x@example.test' WHERE id = $1`, userB)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), tag.RowsAffected(), "A-scoped UPDATE must not touch org B's row")
+	})
+	t.Run("DELETE of another org's row affects 0 rows", func(t *testing.T) {
+		tag, err := conn.Exec(ctx, `DELETE FROM users WHERE id = $1`, userB)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), tag.RowsAffected(), "A-scoped DELETE must not touch org B's row")
+	})
+}
+
+// TestRLSBeltTables generalizes the read-belt beyond `users`: for each
+// representative scoped table, a row seeded in org B is invisible to an
+// A-scoped session and visible under bypass. Proves the RLS guarantee isn't an
+// artifact of the users table alone.
+func TestRLSBeltTables(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgA := seedOrg(t, admin, "tbelt-a-"+suffix)
+	orgB := seedOrg(t, admin, "tbelt-b-"+suffix)
+	t.Cleanup(func() { bypassExec(t, admin, "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB) })
+
+	cases := []struct {
+		table     string
+		insertSQL string // one row; $1 = org_id
+	}{
+		{"users", `INSERT INTO users (username, email, enabled, org_id) VALUES ('tbelt-u-` + suffix + `','tbelt-u-` + suffix + `@example.test',true,$1)`},
+		{"applications", `INSERT INTO applications (client_id, name, type, org_id) VALUES ('tbelt-app-` + suffix + `','tbelt app','web',$1)`},
+		{"oauth_clients", `INSERT INTO oauth_clients (client_id, name, type, org_id) VALUES ('tbelt-oc-` + suffix + `','tbelt client','confidential',$1)`},
+		{"audit_events", `INSERT INTO audit_events (event_type, category, action, outcome, org_id) VALUES ('tbelt','test','probe','success',$1)`},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.table, func(t *testing.T) {
+			requireForceRLS(t, admin, c.table)
+			bypassExec(t, admin, c.insertSQL, orgB)
+			t.Cleanup(func() { bypassExec(t, admin, "DELETE FROM "+c.table+" WHERE org_id = $1", orgB) })
+
+			pool := rlsRolePool(t, admin)
+			defer pool.Close()
+			conn, err := pool.Acquire(ctx)
+			require.NoError(t, err)
+			defer conn.Release()
+
+			countB := func(bypass string) int {
+				_, e := conn.Exec(ctx, `select set_config('app.org_id',$1,false), set_config('app.bypass_rls',$2,false)`, orgA, bypass)
+				require.NoError(t, e)
+				var n int
+				require.NoError(t, conn.QueryRow(ctx, "SELECT count(*) FROM "+c.table+" WHERE org_id = $1", orgB).Scan(&n))
+				return n
+			}
+			assert.Equal(t, 0, countB(""), "A-scoped session must not see org B rows in %s", c.table)
+			assert.Greater(t, countB("on"), 0, "bypass must see org B rows in %s", c.table)
+		})
+	}
+}
+
+// requireForceRLS skips the suite (with guidance) unless FORCE ROW LEVEL
+// SECURITY is active on the table — otherwise the belt assertions are vacuous.
+func requireForceRLS(t *testing.T, db *pgxpool.Pool, table string) {
+	t.Helper()
+	var forced bool
+	err := db.QueryRow(context.Background(),
+		`SELECT relforcerowsecurity FROM pg_class WHERE relname = $1`, table).Scan(&forced)
+	require.NoError(t, err)
+	if !forced {
+		t.Skipf("FORCE ROW LEVEL SECURITY not active on %s (migration v37 not applied?) — skipping belt", table)
+	}
+}
+
+// TestCrossOrgSpoofing proves the gateway is the security boundary for the
+// client-supplied X-Org-Slug header: a request through the gateway (:8008)
+// carrying a forged X-Org-Slug for another org is STRIPPED — the gateway
+// re-derives org from the authenticated identity — so it cannot read the forged
+// org's data. (Sending the header straight to a service is NOT a negative:
+// services trust X-Org-Slug because the gateway sets it.) Skips if the gateway
+// isn't reachable (CI may not start it; the box does).
+func TestCrossOrgSpoofing(t *testing.T) {
+	db := integrationDB(t)
+	defer db.Close()
+
+	if _, err := http.Get(gatewayURL + "/health"); err != nil {
+		t.Skipf("gateway not reachable at %s (%v) — skipping X-Org-Slug strip test", gatewayURL, err)
+	}
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgB := seedOrg(t, db, "spoof-b-"+suffix)
+	userB := seedUserInOrg(t, db, orgB, "spoof-userB-"+suffix, "spoof-b-"+suffix+"@example.test")
+	t.Cleanup(func() {
+		bypassExec(t, db, "DELETE FROM users WHERE id = $1", userB)
+		bypassExec(t, db, "DELETE FROM organizations WHERE id = $1", orgB)
+	})
+
+	// Use the error-returning login directly so the test SKIPS (not fatals) when
+	// admin auth isn't available in this environment (e.g. the OAuth test client's
+	// redirect_uri isn't registered on a dev box); it runs fully in CI, where the
+	// existing cross-org suite authenticates successfully.
+	token, err := doAdminLogin()
+	if err != nil {
+		t.Skipf("admin login unavailable in this env (%v) — skipping gateway X-Org-Slug strip test", err)
+	}
+	// Through the gateway, forge X-Org-Slug for org B while reading org B's user
+	// by id. The gateway strips the client header and scopes to the admin's
+	// derived org (the install default, NOT the freshly-seeded org B), so the
+	// read must NOT succeed against org B's row.
+	status, _ := apiRequestWithHeaders(t, "GET",
+		gatewayURL+"/api/v1/identity/users/"+userB, "", token,
+		map[string]string{"X-Org-Slug": "spoof-b-" + suffix})
+	assert.NotEqual(t, 200, status,
+		"forged X-Org-Slug through the gateway must be stripped — org B's user must not read 200")
 }

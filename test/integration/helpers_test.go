@@ -25,6 +25,7 @@ import (
 var (
 	oauthURL    = envOrDefault("OAUTH_URL", "http://localhost:8006")
 	identityURL = envOrDefault("IDENTITY_URL", "http://localhost:8001")
+	gatewayURL  = envOrDefault("GATEWAY_URL", "http://localhost:8008")
 	clientID    = "admin-console"
 	// Must match the redirect_uri the admin-console client is seeded with
 	// (deployments seed migration v10) — previously /login, which never
