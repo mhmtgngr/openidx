@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-29
+
+### Added
+- **Database-enforced tenant isolation (RLS activation)** — the v1.8 milestone of
+  the multi-tenancy epic. The app now connects as a dedicated non-owner
+  `openidx_app` role (`NOSUPERUSER NOBYPASSRLS`), so the `FORCE`'d row-level
+  security policies (the predicate + FORCE shipped earlier in v37) finally
+  enforce instead of being bypassed by a superuser connection. A no-GUC query on
+  a scoped table now returns 0 rows; queries see only the request's org via the
+  `app.org_id` GUC set at pool checkout; platform/cross-org paths opt in via
+  `app.bypass_rls`. This is defense-in-depth *behind* the v1.7 app-layer `org_id`
+  filtering. (#250)
+
+### Changed
+- **Migration v53** provisions `openidx_app` with blanket DML grants + default
+  privileges (passwordless; the password is set out-of-band at deploy). Migrations
+  and DDL continue to run as the owner role; services keep `AUTO_MIGRATE` off and
+  the app `DATABASE_URL` points at `openidx_app`. `init-db.sql` provisions the
+  same role for fresh installs. (#250)
+
 ## [1.7.2] - 2026-06-29
 
 ### Security
@@ -1054,7 +1074,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/mhmtgngr/openidx/compare/v1.7.2...v1.8.0
 [1.7.2]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/mhmtgngr/openidx/compare/v1.6.0...v1.7.0
