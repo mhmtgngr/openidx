@@ -3441,11 +3441,14 @@ CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_hash ON agent_enrollment_tokens
 -- (ALTER ROLE openidx_app PASSWORD '...') and point the app DATABASE_URL at it.
 -- Migrations/DDL keep using the owner role.
 -- ============================================================================
-DO $$ BEGIN
+DO
+$$
+BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
     CREATE ROLE openidx_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
   END IF;
-END $$;
+END
+$$;
 GRANT CONNECT ON DATABASE openidx TO openidx_app;
 GRANT USAGE ON SCHEMA public TO openidx_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO openidx_app;
