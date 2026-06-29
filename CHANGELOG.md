@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-06-29
+
+### Security
+- **`github.com/jackc/pgx/v5` v5.5.4 → v5.9.2** — resolves GO-2026-5004.
+  `govulncheck` now reports 0 affected vulnerabilities. (#248)
+
+### Fixed
+- **CI hard gates restored to green** (`Required Checks`). The org-scope, lint,
+  and vulnerability gates had regressed:
+  - **orgscope**: annotated the 19 org-unscoped queries the governance/devices
+    work introduced (the Relations & Integrity Doctor's whole-install scans and
+    queries keyed by globally-unique ids) with reviewed `//orgscope:ignore`
+    directives. (#247)
+  - **lint**: removed an unused var + orphaned import in `ziti_settings.go`;
+    justified the deprecated, operator-supplied `google.CredentialsFromJSON` call
+    in `play_integrity.go`; migrated the RLS pool hook `BeforeAcquire →
+    PrepareConn` (deprecated by the pgx bump), preserving exact checkout
+    semantics. (#247, #248)
+
 ## [1.7.1] - 2026-06-26
 
 ### Fixed
@@ -1035,7 +1054,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/mhmtgngr/openidx/compare/v1.6.0...v1.7.0
 [1.0.0]: https://github.com/mhmtgngr/openidx/releases/tag/v1.0.0
