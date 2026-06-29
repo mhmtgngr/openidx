@@ -3,7 +3,6 @@ package access
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -131,8 +130,6 @@ func saveZitiConnSettings(ctx context.Context, db *database.PostgresDB, encKey s
 		zitiConnSettingsKey, blob, by)
 	return err
 }
-
-var errZitiNotConfigured = errors.New("ziti connection not configured")
 
 // ResolveBootZitiConn resolves the connection to use at startup: persisted DB
 // settings win; otherwise fall back to env (the Phase-1 path). enabled reflects

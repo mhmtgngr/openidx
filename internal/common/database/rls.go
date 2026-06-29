@@ -81,6 +81,11 @@ func (a *rlsApplier) beforeClose(conn *pgx.Conn) {
 // configureRLS installs the tenant-scope checkout hook on the pool config.
 func configureRLS(config *pgxpool.Config) {
 	a := newRLSApplier()
-	config.BeforeAcquire = a.beforeAcquire
+	// PrepareConn (pgx v5.9+) supersedes the deprecated BeforeAcquire — same
+	// before-acquire hook, now returning an error alongside the keep/destroy
+	// bool. The adapter preserves beforeAcquire's exact semantics.
+	config.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
+		return a.beforeAcquire(ctx, conn), nil
+	}
 	config.BeforeClose = a.beforeClose
 }
