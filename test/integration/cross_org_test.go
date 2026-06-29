@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"testing"
@@ -425,4 +426,39 @@ func requireForceRLS(t *testing.T, db *pgxpool.Pool, table string) {
 	if !forced {
 		t.Skipf("FORCE ROW LEVEL SECURITY not active on %s (migration v37 not applied?) — skipping belt", table)
 	}
+}
+
+// TestCrossOrgSpoofing proves the gateway is the security boundary for the
+// client-supplied X-Org-Slug header: a request through the gateway (:8008)
+// carrying a forged X-Org-Slug for another org is STRIPPED — the gateway
+// re-derives org from the authenticated identity — so it cannot read the forged
+// org's data. (Sending the header straight to a service is NOT a negative:
+// services trust X-Org-Slug because the gateway sets it.) Skips if the gateway
+// isn't reachable (CI may not start it; the box does).
+func TestCrossOrgSpoofing(t *testing.T) {
+	db := integrationDB(t)
+	defer db.Close()
+
+	if _, err := http.Get(gatewayURL + "/health"); err != nil {
+		t.Skipf("gateway not reachable at %s (%v) — skipping X-Org-Slug strip test", gatewayURL, err)
+	}
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgB := seedOrg(t, db, "spoof-b-"+suffix)
+	userB := seedUserInOrg(t, db, orgB, "spoof-userB-"+suffix, "spoof-b-"+suffix+"@example.test")
+	t.Cleanup(func() {
+		bypassExec(t, db, "DELETE FROM users WHERE id = $1", userB)
+		bypassExec(t, db, "DELETE FROM organizations WHERE id = $1", orgB)
+	})
+
+	token := getAdminToken(t)
+	// Through the gateway, forge X-Org-Slug for org B while reading org B's user
+	// by id. The gateway strips the client header and scopes to the admin's
+	// derived org (the install default, NOT the freshly-seeded org B), so the
+	// read must NOT succeed against org B's row.
+	status, _ := apiRequestWithHeaders(t, "GET",
+		gatewayURL+"/api/v1/identity/users/"+userB, "", token,
+		map[string]string{"X-Org-Slug": "spoof-b-" + suffix})
+	assert.NotEqual(t, 200, status,
+		"forged X-Org-Slug through the gateway must be stripped — org B's user must not read 200")
 }
