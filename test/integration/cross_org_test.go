@@ -364,6 +364,56 @@ func TestRLSWriteBelt(t *testing.T) {
 	})
 }
 
+// TestRLSBeltTables generalizes the read-belt beyond `users`: for each
+// representative scoped table, a row seeded in org B is invisible to an
+// A-scoped session and visible under bypass. Proves the RLS guarantee isn't an
+// artifact of the users table alone.
+func TestRLSBeltTables(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgA := seedOrg(t, admin, "tbelt-a-"+suffix)
+	orgB := seedOrg(t, admin, "tbelt-b-"+suffix)
+	t.Cleanup(func() { bypassExec(t, admin, "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB) })
+
+	cases := []struct {
+		table     string
+		insertSQL string // one row; $1 = org_id
+	}{
+		{"users", `INSERT INTO users (username, email, enabled, org_id) VALUES ('tbelt-u-` + suffix + `','tbelt-u-` + suffix + `@example.test',true,$1)`},
+		{"applications", `INSERT INTO applications (client_id, name, type, org_id) VALUES ('tbelt-app-` + suffix + `','tbelt app','web',$1)`},
+		{"oauth_clients", `INSERT INTO oauth_clients (client_id, name, type, org_id) VALUES ('tbelt-oc-` + suffix + `','tbelt client','confidential',$1)`},
+		{"audit_events", `INSERT INTO audit_events (event_type, category, action, outcome, org_id) VALUES ('tbelt','test','probe','success',$1)`},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.table, func(t *testing.T) {
+			requireForceRLS(t, admin, c.table)
+			bypassExec(t, admin, c.insertSQL, orgB)
+			t.Cleanup(func() { bypassExec(t, admin, "DELETE FROM "+c.table+" WHERE org_id = $1", orgB) })
+
+			pool := rlsRolePool(t, admin)
+			defer pool.Close()
+			conn, err := pool.Acquire(ctx)
+			require.NoError(t, err)
+			defer conn.Release()
+
+			countB := func(bypass string) int {
+				_, e := conn.Exec(ctx, `select set_config('app.org_id',$1,false), set_config('app.bypass_rls',$2,false)`, orgA, bypass)
+				require.NoError(t, e)
+				var n int
+				require.NoError(t, conn.QueryRow(ctx, "SELECT count(*) FROM "+c.table+" WHERE org_id = $1", orgB).Scan(&n))
+				return n
+			}
+			assert.Equal(t, 0, countB(""), "A-scoped session must not see org B rows in %s", c.table)
+			assert.Greater(t, countB("on"), 0, "bypass must see org B rows in %s", c.table)
+		})
+	}
+}
+
 // requireForceRLS skips the suite (with guidance) unless FORCE ROW LEVEL
 // SECURITY is active on the table — otherwise the belt assertions are vacuous.
 func requireForceRLS(t *testing.T, db *pgxpool.Pool, table string) {
