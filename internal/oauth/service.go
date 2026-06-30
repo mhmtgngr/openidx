@@ -2918,6 +2918,24 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 		return
 	}
 
+	// Honor revocation: a signature-valid access token may have been revoked via
+	// /oauth/revoke or /oauth/logout(-all). RFC 7662 §2.2 — a revoked token (or
+	// one whose revocation state can't be verified) introspects as active:false
+	// (fail closed; not a 401, since introspection's contract is the boolean).
+	userID, _ := claims["sub"].(string)
+	var issuedAt int64
+	if iatF, ok := claims["iat"].(float64); ok {
+		issuedAt = int64(iatF)
+	}
+	if revoked, err := s.IsAccessTokenRevoked(c.Request.Context(), token, userID, issuedAt); err != nil {
+		s.logger.Warn("introspect: revocation check failed", zap.Error(err))
+		c.JSON(200, gin.H{"active": false})
+		return
+	} else if revoked {
+		c.JSON(200, gin.H{"active": false})
+		return
+	}
+
 	response := gin.H{
 		"active":     true,
 		"token_type": "access_token",
