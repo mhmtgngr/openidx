@@ -326,7 +326,7 @@ func (s *Service) handleExecuteLifecyclePolicy(c *gin.Context) {
 	// Create execution record
 	var execID string
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO lifecycle_executions (policy_id, status, users_scanned) VALUES ($1, 'running', $2) RETURNING id`,
+		`INSERT INTO lifecycle_policy_executions (policy_id, status, users_scanned) VALUES ($1, 'running', $2) RETURNING id`,
 		id, len(affected),
 	).Scan(&execID)
 	if err != nil {
@@ -481,7 +481,7 @@ func (s *Service) executeLifecyclePolicy(orgID, execID string, p LifecyclePolicy
 
 	actionsJSON, _ := json.Marshal(actionsTaken)
 	_, _ = s.db.Pool.Exec(ctx,
-		`UPDATE lifecycle_executions SET status = 'completed', users_affected = $1,
+		`UPDATE lifecycle_policy_executions SET status = 'completed', users_affected = $1,
 		 actions_taken = $2, completed_at = NOW() WHERE id = $3`,
 		usersAffected, actionsJSON, execID)
 }
@@ -494,7 +494,7 @@ func (s *Service) handleListLifecycleExecutions(c *gin.Context) {
 	policyID := c.Param("id")
 	rows, err := s.db.Pool.Query(c.Request.Context(),
 		`SELECT id, policy_id, status, users_scanned, users_affected, actions_taken, started_at, completed_at, error_message
-		 FROM lifecycle_executions WHERE policy_id = $1 ORDER BY started_at DESC LIMIT 20`, policyID)
+		 FROM lifecycle_policy_executions WHERE policy_id = $1 ORDER BY started_at DESC LIMIT 20`, policyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list executions"})
 		return
