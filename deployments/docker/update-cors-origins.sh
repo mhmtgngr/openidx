@@ -3,7 +3,7 @@
 # Update OpenIDX routes to include correct CORS origins
 
 ADMIN_API_URL="http://localhost:9188"
-ADMIN_KEY="edd1c9f034335f136f87ad84b625c8f1"
+ADMIN_KEY="${APISIX_ADMIN_KEY:?Set APISIX_ADMIN_KEY to the APISIX admin_key configured in config.yaml}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

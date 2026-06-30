@@ -3,7 +3,7 @@
 # Load all OpenIDX routes into APISIX via Admin API
 
 ADMIN_API_URL="http://localhost:9188"
-ADMIN_KEY="edd1c9f034335f136f87ad84b625c8f1"
+ADMIN_KEY="${APISIX_ADMIN_KEY:?Set APISIX_ADMIN_KEY to the APISIX admin_key configured in config.yaml}"
 
 # Color output
 GREEN='\033[0;32m'

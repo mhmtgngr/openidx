@@ -8,7 +8,7 @@ set -e
 
 # Configuration
 ADMIN_API_URL="${APISIX_ADMIN_URL:-http://localhost:9188}"
-ADMIN_KEY="${APISIX_ADMIN_KEY:-edd1c9f034335f136f87ad84b625c8f1}"
+ADMIN_KEY="${APISIX_ADMIN_KEY:?Set APISIX_ADMIN_KEY to the APISIX admin_key configured in config.yaml}"
 DOMAIN="${PRODUCTION_DOMAIN:-openidx.tdv.org}"
 
 # Color output
