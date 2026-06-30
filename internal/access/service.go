@@ -25,6 +25,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -2454,10 +2455,17 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return nil
 	}
-
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseTokenClaims(token)
+
+	// SECURITY (P0-1): verify the bearer's signature + expiry against the OAuth
+	// JWKS before trusting any claim. A forged/unsigned token must yield no
+	// session — the request then falls through to unauthenticated handling,
+	// exactly as a missing cookie does. Never build a ProxySession from
+	// unverified claims. If JWKS is unconfigured, verification fails → no
+	// session (fail-closed: bearer auth is unavailable, never forgeable).
+	claims, err := middleware.VerifyBearerToken(s.oauthJWKSURL, token)
 	if err != nil {
+		s.logger.Debug("bearer token rejected", zap.Error(err))
 		return nil
 	}
 
@@ -2583,7 +2591,15 @@ type tokenResponse struct {
 	IDToken      string `json:"id_token"`
 }
 
-// parseTokenClaims decodes JWT claims without full validation (validation is done by session creation)
+// parseTokenClaims decodes JWT claims WITHOUT verifying the signature or expiry.
+//
+// SECURITY: only call this on a token obtained over a trusted back channel — i.e.
+// one just returned by a server-to-server code exchange against our own OAuth
+// token endpoint (handleCallback) or an external IdP's token endpoint
+// (multi_idp), per OIDC Core §3.1.3.7. NEVER call it on a client-supplied bearer:
+// that is the P0-1 unsigned-JWT auth bypass. The bearer path
+// (getSessionFromBearer) uses middleware.VerifyBearerToken, which verifies the
+// signature + expiry against the OAuth JWKS — use that for any client token.
 func (s *Service) parseTokenClaims(tokenString string) (map[string]interface{}, error) {
 	parts := strings.Split(tokenString, ".")
 	if len(parts) != 3 {

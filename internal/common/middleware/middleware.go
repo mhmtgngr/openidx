@@ -182,6 +182,52 @@ func getFirstSigningKey(jwksURL string) (*rsa.PublicKey, error) {
 	return nil, fmt.Errorf("no signing keys found in JWKS")
 }
 
+// VerifyBearerToken validates a bearer JWT against the OAuth JWKS and returns
+// its claims. It enforces the same guarantees as Auth(): an RS256 algorithm pin
+// (rejecting "none"/HS256 and alg-confusion), a kid→JWKS signing-key lookup via
+// the shared 1-hour key cache, and a required, unexpired exp. It is for services
+// that authenticate a bearer OUTSIDE the Auth() middleware (e.g. the access
+// reverse proxy resolving a forwarded bearer). Any verification failure returns
+// an error; callers MUST treat a non-nil error as "unauthenticated" and build no
+// session from it.
+func VerifyBearerToken(jwksURL, tokenString string) (map[string]interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		alg, ok := token.Header["alg"].(string)
+		if !ok || alg == "" {
+			return nil, fmt.Errorf("token missing alg header")
+		}
+		if alg != "RS256" {
+			return nil, fmt.Errorf("unexpected signing algorithm: %s (only RS256 is allowed)", alg)
+		}
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("token method is not RSA despite alg header")
+		}
+		kid, ok := token.Header["kid"].(string)
+		if !ok {
+			return nil, fmt.Errorf("token missing kid header")
+		}
+		return getSigningKey(jwksURL, kid)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if token == nil || !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	exp, ok := claims["exp"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("token missing exp")
+	}
+	if time.Now().Unix() > int64(exp) {
+		return nil, fmt.Errorf("token expired")
+	}
+	return claims, nil
+}
+
 // CORS returns a middleware that handles CORS headers
 func CORS(allowedOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
