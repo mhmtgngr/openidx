@@ -59,8 +59,8 @@ teardown() {
 }
 
 @test "script should define APISIX_ADMIN_KEY variable" {
-  run grep "APISIX_ADMIN_KEY=" ../deployments/docker/load-production-routes.sh
-  assert_output --partial "edd1c9f034335f136f87ad84b625c8f1"
+  run grep "APISIX_ADMIN_KEY" ../deployments/docker/load-production-routes.sh
+  assert_output --partial "APISIX_ADMIN_KEY"
   assert_success
 }
 

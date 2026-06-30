@@ -4,7 +4,7 @@ apisix:
   enable_admin: true
   admin_key:
     - name: admin
-      key: edd1c9f034335f136f87ad84b625c8f1
+      key: CHANGE_ME_ADMIN_KEY
       schema: admin
   port_admin: 9180
   admin_allow_ip:
@@ -24,7 +24,7 @@ deployment:
   admin:
     admin_key:
       - name: admin
-        key: edd1c9f034335f136f87ad84b625c8f1
+        key: CHANGE_ME_ADMIN_KEY
         schema: admin
   etcd:
     host:

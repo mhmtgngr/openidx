@@ -457,7 +457,7 @@ docker compose exec nginx-proxy ls -la /etc/letsencrypt/live/openidx.tdv.org/
 ```bash
 # Check APISIX routes
 curl http://localhost:9188/apisix/admin/routes \
-    -H "X-API-KEY: edd1c9f034335f136f87ad84b625c8f1"
+    -H "X-API-KEY: $APISIX_ADMIN_KEY"
 
 # Reload routes
 ./load-production-routes.sh
