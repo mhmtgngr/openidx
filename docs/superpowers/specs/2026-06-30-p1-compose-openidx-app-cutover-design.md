@@ -1,5 +1,36 @@
 # P1 — Compose: run migrations + cut the app role over to `openidx_app`
 
+> **STATUS: DEFERRED (2026-06-30).** Implementation was attempted and revealed
+> this is the larger "collapse to one schema source" initiative (audit root-cause
+> #1), not a single P1. Findings that block the "layer migrations on top of
+> init-db" approach this spec proposed:
+>
+> 1. **init-db.sql's table DDL diverges from the migrations.** `migrate up` on an
+>    init-db-bootstrapped DB fails at **v29 (`ziti_certificates`: index references
+>    `identity_id`, which init-db's version of the table lacks)** — same class as
+>    the `lifecycle_executions` collision. Reconciling each divergent table is
+>    unbounded.
+> 2. **`migrate up` on an EMPTY DB is clean** (v1–v55, `users.org_id` + FORCE RLS,
+>    168 tables, and v53 even creates `openidx_app`). So migrations are a complete,
+>    self-consistent schema source — the right model is "migrations own the
+>    schema," not "layer on top."
+> 3. **But init-db.sql carries 39 seed INSERTs migrations don't** (default admin
+>    user, `admin-console` OAuth client, roles, permissions, `system_settings`,
+>    demo apps). Dropping init-db's tables would drop that seed → a fresh
+>    `docker compose up` would have no login/clients. Migrations only seed the
+>    default org row.
+>
+> **Correct path for the dedicated initiative:** reduce init-db.sql to a minimal
+> bootstrap (extensions + the passwordless `openidx_app` role, so the password
+> hook still works at init time), relocate the 39 seeds into a post-migrate seed
+> step compatible with the migrated schema, keep the migrate service + role
+> cutover + password hook described below (built and `docker compose config`-
+> validated in the deferred attempt), and verify with a full `docker compose up`.
+> The plumbing design below is sound and reusable; the schema/seed reduction is
+> the remaining work.
+
+
+
 ## Context
 
 On the box, the app connects as the non-owner `openidx_app` role so the v37 RLS
