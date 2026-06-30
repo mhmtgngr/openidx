@@ -2994,7 +2994,7 @@ CREATE TABLE IF NOT EXISTS lifecycle_policies (
 );
 
 -- Lifecycle policy execution history
-CREATE TABLE IF NOT EXISTS lifecycle_executions (
+CREATE TABLE IF NOT EXISTS lifecycle_policy_executions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     policy_id UUID NOT NULL REFERENCES lifecycle_policies(id) ON DELETE CASCADE,
     status VARCHAR(50) DEFAULT 'running',
@@ -3006,7 +3006,7 @@ CREATE TABLE IF NOT EXISTS lifecycle_executions (
     error_message TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_lifecycle_exec_policy ON lifecycle_executions(policy_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_policy_exec ON lifecycle_policy_executions(policy_id, started_at DESC);
 
 -- Attestation campaigns
 CREATE TABLE IF NOT EXISTS attestation_campaigns (

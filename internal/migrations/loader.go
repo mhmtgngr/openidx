@@ -390,5 +390,12 @@ func allMigrations() []*Migration {
 			UpSQL:       reconcileTableGapUp,
 			DownSQL:     reconcileTableGapDown,
 		},
+		{
+			Version:     55,
+			Name:        "lifecycle_policy_executions",
+			Description: "Split the deprovisioning policy-run execution log out of the workflow lifecycle_executions table (a name collision: the workflow schema won, so deprovisioning's policy_id queries failed on every install). Creates lifecycle_policy_executions; init-db.sql's dead second block is renamed in lockstep and internal/admin/deprovisioning.go repointed. Idempotent; not under the v37 RLS belt.",
+			UpSQL:       lifecyclePolicyExecUp,
+			DownSQL:     lifecyclePolicyExecDown,
+		},
 	}
 }
