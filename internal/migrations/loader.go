@@ -383,5 +383,12 @@ func allMigrations() []*Migration {
 			UpSQL:       rlsAppRoleUp,
 			DownSQL:     rlsAppRoleDown,
 		},
+		{
+			Version:     54,
+			Name:        "reconcile_initdb_table_gap",
+			Description: "Create the 58 tables that existed only in deployments/docker/init-db.sql so managed-Postgres/RDS/Helm/migrate installs stop 500ing across MFA variants, SAML/social/federation, lifecycle, ISPM, audit archival, bulk-ops, biometric, passwordless, guacamole and ziti-fabric features (the broad init-db<->migrations reconcile after v38-v45's ~15). Verbatim DDL, idempotent (IF NOT EXISTS) so it is a no-op on docker-compose installs. Not under the v37 RLS belt (non-FORCE tables; openidx_app unaffected). TestInitDBParity now keeps this gap from recurring.",
+			UpSQL:       reconcileTableGapUp,
+			DownSQL:     reconcileTableGapDown,
+		},
 	}
 }
