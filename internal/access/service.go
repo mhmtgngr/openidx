@@ -25,6 +25,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -2454,10 +2455,17 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return nil
 	}
-
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.parseTokenClaims(token)
+
+	// SECURITY (P0-1): verify the bearer's signature + expiry against the OAuth
+	// JWKS before trusting any claim. A forged/unsigned token must yield no
+	// session — the request then falls through to unauthenticated handling,
+	// exactly as a missing cookie does. Never build a ProxySession from
+	// unverified claims. If JWKS is unconfigured, verification fails → no
+	// session (fail-closed: bearer auth is unavailable, never forgeable).
+	claims, err := middleware.VerifyBearerToken(s.oauthJWKSURL, token)
 	if err != nil {
+		s.logger.Debug("bearer token rejected", zap.Error(err))
 		return nil
 	}
 
