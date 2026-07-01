@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-07-01
+
+Security & production-readiness hardening — remediation of the v2.0 GA
+production-readiness audit (all P0s + four P1s + a P2 cluster).
+
+### Security
+- Access proxy now verifies a bearer JWT's signature + expiry (RS256 via the
+  OAuth JWKS) before building a session; forged/unsigned tokens are rejected
+  (P0-1, #255).
+- Pre-tenant-resolution lookups against RLS-forced tables (API-key validation,
+  proxy route/session/device/posture reads, Ziti startup, audit webhook
+  bookkeeping) are bypass-wrapped so they no longer fail closed under the
+  non-owner `openidx_app` role; WebAuthn login is org-scoped (P0-2, #254).
+- OAuth token introspection now honors revocation — a revoked token reports
+  `active:false` (#259).
+- Removed the hardcoded APISIX admin key from the repo; templated from env
+  (P0-4, #256). **Rotate the previously-committed key wherever deployed.**
+- Enabled branch protection on `main` (Required Checks, enforce_admins) (P0-5).
+- Production config validation now checks the *effective* DB sslmode (parsed from
+  `DATABASE_URL`, not just the standalone field) (#263).
+- Bumped auth/transport-critical dependencies (x/crypto, x/net, pgx/v5,
+  go-webauthn, go-redis/v9); transitive advisories dropped 23→2 (#264).
+- Platform-admin cross-org audit now records under RLS and logs failures;
+  IP-threat DB errors are surfaced; dead runtime-DDL removed (P2, #265).
+
+### Fixed
+- 58 tables that existed only in `init-db.sql` are now created by migration
+  **v54**, so managed-Postgres/RDS/Helm/`migrate` installs stop 500ing across
+  MFA/SAML/social/lifecycle/ISPM/audit features; a parity test guards against
+  recurrence (P0-3, #257).
+- Split the deprovisioning policy-run log into `lifecycle_policy_executions`
+  (migration **v55**) — it collided with the workflow `lifecycle_executions`
+  schema, breaking deprovisioning execution records on every install (#258).
+- Docs workflow no longer passes `latest latest` to `mike deploy` (#261).
+
+### Changed
+- Migrated off go-redis deprecated APIs (`SetEx`→`Set`, `GetSet`→`SetArgs`,
+  `ZRevRange`→`ZRangeArgs`) (#264).
+- `.gitignore` now excludes `*.zip` to prevent stray archive exports being
+  committed (#266).
+
 ## [1.8.0] - 2026-06-29
 
 ### Added
@@ -1074,7 +1115,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/mhmtgngr/openidx/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/mhmtgngr/openidx/compare/v1.7.2...v1.8.0
 [1.7.2]: https://github.com/mhmtgngr/openidx/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/mhmtgngr/openidx/compare/v1.7.0...v1.7.1
