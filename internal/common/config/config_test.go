@@ -760,6 +760,71 @@ func TestValidateProduction(t *testing.T) {
 		err := cfg.ValidateProduction()
 		assert.NoError(t, err)
 	})
+
+	// The effective sslmode is what pgx connects with — DATABASE_URL wins over
+	// the standalone field, so a URL carrying sslmode=disable must be caught even
+	// when database_ssl_mode says 'require' (the drift this fix closes).
+	t.Run("Fails when DATABASE_URL sslmode=disable despite field=require", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseURL:               "postgres://u:p@db:5432/openidx?sslmode=disable",
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "sslmode")
+	})
+
+	t.Run("Passes when DATABASE_URL sslmode=require despite field=disable", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseURL:               "postgres://u:p@db:5432/openidx?sslmode=require",
+			DatabaseSSLMode:           "disable",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.NoError(t, err)
+	})
+}
+
+func TestEffectiveDatabaseSSLMode(t *testing.T) {
+	tests := []struct {
+		name  string
+		url   string
+		field string
+		want  string
+	}{
+		{"URL query form wins", "postgres://u:p@h/db?sslmode=verify-full", "disable", "verify-full"},
+		{"URL disable wins over field", "postgres://u:p@h/db?sslmode=disable", "require", "disable"},
+		{"DSN form", "host=h user=u dbname=db sslmode=require", "disable", "require"},
+		{"empty URL falls back to field", "", "verify-ca", "verify-ca"},
+		{"URL without sslmode falls back to field", "postgres://u:p@h/db", "require", "require"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{DatabaseURL: tt.url, DatabaseSSLMode: tt.field}
+			assert.Equal(t, tt.want, c.effectiveDatabaseSSLMode())
+		})
+	}
 }
 
 func TestDebugOTPsEnabled(t *testing.T) {

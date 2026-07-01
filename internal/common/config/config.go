@@ -3,10 +3,15 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// sslmodeRe extracts the sslmode from a DATABASE_URL (URL "?sslmode=" or DSN
+// "sslmode=" form).
+var sslmodeRe = regexp.MustCompile(`sslmode=([a-zA-Z-]+)`)
 
 // Config holds all configuration for the application
 type Config struct {
@@ -805,8 +810,8 @@ func (c *Config) ProductionWarnings() []string {
 	if !c.CSRFEnabled {
 		warnings = append(warnings, "csrf_enabled is false; enable CSRF protection for production deployments")
 	}
-	if c.DatabaseSSLMode == "" || c.DatabaseSSLMode == "disable" {
-		warnings = append(warnings, "database_ssl_mode is 'disable'; use 'verify-full' for production")
+	if m := c.effectiveDatabaseSSLMode(); m == "" || m == "disable" {
+		warnings = append(warnings, "database sslmode is 'disable' (from DATABASE_URL or database_ssl_mode); use 'verify-full' for production")
 	}
 	if !c.RedisTLSEnabled {
 		warnings = append(warnings, "redis_tls_enabled is false; enable TLS for Redis in production")
@@ -815,6 +820,18 @@ func (c *Config) ProductionWarnings() []string {
 		warnings = append(warnings, "tls.enabled is false; enable inter-service TLS for production")
 	}
 	return warnings
+}
+
+// effectiveDatabaseSSLMode returns the sslmode that will actually govern the DB
+// connection. The value embedded in DatabaseURL wins, because the pool is built
+// from that URL verbatim (pgxpool.ParseConfig); the standalone DatabaseSSLMode
+// field is only a fallback for when the URL omits it. This prevents a passing
+// production gate while DATABASE_URL carries sslmode=disable.
+func (c *Config) effectiveDatabaseSSLMode() string {
+	if m := sslmodeRe.FindStringSubmatch(c.DatabaseURL); len(m) == 2 {
+		return m[1]
+	}
+	return c.DatabaseSSLMode
 }
 
 // ValidateProduction performs critical security validation for production deployments.
@@ -858,10 +875,13 @@ func (c *Config) ValidateProduction() error {
 			"csrf_enabled must be true in production to prevent CSRF attacks")
 	}
 
-	// Critical: Database connections must use TLS in production
-	if c.DatabaseSSLMode == "" || c.DatabaseSSLMode == "disable" {
+	// Critical: Database connections must use TLS in production. Check the
+	// EFFECTIVE sslmode — the one in DATABASE_URL (what pgx actually connects
+	// with) wins over the standalone database_ssl_mode field, so a URL carrying
+	// sslmode=disable can't slip past a field set to 'require'.
+	if m := c.effectiveDatabaseSSLMode(); m == "" || m == "disable" {
 		criticalIssues = append(criticalIssues,
-			"database_ssl_mode must be 'require', 'verify-ca', or 'verify-full' in production (not 'disable')")
+			"database sslmode must be 'require', 'verify-ca', or 'verify-full' in production (not 'disable') — set it in DATABASE_URL and/or database_ssl_mode")
 	}
 
 	// Critical: Redis connections must use TLS in production
