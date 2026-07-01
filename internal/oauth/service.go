@@ -1593,6 +1593,36 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 		return
 	}
 
+	// Device-trust gate for clientless (BrowZer) access. BrowZer's data path
+	// bypasses the proxy's forward-auth device-trust check, and this
+	// server-rendered login (POST /oauth/authorize/callback) — not the JSON
+	// /oauth/login — is what the BrowZer public client uses, so this is the
+	// enforcement point. Mirrors the handleLogin gate (#268). Placed before the
+	// login_session is deleted so a blocked user can retry the same session.
+	if s.riskService != nil {
+		clientIP := c.ClientIP()
+		userAgent := c.GetHeader("User-Agent")
+		fingerprint := s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
+		// Register the device so an approval has a known_devices row to flip.
+		_, _, _ = s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, "")
+		deviceTrusted := s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
+		if s.deviceTrustGateBlocks(oauthParams["client_id"], deviceTrusted) {
+			req, derr := s.identityService.CreateDeviceTrustRequest(c.Request.Context(),
+				user.ID, fingerprint, fingerprint, parseBrowserNameFromUA(userAgent),
+				"browser", clientIP, userAgent,
+				"clientless (BrowZer) access from an untrusted device")
+			if !(derr == nil && req != nil && req.Status == "approved") {
+				s.logger.Warn("clientless login blocked: device not trusted",
+					zap.String("user_id", user.ID),
+					zap.String("client_id", oauthParams["client_id"]))
+				s.renderLoginPage(c, loginSession,
+					"This device must be approved before clientless access. An approval request has been filed; try again after an administrator approves it.")
+				return
+			}
+			// Auto-approved (e.g. known corporate IP) → fall through and issue the code.
+		}
+	}
+
 	// Clean up login session
 	s.redis.Client.Del(c.Request.Context(), "login_session:"+loginSession)
 
