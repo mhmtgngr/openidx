@@ -394,7 +394,7 @@ func (c *Cache) GetSet(ctx context.Context, key string, newValue interface{}) (s
 	}
 
 	fullKey := c.fullKey(key)
-	oldValue, err := c.client.GetSet(ctx, fullKey, newValue).Result()
+	oldValue, err := c.client.SetArgs(ctx, fullKey, newValue, redis.SetArgs{Get: true}).Result()
 	if err != nil && err != redis.Nil {
 		c.metrics.errors.Add(1)
 		return "", fmt.Errorf("failed to getset: %w", err)

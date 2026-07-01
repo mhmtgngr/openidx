@@ -309,7 +309,7 @@ func (rc *ResponseCache) handleRequest(c *gin.Context, duration time.Duration, o
 			for _, tag := range cfg.tags {
 				tagKey := "tag:" + tag + ":" + cacheKey
 				if rc.redis != nil {
-					rc.redis.SetEx(c.Request.Context(), tagKey, 1, cfg.duration+cfg.staleTTL)
+					rc.redis.Set(c.Request.Context(), tagKey, 1, cfg.duration+cfg.staleTTL)
 				} else {
 					rc.mu.Lock()
 					rc.memCache[tagKey] = &inMemoryCacheEntry{
@@ -433,7 +433,7 @@ func (rc *ResponseCache) setToCache(ctx context.Context, key string, resp *Cache
 		return nil
 	}
 
-	return rc.redis.SetEx(ctx, key, data, ttl).Err()
+	return rc.redis.Set(ctx, key, data, ttl).Err()
 }
 
 // setHeaderFromCache sets response headers from a cached response
@@ -867,5 +867,5 @@ func SetCacheByKey(redisClient *redis.Client, key string, resp *CachedResponse, 
 	if err != nil {
 		return err
 	}
-	return redisClient.SetEx(ctx, "response:"+key, data, ttl).Err()
+	return redisClient.Set(ctx, "response:"+key, data, ttl).Err()
 }
