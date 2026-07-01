@@ -81,8 +81,15 @@ jobs:
             VERSION=$(git describe --tags --exact-match 2>/dev/null || echo "latest")
           fi
 
-          # Deploy with mike for versioning
-          mike deploy --config-file docs/mkdocs.yml --branch gh-pages --update-aliases $VERSION latest
+          # Deploy with mike for versioning. On a non-tag push VERSION falls back
+          # to "latest"; passing "latest latest" (version == alias) makes mike
+          # error "duplicated version and alias" — which failed this workflow on
+          # every push to main. Only attach the 'latest' alias for a real tag.
+          if [ "$VERSION" = "latest" ]; then
+            mike deploy --config-file docs/mkdocs.yml --branch gh-pages --update-aliases latest
+          else
+            mike deploy --config-file docs/mkdocs.yml --branch gh-pages --update-aliases "$VERSION" latest
+          fi
           mike set-default --config-file docs/mkdocs.yml --branch gh-pages latest
 
       - name: Upload artifact
