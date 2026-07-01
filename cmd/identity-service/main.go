@@ -154,7 +154,7 @@ func main() {
 		DefaultOrgFallback:     cfg.DefaultOrgFallback,
 		DefaultOrgID:           cfg.DefaultOrgID,
 		PlatformAdminPredicate: auth.SuperAdminPredicate,
-		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool),
+		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool, log),
 	}))
 
 	// Initialize directory service for LDAP sync

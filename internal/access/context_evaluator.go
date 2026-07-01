@@ -4,6 +4,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -395,6 +397,15 @@ func (s *Service) checkIPThreat(ctx context.Context, ip string) (threatType stri
 		`SELECT threat_type, is_active FROM ip_threat_list WHERE ip_address=$1`, ip).
 		Scan(&threat, &isActive)
 	if err != nil {
+		// ErrNoRows is the normal case: the IP isn't a listed threat → allow.
+		// A real DB error is different: fail OPEN (allow) — ip_threat_list is a
+		// secondary deny-list, and failing closed would block ALL proxied traffic
+		// on a transient DB error (a worse DoS than admitting a listed IP during
+		// an outage) — but never silently: surface it so the gap is visible.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			s.logger.Warn("ip-threat check failed; allowing (deny-list is best-effort)",
+				zap.String("ip", ip), zap.Error(err))
+		}
 		return "", false
 	}
 

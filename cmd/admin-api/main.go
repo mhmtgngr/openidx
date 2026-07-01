@@ -227,7 +227,7 @@ func main() {
 		DefaultOrgFallback:     cfg.DefaultOrgFallback,
 		DefaultOrgID:           cfg.DefaultOrgID,
 		PlatformAdminPredicate: auth.SuperAdminPredicate,
-		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool),
+		OnPlatformCrossOrg:     audit.CrossOrgAuditor(db.Pool, log),
 	}))
 
 	// OPA authorization (opt-in via ENABLE_OPA_AUTHZ)

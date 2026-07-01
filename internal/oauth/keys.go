@@ -593,35 +593,6 @@ func (km *KeyManager) ValidateJWT(tokenString string) (*jwt.MapClaims, error) {
 	return nil, errors.New("invalid token")
 }
 
-// EnsureSigningKeysTable creates the oauth_signing_keys table if it doesn't exist
-func (km *KeyManager) EnsureSigningKeysTable(ctx context.Context) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS oauth_signing_keys (
-			key_id VARCHAR(255) PRIMARY KEY,
-			key_type VARCHAR(50) NOT NULL,
-			algorithm VARCHAR(50) NOT NULL,
-			use VARCHAR(10) NOT NULL,
-			public_key TEXT NOT NULL,
-			private_key TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			expires_at TIMESTAMP NOT NULL,
-			rotated_at TIMESTAMP,
-			status VARCHAR(20) NOT NULL DEFAULT 'active',
-			key_version INTEGER NOT NULL
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_oauth_signing_keys_status ON oauth_signing_keys(status);
-		CREATE INDEX IF NOT EXISTS idx_oauth_signing_keys_expires_at ON oauth_signing_keys(expires_at);
-	`
-
-	_, err := km.db.Pool.Exec(ctx, query)
-	if err != nil {
-		return fmt.Errorf("failed to create oauth_signing_keys table: %w", err)
-	}
-
-	return nil
-}
-
 // hashKey computes a hash of a key for fingerprinting
 func (km *KeyManager) hashKey(key *rsa.PublicKey) string {
 	// Create a fingerprint using SHA-256

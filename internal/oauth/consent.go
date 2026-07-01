@@ -488,38 +488,6 @@ func (m *ConsentManager) CleanupExpiredConsents(ctx context.Context) (int64, err
 	return count, nil
 }
 
-// EnsureConsentTable creates the oauth_consent table if it doesn't exist
-func (m *ConsentManager) EnsureConsentTable(ctx context.Context) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS oauth_consent (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			user_id VARCHAR(255) NOT NULL,
-			client_id VARCHAR(255) NOT NULL,
-			scopes TEXT[] NOT NULL,
-			claims TEXT[] DEFAULT '{}',
-			status VARCHAR(20) NOT NULL DEFAULT 'granted',
-			granted_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			expires_at TIMESTAMP,
-			revoked_at TIMESTAMP,
-			last_used_at TIMESTAMP,
-			metadata JSONB,
-			UNIQUE(user_id, client_id)
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_oauth_consent_user_id ON oauth_consent(user_id);
-		CREATE INDEX IF NOT EXISTS idx_oauth_consent_client_id ON oauth_consent(client_id);
-		CREATE INDEX IF NOT EXISTS idx_oauth_consent_status ON oauth_consent(status);
-		CREATE INDEX IF NOT EXISTS idx_oauth_consent_expires_at ON oauth_consent(expires_at);
-	`
-
-	_, err := m.db.Pool.Exec(ctx, query)
-	if err != nil {
-		return fmt.Errorf("failed to create oauth_consent table: %w", err)
-	}
-
-	return nil
-}
-
 // ParseScopeString parses a space-separated scope string into a slice
 func ParseScopeString(scopeStr string) []string {
 	if scopeStr == "" {
