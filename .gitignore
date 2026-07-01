@@ -67,3 +67,7 @@ credentials.json
 # Exclude generated secrets files, but not Helm templates
 secrets.yaml
 !deployments/kubernetes/helm/**/templates/secrets.yaml
+
+# Archives / data exports (never committed — prevents stray *.zip like
+# tdv.org_*.zip from being swept in by `git add -A`)
+*.zip
