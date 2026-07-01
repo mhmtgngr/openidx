@@ -4,7 +4,7 @@
 # ============================================
 # Stage 1: Build (prepare assets if needed)
 # ============================================
-FROM alpine:3.20 AS builder
+FROM alpine:3.24 AS builder
 
 # Install wget for healthcheck verification
 RUN apk add --no-cache wget
