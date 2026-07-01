@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Optional device-trust enforcement for clientless (BrowZer) access.** With
+  `OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS=true` (off by default), an OIDC
+  login for the clientless (BrowZer) client from an untrusted device is refused —
+  the login page shows "This device must be approved before clientless access" and
+  a device-trust request is filed for admin approval (admin console → **Device
+  Trust Approval**); after approval, the retry succeeds. Closes the gap where a
+  BrowZer route's `require_device_trust` was silently unenforced (BrowZer traffic
+  bypasses the proxy's HTTP forward-auth). Enforced at the OIDC login
+  (`handleAuthorizeCallback` — BrowZer's server-rendered login — and
+  `handleLogin`); per-device, not per-route. (#268, #269, #270)
+
 ## [1.8.1] - 2026-07-01
 
 Security & production-readiness hardening — remediation of the v2.0 GA
