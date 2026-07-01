@@ -1603,12 +1603,14 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 		clientIP := c.ClientIP()
 		userAgent := c.GetHeader("User-Agent")
 		fingerprint := s.riskService.ComputeDeviceFingerprint(clientIP, userAgent)
-		// Register the device so an approval has a known_devices row to flip.
-		_, _, _ = s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, "")
+		// Register the device so an approval has a known_devices row to flip;
+		// deviceID is the known_devices UUID (device_trust_requests.device_id is
+		// a uuid — passing the fingerprint would fail the insert).
+		deviceID, _, _ := s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, "")
 		deviceTrusted := s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
 		if s.deviceTrustGateBlocks(oauthParams["client_id"], deviceTrusted) {
 			req, derr := s.identityService.CreateDeviceTrustRequest(c.Request.Context(),
-				user.ID, fingerprint, fingerprint, parseBrowserNameFromUA(userAgent),
+				user.ID, deviceID, fingerprint, parseBrowserNameFromUA(userAgent),
 				"browser", clientIP, userAgent,
 				"clientless (BrowZer) access from an untrusted device")
 			if !(derr == nil && req != nil && req.Status == "approved") {
@@ -1763,8 +1765,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 			lon = geo.Lon
 		}
 
-		// Register device
-		_, _, _ = s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, location)
+		// Register device; deviceID is the known_devices UUID used below for the
+		// device-trust request (device_trust_requests.device_id is a uuid).
+		deviceID, _, _ := s.riskService.RegisterDevice(c.Request.Context(), user.ID, fingerprint, clientIP, userAgent, location)
 
 		// Check device trust
 		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
@@ -1776,7 +1779,7 @@ func (s *Service) handleLogin(c *gin.Context) {
 		// is filed (dedups; auto-approves on known IP / corporate device).
 		if s.deviceTrustGateBlocks(oauthParams["client_id"], deviceTrusted) {
 			req, derr := s.identityService.CreateDeviceTrustRequest(c.Request.Context(),
-				user.ID, fingerprint, fingerprint, parseBrowserNameFromUA(userAgent),
+				user.ID, deviceID, fingerprint, parseBrowserNameFromUA(userAgent),
 				"browser", clientIP, userAgent,
 				"clientless (BrowZer) access from an untrusted device")
 			if derr == nil && req != nil && req.Status == "approved" {
