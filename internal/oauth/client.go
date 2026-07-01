@@ -547,36 +547,3 @@ func generateUUID() string {
 	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
-
-// EnsureClientsTable creates the oauth_clients table if it doesn't exist
-func (r *ClientRepository) EnsureClientsTable(ctx context.Context) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS oauth_clients (
-			id UUID PRIMARY KEY,
-			client_id VARCHAR(255) UNIQUE NOT NULL,
-			client_secret_hash VARCHAR(255) NOT NULL,
-			name VARCHAR(255) NOT NULL,
-			description TEXT,
-			tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
-			redirect_uris TEXT[] NOT NULL,
-			grant_types TEXT[] NOT NULL DEFAULT '{"authorization_code", "refresh_token"}',
-			scopes TEXT[] NOT NULL DEFAULT '{"openid", "profile"}',
-			client_authentication VARCHAR(50) NOT NULL DEFAULT 'client_secret_basic',
-			pkce_required BOOLEAN NOT NULL DEFAULT false,
-			access_token_lifetime INTEGER NOT NULL DEFAULT 3600,
-			refresh_token_lifetime INTEGER NOT NULL DEFAULT 2592000,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_oauth_clients_client_id ON oauth_clients(client_id);
-		CREATE INDEX IF NOT EXISTS idx_oauth_clients_tenant_id ON oauth_clients(tenant_id);
-	`
-
-	_, err := r.db.Pool.Exec(ctx, query)
-	if err != nil {
-		return fmt.Errorf("failed to create oauth_clients table: %w", err)
-	}
-
-	return nil
-}

@@ -278,7 +278,15 @@ func (s *Store) getLastHash(ctx context.Context, tenantID string) (string, error
 	return lastHash, nil
 }
 
-// ensurePartition ensures the monthly partition exists
+// ensurePartition ensures the monthly partition exists.
+//
+// NOTE (P2, deferred): this and the Store's schema init run CREATE TABLE at
+// runtime. The tamper-evident Store is currently UNWIRED (no production
+// constructor; audit_events_tamper_evident exists in no migration or init-db),
+// so this never runs today. Before this Store is ever wired into a service, its
+// table + partition DDL MUST move to a versioned migration — the app connects as
+// the non-owner openidx_app role, which cannot execute CREATE TABLE, so runtime
+// DDL would fail under RLS enforcement.
 func (s *Store) ensurePartition(ctx context.Context, tx pgx.Tx, partitionName string) error {
 	// Check if partition exists
 	var exists bool
