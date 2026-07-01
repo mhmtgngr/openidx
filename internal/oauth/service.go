@@ -1628,6 +1628,17 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 }
 
 // handleLogin handles username/password login for direct OpenIDX authentication
+// deviceTrustGateBlocks reports whether a login must be blocked for clientless
+// device trust: the feature is enabled, the login targets the clientless
+// (BrowZer) client, and the device is not trusted. This is the only enforceable
+// point for device trust on the BrowZer data path (which bypasses the proxy's
+// forward-auth device-trust check). See the design doc.
+func (s *Service) deviceTrustGateBlocks(clientID string, deviceTrusted bool) bool {
+	return s.config.RequireDeviceTrustForClientless &&
+		clientID != "" && clientID == s.config.BrowZerClientID &&
+		!deviceTrusted
+}
+
 func (s *Service) handleLogin(c *gin.Context) {
 	var req struct {
 		Username     string `json:"username"`
@@ -1727,6 +1738,32 @@ func (s *Service) handleLogin(c *gin.Context) {
 
 		// Check device trust
 		deviceTrusted = s.riskService.IsDeviceTrusted(c.Request.Context(), user.ID, fingerprint)
+
+		// Device-trust gate for clientless (BrowZer) access. BrowZer traffic
+		// bypasses the proxy's forward-auth device-trust check, so the OIDC login
+		// is the only place to enforce it. When enabled, an untrusted device
+		// targeting the clientless client is refused a session and a trust request
+		// is filed (dedups; auto-approves on known IP / corporate device).
+		if s.deviceTrustGateBlocks(oauthParams["client_id"], deviceTrusted) {
+			req, derr := s.identityService.CreateDeviceTrustRequest(c.Request.Context(),
+				user.ID, fingerprint, fingerprint, parseBrowserNameFromUA(userAgent),
+				"browser", clientIP, userAgent,
+				"clientless (BrowZer) access from an untrusted device")
+			if derr == nil && req != nil && req.Status == "approved" {
+				// Auto-approved (e.g. known corporate IP) → treat as trusted and
+				// let the login proceed.
+				deviceTrusted = true
+			} else {
+				s.logger.Warn("clientless login blocked: device not trusted",
+					zap.String("user_id", user.ID),
+					zap.String("client_id", oauthParams["client_id"]))
+				c.JSON(403, gin.H{
+					"error":             "device_not_trusted",
+					"error_description": "This device must be approved before clientless access. An approval request has been filed; try again after an administrator approves it.",
+				})
+				return
+			}
+		}
 
 		// Calculate risk score
 		riskScore, riskFactors = s.riskService.CalculateRiskScore(c.Request.Context(), user.ID, clientIP, userAgent, fingerprint, location, lat, lon)

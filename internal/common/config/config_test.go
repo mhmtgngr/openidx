@@ -218,6 +218,34 @@ func TestAPISIXEdgeEnvBindings(t *testing.T) {
 	assert.Equal(t, "10.0.0.1:8445", cfg.APISIXBootstrapperNode)
 }
 
+func TestRequireDeviceTrustForClientlessBinding(t *testing.T) {
+	saved := os.Getenv("OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS")
+	dburl := os.Getenv("DATABASE_URL")
+	defer func() {
+		if saved != "" {
+			os.Setenv("OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS", saved)
+		} else {
+			os.Unsetenv("OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS")
+		}
+		if dburl != "" {
+			os.Setenv("DATABASE_URL", dburl)
+		} else {
+			os.Unsetenv("DATABASE_URL")
+		}
+	}()
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+
+	os.Unsetenv("OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS")
+	cfg, err := Load("test-service")
+	require.NoError(t, err)
+	assert.False(t, cfg.RequireDeviceTrustForClientless, "default must be false")
+
+	os.Setenv("OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS", "true")
+	cfg, err = Load("test-service")
+	require.NoError(t, err)
+	assert.True(t, cfg.RequireDeviceTrustForClientless)
+}
+
 func TestGetRedisSentinelAddresses(t *testing.T) {
 	tests := []struct {
 		name     string
