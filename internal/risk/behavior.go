@@ -228,7 +228,7 @@ func (b *BehaviorTracker) GetBehaviorProfile(ctx context.Context, userID string)
 
 	// Get locations
 	locationKey := fmt.Sprintf("%s%s:locations", behaviorKeyPrefix, userID)
-	locationResults, err := b.redis.Client.ZRevRange(ctx, locationKey, 0, int64(b.config.MaxLocations-1)).Result()
+	locationResults, err := b.redis.Client.ZRangeArgs(ctx, redis.ZRangeArgs{Key: locationKey, Start: 0, Stop: int64(b.config.MaxLocations - 1), Rev: true}).Result()
 	if err == nil {
 		detailsKey := fmt.Sprintf("%s%s:location:details", behaviorKeyPrefix, userID)
 		for _, locHash := range locationResults {
@@ -244,14 +244,14 @@ func (b *BehaviorTracker) GetBehaviorProfile(ctx context.Context, userID string)
 
 	// Get devices
 	deviceKey := fmt.Sprintf("%s%s:devices", behaviorKeyPrefix, userID)
-	deviceResults, err := b.redis.Client.ZRevRange(ctx, deviceKey, 0, int64(b.config.MaxDevices-1)).Result()
+	deviceResults, err := b.redis.Client.ZRangeArgs(ctx, redis.ZRangeArgs{Key: deviceKey, Start: 0, Stop: int64(b.config.MaxDevices - 1), Rev: true}).Result()
 	if err == nil {
 		profile.TypicalDevices = deviceResults
 	}
 
 	// Get resources
 	resourceKey := fmt.Sprintf("%s%s:resources", behaviorKeyPrefix, userID)
-	resourceResults, err := b.redis.Client.ZRevRange(ctx, resourceKey, 0, int64(b.config.MaxResources-1)).Result()
+	resourceResults, err := b.redis.Client.ZRangeArgs(ctx, redis.ZRangeArgs{Key: resourceKey, Start: 0, Stop: int64(b.config.MaxResources - 1), Rev: true}).Result()
 	if err == nil {
 		profile.TypicalResources = resourceResults
 	}
