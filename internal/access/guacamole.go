@@ -45,6 +45,10 @@ type GuacConnection struct {
 	Hostname              string            `json:"hostname"`
 	Port                  int               `json:"port"`
 	Parameters            map[string]string `json:"parameters"`
+	VaultSecretID         string            `json:"vault_secret_id,omitempty"`
+	InjectUsername        string            `json:"inject_username,omitempty"`
+	RequireApproval       bool              `json:"require_approval"`
+	RecordSession         bool              `json:"record_session"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 }
@@ -411,6 +415,94 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 		"connection_id": connID,
 		"route_id":      routeID,
 	})
+}
+
+// handleSetGuacCredential sets the credential/approval/recording config on an existing guacamole_connections row.
+// PUT /guacamole/connections/:routeId/credential (admin-only)
+func (s *Service) handleSetGuacCredential(c *gin.Context) {
+	routeID := c.Param("routeId")
+
+	var req struct {
+		VaultSecretID   string `json:"vault_secret_id"`
+		InjectUsername  string `json:"inject_username"`
+		RequireApproval bool   `json:"require_approval"`
+		RecordSession   bool   `json:"record_session"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Verify the route belongs to this org (guacamole_connections has no org_id; scope via proxy_routes).
+	var exists bool
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM guacamole_connections gc
+		              JOIN proxy_routes pr ON pr.id = gc.route_id
+		              WHERE gc.route_id = $1 AND pr.org_id = $2)`,
+		routeID, org.ID).Scan(&exists)
+	if err != nil {
+		s.logger.Error("handleSetGuacCredential: route lookup failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up connection"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "guacamole connection not found for this route"})
+		return
+	}
+
+	// Validate the vault secret exists in this org (RLS-scoped — request context already carries org_id).
+	if req.VaultSecretID != "" {
+		var secretExists bool
+		//orgscope:ignore RLS on vault_secrets is enforced via the request context's app.org_id setting
+		err = s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id = $1)`,
+			req.VaultSecretID).Scan(&secretExists)
+		if err != nil {
+			s.logger.Error("handleSetGuacCredential: vault secret lookup failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate vault secret"})
+			return
+		}
+		if !secretExists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "vault secret not found"})
+			return
+		}
+	}
+
+	// guacamole_connections has no org_id; uniqueness is enforced by route_id.
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE guacamole_connections
+		    SET vault_secret_id  = NULLIF($1, '')::uuid,
+		        inject_username  = $2,
+		        require_approval = $3,
+		        record_session   = $4,
+		        updated_at       = NOW()
+		  WHERE route_id = $5`,
+		req.VaultSecretID, req.InjectUsername, req.RequireApproval, req.RecordSession, routeID)
+	if err != nil {
+		s.logger.Error("handleSetGuacCredential: update failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update connection credential"})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	s.logAuditEvent(c, "guacamole_credential_set", routeID, "guacamole_connection", map[string]interface{}{
+		"route_id":         routeID,
+		"inject_username":  req.InjectUsername,
+		"require_approval": req.RequireApproval,
+		"record_session":   req.RecordSession,
+		"has_secret":       req.VaultSecretID != "",
+		"user_id":          userID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"message": "connection credential updated"})
 }
 
 // provisionGuacamoleForRoute creates a Guacamole connection when a remote-access route is created/updated

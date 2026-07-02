@@ -478,6 +478,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guacamole remote access
 		api.GET("/guacamole/connections", svc.handleListGuacamoleConnections)
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
+		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 
 		// Temporary access links for support/vendor access
 		api.GET("/temp-access", svc.handleListTempAccess)
