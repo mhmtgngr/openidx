@@ -453,3 +453,55 @@ func (s *Service) Checkouts(ctx context.Context, secretID string) ([]Checkout, e
 	}
 	return out, rows.Err()
 }
+
+// AddCandidateVersion stores a new encrypted version WITHOUT bumping current_version.
+// The candidate is invisible to Use/Reveal (which join on current_version) until
+// PromoteVersion runs. Version number = MAX(version)+1 so repeated failed rotations
+// don't collide. Used by the rotation engine to make a generated value durable before
+// touching the target. value is zeroed by the caller.
+func (s *Service) AddCandidateVersion(ctx context.Context, secretID string, value []byte, by string) (int, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var next int
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version),0)+1 FROM vault_secret_versions WHERE secret_id = $1`, secretID).Scan(&next); err != nil {
+		return 0, err
+	}
+	keyID, blob, err := s.ring.Seal(secretID, next, value)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO vault_secret_versions (org_id, secret_id, version, key_id, ciphertext, created_by)
+		 VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::uuid)`, orgID, secretID, next, int(keyID), blob, by); err != nil {
+		return 0, err
+	}
+	return next, nil
+}
+
+// PromoteVersion sets a secret's current_version — the atomic "this value is now live on
+// the target" commit that makes it visible to Use/Reveal.
+func (s *Service) PromoteVersion(ctx context.Context, secretID string, version int) error {
+	ct, err := s.db.Pool.Exec(ctx,
+		`UPDATE vault_secrets SET current_version = $2, updated_at = NOW() WHERE id = $1`, secretID, version)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SecretOrg returns a secret's org_id. Background/bypass callers (the rotation engine)
+// use it to inject the org into their context for scoped vault writes.
+func (s *Service) SecretOrg(ctx context.Context, secretID string) (string, error) {
+	var org string
+	err := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM vault_secrets WHERE id = $1`, secretID).Scan(&org)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return org, err
+}
