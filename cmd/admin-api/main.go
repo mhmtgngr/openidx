@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/access"
 	"github.com/openidx/openidx/internal/admin"
 	adminhandlers "github.com/openidx/openidx/internal/admin/handlers"
 	"github.com/openidx/openidx/internal/api"
@@ -33,6 +34,7 @@ import (
 	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/risk"
 	"github.com/openidx/openidx/internal/server"
+	"github.com/openidx/openidx/internal/vault"
 	"github.com/openidx/openidx/internal/webhooks"
 )
 
@@ -243,6 +245,28 @@ func main() {
 
 		// Register admin console handlers (dashboard, settings)
 		adminhandlers.RegisterAllRoutes(v1, db.Pool, log)
+
+		// Vault (PAM credential store) — fail-closed: service must not start
+		// without a usable KEK. Falls back to EncryptionKey as id 0.
+		vaultRing, err := vault.KeyringFromConfig(vault.KeyConfig{
+			KEK:           cfg.VaultKEK,
+			KEKs:          cfg.VaultKEKs,
+			ActiveKEKID:   cfg.VaultActiveKEKID,
+			EncryptionKey: cfg.EncryptionKey,
+		})
+		if err != nil {
+			log.Fatal("vault keyring unavailable (fail-closed)", zap.Error(err))
+		}
+		unifiedAudit := access.NewUnifiedAuditService(db, log)
+		vaultSvc, err := vault.NewService(db, vaultRing, unifiedAudit,
+			time.Duration(cfg.VaultRevealLeaseTTLSeconds)*time.Second, log)
+		if err != nil {
+			log.Fatal("vault service init failed", zap.Error(err))
+		}
+		vaultGroup := v1.Group("")
+		vaultGroup.Use(admin.RequireAdmin())
+		vaultSvc.RegisterRoutes(vaultGroup)
+		go vaultSvc.StartSweeper(ctx, redis.Client)
 	}
 
 	// Create HTTP server

@@ -269,6 +269,15 @@ type Config struct {
 	//   e.g. "1:<base64-32B>,2:<base64-32B>" with active_key_id=2
 	RecordingsEncryptionKeys        string `mapstructure:"recordings_encryption_keys"`
 	RecordingsEncryptionActiveKeyID int    `mapstructure:"recordings_encryption_active_key_id"`
+
+	// Vault (PAM credential vault) key-encryption keys. Same shape as the
+	// recordings keyring. When all three are empty the vault falls back to
+	// EncryptionKey as KEK id 0 (raw 32-byte string, not base64). If that is
+	// also unusable the vault service fails closed and does not register.
+	VaultKEK                   string `mapstructure:"vault_kek"`
+	VaultKEKs                  string `mapstructure:"vault_keks"`
+	VaultActiveKEKID           int    `mapstructure:"vault_active_kek_id"`
+	VaultRevealLeaseTTLSeconds int    `mapstructure:"vault_reveal_lease_ttl_seconds"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption
@@ -576,6 +585,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Audit Stream WebSocket defaults (development-friendly)
 	v.SetDefault("audit_stream_allowed_origins", "")
+
+	// Vault (PAM credential vault) defaults
+	v.SetDefault("vault_reveal_lease_ttl_seconds", 300)
 }
 
 func bindEnvVars(v *viper.Viper) {
@@ -637,6 +649,10 @@ func bindEnvVars(v *viper.Viper) {
 		"enable_opa_authz":                    "ENABLE_OPA_AUTHZ",
 		"jwt_secret":                          "JWT_SECRET",
 		"encryption_key":                      "ENCRYPTION_KEY",
+		"vault_kek":                           "VAULT_KEK",
+		"vault_keks":                          "VAULT_KEKS",
+		"vault_active_kek_id":                 "VAULT_ACTIVE_KEK_ID",
+		"vault_reveal_lease_ttl_seconds":      "VAULT_REVEAL_LEASE_TTL_SECONDS",
 		"smtp_host":                           "SMTP_HOST",
 		"smtp_port":                           "SMTP_PORT",
 		"smtp_username":                       "SMTP_USERNAME",

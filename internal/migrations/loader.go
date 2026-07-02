@@ -397,5 +397,12 @@ func allMigrations() []*Migration {
 			UpSQL:       lifecyclePolicyExecUp,
 			DownSQL:     lifecyclePolicyExecDown,
 		},
+		{
+			Version:     56,
+			Name:        "vault_store",
+			Description: "PAM credential vault store (M1): vault_secrets, vault_secret_versions, vault_access_grants, vault_checkouts — org-scoped under the v37 FORCE-RLS belt. Envelope ciphertext lives only in vault_secret_versions. Rotation (credential_rotation_policies) is deferred to M1b. Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       vaultStoreUp,
+			DownSQL:     vaultStoreDown,
+		},
 	}
 }
