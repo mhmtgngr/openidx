@@ -3,7 +3,9 @@ package access
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +21,10 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// ErrSharingUnsupported is returned by ShareActiveConnection when the Guacamole
+// server does not support connection sharing (non-2xx or missing endpoint).
+var ErrSharingUnsupported = errors.New("guacamole: connection sharing not supported by this server")
 
 // GuacamoleClient communicates with the Apache Guacamole REST API to manage connections
 type GuacamoleClient struct {
@@ -960,6 +966,94 @@ func (gc *GuacamoleClient) TerminateSession(ctx context.Context, activeConnID st
 	gc.logger.Info("Terminated Guacamole active session",
 		zap.String("active_conn_id", activeConnID))
 	return nil
+}
+
+// ShareActiveConnection mints a read-only sharing link for an active Guacamole
+// connection. It follows the Guacamole 1.x sharing-profile approach:
+//
+//  1. Resolve the active connection's underlying connectionIdentifier from the
+//     activeConnID (active-connection UUID) by calling ListActiveSessions.
+//  2. POST a read-only sharing profile to /sharingProfiles bound to that
+//     connectionIdentifier. If the endpoint returns 404 (feature absent on this
+//     Guacamole build/version) or any non-2xx, ErrSharingUnsupported is returned
+//     so callers can downgrade gracefully.
+//  3. Construct the client share URL using Guacamole's standard client-id
+//     encoding for a sharing profile:
+//     base64(<sharingProfileIdentifier> + "\x00" + "s" + "\x00" + <dataSource>)
+//     giving /#/client/<clientID>?token=<authToken>.
+//
+// NOTE: Guacamole's sharing-profile REST endpoint was introduced in 1.3. Earlier
+// servers will 404 and this function will return ErrSharingUnsupported. The
+// GetConnectionURL helper for ordinary connections uses the simplified non-base64
+// path (line ~305); for sharing profiles we use the standard encoded form because
+// Guacamole's client router requires the type-tagged encoding to distinguish
+// a sharing profile ("s") from a connection ("c").
+func (gc *GuacamoleClient) ShareActiveConnection(ctx context.Context, activeConnID string) (string, error) {
+	// Step 1 — find the underlying connectionIdentifier for this active connection.
+	sessions, err := gc.ListActiveSessions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("guacamole ShareActiveConnection: list active sessions: %w", err)
+	}
+
+	var connIdentifier string
+	for _, s := range sessions {
+		if s.Identifier == activeConnID {
+			connIdentifier = s.ConnectionIdentifier
+			break
+		}
+	}
+	if connIdentifier == "" {
+		return "", fmt.Errorf("guacamole ShareActiveConnection: active connection %q not found", activeConnID)
+	}
+
+	// Step 2 — look up or create a read-only sharing profile for this connection.
+	// Guacamole does not expose a "get-or-create" API; we attempt to create one
+	// each time. The server may return a duplicate if one already exists; we treat
+	// any non-2xx as unsupported rather than trying to enumerate existing profiles
+	// (which would require an additional GET that not all versions support).
+	sharingProfileBody := map[string]interface{}{
+		"name":                        "openidx-readonly-share",
+		"primaryConnectionIdentifier": connIdentifier,
+		"parameters": map[string]string{
+			"read-only": "true",
+		},
+	}
+
+	respData, statusCode, err := gc.apiRequest("POST", "/sharingProfiles", sharingProfileBody)
+	if err != nil {
+		return "", fmt.Errorf("guacamole ShareActiveConnection: sharingProfiles request failed: %w", err)
+	}
+	if statusCode == http.StatusNotFound {
+		// Sharing profiles endpoint absent — Guacamole < 1.3 or feature disabled.
+		return "", ErrSharingUnsupported
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return "", ErrSharingUnsupported
+	}
+
+	var sharingResp struct {
+		Identifier string `json:"identifier"`
+	}
+	if err := json.Unmarshal(respData, &sharingResp); err != nil || sharingResp.Identifier == "" {
+		return "", ErrSharingUnsupported
+	}
+
+	// Step 3 — encode the sharing-profile client-id in Guacamole's standard form:
+	//   <sharingProfileIdentifier>\x00s\x00<dataSource>
+	// where "s" is the type tag for a sharing profile (vs "c" for a connection).
+	// This matches the encoding Guacamole's web client uses when opening a shared
+	// session link.
+	clientID := base64.StdEncoding.EncodeToString(
+		[]byte(sharingResp.Identifier + "\x00s\x00" + gc.dataSource),
+	)
+	shareURL := fmt.Sprintf("%s/#/client/%s?token=%s", gc.baseURL, clientID, gc.authToken)
+
+	gc.logger.Info("Created Guacamole read-only sharing profile",
+		zap.String("active_conn_id", activeConnID),
+		zap.String("connection_identifier", connIdentifier),
+		zap.String("sharing_profile_id", sharingResp.Identifier))
+
+	return shareURL, nil
 }
 
 // GetSessionHistory retrieves session history from Guacamole

@@ -284,6 +284,46 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "session terminated", "active_conn_id": activeConnID})
 }
 
+// ---- handleShareGuacSession ----
+// POST /api/v1/access/guacamole/sessions/:id/share (admin)
+//
+// Mints a read-only sharing link for an active Guacamole session by its
+// active-connection UUID (:id). Delegates to ShareActiveConnection which
+// creates a read-only sharing profile via the Guacamole REST API and returns
+// a pre-authenticated share URL. On ErrSharingUnsupported (Guacamole server
+// does not implement the sharingProfiles endpoint, e.g. < 1.3) the handler
+// responds 501 with a helpful fallback message. Audits guacamole.session_shared.
+func (s *Service) handleShareGuacSession(c *gin.Context) {
+	if s.guacamoleClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
+		return
+	}
+
+	activeConnID := c.Param("id")
+	ctx := c.Request.Context()
+
+	shareURL, err := s.guacamoleClient.ShareActiveConnection(ctx, activeConnID)
+	if err != nil {
+		if errors.Is(err, ErrSharingUnsupported) {
+			c.JSON(http.StatusNotImplemented, gin.H{
+				"error": "connection sharing not supported; use GET /guacamole/sessions to list active sessions",
+			})
+			return
+		}
+		s.logger.Error("handleShareGuacSession: ShareActiveConnection failed",
+			zap.String("active_conn_id", activeConnID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.logAuditEvent(c, "guacamole.session_shared", activeConnID, "guacamole_session",
+		map[string]interface{}{
+			"active_conn_id": activeConnID,
+		})
+
+	c.JSON(http.StatusOK, gin.H{"share_url": shareURL})
+}
+
 // ---- handleGetGuacTranscript ----
 // GET /api/v1/access/guacamole/sessions/:id/transcript (admin)
 //
