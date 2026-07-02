@@ -255,3 +255,70 @@ func jsonOrEmpty(m map[string]interface{}) string {
 	}
 	return string(b)
 }
+
+// ---- Access grants ----
+
+// Grant represents a principal's permission to perform one or more actions
+// (use, reveal) on a secret.
+type Grant struct {
+	SecretID      string     `json:"secret_id"`
+	PrincipalType string     `json:"principal_type"` // user|role|service_account
+	PrincipalID   string     `json:"principal_id"`
+	Actions       []string   `json:"actions"` // subset of {use, reveal}
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	GrantedBy     string     `json:"-"`
+}
+
+// AddGrant upserts a grant for (secret_id, principal_type, principal_id). On
+// conflict the actions and expires_at are updated. Returns the grant id.
+func (s *Service) AddGrant(ctx context.Context, g Grant) (string, error) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		return "", err
+	}
+	id := uuid.New().String()
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions, granted_by, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,'')::uuid,$8)
+		ON CONFLICT (secret_id, principal_type, principal_id)
+		DO UPDATE SET actions = EXCLUDED.actions, expires_at = EXCLUDED.expires_at`,
+		id, orgID, g.SecretID, g.PrincipalType, g.PrincipalID, g.Actions, g.GrantedBy, g.ExpiresAt)
+	if err != nil {
+		return "", err
+	}
+	s.recordAudit(ctx, "vault.grant_added", g.GrantedBy, map[string]interface{}{
+		"secret_id": g.SecretID, "principal": g.PrincipalType + ":" + g.PrincipalID, "actions": g.Actions})
+	return id, nil
+}
+
+// RemoveGrant deletes the grant by id. Returns ErrNotFound if no row was
+// deleted.
+func (s *Service) RemoveGrant(ctx context.Context, grantID string) error {
+	ct, err := s.db.Pool.Exec(ctx, `DELETE FROM vault_access_grants WHERE id = $1`, grantID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	s.recordAudit(ctx, "vault.grant_removed", "", map[string]interface{}{"grant_id": grantID})
+	return nil
+}
+
+// hasGrant reports whether principalID holds a non-expired grant carrying
+// action on secretID. userRoles lets a user match role-type grants.
+func (s *Service) hasGrant(ctx context.Context, secretID, principalID string, userRoles []string, action string) (bool, error) {
+	var ok bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM vault_access_grants
+			WHERE secret_id = $1
+			  AND $2 = ANY(actions)
+			  AND (expires_at IS NULL OR expires_at > NOW())
+			  AND (
+			    (principal_type IN ('user','service_account') AND principal_id::text = $3)
+			    OR (principal_type = 'role' AND principal_id::text = ANY($4))
+			  )
+		)`, secretID, action, principalID, userRoles).Scan(&ok)
+	return ok, err
+}
