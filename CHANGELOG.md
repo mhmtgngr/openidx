@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-07-02
+
+PAM session assurance (M4) + rotation connectors (M5), plus a recording
+data-loss fix.
+
+### Added
+- **Session transcripts** — a `guaclog`-based sweep generates a keystroke/command
+  transcript for ended/terminated recorded Guacamole sessions and serves it via an
+  admin-guarded `GET /api/v1/access/guacamole/sessions/:id/transcript`. Generation is
+  `exec.LookPath`-gated (inert if `guaclog` is absent); `guaclog` is included in the
+  access-service image. (#279)
+- **Live session monitor** — `POST /api/v1/access/guacamole/sessions/:id/share` mints a
+  read-only Guacamole connection-sharing link (falls back to the active-session list when
+  the server lacks the sharing API). (#279)
+- **Session-end detection** — a background sweep reconciles tracked sessions against
+  Guacamole's active connections and marks naturally-ended sessions (2-minute grace;
+  fail-safe when Guacamole is unreachable). (#279)
+- **Attestation of privileged entitlements** — new `vault_access` and `rotation_policy`
+  access-certification campaign types; a revoke decision deletes the vault grant / disables
+  the rotation policy. (#279)
+- **SSH + PostgreSQL rotation connectors** — the rotation engine can now rotate credentials
+  on Linux/SSH hosts (`chpasswd` over SSH, host-key-pinned, password via stdin) and
+  PostgreSQL (`ALTER ROLE` with server-side identifier/literal quoting). Each resolves its
+  bootstrap/admin credential from the vault and verifies by authenticating with the new
+  credential; both fail closed. No new dependencies. (#280)
+
+### Fixed
+- **Guacamole recording data loss** — `guacamole_sessions.recording_path` stored the shared
+  recordings *directory*, so the retention sweep's `RemoveAll` could delete every recording.
+  The full recording *file* path is now persisted and purge is guarded so it can never
+  remove the recordings root. (#279)
+
 ## [1.9.0] - 2026-07-02
 
 Privileged Access Management (PAM) — an integrated credential vault, automated
@@ -1168,7 +1200,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/mhmtgngr/openidx/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mhmtgngr/openidx/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/mhmtgngr/openidx/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/mhmtgngr/openidx/compare/v1.8.0...v1.8.1
