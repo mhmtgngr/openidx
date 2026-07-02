@@ -40,6 +40,22 @@ type duePolicy struct {
 	trigger  string
 }
 
+// DuePolicies returns the IDs of policies that are currently due for rotation,
+// pairing each with its trigger reason ("scheduled" or "checkout"). This is a
+// thin exported wrapper around dueUnsafe intended for testing. The caller is
+// responsible for providing a bypass-RLS context when querying across orgs.
+func (s *Service) DuePolicies(ctx context.Context) ([]string, error) {
+	due, err := s.dueUnsafe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(due))
+	for i, d := range due {
+		ids[i] = d.policyID
+	}
+	return ids, nil
+}
+
 // dueUnsafe returns policies whose interval is due OR whose rotate_on_checkout is set and a
 // checkout concluded since last_run_at. Runs under bypass (background, cross-org).
 func (s *Service) dueUnsafe(ctx context.Context) ([]duePolicy, error) {
