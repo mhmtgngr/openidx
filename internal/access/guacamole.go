@@ -370,6 +370,31 @@ func (gc *GuacamoleClient) ListGuacConnections(ctx context.Context) ([]GuacConne
 	return conns, nil
 }
 
+// ---- Pure helpers ----
+
+// buildInjectedParams assembles the Guacamole connection parameters for a brokered
+// session: the credential goes to password (or private-key for ssh_key secrets), the
+// username from the connection config, and guacd recording params when recording is on.
+func buildInjectedParams(secretType, injectUsername string, cred []byte, record bool, recordingPath, recordingName string) map[string]string {
+	params := map[string]string{}
+	if len(cred) > 0 {
+		if injectUsername != "" {
+			params["username"] = injectUsername
+		}
+		if secretType == "ssh_key" {
+			params["private-key"] = string(cred)
+		} else {
+			params["password"] = string(cred)
+		}
+	}
+	if record {
+		params["recording-path"] = recordingPath
+		params["recording-name"] = recordingName
+		params["recording-include-keys"] = "true"
+	}
+	return params
+}
+
 // ---- HTTP Handlers ----
 
 // handleListGuacamoleConnections lists all Guacamole connections
@@ -439,10 +464,12 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	}
 
 	// Build server-side injected params — credential never leaves the server.
-	params := map[string]string{}
+	var cred []byte
+	var secretType string
 	if secretID != "" && s.vaultSvc != nil {
 		bctx := orgctx.WithBypassRLS(ctx)
-		cred, err := s.vaultSvc.Use(bctx, secretID)
+		var err error
+		cred, err = s.vaultSvc.Use(bctx, secretID)
 		if err != nil {
 			s.logger.Warn("handleGuacamoleConnect: vault credential unavailable",
 				zap.String("secret_id", secretID), zap.Error(err))
@@ -452,27 +479,23 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 
 		// Determine which connection parameter to inject based on the secret type.
 		// ssh_key → private-key; anything else (password, api_key, …) → password.
-		var secretType string
 		//orgscope:ignore vault_secrets SELECT under bypass-RLS context to determine injection field
 		_ = s.db.Pool.QueryRow(bctx,
 			`SELECT type FROM vault_secrets WHERE id=$1`, secretID).Scan(&secretType)
+	}
 
-		if secretType == "ssh_key" {
-			params["private-key"] = string(cred)
-		} else {
-			params["password"] = string(cred)
-		}
-		if injectUser != "" {
-			params["username"] = injectUser
-		}
+	recPath := s.config.GuacamoleRecordingPath
+	recName := fmt.Sprintf("%s-%d", connID, time.Now().UnixMilli())
+	params := buildInjectedParams(secretType, injectUser, cred, recordSession, recPath, recName)
 
-		// Zero the plaintext credential slice immediately after copying into params.
-		// The string values in params are independent copies; we accept that caveat
-		// (same approach as M1/M2b elsewhere in this package).
-		for i := range cred {
-			cred[i] = 0
-		}
+	// Zero the plaintext credential slice immediately after buildInjectedParams copies
+	// it into the params map. The string values in params are independent copies; we
+	// accept that caveat (same approach as M1/M2b elsewhere in this package).
+	for i := range cred {
+		cred[i] = 0
+	}
 
+	if secretID != "" && s.vaultSvc != nil {
 		s.logAuditEvent(c, "guacamole_credential_injected", routeID, "guacamole_connection",
 			map[string]interface{}{
 				"route_id":  routeID,
@@ -482,14 +505,8 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 			})
 	}
 
-	// Recording params — guacd-native session recording.
+	// Recording side-effects — guacd-native session recording.
 	if recordSession {
-		recPath := s.config.GuacamoleRecordingPath
-		recName := fmt.Sprintf("%s-%d", connID, time.Now().UnixMilli())
-		params["recording-path"] = recPath
-		params["recording-name"] = recName
-		params["recording-include-keys"] = "true"
-
 		if _, err := s.recordGuacSession(ctx, org.ID, connectionPK, userID, recPath); err != nil {
 			s.logger.Warn("handleGuacamoleConnect: recordGuacSession failed (best-effort)",
 				zap.String("connection_id", connectionPK), zap.Error(err))
