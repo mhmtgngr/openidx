@@ -28,6 +28,7 @@ import (
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/server"
+	"github.com/openidx/openidx/internal/vault"
 )
 
 var (
@@ -141,6 +142,22 @@ func main() {
 
 	// Initialize governance service
 	governanceService := governance.NewService(db, redis, cfg, log)
+
+	// Construct in-process vault (fail-closed): governance issues its own
+	// jit_credential.* audit events so the vault Auditor is nil here.
+	vaultRing, err := vault.KeyringFromConfig(vault.KeyConfig{
+		KEK: cfg.VaultKEK, KEKs: cfg.VaultKEKs, ActiveKEKID: cfg.VaultActiveKEKID,
+		EncryptionKey: cfg.EncryptionKey,
+	})
+	if err != nil {
+		log.Fatal("vault keyring unavailable (fail-closed)", zap.Error(err))
+	}
+	vaultSvc, err := vault.NewService(db, vaultRing, nil,
+		time.Duration(cfg.VaultRevealLeaseTTLSeconds)*time.Second, log)
+	if err != nil {
+		log.Fatal("vault service init failed", zap.Error(err))
+	}
+	governanceService.SetVaultService(vaultSvc)
 
 	// Register routes (with optional OPA authorization)
 	var opaMiddleware []gin.HandlerFunc

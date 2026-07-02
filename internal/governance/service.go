@@ -26,6 +26,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/vault"
 )
 
 // AccessReview represents an access certification review
@@ -132,15 +133,19 @@ type PolicyRule struct {
 
 // Service provides governance operations
 type Service struct {
-	db     *database.PostgresDB
-	redis  *database.RedisClient
-	config *config.Config
-	logger *zap.Logger
+	db       *database.PostgresDB
+	redis    *database.RedisClient
+	config   *config.Config
+	logger   *zap.Logger
+	vaultSvc *vault.Service
 
 	jwksCacheMu     sync.RWMutex
 	jwksCachedKey   *rsa.PublicKey
 	jwksCacheExpiry time.Time
 }
+
+// SetVaultService injects the in-process vault used for JIT credential checkout.
+func (s *Service) SetVaultService(v *vault.Service) { s.vaultSvc = v }
 
 // NewService creates a new governance service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
