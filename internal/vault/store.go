@@ -314,6 +314,43 @@ func (s *Service) RemoveGrant(ctx context.Context, grantID string) error {
 	return nil
 }
 
+// GrantRow is a JSON-safe DTO for listing grants. Unlike Grant it exposes ID
+// and GrantedBy (the caller is an admin listing grants they issued).
+type GrantRow struct {
+	ID            string     `json:"id"`
+	SecretID      string     `json:"secret_id"`
+	PrincipalType string     `json:"principal_type"`
+	PrincipalID   string     `json:"principal_id"`
+	Actions       []string   `json:"actions"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	GrantedBy     string     `json:"granted_by,omitempty"`
+}
+
+// ListGrants returns all access grants for secretID, ordered by principal_type
+// then principal_id.
+func (s *Service) ListGrants(ctx context.Context, secretID string) ([]GrantRow, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, secret_id, principal_type, principal_id, actions, expires_at,
+		       COALESCE(granted_by::text,'')
+		FROM vault_access_grants
+		WHERE secret_id = $1
+		ORDER BY principal_type, principal_id`, secretID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GrantRow
+	for rows.Next() {
+		var g GrantRow
+		if err := rows.Scan(&g.ID, &g.SecretID, &g.PrincipalType, &g.PrincipalID,
+			&g.Actions, &g.ExpiresAt, &g.GrantedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // RevokeGrantForPrincipal deletes any grant for (secretID, principalType, principalID).
 // Used by the JIT-checkout early-return path for immediate deauthorization; the timeout
 // path relies on the grant's expires_at. Org-scoped by RLS via ctx.

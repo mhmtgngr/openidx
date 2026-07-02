@@ -8,7 +8,7 @@ import (
 
 // SecretMeta / SecretDetail must have NO field that could carry a plaintext value.
 func TestDTOsHaveNoValueField(t *testing.T) {
-	for _, v := range []interface{}{SecretMeta{}, SecretDetail{}, VersionMeta{}} {
+	for _, v := range []interface{}{SecretMeta{}, SecretDetail{}, VersionMeta{}, GrantRow{}} {
 		b, _ := json.Marshal(v)
 		if strings.Contains(strings.ToLower(string(b)), "\"value\"") ||
 			strings.Contains(strings.ToLower(string(b)), "\"ciphertext\"") ||
