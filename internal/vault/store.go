@@ -322,3 +322,116 @@ func (s *Service) hasGrant(ctx context.Context, secretID, principalID string, us
 		)`, secretID, action, principalID, userRoles).Scan(&ok)
 	return ok, err
 }
+
+// ---- Use + Reveal + checkout ledger ----
+
+// decryptCurrent loads and decrypts the current version. Internal only.
+func (s *Service) decryptCurrent(ctx context.Context, secretID string) (int, []byte, error) {
+	var version, keyID int
+	var blob []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT v.version, v.key_id, v.ciphertext
+		FROM vault_secret_versions v
+		JOIN vault_secrets s ON s.id = v.secret_id AND s.current_version = v.version
+		WHERE v.secret_id = $1`, secretID).Scan(&version, &keyID, &blob)
+	if err != nil {
+		return 0, nil, err
+	}
+	pt, err := s.ring.Open(byte(keyID), secretID, version, blob)
+	if err != nil {
+		return 0, nil, fmt.Errorf("decrypt: %w", err)
+	}
+	return version, pt, nil
+}
+
+// Use returns the current plaintext to an INTERNAL Go caller (rotation engine,
+// session broker). Never exposed over HTTP. System callers (WithBypassRLS) skip
+// the grant check but are still recorded. Callers must zero the returned slice.
+func (s *Service) Use(ctx context.Context, secretID string) ([]byte, error) {
+	if !orgctx.IsBypassRLS(ctx) {
+		return nil, errors.New("vault: Use requires a system (bypass-RLS) context")
+	}
+	version, pt, err := s.decryptCurrent(ctx, secretID)
+	if err != nil {
+		return nil, err
+	}
+	s.recordCheckout(ctx, secretID, version, "", "use", "", nil)
+	s.recordAudit(ctx, "vault.use", "", map[string]interface{}{"secret_id": secretID, "system": true})
+	return pt, nil
+}
+
+// Reveal returns the current plaintext to a human, requiring a `reveal` grant
+// and a non-empty reason. Heavily audited; opens a short lease.
+func (s *Service) Reveal(ctx context.Context, secretID, principalID string, userRoles []string, reason string, isAdmin bool) ([]byte, error) {
+	if reason == "" {
+		return nil, errors.New("vault: reveal requires a reason")
+	}
+	if !isAdmin {
+		ok, err := s.hasGrant(ctx, secretID, principalID, userRoles, "reveal")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrForbidden
+		}
+	}
+	version, pt, err := s.decryptCurrent(ctx, secretID)
+	if err != nil {
+		return nil, err
+	}
+	exp := time.Now().Add(s.revealLeaseTTL)
+	s.recordCheckout(ctx, secretID, version, principalID, "reveal", reason, &exp)
+	s.recordAudit(ctx, "vault.reveal", principalID, map[string]interface{}{
+		"secret_id": secretID, "version": version, "reason": reason})
+	return pt, nil
+}
+
+// ErrForbidden is returned when a principal lacks the required grant.
+var ErrForbidden = errors.New("vault: principal lacks the required grant")
+
+func (s *Service) recordCheckout(ctx context.Context, secretID string, version int, principalID, mode, reason string, expires *time.Time) {
+	orgID, err := s.orgID(ctx)
+	if err != nil {
+		// System Use runs under bypass with no org; derive from the secret row.
+		_ = s.db.Pool.QueryRow(ctx, `SELECT org_id FROM vault_secrets WHERE id = $1`, secretID).Scan(&orgID) //orgscope:ignore system Use has no request org; org_id derived from the secret row
+	}
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO vault_checkouts (org_id, secret_id, secret_version, principal_id, mode, reason, expires_at)
+		VALUES ($1,$2,$3,NULLIF($4,'')::uuid,$5,NULLIF($6,''),$7)`,
+		orgID, secretID, version, principalID, mode, reason, expires); err != nil {
+		s.logger.Warn("vault checkout record failed", zap.Error(err))
+	}
+}
+
+// Checkout is a single ledger entry for a Use or Reveal operation.
+type Checkout struct {
+	ID        string     `json:"id"`
+	Version   int        `json:"secret_version"`
+	Principal string     `json:"principal_id,omitempty"`
+	Mode      string     `json:"mode"`
+	Reason    string     `json:"reason,omitempty"`
+	LeasedAt  time.Time  `json:"leased_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Status    string     `json:"status"`
+}
+
+// Checkouts returns the last 200 checkout ledger entries for a secret, newest
+// first.
+func (s *Service) Checkouts(ctx context.Context, secretID string) ([]Checkout, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, secret_version, COALESCE(principal_id::text,''), mode, COALESCE(reason,''), leased_at, expires_at, status
+		FROM vault_checkouts WHERE secret_id = $1 ORDER BY leased_at DESC LIMIT 200`, secretID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Checkout
+	for rows.Next() {
+		var c Checkout
+		if err := rows.Scan(&c.ID, &c.Version, &c.Principal, &c.Mode, &c.Reason, &c.LeasedAt, &c.ExpiresAt, &c.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
