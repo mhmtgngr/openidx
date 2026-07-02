@@ -1,0 +1,600 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import {
+  api,
+  VaultSecretMeta,
+  VaultRotationPolicy,
+  VaultRotationPolicyInput,
+  VaultGenerationPolicy,
+} from '../lib/api'
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { LoadingSpinner } from '../components/ui/loading-spinner'
+import { Input } from '../components/ui/input'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../components/ui/alert-dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table'
+import { RefreshCw, Plus, Trash2, Pencil } from 'lucide-react'
+import { useToast } from '../hooks/use-toast'
+
+function formatInterval(seconds: number): string {
+  if (seconds === 0) return 'manual'
+  if (seconds % 86400 === 0) return `${seconds / 86400}d`
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
+}
+
+const connectorLabels: Record<string, string> = {
+  directory: 'Directory',
+  generate_only: 'Generate-only',
+}
+
+const connectorColors: Record<string, string> = {
+  directory: 'bg-blue-100 text-blue-800',
+  generate_only: 'bg-green-100 text-green-800',
+}
+
+const defaultGenPolicy: VaultGenerationPolicy = {
+  length: 24,
+  upper: true,
+  lower: true,
+  digits: true,
+  symbols: false,
+}
+
+type IntervalUnit = 'seconds' | 'minutes' | 'hours' | 'days'
+
+function toSeconds(value: number, unit: IntervalUnit): number {
+  if (value === 0) return 0
+  const multipliers: Record<IntervalUnit, number> = {
+    seconds: 1,
+    minutes: 60,
+    hours: 3600,
+    days: 86400,
+  }
+  return value * multipliers[unit]
+}
+
+function fromSeconds(s: number): { value: number; unit: IntervalUnit } {
+  if (s === 0) return { value: 0, unit: 'days' }
+  if (s % 86400 === 0) return { value: s / 86400, unit: 'days' }
+  if (s % 3600 === 0) return { value: s / 3600, unit: 'hours' }
+  if (s % 60 === 0) return { value: s / 60, unit: 'minutes' }
+  return { value: s, unit: 'seconds' }
+}
+
+interface PolicyFormState {
+  secretId: string
+  connectorType: string
+  directoryId: string
+  username: string
+  intervalValue: number
+  intervalUnit: IntervalUnit
+  rotateOnCheckout: boolean
+  genLength: number
+  genUpper: boolean
+  genLower: boolean
+  genDigits: boolean
+  genSymbols: boolean
+  enabled: boolean
+}
+
+function blankForm(): PolicyFormState {
+  return {
+    secretId: '',
+    connectorType: 'generate_only',
+    directoryId: '',
+    username: '',
+    intervalValue: 7,
+    intervalUnit: 'days',
+    rotateOnCheckout: false,
+    genLength: defaultGenPolicy.length,
+    genUpper: defaultGenPolicy.upper,
+    genLower: defaultGenPolicy.lower,
+    genDigits: defaultGenPolicy.digits,
+    genSymbols: defaultGenPolicy.symbols,
+    enabled: true,
+  }
+}
+
+function policyToForm(p: VaultRotationPolicy): PolicyFormState {
+  const { value, unit } = fromSeconds(p.interval_seconds)
+  const cfg = p.connector_config as Record<string, string>
+  return {
+    secretId: p.secret_id,
+    connectorType: p.connector_type,
+    directoryId: cfg.directory_id ?? '',
+    username: cfg.username ?? '',
+    intervalValue: value,
+    intervalUnit: unit,
+    rotateOnCheckout: p.rotate_on_checkout,
+    genLength: p.generation_policy.length,
+    genUpper: p.generation_policy.upper,
+    genLower: p.generation_policy.lower,
+    genDigits: p.generation_policy.digits,
+    genSymbols: p.generation_policy.symbols,
+    enabled: p.enabled,
+  }
+}
+
+function formToInput(f: PolicyFormState): VaultRotationPolicyInput {
+  const connectorConfig: Record<string, unknown> =
+    f.connectorType === 'directory'
+      ? { directory_id: f.directoryId, username: f.username }
+      : {}
+  return {
+    secret_id: f.secretId,
+    connector_type: f.connectorType,
+    connector_config: connectorConfig,
+    generation_policy: {
+      length: f.genLength,
+      upper: f.genUpper,
+      lower: f.genLower,
+      digits: f.genDigits,
+      symbols: f.genSymbols,
+    },
+    interval_seconds: toSeconds(f.intervalValue, f.intervalUnit),
+    rotate_on_checkout: f.rotateOnCheckout,
+    enabled: f.enabled,
+  }
+}
+
+export function RotationPoliciesPage() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+
+  const [showDialog, setShowDialog] = useState(false)
+  const [editingPolicy, setEditingPolicy] = useState<VaultRotationPolicy | null>(null)
+  const [form, setForm] = useState<PolicyFormState>(blankForm())
+
+  // Queries
+  const { data: policiesData, isLoading, error } = useQuery({
+    queryKey: ['rotation-policies'],
+    queryFn: () => api.vault.listPolicies(),
+  })
+
+  const { data: secretsData } = useQuery({
+    queryKey: ['vault-secrets'],
+    queryFn: () => api.vault.listSecrets(),
+  })
+
+  const policies: VaultRotationPolicy[] = policiesData?.policies || []
+  const secrets: VaultSecretMeta[] = secretsData?.secrets || []
+
+  function secretName(secretId: string): string {
+    return secrets.find((s) => s.id === secretId)?.name ?? secretId
+  }
+
+  // Mutations
+  const createMutation = useMutation({
+    mutationFn: (body: VaultRotationPolicyInput) => api.vault.createPolicy(body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rotation-policies'] })
+      setShowDialog(false)
+      toast({ title: 'Rotation policy created' })
+    },
+    onError: () => {
+      toast({ title: 'Failed to create policy', variant: 'destructive' })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: VaultRotationPolicyInput }) =>
+      api.vault.updatePolicy(id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rotation-policies'] })
+      setShowDialog(false)
+      toast({ title: 'Rotation policy updated' })
+    },
+    onError: () => {
+      toast({ title: 'Failed to update policy', variant: 'destructive' })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.vault.deletePolicy(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rotation-policies'] })
+      toast({ title: 'Policy deleted' })
+    },
+  })
+
+  function openCreate() {
+    setEditingPolicy(null)
+    setForm(blankForm())
+    setShowDialog(true)
+  }
+
+  function openEdit(p: VaultRotationPolicy) {
+    setEditingPolicy(p)
+    setForm(policyToForm(p))
+    setShowDialog(true)
+  }
+
+  function handleSubmit() {
+    const body = formToInput(form)
+    if (editingPolicy) {
+      updateMutation.mutate({ id: editingPolicy.id, body })
+    } else {
+      createMutation.mutate(body)
+    }
+  }
+
+  const isPending = createMutation.isPending || updateMutation.isPending
+
+  const isFormValid =
+    !!form.secretId &&
+    !!form.connectorType &&
+    (form.connectorType !== 'directory' || (!!form.directoryId && !!form.username))
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Rotation Policies</h1>
+          <p className="text-muted-foreground">
+            Manage automated credential rotation — admin guarded
+          </p>
+        </div>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4 mr-2" />
+          New Policy
+        </Button>
+      </div>
+
+      {/* List */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5" />
+            Policies ({policies.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <LoadingSpinner size="lg" />
+            </div>
+          ) : error ? (
+            <div className="py-8 text-center text-sm text-red-600">
+              {(error as { response?: { status?: number } })?.response?.status === 403
+                ? 'Vault admin access required'
+                : 'Failed to load rotation policies'}
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Secret</TableHead>
+                  <TableHead>Connector</TableHead>
+                  <TableHead>Interval</TableHead>
+                  <TableHead>On Checkout</TableHead>
+                  <TableHead>Enabled</TableHead>
+                  <TableHead>Last Status</TableHead>
+                  <TableHead>Last Run</TableHead>
+                  <TableHead>Next Run</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {policies.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-medium">{secretName(p.secret_id)}</TableCell>
+                    <TableCell>
+                      <Badge className={connectorColors[p.connector_type] || 'bg-gray-100 text-gray-800'}>
+                        {connectorLabels[p.connector_type] || p.connector_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{formatInterval(p.interval_seconds)}</TableCell>
+                    <TableCell>
+                      {p.rotate_on_checkout ? (
+                        <Badge className="bg-purple-100 text-purple-800">yes</Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">no</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        className={
+                          p.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                        }
+                      >
+                        {p.enabled ? 'enabled' : 'disabled'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {p.last_status ? (
+                        <Badge
+                          className={
+                            p.last_status === 'success'
+                              ? 'bg-green-100 text-green-800'
+                              : p.last_status === 'failed'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }
+                        >
+                          {p.last_status}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {p.last_run_at ? new Date(p.last_run_at).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {p.next_run_at ? new Date(p.next_run_at).toLocaleString() : '—'}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEdit(p)}
+                          data-testid={`edit-${p.id}`}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-600 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete rotation policy?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This permanently removes the rotation schedule for{' '}
+                                <strong>{secretName(p.secret_id)}</strong>. Rotation history is
+                                retained.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteMutation.mutate(p.id)}
+                                className="bg-red-600 hover:bg-red-700"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {policies.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                      No rotation policies yet
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create / Edit dialog */}
+      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {editingPolicy ? 'Edit Rotation Policy' : 'New Rotation Policy'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Secret */}
+            <div>
+              <label className="text-sm font-medium">Secret *</label>
+              <Select
+                value={form.secretId}
+                onValueChange={(v) => setForm((f) => ({ ...f, secretId: v }))}
+              >
+                <SelectTrigger className="mt-1" data-testid="secret-select">
+                  <SelectValue placeholder="Select a secret" />
+                </SelectTrigger>
+                <SelectContent>
+                  {secrets.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Connector type */}
+            <div>
+              <label className="text-sm font-medium">Connector Type *</label>
+              <Select
+                value={form.connectorType}
+                onValueChange={(v) => setForm((f) => ({ ...f, connectorType: v }))}
+              >
+                <SelectTrigger className="mt-1" data-testid="connector-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="directory">Directory</SelectItem>
+                  <SelectItem value="generate_only">Generate-only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Directory-specific fields */}
+            {form.connectorType === 'directory' && (
+              <>
+                <div>
+                  <label className="text-sm font-medium">Directory ID *</label>
+                  <Input
+                    className="mt-1"
+                    placeholder="e.g. dir-abc123"
+                    value={form.directoryId}
+                    onChange={(e) => setForm((f) => ({ ...f, directoryId: e.target.value }))}
+                    data-testid="directory-id-input"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Username *</label>
+                  <Input
+                    className="mt-1"
+                    placeholder="e.g. svc-account"
+                    value={form.username}
+                    onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                    data-testid="username-input"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Interval */}
+            <div>
+              <label className="text-sm font-medium">Rotation Interval (0 = manual)</label>
+              <div className="flex gap-2 mt-1">
+                <Input
+                  type="number"
+                  min={0}
+                  className="flex-1"
+                  value={form.intervalValue}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, intervalValue: parseInt(e.target.value, 10) || 0 }))
+                  }
+                />
+                <Select
+                  value={form.intervalUnit}
+                  onValueChange={(v) => setForm((f) => ({ ...f, intervalUnit: v as IntervalUnit }))}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="seconds">seconds</SelectItem>
+                    <SelectItem value="minutes">minutes</SelectItem>
+                    <SelectItem value="hours">hours</SelectItem>
+                    <SelectItem value="days">days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Rotate on checkout */}
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="rotateOnCheckout"
+                checked={form.rotateOnCheckout}
+                onChange={(e) => setForm((f) => ({ ...f, rotateOnCheckout: e.target.checked }))}
+                className="h-4 w-4"
+              />
+              <label htmlFor="rotateOnCheckout" className="text-sm font-medium">
+                Rotate on checkout
+              </label>
+            </div>
+
+            {/* Generation policy */}
+            <div className="space-y-2 border rounded-lg p-3">
+              <p className="text-sm font-medium">Generation Policy</p>
+              <div>
+                <label className="text-xs text-muted-foreground">Length</label>
+                <Input
+                  type="number"
+                  min={8}
+                  max={256}
+                  className="mt-1"
+                  value={form.genLength}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, genLength: parseInt(e.target.value, 10) || 24 }))
+                  }
+                />
+              </div>
+              <div className="flex gap-4">
+                {(
+                  [
+                    ['genUpper', 'Uppercase'],
+                    ['genLower', 'Lowercase'],
+                    ['genDigits', 'Digits'],
+                    ['genSymbols', 'Symbols'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-1 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form[key]}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, [key]: e.target.checked }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Enabled toggle */}
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="enabled"
+                checked={form.enabled}
+                onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
+                className="h-4 w-4"
+              />
+              <label htmlFor="enabled" className="text-sm font-medium">
+                Enabled
+              </label>
+            </div>
+
+            <Button
+              onClick={handleSubmit}
+              disabled={!isFormValid || isPending}
+              className="w-full"
+            >
+              {isPending
+                ? editingPolicy
+                  ? 'Saving...'
+                  : 'Creating...'
+                : editingPolicy
+                ? 'Save Changes'
+                : 'Create Policy'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}

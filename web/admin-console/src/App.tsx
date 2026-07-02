@@ -92,6 +92,7 @@ import {
   NotificationCenter,
   NotificationPreferences,
   ReviewDetail,
+  RotationPolicies,
 } from '@/pages'
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/lib/auth'
@@ -260,6 +261,7 @@ function App() {
 
         {/* Privileged Access - Admin Protected */}
         <Route path="vault-secrets" element={<VaultSecrets />} />
+        <Route path="rotation-policies" element={<RotationPolicies />} />
 
         {/* Developer - Admin Protected */}
         <Route path="api-explorer" element={<APIExplorer />} />

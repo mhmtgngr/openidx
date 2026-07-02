@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, VaultSecretMeta, VaultSecretDetail, VaultGrant, VaultCheckout } from '../lib/api'
+import { api, VaultSecretMeta, VaultSecretDetail, VaultGrant, VaultCheckout, VaultRotationRun } from '../lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -104,6 +104,14 @@ export function VaultSecretsPage() {
     enabled: !!selectedId,
   })
 
+  const { data: rotationsData } = useQuery({
+    queryKey: ['vault-rotations', selectedId],
+    queryFn: () => api.vault.listRotations(selectedId!),
+    enabled: !!selectedId,
+  })
+
+  const rotations: VaultRotationRun[] = rotationsData?.rotations || []
+
   const secrets: VaultSecretMeta[] = listData?.secrets || []
   const detail: VaultSecretDetail | undefined = detailData
   const grants: VaultGrant[] = grantsData?.grants || []
@@ -198,6 +206,25 @@ export function VaultSecretsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vault-grants', selectedId] })
       toast({ title: 'Grant removed' })
+    },
+  })
+
+  const rotateNowMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedId) throw new Error('No secret selected')
+      return api.vault.rotateNow(selectedId)
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['vault-rotations', selectedId] })
+      const status = (data as { status?: string }).status ?? 'completed'
+      toast({ title: `Rotation ${status}` })
+    },
+    onError: (err: { response?: { status?: number } }) => {
+      if (err?.response?.status === 404) {
+        toast({ title: 'No rotation policy configured for this secret', variant: 'destructive' })
+      } else {
+        toast({ title: 'Rotation failed', variant: 'destructive' })
+      }
     },
   })
 
@@ -402,6 +429,16 @@ export function VaultSecretsPage() {
                 {detail?.name || 'Loading...'}
               </span>
               <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => rotateNowMutation.mutate()}
+                  disabled={rotateNowMutation.isPending}
+                  data-testid="rotate-now-btn"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  {rotateNowMutation.isPending ? 'Rotating...' : 'Rotate now'}
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setShowReveal(true)}>
                   <Eye className="h-3 w-3 mr-1" />
                   Reveal
@@ -455,6 +492,7 @@ export function VaultSecretsPage() {
                   </TabsTrigger>
                   <TabsTrigger value="grants">Grants ({grants.length})</TabsTrigger>
                   <TabsTrigger value="checkouts">Checkouts ({checkouts.length})</TabsTrigger>
+                  <TabsTrigger value="rotations">Rotations ({rotations.length})</TabsTrigger>
                 </TabsList>
 
                 {/* Versions tab */}
@@ -565,6 +603,49 @@ export function VaultSecretsPage() {
                     {checkouts.length === 0 && (
                       <p className="py-4 text-center text-sm text-muted-foreground">
                         No checkouts yet
+                      </p>
+                    )}
+                  </div>
+                </TabsContent>
+
+                {/* Rotations tab */}
+                <TabsContent value="rotations">
+                  <div className="divide-y mt-2">
+                    {rotations.map((r) => (
+                      <div key={r.id} className="py-2 flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              className={
+                                r.status === 'success'
+                                  ? 'bg-green-100 text-green-800'
+                                  : r.status === 'failed'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-yellow-100 text-yellow-800'
+                              }
+                            >
+                              {r.status}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">{r.trigger}</span>
+                            <span className="text-xs text-muted-foreground">{r.connector_type}</span>
+                          </div>
+                          {(r.version_from !== undefined || r.version_to !== undefined) && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              v{r.version_from} → v{r.version_to}
+                            </p>
+                          )}
+                          {r.error_message && (
+                            <p className="text-xs text-red-600 mt-0.5">{r.error_message}</p>
+                          )}
+                        </div>
+                        <div className="text-right text-xs text-muted-foreground">
+                          {r.started_at && new Date(r.started_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                    {rotations.length === 0 && (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        No rotations yet
                       </p>
                     )}
                   </div>

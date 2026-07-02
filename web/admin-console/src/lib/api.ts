@@ -103,6 +103,53 @@ export interface VaultCheckout {
   status: string
 }
 
+export interface VaultGenerationPolicy {
+  length: number
+  upper: boolean
+  lower: boolean
+  digits: boolean
+  symbols: boolean
+}
+
+export interface VaultRotationPolicy {
+  id: string
+  org_id: string
+  secret_id: string
+  connector_type: string
+  connector_config: Record<string, unknown>
+  generation_policy: VaultGenerationPolicy
+  interval_seconds: number
+  rotate_on_checkout: boolean
+  enabled: boolean
+  next_run_at?: string
+  last_run_at?: string
+  last_status?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface VaultRotationPolicyInput {
+  secret_id: string
+  connector_type: string
+  connector_config: Record<string, unknown>
+  generation_policy: VaultGenerationPolicy
+  interval_seconds: number
+  rotate_on_checkout: boolean
+  enabled: boolean | null
+}
+
+export interface VaultRotationRun {
+  id: string
+  status: string
+  trigger: string
+  connector_type: string
+  version_from?: number
+  version_to?: number
+  error_message?: string
+  started_at?: string
+  completed_at?: string
+}
+
 // Get API base URL based on environment
 const getAPIBaseURL = (): string => {
   const envURL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
@@ -356,6 +403,20 @@ export const api = {
       api.get<{ grants: VaultGrant[] | null }>(`/api/v1/vault/secrets/${id}/grants`),
     listCheckouts: (id: string) =>
       api.get<{ checkouts: VaultCheckout[] | null }>(`/api/v1/vault/secrets/${id}/checkouts`),
+    listPolicies: () =>
+      api.get<{ policies: VaultRotationPolicy[] | null }>('/api/v1/vault/rotation-policies'),
+    createPolicy: (body: VaultRotationPolicyInput) =>
+      api.post<VaultRotationPolicy>('/api/v1/vault/rotation-policies', body),
+    getPolicy: (id: string) =>
+      api.get<VaultRotationPolicy>(`/api/v1/vault/rotation-policies/${id}`),
+    updatePolicy: (id: string, body: VaultRotationPolicyInput) =>
+      api.put<VaultRotationPolicy>(`/api/v1/vault/rotation-policies/${id}`, body),
+    deletePolicy: (id: string) =>
+      api.delete<void>(`/api/v1/vault/rotation-policies/${id}`),
+    rotateNow: (secretId: string) =>
+      api.post<VaultRotationRun | { status: string }>(`/api/v1/vault/secrets/${secretId}/rotate`),
+    listRotations: (secretId: string) =>
+      api.get<{ rotations: VaultRotationRun[] | null }>(`/api/v1/vault/secrets/${secretId}/rotations`),
   },
 }
 

@@ -82,6 +82,7 @@ export { LifecyclePoliciesPage as LifecyclePolicies } from './lifecycle-policies
 export { AttestationCampaignsPage as AttestationCampaigns } from './attestation-campaigns'
 export { AuditArchivalPage as AuditArchival } from './audit-archival'
 export { VaultSecretsPage as VaultSecrets } from './vault-secrets'
+export { RotationPoliciesPage as RotationPolicies } from './rotation-policies'
 
 // Developer
 export { ApiExplorerPage as APIExplorer } from './api-explorer'

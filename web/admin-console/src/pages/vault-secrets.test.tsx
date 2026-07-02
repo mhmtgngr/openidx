@@ -21,6 +21,13 @@ vi.mock('../lib/api', () => ({
       removeGrant: vi.fn(),
       listGrants: vi.fn(),
       listCheckouts: vi.fn(),
+      listPolicies: vi.fn(),
+      createPolicy: vi.fn(),
+      getPolicy: vi.fn(),
+      updatePolicy: vi.fn(),
+      deletePolicy: vi.fn(),
+      rotateNow: vi.fn(),
+      listRotations: vi.fn(),
     },
   },
 }))
@@ -81,6 +88,18 @@ describe('VaultSecretsPage', () => {
     vi.mocked(api.vault.listCheckouts).mockResolvedValue({ checkouts: [] })
     vi.mocked(api.vault.createSecret).mockResolvedValue(secretA)
     vi.mocked(api.vault.reveal).mockResolvedValue({ value: 'supersecret123' })
+    vi.mocked(api.vault.rotateNow).mockResolvedValue({ status: 'completed' })
+    vi.mocked(api.vault.listRotations).mockResolvedValue({ rotations: [
+      {
+        id: 'run-1',
+        status: 'success',
+        trigger: 'manual',
+        connector_type: 'generate_only',
+        version_from: 2,
+        version_to: 3,
+        started_at: '2026-06-01T00:00:00Z',
+      },
+    ]})
   })
 
   it('renders the heading + subtitle + New Secret button', async () => {
@@ -228,5 +247,39 @@ describe('VaultSecretsPage', () => {
 
     // Still no revealed value
     expect(screen.queryByTestId('revealed-value')).not.toBeInTheDocument()
+  })
+
+  it('Rotate now button calls rotateNow', async () => {
+    const user = userEvent.setup()
+    render(<VaultSecretsPage />, { wrapper: createWrapper() })
+
+    const row = await screen.findByText('prod-db-password')
+    await user.click(row)
+
+    const rotateBtn = await screen.findByTestId('rotate-now-btn')
+    await user.click(rotateBtn)
+
+    await waitFor(() => {
+      expect(vi.mocked(api.vault.rotateNow)).toHaveBeenCalledWith('sec-1')
+    })
+  })
+
+  it('Rotations tab renders listRotations results', async () => {
+    const user = userEvent.setup()
+    render(<VaultSecretsPage />, { wrapper: createWrapper() })
+
+    const row = await screen.findByText('prod-db-password')
+    await user.click(row)
+
+    // Wait for detail panel to load
+    await screen.findByText('Versions (3)')
+
+    // Click the Rotations tab
+    await user.click(screen.getByRole('tab', { name: /rotations/i }))
+
+    // The rotation run should be visible
+    expect(await screen.findByText('success')).toBeInTheDocument()
+    expect(screen.getByText('manual')).toBeInTheDocument()
+    expect(screen.getByText('generate_only')).toBeInTheDocument()
   })
 })
