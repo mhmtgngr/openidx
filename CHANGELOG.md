@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Notes
+- **Deferred PAM follow-ups** (tracked; not yet implemented — the core PAM roadmap M1–M5
+  shipped in v1.9.0/v1.9.1):
+  - **MySQL and cloud-IAM (AWS/GCP/Azure) rotation connectors** behind the M5 `Rotator`
+    interface (v1.9.1 shipped SSH + PostgreSQL).
+  - **SSH key rotation** (v1.9.1 shipped SSH *password* rotation via `chpasswd`).
+  - **Guacamole recording legal-hold** — retention is implemented, but
+    `recording_legal_holds` is FK'd to `remote_support_sessions` only; covering
+    `guacamole_sessions` recordings needs a shared-hold refactor.
+  - **`org_id`/RLS on `jit_grants`, `request_approval_chains`, and the `attestation_*`
+    tables** — currently org-scoped only in-handler, not under the v37 FORCE-RLS belt.
+
 ## [1.9.1] - 2026-07-02
 
 PAM session assurance (M4) + rotation connectors (M5), plus a recording
