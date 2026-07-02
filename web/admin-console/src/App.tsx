@@ -93,6 +93,7 @@ import {
   NotificationPreferences,
   ReviewDetail,
   RotationPolicies,
+  GuacamoleSessions,
 } from '@/pages'
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/lib/auth'
@@ -262,6 +263,7 @@ function App() {
         {/* Privileged Access - Admin Protected */}
         <Route path="vault-secrets" element={<VaultSecrets />} />
         <Route path="rotation-policies" element={<RotationPolicies />} />
+        <Route path="guacamole-sessions" element={<GuacamoleSessions />} />
 
         {/* Developer - Admin Protected */}
         <Route path="api-explorer" element={<APIExplorer />} />
