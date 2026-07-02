@@ -125,6 +125,7 @@ func (s *Service) handleCreateAttestationCampaign(c *gin.Context) {
 	validTypes := map[string]bool{
 		"manager_review": true, "application_access": true,
 		"role_certification": true, "entitlement_review": true,
+		"vault_access": true, "rotation_policy": true,
 	}
 	if !validTypes[req.CampaignType] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid campaign type"})
@@ -423,6 +424,54 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				}
 			}
 		}
+
+	case "vault_access":
+		// Create items for each active vault access grant
+		rows, err := s.db.Pool.Query(ctx,
+			`SELECT vag.id, s.name, vag.principal_id, array_to_string(vag.actions, ',')
+			 FROM vault_access_grants vag
+			 JOIN vault_secrets s ON s.id = vag.secret_id
+			 WHERE vag.org_id = $1 AND (vag.expires_at IS NULL OR vag.expires_at > NOW())`, org.ID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var grantID, secretName, principalID, actions string
+				if err := rows.Scan(&grantID, &secretName, &principalID, &actions); err == nil {
+					_, err := s.db.Pool.Exec(ctx,
+						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1),
+						         NULLIF($2, '')::uuid, 'vault_access', $3::uuid, $4)`,
+						ac.ID, principalID, grantID, pf("%s:%s", secretName, actions), org.ID)
+					if err == nil {
+						count++
+					}
+				}
+			}
+		}
+
+	case "rotation_policy":
+		// Create items for each enabled credential rotation policy
+		rows, err := s.db.Pool.Query(ctx,
+			`SELECT p.id, s.name, p.connector_type
+			 FROM credential_rotation_policies p
+			 JOIN vault_secrets s ON s.id = p.secret_id
+			 WHERE p.org_id = $1 AND p.enabled = true`, org.ID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var policyID, secretName, connectorType string
+				if err := rows.Scan(&policyID, &secretName, &connectorType); err == nil {
+					_, err := s.db.Pool.Exec(ctx,
+						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $4 LIMIT 1),
+						         NULL, 'rotation_policy', $2::uuid, $3)`,
+						ac.ID, policyID, pf("%s:%s", secretName, connectorType), org.ID)
+					if err == nil {
+						count++
+					}
+				}
+			}
+		}
 	}
 
 	return count
@@ -535,6 +584,18 @@ func (s *Service) handleDecideAttestationItem(c *gin.Context) {
 			case "group":
 				_, _ = s.db.Pool.Exec(c.Request.Context(),
 					"DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3", *userID, *resourceID, org.ID)
+			case "vault_access":
+				_, _ = s.db.Pool.Exec(c.Request.Context(),
+					"DELETE FROM vault_access_grants WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
+			}
+		}
+
+		// resource-only revocations (no user principal required)
+		if resourceID != nil {
+			switch resourceType {
+			case "rotation_policy":
+				_, _ = s.db.Pool.Exec(c.Request.Context(),
+					"UPDATE credential_rotation_policies SET enabled = false, updated_at = NOW() WHERE id = $1 AND org_id = $2", *resourceID, org.ID)
 			}
 		}
 	}
