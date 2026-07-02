@@ -87,7 +87,11 @@ func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVau
 	}
 	defer zero(newValue)
 
-	candidate, err := v.AddCandidateVersion(ctx, secretID, newValue, "rotation")
+	// created_by is empty: rotation is a system action with no acting user, and
+	// vault_secret_versions.created_by is a UUID column (AddCandidateVersion casts
+	// it NULLIF($,'')::uuid), so a non-UUID marker like "rotation" would fail the
+	// cast. Empty string → created_by = NULL.
+	candidate, err := v.AddCandidateVersion(ctx, secretID, newValue, "")
 	if err != nil {
 		return "failed", false, 0
 	}
