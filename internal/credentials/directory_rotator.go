@@ -10,6 +10,11 @@ import (
 
 type directoryRotator struct{ dir *directory.Service }
 
+// NewDirectoryRotator returns a Rotator that applies credential changes via the
+// directory connector (LDAP/AD). Exported so cmd/admin-api can construct the
+// rotator slice without importing the unexported type directly.
+func NewDirectoryRotator(dir *directory.Service) Rotator { return &directoryRotator{dir: dir} }
+
 func (d *directoryRotator) Type() string { return "directory" }
 
 func (d *directoryRotator) Apply(ctx context.Context, cfg map[string]any, newValue []byte) error {
