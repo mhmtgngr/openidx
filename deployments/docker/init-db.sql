@@ -3565,6 +3565,7 @@ CREATE INDEX IF NOT EXISTS idx_rotation_policies_due
 
 -- Reconcile the dead credential_rotations into a run ledger (one row per attempt).
 ALTER TABLE credential_rotations ALTER COLUMN service_account_id DROP NOT NULL;
+ALTER TABLE credential_rotations ALTER COLUMN rotation_type DROP NOT NULL;
 ALTER TABLE credential_rotations ADD COLUMN IF NOT EXISTS org_id         UUID;
 ALTER TABLE credential_rotations ADD COLUMN IF NOT EXISTS policy_id      UUID REFERENCES credential_rotation_policies(id) ON DELETE SET NULL;
 ALTER TABLE credential_rotations ADD COLUMN IF NOT EXISTS secret_id      UUID REFERENCES vault_secrets(id) ON DELETE CASCADE;
