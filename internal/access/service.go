@@ -27,6 +27,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/vault"
 )
 
 // ProxyRoute represents a configured proxy route
@@ -125,6 +126,7 @@ type Service struct {
 	apisixConfigPath     string
 	agentHandler         *AgentAPIHandler
 	remoteSupportHandler *RemoteSupportHandler
+	vaultSvc             *vault.Service
 }
 
 // handleAgentAPKDownload serves the hosted Android agent APK without auth so
@@ -275,6 +277,9 @@ func (s *Service) SetAuditService(as *UnifiedAuditService) {
 		as.SetGuacamoleClient(s.guacamoleClient)
 	}
 }
+
+// SetVaultService wires the in-process PAM credential vault.
+func (s *Service) SetVaultService(v *vault.Service) { s.vaultSvc = v }
 
 // NewService creates a new access proxy service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {

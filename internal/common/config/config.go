@@ -113,6 +113,7 @@ type Config struct {
 	GuacamoleURL           string `mapstructure:"guacamole_url"`
 	GuacamoleAdminUser     string `mapstructure:"guacamole_admin_user"`
 	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
+	GuacamoleRecordingPath string `mapstructure:"guacamole_recording_path"`
 
 	// BrowZer configuration (browser-native Ziti participation)
 	BrowZerEnabled          bool   `mapstructure:"browzer_enabled"`
@@ -488,6 +489,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("guacamole_url", "")
 	v.SetDefault("guacamole_admin_user", "guacadmin")
 	v.SetDefault("guacamole_admin_password", "guacadmin")
+	v.SetDefault("guacamole_recording_path", "/var/lib/openidx/recordings/guacamole")
 
 	// BrowZer defaults
 	v.SetDefault("browzer_enabled", false)
@@ -632,6 +634,7 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_url":                       "GUACAMOLE_URL",
 		"guacamole_admin_user":                "GUACAMOLE_ADMIN_USER",
 		"guacamole_admin_password":            "GUACAMOLE_ADMIN_PASSWORD",
+		"guacamole_recording_path":            "GUACAMOLE_RECORDING_PATH",
 		"browzer_enabled":                     "BROWZER_ENABLED",
 		"browzer_client_id":                   "BROWZER_CLIENT_ID",
 		"browzer_targets_path":                "BROWZER_TARGETS_PATH",

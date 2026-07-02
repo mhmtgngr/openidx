@@ -27,6 +27,7 @@ import (
 	"github.com/openidx/openidx/internal/metrics"
 	"github.com/openidx/openidx/internal/organization"
 	"github.com/openidx/openidx/internal/server"
+	"github.com/openidx/openidx/internal/vault"
 )
 
 var (
@@ -175,6 +176,22 @@ func main() {
 
 	// Initialize access proxy service
 	accessService := access.NewService(db, redis, cfg, log)
+
+	// Construct in-process vault (fail-closed): access-service issues its own
+	// guacamole.credential_injected audit events so the vault Auditor is nil here.
+	vaultRing, err := vault.KeyringFromConfig(vault.KeyConfig{
+		KEK: cfg.VaultKEK, KEKs: cfg.VaultKEKs, ActiveKEKID: cfg.VaultActiveKEKID,
+		EncryptionKey: cfg.EncryptionKey,
+	})
+	if err != nil {
+		log.Fatal("vault keyring unavailable (fail-closed)", zap.Error(err))
+	}
+	vaultSvc, err := vault.NewService(db, vaultRing, nil,
+		time.Duration(cfg.VaultRevealLeaseTTLSeconds)*time.Second, log)
+	if err != nil {
+		log.Fatal("vault service init failed", zap.Error(err))
+	}
+	accessService.SetVaultService(vaultSvc)
 
 	// Background context for long-running goroutines
 	bgCtx, bgCancel := context.WithCancel(context.Background())
