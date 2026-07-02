@@ -411,5 +411,12 @@ func allMigrations() []*Migration {
 			UpSQL:       credentialRotationUp,
 			DownSQL:     credentialRotationDown,
 		},
+		{
+			Version:     58,
+			Name:        "jit_approval_drift_fix",
+			Description: "Create jit_grants and request_approval_chains — referenced by internal/governance (jit.go, jit_expiry.go, request.go) but never created by any migration or init-db.sql, so POST /api/v1/governance/requests and the JIT/escalation background workers 500 today. Columns match the code's exact SQL usage. Not under the v37 RLS belt (jit_grants isn't org-scoped in code; request_approval_chains is a child of access_requests reached via the RLS-scoped parent) — matches the v42-v55 reconcile precedent. Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       jitDriftFixUp,
+			DownSQL:     jitDriftFixDown,
+		},
 	}
 }
