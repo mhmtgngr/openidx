@@ -278,6 +278,10 @@ type Config struct {
 	VaultKEKs                  string `mapstructure:"vault_keks"`
 	VaultActiveKEKID           int    `mapstructure:"vault_active_kek_id"`
 	VaultRevealLeaseTTLSeconds int    `mapstructure:"vault_reveal_lease_ttl_seconds"`
+
+	// Credentials rotation scheduler configuration
+	CredentialsRotationSchedulerIntervalSeconds int `mapstructure:"credentials_rotation_scheduler_interval_seconds"`
+	CredentialsRotationDefaultLength            int `mapstructure:"credentials_rotation_default_length"`
 }
 
 // TLSConfig holds TLS configuration for service-to-service encryption
@@ -588,6 +592,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// Vault (PAM credential vault) defaults
 	v.SetDefault("vault_reveal_lease_ttl_seconds", 300)
+
+	// Credentials rotation defaults
+	v.SetDefault("credentials_rotation_scheduler_interval_seconds", 60)
+	v.SetDefault("credentials_rotation_default_length", 24)
 }
 
 func bindEnvVars(v *viper.Viper) {
@@ -653,21 +661,23 @@ func bindEnvVars(v *viper.Viper) {
 		"vault_keks":                          "VAULT_KEKS",
 		"vault_active_kek_id":                 "VAULT_ACTIVE_KEK_ID",
 		"vault_reveal_lease_ttl_seconds":      "VAULT_REVEAL_LEASE_TTL_SECONDS",
-		"smtp_host":                           "SMTP_HOST",
-		"smtp_port":                           "SMTP_PORT",
-		"smtp_username":                       "SMTP_USERNAME",
-		"smtp_password":                       "SMTP_PASSWORD",
-		"smtp_from":                           "SMTP_FROM",
-		"sms.enabled":                         "SMS_ENABLED",
-		"sms.provider":                        "SMS_PROVIDER",
-		"sms.twilio_sid":                      "TWILIO_ACCOUNT_SID",
-		"sms.twilio_token":                    "TWILIO_AUTH_TOKEN",
-		"sms.twilio_from":                     "TWILIO_FROM_NUMBER",
-		"sms.aws_region":                      "AWS_REGION",
-		"sms.aws_access_key":                  "AWS_ACCESS_KEY_ID",
-		"sms.aws_secret_key":                  "AWS_SECRET_ACCESS_KEY",
-		"sms.webhook_url":                     "SMS_WEBHOOK_URL",
-		"sms.webhook_api_key":                 "SMS_WEBHOOK_API_KEY",
+		"credentials_rotation_scheduler_interval_seconds": "CREDENTIALS_ROTATION_SCHEDULER_INTERVAL_SECONDS",
+		"credentials_rotation_default_length":             "CREDENTIALS_ROTATION_DEFAULT_LENGTH",
+		"smtp_host":                                       "SMTP_HOST",
+		"smtp_port":                                       "SMTP_PORT",
+		"smtp_username":                                   "SMTP_USERNAME",
+		"smtp_password":                                   "SMTP_PASSWORD",
+		"smtp_from":                                       "SMTP_FROM",
+		"sms.enabled":                                     "SMS_ENABLED",
+		"sms.provider":                                    "SMS_PROVIDER",
+		"sms.twilio_sid":                                  "TWILIO_ACCOUNT_SID",
+		"sms.twilio_token":                                "TWILIO_AUTH_TOKEN",
+		"sms.twilio_from":                                 "TWILIO_FROM_NUMBER",
+		"sms.aws_region":                                  "AWS_REGION",
+		"sms.aws_access_key":                              "AWS_ACCESS_KEY_ID",
+		"sms.aws_secret_key":                              "AWS_SECRET_ACCESS_KEY",
+		"sms.webhook_url":                                 "SMS_WEBHOOK_URL",
+		"sms.webhook_api_key":                             "SMS_WEBHOOK_API_KEY",
 		// Turkish SMS providers
 		"sms.netgsm_usercode":          "NETGSM_USERCODE",
 		"sms.netgsm_password":          "NETGSM_PASSWORD",
