@@ -1168,6 +1168,10 @@ func (s *Service) handleReturnCredential(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not your vault_credential request"})
 		return
 	}
+	if status != "fulfilled" {
+		c.JSON(http.StatusConflict, gin.H{"error": "credential not currently checked out"})
+		return
+	}
 	// Immediate deauthorization + mark expired + rotate-on-return.
 	if err := s.vaultSvc.RevokeGrantForPrincipal(ctx, resourceID, "user", userID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "revoke grant"})
