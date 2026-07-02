@@ -314,6 +314,16 @@ func (s *Service) RemoveGrant(ctx context.Context, grantID string) error {
 	return nil
 }
 
+// RevokeGrantForPrincipal deletes any grant for (secretID, principalType, principalID).
+// Used by the JIT-checkout early-return path for immediate deauthorization; the timeout
+// path relies on the grant's expires_at. Org-scoped by RLS via ctx.
+func (s *Service) RevokeGrantForPrincipal(ctx context.Context, secretID, principalType, principalID string) error {
+	_, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM vault_access_grants WHERE secret_id=$1 AND principal_type=$2 AND principal_id=$3`,
+		secretID, principalType, principalID)
+	return err
+}
+
 // hasGrant reports whether principalID holds a non-expired grant carrying
 // action on secretID. userRoles lets a user match role-type grants.
 func (s *Service) hasGrant(ctx context.Context, secretID, principalID string, userRoles []string, action string) (bool, error) {
