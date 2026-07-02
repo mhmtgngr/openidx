@@ -209,6 +209,26 @@ func (c *LDAPConnector) AuthenticateUser(username, password string) error {
 	return nil
 }
 
+// VerifyBind opens a fresh connection, resolves the user DN, then attempts to bind
+// as the user with the given password. Returns nil on success, the bind error otherwise.
+func (c *LDAPConnector) VerifyBind(username, password string) error {
+	conn, err := c.Connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	userDN, err := c.findUserDN(conn, username)
+	if err != nil {
+		return err
+	}
+
+	if err := conn.Bind(userDN, password); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ChangePassword changes a user's password via LDAP Password Modify Extended Operation (RFC 3062).
 // The user's current password is verified first by rebinding.
 func (c *LDAPConnector) ChangePassword(username, oldPassword, newPassword string) error {

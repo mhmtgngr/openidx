@@ -3,6 +3,7 @@ package directory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
@@ -11,6 +12,10 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// ErrVerifyUnsupported means this directory type cannot cheaply verify a credential
+// (e.g. Azure AD via Graph). Callers treat it as "skip verification".
+var ErrVerifyUnsupported = errors.New("directory: password verify unsupported for this type")
 
 // Service is the directory sync service facade
 type Service struct {
@@ -168,6 +173,29 @@ func (s *Service) ResetPassword(ctx context.Context, directoryID, username, newP
 		}
 		connector := NewAzureADConnector(cfg, s.logger)
 		return connector.ResetPassword(ctx, *externalID, newPassword)
+	default:
+		return fmt.Errorf("unsupported directory type: %s", dirType)
+	}
+}
+
+// VerifyPassword confirms that username/password authenticates against the directory.
+// For ldap/active_directory it performs a bind; for azure_ad it returns ErrVerifyUnsupported.
+func (s *Service) VerifyPassword(ctx context.Context, directoryID, username, password string) error {
+	dirType, configBytes, err := s.loadDirectoryTypeAndConfig(ctx, directoryID)
+	if err != nil {
+		return err
+	}
+
+	switch dirType {
+	case "ldap", "active_directory":
+		var cfg LDAPConfig
+		if err := json.Unmarshal(configBytes, &cfg); err != nil {
+			return fmt.Errorf("invalid LDAP config: %w", err)
+		}
+		connector := NewLDAPConnector(cfg, s.logger)
+		return connector.VerifyBind(username, password)
+	case "azure_ad":
+		return ErrVerifyUnsupported
 	default:
 		return fmt.Errorf("unsupported directory type: %s", dirType)
 	}

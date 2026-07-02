@@ -26,6 +26,7 @@ import (
 	"github.com/openidx/openidx/internal/common/opa"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
+	"github.com/openidx/openidx/internal/credentials"
 	"github.com/openidx/openidx/internal/directory"
 	"github.com/openidx/openidx/internal/email"
 	newhealth "github.com/openidx/openidx/internal/health"
@@ -267,6 +268,16 @@ func main() {
 		vaultGroup.Use(admin.RequireAdmin())
 		vaultSvc.RegisterRoutes(vaultGroup)
 		go vaultSvc.StartSweeper(ctx, redis.Client)
+
+		// Credential rotation engine — wired into the same admin-guarded group as vault.
+		// dirService is already constructed above; use it for the directory rotator.
+		rotators := []credentials.Rotator{
+			credentials.NewDirectoryRotator(dirService),
+			credentials.NewGenerateOnlyRotator(),
+		}
+		credSvc := credentials.NewService(db, vaultSvc, rotators, unifiedAudit, cfg.CredentialsRotationDefaultLength, log)
+		credSvc.RegisterRoutes(vaultGroup)
+		go credSvc.StartScheduler(ctx, redis.Client, time.Duration(cfg.CredentialsRotationSchedulerIntervalSeconds)*time.Second)
 	}
 
 	// Create HTTP server
