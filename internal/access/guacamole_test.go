@@ -1,8 +1,22 @@
 package access
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
+
+// The session-history DTO must expose only a transcript/recording availability
+// boolean — never the on-disk recording_path or transcript_path.
+func TestGuacSessionRowHidesFilePaths(t *testing.T) {
+	b, _ := json.Marshal(GuacSessionRow{})
+	lower := strings.ToLower(string(b))
+	for _, forbidden := range []string{"recording_path", "transcript_path"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("GuacSessionRow exposes a file-path field %q: %s", forbidden, b)
+		}
+	}
+}
 
 func TestBuildInjectedParams(t *testing.T) {
 	t.Parallel()

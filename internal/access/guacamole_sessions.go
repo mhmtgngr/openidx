@@ -210,6 +210,72 @@ func (s *Service) handleListGuacSessionRequests(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"requests": requests})
 }
 
+// GuacSessionRow is the API representation of a guacamole_sessions row for the
+// admin session-history list. It deliberately exposes only a transcript/recording
+// *availability* boolean — never the on-disk recording_path or transcript_path.
+type GuacSessionRow struct {
+	ID                    string     `json:"id"`
+	ConnectionID          string     `json:"connection_id"`
+	UserID                *string    `json:"user_id,omitempty"`
+	GuacSessionUUID       *string    `json:"guac_session_uuid,omitempty"`
+	StartedAt             time.Time  `json:"started_at"`
+	EndedAt               *time.Time `json:"ended_at,omitempty"`
+	Status                string     `json:"status"`
+	TranscriptAvailable   bool       `json:"transcript_available"`
+	TranscriptGeneratedAt *time.Time `json:"transcript_generated_at,omitempty"`
+}
+
+// ---- handleListGuacSessionHistory ----
+// GET /api/v1/access/guacamole/session-history (admin)
+//
+// Lists DB-backed guacamole_sessions rows for the org (most recent first), so the
+// console can offer per-session transcript downloads (keyed by row id). RLS enforces
+// org scoping via the request context's app.org_id; the explicit org_id filter is
+// defence in depth (same pattern as handleListGuacSessionRequests). Returns only a
+// transcript-availability boolean, never the recording/transcript file paths.
+func (s *Service) handleListGuacSessionHistory(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, connection_id, user_id, guac_session_uuid,
+		        started_at, ended_at, status,
+		        (COALESCE(transcript_path, '') <> '') AS transcript_available,
+		        transcript_generated_at
+		   FROM guacamole_sessions
+		  WHERE org_id = $1
+		  ORDER BY started_at DESC
+		  LIMIT 200`,
+		org.ID)
+	if err != nil {
+		s.logger.Error("handleListGuacSessionHistory: query failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list session history"})
+		return
+	}
+	defer rows.Close()
+
+	sessions := []GuacSessionRow{}
+	for rows.Next() {
+		var r GuacSessionRow
+		if err := rows.Scan(
+			&r.ID, &r.ConnectionID, &r.UserID, &r.GuacSessionUUID,
+			&r.StartedAt, &r.EndedAt, &r.Status,
+			&r.TranscriptAvailable, &r.TranscriptGeneratedAt,
+		); err != nil {
+			s.logger.Warn("handleListGuacSessionHistory: scan failed", zap.Error(err))
+			continue
+		}
+		sessions = append(sessions, r)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+}
+
 // ---- handleListActiveGuacSessions ----
 // GET /api/v1/access/guacamole/sessions (admin)
 //
