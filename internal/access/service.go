@@ -490,6 +490,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/guacamole/sessions", svc.requireAdminRole(), svc.handleListActiveGuacSessions)
 		api.POST("/guacamole/sessions/:id/terminate", svc.requireAdminRole(), svc.handleTerminateGuacSession)
 
+		// Guacamole transcript download (Task 3 — PAM M4)
+		api.GET("/guacamole/sessions/:id/transcript", svc.requireAdminRole(), svc.handleGetGuacTranscript)
+
 		// Temporary access links for support/vendor access
 		api.GET("/temp-access", svc.handleListTempAccess)
 		api.POST("/temp-access", svc.handleCreateTempAccess)

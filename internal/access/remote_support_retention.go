@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -202,6 +203,7 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 		h.sweepExpiredRecordings(ctx)
 		h.sweepExpiredGuacRecordings(ctx)
 		h.detectEndedGuacSessions(ctx)
+		h.generateGuacTranscripts(ctx)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -212,6 +214,7 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 				h.sweepExpiredRecordings(ctx)
 				h.sweepExpiredGuacRecordings(ctx)
 				h.detectEndedGuacSessions(ctx)
+				h.generateGuacTranscripts(ctx)
 			}
 		}
 	}()
@@ -499,6 +502,95 @@ func (h *RemoteSupportHandler) detectEndedGuacSessions(ctx context.Context) {
 	}
 }
 
+// generateGuacTranscripts uses the guaclog CLI tool to produce a plain-text
+// transcript for every ended/terminated Guacamole session that has a recording
+// on disk but not yet a transcript. The function is invoked from
+// StartRecordingRetentionEnforcer (immediate + each tick).
+//
+// If guaclog is not installed (exec.LookPath returns an error) the function
+// returns immediately — missing tooling is never an error; the feature is
+// simply inert.
+//
+// guaclog behaviour: it writes <recording_path>.txt to the filesystem. If
+// the file is not present after the run (some versions write to stdout
+// instead), we persist the captured CombinedOutput to that path ourselves.
+//
+// Transcript content is never written to the application log.
+func (h *RemoteSupportHandler) generateGuacTranscripts(ctx context.Context) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+	guaclog, lookErr := exec.LookPath("guaclog")
+	if lookErr != nil {
+		return // guaclog not installed → feature inert, no error
+	}
+
+	//orgscope:ignore background cross-org transcript sweep under bypass-RLS context
+	rows, err := h.db.Pool.Query(ctx,
+		`SELECT id, recording_path
+		   FROM guacamole_sessions
+		  WHERE status IN ('ended', 'terminated')
+		    AND recording_path IS NOT NULL
+		    AND recording_path <> ''
+		    AND recording_purged_at IS NULL
+		    AND transcript_path IS NULL
+		  LIMIT 50`)
+	if err != nil {
+		h.logger.Warn("generateGuacTranscripts: query failed", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type job struct {
+		id   string
+		path string
+	}
+	var jobs []job
+	for rows.Next() {
+		var j job
+		if rows.Scan(&j.id, &j.path) == nil {
+			jobs = append(jobs, j)
+		}
+	}
+	rows.Close()
+
+	for _, j := range jobs {
+		// Skip if the recording file isn't on disk yet.
+		if _, statErr := os.Stat(j.path); statErr != nil {
+			continue
+		}
+		tpath := j.path + ".txt"
+		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		out, runErr := exec.CommandContext(cctx, guaclog, j.path).CombinedOutput()
+		cancel()
+		if runErr != nil {
+			h.logger.Warn("generateGuacTranscripts: guaclog failed",
+				zap.String("session_id", j.id),
+				zap.Error(runErr))
+			continue
+		}
+		// guaclog writes <path>.txt itself; if it wrote to stdout instead,
+		// persist the captured output. NEVER log the content.
+		if _, statErr := os.Stat(tpath); statErr != nil {
+			if writeErr := os.WriteFile(tpath, out, 0o600); writeErr != nil {
+				h.logger.Warn("generateGuacTranscripts: failed to write transcript file",
+					zap.String("session_id", j.id),
+					zap.String("transcript_path", tpath),
+					zap.Error(writeErr))
+				continue
+			}
+		}
+		//orgscope:ignore background sweep; row identified by PK
+		_, _ = h.db.Pool.Exec(ctx,
+			`UPDATE guacamole_sessions
+			    SET transcript_path         = $1,
+			        transcript_generated_at = NOW()
+			  WHERE id = $2`,
+			tpath, j.id)
+		h.audit(ctx, "guacamole.transcript_generated", j.id, "session", "")
+	}
+}
+
 // isUnderRoot reports whether p is strictly inside root: both are
 // filepath.Clean'd, root must be non-empty, and p must have root+"/" as a
 // prefix (so p == root is rejected — callers must never RemoveAll the root
@@ -533,6 +625,19 @@ func (h *RemoteSupportHandler) purgeGuacRecording(ctx context.Context, sessionID
 		} else {
 			if err := os.RemoveAll(recordingPath); err != nil {
 				return err
+			}
+			// Also remove the transcript file (recording_path + ".txt") when
+			// it is strictly inside the recordings root. The DB columns
+			// (transcript_path, transcript_generated_at) are left intact so
+			// the audit history is preserved.
+			tpath := recordingPath + ".txt"
+			if isUnderRoot(tpath, root) {
+				if removeErr := os.Remove(tpath); removeErr != nil && !os.IsNotExist(removeErr) {
+					h.logger.Warn("purgeGuacRecording: failed to remove transcript file",
+						zap.String("session_id", sessionID),
+						zap.String("transcript_path", tpath),
+						zap.Error(removeErr))
+				}
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -281,6 +282,61 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 		})
 
 	c.JSON(http.StatusOK, gin.H{"message": "session terminated", "active_conn_id": activeConnID})
+}
+
+// ---- handleGetGuacTranscript ----
+// GET /api/v1/access/guacamole/sessions/:id/transcript (admin)
+//
+// Streams the plain-text transcript for the given guacamole_sessions row.
+// Org-scoped via a guacamole_connections → proxy_routes JOIN (same pattern as
+// handleSetGuacCredential). Returns 404 when the session has no transcript or
+// the transcript file is absent from disk. Audits guacamole.transcript_downloaded.
+func (s *Service) handleGetGuacTranscript(c *gin.Context) {
+	sessionID := c.Param("id")
+
+	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	var transcriptPath string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT gs.transcript_path
+		   FROM guacamole_sessions gs
+		   JOIN guacamole_connections gc ON gc.id = gs.connection_id
+		   JOIN proxy_routes pr ON pr.id = gc.route_id
+		  WHERE gs.id = $1 AND pr.org_id = $2`,
+		sessionID, org.ID).Scan(&transcriptPath)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+		s.logger.Error("handleGetGuacTranscript: query failed",
+			zap.String("session_id", sessionID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up session"})
+		return
+	}
+	if transcriptPath == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "transcript not yet generated for this session"})
+		return
+	}
+	if _, statErr := os.Stat(transcriptPath); statErr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "transcript file not found on disk"})
+		return
+	}
+
+	s.logAuditEvent(c, "guacamole.transcript_downloaded", sessionID, "guacamole_session",
+		map[string]interface{}{
+			"session_id":      sessionID,
+			"transcript_path": transcriptPath,
+		})
+
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.File(transcriptPath)
 }
 
 // ---- recordGuacSession ----

@@ -44,8 +44,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # NOTE: Access service needs Alpine for shell script entrypoint
 FROM alpine:3.20
 
-# Install runtime dependencies, create user and directories, cleanup in single layer
-RUN apk add --no-cache ca-certificates tzdata wget && \
+# Install runtime dependencies, create user and directories, cleanup in single layer.
+# guacamole-server provides the guaclog CLI used for transcript generation
+# (see internal/access/remote_support_retention.go generateGuacTranscripts).
+# The feature is LookPath-gated; removing guacamole-server only disables transcript
+# generation — it does not break the service.
+RUN apk add --no-cache ca-certificates tzdata wget guacamole-server && \
     addgroup -S openidx && \
     adduser -S openidx -G openidx && \
     mkdir -p /ziti /shared-config /shared-certs && \
