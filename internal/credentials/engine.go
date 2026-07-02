@@ -18,7 +18,6 @@ import (
 type vaultPort interface {
 	AddCandidateVersion(ctx context.Context, secretID string, value []byte, by string) (int, error)
 	PromoteVersion(ctx context.Context, secretID string, version int) error
-	SecretOrg(ctx context.Context, secretID string) (string, error)
 }
 
 // Auditor records an audit event. Satisfied by *access.UnifiedAuditService.
@@ -158,10 +157,6 @@ func (s *Service) validatePolicyInput(in PolicyInput) error {
 	}
 	if in.IntervalSeconds < 0 {
 		return fmt.Errorf("%w: interval_seconds must be >= 0", ErrInvalidPolicy)
-	}
-	// Apply defaultLen when generation policy length is 0.
-	if in.GenerationPolicy.Length == 0 {
-		in.GenerationPolicy.Length = s.defaultLen
 	}
 	return nil
 }
@@ -525,7 +520,7 @@ func (s *Service) updateRunSucceeded(ctx context.Context, runID, policyID string
 		if _, err := s.db.Pool.Exec(ctx, //orgscope:ignore success-path update keyed by policy UUID; RLS on credential_rotation_policies enforces org
 			`UPDATE credential_rotation_policies
 			 SET last_run_at=NOW(), last_status='succeeded',
-			     next_run_at=NOW() + ($2 || ' seconds')::interval,
+			     next_run_at=NOW() + $2 * interval '1 second',
 			     updated_at=NOW()
 			 WHERE id=$1`, policyID, intervalSeconds,
 		); err != nil {
