@@ -19,6 +19,9 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -199,6 +202,8 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 		// honor the configured interval.
 		h.sweepExpiredRecordings(ctx)
 		h.sweepExpiredGuacRecordings(ctx)
+		h.detectEndedGuacSessions(ctx)
+		h.generateGuacTranscripts(ctx)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -208,6 +213,8 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 			case <-ticker.C:
 				h.sweepExpiredRecordings(ctx)
 				h.sweepExpiredGuacRecordings(ctx)
+				h.detectEndedGuacSessions(ctx)
+				h.generateGuacTranscripts(ctx)
 			}
 		}
 	}()
@@ -385,13 +392,253 @@ func (h *RemoteSupportHandler) sweepExpiredGuacRecordings(ctx context.Context) {
 	}
 }
 
-// purgeGuacRecording removes the guacd-native recording directory at path and
-// stamps recording_purged_at on the session row. Idempotent: a missing path is
-// not an error (os.RemoveAll is a no-op for non-existent paths on Go 1.16+).
+// detectEndedGuacSessions reconciles the guacamole_sessions table against
+// the live active-session list from the Guacamole REST API. Any session row
+// whose (guacamole_connection_id, username) pair is absent from the live set
+// is stamped status='ended' and audited as guacamole.session_ended_detected.
+//
+// The function applies a 2-minute grace window (started_at < NOW()-2min) so
+// sessions that just started are never prematurely closed before Guacamole
+// reports them as active.
+//
+// Fail-safe: if guacamoleClient is nil or ListActiveSessions returns an error
+// we log a warning and return immediately without marking anything ended.
+// Marking sessions ended without a definitive live set would be a false
+// positive, which is far worse than a missed detection.
+//
+// Both the enumeration query and the per-session UPDATE are cross-org
+// background operations executed under the bypass-RLS context established by
+// StartRecordingRetentionEnforcer.
+func (h *RemoteSupportHandler) detectEndedGuacSessions(ctx context.Context) {
+	// Fail-safe: no client → skip entirely. Never end sessions when we
+	// cannot see the live set.
+	if h.guacamoleClient == nil {
+		return
+	}
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+
+	active, err := h.guacamoleClient.ListActiveSessions(ctx)
+	if err != nil {
+		h.logger.Warn("detectEndedGuacSessions: list active sessions failed",
+			zap.Error(err))
+		return
+	}
+
+	// Build a set of live keys: connectionIdentifier + "|" + username.
+	// This mirrors the composite key that uniquely identifies an active
+	// connection from Guacamole's perspective.
+	live := make(map[string]bool, len(active))
+	for _, a := range active {
+		live[a.ConnectionIdentifier+"|"+a.Username] = true
+	}
+
+	// Query active sessions that are old enough to be past the grace window.
+	// JOIN guacamole_connections to retrieve the Guacamole-side connection
+	// identifier, LEFT JOIN users to resolve the username (COALESCE to '' so
+	// sessions without a matched user row still participate in the key check).
+	//orgscope:ignore background cross-org sweep reconciling active Guacamole sessions against the live set
+	rows, err := h.db.Pool.Query(ctx, `
+        SELECT gs.id,
+               gc.guacamole_connection_id,
+               COALESCE(u.username, '')
+          FROM guacamole_sessions gs
+          JOIN guacamole_connections gc ON gc.id = gs.connection_id
+          LEFT JOIN users u ON u.id = gs.user_id
+         WHERE gs.status = 'active'
+           AND gs.started_at < NOW() - INTERVAL '2 minutes'
+    `)
+	if err != nil {
+		h.logger.Warn("detectEndedGuacSessions: query active sessions failed",
+			zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type candidateRow struct {
+		id         string
+		guacConnID string
+		username   string
+	}
+
+	var candidates []candidateRow
+	for rows.Next() {
+		var c candidateRow
+		if err := rows.Scan(&c.id, &c.guacConnID, &c.username); err != nil {
+			h.logger.Warn("detectEndedGuacSessions: scan failed", zap.Error(err))
+			continue
+		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+
+	// For each DB-active session not in the live set, mark it ended.
+	ended := 0
+	for _, c := range candidates {
+		if live[c.guacConnID+"|"+c.username] {
+			// Still live — leave it alone.
+			continue
+		}
+		//orgscope:ignore background sweep; row identified by PK — org scoping enforced at insert time
+		_, execErr := h.db.Pool.Exec(ctx, `
+            UPDATE guacamole_sessions
+               SET status   = 'ended',
+                   ended_at = NOW()
+             WHERE id = $1
+               AND status = 'active'
+        `, c.id)
+		if execErr != nil {
+			h.logger.Warn("detectEndedGuacSessions: update failed",
+				zap.String("session_id", c.id), zap.Error(execErr))
+			continue
+		}
+		h.audit(ctx, "guacamole.session_ended_detected", c.id, "session", "")
+		ended++
+	}
+	if ended > 0 {
+		h.logger.Info("detectEndedGuacSessions: marked sessions ended",
+			zap.Int("count", ended))
+	}
+}
+
+// generateGuacTranscripts uses the guaclog CLI tool to produce a plain-text
+// transcript for every ended/terminated Guacamole session that has a recording
+// on disk but not yet a transcript. The function is invoked from
+// StartRecordingRetentionEnforcer (immediate + each tick).
+//
+// If guaclog is not installed (exec.LookPath returns an error) the function
+// returns immediately — missing tooling is never an error; the feature is
+// simply inert.
+//
+// guaclog behaviour: it writes <recording_path>.txt to the filesystem. If
+// the file is not present after the run (some versions write to stdout
+// instead), we persist the captured CombinedOutput to that path ourselves.
+//
+// Transcript content is never written to the application log.
+func (h *RemoteSupportHandler) generateGuacTranscripts(ctx context.Context) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+	guaclog, lookErr := exec.LookPath("guaclog")
+	if lookErr != nil {
+		return // guaclog not installed → feature inert, no error
+	}
+
+	//orgscope:ignore background cross-org transcript sweep under bypass-RLS context
+	rows, err := h.db.Pool.Query(ctx,
+		`SELECT id, recording_path
+		   FROM guacamole_sessions
+		  WHERE status IN ('ended', 'terminated')
+		    AND recording_path IS NOT NULL
+		    AND recording_path <> ''
+		    AND recording_purged_at IS NULL
+		    AND transcript_path IS NULL
+		  LIMIT 50`)
+	if err != nil {
+		h.logger.Warn("generateGuacTranscripts: query failed", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type job struct {
+		id   string
+		path string
+	}
+	var jobs []job
+	for rows.Next() {
+		var j job
+		if rows.Scan(&j.id, &j.path) == nil {
+			jobs = append(jobs, j)
+		}
+	}
+	rows.Close()
+
+	for _, j := range jobs {
+		// Skip if the recording file isn't on disk yet.
+		if _, statErr := os.Stat(j.path); statErr != nil {
+			continue
+		}
+		tpath := j.path + ".txt"
+		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		out, runErr := exec.CommandContext(cctx, guaclog, j.path).CombinedOutput()
+		cancel()
+		if runErr != nil {
+			h.logger.Warn("generateGuacTranscripts: guaclog failed",
+				zap.String("session_id", j.id),
+				zap.Error(runErr))
+			continue
+		}
+		// guaclog writes <path>.txt itself; if it wrote to stdout instead,
+		// persist the captured output. NEVER log the content.
+		if _, statErr := os.Stat(tpath); statErr != nil {
+			if writeErr := os.WriteFile(tpath, out, 0o600); writeErr != nil {
+				h.logger.Warn("generateGuacTranscripts: failed to write transcript file",
+					zap.String("session_id", j.id),
+					zap.String("transcript_path", tpath),
+					zap.Error(writeErr))
+				continue
+			}
+		}
+		//orgscope:ignore background sweep; row identified by PK
+		_, _ = h.db.Pool.Exec(ctx,
+			`UPDATE guacamole_sessions
+			    SET transcript_path         = $1,
+			        transcript_generated_at = NOW()
+			  WHERE id = $2`,
+			tpath, j.id)
+		h.audit(ctx, "guacamole.transcript_generated", j.id, "session", "")
+	}
+}
+
+// isUnderRoot reports whether p is strictly inside root: both are
+// filepath.Clean'd, root must be non-empty, and p must have root+"/" as a
+// prefix (so p == root is rejected — callers must never RemoveAll the root
+// itself).
+func isUnderRoot(p, root string) bool {
+	if root == "" || p == "" {
+		return false
+	}
+	cp := filepath.Clean(p)
+	cr := filepath.Clean(root)
+	// Require a path-separator boundary so "/recordings2" is not "under" "/recordings".
+	return strings.HasPrefix(cp, cr+string(filepath.Separator))
+}
+
+// purgeGuacRecording removes the guacd-native recording file at recordingPath
+// and stamps recording_purged_at on the session row. Idempotent: a missing
+// path is not an error (os.RemoveAll is a no-op for non-existent paths on
+// Go 1.16+).
+//
+// Safety guard: the path must be strictly inside the configured recordings
+// root (h.guacRecordingsRoot). An empty, root-equal, or escaping path is
+// skipped with a Warn rather than deleted, preventing a misconfigured or
+// corrupted row from wiping the entire recordings directory.
 func (h *RemoteSupportHandler) purgeGuacRecording(ctx context.Context, sessionID, recordingPath string) error {
 	if recordingPath != "" {
-		if err := os.RemoveAll(recordingPath); err != nil {
-			return err
+		root := h.guacRecordingsRoot
+		if root == "" || !isUnderRoot(recordingPath, root) {
+			h.logger.Warn("purgeGuacRecording: skipping unsafe recording_path",
+				zap.String("session_id", sessionID),
+				zap.String("recording_path", recordingPath),
+				zap.String("recordings_root", root))
+		} else {
+			if err := os.RemoveAll(recordingPath); err != nil {
+				return err
+			}
+			// Also remove the transcript file (recording_path + ".txt") when
+			// it is strictly inside the recordings root. The DB columns
+			// (transcript_path, transcript_generated_at) are left intact so
+			// the audit history is preserved.
+			tpath := recordingPath + ".txt"
+			if isUnderRoot(tpath, root) {
+				if removeErr := os.Remove(tpath); removeErr != nil && !os.IsNotExist(removeErr) {
+					h.logger.Warn("purgeGuacRecording: failed to remove transcript file",
+						zap.String("session_id", sessionID),
+						zap.String("transcript_path", tpath),
+						zap.Error(removeErr))
+				}
+			}
 		}
 	}
 	//orgscope:ignore bypass-RLS sweep — session row identified by PK; org_id scoping is enforced at insert time

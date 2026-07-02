@@ -490,6 +490,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/guacamole/sessions", svc.requireAdminRole(), svc.handleListActiveGuacSessions)
 		api.POST("/guacamole/sessions/:id/terminate", svc.requireAdminRole(), svc.handleTerminateGuacSession)
 
+		// Guacamole transcript download (Task 3 — PAM M4)
+		api.GET("/guacamole/sessions/:id/transcript", svc.requireAdminRole(), svc.handleGetGuacTranscript)
+
+		// Guacamole live monitor — read-only connection sharing (Task 4 — PAM M4)
+		api.POST("/guacamole/sessions/:id/share", svc.requireAdminRole(), svc.handleShareGuacSession)
+
 		// Temporary access links for support/vendor access
 		api.GET("/temp-access", svc.handleListTempAccess)
 		api.POST("/temp-access", svc.handleCreateTempAccess)
@@ -591,6 +597,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
+		if svc.guacamoleClient != nil {
+			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)
+		}
 
 		// Recording storage backend. Preference: S3 over filesystem so a
 		// production deployment that configures both gets durability
@@ -653,6 +662,7 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 			if store != nil {
 				remoteSupport.SetRecordingStore(store)
 				remoteSupport.SetDefaultRetentionDays(svc.config.RecordingsDefaultRetentionDays)
+				remoteSupport.SetGuacRecordingsRoot(svc.config.GuacamoleRecordingPath)
 				// Sweep every hour. Cheap query — predicate index on
 				// recording_finalized_at WHERE recording_purged_at IS NULL.
 				remoteSupport.StartRecordingRetentionEnforcer(context.Background(), time.Hour)
