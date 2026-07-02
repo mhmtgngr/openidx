@@ -3435,6 +3435,72 @@ CREATE TABLE IF NOT EXISTS agent_enrollment_tokens (
 CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_hash ON agent_enrollment_tokens(token_hash);
 
 -- ============================================================================
+-- PAM credential vault store (v56)
+-- ============================================================================
+-- Four org-scoped tables for the PAM credential vault (M1). Envelope ciphertext
+-- lives only in vault_secret_versions; vault_secrets carries metadata only.
+-- The v37 FORCE-RLS belt is applied by the migration; here we only create the
+-- tables so TestInitDBParity stays green.
+CREATE TABLE IF NOT EXISTS vault_secrets (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID NOT NULL,
+    name            VARCHAR(255) NOT NULL,
+    type            VARCHAR(32)  NOT NULL DEFAULT 'generic',
+    description     TEXT,
+    owner_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+    metadata        JSONB NOT NULL DEFAULT '{}',
+    current_version INTEGER NOT NULL DEFAULT 0,
+    created_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (org_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS vault_secret_versions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL,
+    secret_id   UUID NOT NULL REFERENCES vault_secrets(id) ON DELETE CASCADE,
+    version     INTEGER NOT NULL,
+    key_id      SMALLINT NOT NULL,
+    ciphertext  BYTEA NOT NULL,
+    created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (secret_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS vault_access_grants (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         UUID NOT NULL,
+    secret_id      UUID NOT NULL REFERENCES vault_secrets(id) ON DELETE CASCADE,
+    principal_type VARCHAR(32) NOT NULL,
+    principal_id   UUID NOT NULL,
+    actions        TEXT[] NOT NULL DEFAULT '{}',
+    granted_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+    expires_at     TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (secret_id, principal_type, principal_id)
+);
+
+CREATE TABLE IF NOT EXISTS vault_checkouts (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         UUID NOT NULL,
+    secret_id      UUID NOT NULL REFERENCES vault_secrets(id) ON DELETE CASCADE,
+    secret_version INTEGER NOT NULL,
+    principal_id   UUID,
+    mode           VARCHAR(16) NOT NULL,
+    reason         TEXT,
+    leased_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at     TIMESTAMPTZ,
+    returned_at    TIMESTAMPTZ,
+    status         VARCHAR(16) NOT NULL DEFAULT 'active'
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_versions_secret  ON vault_secret_versions(secret_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_vault_grants_secret    ON vault_access_grants(secret_id);
+CREATE INDEX IF NOT EXISTS idx_vault_checkouts_secret ON vault_checkouts(secret_id, leased_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vault_checkouts_active ON vault_checkouts(status, expires_at) WHERE status = 'active';
+
+-- ============================================================================
 -- v1.8 RLS: non-owner application runtime role (mirrors migration v53)
 -- The app connects as this NOSUPERUSER NOBYPASSRLS role so the FORCE'd RLS
 -- policies enforce. Passwordless here — set the password at deploy time
