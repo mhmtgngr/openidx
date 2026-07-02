@@ -19,6 +19,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	v.DELETE("/:id", s.handleDelete)
 	v.POST("/:id/reveal", s.handleReveal)
 	v.POST("/:id/grants", s.handleAddGrant)
+	v.GET("/:id/grants", s.handleListGrants)
 	v.DELETE("/:id/grants/:grantId", s.handleRemoveGrant)
 	v.GET("/:id/checkouts", s.handleCheckouts)
 }
@@ -143,6 +144,19 @@ func (s *Service) handleAddGrant(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (s *Service) handleListGrants(c *gin.Context) {
+	grants, err := s.ListGrants(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"grants": grants})
 }
 
 func (s *Service) handleRemoveGrant(c *gin.Context) {

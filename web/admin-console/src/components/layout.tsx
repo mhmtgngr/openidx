@@ -218,6 +218,13 @@ const navigationSections: NavSection[] = [
     ],
   },
   {
+    label: 'Privileged Access',
+    adminOnly: true,
+    items: [
+      { name: 'Vault Secrets', href: '/vault-secrets', icon: KeyRound, adminOnly: true },
+    ],
+  },
+  {
     label: 'Developer',
     adminOnly: true,
     items: [

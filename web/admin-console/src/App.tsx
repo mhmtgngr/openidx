@@ -66,6 +66,7 @@ import {
   LifecyclePolicies,
   AttestationCampaigns,
   AuditArchival,
+  VaultSecrets,
   APIExplorer,
   OAuthPlayground,
   DeveloperSettings,
@@ -256,6 +257,9 @@ function App() {
         <Route path="lifecycle-policies" element={<LifecyclePolicies />} />
         <Route path="attestation-campaigns" element={<AttestationCampaigns />} />
         <Route path="audit-archival" element={<AuditArchival />} />
+
+        {/* Privileged Access - Admin Protected */}
+        <Route path="vault-secrets" element={<VaultSecrets />} />
 
         {/* Developer - Admin Protected */}
         <Route path="api-explorer" element={<APIExplorer />} />

@@ -61,6 +61,48 @@ export interface ProvisioningRule {
   updated_at: string
 }
 
+export interface VaultSecretMeta {
+  id: string
+  name: string
+  type: string
+  description?: string
+  current_version: number
+  created_at: string
+  updated_at: string
+}
+
+export interface VaultVersion {
+  version: number
+  key_id: number
+  created_by?: string
+  created_at: string
+}
+
+export interface VaultSecretDetail extends VaultSecretMeta {
+  versions: VaultVersion[]
+}
+
+export interface VaultGrant {
+  id: string
+  secret_id: string
+  principal_type: string
+  principal_id: string
+  actions: string[]
+  expires_at?: string
+  granted_by?: string
+}
+
+export interface VaultCheckout {
+  id: string
+  secret_version: number
+  principal_id?: string
+  mode: string
+  reason?: string
+  leased_at: string
+  expires_at?: string
+  status: string
+}
+
 // Get API base URL based on environment
 const getAPIBaseURL = (): string => {
   const envURL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL
@@ -294,6 +336,26 @@ export const api = {
     return window.location.protocol === 'https:'
       ? `wss://${window.location.host}`
       : `ws://${window.location.host}`
+  },
+
+  vault: {
+    listSecrets: () => api.get<{ secrets: VaultSecretMeta[] | null }>('/api/v1/vault/secrets'),
+    createSecret: (body: { name: string; type: string; description?: string; value: string; metadata?: Record<string, unknown> }) =>
+      api.post<VaultSecretMeta>('/api/v1/vault/secrets', body),
+    getSecret: (id: string) => api.get<VaultSecretDetail>(`/api/v1/vault/secrets/${id}`),
+    newVersion: (id: string, value: string) =>
+      api.put<{ version: number }>(`/api/v1/vault/secrets/${id}/version`, { value }),
+    deleteSecret: (id: string) => api.delete<void>(`/api/v1/vault/secrets/${id}`),
+    reveal: (id: string, reason: string) =>
+      api.post<{ value: string }>(`/api/v1/vault/secrets/${id}/reveal`, { reason }),
+    addGrant: (id: string, grant: { principal_type: string; principal_id: string; actions: string[]; expires_at?: string }) =>
+      api.post<{ id: string }>(`/api/v1/vault/secrets/${id}/grants`, grant),
+    removeGrant: (id: string, grantId: string) =>
+      api.delete<void>(`/api/v1/vault/secrets/${id}/grants/${grantId}`),
+    listGrants: (id: string) =>
+      api.get<{ grants: VaultGrant[] | null }>(`/api/v1/vault/secrets/${id}/grants`),
+    listCheckouts: (id: string) =>
+      api.get<{ checkouts: VaultCheckout[] | null }>(`/api/v1/vault/secrets/${id}/checkouts`),
   },
 }
 

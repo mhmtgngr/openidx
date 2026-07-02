@@ -81,6 +81,7 @@ export { EmailTemplatesPage as EmailTemplates } from './email-templates'
 export { LifecyclePoliciesPage as LifecyclePolicies } from './lifecycle-policies'
 export { AttestationCampaignsPage as AttestationCampaigns } from './attestation-campaigns'
 export { AuditArchivalPage as AuditArchival } from './audit-archival'
+export { VaultSecretsPage as VaultSecrets } from './vault-secrets'
 
 // Developer
 export { ApiExplorerPage as APIExplorer } from './api-explorer'
