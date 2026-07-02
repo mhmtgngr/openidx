@@ -118,6 +118,11 @@ func (m *MockLDAPConnector) ResetPassword(username, newPassword string) error {
 	return args.Error(0)
 }
 
+func (m *MockLDAPConnector) VerifyBind(username, password string) error {
+	args := m.Called(username, password)
+	return args.Error(0)
+}
+
 // MockAzureADConnector is a mock for AzureADConnector
 type MockAzureADConnector struct {
 	mock.Mock
