@@ -389,7 +389,9 @@ func (s *Service) handleListGuacamoleConnections(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"connections": conns})
 }
 
-// handleGuacamoleConnect returns the URL to connect to a Guacamole session for a route
+// handleGuacamoleConnect returns the URL to connect to a Guacamole session for a
+// route, applying credential injection, approval gating, and session recording
+// as configured on the guacamole_connections row (PAM M3, Task 7).
 func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	if s.guacamoleClient == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
@@ -397,21 +399,111 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	}
 
 	routeID := c.Param("routeId")
+	userID := c.GetString("user_id")
+	ctx := c.Request.Context()
+	org, _ := orgctx.From(ctx)
 
-	// Look up the Guacamole connection for this route
-	var connID string
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT guacamole_connection_id FROM guacamole_connections WHERE route_id=$1", routeID).
-		Scan(&connID)
+	// Load the connection row including PAM config columns.
+	var connectionPK, connID, protocol, hostname, secretID, injectUser string
+	var port int
+	var requireApproval, recordSession bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, guacamole_connection_id, protocol, hostname, port,
+		        COALESCE(vault_secret_id::text,''), COALESCE(inject_username,''),
+		        require_approval, record_session
+		 FROM guacamole_connections WHERE route_id=$1`, routeID).
+		Scan(&connectionPK, &connID, &protocol, &hostname, &port,
+			&secretID, &injectUser, &requireApproval, &recordSession)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no Guacamole connection found for this route"})
 		return
 	}
 
-	connectURL := s.guacamoleClient.GetConnectionURL(connID)
+	// Approval gate — single-use, atomic consume.
+	if requireApproval {
+		ok, err := s.checkAndConsumeApproval(ctx, connectionPK, userID)
+		if err != nil {
+			s.logger.Error("handleGuacamoleConnect: checkAndConsumeApproval failed",
+				zap.String("connection_id", connectionPK), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check approval"})
+			return
+		}
+		if !ok {
+			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval"})
+			return
+		}
+	}
+
+	// Build server-side injected params — credential never leaves the server.
+	params := map[string]string{}
+	if secretID != "" && s.vaultSvc != nil {
+		bctx := orgctx.WithBypassRLS(ctx)
+		cred, err := s.vaultSvc.Use(bctx, secretID)
+		if err != nil {
+			s.logger.Warn("handleGuacamoleConnect: vault credential unavailable",
+				zap.String("secret_id", secretID), zap.Error(err))
+			c.JSON(http.StatusForbidden, gin.H{"error": "credential unavailable"})
+			return
+		}
+
+		// Determine which connection parameter to inject based on the secret type.
+		// ssh_key → private-key; anything else (password, api_key, …) → password.
+		var secretType string
+		//orgscope:ignore vault_secrets SELECT under bypass-RLS context to determine injection field
+		_ = s.db.Pool.QueryRow(bctx,
+			`SELECT type FROM vault_secrets WHERE id=$1`, secretID).Scan(&secretType)
+
+		if secretType == "ssh_key" {
+			params["private-key"] = string(cred)
+		} else {
+			params["password"] = string(cred)
+		}
+		if injectUser != "" {
+			params["username"] = injectUser
+		}
+
+		// Zero the plaintext credential slice immediately after copying into params.
+		// The string values in params are independent copies; we accept that caveat
+		// (same approach as M1/M2b elsewhere in this package).
+		for i := range cred {
+			cred[i] = 0
+		}
+
+		s.logAuditEvent(c, "guacamole_credential_injected", routeID, "guacamole_connection",
+			map[string]interface{}{
+				"route_id":  routeID,
+				"secret_id": secretID,
+				"user_id":   userID,
+				// Credential value intentionally omitted from audit.
+			})
+	}
+
+	// Recording params — guacd-native session recording.
+	if recordSession {
+		recPath := s.config.GuacamoleRecordingPath
+		recName := fmt.Sprintf("%s-%d", connID, time.Now().UnixMilli())
+		params["recording-path"] = recPath
+		params["recording-name"] = recName
+		params["recording-include-keys"] = "true"
+
+		if _, err := s.recordGuacSession(ctx, org.ID, connectionPK, userID, recPath); err != nil {
+			s.logger.Warn("handleGuacamoleConnect: recordGuacSession failed (best-effort)",
+				zap.String("connection_id", connectionPK), zap.Error(err))
+		}
+	}
+
+	// Push injected params to Guacamole only when there is something to inject.
+	if len(params) > 0 {
+		if err := s.guacamoleClient.UpdateConnection(connID, connID, protocol, hostname, port, params); err != nil {
+			s.logger.Error("handleGuacamoleConnect: UpdateConnection failed",
+				zap.String("conn_id", connID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "prepare session"})
+			return
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"connect_url":   connectURL,
+		"connect_url":   s.guacamoleClient.GetConnectionURL(connID),
 		"connection_id": connID,
 		"route_id":      routeID,
 	})
