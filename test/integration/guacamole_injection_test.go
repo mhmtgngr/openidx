@@ -83,9 +83,9 @@ func seedGuacConnection(t *testing.T, admin *pgxpool.Pool, routeID string) strin
 		`INSERT INTO guacamole_connections
 		   (route_id, guacamole_connection_id, protocol, hostname, port,
 		    require_approval, record_session)
-		 VALUES ($1, 'guac-ext-id-'||$1::text, 'rdp', '10.0.0.1', 3389, true, true)
+		 VALUES ($1, $2, 'rdp', '10.0.0.1', 3389, true, true)
 		 RETURNING id`,
-		routeID).Scan(&connID)
+		routeID, "guac-ext-id-"+routeID).Scan(&connID)
 	require.NoError(t, err, "seed guacamole_connections")
 	require.NoError(t, tx.Commit(ctx))
 	return connID
