@@ -404,5 +404,12 @@ func allMigrations() []*Migration {
 			UpSQL:       vaultStoreUp,
 			DownSQL:     vaultStoreDown,
 		},
+		{
+			Version:     57,
+			Name:        "credential_rotation",
+			Description: "PAM rotation engine (M1b): adds credential_rotation_policies (one-per-secret connector + schedule) and reconciles the dead credential_rotations table into a run ledger (org_id, policy_id, secret_id, version_from/to, connector_type, trigger, error_message, started_at, completed_at; service_account_id NOT NULL dropped). Both tables placed under the v37 FORCE-RLS belt. Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       credentialRotationUp,
+			DownSQL:     credentialRotationDown,
+		},
 	}
 }
