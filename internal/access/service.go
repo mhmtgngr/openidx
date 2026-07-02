@@ -480,6 +480,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
 		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 
+		// Guacamole pre-session approval lifecycle (Task 4 — PAM M3)
+		api.POST("/guacamole/connections/:routeId/request", svc.handleRequestGuacSession)
+		api.POST("/guacamole/session-requests/:id/approve", svc.requireAdminRole(), svc.handleApproveGuacSession)
+		api.POST("/guacamole/session-requests/:id/deny", svc.requireAdminRole(), svc.handleDenyGuacSession)
+		api.GET("/guacamole/session-requests", svc.requireAdminRole(), svc.handleListGuacSessionRequests)
+
 		// Temporary access links for support/vendor access
 		api.GET("/temp-access", svc.handleListTempAccess)
 		api.POST("/temp-access", svc.handleCreateTempAccess)
