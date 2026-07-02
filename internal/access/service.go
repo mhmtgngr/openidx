@@ -27,6 +27,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/vault"
 )
 
 // ProxyRoute represents a configured proxy route
@@ -125,6 +126,7 @@ type Service struct {
 	apisixConfigPath     string
 	agentHandler         *AgentAPIHandler
 	remoteSupportHandler *RemoteSupportHandler
+	vaultSvc             *vault.Service
 }
 
 // handleAgentAPKDownload serves the hosted Android agent APK without auth so
@@ -275,6 +277,9 @@ func (s *Service) SetAuditService(as *UnifiedAuditService) {
 		as.SetGuacamoleClient(s.guacamoleClient)
 	}
 }
+
+// SetVaultService wires the in-process PAM credential vault.
+func (s *Service) SetVaultService(v *vault.Service) { s.vaultSvc = v }
 
 // NewService creates a new access proxy service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
@@ -473,6 +478,17 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guacamole remote access
 		api.GET("/guacamole/connections", svc.handleListGuacamoleConnections)
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
+		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
+
+		// Guacamole pre-session approval lifecycle (Task 4 — PAM M3)
+		api.POST("/guacamole/connections/:routeId/request", svc.handleRequestGuacSession)
+		api.POST("/guacamole/session-requests/:id/approve", svc.requireAdminRole(), svc.handleApproveGuacSession)
+		api.POST("/guacamole/session-requests/:id/deny", svc.requireAdminRole(), svc.handleDenyGuacSession)
+		api.GET("/guacamole/session-requests", svc.requireAdminRole(), svc.handleListGuacSessionRequests)
+
+		// Guacamole active-session management (Task 5 — PAM M3)
+		api.GET("/guacamole/sessions", svc.requireAdminRole(), svc.handleListActiveGuacSessions)
+		api.POST("/guacamole/sessions/:id/terminate", svc.requireAdminRole(), svc.handleTerminateGuacSession)
 
 		// Temporary access links for support/vendor access
 		api.GET("/temp-access", svc.handleListTempAccess)

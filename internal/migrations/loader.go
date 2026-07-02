@@ -418,5 +418,12 @@ func allMigrations() []*Migration {
 			UpSQL:       jitDriftFixUp,
 			DownSQL:     jitDriftFixDown,
 		},
+		{
+			Version:     59,
+			Name:        "guacamole_session_injection",
+			Description: "PAM M3 session injection: adds vault_secret_id, inject_username, require_approval, record_session columns to guacamole_connections; creates guacamole_session_requests (pre-session approval lifecycle) and guacamole_sessions (active/ended session tracking + recording ledger), both under the v37 FORCE-RLS belt. guacamole_connections is not belted (only ALTERed). Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       guacSessionsUp,
+			DownSQL:     guacSessionsDown,
+		},
 	}
 }
