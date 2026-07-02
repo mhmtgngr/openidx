@@ -274,6 +274,8 @@ func main() {
 		rotators := []credentials.Rotator{
 			credentials.NewDirectoryRotator(dirService),
 			credentials.NewGenerateOnlyRotator(),
+			credentials.NewSSHRotator(vaultSvc),
+			credentials.NewPostgresRotator(vaultSvc),
 		}
 		credSvc := credentials.NewService(db, vaultSvc, rotators, unifiedAudit, cfg.CredentialsRotationDefaultLength, log)
 		credSvc.RegisterRoutes(vaultGroup)
