@@ -3604,6 +3604,42 @@ DO $$ BEGIN
 END $$;
 
 -- ============================================================================
+-- PAM M2a: JIT/approval drift-fix tables (mirrors migration v58).
+-- Referenced by internal/governance (jit.go, jit_expiry.go, request.go) but never
+-- created anywhere. Not org-scoped / not under the RLS belt (matches the code + v42-v55).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS jit_grants (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_id       UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    role_name     VARCHAR(255) NOT NULL,
+    granted_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+    justification TEXT NOT NULL,
+    duration      VARCHAR(32) NOT NULL,
+    expires_at    TIMESTAMPTZ NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at    TIMESTAMPTZ,
+    revoked_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+    status        VARCHAR(16) NOT NULL DEFAULT 'active'
+);
+CREATE INDEX IF NOT EXISTS idx_jit_grants_user_role ON jit_grants(user_id, role_id, status);
+CREATE INDEX IF NOT EXISTS idx_jit_grants_expiry    ON jit_grants(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS request_approval_chains (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id           UUID NOT NULL UNIQUE REFERENCES access_requests(id) ON DELETE CASCADE,
+    steps                JSONB NOT NULL DEFAULT '[]',
+    escalate_after_hours INTEGER NOT NULL DEFAULT 24,
+    escalate_to          JSONB NOT NULL DEFAULT '[]',
+    escalation_due_at    TIMESTAMPTZ NOT NULL,
+    current_step         INTEGER NOT NULL DEFAULT 0,
+    escalation_notified  BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS idx_rac_escalation ON request_approval_chains(escalation_due_at)
+    WHERE escalation_notified = false;
+
+-- ============================================================================
 -- v1.8 RLS: non-owner application runtime role (mirrors migration v53)
 -- The app connects as this NOSUPERUSER NOBYPASSRLS role so the FORCE'd RLS
 -- policies enforce. Passwordless here — set the password at deploy time
