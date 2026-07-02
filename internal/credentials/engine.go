@@ -537,6 +537,94 @@ func (s *Service) updateRunSucceeded(ctx context.Context, runID, policyID string
 	}
 }
 
+// RotationRun is the DTO for a single credential_rotations ledger row.
+// Never includes the secret value.
+type RotationRun struct {
+	ID            string     `json:"id"`
+	Status        string     `json:"status"`
+	Trigger       string     `json:"trigger"`
+	ConnectorType string     `json:"connector_type"`
+	VersionFrom   *int       `json:"version_from,omitempty"`
+	VersionTo     *int       `json:"version_to,omitempty"`
+	ErrorMessage  string     `json:"error_message,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+}
+
+// policyIDForSecret returns the rotation policy ID for a given secret, or
+// ErrPolicyNotFound if no policy is configured for that secret (org-scoped
+// via RLS / request context).
+func (s *Service) policyIDForSecret(ctx context.Context, secretID string) (string, error) {
+	var policyID string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM credential_rotation_policies WHERE secret_id = $1 LIMIT 1`, secretID,
+	).Scan(&policyID)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return "", ErrPolicyNotFound
+		}
+		return "", err
+	}
+	return policyID, nil
+}
+
+// LatestRotationRun returns the most recent ledger row for a secret, used to
+// report status after an on-demand rotation.
+func (s *Service) LatestRotationRun(ctx context.Context, secretID string) (*RotationRun, error) {
+	row := s.db.Pool.QueryRow(ctx, //orgscope:ignore org enforced by FORCE RLS on credential_rotations; caller provides request context
+		`SELECT id, COALESCE(status,''), COALESCE(trigger,''), COALESCE(connector_type,''),
+		        version_from, version_to, COALESCE(error_message,''),
+		        started_at, completed_at
+		 FROM credential_rotations
+		 WHERE secret_id = $1
+		 ORDER BY started_at DESC
+		 LIMIT 1`, secretID,
+	)
+	var r RotationRun
+	if err := row.Scan(
+		&r.ID, &r.Status, &r.Trigger, &r.ConnectorType,
+		&r.VersionFrom, &r.VersionTo, &r.ErrorMessage,
+		&r.StartedAt, &r.CompletedAt,
+	); err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, ErrPolicyNotFound
+		}
+		return nil, err
+	}
+	return &r, nil
+}
+
+// RotationHistory returns up to 200 ledger rows for a secret, ordered
+// newest-first (org-scoped via RLS). Never includes secret values.
+func (s *Service) RotationHistory(ctx context.Context, secretID string) ([]RotationRun, error) {
+	rows, err := s.db.Pool.Query(ctx, //orgscope:ignore org enforced by FORCE RLS on credential_rotations; caller provides request context
+		`SELECT id, COALESCE(status,''), COALESCE(trigger,''), COALESCE(connector_type,''),
+		        version_from, version_to, COALESCE(error_message,''),
+		        started_at, completed_at
+		 FROM credential_rotations
+		 WHERE secret_id = $1
+		 ORDER BY started_at DESC
+		 LIMIT 200`, secretID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RotationRun
+	for rows.Next() {
+		var r RotationRun
+		if err := rows.Scan(
+			&r.ID, &r.Status, &r.Trigger, &r.ConnectorType,
+			&r.VersionFrom, &r.VersionTo, &r.ErrorMessage,
+			&r.StartedAt, &r.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // recordRotationAudit emits an audit event (never includes the secret value).
 func (s *Service) recordRotationAudit(ctx context.Context, eventType, policyID, secretID string, versionFrom int, versionTo *int, connectorType, trigger, errMsg string) {
 	if s.audit == nil {
