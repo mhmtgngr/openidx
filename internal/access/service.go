@@ -591,6 +591,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		remoteSupport := NewRemoteSupportHandler(svc.logger, svc.db, agentHandler)
 		remoteSupport.RegisterRemoteSupportAdminRoutes(api)
 		remoteSupport.StartJanitor(context.Background(), 5*time.Minute, time.Minute)
+		if svc.guacamoleClient != nil {
+			remoteSupport.SetGuacamoleClient(svc.guacamoleClient)
+		}
 
 		// Recording storage backend. Preference: S3 over filesystem so a
 		// production deployment that configures both gets durability

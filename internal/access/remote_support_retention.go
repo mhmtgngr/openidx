@@ -201,6 +201,7 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 		// honor the configured interval.
 		h.sweepExpiredRecordings(ctx)
 		h.sweepExpiredGuacRecordings(ctx)
+		h.detectEndedGuacSessions(ctx)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -210,6 +211,7 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 			case <-ticker.C:
 				h.sweepExpiredRecordings(ctx)
 				h.sweepExpiredGuacRecordings(ctx)
+				h.detectEndedGuacSessions(ctx)
 			}
 		}
 	}()
@@ -384,6 +386,116 @@ func (h *RemoteSupportHandler) sweepExpiredGuacRecordings(ctx context.Context) {
 	}
 	if purged > 0 {
 		h.logger.Info("guacamole recording sweep complete", zap.Int("purged", purged))
+	}
+}
+
+// detectEndedGuacSessions reconciles the guacamole_sessions table against
+// the live active-session list from the Guacamole REST API. Any session row
+// whose (guacamole_connection_id, username) pair is absent from the live set
+// is stamped status='ended' and audited as guacamole.session_ended_detected.
+//
+// The function applies a 2-minute grace window (started_at < NOW()-2min) so
+// sessions that just started are never prematurely closed before Guacamole
+// reports them as active.
+//
+// Fail-safe: if guacamoleClient is nil or ListActiveSessions returns an error
+// we log a warning and return immediately without marking anything ended.
+// Marking sessions ended without a definitive live set would be a false
+// positive, which is far worse than a missed detection.
+//
+// Both the enumeration query and the per-session UPDATE are cross-org
+// background operations executed under the bypass-RLS context established by
+// StartRecordingRetentionEnforcer.
+func (h *RemoteSupportHandler) detectEndedGuacSessions(ctx context.Context) {
+	// Fail-safe: no client → skip entirely. Never end sessions when we
+	// cannot see the live set.
+	if h.guacamoleClient == nil {
+		return
+	}
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+
+	active, err := h.guacamoleClient.ListActiveSessions(ctx)
+	if err != nil {
+		h.logger.Warn("detectEndedGuacSessions: list active sessions failed",
+			zap.Error(err))
+		return
+	}
+
+	// Build a set of live keys: connectionIdentifier + "|" + username.
+	// This mirrors the composite key that uniquely identifies an active
+	// connection from Guacamole's perspective.
+	live := make(map[string]bool, len(active))
+	for _, a := range active {
+		live[a.ConnectionIdentifier+"|"+a.Username] = true
+	}
+
+	// Query active sessions that are old enough to be past the grace window.
+	// JOIN guacamole_connections to retrieve the Guacamole-side connection
+	// identifier, LEFT JOIN users to resolve the username (COALESCE to '' so
+	// sessions without a matched user row still participate in the key check).
+	//orgscope:ignore background cross-org sweep reconciling active Guacamole sessions against the live set
+	rows, err := h.db.Pool.Query(ctx, `
+        SELECT gs.id,
+               gc.guacamole_connection_id,
+               COALESCE(u.username, '')
+          FROM guacamole_sessions gs
+          JOIN guacamole_connections gc ON gc.id = gs.connection_id
+          LEFT JOIN users u ON u.id = gs.user_id
+         WHERE gs.status = 'active'
+           AND gs.started_at < NOW() - INTERVAL '2 minutes'
+    `)
+	if err != nil {
+		h.logger.Warn("detectEndedGuacSessions: query active sessions failed",
+			zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type candidateRow struct {
+		id         string
+		guacConnID string
+		username   string
+	}
+
+	var candidates []candidateRow
+	for rows.Next() {
+		var c candidateRow
+		if err := rows.Scan(&c.id, &c.guacConnID, &c.username); err != nil {
+			h.logger.Warn("detectEndedGuacSessions: scan failed", zap.Error(err))
+			continue
+		}
+		candidates = append(candidates, c)
+	}
+	rows.Close()
+
+	// For each DB-active session not in the live set, mark it ended.
+	ended := 0
+	for _, c := range candidates {
+		if live[c.guacConnID+"|"+c.username] {
+			// Still live — leave it alone.
+			continue
+		}
+		//orgscope:ignore background sweep; row identified by PK — org scoping enforced at insert time
+		_, execErr := h.db.Pool.Exec(ctx, `
+            UPDATE guacamole_sessions
+               SET status   = 'ended',
+                   ended_at = NOW()
+             WHERE id = $1
+               AND status = 'active'
+        `, c.id)
+		if execErr != nil {
+			h.logger.Warn("detectEndedGuacSessions: update failed",
+				zap.String("session_id", c.id), zap.Error(execErr))
+			continue
+		}
+		h.audit(ctx, "guacamole.session_ended_detected", c.id, "session", "")
+		ended++
+	}
+	if ended > 0 {
+		h.logger.Info("detectEndedGuacSessions: marked sessions ended",
+			zap.Int("count", ended))
 	}
 }
 
