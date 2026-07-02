@@ -401,7 +401,11 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	routeID := c.Param("routeId")
 	userID := c.GetString("user_id")
 	ctx := c.Request.Context()
-	org, _ := orgctx.From(ctx)
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	// Load the connection row including PAM config columns.
 	var connectionPK, connID, protocol, hostname, secretID, injectUser string
@@ -425,7 +429,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 		if err != nil {
 			s.logger.Error("handleGuacamoleConnect: checkAndConsumeApproval failed",
 				zap.String("connection_id", connectionPK), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check approval"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "session requires approval"})
 			return
 		}
 		if !ok {
