@@ -283,6 +283,22 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "session terminated", "active_conn_id": activeConnID})
 }
 
+// ---- recordGuacSession ----
+// recordGuacSession inserts a guacamole_sessions row for a recorded brokered
+// session and returns its id. Called from the connect handler when
+// record_session is on.
+//
+// user_id may be an empty string (no-auth path) — NULLIF coerces it to NULL
+// so the UUID cast succeeds.
+func (s *Service) recordGuacSession(ctx context.Context, orgID, connectionID, userID, recordingPath string) (string, error) {
+	var id string
+	err := s.db.Pool.QueryRow(ctx,
+		`INSERT INTO guacamole_sessions (org_id, connection_id, user_id, recording_path, status)
+		 VALUES ($1,$2,NULLIF($3,'')::uuid,$4,'active') RETURNING id`,
+		orgID, connectionID, userID, recordingPath).Scan(&id)
+	return id, err
+}
+
 // ---- checkAndConsumeApproval ----
 // checkAndConsumeApproval atomically consumes the most-recent approved,
 // unexpired guacamole_session_requests row for the given connection and

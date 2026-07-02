@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -197,6 +198,7 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 		// up immediately on cron-style schedule changes; subsequent sweeps
 		// honor the configured interval.
 		h.sweepExpiredRecordings(ctx)
+		h.sweepExpiredGuacRecordings(ctx)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -205,6 +207,7 @@ func (h *RemoteSupportHandler) StartRecordingRetentionEnforcer(ctx context.Conte
 				return
 			case <-ticker.C:
 				h.sweepExpiredRecordings(ctx)
+				h.sweepExpiredGuacRecordings(ctx)
 			}
 		}
 	}()
@@ -292,6 +295,115 @@ func (h *RemoteSupportHandler) purgeRecording(ctx context.Context, sessionID str
 		return err
 	}
 	h.audit(ctx, "remote_support.recording_purged", sessionID, "enforced", "")
+	return nil
+}
+
+// sweepExpiredGuacRecordings purges guacamole recording files that have
+// exceeded their effective retention period. It is invoked from the same
+// ticker/goroutine as sweepExpiredRecordings (StartRecordingRetentionEnforcer)
+// under the shared bypass-RLS context.
+//
+// Retention is resolved through the same two-layer chain used for
+// remote-support sessions: per-org recording_retention_policies row →
+// global default → hard fallback (90 days). guacamole_sessions has no
+// per-session retention-days column, so layer 1 of the four-layer chain
+// is skipped (perSession is always nil).
+//
+// Legal-hold: recording_legal_holds.session_id references remote_support_sessions,
+// not guacamole_sessions. Guacamole recording legal-hold is therefore out of
+// scope for this sweeper; when legal-hold is required for guac recordings it
+// must be implemented as a separate table (tracked as future work).
+//
+// The recording artifact is a guacd-native filesystem directory at
+// recording_path (set by handleGuacamoleConnect). We remove it with
+// os.RemoveAll (idempotent) and then stamp recording_purged_at.
+func (h *RemoteSupportHandler) sweepExpiredGuacRecordings(ctx context.Context) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+
+	// Bypass-RLS context is set by the caller (StartRecordingRetentionEnforcer).
+	// The query is intentionally cross-org — each row carries its own org_id so
+	// we can resolve per-org retention correctly.
+	//orgscope:ignore background retention sweep — cross-org by design under bypass-RLS context
+	rows, err := h.db.Pool.Query(ctx, `
+        SELECT id,
+               COALESCE(org_id::text, ''),
+               recording_path,
+               COALESCE(ended_at, started_at)
+          FROM guacamole_sessions
+         WHERE recording_path  IS NOT NULL
+           AND recording_path  != ''
+           AND recording_purged_at IS NULL
+           AND status IN ('ended', 'terminated')
+    `)
+	if err != nil {
+		h.logger.Warn("sweepExpiredGuacRecordings: query failed", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type guacCandidate struct {
+		SessionID     string
+		OrgID         string
+		RecordingPath string
+		FinalizedAt   time.Time
+	}
+
+	candidates := make([]guacCandidate, 0, 16)
+	for rows.Next() {
+		var c guacCandidate
+		if err := rows.Scan(&c.SessionID, &c.OrgID, &c.RecordingPath, &c.FinalizedAt); err != nil {
+			h.logger.Warn("sweepExpiredGuacRecordings: scan failed", zap.Error(err))
+			continue
+		}
+		candidates = append(candidates, c)
+	}
+
+	now := time.Now().UTC()
+	purged := 0
+	for _, c := range candidates {
+		// No per-session retention override for guacamole_sessions; pass nil.
+		ret := h.resolveEffectiveRetention(ctx, nil, c.OrgID)
+		if ret <= 0 {
+			// Infinite retention — skip.
+			continue
+		}
+		ageDays := int(now.Sub(c.FinalizedAt).Hours() / 24)
+		if ageDays < ret {
+			continue
+		}
+		if err := h.purgeGuacRecording(ctx, c.SessionID, c.RecordingPath); err != nil {
+			h.logger.Warn("purgeGuacRecording failed",
+				zap.String("session_id", c.SessionID), zap.Error(err))
+			continue
+		}
+		purged++
+	}
+	if purged > 0 {
+		h.logger.Info("guacamole recording sweep complete", zap.Int("purged", purged))
+	}
+}
+
+// purgeGuacRecording removes the guacd-native recording directory at path and
+// stamps recording_purged_at on the session row. Idempotent: a missing path is
+// not an error (os.RemoveAll is a no-op for non-existent paths on Go 1.16+).
+func (h *RemoteSupportHandler) purgeGuacRecording(ctx context.Context, sessionID, recordingPath string) error {
+	if recordingPath != "" {
+		if err := os.RemoveAll(recordingPath); err != nil {
+			return err
+		}
+	}
+	//orgscope:ignore bypass-RLS sweep — session row identified by PK; org_id scoping is enforced at insert time
+	_, err := h.db.Pool.Exec(ctx, `
+        UPDATE guacamole_sessions
+           SET recording_purged_at = NOW()
+         WHERE id = $1
+    `, sessionID)
+	if err != nil {
+		return err
+	}
+	h.audit(ctx, "guacamole.recording_purged", sessionID, "enforced", "")
 	return nil
 }
 
