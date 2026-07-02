@@ -3,6 +3,12 @@
 > System-design roadmap. Feasibility assessment + bottom-up/top-down architecture,
 > decomposed into milestones. Each milestone gets its own spec → plan → PR cycle.
 > Milestone 1 (credential vault + rotation engine) is the agreed lead.
+>
+> **✅ STATUS (2026-07-02): COMPLETE.** All milestones M1–M5 are built, reviewed, merged,
+> and released (v1.9.0 = M1–M3, v1.9.1 = M4–M5), then deployed to the reference box and
+> smoke-tested live. Per-milestone specs/plans live under `docs/superpowers/`. Deferred
+> follow-ups: MySQL + cloud-IAM rotation connectors (behind the M5 interface), Guacamole
+> recording legal-hold, and `org_id`/RLS on `jit_grants`/`request_approval_chains`/`attestation_*`.
 
 ## Context
 
@@ -70,28 +76,28 @@ Layer 6  Audit & recording       bind every checkout/session to unified_audit + 
   recording + post-hoc review.
 - **Assurance:** existing attestation campaigns extend to privileged entitlements + vault-access review.
 
-## Phased roadmap (each milestone = its own spec → plan → PR series)
+## Phased roadmap (each milestone = its own spec → plan → PR series) — ✅ ALL SHIPPED
 
-**M1 — Credential vault + rotation engine (lead; foundation).** New `internal/vault` pkg +
+**M1 — Credential vault + rotation engine (lead; foundation). ✅ Shipped (#273 vault, #274 rotation engine; v1.9.0).** New `internal/vault` pkg +
 `internal/credentials` rotation service. Encrypted `vault_secrets` (envelope-encrypted,
 versioned) + `vault_secret_versions`; wire the dead `credential_rotations` table; rotation
 policies + leader-gated scheduler cloning the `ziti_hardening` state machine; first connector =
 directory write-back (already built). Fold the plaintext-secret TODOs (oauth/idp/webhook/guac)
 into vault-backed storage. Detailed at roadmap level below.
 
-**M2 — JIT credential checkout + fix drift.** Add the missing `jit_grants` /
+**M2 — JIT credential checkout + fix drift. ✅ Shipped (#275 drift-fix, #276 checkout; v1.9.0).** Add the missing `jit_grants` /
 `request_approval_chains` migrations (closes the latent-500 bug), then build approval-gated,
 time-boxed **checkout** on top of `access_requests`/`approval_policies`, with `jit_expiry`-style
 auto-revoke and **rotate-on-return**.
 
-**M3 — Credential injection into brokered sessions.** Guacamole/WebRTC pull the target
+**M3 — Credential injection into brokered sessions. ✅ Shipped (#277; v1.9.0).** Guacamole/WebRTC pull the target
 credential from the vault server-side (never sent to the browser); pre-session **approval gate**
 + **force-terminate-with-reason**; bind session to recording.
 
-**M4 — Session assurance.** Keystroke/command **transcript** alongside video; live monitor;
+**M4 — Session assurance. ✅ Shipped (#279; v1.9.1).** Keystroke/command **transcript** alongside video; live monitor;
 extend attestation to privileged entitlements + vault-access reviews.
 
-**M5 — Connector expansion.** `CredentialRotator` implementations for SSH, PostgreSQL/MySQL,
+**M5 — Connector expansion. ✅ Shipped (#280; v1.9.1) — SSH + PostgreSQL landed; MySQL + cloud IAM deferred (same interface).** `CredentialRotator` implementations for SSH, PostgreSQL/MySQL,
 cloud IAM — behind the M1 interface.
 
 ## M1 detail (roadmap level — full plan in a later cycle)
