@@ -95,14 +95,15 @@ CREATE POLICY pol_vault_checkouts_org_scope ON vault_checkouts
 ALTER TABLE vault_checkouts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vault_checkouts FORCE  ROW LEVEL SECURITY;
 
--- Grant DML to the runtime app role when present (matches v53).
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
-    GRANT SELECT, INSERT, UPDATE, DELETE ON
-      vault_secrets, vault_secret_versions, vault_access_grants, vault_checkouts
-      TO openidx_app;
-  END IF;
-END $$;
+-- Grant DML to the runtime app role. openidx_app is provisioned by v53, which
+-- always runs before v56, and v53's ALTER DEFAULT PRIVILEGES already covers new
+-- tables — this explicit grant is belt-and-suspenders. It is a plain GRANT (no
+-- DO/$$ block) because the migration runner's splitSQL only recognizes a $$ tag
+-- at the start of a line (see internal/migrations/migration_test.go), so a
+-- DO $$ ... ; ... $$ block would be split at the inner semicolon and fail.
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  vault_secrets, vault_secret_versions, vault_access_grants, vault_checkouts
+  TO openidx_app;
 `
 
 var vaultStoreDown = `-- Migration 056 down.
