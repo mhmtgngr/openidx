@@ -209,6 +209,80 @@ func (s *Service) handleListGuacSessionRequests(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"requests": requests})
 }
 
+// ---- handleListActiveGuacSessions ----
+// GET /api/v1/access/guacamole/sessions (admin)
+//
+// Returns all currently active Guacamole connections via the Guacamole
+// activeConnections API.
+func (s *Service) handleListActiveGuacSessions(c *gin.Context) {
+	if s.guacamoleClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
+		return
+	}
+
+	sessions, err := s.guacamoleClient.ListActiveSessions(c.Request.Context())
+	if err != nil {
+		s.logger.Error("handleListActiveGuacSessions: failed to list active sessions", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+}
+
+// ---- handleTerminateGuacSession ----
+// POST /api/v1/access/guacamole/sessions/:id/terminate (admin)
+//
+// Force-terminates an active Guacamole session by its active-connection UUID.
+// Also marks the corresponding guacamole_sessions row as terminated (best-effort).
+func (s *Service) handleTerminateGuacSession(c *gin.Context) {
+	if s.guacamoleClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
+		return
+	}
+
+	activeConnID := c.Param("id")
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body) // reason is optional
+
+	ctx := c.Request.Context()
+
+	if err := s.guacamoleClient.TerminateSession(ctx, activeConnID); err != nil {
+		s.logger.Error("handleTerminateGuacSession: failed to terminate session",
+			zap.String("active_conn_id", activeConnID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Best-effort: mark the tracking row as terminated. guacamole_sessions has
+	// org_id and RLS is FORCE-enabled, so the UPDATE is automatically org-scoped
+	// via the request context's app.org_id setting.
+	//orgscope:ignore RLS on guacamole_sessions is enforced via the request context's app.org_id setting
+	_, dbErr := s.db.Pool.Exec(ctx,
+		`UPDATE guacamole_sessions
+		    SET status   = 'terminated',
+		        ended_at = NOW()
+		  WHERE guac_session_uuid = $1
+		    AND status = 'active'`,
+		activeConnID)
+	if dbErr != nil {
+		s.logger.Warn("handleTerminateGuacSession: could not update session tracking row",
+			zap.String("active_conn_id", activeConnID), zap.Error(dbErr))
+		// Not fatal — continue to audit + respond.
+	}
+
+	s.logAuditEvent(c, "guacamole.session_terminated", activeConnID, "guacamole_session",
+		map[string]interface{}{
+			"active_conn_id": activeConnID,
+			"reason":         body.Reason,
+		})
+
+	c.JSON(http.StatusOK, gin.H{"message": "session terminated", "active_conn_id": activeConnID})
+}
+
 // ---- checkAndConsumeApproval ----
 // checkAndConsumeApproval atomically consumes the most-recent approved,
 // unexpired guacamole_session_requests row for the given connection and

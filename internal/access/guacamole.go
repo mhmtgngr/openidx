@@ -774,6 +774,73 @@ type GuacamoleSession struct {
 	DurationSeconds int        `json:"duration_seconds,omitempty"`
 }
 
+// GuacActiveSession represents an active Guacamole connection from the
+// activeConnections REST endpoint. The map key (active-connection UUID) is
+// promoted into the Identifier field.
+type GuacActiveSession struct {
+	Identifier           string `json:"identifier"`
+	ConnectionIdentifier string `json:"connectionIdentifier"`
+	Username             string `json:"username"`
+	RemoteHost           string `json:"remoteHost"`
+	StartDate            int64  `json:"startDate"`
+}
+
+// ListActiveSessions returns all currently active Guacamole connections.
+// GET /api/session/data/<dataSource>/activeConnections
+// The response is a JSON object keyed by active-connection UUID; we flatten
+// it into a slice and set Identifier = key.
+func (gc *GuacamoleClient) ListActiveSessions(ctx context.Context) ([]GuacActiveSession, error) {
+	respData, statusCode, err := gc.apiRequest("GET", "/activeConnections", nil)
+	if err != nil {
+		return nil, fmt.Errorf("guacamole ListActiveSessions request failed: %w", err)
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("guacamole ListActiveSessions: unexpected HTTP %d", statusCode)
+	}
+
+	var raw map[string]struct {
+		ConnectionIdentifier string `json:"connectionIdentifier"`
+		Username             string `json:"username"`
+		RemoteHost           string `json:"remoteHost"`
+		StartDate            int64  `json:"startDate"`
+	}
+	if err := json.Unmarshal(respData, &raw); err != nil {
+		return nil, fmt.Errorf("guacamole ListActiveSessions: failed to parse response: %w", err)
+	}
+
+	sessions := make([]GuacActiveSession, 0, len(raw))
+	for id, entry := range raw {
+		sessions = append(sessions, GuacActiveSession{
+			Identifier:           id,
+			ConnectionIdentifier: entry.ConnectionIdentifier,
+			Username:             entry.Username,
+			RemoteHost:           entry.RemoteHost,
+			StartDate:            entry.StartDate,
+		})
+	}
+	return sessions, nil
+}
+
+// TerminateSession force-terminates an active Guacamole connection by its
+// active-connection UUID using the JSON Patch remove operation:
+// PATCH /api/session/data/<dataSource>/activeConnections
+// Body: [{"op":"remove","path":"/<activeConnID>"}]
+func (gc *GuacamoleClient) TerminateSession(ctx context.Context, activeConnID string) error {
+	body := []map[string]string{
+		{"op": "remove", "path": "/" + activeConnID},
+	}
+	_, statusCode, err := gc.apiRequest("PATCH", "/activeConnections", body)
+	if err != nil {
+		return fmt.Errorf("guacamole TerminateSession request failed: %w", err)
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return fmt.Errorf("guacamole TerminateSession: unexpected HTTP %d", statusCode)
+	}
+	gc.logger.Info("Terminated Guacamole active session",
+		zap.String("active_conn_id", activeConnID))
+	return nil
+}
+
 // GetSessionHistory retrieves session history from Guacamole
 func (gc *GuacamoleClient) GetSessionHistory(ctx context.Context, since *time.Time) ([]GuacamoleSession, error) {
 	// Guacamole history API endpoint
