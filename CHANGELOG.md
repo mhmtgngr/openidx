@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-02
+
+Privileged Access Management (PAM) — an integrated credential vault, automated
+rotation, just-in-time credential checkout, and privileged-session brokering with
+server-side credential injection. Built on the existing vault crypto, approval
+workflows, Guacamole brokering, and recording/retention pipeline.
+
+### Added
+- **Credential vault** — tenant-isolated, envelope-encrypted secret store
+  (per-version HKDF + AES-256-GCM under a rotatable key-encryption keyring that
+  defaults to `ENCRYPTION_KEY`; fail-closed). Versioned secrets, per-secret access
+  grants, internal server-side `use` vs. reason-gated + audited `reveal`;
+  admin-guarded `/api/v1/vault/*` API. Migration v56. (#273)
+- **Automated credential rotation** — leader-gated rotation engine with pluggable
+  connectors (Active Directory / LDAP / Azure AD via directory write-back;
+  generate-only). Candidate-version → apply-to-target → verify → promote, so a
+  failed rotation never locks the account out. Scheduled, on-demand (admin), and
+  rotate-on-checkout triggers. Migration v57. (#274)
+- **Just-in-time credential checkout** — request a vault credential through the
+  existing multi-step approval workflow (`resource_type=vault_credential`); on
+  approval the requester retrieves the secret once for a bounded window, after
+  which access auto-revokes and the credential rotates. (#276)
+- **Privileged session brokering with credential injection** — Guacamole
+  RDP/SSH/VNC sessions inject the target credential from the vault **server-side**
+  (the browser never receives it), with an optional pre-session approval gate,
+  admin force-terminate (with reason), and native session recording retained via
+  the existing recording-retention policy. Migration v59. (#277)
+
+### Fixed
+- Created `jit_grants` and `request_approval_chains` — referenced by governance
+  code but never created by any migration, so JIT elevation, the escalation
+  worker, and `POST /api/v1/governance/requests` were returning 500s. Migration
+  v58. (#275)
+
+### Notes
+- Each service that uses the vault (admin-api, governance, access) reads the shared
+  `ENCRYPTION_KEY` / `VAULT_KEK` and instantiates an in-process vault; the access
+  service additionally needs a shared recording volume for Guacamole recordings.
+
 ## [1.8.2] - 2026-07-01
 
 ### Added
@@ -1129,7 +1168,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/mhmtgngr/openidx/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/mhmtgngr/openidx/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/mhmtgngr/openidx/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/mhmtgngr/openidx/compare/v1.7.2...v1.8.0
