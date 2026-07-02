@@ -61,6 +61,7 @@ import {
   Send,
   Video,
   Lock,
+  RefreshCw,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -222,6 +223,7 @@ const navigationSections: NavSection[] = [
     adminOnly: true,
     items: [
       { name: 'Vault Secrets', href: '/vault-secrets', icon: KeyRound, adminOnly: true },
+      { name: 'Rotation Policies', href: '/rotation-policies', icon: RefreshCw, adminOnly: true },
     ],
   },
   {
