@@ -263,7 +263,9 @@ func main() {
 		if err != nil {
 			log.Fatal("vault service init failed", zap.Error(err))
 		}
-		vaultSvc.RegisterRoutes(v1)
+		vaultGroup := v1.Group("")
+		vaultGroup.Use(admin.RequireAdmin())
+		vaultSvc.RegisterRoutes(vaultGroup)
 		go vaultSvc.StartSweeper(ctx, redis.Client)
 	}
 

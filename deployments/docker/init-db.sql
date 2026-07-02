@@ -3439,8 +3439,8 @@ CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_hash ON agent_enrollment_tokens
 -- ============================================================================
 -- Four org-scoped tables for the PAM credential vault (M1). Envelope ciphertext
 -- lives only in vault_secret_versions; vault_secrets carries metadata only.
--- The v37 FORCE-RLS belt is applied by the migration; here we only create the
--- tables so TestInitDBParity stays green.
+-- The v37-style FORCE-RLS belt is applied below (idempotent) so init-db
+-- deployments are identically protected to the migration (v56).
 CREATE TABLE IF NOT EXISTS vault_secrets (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id          UUID NOT NULL,
@@ -3499,6 +3499,37 @@ CREATE INDEX IF NOT EXISTS idx_vault_versions_secret  ON vault_secret_versions(s
 CREATE INDEX IF NOT EXISTS idx_vault_grants_secret    ON vault_access_grants(secret_id);
 CREATE INDEX IF NOT EXISTS idx_vault_checkouts_secret ON vault_checkouts(secret_id, leased_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vault_checkouts_active ON vault_checkouts(status, expires_at) WHERE status = 'active';
+
+-- v37-style RLS belt for the four vault tables (mirrors migration v56). These
+-- are the most sensitive tables in the schema; the belt is applied here as well
+-- so fresh init-db deployments are identically protected. Idempotent.
+DROP POLICY IF EXISTS pol_vault_secrets_org_scope ON vault_secrets;
+CREATE POLICY pol_vault_secrets_org_scope ON vault_secrets
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE vault_secrets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vault_secrets FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pol_vault_secret_versions_org_scope ON vault_secret_versions;
+CREATE POLICY pol_vault_secret_versions_org_scope ON vault_secret_versions
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE vault_secret_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vault_secret_versions FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pol_vault_access_grants_org_scope ON vault_access_grants;
+CREATE POLICY pol_vault_access_grants_org_scope ON vault_access_grants
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE vault_access_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vault_access_grants FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pol_vault_checkouts_org_scope ON vault_checkouts;
+CREATE POLICY pol_vault_checkouts_org_scope ON vault_checkouts
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE vault_checkouts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vault_checkouts FORCE  ROW LEVEL SECURITY;
 
 -- ============================================================================
 -- v1.8 RLS: non-owner application runtime role (mirrors migration v53)

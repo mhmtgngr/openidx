@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -90,6 +91,7 @@ func (s *Service) orgID(ctx context.Context) (string, error) {
 // Store creates a new secret at version 1. The plaintext is sealed and zeroed;
 // it is never persisted, logged, or returned.
 func (s *Service) Store(ctx context.Context, in StoreInput) (*SecretMeta, error) {
+	defer zero(in.Value) // wipe plaintext on every return path, including Seal errors
 	orgID, err := s.orgID(ctx)
 	if err != nil {
 		return nil, err
@@ -135,6 +137,7 @@ func (s *Service) Store(ctx context.Context, in StoreInput) (*SecretMeta, error)
 
 // NewVersion appends an encrypted version and bumps current_version.
 func (s *Service) NewVersion(ctx context.Context, secretID string, value []byte, by string) (int, error) {
+	defer zero(value) // wipe plaintext on every return path, including Seal errors
 	orgID, err := s.orgID(ctx)
 	if err != nil {
 		return 0, err
@@ -194,6 +197,9 @@ func (s *Service) Get(ctx context.Context, secretID string) (*SecretDetail, erro
 		FROM vault_secrets WHERE id = $1`, secretID).
 		Scan(&d.ID, &d.Name, &d.Type, &d.Description, &d.CurrentVersion, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	rows, err := s.db.Pool.Query(ctx,
@@ -277,15 +283,18 @@ func (s *Service) AddGrant(ctx context.Context, g Grant) (string, error) {
 		return "", err
 	}
 	id := uuid.New().String()
-	_, err = s.db.Pool.Exec(ctx, `
+	var persistedID string
+	err = s.db.Pool.QueryRow(ctx, `
 		INSERT INTO vault_access_grants (id, org_id, secret_id, principal_type, principal_id, actions, granted_by, expires_at)
 		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,'')::uuid,$8)
 		ON CONFLICT (secret_id, principal_type, principal_id)
-		DO UPDATE SET actions = EXCLUDED.actions, expires_at = EXCLUDED.expires_at`,
-		id, orgID, g.SecretID, g.PrincipalType, g.PrincipalID, g.Actions, g.GrantedBy, g.ExpiresAt)
+		DO UPDATE SET actions = EXCLUDED.actions, expires_at = EXCLUDED.expires_at
+		RETURNING id`,
+		id, orgID, g.SecretID, g.PrincipalType, g.PrincipalID, g.Actions, g.GrantedBy, g.ExpiresAt).Scan(&persistedID)
 	if err != nil {
 		return "", err
 	}
+	id = persistedID
 	s.recordAudit(ctx, "vault.grant_added", g.GrantedBy, map[string]interface{}{
 		"secret_id": g.SecretID, "principal": g.PrincipalType + ":" + g.PrincipalID, "actions": g.Actions})
 	return id, nil
@@ -335,6 +344,9 @@ func (s *Service) decryptCurrent(ctx context.Context, secretID string) (int, []b
 		JOIN vault_secrets s ON s.id = v.secret_id AND s.current_version = v.version
 		WHERE v.secret_id = $1`, secretID).Scan(&version, &keyID, &blob)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil, ErrNotFound
+		}
 		return 0, nil, err
 	}
 	pt, err := s.ring.Open(byte(keyID), secretID, version, blob)
@@ -347,6 +359,12 @@ func (s *Service) decryptCurrent(ctx context.Context, secretID string) (int, []b
 // Use returns the current plaintext to an INTERNAL Go caller (rotation engine,
 // session broker). Never exposed over HTTP. System callers (WithBypassRLS) skip
 // the grant check but are still recorded. Callers must zero the returned slice.
+//
+// IMPORTANT: Use MUST only be called by internal system callers (rotation engine,
+// session-broker) that hold a bypass-RLS context (orgctx.WithBypassRLS). Calling
+// this from a request-scoped context without bypass-RLS will return an error
+// immediately — the check is intentionally fail-closed to prevent accidental
+// exposure of plaintext over the HTTP path.
 func (s *Service) Use(ctx context.Context, secretID string) ([]byte, error) {
 	if !orgctx.IsBypassRLS(ctx) {
 		return nil, errors.New("vault: Use requires a system (bypass-RLS) context")

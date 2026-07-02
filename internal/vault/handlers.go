@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -61,7 +62,11 @@ func (s *Service) handleList(c *gin.Context) {
 func (s *Service) handleGet(c *gin.Context) {
 	d, err := s.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, d)
@@ -85,7 +90,11 @@ func (s *Service) handleNewVersion(c *gin.Context) {
 
 func (s *Service) handleDelete(c *gin.Context) {
 	if err := s.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -101,14 +110,21 @@ func (s *Service) handleReveal(c *gin.Context) {
 	}
 	pt, err := s.Reveal(c.Request.Context(), c.Param("id"), currentUserID(c), currentUserRoles(c), req.Reason, isAdmin(c))
 	if err != nil {
-		if err == ErrForbidden {
+		if errors.Is(err, ErrForbidden) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not permitted"})
+			return
+		}
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	// Returned once. Do not log the body.
+	// NOTE: zero(pt) clears the source []byte but not the string copy that
+	// c.JSON/the JSON encoder holds in the response buffer. That copy is
+	// GC-managed and cannot be zeroed without a manual encoder rewrite.
 	c.JSON(http.StatusOK, gin.H{"value": string(pt)})
 	zero(pt)
 }
@@ -140,6 +156,10 @@ func (s *Service) handleRemoveGrant(c *gin.Context) {
 func (s *Service) handleCheckouts(c *gin.Context) {
 	out, err := s.Checkouts(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
