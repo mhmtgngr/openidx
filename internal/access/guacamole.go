@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -486,6 +487,13 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 
 	recPath := s.config.GuacamoleRecordingPath
 	recName := fmt.Sprintf("%s-%d", connID, time.Now().UnixMilli())
+	// recFile is the full filesystem path to the recording artifact that guacd
+	// will write. guacd itself receives dir (recording-path) + name (recording-name)
+	// separately so that it can rotate/suffix files correctly; we compute the
+	// joined path here so the session ledger row stores the exact file to purge
+	// rather than the directory root (which would cause RemoveAll to wipe the
+	// entire recordings directory — data-loss bug fixed in v60).
+	recFile := filepath.Join(recPath, recName)
 	params := buildInjectedParams(secretType, injectUser, cred, recordSession, recPath, recName)
 
 	// Zero the plaintext credential slice immediately after buildInjectedParams copies
@@ -507,7 +515,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 
 	// Recording side-effects — guacd-native session recording.
 	if recordSession {
-		if _, err := s.recordGuacSession(ctx, org.ID, connectionPK, userID, recPath); err != nil {
+		if _, err := s.recordGuacSession(ctx, org.ID, connectionPK, userID, recFile); err != nil {
 			s.logger.Warn("handleGuacamoleConnect: recordGuacSession failed (best-effort)",
 				zap.String("connection_id", connectionPK), zap.Error(err))
 		}

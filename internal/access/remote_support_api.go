@@ -49,7 +49,11 @@ type RemoteSupportHandler struct {
 	turn                 *TurnMinter
 	recordingStore       recordingStore
 	defaultRetentionDays int
-	upgrader             websocket.Upgrader
+	// guacRecordingsRoot is the configured GuacamoleRecordingPath (directory).
+	// The Guac retention sweeper uses it to guard against accidentally deleting
+	// the entire recordings root when recording_path is missing or equals the root.
+	guacRecordingsRoot string
+	upgrader           websocket.Upgrader
 
 	mu       sync.Mutex
 	sessions map[string]*signalingSession
@@ -87,6 +91,13 @@ func (h *RemoteSupportHandler) SetTurnMinter(m *TurnMinter) {
 // Zero means "use the hard fallback (90)".
 func (h *RemoteSupportHandler) SetDefaultRetentionDays(days int) {
 	h.defaultRetentionDays = days
+}
+
+// SetGuacRecordingsRoot stores the configured Guacamole recording directory
+// root so the Guac retention sweeper can validate paths before calling
+// os.RemoveAll, preventing accidental deletion of the entire recordings root.
+func (h *RemoteSupportHandler) SetGuacRecordingsRoot(root string) {
+	h.guacRecordingsRoot = root
 }
 
 // signalingSession is the live broker record for a session that has at

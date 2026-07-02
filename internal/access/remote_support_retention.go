@@ -19,6 +19,8 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -385,13 +387,41 @@ func (h *RemoteSupportHandler) sweepExpiredGuacRecordings(ctx context.Context) {
 	}
 }
 
-// purgeGuacRecording removes the guacd-native recording directory at path and
-// stamps recording_purged_at on the session row. Idempotent: a missing path is
-// not an error (os.RemoveAll is a no-op for non-existent paths on Go 1.16+).
+// isUnderRoot reports whether p is strictly inside root: both are
+// filepath.Clean'd, root must be non-empty, and p must have root+"/" as a
+// prefix (so p == root is rejected — callers must never RemoveAll the root
+// itself).
+func isUnderRoot(p, root string) bool {
+	if root == "" || p == "" {
+		return false
+	}
+	cp := filepath.Clean(p)
+	cr := filepath.Clean(root)
+	// Require a path-separator boundary so "/recordings2" is not "under" "/recordings".
+	return strings.HasPrefix(cp, cr+string(filepath.Separator))
+}
+
+// purgeGuacRecording removes the guacd-native recording file at recordingPath
+// and stamps recording_purged_at on the session row. Idempotent: a missing
+// path is not an error (os.RemoveAll is a no-op for non-existent paths on
+// Go 1.16+).
+//
+// Safety guard: the path must be strictly inside the configured recordings
+// root (h.guacRecordingsRoot). An empty, root-equal, or escaping path is
+// skipped with a Warn rather than deleted, preventing a misconfigured or
+// corrupted row from wiping the entire recordings directory.
 func (h *RemoteSupportHandler) purgeGuacRecording(ctx context.Context, sessionID, recordingPath string) error {
 	if recordingPath != "" {
-		if err := os.RemoveAll(recordingPath); err != nil {
-			return err
+		root := h.guacRecordingsRoot
+		if root == "" || !isUnderRoot(recordingPath, root) {
+			h.logger.Warn("purgeGuacRecording: skipping unsafe recording_path",
+				zap.String("session_id", sessionID),
+				zap.String("recording_path", recordingPath),
+				zap.String("recordings_root", root))
+		} else {
+			if err := os.RemoveAll(recordingPath); err != nil {
+				return err
+			}
 		}
 	}
 	//orgscope:ignore bypass-RLS sweep — session row identified by PK; org_id scoping is enforced at insert time

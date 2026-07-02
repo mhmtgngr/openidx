@@ -3666,16 +3666,18 @@ CREATE INDEX IF NOT EXISTS idx_guac_session_requests_lookup
     ON guacamole_session_requests(connection_id, requester_id, status);
 
 CREATE TABLE IF NOT EXISTS guacamole_sessions (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id              UUID NOT NULL,
-    connection_id       UUID NOT NULL,
-    user_id             UUID,
-    guac_session_uuid   VARCHAR(255),
-    recording_path      TEXT,
-    recording_purged_at TIMESTAMPTZ,
-    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    ended_at            TIMESTAMPTZ,
-    status              VARCHAR(16) NOT NULL DEFAULT 'active'
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id                  UUID NOT NULL,
+    connection_id           UUID NOT NULL,
+    user_id                 UUID,
+    guac_session_uuid       VARCHAR(255),
+    recording_path          TEXT,
+    recording_purged_at     TIMESTAMPTZ,
+    transcript_path         TEXT,
+    transcript_generated_at TIMESTAMPTZ,
+    started_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at                TIMESTAMPTZ,
+    status                  VARCHAR(16) NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_guac_sessions_connection
     ON guacamole_sessions(connection_id, started_at DESC);

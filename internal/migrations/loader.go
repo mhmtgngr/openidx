@@ -425,5 +425,12 @@ func allMigrations() []*Migration {
 			UpSQL:       guacSessionsUp,
 			DownSQL:     guacSessionsDown,
 		},
+		{
+			Version:     60,
+			Name:        "guacamole_transcripts",
+			Description: "PAM M4 session assurance: adds transcript_path (TEXT) and transcript_generated_at (TIMESTAMPTZ) to guacamole_sessions so the session-assurance sweeper can track guacd-native transcript files independently of the recording blob. Idempotent (ADD COLUMN IF NOT EXISTS); mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       guacTranscriptUp,
+			DownSQL:     guacTranscriptDown,
+		},
 	}
 }
