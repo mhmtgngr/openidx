@@ -70,38 +70,40 @@ type candidateVault interface {
 }
 
 // runRotation is the pure, DB-free decision core: generate → candidate →
-// apply → verify → promote. Returns the terminal ledger status and whether
-// the candidate was promoted.
+// apply → verify → promote. Returns the terminal ledger status, whether
+// the candidate was promoted, and the candidate version number (0 if the
+// candidate was never created — i.e., generate or AddCandidateVersion failed).
 //
 // Semantics:
-//   - Apply failure     → ("failed", false) — no promote.
-//   - Verify failure    → ("failed", false) — no promote.
-//   - ErrVerifyUnsupported → skip verify, proceed to promote → ("succeeded", true).
-//   - All steps pass    → ("succeeded", true).
-func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVault, gp GenerationPolicy, cfg map[string]any) (status string, promoted bool) {
+//   - generate/AddCandidate failure → ("failed", false, 0) — no candidate.
+//   - Apply failure     → ("failed", false, candidateVersion) — candidate exists, no promote.
+//   - Verify failure    → ("failed", false, candidateVersion) — candidate exists, no promote.
+//   - ErrVerifyUnsupported → skip verify, proceed to promote → ("succeeded", true, candidateVersion).
+//   - All steps pass    → ("succeeded", true, candidateVersion).
+func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVault, gp GenerationPolicy, cfg map[string]any) (status string, promoted bool, candidateVersion int) {
 	newValue, err := generateSecret(gp)
 	if err != nil {
-		return "failed", false
+		return "failed", false, 0
 	}
 	defer zero(newValue)
 
 	candidate, err := v.AddCandidateVersion(ctx, secretID, newValue, "rotation")
 	if err != nil {
-		return "failed", false
+		return "failed", false, 0
 	}
 
 	if err := r.Apply(ctx, cfg, newValue); err != nil {
-		return "failed", false
+		return "failed", false, candidate
 	}
 
 	if err := r.Verify(ctx, cfg, newValue); err != nil && !errors.Is(err, ErrVerifyUnsupported) {
-		return "failed", false
+		return "failed", false, candidate
 	}
 
 	if err := v.PromoteVersion(ctx, secretID, candidate); err != nil {
-		return "failed", false
+		return "failed", false, candidate
 	}
-	return "succeeded", true
+	return "succeeded", true, candidate
 }
 
 // ---- Policy DTOs (no secret values) ----
@@ -140,6 +142,10 @@ var ErrPolicyNotFound = errors.New("credentials: rotation policy not found")
 
 // ErrInvalidPolicy is returned when policy validation fails.
 var ErrInvalidPolicy = errors.New("credentials: invalid rotation policy")
+
+// ErrSecretNotFound is returned when the target secret is not visible under
+// the caller's org-scoped context (cross-tenant secret_id rejected).
+var ErrSecretNotFound = errors.New("credentials: secret not found or not accessible")
 
 // validatePolicyInput validates connector_type, connector_config, and interval_seconds.
 func (s *Service) validatePolicyInput(in PolicyInput) error {
@@ -193,6 +199,19 @@ func (s *Service) CreatePolicy(ctx context.Context, in PolicyInput) (*Policy, er
 	gpJSON, err := marshalJSON(in.GenerationPolicy)
 	if err != nil {
 		return nil, err
+	}
+
+	// Verify the target secret is visible under the CALLER's org-scoped context.
+	// Running under the request ctx (RLS-scoped) means another org's secret
+	// returns false → reject with ErrSecretNotFound.
+	var secretExists bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1)`, in.SecretID,
+	).Scan(&secretExists); err != nil {
+		return nil, err
+	}
+	if !secretExists {
+		return nil, ErrSecretNotFound
 	}
 
 	enabled := true
@@ -423,13 +442,28 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 		return nil
 	}
 
-	// 2. Inject the policy's org so vault writes are org-scoped.
-	orgCtx := orgctx.With(bypassCtx, orgctx.Org{ID: p.OrgID})
+	// 2. Build a FRESH context with the policy's org so vault writes are
+	// org-scoped and the bypass marker is NOT inherited.
+	orgCtx := orgctx.With(context.Background(), orgctx.Org{ID: p.OrgID})
 
 	// 3. Apply default generation length.
 	gp := p.GenerationPolicy
 	if gp.Length == 0 {
 		gp.Length = s.defaultLen
+	}
+
+	// 3a. Check for an existing in-flight run; no-op if present.
+	var inFlight bool
+	if err := s.db.Pool.QueryRow(orgCtx, //orgscope:ignore in-flight guard scoped by policy_id (UUID); context is org-scoped via orgCtx so RLS on credential_rotations enforces org isolation
+		`SELECT EXISTS(SELECT 1 FROM credential_rotations
+		  WHERE policy_id=$1 AND status='rotating'
+		    AND started_at > NOW() - INTERVAL '10 minutes')`, policyID,
+	).Scan(&inFlight); err != nil {
+		return fmt.Errorf("credentials: check in-flight: %w", err)
+	}
+	if inFlight {
+		s.logger.Info("credentials: rotation already in flight, skipping", zap.String("policy_id", policyID))
+		return nil
 	}
 
 	// 4. Insert ledger row at status='rotating'.
@@ -452,7 +486,7 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 	}
 
 	// 6. Execute the rotation state machine.
-	status, promoted := runRotation(orgCtx, p.SecretID, rot, s.vault, gp, p.ConnectorConfig)
+	status, promoted, candidateVer := runRotation(orgCtx, p.SecretID, rot, s.vault, gp, p.ConnectorConfig)
 
 	// 7. Determine candidate version from vault (if promoted, it's current_version now).
 	//    We capture candidate inside the rotation to update version_to.
@@ -479,7 +513,11 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 				zap.String("secret_id", p.SecretID))
 		}
 	} else {
-		s.failRun(orgCtx, runID, policyID, 0, "rotation failed")
+		// Pass candidateVer so the ledger failure row records version_to when a
+		// candidate was created before Apply/Verify failed (M-5). If the failure
+		// was pre-candidate (generate / AddCandidate), candidateVer is 0 and
+		// failRun leaves version_to NULL.
+		s.failRun(orgCtx, runID, policyID, candidateVer, "rotation failed")
 		s.recordRotationAudit(orgCtx, "credential.rotation_failed", policyID, p.SecretID, p.CurrentVersion, nil, p.ConnectorType, trigger, "rotation failed")
 	}
 
@@ -557,7 +595,7 @@ type RotationRun struct {
 func (s *Service) policyIDForSecret(ctx context.Context, secretID string) (string, error) {
 	var policyID string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM credential_rotation_policies WHERE secret_id = $1 LIMIT 1`, secretID,
+		`SELECT id FROM credential_rotation_policies WHERE secret_id = $1 AND enabled = true LIMIT 1`, secretID,
 	).Scan(&policyID)
 	if err != nil {
 		if err.Error() == "no rows in result set" {

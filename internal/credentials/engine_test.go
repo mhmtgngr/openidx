@@ -45,7 +45,7 @@ func TestRotateOutcome(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fv := &fakeVault{}
-			status, promoted := runRotation(context.Background(), "dummy-secret-id",
+			status, promoted, _ := runRotation(context.Background(), "dummy-secret-id",
 				fakeRotator{applyErr: tc.apply, verifyErr: tc.verify},
 				fv, GenerationPolicy{Length: 12}, map[string]any{})
 			if promoted != tc.wantPromoted {

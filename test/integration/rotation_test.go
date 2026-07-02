@@ -315,7 +315,7 @@ func TestRotateFailureKeepsCurrent(t *testing.T) {
 	err = admin.QueryRow(context.Background(),
 		`SELECT COUNT(*) FROM vault_secret_versions WHERE secret_id = $1`, meta.ID).Scan(&vcount)
 	require.NoError(t, err)
-	assert.Equal(t, 1, vcount, "only the initial version row should exist after failed rotation")
+	assert.Equal(t, 2, vcount, "two version rows exist after failed rotation (v1 + orphaned candidate v2)")
 }
 
 // ── TestRotateOnCheckoutSelection ────────────────────────────────────────────

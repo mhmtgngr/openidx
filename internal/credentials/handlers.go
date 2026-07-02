@@ -32,6 +32,10 @@ func (s *Service) handleCreatePolicy(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		if errors.Is(err, ErrSecretNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "secret not found or not accessible"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -125,37 +129,4 @@ func (s *Service) handleRotationHistory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rotations": runs})
-}
-
-// ---- auth context helpers ----
-//
-// The Auth middleware (internal/common/middleware/middleware.go) sets:
-//
-//	"user_id" → string   (JWT sub claim)
-//	"roles"   → []string (JWT roles claim)
-//
-// Mirrors the identical helpers in internal/vault/handlers.go.
-
-// currentUserID returns the authenticated user's ID from the gin context.
-func currentUserID(c *gin.Context) string {
-	id, _ := c.Get("user_id")
-	s, _ := id.(string)
-	return s
-}
-
-// currentUserRoles returns the authenticated user's roles from the gin context.
-func currentUserRoles(c *gin.Context) []string {
-	raw, _ := c.Get("roles")
-	roles, _ := raw.([]string)
-	return roles
-}
-
-// isAdmin reports whether the caller holds an admin-level role.
-func isAdmin(c *gin.Context) bool {
-	for _, r := range currentUserRoles(c) {
-		if r == "admin" || r == "super_admin" {
-			return true
-		}
-	}
-	return false
 }
