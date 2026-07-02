@@ -62,14 +62,14 @@ CREATE POLICY pol_credential_rotations_org_scope ON credential_rotations
 ALTER TABLE credential_rotations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE credential_rotations FORCE  ROW LEVEL SECURITY;
 
--- Grant DML to the runtime app role when present (matches v53/v56).
-DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
-    GRANT SELECT, INSERT, UPDATE, DELETE ON
-      credential_rotation_policies, credential_rotations
-      TO openidx_app;
-  END IF;
-END $$;
+-- Grant DML to the runtime app role. openidx_app is provisioned by v53 (runs
+-- before v57) and v53's ALTER DEFAULT PRIVILEGES already covers new tables — this
+-- is belt-and-suspenders. Plain GRANT (no DO/$$ block): the migration runner's
+-- splitSQL only recognizes a $$ tag at the start of a line, so a DO $$ ... ; ... $$
+-- block is split at the inner semicolon and fails (SQLSTATE 42601).
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  credential_rotation_policies, credential_rotations
+  TO openidx_app;
 `
 
 var credentialRotationDown = `-- Migration 057 down.
