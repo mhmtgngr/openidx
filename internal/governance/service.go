@@ -1516,6 +1516,8 @@ func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.Han
 		gov.POST("/requests/:id/approve", svc.handleApproveRequest)
 		gov.POST("/requests/:id/deny", svc.handleDenyRequest)
 		gov.POST("/requests/:id/cancel", svc.handleCancelRequest)
+		gov.POST("/requests/:id/credential", svc.handleRetrieveCredential)
+		gov.POST("/requests/:id/return", svc.handleReturnCredential)
 		gov.GET("/my-approvals", svc.handleListPendingApprovals)
 
 		// Approval policies

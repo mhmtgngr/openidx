@@ -76,6 +76,16 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 					zap.Error(err))
 				continue
 			}
+		case "vault_credential":
+			// Reveal grant auto-expires via its expires_at; here we only wake the
+			// M1b rotation scheduler so the credential rotates on the next tick.
+			if _, err := s.db.Pool.Exec(ctx,
+				//orgscope:ignore background sweep across orgs; bounded by the row being expired
+				`UPDATE credential_rotation_policies SET next_run_at = NOW()
+				 WHERE secret_id = $1 AND rotate_on_checkout = true`, resourceID); err != nil {
+				s.logger.Warn("vault_credential rotate-on-return bump failed",
+					zap.String("secret_id", resourceID), zap.Error(err))
+			}
 		default:
 			s.logger.Warn("No revocation handler for resource type",
 				zap.String("resource_type", resourceType))

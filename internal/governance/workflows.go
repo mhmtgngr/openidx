@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/vault"
 )
 
 // AccessRequest represents a request for access to a role, group, or application
@@ -128,6 +129,26 @@ func (s *Service) handleCreateAccessRequest(c *gin.Context) {
 
 	if body.ResourceID == "" {
 		body.ResourceID = uuid.New().String()
+	}
+
+	// vault_credential requests: validate the secret exists under the caller's org
+	// context (RLS scopes the SELECT to the caller's org) and require a bounded window.
+	if body.ResourceType == "vault_credential" {
+		var exists bool
+		if err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT EXISTS(SELECT 1 FROM vault_secrets WHERE id=$1)`, body.ResourceID).Scan(&exists); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "validate secret"})
+			return
+		}
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "vault secret not found or not accessible"})
+			return
+		}
+		// A duration/expires_at is required so the checkout window is bounded.
+		if body.Duration == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "vault_credential requests require a duration"})
+			return
+		}
 	}
 
 	// Parse duration to calculate expires_at
@@ -988,6 +1009,33 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 		if err != nil {
 			return fmt.Errorf("failed to assign application: %w", err)
 		}
+	case "vault_credential":
+		if s.vaultSvc == nil {
+			return fmt.Errorf("vault service not configured; cannot fulfill vault_credential request %s", request.ID)
+		}
+		if request.ExpiresAt == nil {
+			return fmt.Errorf("vault_credential request %s has no expires_at (unbounded checkout)", request.ID)
+		}
+		// Time-boxed reveal grant IS the authorization to retrieve; it auto-expires
+		// with the checkout window (vault hasGrant checks expires_at > NOW()).
+		if _, err := s.vaultSvc.AddGrant(ctx, vault.Grant{
+			SecretID:      request.ResourceID,
+			PrincipalType: "user",
+			PrincipalID:   request.RequesterID,
+			Actions:       []string{"reveal"},
+			ExpiresAt:     request.ExpiresAt,
+			GrantedBy:     "", // system fulfillment
+		}); err != nil {
+			return fmt.Errorf("grant vault reveal for request %s: %w", request.ID, err)
+		}
+		// Best-effort audit; the grant itself already succeeded.
+		auditDetails, _ := json.Marshal(map[string]any{
+			"request_id": request.ID, "secret_id": request.ResourceID, "expires_at": request.ExpiresAt,
+		})
+		_, _ = s.db.Pool.Exec(ctx,
+			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_granted', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
+			request.RequesterID, request.ResourceID, string(auditDetails), org.ID)
 	default:
 		// Fail loudly. Marking a request "fulfilled" without granting
 		// anything is exactly the bug the P1.1 audit found — an approved
@@ -1014,4 +1062,125 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 
 	request.Status = "fulfilled"
 	return nil
+}
+
+// handleRetrieveCredential reveals the plaintext of a checked-out vault credential
+// to the requester for the duration of the approved checkout window.
+func (s *Service) handleRetrieveCredential(c *gin.Context) {
+	if s.vaultSvc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "vault not configured"})
+		return
+	}
+	reqID := c.Param("id")
+	userID := c.GetString("user_id")
+	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	var resourceType, resourceID, status, requester string
+	var expiresAt *time.Time
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT resource_type, resource_id, status, requester_id, expires_at
+		 FROM access_requests WHERE id=$1 AND org_id=$2`, reqID, org.ID).
+		Scan(&resourceType, &resourceID, &status, &requester, &expiresAt)
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load request"})
+		return
+	}
+	if resourceType != "vault_credential" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not a vault_credential request"})
+		return
+	}
+	if requester != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your request"})
+		return
+	}
+	if status != "fulfilled" {
+		c.JSON(http.StatusConflict, gin.H{"error": "request not approved/fulfilled"})
+		return
+	}
+	if expiresAt == nil || time.Now().After(*expiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "checkout window expired"})
+		return
+	}
+	// Roles are not set by the governance middleware; the vault grant (added during
+	// fulfillRequest) is the authorisation — Reveal checks it via hasGrant.
+	pt, err := s.vaultSvc.Reveal(ctx, resourceID, userID, nil, "JIT checkout "+reqID, false)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "reveal denied"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"value": string(pt)})
+	for i := range pt { // zero plaintext after write to avoid retaining it in heap
+		pt[i] = 0
+	}
+}
+
+// bumpRotationOnReturn wakes the M1b rotation scheduler for a secret whose policy is
+// rotate_on_checkout, so the credential rotates when the checkout concludes.
+func (s *Service) bumpRotationOnReturn(ctx context.Context, secretID string) {
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE credential_rotation_policies SET next_run_at = NOW()
+		 WHERE secret_id = $1 AND rotate_on_checkout = true`, secretID); err != nil {
+		s.logger.Warn("bump rotation on return failed", zap.String("secret_id", secretID), zap.Error(err))
+	}
+}
+
+// handleReturnCredential allows the requester to return a checked-out credential
+// early: revokes the vault grant immediately, marks the request expired, and
+// triggers rotation if the policy is rotate_on_checkout.
+func (s *Service) handleReturnCredential(c *gin.Context) {
+	if s.vaultSvc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "vault not configured"})
+		return
+	}
+	reqID := c.Param("id")
+	userID := c.GetString("user_id")
+	ctx := c.Request.Context()
+
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
+	var resourceType, resourceID, requester, status string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT resource_type, resource_id, requester_id, status FROM access_requests WHERE id=$1 AND org_id=$2`, reqID, org.ID).
+		Scan(&resourceType, &resourceID, &requester, &status)
+	if err == pgx.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load request"})
+		return
+	}
+	if resourceType != "vault_credential" || requester != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not your vault_credential request"})
+		return
+	}
+	// Immediate deauthorization + mark expired + rotate-on-return.
+	if err := s.vaultSvc.RevokeGrantForPrincipal(ctx, resourceID, "user", userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "revoke grant"})
+		return
+	}
+	_, _ = s.db.Pool.Exec(ctx,
+		`UPDATE access_requests SET status='expired', updated_at=NOW() WHERE id=$1 AND org_id=$2`, reqID, org.ID)
+	s.bumpRotationOnReturn(ctx, resourceID)
+	// Best-effort audit.
+	retDetails, _ := json.Marshal(map[string]any{"request_id": reqID, "secret_id": resourceID})
+	_, _ = s.db.Pool.Exec(ctx,
+		`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+		 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_returned', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
+		userID, resourceID, string(retDetails), org.ID)
+	c.JSON(http.StatusOK, gin.H{"status": "returned"})
 }
