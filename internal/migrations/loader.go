@@ -439,5 +439,12 @@ func allMigrations() []*Migration {
 			UpSQL:       attestationOrgIsolationUp,
 			DownSQL:     attestationOrgIsolationDown,
 		},
+		{
+			Version:     62,
+			Name:        "reconcile_missing_tables",
+			Description: "Reconcile referenced-but-uncreated tables (drift class of v58): creates admin_console_settings, auth_contexts, breach_incidents, breach_alerts — referenced by internal/admin (settings.go, continuous_auth.go, ibdr.go) but created by neither a migration nor init-db.sql, so their endpoints 500. Columns match the code's exact SQL usage. Not RLS-belted (code doesn't org-scope them; org_id/RLS is a separate follow-up). Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       reconcileMissingTablesUp,
+			DownSQL:     reconcileMissingTablesDown,
+		},
 	}
 }
