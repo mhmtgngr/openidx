@@ -110,6 +110,7 @@ func TestAccessService_ProductionConfigValidation(t *testing.T) {
 				RedisTLSEnabled:           true,
 				TLS:                       config.TLSConfig{Enabled: true},
 				AuditStreamAllowedOrigins: "https://example.com",
+				VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 			},
 			wantErr: false,
 		},

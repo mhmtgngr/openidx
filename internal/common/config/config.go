@@ -900,6 +900,16 @@ func (c *Config) ValidateProduction() error {
 			"encryption_key must be set to a secure random value (at least 32 bytes)")
 	}
 
+	// Critical: the PAM vault must have an explicit KEK in production. vault
+	// KeyringFromConfig falls back to ENCRYPTION_KEY when neither VAULT_KEK nor
+	// VAULT_KEKS is set; that silently couples the vault's key-encryption key to
+	// the general encryption key, defeating independent rotation/scoping of the
+	// most sensitive secret store. Require an explicit vault KEK in production.
+	if c.VaultKEK == "" && c.VaultKEKs == "" {
+		criticalIssues = append(criticalIssues,
+			"vault_kek or vault_keks must be set in production; do not rely on the ENCRYPTION_KEY fallback for the vault key-encryption key")
+	}
+
 	// Critical: Wildcard CORS in production allows any origin
 	if c.CORSAllowedOrigins == "*" {
 		criticalIssues = append(criticalIssues,

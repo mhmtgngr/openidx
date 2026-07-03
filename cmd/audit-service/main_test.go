@@ -110,6 +110,7 @@ func TestAuditService_ProductionConfigValidation(t *testing.T) {
 				TLS:                       config.TLSConfig{Enabled: true},
 				AccessSessionSecret:       "secure-32-byte-session-secret-12345",
 				AuditStreamAllowedOrigins: "https://example.com",
+				VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 			},
 			wantErr: false,
 		},
