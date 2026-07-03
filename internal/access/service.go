@@ -1679,6 +1679,17 @@ func (s *Service) handleProxy(c *gin.Context) {
 	var session *ProxySession
 	if route.RequireAuth {
 		session = s.getSessionFromRequest(c)
+		// Enforce the route's idle timeout on the cookie session: if it has been
+		// idle longer than idle_timeout, revoke it and re-auth. (Bearer tokens
+		// carry their own JWT expiry, so this only applies to the cookie path.)
+		if session != nil && isIdleExpired(route, session, time.Now()) {
+			s.revokeIdleProxySession(c, session)
+			s.logAuditEvent(c, "proxy_session_idle_expired", route.ID, "proxy_route", map[string]interface{}{
+				"user_id":      session.UserID,
+				"idle_timeout": route.IdleTimeout,
+			})
+			session = nil
+		}
 		if session == nil {
 			// Also check for Bearer token
 			session = s.getSessionFromBearer(c)
@@ -1744,8 +1755,8 @@ func (s *Service) handleProxy(c *gin.Context) {
 			}
 		}
 
-		// Update session activity
-		s.updateSessionActivity(c.Request.Context(), session)
+		// Update session activity (also slides the idle-timeout window)
+		s.updateSessionActivity(c, session)
 	}
 
 	// Proxy the request
@@ -2412,13 +2423,14 @@ func (s *Service) createSession(c *gin.Context, claims map[string]interface{}, a
 
 	// Store session data in Redis for fast access
 	sessionData, _ := json.Marshal(map[string]interface{}{
-		"id":      id,
-		"user_id": userID,
-		"email":   email,
-		"name":    name,
-		"roles":   roles,
-		"token":   accessToken,
-		"expires": expiresAt.Unix(),
+		"id":          id,
+		"user_id":     userID,
+		"email":       email,
+		"name":        name,
+		"roles":       roles,
+		"token":       accessToken,
+		"expires":     expiresAt.Unix(),
+		"last_active": time.Now().Unix(),
 	})
 	s.redis.Client.Set(c.Request.Context(), "proxy_session:"+tokenHash, sessionData, 12*time.Hour)
 
@@ -2471,13 +2483,30 @@ func (s *Service) getSessionFromRequest(c *gin.Context) *ProxySession {
 		}
 	}
 
-	return &ProxySession{
-		ID:     fmt.Sprint(sessionData["id"]),
-		UserID: fmt.Sprint(sessionData["user_id"]),
-		Email:  fmt.Sprint(sessionData["email"]),
-		Name:   fmt.Sprint(sessionData["name"]),
-		Roles:  roles,
+	var lastActive time.Time
+	if la, ok := sessionData["last_active"].(float64); ok && la > 0 {
+		lastActive = time.Unix(int64(la), 0)
 	}
+
+	return &ProxySession{
+		ID:           fmt.Sprint(sessionData["id"]),
+		UserID:       fmt.Sprint(sessionData["user_id"]),
+		Email:        fmt.Sprint(sessionData["email"]),
+		Name:         fmt.Sprint(sessionData["name"]),
+		Roles:        roles,
+		LastActiveAt: lastActive,
+	}
+}
+
+// isIdleExpired reports whether a cookie-backed proxy session has been idle
+// longer than the route's idle_timeout. Returns false when the route sets no
+// idle_timeout (<= 0) or the session carries no last-active stamp (older
+// sessions predating this field ride their absolute expiry). Pure + unit-tested.
+func isIdleExpired(route *ProxyRoute, session *ProxySession, now time.Time) bool {
+	if route == nil || route.IdleTimeout <= 0 || session == nil || session.LastActiveAt.IsZero() {
+		return false
+	}
+	return now.Sub(session.LastActiveAt) > time.Duration(route.IdleTimeout)*time.Second
 }
 
 func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
@@ -2517,10 +2546,62 @@ func (s *Service) getSessionFromBearer(c *gin.Context) *ProxySession {
 	}
 }
 
-func (s *Service) updateSessionActivity(ctx context.Context, session *ProxySession) {
+func (s *Service) updateSessionActivity(c *gin.Context, session *ProxySession) {
+	ctx := c.Request.Context()
+
+	// Throttle: the blob's last_active only needs freshness within a fraction of
+	// idle_timeout, so skip the per-request heartbeat if it was stamped within the
+	// last 30s. Keeps the hot path from doing an extra DB write + three Redis ops
+	// on every proxied request; the idle window still slides with <=30s lag.
+	// (session.LastActiveAt was just read from the blob by getSessionFromRequest;
+	// bearer sessions have it zero, so they skip the throttle and no-op below on
+	// the empty id / absent cookie.)
+	if !session.LastActiveAt.IsZero() && time.Since(session.LastActiveAt) < 30*time.Second {
+		return
+	}
+
 	s.db.Pool.Exec(orgctx.WithBypassRLS(ctx),
 		//orgscope:ignore proxy data-plane activity heartbeat; updates the active session by its primary key on every proxied request
 		"UPDATE proxy_sessions SET last_active_at=NOW() WHERE id=$1", session.ID)
+
+	// Slide the idle window: refresh the Redis blob's last_active, preserving the
+	// remaining absolute TTL so absolute expiry (the "expires" field) still applies
+	// independently. Best-effort — a failure just means the next request re-reads a
+	// slightly stale last_active.
+	cookie, err := c.Cookie("_openidx_proxy_session")
+	if err != nil || cookie == "" {
+		return
+	}
+	key := "proxy_session:" + hashToken(cookie)
+	data, err := s.redis.Client.Get(ctx, key).Bytes()
+	if err != nil {
+		return
+	}
+	var m map[string]interface{}
+	if json.Unmarshal(data, &m) != nil {
+		return
+	}
+	m["last_active"] = time.Now().Unix()
+	ttl := s.redis.Client.TTL(ctx, key).Val()
+	if ttl <= 0 {
+		ttl = 12 * time.Hour
+	}
+	if nb, mErr := json.Marshal(m); mErr == nil {
+		s.redis.Client.Set(ctx, key, nb, ttl)
+	}
+}
+
+// revokeIdleProxySession tears down an idle-expired cookie session: it deletes
+// the Redis blob and marks the proxy_sessions row revoked (both best-effort).
+func (s *Service) revokeIdleProxySession(c *gin.Context, session *ProxySession) {
+	if cookie, err := c.Cookie("_openidx_proxy_session"); err == nil && cookie != "" {
+		s.redis.Client.Del(c.Request.Context(), "proxy_session:"+hashToken(cookie))
+	}
+	if session != nil && session.ID != "" {
+		s.db.Pool.Exec(orgctx.WithBypassRLS(c.Request.Context()),
+			//orgscope:ignore data-plane revoke of the idle session by its primary key
+			"UPDATE proxy_sessions SET revoked=true WHERE id=$1", session.ID)
+	}
 }
 
 func (s *Service) evaluatePolicies(c *gin.Context, route *ProxyRoute, session *ProxySession) (bool, error) {

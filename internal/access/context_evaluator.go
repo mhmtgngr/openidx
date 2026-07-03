@@ -447,6 +447,16 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 
 	// Authenticate
 	session := s.getSessionFromRequest(c)
+	// Enforce the route's idle timeout on the cookie session (bearer tokens carry
+	// their own expiry). Mirrors handleProxy.
+	if session != nil && isIdleExpired(route, session, time.Now()) {
+		s.revokeIdleProxySession(c, session)
+		s.logAuditEvent(c, "proxy_session_idle_expired", route.ID, "proxy_route", map[string]interface{}{
+			"user_id":      session.UserID,
+			"idle_timeout": route.IdleTimeout,
+		})
+		session = nil
+	}
 	if session == nil {
 		session = s.getSessionFromBearer(c)
 	}
@@ -524,8 +534,8 @@ func (s *Service) handleAuthDecide(c *gin.Context) {
 		}
 	}
 
-	// Update session activity
-	s.updateSessionActivity(c.Request.Context(), session)
+	// Update session activity (also slides the idle-timeout window)
+	s.updateSessionActivity(c, session)
 
 	// Set identity headers for the upstream
 	c.Header("X-Forwarded-User", session.UserID)
