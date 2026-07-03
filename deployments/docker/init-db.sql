@@ -1745,7 +1745,7 @@ CREATE INDEX IF NOT EXISTS idx_unified_audit_created ON unified_audit_events(cre
 CREATE TABLE IF NOT EXISTS guacamole_connection_pool (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     connection_id VARCHAR(255) NOT NULL,
-    token VARCHAR(500) NOT NULL,
+    token TEXT NOT NULL, -- encrypted at rest (secretcrypt, tag encv1:); widened from VARCHAR(500) by migration v67
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_used_at TIMESTAMPTZ DEFAULT NOW(),
