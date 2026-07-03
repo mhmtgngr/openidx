@@ -446,5 +446,12 @@ func allMigrations() []*Migration {
 			UpSQL:       reconcileMissingTablesUp,
 			DownSQL:     reconcileMissingTablesDown,
 		},
+		{
+			Version:     63,
+			Name:        "column_drift_reconcile",
+			Description: "Reconcile init-db<->migrations COLUMN drift (paired with the new column-aware TestInitDBColumnParity). Fixes ziti_certificates (swaps the stale migration schema {cert_data NOT NULL, private_key_encrypted, ca_chain, expires_at, identity_id} for the code/init-db schema {cert_type, subject, issuer, serial_number, fingerprint, not_before, not_after, auto_renew, renewal_threshold_days, pem_data, status, associated_identity_id} + indexes) and adds columns init-db.sql adds via ALTER but no migration did, across application_sso_settings, directory_sync_state, ip_threat_list, oauth_clients, user_roles, user_sessions, users, ziti_service_policies. All idempotent; init-db.sql already defines these so it is unchanged.",
+			UpSQL:       columnDriftReconcileUp,
+			DownSQL:     columnDriftReconcileDown,
+		},
 	}
 }
