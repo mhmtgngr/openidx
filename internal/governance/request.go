@@ -163,9 +163,9 @@ func (s *RequestService) SubmitRequest(ctx context.Context, requesterID, request
 
 	// Store approval chain configuration
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO request_approval_chains (request_id, steps, escalate_after_hours, escalate_to, escalation_due_at, current_step, escalation_notified)
-		 VALUES ($1, $2, $3, $4, $5, 0, false)`,
-		id, chainJSON, escalateHours, escalationJSON, escalationDueAt)
+		`INSERT INTO request_approval_chains (request_id, steps, escalate_after_hours, escalate_to, escalation_due_at, current_step, escalation_notified, org_id)
+		 VALUES ($1, $2, $3, $4, $5, 0, false, $6)`,
+		id, chainJSON, escalateHours, escalationJSON, escalationDueAt, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to store approval chain",
 			zap.String("request_id", id),
