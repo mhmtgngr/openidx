@@ -3671,6 +3671,71 @@ CREATE INDEX IF NOT EXISTS idx_rac_escalation ON request_approval_chains(escalat
     WHERE escalation_notified = false;
 
 -- ============================================================================
+-- Reconcile referenced-but-uncreated tables (mirrors migration v62). Referenced
+-- by internal/admin (settings.go, continuous_auth.go, ibdr.go) but previously
+-- created nowhere. Not RLS-belted (code does not org-scope them). Grants come
+-- from the global GRANT ... ON ALL TABLES at the end of this file.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS admin_console_settings (
+    key        TEXT PRIMARY KEY,
+    value      JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auth_contexts (
+    session_id         UUID PRIMARY KEY,
+    user_id            UUID,
+    auth_time          TIMESTAMPTZ,
+    auth_method        TEXT,
+    auth_strength      TEXT,
+    current_risk_score DOUBLE PRECISION,
+    device_fingerprint TEXT,
+    ip_address         TEXT,
+    location           TEXT,
+    user_agent         TEXT,
+    metadata           JSONB NOT NULL DEFAULT '{}',
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS breach_incidents (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    type              TEXT,
+    severity          TEXT,
+    status            TEXT,
+    title             TEXT,
+    description       TEXT,
+    affected_user_ids TEXT[],
+    affected_sessions TEXT[],
+    detection_method  TEXT,
+    first_detected_at TIMESTAMPTZ,
+    last_activity_at  TIMESTAMPTZ,
+    confidence        DOUBLE PRECISION,
+    indicators        JSONB,
+    quarantine_action TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_breach_incidents_status ON breach_incidents(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS breach_alerts (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    incident_id  UUID REFERENCES breach_incidents(id) ON DELETE CASCADE,
+    type         TEXT,
+    severity     TEXT,
+    message      TEXT,
+    user_id      UUID,
+    session_id   TEXT,
+    ip_address   TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    acknowledged BOOLEAN NOT NULL DEFAULT false,
+    acked_at     TIMESTAMPTZ,
+    acked_by     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_breach_alerts_incident ON breach_alerts(incident_id);
+CREATE INDEX IF NOT EXISTS idx_breach_alerts_ack      ON breach_alerts(acknowledged, created_at DESC);
+
+-- ============================================================================
 -- PAM M3: session injection columns + session tables (mirrors migration v59).
 -- Adds credential-injection / approval / recording columns to guacamole_connections
 -- (which is defined earlier in this file) and creates two new org-scoped tables:
