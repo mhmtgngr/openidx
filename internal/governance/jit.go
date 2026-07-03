@@ -110,10 +110,10 @@ func (s *JITService) RequestElevation(ctx context.Context, req JITRequest) (*JIT
 	expiresAt := now.Add(req.Duration)
 
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO jit_grants (id, user_id, role_id, role_name, granted_by, justification, duration, expires_at, created_at, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')`,
+		`INSERT INTO jit_grants (id, user_id, role_id, role_name, granted_by, justification, duration, expires_at, created_at, status, org_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10)`,
 		id, req.UserID, req.RoleID, roleName, req.RequestedBy, req.Justification,
-		req.Duration.String(), expiresAt, now)
+		req.Duration.String(), expiresAt, now, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create JIT grant",
 			zap.String("user_id", req.UserID),

@@ -87,6 +87,8 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 		`GRANT SELECT ON proxy_routes TO ` + roleName,
 		`GRANT SELECT ON attestation_campaigns TO ` + roleName,
 		`GRANT SELECT ON attestation_items TO ` + roleName,
+		`GRANT SELECT ON jit_grants TO ` + roleName,
+		`GRANT SELECT ON request_approval_chains TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
@@ -157,6 +159,21 @@ func bypassExec(t *testing.T, db *pgxpool.Pool, sql string, args ...interface{})
 		return
 	}
 	_ = tx.Commit(ctx)
+}
+
+// bypassQueryRow runs an INSERT ... RETURNING (or any single-row query) under
+// app.bypass_rls and scans the first column into dest. Used to seed FK parents on
+// FORCE-RLS tables and capture their ids.
+func bypassQueryRow(t *testing.T, db *pgxpool.Pool, dest interface{}, sql string, args ...interface{}) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `select set_config('app.bypass_rls', 'on', true)`)
+	require.NoError(t, err)
+	require.NoError(t, tx.QueryRow(ctx, sql, args...).Scan(dest))
+	require.NoError(t, tx.Commit(ctx))
 }
 
 // TestCrossOrgIsolation verifies the v1.7.0 enforcement guarantee: a request
@@ -549,4 +566,63 @@ func TestCrossOrgSpoofing(t *testing.T) {
 		map[string]string{"X-Org-Slug": "spoof-b-" + suffix})
 	assert.NotEqual(t, 200, status,
 		"forged X-Org-Slug through the gateway must be stripped — org B's user must not read 200")
+}
+
+// TestRLSBeltJITAndApprovalChains is the W2.10 belt gate: jit_grants and
+// request_approval_chains (given org_id + the FORCE-RLS belt by migration v64)
+// are invisible cross-org. Both need FK parents, so they can't ride the generic
+// TestRLSBeltTables loop; this seeds the parents under bypass and asserts an
+// A-scoped NOSUPERUSER session sees zero of org B's rows while bypass sees them.
+func TestRLSBeltJITAndApprovalChains(t *testing.T) {
+	admin := integrationDB(t)
+	defer admin.Close()
+	requireForceRLS(t, admin, "jit_grants")
+	requireForceRLS(t, admin, "request_approval_chains")
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	orgA := seedOrg(t, admin, "jitbelt-a-"+suffix)
+	orgB := seedOrg(t, admin, "jitbelt-b-"+suffix)
+	userB := seedUserInOrg(t, admin, orgB, "jitbelt-u-"+suffix, "jitbelt-"+suffix+"@example.test")
+
+	// Seed org B's FK parents + rows under bypass (FORCE RLS would reject an
+	// unset-org WITH CHECK on the org-B inserts).
+	var roleB, reqB string
+	bypassQueryRow(t, admin, &roleB,
+		`INSERT INTO roles (name, org_id) VALUES ($1,$2) RETURNING id`, "jitbelt-role-"+suffix, orgB)
+	bypassExec(t, admin,
+		`INSERT INTO jit_grants (org_id, user_id, role_id, role_name, justification, duration, expires_at)
+		 VALUES ($1,$2,$3,'jitbelt-role','t',' 1h', NOW() + interval '1 hour')`, orgB, userB, roleB)
+	bypassQueryRow(t, admin, &reqB,
+		`INSERT INTO access_requests (requester_id, resource_type, resource_id, resource_name, status, org_id)
+		 VALUES ($1,'role',gen_random_uuid(),'jitbelt','pending',$2) RETURNING id`, userB, orgB)
+	bypassExec(t, admin,
+		`INSERT INTO request_approval_chains (org_id, request_id, escalation_due_at)
+		 VALUES ($1,$2, NOW() + interval '1 day')`, orgB, reqB)
+	t.Cleanup(func() {
+		bypassExec(t, admin, "DELETE FROM request_approval_chains WHERE org_id=$1", orgB)
+		bypassExec(t, admin, "DELETE FROM jit_grants WHERE org_id=$1", orgB)
+		bypassExec(t, admin, "DELETE FROM access_requests WHERE org_id=$1", orgB)
+		bypassExec(t, admin, "DELETE FROM roles WHERE id=$1", roleB)
+		bypassExec(t, admin, "DELETE FROM users WHERE id=$1", userB)
+		bypassExec(t, admin, "DELETE FROM organizations WHERE id IN ($1,$2)", orgA, orgB)
+	})
+
+	pool := rlsRolePool(t, admin)
+	defer pool.Close()
+	conn, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn.Release()
+
+	countB := func(table, bypass string) int {
+		_, e := conn.Exec(ctx, `select set_config('app.org_id',$1,false), set_config('app.bypass_rls',$2,false)`, orgA, bypass)
+		require.NoError(t, e)
+		var n int
+		require.NoError(t, conn.QueryRow(ctx, "SELECT count(*) FROM "+table+" WHERE org_id = $1", orgB).Scan(&n))
+		return n
+	}
+	for _, table := range []string{"jit_grants", "request_approval_chains"} {
+		assert.Equal(t, 0, countB(table, ""), "A-scoped session must not see org B rows in %s", table)
+		assert.Greater(t, countB(table, "on"), 0, "bypass must see org B rows in %s", table)
+	}
 }

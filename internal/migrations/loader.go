@@ -453,5 +453,12 @@ func allMigrations() []*Migration {
 			UpSQL:       columnDriftReconcileUp,
 			DownSQL:     columnDriftReconcileDown,
 		},
+		{
+			Version:     64,
+			Name:        "jit_approval_org_rls",
+			Description: "Defense-in-depth: adds org_id (backfilled from the user/parent-request, NOT NULL, FK) to jit_grants and request_approval_chains and places both under the v37 FORCE-RLS belt (USING + WITH CHECK). v58 created them belt-less (org-scoped only via FKs/parent); the cross-org background sweeps already run under WithBypassRLS so the belt doesn't break them. Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       jitApprovalOrgRLSUp,
+			DownSQL:     jitApprovalOrgRLSDown,
+		},
 	}
 }

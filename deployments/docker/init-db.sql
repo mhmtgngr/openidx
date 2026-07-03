@@ -3641,6 +3641,7 @@ END $$;
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS jit_grants (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_id       UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     role_name     VARCHAR(255) NOT NULL,
@@ -3656,9 +3657,11 @@ CREATE TABLE IF NOT EXISTS jit_grants (
 );
 CREATE INDEX IF NOT EXISTS idx_jit_grants_user_role ON jit_grants(user_id, role_id, status);
 CREATE INDEX IF NOT EXISTS idx_jit_grants_expiry    ON jit_grants(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_jit_grants_org       ON jit_grants(org_id);
 
 CREATE TABLE IF NOT EXISTS request_approval_chains (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id               UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     request_id           UUID NOT NULL UNIQUE REFERENCES access_requests(id) ON DELETE CASCADE,
     steps                JSONB NOT NULL DEFAULT '[]',
     escalate_after_hours INTEGER NOT NULL DEFAULT 24,
@@ -3669,6 +3672,28 @@ CREATE TABLE IF NOT EXISTS request_approval_chains (
 );
 CREATE INDEX IF NOT EXISTS idx_rac_escalation ON request_approval_chains(escalation_due_at)
     WHERE escalation_notified = false;
+CREATE INDEX IF NOT EXISTS idx_request_approval_chains_org ON request_approval_chains(org_id);
+
+-- v37-style RLS belt for jit_grants + request_approval_chains (mirrors migration v64).
+-- USING + WITH CHECK so reads AND writes are org-scoped. Background sweeps that scan
+-- these cross-org run under app.bypass_rls. Idempotent.
+DROP POLICY IF EXISTS pol_jit_grants_org_scope ON jit_grants;
+CREATE POLICY pol_jit_grants_org_scope ON jit_grants
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE jit_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jit_grants FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pol_request_approval_chains_org_scope ON request_approval_chains;
+CREATE POLICY pol_request_approval_chains_org_scope ON request_approval_chains
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE request_approval_chains ENABLE ROW LEVEL SECURITY;
+ALTER TABLE request_approval_chains FORCE  ROW LEVEL SECURITY;
 
 -- ============================================================================
 -- Reconcile referenced-but-uncreated tables (mirrors migration v62). Referenced
