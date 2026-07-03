@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-03
+
 Readiness-finalization pass across three workstreams: make the shipped PAM usable from the
 admin console (W1), close correctness/tenant-isolation gaps (W2), and light production
 hardening (W3).
@@ -1263,7 +1265,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/mhmtgngr/openidx/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mhmtgngr/openidx/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mhmtgngr/openidx/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/mhmtgngr/openidx/compare/v1.8.1...v1.8.2
