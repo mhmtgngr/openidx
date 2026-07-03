@@ -64,6 +64,30 @@ func TestLegacyPlaintextPassthrough(t *testing.T) {
 	}
 }
 
+func TestNoopPassthrough(t *testing.T) {
+	c := NewNoop()
+	// Encrypt is a no-op: no tag, value unchanged (secrets stay plaintext at rest).
+	enc, err := c.Encrypt("secret")
+	if err != nil {
+		t.Fatalf("noop encrypt: %v", err)
+	}
+	if enc != "secret" || IsEncrypted(enc) {
+		t.Fatalf("noop Encrypt should return the plaintext untagged, got %q", enc)
+	}
+	// Decrypt returns its input unchanged, including a tagged value it can't open.
+	if got, _ := c.Decrypt("secret"); got != "secret" {
+		t.Fatalf("noop Decrypt changed value: %q", got)
+	}
+	if got, _ := c.Decrypt("encv1:whatever"); got != "encv1:whatever" {
+		t.Fatalf("noop Decrypt should pass tagged value through: %q", got)
+	}
+	// A real cipher can still read plaintext written under noop (untagged passthrough).
+	real, _ := New(testKey)
+	if got, err := real.Decrypt(enc); err != nil || got != "secret" {
+		t.Fatalf("real Decrypt of noop-written value = %q,%v; want secret,nil", got, err)
+	}
+}
+
 func TestNonDeterministic(t *testing.T) {
 	c, _ := New(testKey)
 	a, _ := c.Encrypt("same")

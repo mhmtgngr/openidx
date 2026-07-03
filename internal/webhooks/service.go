@@ -22,6 +22,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
 	"github.com/openidx/openidx/internal/common/resilience"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // Webhook event type constants
@@ -73,10 +74,14 @@ type Service struct {
 	redis  *database.RedisClient
 	logger *zap.Logger
 	client *resilience.ResilientHTTPClient
+	// cipher encrypts the per-subscription HMAC signing secret at rest. Reads are
+	// prefix-aware (legacy plaintext rows pass through) so rollout needs no flag day.
+	cipher *secretcrypt.Cipher
 }
 
-// NewService creates a new webhook service
-func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *zap.Logger) *Service {
+// NewService creates a new webhook service. cipher encrypts subscription signing
+// secrets at rest (built from ENCRYPTION_KEY by the caller).
+func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *zap.Logger, cipher *secretcrypt.Cipher) *Service {
 	rawClient := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -91,6 +96,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, logger *za
 		redis:  redis,
 		logger: logger,
 		client: resilience.NewResilientHTTPClient(rawClient, cb),
+		cipher: cipher,
 	}
 }
 
@@ -113,11 +119,18 @@ func (s *Service) CreateSubscription(ctx context.Context, name, url, secret stri
 		UpdatedAt: time.Now().UTC(),
 	}
 
+	// Encrypt the signing secret at rest; the returned struct keeps the plaintext
+	// (the caller supplied it and may echo it once on creation).
+	encSecret, err := s.cipher.Encrypt(secret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt webhook secret: %w", err)
+	}
+
 	query := `INSERT INTO webhook_subscriptions (id, name, url, secret, events, status, created_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5::TEXT[], $6, $7, $8, $9)`
 
-	_, err := s.db.Pool.Exec(ctx, query,
-		sub.ID, sub.Name, sub.URL, sub.Secret, sub.Events,
+	_, err = s.db.Pool.Exec(ctx, query,
+		sub.ID, sub.Name, sub.URL, encSecret, sub.Events,
 		sub.Status, sub.CreatedBy, sub.CreatedAt, sub.UpdatedAt,
 	)
 	if err != nil {
@@ -154,6 +167,9 @@ func (s *Service) ListSubscriptions(ctx context.Context) ([]Subscription, error)
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan webhook subscription: %w", err)
 		}
+		if sub.Secret, err = s.cipher.Decrypt(sub.Secret); err != nil {
+			return nil, fmt.Errorf("failed to decrypt webhook secret: %w", err)
+		}
 		subscriptions = append(subscriptions, sub)
 	}
 
@@ -179,6 +195,10 @@ func (s *Service) GetSubscription(ctx context.Context, id string) (*Subscription
 			return nil, fmt.Errorf("webhook subscription not found: %s", id)
 		}
 		return nil, fmt.Errorf("failed to get webhook subscription: %w", err)
+	}
+
+	if sub.Secret, err = s.cipher.Decrypt(sub.Secret); err != nil {
+		return nil, fmt.Errorf("failed to decrypt webhook secret: %w", err)
 	}
 
 	return &sub, nil
@@ -341,6 +361,9 @@ func (s *Service) deliverWebhook(ctx context.Context, deliveryID string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to query delivery: %w", err)
+	}
+	if subSecret, err = s.cipher.Decrypt(subSecret); err != nil {
+		return fmt.Errorf("failed to decrypt webhook secret: %w", err)
 	}
 
 	// Build the HTTP request

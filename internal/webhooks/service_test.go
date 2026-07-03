@@ -22,8 +22,16 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/testutil"
 )
+
+// testCipher returns a secretcrypt.Cipher with a fixed 32-byte test key for
+// wiring the webhook service in tests (the key is valid, so New never errors).
+func testCipher() *secretcrypt.Cipher {
+	c, _ := secretcrypt.New("0123456789abcdef0123456789abcdef")
+	return c
+}
 
 // testContext holds test dependencies
 type testContext struct {
@@ -97,7 +105,7 @@ func setupTest(t *testing.T) *testContext {
 
 	// Create service - convert mock Redis client to database.RedisClient wrapper
 	redisClient := &database.RedisClient{Client: mockRedis.Client()}
-	service := NewService(db, redisClient, logger)
+	service := NewService(db, redisClient, logger, testCipher())
 
 	teardown := func() {
 		if server != nil {
@@ -1514,7 +1522,7 @@ func TestNewService(t *testing.T) {
 		redisClient := &database.RedisClient{Client: mockRedis.Client()}
 
 		// Service can be created with nil DB (for limited functionality)
-		service := NewService(nil, redisClient, logger)
+		service := NewService(nil, redisClient, logger, testCipher())
 
 		assert.NotNil(t, service)
 		assert.Nil(t, service.db)
@@ -1533,7 +1541,7 @@ func TestNewService(t *testing.T) {
 		redisClient := &database.RedisClient{Client: mockRedis.Client()}
 
 		// Service can be created with all dependencies
-		service := NewService(nil, redisClient, logger)
+		service := NewService(nil, redisClient, logger, testCipher())
 
 		assert.NotNil(t, service)
 		assert.NotNil(t, service.client)
@@ -2016,7 +2024,7 @@ func TestWebhookTimeout(t *testing.T) {
 		defer mockRedis.Shutdown()
 
 		redisClient := &database.RedisClient{Client: mockRedis.Client()}
-		service := NewService(nil, redisClient, logger)
+		service := NewService(nil, redisClient, logger, testCipher())
 
 		// The service creates an HTTP client with a 10-second timeout
 		// We can't directly access the timeout, but we can verify the client exists
@@ -2039,7 +2047,7 @@ func TestPublishErrors(t *testing.T) {
 	redisClient := &database.RedisClient{Client: mockRedis.Client()}
 
 	t.Run("publish with unmarshalable payload", func(t *testing.T) {
-		service := NewService(nil, redisClient, logger)
+		service := NewService(nil, redisClient, logger, testCipher())
 
 		// Channels cannot be marshaled to JSON
 		unmarshalable := make(chan int)
@@ -2050,7 +2058,7 @@ func TestPublishErrors(t *testing.T) {
 	})
 
 	t.Run("publish with nil database causes panic", func(t *testing.T) {
-		service := NewService(nil, redisClient, logger)
+		service := NewService(nil, redisClient, logger, testCipher())
 
 		// Valid payload but nil database will cause a panic (not an error)
 		// The code doesn't handle nil db gracefully
@@ -2073,7 +2081,7 @@ func TestServiceWithNilDatabase(t *testing.T) {
 	defer mockRedis.Shutdown()
 
 	redisClient := &database.RedisClient{Client: mockRedis.Client()}
-	service := NewService(nil, redisClient, logger)
+	service := NewService(nil, redisClient, logger, testCipher())
 
 	t.Run("create subscription with nil database panics", func(t *testing.T) {
 		assert.Panics(t, func() {

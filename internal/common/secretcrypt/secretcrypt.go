@@ -24,19 +24,32 @@ import (
 // prefix is encrypted; anything else is treated as legacy plaintext.
 const tag = "encv1:"
 
-// Cipher encrypts/decrypts secret column values with AES-256-GCM.
+// Cipher encrypts/decrypts secret column values with AES-256-GCM. A Cipher in
+// noop mode (NewNoop) is a passthrough — used when no usable ENCRYPTION_KEY is
+// configured, so secrets remain plaintext at rest (no worse than before this
+// package) rather than crashing the service.
 type Cipher struct {
-	key []byte
+	key  []byte
+	noop bool
 }
 
 // New returns a Cipher for the given key, which must be exactly 32 bytes
-// (AES-256). Fail-closed: an unusable key is an error, never silent plaintext.
+// (AES-256). An unusable key is an error; callers decide whether to fail-closed
+// or fall back to NewNoop with a warning.
 func New(key string) (*Cipher, error) {
 	if len(key) != 32 {
 		return nil, fmt.Errorf("secretcrypt: key must be 32 bytes for AES-256, got %d", len(key))
 	}
 	return &Cipher{key: []byte(key)}, nil
 }
+
+// NewNoop returns a passthrough Cipher for environments without a usable
+// ENCRYPTION_KEY: Encrypt and Decrypt return their input unchanged, so secrets
+// stay plaintext at rest exactly as they were before encryption-at-rest existed.
+// Callers should log a warning. If a real key is later configured, its Encrypt
+// protects new writes and its Decrypt still reads these untagged legacy rows via
+// the plaintext passthrough.
+func NewNoop() *Cipher { return &Cipher{noop: true} }
 
 // IsEncrypted reports whether stored carries this package's version tag (i.e. was
 // produced by Encrypt) rather than being a legacy plaintext value.
@@ -47,8 +60,8 @@ func IsEncrypted(stored string) bool {
 // Encrypt returns the tagged, base64-encoded AES-256-GCM ciphertext of plaintext
 // (nonce prepended). An empty plaintext returns "" unchanged (nothing to protect).
 func (c *Cipher) Encrypt(plaintext string) (string, error) {
-	if plaintext == "" {
-		return "", nil
+	if c.noop || plaintext == "" {
+		return plaintext, nil
 	}
 	gcm, err := c.gcm()
 	if err != nil {
@@ -67,8 +80,8 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 // is what lets reads work while rows are being migrated. An empty string returns
 // "" unchanged.
 func (c *Cipher) Decrypt(stored string) (string, error) {
-	if stored == "" {
-		return "", nil
+	if c.noop || stored == "" {
+		return stored, nil
 	}
 	if !IsEncrypted(stored) {
 		return stored, nil // legacy plaintext passthrough

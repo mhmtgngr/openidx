@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	"github.com/openidx/openidx/internal/directory"
@@ -170,7 +171,12 @@ func main() {
 	emailService := email.NewService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, redis, log)
 
 	// Initialize webhook service
-	webhookService := webhooks.NewService(db, redis, log)
+	webhookSecretCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		webhookSecretCipher = secretcrypt.NewNoop()
+	}
+	webhookService := webhooks.NewService(db, redis, log, webhookSecretCipher)
 
 	// Initialize risk/anomaly service
 	riskService := risk.NewService(db, redis, log)
