@@ -132,6 +132,12 @@ func (s *Service) handleCreateAttestationCampaign(c *gin.Context) {
 		return
 	}
 
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	userID, _ := c.Get("user_id")
 	userIDStr, _ := userID.(string)
 
@@ -152,10 +158,10 @@ func (s *Service) handleCreateAttestationCampaign(c *gin.Context) {
 
 	var id string
 	err := s.db.Pool.QueryRow(c.Request.Context(),
-		`INSERT INTO attestation_campaigns (name, description, campaign_type, scope, reviewer_strategy,
+		`INSERT INTO attestation_campaigns (org_id, name, description, campaign_type, scope, reviewer_strategy,
 		  due_date, reminder_days, escalation_after_days, auto_revoke_on_expiry, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-		req.Name, req.Description, req.CampaignType, scope, req.ReviewerStrategy,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+		org.ID, req.Name, req.Description, req.CampaignType, scope, req.ReviewerStrategy,
 		req.DueDate, reminderDays, req.EscalationAfterDays, req.AutoRevokeOnExpiry, nilIfEmpty(userIDStr),
 	).Scan(&id)
 	if err != nil {
@@ -343,8 +349,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &roleID, &roleName); err == nil {
 					// Use admin as default reviewer
 					_, err := s.db.Pool.Exec(ctx,
-						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'role', $3, $4)`,
+						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'role', $3, $4)`,
 						ac.ID, userID, roleID, roleName, org.ID)
 					if err == nil {
 						count++
@@ -367,8 +373,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				var userID, username, appID, appName string
 				if err := rows.Scan(&userID, &username, &appID, &appName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
-						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'application', $3, $4)`,
+						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'application', $3, $4)`,
 						ac.ID, userID, appID, appName, org.ID)
 					if err == nil {
 						count++
@@ -391,8 +397,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				var userID, username, groupID, groupName string
 				if err := rows.Scan(&userID, &username, &groupID, &groupName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
-						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'group', $3, $4)`,
+						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'group', $3, $4)`,
 						ac.ID, userID, groupID, groupName, org.ID)
 					if err == nil {
 						count++
@@ -415,8 +421,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				var userID, username, roleID, roleName string
 				if err := rows.Scan(&userID, &username, &roleID, &roleName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
-						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'entitlement', $3, $4)`,
+						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'entitlement', $3, $4)`,
 						ac.ID, userID, roleID, pf("Role: %s", roleName), org.ID)
 					if err == nil {
 						count++
@@ -438,8 +444,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				var grantID, secretName, principalID, actions string
 				if err := rows.Scan(&grantID, &secretName, &principalID, &actions); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
-						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1),
+						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1),
 						         NULLIF($2, '')::uuid, 'vault_access', $3::uuid, $4)`,
 						ac.ID, principalID, grantID, pf("%s:%s", secretName, actions), org.ID)
 					if err == nil {
@@ -462,8 +468,8 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				var policyID, secretName, connectorType string
 				if err := rows.Scan(&policyID, &secretName, &connectorType); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
-						`INSERT INTO attestation_items (campaign_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, (SELECT id FROM users WHERE username = 'admin' AND org_id = $4 LIMIT 1),
+						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
+						 VALUES ($1, $4, (SELECT id FROM users WHERE username = 'admin' AND org_id = $4 LIMIT 1),
 						         NULL, 'rotation_policy', $2::uuid, $3)`,
 						ac.ID, policyID, pf("%s:%s", secretName, connectorType), org.ID)
 					if err == nil {

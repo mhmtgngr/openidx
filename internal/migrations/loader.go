@@ -432,5 +432,12 @@ func allMigrations() []*Migration {
 			UpSQL:       guacTranscriptUp,
 			DownSQL:     guacTranscriptDown,
 		},
+		{
+			Version:     61,
+			Name:        "attestation_org_isolation",
+			Description: "Attestation tenant isolation: adds org_id (backfilled, NOT NULL, FK) to attestation_campaigns and attestation_items — created by v54 without org_id and queried without an org filter, a cross-org read/write exposure — and places both under the v37 FORCE-RLS belt (USING + WITH CHECK). Idempotent; mirrored into init-db.sql so TestInitDBParity stays green.",
+			UpSQL:       attestationOrgIsolationUp,
+			DownSQL:     attestationOrgIsolationDown,
+		},
 	}
 }

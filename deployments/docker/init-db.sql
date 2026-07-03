@@ -3011,6 +3011,7 @@ CREATE INDEX IF NOT EXISTS idx_lifecycle_policy_exec ON lifecycle_policy_executi
 -- Attestation campaigns
 CREATE TABLE IF NOT EXISTS attestation_campaigns (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     campaign_type VARCHAR(50) NOT NULL,
@@ -3027,10 +3028,12 @@ CREATE TABLE IF NOT EXISTS attestation_campaigns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_attestation_campaigns_status ON attestation_campaigns(status);
+CREATE INDEX IF NOT EXISTS idx_attestation_campaigns_org ON attestation_campaigns(org_id);
 
 -- Attestation campaign items
 CREATE TABLE IF NOT EXISTS attestation_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     campaign_id UUID NOT NULL REFERENCES attestation_campaigns(id) ON DELETE CASCADE,
     reviewer_id UUID REFERENCES users(id),
     user_id UUID REFERENCES users(id),
@@ -3048,6 +3051,34 @@ CREATE TABLE IF NOT EXISTS attestation_items (
 
 CREATE INDEX IF NOT EXISTS idx_attestation_items_campaign ON attestation_items(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_attestation_items_reviewer ON attestation_items(reviewer_id, decision);
+CREATE INDEX IF NOT EXISTS idx_attestation_items_org ON attestation_items(org_id);
+
+-- v37-style RLS belt for the attestation tables (mirrors migration v61). USING +
+-- WITH CHECK so reads AND writes are org-scoped. Idempotent.
+DROP POLICY IF EXISTS pol_attestation_campaigns_org_scope ON attestation_campaigns;
+CREATE POLICY pol_attestation_campaigns_org_scope ON attestation_campaigns
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE attestation_campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attestation_campaigns FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS pol_attestation_items_org_scope ON attestation_items;
+CREATE POLICY pol_attestation_items_org_scope ON attestation_items
+  USING (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid)
+  WITH CHECK (current_setting('app.bypass_rls', true) = 'on'
+         OR org_id = NULLIF(current_setting('app.org_id', true), '')::uuid);
+ALTER TABLE attestation_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attestation_items FORCE  ROW LEVEL SECURITY;
+
+-- Grant DML to the runtime app role for attestation tables when present (mirrors migration v61).
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'openidx_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON attestation_campaigns, attestation_items TO openidx_app;
+  END IF;
+END $$;
 
 -- Audit retention policies
 CREATE TABLE IF NOT EXISTS audit_retention_policies (
