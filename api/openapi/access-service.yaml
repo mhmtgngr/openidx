@@ -910,6 +910,182 @@ paths:
           $ref: '#/components/responses/BadRequest'
 
   # --- Guacamole ---
+  /api/v1/access/guacamole/session-requests:
+    get:
+      tags: [Guacamole]
+      summary: List Guacamole privileged session requests
+      operationId: listGuacSessionRequests
+      responses:
+        '200':
+          description: List of session requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GuacSessionRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/guacamole/session-requests/{id}/approve:
+    post:
+      tags: [Guacamole]
+      summary: Approve a Guacamole session request
+      operationId: approveGuacSessionRequest
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Request approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                  status:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/guacamole/session-requests/{id}/deny:
+    post:
+      tags: [Guacamole]
+      summary: Deny a Guacamole session request
+      operationId: denyGuacSessionRequest
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Request denied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                  status:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/guacamole/sessions:
+    get:
+      tags: [Guacamole]
+      summary: List active Guacamole sessions
+      operationId: listGuacActiveSessions
+      responses:
+        '200':
+          description: List of active Guacamole sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GuacActiveSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Guacamole not configured
+
+  /api/v1/access/guacamole/sessions/{id}/terminate:
+    post:
+      tags: [Guacamole]
+      summary: Terminate an active Guacamole session
+      operationId: terminateGuacSession
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Session terminated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  active_conn_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/guacamole/sessions/{id}/share:
+    post:
+      tags: [Guacamole]
+      summary: Generate a share link for an active Guacamole session
+      operationId: shareGuacSession
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Share URL generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  share_url:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          description: Guacamole server does not support session sharing
+
+  /api/v1/access/guacamole/session-history:
+    get:
+      tags: [Guacamole]
+      summary: List Guacamole session history
+      operationId: listGuacSessionHistory
+      responses:
+        '200':
+          description: Session history records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GuacSessionRow'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/access/guacamole/sessions/{id}/transcript:
+    get:
+      tags: [Guacamole]
+      summary: Download session transcript
+      operationId: getGuacSessionTranscript
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Transcript content
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/access/guacamole/connections:
     get:
       tags: [Guacamole]
@@ -1623,6 +1799,81 @@ components:
           type: array
           items:
             type: string
+
+    # --- Guacamole PAM ---
+    GuacSessionRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        connection_id:
+          type: string
+        requester_id:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+        approver_id:
+          type: string
+          nullable: true
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    GuacActiveSession:
+      type: object
+      properties:
+        identifier:
+          type: string
+        connectionIdentifier:
+          type: string
+        username:
+          type: string
+        remoteHost:
+          type: string
+        startDate:
+          type: integer
+          description: Session start time as epoch milliseconds
+
+    GuacSessionRow:
+      type: object
+      properties:
+        id:
+          type: string
+        connection_id:
+          type: string
+        user_id:
+          type: string
+          nullable: true
+        guac_session_uuid:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        transcript_available:
+          type: boolean
+        transcript_generated_at:
+          type: string
+          format: date-time
+          nullable: true
 
     # --- Guacamole ---
     GuacamoleConnection:
