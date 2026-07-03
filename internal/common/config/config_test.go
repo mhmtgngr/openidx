@@ -783,6 +783,7 @@ func TestValidateProduction(t *testing.T) {
 			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
 			DebugOTPInResponse:        false,
+			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 		}
 
 		err := cfg.ValidateProduction()
@@ -827,10 +828,32 @@ func TestValidateProduction(t *testing.T) {
 			TLS:                       TLSConfig{Enabled: true},
 			AuditStreamAllowedOrigins: "https://example.com",
 			DebugOTPInResponse:        false,
+			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 		}
 
 		err := cfg.ValidateProduction()
 		assert.NoError(t, err)
+	})
+
+	t.Run("Fails without an explicit vault KEK", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+			// VaultKEK / VaultKEKs intentionally unset -> must fail in production.
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "vault_kek")
 	})
 }
 
