@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { GitPullRequest, Plus, Clock, CheckCircle, XCircle, Ban, Timer } from 'lucide-react'
+import { GitPullRequest, Plus, Clock, CheckCircle, XCircle, Ban, Timer, KeyRound, Undo2, Copy } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '../components/ui/alert-dialog'
-import { api } from '../lib/api'
+import { api, VaultSecretMeta } from '../lib/api'
 import { useToast } from '../hooks/use-toast'
 
 interface AccessRequest {
@@ -22,6 +22,7 @@ interface AccessRequest {
   requester_name: string
   resource_name: string
   resource_type: string
+  resource_id?: string
   status: string
   priority: string
   justification: string
@@ -64,7 +65,12 @@ export function AccessRequestsPage() {
   const [comments, setComments] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
-  const [newReq, setNewReq] = useState({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '' })
+  const [newReq, setNewReq] = useState({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '', secretId: '' })
+
+  // Retrieve modal state (mirrors vault-secrets reveal pattern)
+  const [retrieveOpen, setRetrieveOpen] = useState(false)
+  const [selectedRetrieveId, setSelectedRetrieveId] = useState<string | null>(null)
+  const [retrievedValue, setRetrievedValue] = useState<string | null>(null)
 
   const { data: myRequestsData, isLoading: myLoading } = useQuery({
     queryKey: ['my-requests'],
@@ -87,8 +93,26 @@ export function AccessRequestsPage() {
   })
   const allRequests = allData?.requests || []
 
+  const { data: vaultSecretsData } = useQuery({
+    queryKey: ['vault-secrets'],
+    queryFn: () => api.vault.listSecrets(),
+    enabled: newReq.resource_type === 'vault_credential',
+  })
+  const vaultSecrets: VaultSecretMeta[] = vaultSecretsData?.secrets || []
+
   const createMutation = useMutation({
     mutationFn: (data: typeof newReq) => {
+      if (data.resource_type === 'vault_credential') {
+        const payload = {
+          resource_type: data.resource_type,
+          resource_id: data.secretId,
+          resource_name: data.resource_name,
+          justification: data.justification,
+          priority: data.priority,
+          duration: data.duration,
+        }
+        return api.post('/api/v1/governance/requests', payload)
+      }
       const payload = { ...data, duration: data.duration === 'permanent' ? '' : data.duration }
       return api.post('/api/v1/governance/requests', payload)
     },
@@ -97,7 +121,7 @@ export function AccessRequestsPage() {
       queryClient.invalidateQueries({ queryKey: ['all-requests'] })
       toast({ title: 'Access request submitted' })
       setCreateOpen(false)
-      setNewReq({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '' })
+      setNewReq({ resource_type: '', resource_name: '', justification: '', priority: 'normal', duration: '', secretId: '' })
     },
     onError: () => toast({ title: 'Failed to submit request', variant: 'destructive' }),
   })
@@ -132,6 +156,28 @@ export function AccessRequestsPage() {
     },
   })
 
+  const retrieveMutation = useMutation({
+    mutationFn: (id: string) => api.post<{ value: string }>(`/api/v1/governance/requests/${id}/credential`),
+    onSuccess: (data) => setRetrievedValue(data.value),
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      const msg = err.response?.data?.error || 'Failed to retrieve credential'
+      toast({ title: msg, variant: 'destructive' })
+    },
+  })
+
+  const returnMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/governance/requests/${id}/return`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-requests'] })
+      queryClient.invalidateQueries({ queryKey: ['all-requests'] })
+      toast({ title: 'Credential returned' })
+    },
+    onError: (err: { response?: { data?: { error?: string } } }) => {
+      const msg = err.response?.data?.error || 'Failed to return credential'
+      toast({ title: msg, variant: 'destructive' })
+    },
+  })
+
   const formatDate = (d: string) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 
   const openApproval = (req: AccessRequest, action: 'approve' | 'deny') => {
@@ -140,6 +186,15 @@ export function AccessRequestsPage() {
     setComments('')
     setApprovalOpen(true)
   }
+
+  const isVaultType = newReq.resource_type === 'vault_credential'
+  const submitDisabled = isVaultType
+    ? (!newReq.secretId || !newReq.duration || createMutation.isPending)
+    : (!newReq.resource_type || !newReq.resource_name || createMutation.isPending)
+
+  const durationOptions = isVaultType
+    ? DURATION_OPTIONS.filter(opt => opt.value !== '')
+    : DURATION_OPTIONS
 
   return (
     <div className="space-y-6">
@@ -190,23 +245,47 @@ export function AccessRequestsPage() {
                         <TableCell>{r.priority}</TableCell>
                         <TableCell>{formatDate(r.created_at)}</TableCell>
                         <TableCell>
-                          {r.status === 'pending' && (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="outline" size="sm"><Ban className="h-3 w-3 mr-1" />Cancel</Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Cancel Request?</AlertDialogTitle>
-                                  <AlertDialogDescription>Cancel this access request for {r.resource_name}?</AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Keep</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => cancelMutation.mutate(r.id)}>Cancel Request</AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          )}
+                          <div className="flex gap-2">
+                            {r.status === 'pending' && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="outline" size="sm"><Ban className="h-3 w-3 mr-1" />Cancel</Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Cancel Request?</AlertDialogTitle>
+                                    <AlertDialogDescription>Cancel this access request for {r.resource_name}?</AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Keep</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => cancelMutation.mutate(r.id)}>Cancel Request</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                            {r.resource_type === 'vault_credential' && r.status === 'fulfilled' && (
+                              <>
+                                <Button variant="outline" size="sm" onClick={() => { setSelectedRetrieveId(r.id); setRetrieveOpen(true) }}>
+                                  <KeyRound className="h-3 w-3 mr-1" />Retrieve
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="outline" size="sm"><Undo2 className="h-3 w-3 mr-1" />Return</Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Return Credential?</AlertDialogTitle>
+                                      <AlertDialogDescription>Return {r.resource_name} early? This immediately revokes access and triggers credential rotation.</AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Keep</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => returnMutation.mutate(r.id)}>Return</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -310,19 +389,34 @@ export function AccessRequestsPage() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium">Resource Type</label>
-              <Select value={newReq.resource_type} onValueChange={v => setNewReq(p => ({ ...p, resource_type: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+              <Select value={newReq.resource_type} onValueChange={v => setNewReq(p => ({ ...p, resource_type: v, resource_name: '', secretId: '', duration: '' }))}>
+                <SelectTrigger aria-label="Resource Type"><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="role">Role</SelectItem>
                   <SelectItem value="group">Group</SelectItem>
                   <SelectItem value="application">Application</SelectItem>
+                  <SelectItem value="vault_credential">Vault Credential</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
               <label className="text-sm font-medium">Resource Name</label>
-              <Input placeholder="Enter resource name" value={newReq.resource_name}
-                onChange={e => setNewReq(p => ({ ...p, resource_name: e.target.value }))} />
+              {isVaultType ? (
+                <Select value={newReq.secretId} onValueChange={v => {
+                  const secret = vaultSecrets.find(s => s.id === v)
+                  setNewReq(p => ({ ...p, secretId: v, resource_name: secret?.name || '' }))
+                }}>
+                  <SelectTrigger aria-label="Resource Name"><SelectValue placeholder="Select a vault secret" /></SelectTrigger>
+                  <SelectContent>
+                    {vaultSecrets.map(s => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input placeholder="Enter resource name" value={newReq.resource_name}
+                  onChange={e => setNewReq(p => ({ ...p, resource_name: e.target.value }))} />
+              )}
             </div>
             <div>
               <label className="text-sm font-medium">Justification</label>
@@ -342,11 +436,11 @@ export function AccessRequestsPage() {
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium">Access Duration</label>
+              <label className="text-sm font-medium">Access Duration{isVaultType && <span className="text-red-500 ml-1">*</span>}</label>
               <Select value={newReq.duration} onValueChange={v => setNewReq(p => ({ ...p, duration: v }))}>
-                <SelectTrigger><SelectValue placeholder="Permanent" /></SelectTrigger>
+                <SelectTrigger aria-label="Access Duration"><SelectValue placeholder={isVaultType ? 'Select duration (required)' : 'Permanent'} /></SelectTrigger>
                 <SelectContent>
-                  {DURATION_OPTIONS.map(opt => (
+                  {durationOptions.map(opt => (
                     <SelectItem key={opt.value || 'permanent'} value={opt.value || 'permanent'}>
                       {opt.label}
                     </SelectItem>
@@ -354,12 +448,14 @@ export function AccessRequestsPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
-                {newReq.duration ? 'Access will be automatically revoked after the duration expires.' : 'Access will not expire automatically.'}
+                {isVaultType
+                  ? 'Vault credentials require a time-bound duration.'
+                  : newReq.duration ? 'Access will be automatically revoked after the duration expires.' : 'Access will not expire automatically.'}
               </p>
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button disabled={!newReq.resource_type || !newReq.resource_name || createMutation.isPending}
+              <Button disabled={submitDisabled}
                 onClick={() => createMutation.mutate(newReq)}>
                 {createMutation.isPending ? 'Submitting...' : 'Submit Request'}
               </Button>
@@ -398,6 +494,65 @@ export function AccessRequestsPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Retrieve Credential Modal — one-shot reveal (mirrors the vault-secrets reveal) */}
+      <Dialog
+        open={retrieveOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRetrievedValue(null)
+            setSelectedRetrieveId(null)
+          }
+          setRetrieveOpen(open)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader><DialogTitle>Retrieve Credential</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            {!retrievedValue ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  The credential will be shown once. This action is audited.
+                </p>
+                <Button
+                  onClick={() => selectedRetrieveId && retrieveMutation.mutate(selectedRetrieveId)}
+                  disabled={retrieveMutation.isPending || !selectedRetrieveId}
+                  className="w-full"
+                >
+                  {retrieveMutation.isPending ? 'Retrieving...' : 'Get Credential'}
+                </Button>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <p className="text-xs text-amber-800 font-medium">
+                    Value shown once — not stored after this dialog closes.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={retrievedValue}
+                    readOnly
+                    className="font-mono text-sm"
+                    type="text"
+                    data-testid="retrieved-credential-value"
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      navigator.clipboard.writeText(retrievedValue)
+                      toast({ title: 'Copied' })
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
