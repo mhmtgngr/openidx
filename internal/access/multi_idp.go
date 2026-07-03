@@ -50,6 +50,9 @@ func (s *Service) getRouteIDP(ctx context.Context, route *ProxyRoute) (*IDPConfi
 	if err != nil {
 		return nil, fmt.Errorf("failed to load IDP %s: %w", route.IDPId, err)
 	}
+	if idp.ClientSecret, err = s.idpCipher.Decrypt(idp.ClientSecret); err != nil {
+		return nil, fmt.Errorf("decrypt IDP client_secret: %w", err)
+	}
 
 	if scopesJSON != nil {
 		if err := json.Unmarshal(scopesJSON, &idp.Scopes); err != nil {
@@ -189,6 +192,10 @@ func (s *Service) handleLoginWithIDP(c *gin.Context, idpID string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "IDP not found or not enabled"})
 		return
 	}
+	if idp.ClientSecret, err = s.idpCipher.Decrypt(idp.ClientSecret); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load IDP credential"})
+		return
+	}
 	if scopesJSON != nil {
 		if err := json.Unmarshal(scopesJSON, &idp.Scopes); err != nil {
 			s.logger.Warn("Failed to unmarshal IDP scopes", zap.String("idp_id", idp.ID), zap.Error(err))
@@ -251,6 +258,11 @@ func (s *Service) handleCallbackWithIDP(c *gin.Context, idpID, idpIssuer, verifi
 		idpID, org.ID).Scan(&clientID, &clientSecret)
 	if err != nil {
 		s.logger.Error("Failed to load IDP for callback", zap.String("idp_id", idpID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "authentication failed"})
+		return
+	}
+	if clientSecret, err = s.idpCipher.Decrypt(clientSecret); err != nil {
+		s.logger.Error("Failed to decrypt IDP client_secret", zap.String("idp_id", idpID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "authentication failed"})
 		return
 	}

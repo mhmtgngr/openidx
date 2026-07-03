@@ -575,7 +575,7 @@ CREATE TABLE IF NOT EXISTS identity_providers (
     provider_type VARCHAR(50) NOT NULL, -- 'oidc' or 'saml'
     issuer_url VARCHAR(255) UNIQUE NOT NULL,
     client_id VARCHAR(255) NOT NULL,
-    client_secret VARCHAR(255) NOT NULL, -- TODO: Encrypt this value at rest
+    client_secret TEXT NOT NULL, -- encrypted at rest (secretcrypt, tag encv1:); widened from VARCHAR(255) by migration v66
     scopes JSONB,
     enabled BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

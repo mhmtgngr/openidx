@@ -308,6 +308,9 @@ func (s *Service) loadSocialProviderConfig(ctx context.Context, providerID strin
 	if err != nil {
 		return nil, fmt.Errorf("identity provider not found: %w", err)
 	}
+	if provider.ClientSecret, err = s.idpCipher.Decrypt(provider.ClientSecret); err != nil {
+		return nil, fmt.Errorf("decrypt IdP client_secret: %w", err)
+	}
 
 	if len(scopesJSON) > 0 {
 		_ = json.Unmarshal(scopesJSON, &provider.Scopes)
