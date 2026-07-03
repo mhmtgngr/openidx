@@ -18,8 +18,79 @@ tags:
   - name: Access Reviews
   - name: Review Items
   - name: Policies
+  - name: JIT Access Requests
 
 paths:
+  # --- JIT Access Requests ---
+  /api/v1/governance/requests:
+    post:
+      tags: [JIT Access Requests]
+      summary: Create JIT access request
+      description: |
+        Submit a just-in-time access request. When `resource_type` is `vault_credential`,
+        `resource_id` must be an existing vault secret id and `duration` must be non-empty.
+      operationId: createAccessRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessRequestCreate'
+      responses:
+        '201':
+          description: Access request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+        '400':
+          description: Bad request
+
+  /api/v1/governance/requests/{id}/credential:
+    post:
+      tags: [JIT Access Requests]
+      summary: Retrieve checked-out vault credential (one-shot)
+      description: Returns the plaintext credential value for a fulfilled vault_credential request. Requester-only; single use; access is audited.
+      operationId: getRequestCredential
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Credential value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: string
+        '403':
+          description: Request has expired or does not belong to the caller
+        '409':
+          description: Request not yet fulfilled
+        '503':
+          description: Vault not configured
+
+  /api/v1/governance/requests/{id}/return:
+    post:
+      tags: [JIT Access Requests]
+      summary: Return a checked-out vault credential early
+      operationId: returnRequestCredential
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Credential returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        '409':
+          description: Credential is not currently checked out
+
   /api/v1/governance/reviews:
     get:
       tags: [Access Reviews]
@@ -491,3 +562,62 @@ components:
           enum: [allow, deny]
         priority:
           type: integer
+
+    # --- JIT Access Requests ---
+    AccessRequestCreate:
+      type: object
+      required: [resource_type, resource_id]
+      properties:
+        resource_type:
+          type: string
+          enum: [application, role, group, vault_credential]
+          description: |
+            Type of resource being requested. `vault_credential` requires `resource_id`
+            to be an existing vault secret id and `duration` to be non-empty.
+        resource_id:
+          type: string
+        justification:
+          type: string
+        duration:
+          type: string
+          description: >-
+            Access window as a short duration string (e.g. `4h`, `8h`, `1d`, `7d`, `30d`);
+            empty means permanent. Required (non-empty) when resource_type is vault_credential.
+          example: 4h
+
+    AccessRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        requester_id:
+          type: string
+        resource_type:
+          type: string
+          enum: [application, role, group, vault_credential]
+        resource_id:
+          type: string
+        justification:
+          type: string
+        duration:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, denied, fulfilled, expired, returned]
+        approver_id:
+          type: string
+          nullable: true
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

@@ -21,6 +21,8 @@ tags:
   - name: SSO Settings
   - name: Directories
   - name: MFA Configuration
+  - name: Vault
+  - name: Credential Rotation
 
 paths:
   /api/v1/dashboard:
@@ -228,6 +230,336 @@ paths:
                     example: syncing
         '404':
           description: Directory not found
+
+  # --- Vault ---
+  /api/v1/vault/secrets:
+    post:
+      tags: [Vault]
+      summary: Create vault secret
+      operationId: createVaultSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VaultSecretCreate'
+      responses:
+        '201':
+          description: Secret created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecretMeta'
+    get:
+      tags: [Vault]
+      summary: List vault secrets
+      operationId: listVaultSecrets
+      responses:
+        '200':
+          description: List of vault secrets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secrets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SecretMeta'
+
+  /api/v1/vault/secrets/{id}:
+    get:
+      tags: [Vault]
+      summary: Get vault secret detail
+      operationId: getVaultSecret
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Secret metadata and version history (no plaintext value)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecretDetail'
+        '404':
+          description: Secret not found
+    delete:
+      tags: [Vault]
+      summary: Delete vault secret (crypto-erase)
+      operationId: deleteVaultSecret
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Secret crypto-erased
+        '404':
+          description: Secret not found
+
+  /api/v1/vault/secrets/{id}/version:
+    put:
+      tags: [Vault]
+      summary: Add new secret version
+      operationId: addVaultSecretVersion
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  writeOnly: true
+      responses:
+        '200':
+          description: New version stored
+        '404':
+          description: Secret not found
+
+  /api/v1/vault/secrets/{id}/reveal:
+    post:
+      tags: [Vault]
+      summary: Reveal secret value (one-shot, audited)
+      operationId: revealVaultSecret
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Plaintext value (one-shot, access logged)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: string
+        '403':
+          description: Forbidden
+        '404':
+          description: Secret not found
+
+  /api/v1/vault/secrets/{id}/grants:
+    post:
+      tags: [Vault]
+      summary: Grant access to a secret
+      operationId: createVaultGrant
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VaultGrantCreate'
+      responses:
+        '201':
+          description: Grant created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+        '404':
+          description: Secret not found
+    get:
+      tags: [Vault]
+      summary: List grants for a secret
+      operationId: listVaultGrants
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: List of grants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VaultGrant'
+        '404':
+          description: Secret not found
+
+  /api/v1/vault/secrets/{id}/grants/{grantId}:
+    delete:
+      tags: [Vault]
+      summary: Revoke a grant
+      operationId: deleteVaultGrant
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Grant revoked
+        '404':
+          description: Grant not found
+
+  /api/v1/vault/secrets/{id}/checkouts:
+    get:
+      tags: [Vault]
+      summary: List checkouts for a secret
+      operationId: listVaultCheckouts
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: List of checkouts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkouts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VaultCheckout'
+        '404':
+          description: Secret not found
+
+  /api/v1/vault/secrets/{id}/rotate:
+    post:
+      tags: [Credential Rotation]
+      summary: Rotate a secret immediately
+      operationId: rotateVaultSecret
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Rotation run result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotationRun'
+        '404':
+          description: Secret not found or no rotation policy attached
+
+  /api/v1/vault/secrets/{id}/rotations:
+    get:
+      tags: [Credential Rotation]
+      summary: List rotation run history for a secret
+      operationId: listVaultSecretRotations
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Rotation run history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rotations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RotationRun'
+        '404':
+          description: Secret not found
+
+  # --- Credential Rotation ---
+  /api/v1/vault/rotation-policies:
+    post:
+      tags: [Credential Rotation]
+      summary: Create rotation policy
+      operationId: createRotationPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotationPolicyInput'
+      responses:
+        '201':
+          description: Rotation policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotationPolicy'
+    get:
+      tags: [Credential Rotation]
+      summary: List rotation policies
+      operationId: listRotationPolicies
+      responses:
+        '200':
+          description: List of rotation policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RotationPolicy'
+
+  /api/v1/vault/rotation-policies/{id}:
+    get:
+      tags: [Credential Rotation]
+      summary: Get rotation policy
+      operationId: getRotationPolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Rotation policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotationPolicy'
+        '404':
+          description: Policy not found
+    put:
+      tags: [Credential Rotation]
+      summary: Update rotation policy
+      operationId: updateRotationPolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotationPolicyInput'
+      responses:
+        '200':
+          description: Rotation policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RotationPolicy'
+        '404':
+          description: Policy not found
+    delete:
+      tags: [Credential Rotation]
+      summary: Delete rotation policy
+      operationId: deleteRotationPolicy
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204':
+          description: Rotation policy deleted
+        '404':
+          description: Policy not found
 
   /api/v1/mfa/methods:
     get:
@@ -573,3 +905,239 @@ components:
         enabled:
           type: boolean
           default: true
+
+    # --- Vault ---
+    VaultSecretCreate:
+      type: object
+      required: [name, type, value]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [password, api_key, ssh_key, generic]
+        description:
+          type: string
+        value:
+          type: string
+          writeOnly: true
+        metadata:
+          type: object
+          additionalProperties: true
+
+    SecretMeta:
+      type: object
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [password, api_key, ssh_key, generic]
+        description:
+          type: string
+        current_version:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SecretDetail:
+      allOf:
+        - $ref: '#/components/schemas/SecretMeta'
+        - type: object
+          properties:
+            versions:
+              type: array
+              items:
+                $ref: '#/components/schemas/VaultVersion'
+
+    VaultVersion:
+      type: object
+      properties:
+        version:
+          type: integer
+        key_id:
+          type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    VaultGrantCreate:
+      type: object
+      required: [principal_type, principal_id, actions]
+      properties:
+        principal_type:
+          type: string
+        principal_id:
+          type: string
+        actions:
+          type: array
+          items:
+            type: string
+            enum: [use, reveal, rotate]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    VaultGrant:
+      type: object
+      properties:
+        id:
+          type: string
+        secret_id:
+          type: string
+        principal_type:
+          type: string
+        principal_id:
+          type: string
+        actions:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        granted_by:
+          type: string
+
+    VaultCheckout:
+      type: object
+      properties:
+        id:
+          type: string
+        secret_id:
+          type: string
+        principal_type:
+          type: string
+        principal_id:
+          type: string
+        mode:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+        leased_at:
+          type: string
+          format: date-time
+        returned_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # --- Credential Rotation ---
+    GenerationPolicy:
+      type: object
+      properties:
+        length:
+          type: integer
+        upper:
+          type: boolean
+        lower:
+          type: boolean
+        digits:
+          type: boolean
+        symbols:
+          type: boolean
+
+    RotationPolicyInput:
+      type: object
+      required: [secret_id, connector_type]
+      properties:
+        secret_id:
+          type: string
+        connector_type:
+          type: string
+          enum: [directory, generate_only]
+        connector_config:
+          type: object
+          additionalProperties: true
+        generation_policy:
+          $ref: '#/components/schemas/GenerationPolicy'
+        interval_seconds:
+          type: integer
+        rotate_on_checkout:
+          type: boolean
+        enabled:
+          type: boolean
+
+    RotationPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+        org_id:
+          type: string
+        secret_id:
+          type: string
+        connector_type:
+          type: string
+          enum: [directory, generate_only]
+        connector_config:
+          type: object
+          additionalProperties: true
+        generation_policy:
+          $ref: '#/components/schemas/GenerationPolicy'
+        interval_seconds:
+          type: integer
+        rotate_on_checkout:
+          type: boolean
+        enabled:
+          type: boolean
+        next_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RotationRun:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        trigger:
+          type: string
+        connector_type:
+          type: string
+        version_from:
+          type: integer
+          nullable: true
+        version_to:
+          type: integer
+          nullable: true
+        error_message:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
