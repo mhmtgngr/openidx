@@ -460,5 +460,12 @@ func allMigrations() []*Migration {
 			UpSQL:       jitApprovalOrgRLSUp,
 			DownSQL:     jitApprovalOrgRLSDown,
 		},
+		{
+			Version:     65,
+			Name:        "webhook_secret_widen",
+			Description: "Widen webhook_subscriptions.secret to TEXT so the HMAC signing secret can be stored AES-256-GCM-encrypted at rest (secretcrypt, tag encv1:) instead of plaintext — base64 ciphertext exceeds VARCHAR(255). Encryption is applied by the webhooks service (encrypt-on-write, prefix-aware decrypt-on-read); legacy plaintext rows read through unchanged and sign correctly, and are migrated by a one-off backfill tool (UpdateSubscription doesn't rewrite the secret). Idempotent; init-db.sql defines the column as TEXT directly.",
+			UpSQL:       webhookSecretWidenUp,
+			DownSQL:     webhookSecretWidenDown,
+		},
 	}
 }

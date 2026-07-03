@@ -19,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/common/tlsutil"
 	"github.com/openidx/openidx/internal/common/tracing"
 	newhealth "github.com/openidx/openidx/internal/health"
@@ -163,7 +164,12 @@ func main() {
 	riskService := risk.NewService(db, redis, log)
 
 	// Initialize webhook service
-	webhookService := webhooks.NewService(db, redis, log)
+	webhookSecretCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		log.Warn("webhook signing secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		webhookSecretCipher = secretcrypt.NewNoop()
+	}
+	webhookService := webhooks.NewService(db, redis, log, webhookSecretCipher)
 	ctx, cancelWorkers := context.WithCancel(context.Background())
 	go webhookService.ProcessDeliveries(ctx)
 	go webhookService.ProcessRetries(ctx)
