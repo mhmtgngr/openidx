@@ -20,6 +20,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // ErrSharingUnsupported is returned by ShareActiveConnection when the Guacamole
@@ -36,6 +37,9 @@ type GuacamoleClient struct {
 	httpClient *http.Client
 	db         *database.PostgresDB
 	logger     *zap.Logger
+	// tokenCipher encrypts the pooled Guacamole session token at rest (write-only
+	// DB copy; the in-memory pool holds plaintext for reuse).
+	tokenCipher *secretcrypt.Cipher
 
 	// Connection pool
 	pool           *ConnectionPool
@@ -93,13 +97,20 @@ func NewGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 		return nil, fmt.Errorf("GUACAMOLE_URL is not configured")
 	}
 
+	tokenCipher, err := secretcrypt.New(cfg.EncryptionKey)
+	if err != nil {
+		logger.Warn("Guacamole pool tokens will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		tokenCipher = secretcrypt.NewNoop()
+	}
+
 	gc := &GuacamoleClient{
-		baseURL:    strings.TrimRight(cfg.GuacamoleURL, "/"),
-		username:   cfg.GuacamoleAdminUser,
-		password:   cfg.GuacamoleAdminPassword,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		db:         db,
-		logger:     logger.With(zap.String("component", "guacamole")),
+		baseURL:     strings.TrimRight(cfg.GuacamoleURL, "/"),
+		username:    cfg.GuacamoleAdminUser,
+		password:    cfg.GuacamoleAdminPassword,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		db:          db,
+		logger:      logger.With(zap.String("component", "guacamole")),
+		tokenCipher: tokenCipher,
 	}
 
 	// Authenticate to get a token
@@ -746,12 +757,20 @@ func (gc *GuacamoleClient) createConnectionToken(connID string) (string, error) 
 }
 
 func (gc *GuacamoleClient) savePooledConnection(ctx context.Context, conn *PooledConnection) {
-	_, err := gc.db.Pool.Exec(ctx, `
+	// Encrypt the session token in the at-rest DB copy. The in-memory pool keeps
+	// the plaintext for reuse; this column is never read back (write-only), so a
+	// DB dump can't yield usable session tokens.
+	encToken, err := gc.tokenCipher.Encrypt(conn.Token)
+	if err != nil {
+		gc.logger.Warn("Failed to encrypt pooled connection token", zap.Error(err))
+		return
+	}
+	_, err = gc.db.Pool.Exec(ctx, `
 		INSERT INTO guacamole_connection_pool (connection_id, token, user_id, created_at, last_used_at, use_count, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (connection_id) DO UPDATE SET
 			token = $2, last_used_at = $5, use_count = $6, expires_at = $7
-	`, conn.ConnectionID, conn.Token, conn.UserID, conn.CreatedAt, conn.LastUsedAt, conn.UseCount, conn.ExpiresAt)
+	`, conn.ConnectionID, encToken, conn.UserID, conn.CreatedAt, conn.LastUsedAt, conn.UseCount, conn.ExpiresAt)
 	if err != nil {
 		gc.logger.Warn("Failed to save pooled connection", zap.Error(err))
 	}

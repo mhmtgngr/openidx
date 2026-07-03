@@ -474,5 +474,12 @@ func allMigrations() []*Migration {
 			UpSQL:       idpClientSecretWidenUp,
 			DownSQL:     idpClientSecretWidenDown,
 		},
+		{
+			Version:     67,
+			Name:        "guac_token_widen",
+			Description: "Widen guacamole_connection_pool.token to TEXT so the pooled Guacamole session token can be stored AES-256-GCM-encrypted at rest (secretcrypt, tag encv1:) instead of plaintext — base64 ciphertext exceeds VARCHAR(500). The column is write-only (in-memory pool serves reads), so the access service only encrypts on write; a DB dump yields no usable tokens. Idempotent; init-db.sql defines the column as TEXT.",
+			UpSQL:       guacTokenWidenUp,
+			DownSQL:     guacTokenWidenDown,
+		},
 	}
 }
