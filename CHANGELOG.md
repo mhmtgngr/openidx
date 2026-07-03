@@ -7,17 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Readiness-finalization pass across three workstreams: make the shipped PAM usable from the
+admin console (W1), close correctness/tenant-isolation gaps (W2), and light production
+hardening (W3).
+
+### Added
+- **PAM admin console** — the previously backend-only PAM surface is now driveable from the
+  console: **Vault Secrets** page (list/create/versions/grants + reason-gated one-shot reveal +
+  checkout ledger; #284), **Rotation Policies** page + per-secret rotate-now/history (#285),
+  **Privileged Sessions** page (Guacamole pending-request approve/deny, active-session
+  monitor/share/force-terminate, transcript download; #286), and a **`vault_credential`** option
+  in Access Requests with one-shot retrieve + return-early (#287). A "Privileged Access" nav
+  group + dashboard entry point (#289).
+- **`GET /api/v1/access/guacamole/session-history`** — admin-guarded, org-scoped listing of
+  Guacamole session rows with a `transcript_available` flag (no file paths), so transcripts are
+  reachable from the console. (#286)
+- **`GET /api/v1/vault/secrets/:id/grants`** — list a secret's access grants (metadata only). (#284)
+- **OpenAPI specs** for all shipped PAM endpoints (vault, rotation, Guacamole sessions,
+  `vault_credential` retrieve/return) across the admin-api/access/governance specs. (#288)
+- **Column-level init-db↔migrations parity guard** (`TestInitDBColumnParity`) — fails CI when an
+  `init-db.sql` column is created by no migration (the drift class that breaks migrate-only
+  RDS/Helm installs). (#292)
+
+### Changed / Security
+- **Attestation tenant isolation** — `attestation_campaigns`/`attestation_items` (created by v54
+  without `org_id`) gained `org_id` + the v37 FORCE-RLS belt (USING + WITH CHECK); handlers tag
+  `org_id` on write and rely on RLS for reads. Closes a cross-org read/write exposure. Migration
+  v61. (#290)
+- **`org_id` + FORCE-RLS belt** added to `jit_grants` and `request_approval_chains` (previously
+  org-scoped only in-handler). Migration v64. (#293)
+- **Access-proxy idle timeout enforced** — routes' `idle_timeout` was dead config on the data
+  plane (only absolute expiry was checked). The proxy + forward-auth paths now revoke and re-auth
+  a cookie session idle beyond `idle_timeout` (sliding window; bearer tokens unaffected). (#294)
+- **Production requires an explicit vault KEK** — `ValidateProduction` now fails unless `VAULT_KEK`
+  or `VAULT_KEKS` is set, instead of silently falling back to `ENCRYPTION_KEY` for the vault
+  key-encryption key. (#295)
+
+### Fixed
+- **Referenced-but-uncreated tables reconciled** — `admin_console_settings`, `auth_contexts`,
+  `breach_incidents`, `breach_alerts` were referenced by code but created by neither a migration
+  nor `init-db.sql` (latent 500s, the `jit_grants`-class drift). Migration v62 creates them.
+  (`access_stats`, also flagged, was a false positive — a CTE, not a table.) (#291)
+- **`ziti_certificates` column drift** — the migration schema had diverged wholesale from the
+  code/init-db schema (`cert_data NOT NULL`, … vs `cert_type`/`not_after`/`status`/…), breaking
+  cert-hardening on migrate-only installs. Reconciled to the code schema; also reconciled 8 other
+  tables whose init-db `ALTER … ADD COLUMN` patches were never mirrored into a migration.
+  Migration v63. (#292)
+
 ### Notes
-- **Deferred PAM follow-ups** (tracked; not yet implemented — the core PAM roadmap M1–M5
-  shipped in v1.9.0/v1.9.1):
+- **OPA fail-open** was verified to be unreachable in production (the middleware's `devMode` is
+  `cfg.IsDevelopment()`, false in prod → fails closed with 403); a regression test now pins the
+  invariant. No code change to `opa.go`. (#295)
+- **Deferred follow-ups** (tracked; not implemented):
   - **MySQL and cloud-IAM (AWS/GCP/Azure) rotation connectors** behind the M5 `Rotator`
-    interface (v1.9.1 shipped SSH + PostgreSQL).
-  - **SSH key rotation** (v1.9.1 shipped SSH *password* rotation via `chpasswd`).
-  - **Guacamole recording legal-hold** — retention is implemented, but
-    `recording_legal_holds` is FK'd to `remote_support_sessions` only; covering
-    `guacamole_sessions` recordings needs a shared-hold refactor.
-  - **`org_id`/RLS on `jit_grants`, `request_approval_chains`, and the `attestation_*`
-    tables** — currently org-scoped only in-handler, not under the v37 FORCE-RLS belt.
+    interface (v1.9.1 shipped SSH + PostgreSQL); **SSH *key* rotation** (v1.9.1 shipped SSH
+    *password* rotation).
+  - **Guacamole recording legal-hold** — retention works, but `recording_legal_holds` is FK'd to
+    `remote_support_sessions` only; covering `guacamole_sessions` recordings needs a shared-hold refactor.
+  - **Multi-tenant / production-GA hardening**: docker-compose `openidx_app` (non-owner) cutover +
+    FORCE-RLS for compose; prod-compose TLS/Elasticsearch-security/APISIX-admin-key hardening;
+    encrypt-at-rest for the legacy plaintext secret columns (`oauth_clients.client_secret`,
+    `identity_providers.client_secret`, webhook secrets, guac pool token) via the vault; rotate the
+    git-history-compromised APISIX admin key.
 
 ## [1.9.1] - 2026-07-02
 
