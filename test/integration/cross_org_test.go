@@ -85,6 +85,8 @@ END $$;`, roleName, roleName, rolePass, roleName, rolePass))
 		`GRANT SELECT ON audit_events TO ` + roleName,
 		`GRANT SELECT ON api_keys TO ` + roleName,
 		`GRANT SELECT ON proxy_routes TO ` + roleName,
+		`GRANT SELECT ON attestation_campaigns TO ` + roleName,
+		`GRANT SELECT ON attestation_items TO ` + roleName,
 	} {
 		_, err := admin.Exec(ctx, stmt)
 		require.NoError(t, err, "grant to RLS test role: %s", stmt)
@@ -389,6 +391,7 @@ func TestRLSBeltTables(t *testing.T) {
 		{"applications", `INSERT INTO applications (client_id, name, type, org_id) VALUES ('tbelt-app-` + suffix + `','tbelt app','web',$1)`},
 		{"oauth_clients", `INSERT INTO oauth_clients (client_id, name, type, org_id) VALUES ('tbelt-oc-` + suffix + `','tbelt client','confidential',$1)`},
 		{"audit_events", `INSERT INTO audit_events (event_type, category, action, outcome, org_id) VALUES ('tbelt','test','probe','success',$1)`},
+		{"attestation_campaigns", `INSERT INTO attestation_campaigns (name, campaign_type, org_id) VALUES ('tbelt-att-` + suffix + `','role_certification',$1)`},
 	}
 
 	for _, c := range cases {
