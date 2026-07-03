@@ -32,6 +32,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
 )
@@ -144,6 +145,7 @@ type Service struct {
 	redis            *database.RedisClient
 	config           *config.Config
 	logger           *zap.Logger
+	idpCipher        *secretcrypt.Cipher // decrypts identity_providers.client_secret (social login raw read)
 	privateKey       *rsa.PrivateKey
 	publicKey        *rsa.PublicKey
 	keyManager       *KeyManager // KeyManager for Ed25519 and RSA key management
@@ -239,11 +241,18 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		issuer = "http://localhost:8006"
 	}
 
+	idpCipher, cerr := secretcrypt.New(cfg.EncryptionKey)
+	if cerr != nil {
+		logger.Warn("IdP client secrets will NOT be decrypted for social login (plaintext at rest); set a 32-byte ENCRYPTION_KEY", zap.Error(cerr))
+		idpCipher = secretcrypt.NewNoop()
+	}
+
 	svc := &Service{
 		db:               db,
 		redis:            redis,
 		config:           cfg,
 		logger:           logger.With(zap.String("service", "oauth")),
+		idpCipher:        idpCipher,
 		privateKey:       privateKey,
 		publicKey:        &privateKey.PublicKey,
 		issuer:           issuer,

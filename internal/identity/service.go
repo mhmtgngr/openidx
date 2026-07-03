@@ -33,6 +33,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/risk"
 )
 
@@ -173,15 +174,30 @@ type Service struct {
 	jwksCacheMu     sync.RWMutex
 	jwksCachedKey   *rsa.PublicKey
 	jwksCacheExpiry time.Time
+
+	// idpCipher encrypts identity_providers.client_secret at rest. Best-effort:
+	// a passthrough (noop) when no usable ENCRYPTION_KEY is configured.
+	idpCipher *secretcrypt.Cipher
 }
 
 // NewService creates a new identity service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
+	log := logger.With(zap.String("service", "identity"))
+	encKey := ""
+	if cfg != nil {
+		encKey = cfg.EncryptionKey
+	}
+	idpCipher, err := secretcrypt.New(encKey)
+	if err != nil {
+		log.Warn("IdP client secrets will NOT be encrypted at rest; set a 32-byte ENCRYPTION_KEY to enable", zap.Error(err))
+		idpCipher = secretcrypt.NewNoop()
+	}
 	return &Service{
-		db:     db,
-		redis:  redis,
-		cfg:    cfg,
-		logger: logger.With(zap.String("service", "identity")),
+		db:        db,
+		redis:     redis,
+		cfg:       cfg,
+		logger:    log,
+		idpCipher: idpCipher,
 	}
 }
 
@@ -763,10 +779,15 @@ func (s *Service) CreateIdentityProvider(ctx context.Context, idp *IdentityProvi
 	idp.CreatedAt = now
 	idp.UpdatedAt = now
 
+	encSecret, err := s.idpCipher.Encrypt(idp.ClientSecret)
+	if err != nil {
+		return fmt.Errorf("encrypt idp client_secret: %w", err)
+	}
+
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO identity_providers (id, name, provider_type, issuer_url, client_id, client_secret, scopes, enabled, created_at, updated_at, org_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt, org.ID)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, encSecret, idp.Scopes, idp.Enabled, idp.CreatedAt, idp.UpdatedAt, org.ID)
 
 	return err
 }
@@ -789,6 +810,9 @@ func (s *Service) GetIdentityProvider(ctx context.Context, idpID string) (*Ident
 	)
 	if err != nil {
 		return nil, err
+	}
+	if idp.ClientSecret, err = s.idpCipher.Decrypt(idp.ClientSecret); err != nil {
+		return nil, fmt.Errorf("decrypt idp client_secret: %w", err)
 	}
 
 	return &idp, nil
@@ -829,6 +853,9 @@ func (s *Service) ListIdentityProviders(ctx context.Context, offset, limit int) 
 		); err != nil {
 			return nil, 0, err
 		}
+		if idp.ClientSecret, err = s.idpCipher.Decrypt(idp.ClientSecret); err != nil {
+			return nil, 0, fmt.Errorf("decrypt idp client_secret: %w", err)
+		}
 		idps = append(idps, idp)
 	}
 
@@ -846,11 +873,16 @@ func (s *Service) UpdateIdentityProvider(ctx context.Context, idp *IdentityProvi
 
 	idp.UpdatedAt = time.Now()
 
+	encSecret, err := s.idpCipher.Encrypt(idp.ClientSecret)
+	if err != nil {
+		return fmt.Errorf("encrypt idp client_secret: %w", err)
+	}
+
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE identity_providers
 		SET name = $2, provider_type = $3, issuer_url = $4, client_id = $5, client_secret = $6, scopes = $7, enabled = $8, updated_at = $9
 		WHERE id = $1 AND org_id = $10
-	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, idp.ClientSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt, org.ID)
+	`, idp.ID, idp.Name, idp.ProviderType, idp.IssuerURL, idp.ClientID, encSecret, idp.Scopes, idp.Enabled, idp.UpdatedAt, org.ID)
 
 	return err
 }

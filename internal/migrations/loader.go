@@ -467,5 +467,12 @@ func allMigrations() []*Migration {
 			UpSQL:       webhookSecretWidenUp,
 			DownSQL:     webhookSecretWidenDown,
 		},
+		{
+			Version:     66,
+			Name:        "idp_client_secret_widen",
+			Description: "Widen identity_providers.client_secret to TEXT so the external-IdP OIDC client secret can be stored AES-256-GCM-encrypted at rest (secretcrypt, tag encv1:) instead of plaintext — base64 ciphertext exceeds VARCHAR(255). identity encrypts on create/update + decrypts on read; access (multi_idp) decrypts its direct reads; oauth reads via identity.GetIdentityProvider. Prefix-aware reads keep legacy plaintext rows working and re-encrypt on Update; any never-updated rows migrate by re-saving the IdP at deploy. Idempotent; init-db.sql defines the column as TEXT.",
+			UpSQL:       idpClientSecretWidenUp,
+			DownSQL:     idpClientSecretWidenDown,
+		},
 	}
 }

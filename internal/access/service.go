@@ -27,6 +27,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/vault"
 )
 
@@ -116,6 +117,7 @@ type Service struct {
 	oauthIssuer          string
 	oauthInternalURL     string // Docker-internal URL for server-to-server calls
 	oauthJWKSURL         string
+	idpCipher            *secretcrypt.Cipher // decrypts identity_providers.client_secret at rest
 	zitiProvider         *ZitiProvider
 	zitiReconciler       *ZitiReconciler
 	guacamoleClient      *GuacamoleClient
@@ -297,17 +299,29 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		}
 	}
 
+	alog := logger.With(zap.String("service", "access"))
+	encKey := ""
+	if cfg != nil {
+		encKey = cfg.EncryptionKey
+	}
+	idpCipher, err := secretcrypt.New(encKey)
+	if err != nil {
+		alog.Warn("IdP client secrets will NOT be decrypted (plaintext at rest); set a 32-byte ENCRYPTION_KEY", zap.Error(err))
+		idpCipher = secretcrypt.NewNoop()
+	}
+
 	return &Service{
 		db:               db,
 		redis:            redis,
 		config:           cfg,
-		logger:           logger.With(zap.String("service", "access")),
+		logger:           alog,
 		governanceURL:    cfg.GovernanceURL,
 		auditURL:         cfg.AuditURL,
 		sessionSecret:    []byte(secret[:32]),
 		oauthIssuer:      cfg.OAuthIssuer,
 		oauthInternalURL: oauthInternal,
 		oauthJWKSURL:     cfg.OAuthJWKSURL,
+		idpCipher:        idpCipher,
 	}
 }
 
