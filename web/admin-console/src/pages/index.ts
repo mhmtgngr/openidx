@@ -83,6 +83,7 @@ export { AttestationCampaignsPage as AttestationCampaigns } from './attestation-
 export { AuditArchivalPage as AuditArchival } from './audit-archival'
 export { VaultSecretsPage as VaultSecrets } from './vault-secrets'
 export { RotationPoliciesPage as RotationPolicies } from './rotation-policies'
+export { GuacamoleSessionsPage as GuacamoleSessions } from './guacamole-sessions'
 
 // Developer
 export { ApiExplorerPage as APIExplorer } from './api-explorer'

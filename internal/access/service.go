@@ -496,6 +496,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guacamole live monitor — read-only connection sharing (Task 4 — PAM M4)
 		api.POST("/guacamole/sessions/:id/share", svc.requireAdminRole(), svc.handleShareGuacSession)
 
+		// Guacamole session history — DB-backed session rows + transcript availability
+		// (admin console W1.3). Static path avoids the /sessions/:id wildcard conflict.
+		api.GET("/guacamole/session-history", svc.requireAdminRole(), svc.handleListGuacSessionHistory)
+
 		// Temporary access links for support/vendor access
 		api.GET("/temp-access", svc.handleListTempAccess)
 		api.POST("/temp-access", svc.handleCreateTempAccess)
