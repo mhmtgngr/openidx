@@ -4,6 +4,12 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DashboardPage } from './dashboard'
 
+// Toggleable admin role for the Privileged Access entry-point test.
+const { mockHasRole } = vi.hoisted(() => ({ mockHasRole: vi.fn((_role: string) => true) }))
+vi.mock('../lib/auth', () => ({
+  useAuth: () => ({ hasRole: mockHasRole }),
+}))
+
 // Mock Recharts components
 vi.mock('recharts', () => ({
   AreaChart: ({ children }: { children: React.ReactNode }) => <div data-testid="area-chart">{children}</div>,
@@ -90,6 +96,7 @@ describe('DashboardPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
+    mockHasRole.mockReturnValue(true) // admin by default
 
     // Setup default mock responses
     mockApiGet.mockImplementation((url: string) => {
@@ -121,6 +128,24 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
     expect(screen.getByText('Overview of your identity platform')).toBeInTheDocument()
+  })
+
+  it('renders the Privileged Access entry point with links for admins', () => {
+    const wrapper = createWrapper()
+    render(<DashboardPage />, { wrapper })
+
+    expect(screen.getByText('Privileged Access')).toBeInTheDocument()
+    expect(screen.getByText('Vault Secrets').closest('a')).toHaveAttribute('href', '/vault-secrets')
+    expect(screen.getByText('Rotation Policies').closest('a')).toHaveAttribute('href', '/rotation-policies')
+    expect(screen.getByText('Privileged Sessions').closest('a')).toHaveAttribute('href', '/guacamole-sessions')
+  })
+
+  it('hides the Privileged Access entry point for non-admins', () => {
+    mockHasRole.mockReturnValue(false)
+    const wrapper = createWrapper()
+    render(<DashboardPage />, { wrapper })
+
+    expect(screen.queryByText('Privileged Access')).not.toBeInTheDocument()
   })
 
   it('renders stat cards', async () => {

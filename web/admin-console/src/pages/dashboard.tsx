@@ -12,11 +12,15 @@ import {
   Settings,
   Network,
   RefreshCw,
+  KeyRound,
+  RotateCw,
+  MonitorPlay,
 } from 'lucide-react'
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { api } from '../lib/api'
+import { useAuth } from '../lib/auth'
 
 // Matches the /api/v1/dashboard recent_events item.
 interface RecentEvent {
@@ -120,6 +124,7 @@ function activityIcon(type: string) {
 
 export function DashboardPage() {
   const [period, setPeriod] = useState('30d')
+  const { hasRole } = useAuth()
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ['dashboard'],
@@ -334,6 +339,35 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </Link>
+      )}
+
+      {/* Privileged Access (PAM) entry point — admin only */}
+      {hasRole('admin') && (
+        <Card className="border-purple-200 bg-purple-50/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Shield className="h-4 w-4 text-purple-600" />
+              Privileged Access
+            </CardTitle>
+            <CardDescription>Vault secrets, credential rotation, and brokered privileged sessions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Link to="/vault-secrets" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
+                <KeyRound className="h-4 w-4 text-purple-600" />
+                Vault Secrets
+              </Link>
+              <Link to="/rotation-policies" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
+                <RotateCw className="h-4 w-4 text-purple-600" />
+                Rotation Policies
+              </Link>
+              <Link to="/guacamole-sessions" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
+                <MonitorPlay className="h-4 w-4 text-purple-600" />
+                Privileged Sessions
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Analytics Section */}
