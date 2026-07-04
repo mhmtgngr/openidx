@@ -132,7 +132,7 @@ func (r *sshRotator) Apply(ctx context.Context, cfg map[string]any, newValue []b
 	}
 	defer zero(admin)
 
-	client, err := r.dial(ctx, conf, admin)
+	client, err := sshDialAdmin(ctx, conf, admin)
 	if err != nil {
 		return fmt.Errorf("ssh: dial: %w", err)
 	}
@@ -162,7 +162,7 @@ func (r *sshRotator) Verify(ctx context.Context, cfg map[string]any, newValue []
 	if err != nil {
 		return err
 	}
-	client, err := r.dialAs(ctx, conf, conf.username, ssh.Password(string(newValue)))
+	client, err := sshDialAs(ctx, conf, conf.username, ssh.Password(string(newValue)))
 	if err != nil {
 		return fmt.Errorf("ssh: verify auth failed: %w", err)
 	}
@@ -183,9 +183,9 @@ func fixedHostKey(rawKey string) (ssh.HostKeyCallback, error) {
 
 const sshDialTimeout = 15 * time.Second
 
-// dial connects as the admin user, choosing password or private-key auth
-// based on conf.adminAuth, then delegates to dialAs.
-func (r *sshRotator) dial(ctx context.Context, conf sshConf, admin []byte) (*ssh.Client, error) {
+// sshDialAdmin connects as the admin user, choosing password or private-key auth
+// based on conf.adminAuth, then delegates to sshDialAs.
+func sshDialAdmin(ctx context.Context, conf sshConf, admin []byte) (*ssh.Client, error) {
 	var authMethod ssh.AuthMethod
 	if conf.adminAuth == "private_key" {
 		signer, err := ssh.ParsePrivateKey(admin)
@@ -196,13 +196,13 @@ func (r *sshRotator) dial(ctx context.Context, conf sshConf, admin []byte) (*ssh
 	} else {
 		authMethod = ssh.Password(string(admin))
 	}
-	return r.dialAs(ctx, conf, conf.adminUsername, authMethod)
+	return sshDialAs(ctx, conf, conf.adminUsername, authMethod)
 }
 
-// dialAs opens an SSH connection to conf.host:conf.port as the given user with
+// sshDialAs opens an SSH connection to conf.host:conf.port as the given user with
 // the provided auth method. It enforces conf.hostKey via ssh.FixedHostKey and
 // applies a bounded dial timeout.
-func (r *sshRotator) dialAs(ctx context.Context, conf sshConf, user string, authMethod ssh.AuthMethod) (*ssh.Client, error) {
+func sshDialAs(ctx context.Context, conf sshConf, user string, authMethod ssh.AuthMethod) (*ssh.Client, error) {
 	hkCallback, err := fixedHostKey(conf.hostKey)
 	if err != nil {
 		return nil, err
