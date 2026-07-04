@@ -51,20 +51,12 @@ no check. This mirrors the existing VAULT_KEK / sslmode / redis-TLS critical che
   (placeholders; document that ES password + the app's ES password must match).
 - `.env` (gitignored): real generated values for dev use.
 
-## OPEN DECISION (spec review) — ES HTTP TLS?
-Same shape as the Postgres `sslmode` decision. Baseline (above) is **security + basic auth over
-HTTP** on the private compose network — closes the "open ES" gap (auth now required) without cert
-work.
-- **(i) Baseline — no HTTP TLS.** `xpack.security.http.ssl.enabled=false`; app uses HTTP basic auth.
-  Simplest; encryption relies on network isolation.
-- **(ii) Also self-signed HTTP TLS** — mirror `pg-certgen`: generate an ES cert, enable
-  `xpack.security.http.ssl`, set `ELASTICSEARCH_TLS=true` + mount the CA and set `ELASTICSEARCH_CA_CERT`
-  for audit-service (the client already supports CACert). Thorough (matches the PG TLS we shipped in
-  v1.12.0), more moving parts.
-
-Recommendation: **(i) baseline now** — the primary gap is "no auth"; basic-auth over the isolated
-network closes it, and ES HTTP TLS can be a follow-up. But if you want parity with the PG-TLS
-decision, I'll do (ii). Your call at review.
+## ES HTTP TLS — RESOLVED: (i) baseline, no HTTP TLS
+Enable security + basic auth over HTTP on the private compose network:
+`xpack.security.http.ssl.enabled=false`, app uses HTTP basic auth. Closes the "open ES" gap (auth
+now required); in-transit encryption relies on network isolation. `ELASTICSEARCH_TLS` stays
+`false` and no cert-gen/CACert work. Self-signed ES HTTP TLS (parity with the v1.12.0 PG TLS) is a
+documented follow-up, not this pass.
 
 ## Testing / verification
 - **`docker compose config`** valid for all three files with the new env.
