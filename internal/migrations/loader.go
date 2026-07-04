@@ -481,5 +481,12 @@ func allMigrations() []*Migration {
 			UpSQL:       guacTokenWidenUp,
 			DownSQL:     guacTokenWidenDown,
 		},
+		{
+			Version:     68,
+			Name:        "guacamole_recording_legal_hold",
+			Description: "Guacamole recording legal-hold: guacamole_recording_legal_holds (FK -> guacamole_sessions ON DELETE CASCADE, UNIQUE active-hold partial index) so sweepExpiredGuacRecordings never purges a held recording. Parallels recording_legal_holds (v42, remote_support). Not RLS-belted; plain GRANT to openidx_app (exists by v53). Idempotent.",
+			UpSQL:       guacRecordingLegalHoldsUp,
+			DownSQL:     guacRecordingLegalHoldsDown,
+		},
 	}
 }
