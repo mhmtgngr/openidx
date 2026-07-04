@@ -165,7 +165,7 @@ func main() {
 		Server:          httpServer,
 		Logger:          log,
 		Shutdownables:   shutdownables,
-		ShutdownTimeout: 30 * time.Second,
+		ShutdownTimeout: cfg.ShutdownTimeout(),
 	})
 
 	// Start server in goroutine
@@ -205,7 +205,7 @@ func createGatewayConfig(cfg *config.Config, redis *redis.Client, log *zap.Logge
 		},
 		AllowedOrigins:  cfg.GetCORSOrigins(),
 		RequestTimeout:  30 * time.Second,
-		ShutdownTimeout: 30 * time.Second,
+		ShutdownTimeout: cfg.ShutdownTimeout(),
 		Redis:           &redisClientWrapper{client: redis},
 		Logger:          &zapLoggerWrapper{logger: log},
 		TracerShutdown:  shutdownTracer,

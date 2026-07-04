@@ -145,6 +145,8 @@ services:
   apisix:
     image: apache/apisix:3.8.0-debian
     container_name: openidx-apisix
+    environment:
+      APISIX_ADMIN_KEY: ${APISIX_ADMIN_KEY:?APISIX_ADMIN_KEY required - run scripts/generate-secrets.sh}
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
       - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro

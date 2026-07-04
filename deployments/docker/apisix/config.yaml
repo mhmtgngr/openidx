@@ -4,14 +4,22 @@ apisix:
   enable_admin: true
   admin_key:
     - name: admin
-      key: CHANGE_ME_ADMIN_KEY
+      # Sourced from the APISIX_ADMIN_KEY env var (native APISIX 3.x ${{}} substitution).
+      key: ${{APISIX_ADMIN_KEY}}
       schema: admin
   port_admin: 9180
+  # Primary protection is the host port-binding (127.0.0.1:9188:9180 in prod) — the
+  # admin API is not reachable off-host. admin_allow_ip is defense-in-depth on the
+  # SOURCE IP APISIX sees, which for a host->published-port call is the container's
+  # own bridge address, not loopback. That address depends on the runtime's pool:
+  # Docker's default is 172.16.0.0/12; rootless podman/netavark uses 10.89.x (within
+  # 10.0.0.0/8). Both are covered below so the documented route-loading workflow
+  # (load-production-routes.sh -> localhost:9188) works on either. 192.168.0.0/16 is
+  # dropped — it's a home-LAN range, never a container bridge pool.
   admin_allow_ip:
     - 127.0.0.1
     - 10.0.0.0/8
     - 172.16.0.0/12
-    - 192.168.0.0/16
   ssl:
     enable: true
     listen:
@@ -24,7 +32,8 @@ deployment:
   admin:
     admin_key:
       - name: admin
-        key: CHANGE_ME_ADMIN_KEY
+        # Sourced from the APISIX_ADMIN_KEY env var (native APISIX 3.x ${{}} substitution).
+        key: ${{APISIX_ADMIN_KEY}}
         schema: admin
   etcd:
     host:

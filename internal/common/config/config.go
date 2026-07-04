@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -20,6 +21,10 @@ type Config struct {
 	Environment string `mapstructure:"environment"`
 	Port        int    `mapstructure:"port"`
 	LogLevel    string `mapstructure:"log_level"`
+
+	// ShutdownTimeoutSeconds bounds the graceful-shutdown drain window for the
+	// HTTP server. Non-positive falls back to 30s (see ShutdownTimeout).
+	ShutdownTimeoutSeconds int `mapstructure:"shutdown_timeout_seconds"`
 
 	// Database connections
 	DatabaseURL      string `mapstructure:"database_url"`
@@ -416,6 +421,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// Service defaults
 	v.SetDefault("environment", "development")
 	v.SetDefault("log_level", "info")
+	v.SetDefault("shutdown_timeout_seconds", 30)
 
 	// Port defaults per service
 	ports := map[string]int{
@@ -610,6 +616,7 @@ func bindEnvVars(v *viper.Viper) {
 		"environment":                         "APP_ENV",
 		"log_level":                           "LOG_LEVEL",
 		"port":                                "PORT",
+		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
 		"oauth_issuer":                        "OAUTH_ISSUER",
 		"tenant_base_domain":                  "TENANT_BASE_DOMAIN",
 		"default_org_fallback":                "DEFAULT_ORG_FALLBACK",
@@ -813,6 +820,15 @@ func (c *Config) GetAuditStreamAllowedOrigins() []string {
 		}
 	}
 	return result
+}
+
+// ShutdownTimeout returns the configured graceful-shutdown timeout, defaulting to
+// 30s when unset or non-positive.
+func (c *Config) ShutdownTimeout() time.Duration {
+	if c.ShutdownTimeoutSeconds <= 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(c.ShutdownTimeoutSeconds) * time.Second
 }
 
 // IsDevelopment returns true if running in development mode
