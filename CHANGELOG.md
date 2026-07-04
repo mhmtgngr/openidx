@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-04
+
+Docker-compose deployments are now tenant-isolated. Previously a fresh
+`docker compose up` was pre-multi-tenancy at the schema level (`init-db.sql` had no
+RLS belt and app services connected as the `openidx` superuser, which bypasses RLS
+entirely). This release makes migrations the sole schema source in compose and cuts
+the app services over to the non-owner `openidx_app` role so the FORCE'd RLS
+policies enforce — matching the box and managed/RDS deployments.
+
+### Added
+
+- **`migrate` + `seed` one-shot compose services** (#303) — a `migrate` service builds
+  the full v1–v67 schema (as the superuser) after Postgres is healthy, then a `seed`
+  service applies the functional-delta bootstrap. App services gate on the seed
+  completing (`depends_on: service_completed_successfully`). Wired into
+  `docker-compose.yml`, `docker-compose.prod.yml`, and `docker-compose.infra.yml`.
+- **`deployments/docker/bootstrap.sql`** (#303) — minimal first-init (the passwordless
+  `openidx_app` role + `GRANT CONNECT`); migrations own everything else.
+- **`deployments/docker/seed.sql`** (#303) — idempotent functional-delta bootstrap
+  (`role_permissions` + default risk/posture/privacy/notification/lifecycle/ispm
+  policies + tenant branding), org-scoped, applied under `app.bypass_rls`.
+- **`deployments/docker/set-app-role-password.sh`** (#304) — first-init hook that sets
+  the `openidx_app` password from `OPENIDX_APP_PASSWORD` (sorts after `bootstrap.sql`).
+- **`test/integration/compose_seed_test.go`** (#303) — e2e guard: migrate-from-empty →
+  `seed.sql` → asserts the login bootstrap and that RLS fails closed for a NOSUPERUSER
+  role without an org GUC and returns default-org rows with one set.
+
+### Changed
+
+- **Compose app services connect as `openidx_app`** (NOSUPERUSER, NOBYPASSRLS) (#304),
+  so the v37 FORCE-RLS policies enforce. `migrate`/`seed` stay on the `openidx`
+  superuser (they own DDL + seed). Add `OPENIDX_APP_PASSWORD` to the postgres env and
+  `.env` / `.env.production`.
+- **`scripts/seed.sh`** now re-applies `seed.sql` (migrations own the schema + login
+  bootstrap) instead of the removed `init-db.sql`.
+
+### Removed
+
+- **`deployments/docker/init-db.sql`** — retired as the schema source. Layering
+  migrations on top of it was permanently blocked (v29 `ziti_certificates(identity_id)`
+  ordering), and the file was itself broken on current Postgres (`NOW()` in a
+  partial-index predicate). Migrate-from-empty is clean to v67 and already seeds a
+  working admin install (default org, admin user, `admin-console` client, roles).
+- **`TestInitDBParity` / `TestInitDBColumnParity`** (`internal/migrations/initdb_parity_test.go`)
+  — no subject once `init-db.sql` is gone; migrations are the sole schema source.
+
+### Upgrade note
+
+The `openidx_app` password hook runs only on **first init of a fresh `postgres_data`
+volume**. On an **existing** volume, set the password once:
+`ALTER ROLE openidx_app WITH LOGIN PASSWORD '<OPENIDX_APP_PASSWORD>';` (or
+`docker compose down -v` / `make dev-clean` to recreate the volume). This is a
+compose-only change — systemd/managed deployments are unaffected.
+
 ## [1.10.1] - 2026-07-04
 
 Encrypt-secrets-at-rest hardening pass. Secret columns that were previously stored as plaintext
@@ -1300,7 +1354,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/mhmtgngr/openidx/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/mhmtgngr/openidx/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/mhmtgngr/openidx/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mhmtgngr/openidx/compare/v1.9.0...v1.9.1
