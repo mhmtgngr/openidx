@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-07-04
+
+### Changed
+
+- **All registered rotation connectors are now creatable via the CreatePolicy API** (#316) —
+  `validatePolicyInput` previously accepted only `directory`/`generate_only`, so `ssh`, `postgres`,
+  `ssh_key`, and `mysql` rotation policies required a direct DB insert. A new optional
+  `ConfigValidator` interface lets each connector validate its own `connector_config` (delegating to
+  its existing config parser), and the engine now accepts any **registered** connector type.
+  **Note:** the accepted connector-type set is now registration-dependent rather than a hardcoded
+  pair; unregistered types are rejected with a clear error.
+
 ## [1.14.0] - 2026-07-04
 
 Two new PAM credential-rotation connectors, extending the M5 rotation engine.
@@ -1454,7 +1466,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.14.1...HEAD
+[1.14.1]: https://github.com/mhmtgngr/openidx/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/mhmtgngr/openidx/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/mhmtgngr/openidx/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/mhmtgngr/openidx/compare/v1.12.0...v1.13.0
