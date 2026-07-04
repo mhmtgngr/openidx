@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-04
+
+Elasticsearch authentication for the docker-compose deploy path — the last deferred item from
+the prod-compose hardening bundle. Compose-only; the app-side ES auth was already built.
+
+### Changed
+
+- **Elasticsearch security enabled in prod compose** (#309) — `docker-compose.prod.yml` sets
+  `xpack.security.enabled=true` + `xpack.security.http.ssl.enabled=false` + `ELASTIC_PASSWORD` on
+  the `elasticsearch` service (HTTP basic auth over the private network), and wires
+  `ELASTICSEARCH_USERNAME`/`ELASTICSEARCH_PASSWORD` into `audit-service` (the only ES consumer,
+  which already passes them to the auth-aware client). Dev/infra compose keep security disabled.
+- **`ValidateProduction` requires ES credentials** (#309) — when `APP_ENV=production` and
+  `elasticsearch_url` is set, `elasticsearch_username`/`elasticsearch_password` must be provided
+  (conditional, so ES-unused deployments are unaffected).
+
+### Notes
+
+- Baseline is HTTP basic auth; self-signed ES HTTP TLS (parity with the v1.12.0 Postgres TLS) is a
+  documented follow-up. Dedicated least-privilege ES roles are also a follow-up (uses the built-in
+  `elastic` user for now).
+- Upgrade: set `ELASTIC_PASSWORD` and a matching `ELASTICSEARCH_PASSWORD` in `.env` before a prod
+  `docker compose up`.
+
 ## [1.12.0] - 2026-07-04
 
 Production-readiness hardening for the docker-compose deploy path. Compose-only —
@@ -1392,7 +1416,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/mhmtgngr/openidx/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/mhmtgngr/openidx/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/mhmtgngr/openidx/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/mhmtgngr/openidx/compare/v1.10.0...v1.10.1
