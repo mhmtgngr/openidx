@@ -173,9 +173,19 @@ func (r *mysqlRotator) Apply(ctx context.Context, cfg map[string]any, newValue [
 		return fmt.Errorf("mysql: admin connect: %w", err)
 	}
 
+	// Pin a single physical connection: the SET SESSION sql_mode below only affects
+	// the connection it runs on, so the ALTER must run on that SAME connection —
+	// otherwise the *sql.DB pool could route them to different connections and the
+	// NO_BACKSLASH_ESCAPES strip would not apply to the ALTER.
+	conn, err := db.Conn(cctx)
+	if err != nil {
+		return fmt.Errorf("mysql: acquire conn: %w", err)
+	}
+	defer conn.Close()
+
 	// Strip NO_BACKSLASH_ESCAPES so the backslash-escaping in the quoted literal
 	// is interpreted as an escape (not a literal backslash).
-	if _, err := db.ExecContext(cctx,
+	if _, err := conn.ExecContext(cctx,
 		"SET SESSION sql_mode = REPLACE(@@SESSION.sql_mode, 'NO_BACKSLASH_ESCAPES', '')",
 	); err != nil {
 		return fmt.Errorf("mysql: set sql_mode: %w", err)
@@ -189,7 +199,7 @@ func (r *mysqlRotator) Apply(ctx context.Context, cfg map[string]any, newValue [
 	// Identifiers validated to the safe charset; password is escaped-and-quoted.
 	// Never log this DDL (it contains the new secret).
 	ddl := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY %s", conf.targetUser, conf.targetHost, quoted)
-	if _, err := db.ExecContext(cctx, ddl); err != nil {
+	if _, err := conn.ExecContext(cctx, ddl); err != nil {
 		return fmt.Errorf("mysql: alter user: %w", err)
 	}
 	return nil
