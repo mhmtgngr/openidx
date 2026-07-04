@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,20 @@ type PostgresTLSConfig struct {
 	SSLKey      string // Path to client private key (mTLS)
 }
 
+// envInt32 reads an int32 from env var name, clamped to >= min, falling back to def
+// (with default on empty/unparseable input). Used for pool sizing knobs.
+func envInt32(name string, def, min int32) int32 {
+	s := os.Getenv(name)
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || int32(n) < min {
+		return def
+	}
+	return int32(n)
+}
+
 // NewPostgres creates a new PostgreSQL connection pool.
 // An optional PostgresTLSConfig can be provided to configure SSL parameters.
 func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, error) {
@@ -47,8 +62,8 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 	}
 
 	// Connection pool settings
-	config.MaxConns = 25
-	config.MinConns = 5
+	config.MaxConns = envInt32("DB_MAX_CONNS", 25, 1)
+	config.MinConns = envInt32("DB_MIN_CONNS", 5, 0)
 	config.MaxConnLifetime = time.Hour
 	config.MaxConnIdleTime = 30 * time.Minute
 	config.HealthCheckPeriod = time.Minute

@@ -665,3 +665,21 @@ func BenchmarkParsePostgresConfig(b *testing.B) {
 		_, _ = parsePostgresConfig(connString, tlsCfg)
 	}
 }
+
+func TestEnvInt32(t *testing.T) {
+	if got := envInt32("OIDX_TEST_MAXC", 25, 1); got != 25 {
+		t.Fatalf("unset: want 25, got %d", got)
+	}
+	t.Setenv("OIDX_TEST_MAXC", "50")
+	if got := envInt32("OIDX_TEST_MAXC", 25, 1); got != 50 {
+		t.Fatalf("valid: want 50, got %d", got)
+	}
+	t.Setenv("OIDX_TEST_MAXC", "abc")
+	if got := envInt32("OIDX_TEST_MAXC", 25, 1); got != 25 {
+		t.Fatalf("invalid: want default 25, got %d", got)
+	}
+	t.Setenv("OIDX_TEST_MAXC", "0")
+	if got := envInt32("OIDX_TEST_MAXC", 25, 1); got != 25 {
+		t.Fatalf("below-min: want default 25, got %d", got)
+	}
+}
