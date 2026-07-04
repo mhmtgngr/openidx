@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-04
+
+Production-readiness hardening for the docker-compose deploy path. Compose-only —
+systemd/managed deployments are unaffected.
+
+### Added
+
+- **Startup readiness probes** (#307) — `internal/common/health.WaitForDependency` (bounded
+  retry) plus `ProbeHTTP`/`ProbeOPA`. Services now verify hard dependencies at boot instead of
+  returning 500s later: the OPA-using services (admin-api, provisioning, governance) probe
+  `OPA/health` and the access service probes its Ziti controller — **fail-fast in production,
+  warn and continue in development**. The OPA probe is gated on `EnableOPAAuthz` so a deploy
+  that doesn't use OPA never blocks on it; APISIX is intentionally not probed (its reconciler
+  already self-heals).
+- **Self-signed Postgres TLS in prod compose** (#306) — a `pg-certgen` one-shot service
+  generates a server cert (owned uid 70, key mode 0600) into a `pg_certs` volume; the prod
+  Postgres runs with `ssl=on`, and the app/migrate/seed DSNs default to
+  `sslmode=${DATABASE_SSL_MODE:-require}` so DB traffic is encrypted out of the box. Point at an
+  external managed Postgres by setting `DATABASE_SSL_MODE` and supplying your own certs.
+
+### Changed
+
+- **DB pool sizing is configurable** (#306) — `DB_MAX_CONNS`/`DB_MIN_CONNS` (defaults 25/5)
+  replace the hardcoded pool limits in `internal/common/database`.
+- **APISIX admin key sourced from `APISIX_ADMIN_KEY`** (#306) via native APISIX `${{...}}` env
+  substitution (no more `CHANGE_ME_ADMIN_KEY` in the config), wired into all three compose files;
+  `admin_allow_ip` tightened to loopback + the container bridge ranges (`10.0.0.0/8`,
+  `172.16.0.0/12`).
+- **Graceful-shutdown timeout is configurable** (#306) — `SHUTDOWN_TIMEOUT_SECONDS` (default 30)
+  replaces the hardcoded 30s across all services.
+
+### Notes
+
+- Elasticsearch `xpack.security` remains deferred (needs ES-client auth wiring).
+- Upgrade: the `openidx_app` password hook and now Postgres TLS certs are generated on **first
+  init of a fresh `postgres_data` volume**; existing volumes need the operator to provision them
+  once (see the v1.11.0 note for the role password).
+
 ## [1.11.0] - 2026-07-04
 
 Docker-compose deployments are now tenant-isolated. Previously a fresh
@@ -1354,7 +1392,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/mhmtgngr/openidx/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/mhmtgngr/openidx/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/mhmtgngr/openidx/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/mhmtgngr/openidx/compare/v1.9.1...v1.10.0
