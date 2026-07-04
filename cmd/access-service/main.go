@@ -312,7 +312,19 @@ func main() {
 	if zEnabled {
 		log.Info("OpenZiti integration enabled, initializing ZitiManager...")
 		zm, err := access.NewZitiManagerWithConn(cfg, zCtrlURL, zUser, zPwd, zDir, zInsecure, db, log)
+		// In production, an enabled Ziti is a hard dependency: retry a bounded number of
+		// times (the controller may still be coming up) and fail fast rather than
+		// silently disabling it. In non-production keep the existing best-effort behavior
+		// (single attempt, warn, continue) so a dev box without Ziti still boots.
+		for attempt := 1; err != nil && cfg.IsProduction() && attempt < 5; attempt++ {
+			log.Warn("ZitiManager init failed, retrying", zap.Int("attempt", attempt), zap.Int("max", 5), zap.Error(err))
+			time.Sleep(3 * time.Second)
+			zm, err = access.NewZitiManagerWithConn(cfg, zCtrlURL, zUser, zPwd, zDir, zInsecure, db, log)
+		}
 		if err != nil {
+			if cfg.IsProduction() {
+				log.Fatal("Ziti enabled but ZitiManager failed to initialize after retries", zap.Error(err))
+			}
 			log.Error("Failed to initialize ZitiManager -- Ziti features disabled", zap.Error(err))
 		} else {
 			// Start background monitors on a context owned by the provider slot

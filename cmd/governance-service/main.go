@@ -18,6 +18,7 @@ import (
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/health"
 	"github.com/openidx/openidx/internal/common/logger"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/opa"
@@ -66,6 +67,21 @@ func main() {
 	shutdownTracer, err := tracing.Init(context.Background(), tracingCfg, log)
 	if err != nil {
 		log.Warn("Failed to initialize tracing", zap.Error(err))
+	}
+
+	// When OPA authz is enabled, fail fast if the policy engine isn't reachable at
+	// boot in production; warn and continue in dev so a slightly-late OPA doesn't
+	// crash-loop the stack. Guard matches the actual OPA-usage condition below
+	// (cfg.EnableOPAAuthz) so a deploy that doesn't use OPA never blocks on it.
+	if cfg.EnableOPAAuthz && cfg.OPAURL != "" {
+		opaCtx, opaCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if err := health.WaitForDependency(opaCtx, log, "opa", 10, 3*time.Second, health.ProbeOPA(cfg.OPAURL, 2*time.Second)); err != nil {
+			if cfg.IsProduction() {
+				log.Fatal("OPA policy engine not reachable at startup", zap.Error(err))
+			}
+			log.Warn("OPA policy engine not reachable at startup; continuing (non-production)", zap.Error(err))
+		}
+		opaCancel()
 	}
 
 	// Initialize database connection
