@@ -297,6 +297,7 @@ func main() {
 			credentials.NewDirectoryRotator(dirService),
 			credentials.NewGenerateOnlyRotator(),
 			credentials.NewSSHRotator(vaultSvc),
+			credentials.NewSSHKeyRotator(vaultSvc),
 			credentials.NewPostgresRotator(vaultSvc),
 		}
 		credSvc := credentials.NewService(db, vaultSvc, rotators, unifiedAudit, cfg.CredentialsRotationDefaultLength, log)
