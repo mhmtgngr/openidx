@@ -341,12 +341,18 @@ func NewElasticsearchFromConfig(cfg ElasticsearchConfig) (*ElasticsearchClient, 
 		return nil, fmt.Errorf("failed to create elasticsearch client: %w", err)
 	}
 
-	// Test connectivity
+	// Test connectivity AND authentication. Ping only surfaces transport errors; a
+	// wrong password / missing creds against a security-enabled cluster comes back as
+	// a 401/403 response with err == nil, so check the response status too — otherwise
+	// a misconfigured credential silently "connects" and then fails every operation.
 	res, err := client.Ping()
 	if err != nil {
 		return nil, fmt.Errorf("failed to ping elasticsearch: %w", err)
 	}
-	res.Body.Close()
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, fmt.Errorf("elasticsearch ping failed: %s (check credentials/URL)", res.Status())
+	}
 
 	return &ElasticsearchClient{Client: client, URL: cfg.URL}, nil
 }
