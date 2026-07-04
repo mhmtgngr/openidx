@@ -74,8 +74,8 @@ func main() {
 	// crash-loop the stack. Guard matches the actual OPA-usage condition below
 	// (cfg.EnableOPAAuthz) so a deploy that doesn't use OPA never blocks on it.
 	if cfg.EnableOPAAuthz && cfg.OPAURL != "" {
-		opaCtx, opaCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := health.WaitForDependency(opaCtx, log, "opa", 10, 3*time.Second, health.ProbeOPA(cfg.OPAURL, 5*time.Second)); err != nil {
+		opaCtx, opaCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if err := health.WaitForDependency(opaCtx, log, "opa", 10, 3*time.Second, health.ProbeOPA(cfg.OPAURL, 2*time.Second)); err != nil {
 			if cfg.IsProduction() {
 				log.Fatal("OPA policy engine not reachable at startup", zap.Error(err))
 			}
