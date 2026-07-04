@@ -22,6 +22,13 @@ type Rotator interface {
 	Verify(ctx context.Context, cfg map[string]any, newValue []byte) error
 }
 
+// ValueGenerator lets a connector produce the secret value itself (e.g. an SSH private key)
+// instead of the engine's default random-password generateSecret. Optional: connectors that
+// don't implement it keep using generateSecret.
+type ValueGenerator interface {
+	Generate(gp GenerationPolicy) ([]byte, error)
+}
+
 // GenerationPolicy controls generateSecret. Zero value → length 24, all character classes.
 type GenerationPolicy struct {
 	Length  int  `json:"length"`

@@ -81,7 +81,13 @@ type candidateVault interface {
 //   - ErrVerifyUnsupported → skip verify, proceed to promote → ("succeeded", true, candidateVersion).
 //   - All steps pass    → ("succeeded", true, candidateVersion).
 func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVault, gp GenerationPolicy, cfg map[string]any) (status string, promoted bool, candidateVersion int) {
-	newValue, err := generateSecret(gp)
+	var newValue []byte
+	var err error
+	if g, ok := r.(ValueGenerator); ok {
+		newValue, err = g.Generate(gp)
+	} else {
+		newValue, err = generateSecret(gp)
+	}
 	if err != nil {
 		return "failed", false, 0
 	}
