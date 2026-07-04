@@ -4,14 +4,18 @@ apisix:
   enable_admin: true
   admin_key:
     - name: admin
-      key: CHANGE_ME_ADMIN_KEY
+      # Sourced from the APISIX_ADMIN_KEY env var (native APISIX 3.x ${{}} substitution).
+      key: ${{APISIX_ADMIN_KEY}}
       schema: admin
   port_admin: 9180
+  # Only allow the loopback and the Docker bridge pool that covers the
+  # openidx-network container IPs. Docker's default bridge/user-defined
+  # network pool is 172.16.0.0/12, which is where openidx-network lives.
+  # If your daemon is configured with a custom default-address-pool
+  # (e.g. 10.x or 192.168.x), add that CIDR here to widen access.
   admin_allow_ip:
     - 127.0.0.1
-    - 10.0.0.0/8
     - 172.16.0.0/12
-    - 192.168.0.0/16
   ssl:
     enable: true
     listen:
@@ -24,7 +28,8 @@ deployment:
   admin:
     admin_key:
       - name: admin
-        key: CHANGE_ME_ADMIN_KEY
+        # Sourced from the APISIX_ADMIN_KEY env var (native APISIX 3.x ${{}} substitution).
+        key: ${{APISIX_ADMIN_KEY}}
         schema: admin
   etcd:
     host:
