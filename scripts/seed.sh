@@ -1,9 +1,15 @@
 #!/bin/bash
 # Database seeding script for OpenIDX
 #
-# Seed data is automatically loaded on first `docker compose up` via
-# deployments/docker/init-db.sql. This script re-applies seed data
-# to a running database for reset scenarios.
+# Migrations own the schema and the login bootstrap: `cmd/migrate up` (run as the
+# one-shot `migrate` compose service, or manually) creates every table plus the
+# default org, admin user, admin-console OAuth client, roles and permissions.
+# deployments/docker/seed.sql then adds the functional delta (role_permissions +
+# default policies) and is what the one-shot `seed` compose service applies.
+#
+# This script re-applies deployments/docker/seed.sql to a running, already-migrated
+# database (reset/top-up scenarios). It does NOT create the schema — run
+# `cmd/migrate up` (or `docker compose up migrate`) first.
 
 set -e
 
@@ -48,16 +54,18 @@ if [ "$ADMIN_EXISTS" -gt 0 ] && [ "${1:-}" != "--force" ]; then
     echo
     echo -e "${BLUE}Existing seed credentials:${NC}"
 else
-    echo -e "${GREEN}Applying seed data from init-db.sql...${NC}"
-    $PSQL_CMD -f "$PROJECT_ROOT/deployments/docker/init-db.sql" 2>/dev/null || true
+    if [ "$ADMIN_EXISTS" -eq 0 ]; then
+        echo -e "${YELLOW}No admin user found — the schema isn't migrated yet.${NC}"
+        echo -e "  Run migrations first: ${BLUE}docker compose up migrate${NC} (or ${BLUE}go run ./cmd/migrate up${NC})."
+    fi
+    echo -e "${GREEN}Applying functional-delta seed from seed.sql...${NC}"
+    $PSQL_CMD -f "$PROJECT_ROOT/deployments/docker/seed.sql" 2>/dev/null || true
     echo -e "${GREEN}Done${NC}"
     echo
     echo -e "${BLUE}Seed credentials:${NC}"
 fi
 
-echo -e "  Admin:         ${GREEN}admin@openidx.local${NC}"
-echo -e "  Test users:    jsmith, jdoe, bwilson, amartin"
-echo -e "  OAuth clients: admin-console (public), api-service (confidential), test-client"
-echo -e "  API client:    ${GREEN}api-service${NC} / ${GREEN}api-service-secret${NC}"
+echo -e "  Admin:         ${GREEN}admin@openidx.local${NC} (created by migrations)"
+echo -e "  OAuth client:  admin-console (created by migrations)"
 echo -e "  Roles:         admin, user, manager, auditor, developer"
-echo -e "  Groups:        Administrators, Developers, DevOps, QA, Finance, HR"
+echo -e "  role_permissions + default risk/posture/privacy/notification/lifecycle/ispm policies (from seed.sql)"
