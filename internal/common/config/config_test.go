@@ -857,6 +857,54 @@ func TestValidateProduction(t *testing.T) {
 	})
 }
 
+func TestValidateProduction_Elasticsearch(t *testing.T) {
+	// Base is the "fully secure config" that ValidateProduction accepts as nil,
+	// so these cases isolate the Elasticsearch credential rule.
+	base := func() *Config {
+		return &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "verify-full",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		}
+	}
+
+	t.Run("Passes when elasticsearch_url is unset", func(t *testing.T) {
+		cfg := base()
+		cfg.ElasticsearchURL = ""
+
+		err := cfg.ValidateProduction()
+		assert.NoError(t, err)
+	})
+
+	t.Run("Fails when elasticsearch_url is set but credentials are missing", func(t *testing.T) {
+		cfg := base()
+		cfg.ElasticsearchURL = "http://es:9200"
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "elasticsearch")
+	})
+
+	t.Run("Passes when elasticsearch_url and credentials are set", func(t *testing.T) {
+		cfg := base()
+		cfg.ElasticsearchURL = "http://es:9200"
+		cfg.ElasticsearchUsername = "elastic"
+		cfg.ElasticsearchPassword = "x"
+
+		err := cfg.ValidateProduction()
+		assert.NoError(t, err)
+	})
+}
+
 func TestEffectiveDatabaseSSLMode(t *testing.T) {
 	tests := []struct {
 		name  string

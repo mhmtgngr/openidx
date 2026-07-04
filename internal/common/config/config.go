@@ -953,6 +953,13 @@ func (c *Config) ValidateProduction() error {
 			"redis_tls_enabled must be true in production")
 	}
 
+	// Critical: if Elasticsearch is configured in production, it must be authenticated
+	// (the compose ES now runs with xpack.security on). No ES URL ⇒ ES unused ⇒ no check.
+	if c.ElasticsearchURL != "" && (c.ElasticsearchUsername == "" || c.ElasticsearchPassword == "") {
+		criticalIssues = append(criticalIssues,
+			"elasticsearch_username and elasticsearch_password must be set in production when elasticsearch_url is configured")
+	}
+
 	// Critical: Inter-service TLS must be enabled in production
 	if !c.TLS.Enabled {
 		criticalIssues = append(criticalIssues,
