@@ -683,3 +683,32 @@ func TestEnvInt32(t *testing.T) {
 		t.Fatalf("below-min: want default 25, got %d", got)
 	}
 }
+
+// TestNewElasticsearchFromConfig_PingAuth verifies the construction ping checks the
+// response status, not just the transport error — so a 401/403 (bad creds against a
+// security-enabled cluster) fails construction instead of silently "connecting".
+func TestNewElasticsearchFromConfig_PingAuth(t *testing.T) {
+	esProduct := func(w http.ResponseWriter) { w.Header().Set("X-Elastic-Product", "Elasticsearch") }
+
+	t.Run("401 ping fails construction", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			esProduct(w)
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer srv.Close()
+		_, err := NewElasticsearchFromConfig(ElasticsearchConfig{URL: srv.URL, Username: "elastic", Password: "wrong"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ping failed")
+	})
+
+	t.Run("200 ping succeeds", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			esProduct(w)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		c, err := NewElasticsearchFromConfig(ElasticsearchConfig{URL: srv.URL, Username: "elastic", Password: "right"})
+		require.NoError(t, err)
+		assert.NotNil(t, c)
+	})
+}
