@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-07-04
+
+Encrypt-secrets-at-rest hardening pass. Secret columns that were previously stored as plaintext
+are now AES-256-GCM encrypted at rest, keyed by `ENCRYPTION_KEY`. Rollout is lazy and
+flag-day-free: reads are prefix-aware (tagged ciphertext is decrypted; legacy plaintext passes
+through untouched), and environments without a usable key fall back to a warned passthrough rather
+than crashing.
+
+### Added
+
+- **`internal/common/secretcrypt`** — shared AES-256-GCM helper (#298). `Encrypt` emits
+  `encv1:<base64(nonce‖ciphertext)>`; `Decrypt` is prefix-aware (tagged → decrypt, untagged legacy
+  plaintext → passthrough); `NewNoop()` provides a best-effort passthrough cipher for environments
+  without a 32-byte key (services warn and continue rather than fail closed).
+
+### Changed
+
+- **Webhook signing secrets encrypted at rest** (#299) — `webhook_subscriptions.secret` is now
+  encrypted on create and decrypted on read and before HMAC signature computation. Column widened to
+  `TEXT` (migration **v65**; file-based `202607030001`).
+- **Identity-provider client secrets encrypted at rest** (#300) — `identity_providers.client_secret`
+  is encrypted on create/update and decrypted on every read path: identity get/list, the access
+  service's multi-IdP route resolution, and the OAuth social-login token exchange. Column widened to
+  `TEXT` (migration **v66**; file-based `202607030002`).
+- **Guacamole pool tokens encrypted at rest** (#301) — `guacamole_connection_pool.token` is encrypted
+  on write. The column is write-only (the in-memory pool serves reads), so there is no decrypt path — a
+  database dump cannot yield usable session tokens. Column widened to `TEXT` (migration **v67**).
+
+### Notes
+
+- `oauth_clients.client_secret` was already SHA-256 hashed (constant-time compare, never re-returned)
+  and is intentionally out of scope for this pass; the stale `-- TODO: Encrypt` marker was removed.
+- Highest migration is now **v67**. `init-db.sql` defines all three columns as `TEXT` directly, so
+  fresh installs need no backfill.
+
 ## [1.10.0] - 2026-07-03
 
 Readiness-finalization pass across three workstreams: make the shipped PAM usable from the
@@ -1265,7 +1300,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/mhmtgngr/openidx/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/mhmtgngr/openidx/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mhmtgngr/openidx/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mhmtgngr/openidx/compare/v1.8.2...v1.9.0
