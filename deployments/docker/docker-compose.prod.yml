@@ -123,7 +123,9 @@ services:
     restart: always
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?ELASTIC_PASSWORD required - run scripts/generate-secrets.sh}
       - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
       - bootstrap.memory_lock=true
     ulimits:
@@ -289,6 +291,8 @@ services:
       - APP_ENV=production
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-elastic}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:?ELASTICSEARCH_PASSWORD required - run scripts/generate-secrets.sh}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - OPENIDX_ENABLE_RATE_LIMIT=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT:-jaeger:4317}
