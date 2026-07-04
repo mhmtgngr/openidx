@@ -198,3 +198,9 @@ func (r *postgresRotator) Verify(ctx context.Context, cfg map[string]any, newVal
 
 	return conn.Ping(cctx)
 }
+
+// ValidateConfig satisfies ConfigValidator: the config is valid if it parses.
+func (r *postgresRotator) ValidateConfig(cfg map[string]any) error {
+	_, err := pgConfigFromMap(cfg)
+	return err
+}

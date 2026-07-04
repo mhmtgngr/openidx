@@ -140,3 +140,9 @@ func authorizedKeysScript(user string) string {
 		`grep -v "openidx-rotated:$u" "$ak" > "$tmp" || true; printf '%s\n' "$new" >> "$tmp"; ` +
 		`chmod 600 "$tmp"; chown "$u" "$tmp"; mv "$tmp" "$ak"`
 }
+
+// ValidateConfig satisfies ConfigValidator: the config is valid if it parses.
+func (r *sshKeyRotator) ValidateConfig(cfg map[string]any) error {
+	_, err := sshConfigFromMap(cfg)
+	return err
+}

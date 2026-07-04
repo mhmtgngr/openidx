@@ -222,3 +222,9 @@ func sshDialAs(ctx context.Context, conf sshConf, user string, authMethod ssh.Au
 	}
 	return client, nil
 }
+
+// ValidateConfig satisfies ConfigValidator: the config is valid if it parses.
+func (r *sshRotator) ValidateConfig(cfg map[string]any) error {
+	_, err := sshConfigFromMap(cfg)
+	return err
+}

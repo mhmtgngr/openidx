@@ -29,6 +29,12 @@ type ValueGenerator interface {
 	Generate(gp GenerationPolicy) ([]byte, error)
 }
 
+// ConfigValidator lets a connector validate a policy's connector_config at CreatePolicy time.
+// Optional: a connector without it (e.g. generate_only) imposes no config requirements.
+type ConfigValidator interface {
+	ValidateConfig(cfg map[string]any) error
+}
+
 // GenerationPolicy controls generateSecret. Zero value → length 24, all character classes.
 type GenerationPolicy struct {
 	Length  int  `json:"length"`
