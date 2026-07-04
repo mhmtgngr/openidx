@@ -8,13 +8,17 @@ apisix:
       key: ${{APISIX_ADMIN_KEY}}
       schema: admin
   port_admin: 9180
-  # Only allow the loopback and the Docker bridge pool that covers the
-  # openidx-network container IPs. Docker's default bridge/user-defined
-  # network pool is 172.16.0.0/12, which is where openidx-network lives.
-  # If your daemon is configured with a custom default-address-pool
-  # (e.g. 10.x or 192.168.x), add that CIDR here to widen access.
+  # Primary protection is the host port-binding (127.0.0.1:9188:9180 in prod) — the
+  # admin API is not reachable off-host. admin_allow_ip is defense-in-depth on the
+  # SOURCE IP APISIX sees, which for a host->published-port call is the container's
+  # own bridge address, not loopback. That address depends on the runtime's pool:
+  # Docker's default is 172.16.0.0/12; rootless podman/netavark uses 10.89.x (within
+  # 10.0.0.0/8). Both are covered below so the documented route-loading workflow
+  # (load-production-routes.sh -> localhost:9188) works on either. 192.168.0.0/16 is
+  # dropped — it's a home-LAN range, never a container bridge pool.
   admin_allow_ip:
     - 127.0.0.1
+    - 10.0.0.0/8
     - 172.16.0.0/12
   ssl:
     enable: true
