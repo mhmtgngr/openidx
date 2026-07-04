@@ -132,8 +132,10 @@ func (r *sshKeyRotator) Verify(ctx context.Context, cfg map[string]any, newValue
 // the authorized_keys line piped on stdin, replacing any prior "openidx-rotated:<user>"
 // line, atomically. The caller MUST have validated user via validateUsername first.
 func authorizedKeysScript(user string) string {
+	// chown the .ssh dir (not just the file) to the target user: it may be created here
+	// by the admin (root), and sshd StrictModes rejects a ~/.ssh not owned by the user.
 	return `set -e; u=` + user + `; h=$(getent passwd "$u" | cut -d: -f6); ` +
-		`test -n "$h"; mkdir -p "$h/.ssh"; chmod 700 "$h/.ssh"; ak="$h/.ssh/authorized_keys"; ` +
+		`test -n "$h"; mkdir -p "$h/.ssh"; chmod 700 "$h/.ssh"; chown "$u" "$h/.ssh"; ak="$h/.ssh/authorized_keys"; ` +
 		`touch "$ak"; new=$(cat); tmp="$ak.oidx.$$"; ` +
 		`grep -v "openidx-rotated:$u" "$ak" > "$tmp" || true; printf '%s\n' "$new" >> "$tmp"; ` +
 		`chmod 600 "$tmp"; chown "$u" "$tmp"; mv "$tmp" "$ak"`
