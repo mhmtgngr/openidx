@@ -228,3 +228,9 @@ func (r *mysqlRotator) Verify(ctx context.Context, cfg map[string]any, newValue 
 	}
 	return nil
 }
+
+// ValidateConfig satisfies ConfigValidator: the config is valid if it parses.
+func (r *mysqlRotator) ValidateConfig(cfg map[string]any) error {
+	_, err := mysqlConfigFromMap(cfg)
+	return err
+}

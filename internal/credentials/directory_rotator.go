@@ -35,3 +35,14 @@ func (d *directoryRotator) Verify(ctx context.Context, cfg map[string]any, newVa
 	}
 	return err
 }
+
+// ValidateConfig satisfies ConfigValidator: requires directory_id and username
+// (matches Apply's requirements).
+func (d *directoryRotator) ValidateConfig(cfg map[string]any) error {
+	dirID, _ := cfg["directory_id"].(string)
+	user, _ := cfg["username"].(string)
+	if dirID == "" || user == "" {
+		return fmt.Errorf("directory connector requires directory_id and username")
+	}
+	return nil
+}

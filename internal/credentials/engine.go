@@ -158,18 +158,18 @@ var ErrInvalidPolicy = errors.New("credentials: invalid rotation policy")
 var ErrSecretNotFound = errors.New("credentials: secret not found or not accessible")
 
 // validatePolicyInput validates connector_type, connector_config, and interval_seconds.
+// The connector_type must be a REGISTERED connector; its connector_config is validated by
+// the connector itself (via the optional ConfigValidator interface) so any registered
+// connector is creatable without the engine hardcoding per-connector field lists.
 func (s *Service) validatePolicyInput(in PolicyInput) error {
-	switch in.ConnectorType {
-	case "directory":
-		dirID, _ := in.ConnectorConfig["directory_id"].(string)
-		user, _ := in.ConnectorConfig["username"].(string)
-		if dirID == "" || user == "" {
-			return fmt.Errorf("%w: directory connector requires connector_config.directory_id and username", ErrInvalidPolicy)
+	rot, ok := s.rotators[in.ConnectorType]
+	if !ok {
+		return fmt.Errorf("%w: unknown connector_type %q (no registered connector)", ErrInvalidPolicy, in.ConnectorType)
+	}
+	if cv, ok := rot.(ConfigValidator); ok {
+		if err := cv.ValidateConfig(in.ConnectorConfig); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidPolicy, err)
 		}
-	case "generate_only":
-		// no additional requirements
-	default:
-		return fmt.Errorf("%w: connector_type must be one of {directory, generate_only}", ErrInvalidPolicy)
 	}
 	if in.IntervalSeconds < 0 {
 		return fmt.Errorf("%w: interval_seconds must be >= 0", ErrInvalidPolicy)
