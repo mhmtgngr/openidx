@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-04
+
+Two new PAM credential-rotation connectors, extending the M5 rotation engine.
+
+### Added
+
+- **SSH key-pair rotation connector** (`ssh_key`) (#313) — rotates a POSIX account's SSH key: the
+  stored secret value is a freshly generated ed25519 OpenSSH private key; the derived public key is
+  installed into the target's `authorized_keys` (a single tagged line, replaced each rotation) over
+  an admin SSH session, and rotation is verified by logging in as the target with the new key. Reuses
+  the existing `FixedHostKey` verification. No new dependencies.
+- **`ValueGenerator` engine seam** (#313) — an optional interface letting a connector produce the
+  secret value itself (e.g. a private key) instead of the engine's default random password. Existing
+  connectors are unaffected.
+- **MySQL rotation connector** (`mysql`) (#314) — rotates a MySQL user's password via `ALTER USER`,
+  authenticating with a bootstrap admin credential from the vault, verified by connecting as the
+  target with the new password. New dependency: `github.com/go-sql-driver/mysql`. Because MySQL DDL
+  cannot bind the password, the connector strictly validates identifiers, escapes the password as a
+  single-quoted literal, and strips `NO_BACKSLASH_ESCAPES` on a pinned connection — verified against
+  injection-shaped inputs.
+
+### Notes
+
+- Cloud-IAM (AWS/GCP) rotation is deferred (heavy SDKs, not locally verifiable).
+- Follow-up: `validatePolicyInput` accepts only `directory`/`generate_only`, so `ssh`/`postgres`/
+  `ssh_key`/`mysql` rotation policies must currently be created out-of-band (pre-existing gap).
+
 ## [1.13.1] - 2026-07-04
 
 ### Fixed
@@ -1427,7 +1454,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/mhmtgngr/openidx/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/mhmtgngr/openidx/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/mhmtgngr/openidx/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/mhmtgngr/openidx/compare/v1.11.0...v1.12.0
