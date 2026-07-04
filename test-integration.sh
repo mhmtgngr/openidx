@@ -19,7 +19,7 @@ OAUTH_URL="${1:-http://localhost:8006}"
 IDENTITY_URL="${2:-http://localhost:8001}"
 OAUTH_CLIENT_ID="admin-console"
 REDIRECT_URI="http://localhost:3000/login"
-# Seed admin user from init-db.sql (admin / Admin@123)
+# Seed admin user from the migrations (admin / Admin@123)
 TEST_USERNAME="admin"
 TEST_PASSWORD="Admin@123"
 TEST_EMAIL="admin@openidx.local"
@@ -179,7 +179,7 @@ test_user_setup() {
     header "1. Verify Seed Data"
 
     # The admin user (admin / Admin@123) and admin-console OAuth client
-    # are seeded by init-db.sql. Verify the seed user exists by checking
+    # are seeded by the migrations. Verify the seed user exists by checking
     # the health endpoint (we can't query users without auth yet).
     USER_ID="00000000-0000-0000-0000-000000000001"
     info "Using seed admin user: $TEST_USERNAME (ID: $USER_ID)"
@@ -191,12 +191,12 @@ test_user_setup() {
 test_oauth_client() {
     header "2. OAuth Client Verification"
 
-    # admin-console client is seeded by init-db.sql
+    # admin-console client is seeded by the migrations
     http GET "$OAUTH_URL/api/v1/oauth/clients/$OAUTH_CLIENT_ID"
     if [ "$HTTP_STATUS" = "200" ]; then
         pass "OAuth client '$OAUTH_CLIENT_ID' exists (seeded)"
     else
-        fail "OAuth client '$OAUTH_CLIENT_ID' not found" "Status: $HTTP_STATUS. Check init-db.sql seed data."
+        fail "OAuth client '$OAUTH_CLIENT_ID' not found" "Status: $HTTP_STATUS. Check the migration seed data."
     fi
 }
 

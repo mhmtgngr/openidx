@@ -1,5 +1,12 @@
 # P1 — Compose: run migrations + cut the app role over to `openidx_app`
 
+> **STATUS: SUPERSEDED (2026-07-04) by
+> `2026-07-04-compose-migrations-own-schema-cutover-design.md`.** That spec adopts
+> this doc's "correct path" deferral note (migrations own the schema) and is
+> grounded in fresh empirical findings: migrate-from-empty is clean to v67 and
+> already seeds a working admin install, so the initiative is much smaller than the
+> "collapse to one schema source" this doc feared. Retained for history.
+
 > **STATUS: DEFERRED (2026-06-30).** Implementation was attempted and revealed
 > this is the larger "collapse to one schema source" initiative (audit root-cause
 > #1), not a single P1. Findings that block the "layer migrations on top of
