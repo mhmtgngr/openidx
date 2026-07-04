@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-04
+
+### Fixed
+
+- **Elasticsearch client validates auth at construction** (#311) — `NewElasticsearchFromConfig`'s
+  connectivity ping only inspected the transport error, so a wrong/absent password against a
+  security-enabled cluster (a 401/403 with `err == nil`) silently "connected" and then failed every
+  operation. It now checks `res.IsError()` and returns a clear error, so bad ES credentials surface at
+  startup. Audit-service still treats Elasticsearch as best-effort (warn + continue), so this turns a
+  silent operation-time failure into a clear startup warning. Surfaced by the v1.13.0 ES-auth smoke test.
+
 ## [1.13.0] - 2026-07-04
 
 Elasticsearch authentication for the docker-compose deploy path — the last deferred item from
@@ -1416,7 +1427,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/mhmtgngr/openidx/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/mhmtgngr/openidx/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/mhmtgngr/openidx/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/mhmtgngr/openidx/compare/v1.10.1...v1.11.0
