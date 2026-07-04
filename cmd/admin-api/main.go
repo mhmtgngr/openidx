@@ -310,7 +310,7 @@ func main() {
 		Server:          httpServer,
 		Logger:          log,
 		Shutdownables:   shutdownables,
-		ShutdownTimeout: 30 * time.Second,
+		ShutdownTimeout: cfg.ShutdownTimeout(),
 	})
 
 	// Start server in goroutine

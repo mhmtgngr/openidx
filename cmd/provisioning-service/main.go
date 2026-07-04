@@ -176,7 +176,7 @@ func main() {
 		Server:          httpServer,
 		Logger:          log,
 		Shutdownables:   shutdownables,
-		ShutdownTimeout: 30 * time.Second,
+		ShutdownTimeout: cfg.ShutdownTimeout(),
 	})
 
 	go func() {
