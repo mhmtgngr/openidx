@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openidx_secret}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
     ports:
       - "5432:5432"
     healthcheck:
@@ -22,6 +22,47 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - openidx-network
+
+  # Migrations own the schema: this one-shot service builds v1–v67 (as the openidx
+  # superuser) after postgres is healthy, so `make dev-infra` yields a fully-migrated
+  # DB even though the app services are run separately (go run / make dev).
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: migrate
+    container_name: openidx-migrate
+    command: ["up"]
+    environment:
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      disable: true
+    networks:
+      - openidx-network
+
+  # Applies the functional-delta bootstrap seed (role_permissions + default policies)
+  # after migrations; idempotent, under app.bypass_rls.
+  seed:
+    image: postgres:16-alpine
+    container_name: openidx-seed
+    entrypoint: ["sh", "-c", "psql \"$$DATABASE_URL\" -v ON_ERROR_STOP=1 -f /seed/seed.sql"]
+    environment:
+      - DATABASE_URL=postgres://openidx:${POSTGRES_PASSWORD:-openidx_secret}@postgres:5432/openidx?sslmode=disable
+    volumes:
+      - ./seed.sql:/seed/seed.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    healthcheck:
+      disable: true
     networks:
       - openidx-network
 
