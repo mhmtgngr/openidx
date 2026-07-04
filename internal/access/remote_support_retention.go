@@ -316,10 +316,11 @@ func (h *RemoteSupportHandler) purgeRecording(ctx context.Context, sessionID str
 // per-session retention-days column, so layer 1 of the four-layer chain
 // is skipped (perSession is always nil).
 //
-// Legal-hold: recording_legal_holds.session_id references remote_support_sessions,
-// not guacamole_sessions. Guacamole recording legal-hold is therefore out of
-// scope for this sweeper; when legal-hold is required for guac recordings it
-// must be implemented as a separate table (tracked as future work).
+// Legal-hold: a guacamole_sessions row with an active hold in
+// guacamole_recording_legal_holds (released_at IS NULL) is excluded from the
+// candidate query below, so a held recording is never purged. (Guac holds live in
+// their own table — separate from remote_support's recording_legal_holds — because
+// the FK cascades to guacamole_sessions.)
 //
 // The recording artifact is a guacd-native filesystem directory at
 // recording_path (set by handleGuacamoleConnect). We remove it with
@@ -343,6 +344,11 @@ func (h *RemoteSupportHandler) sweepExpiredGuacRecordings(ctx context.Context) {
            AND recording_path  != ''
            AND recording_purged_at IS NULL
            AND status IN ('ended', 'terminated')
+           AND NOT EXISTS (
+                SELECT 1 FROM guacamole_recording_legal_holds h
+                 WHERE h.session_id = guacamole_sessions.id
+                   AND h.released_at IS NULL
+           )
     `)
 	if err != nil {
 		h.logger.Warn("sweepExpiredGuacRecordings: query failed", zap.Error(err))
