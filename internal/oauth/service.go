@@ -24,6 +24,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -2840,6 +2841,27 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	c.JSON(200, response)
 }
 
+// userIsActive reports whether the user still exists and is enabled. Keyed by
+// the globally-unique user id (UUID PK), so no org context is required — the
+// refresh-token grant runs without one.
+func (s *Service) userIsActive(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, nil
+	}
+	var enabled bool
+	err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore keyed by globally-unique users.id (UUID PK); refresh grant has no org context
+		"SELECT enabled FROM users WHERE id = $1", userID).Scan(&enabled)
+	if err != nil {
+		// No row → user deleted; treat as inactive, not an error.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return enabled, nil
+}
+
 func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	refreshToken := c.PostForm("refresh_token")
 	clientID := c.PostForm("client_id")
@@ -2865,6 +2887,23 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			zap.String("token_client_id", token.ClientID),
 			zap.String("request_client_id", clientID))
 		c.JSON(400, gin.H{"error": "invalid_grant"})
+		return
+	}
+
+	// Re-validate the token's subject: a refresh token outlives its access
+	// token, so a user disabled or deleted AFTER the grant would keep minting
+	// fresh access tokens until the refresh token itself expired. Gate issuance
+	// on the user still existing and being enabled — this is the actual
+	// kill-switch behind user disable/delete/SCIM-deprovision.
+	if active, err := s.userIsActive(c.Request.Context(), token.UserID); err != nil {
+		s.logger.Error("refresh grant: failed to check user status",
+			zap.String("user_id", token.UserID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	} else if !active {
+		s.logger.Info("refresh grant denied: user disabled or deleted",
+			zap.String("user_id", token.UserID))
+		c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "user_inactive"})
 		return
 	}
 

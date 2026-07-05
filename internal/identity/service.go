@@ -738,7 +738,83 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("user not found")
 	}
+
+	// A user set to disabled must lose live access, not just be blocked from new
+	// password logins. deprovisionUser is idempotent, so running it whenever the
+	// resulting state is disabled (without needing the prior value) is safe.
+	if !dbUser.Enabled {
+		s.deprovisionUser(ctx, dbUser.ID, org.ID, false)
+	}
 	return nil
+}
+
+// revokedSessionTTL is how long a revoked-session marker lives in Redis. It
+// must outlast the longest refresh-token lifetime so a disabled user's
+// in-flight refresh tokens keep failing the oauth-service's revoked-session
+// check until they expire on their own.
+const revokedSessionTTL = 30 * 24 * time.Hour
+
+// deprovisionUser revokes everything that keeps a user's access alive after
+// they are disabled or deleted: active sessions (marked revoked + a Redis
+// `revoked_session:<id>` marker the oauth-service honors on every refresh
+// grant) and active API keys. hardDelete removes the child rows outright
+// (user is gone); otherwise they are marked revoked and kept for audit.
+// Best-effort and idempotent — a failure to revoke one class is logged, not
+// fatal, so the caller's primary mutation still completes. OAuth access/refresh
+// tokens are additionally neutralized by the oauth-service's user-active check
+// on the refresh grant, so no cross-service token call is needed here.
+func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
+	// Collect the user's live session IDs so we can publish revocation markers
+	// that the oauth-service checks (it has its own Redis view; the marker is
+	// the cross-service signal).
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID)
+	if err != nil {
+		s.logger.Warn("deprovision: list sessions failed", zap.String("user_id", userID), zap.Error(err))
+	} else {
+		var sessionIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err == nil {
+				sessionIDs = append(sessionIDs, id)
+			}
+		}
+		rows.Close()
+		if s.redis != nil {
+			for _, id := range sessionIDs {
+				if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionTTL).Err(); err != nil {
+					s.logger.Warn("deprovision: publish revoked-session marker failed",
+						zap.String("session_id", id), zap.Error(err))
+				}
+			}
+		}
+	}
+
+	if hardDelete {
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
+			s.logger.Warn("deprovision: delete sessions failed", zap.String("user_id", userID), zap.Error(err))
+		}
+		//orgscope:ignore user_sessions is keyed by globally-unique user_id (no org_id column); deleting a deprovisioned user's rows
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID); err != nil {
+			s.logger.Warn("deprovision: delete user_sessions failed", zap.String("user_id", userID), zap.Error(err))
+		}
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
+			s.logger.Warn("deprovision: delete api_keys failed", zap.String("user_id", userID), zap.Error(err))
+		}
+		return
+	}
+
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE sessions SET revoked = true, revoked_at = NOW()
+		 WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`,
+		userID, orgID); err != nil {
+		s.logger.Warn("deprovision: revoke sessions failed", zap.String("user_id", userID), zap.Error(err))
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
+		userID, orgID); err != nil {
+		s.logger.Warn("deprovision: revoke api_keys failed", zap.String("user_id", userID), zap.Error(err))
+	}
 }
 
 // DeleteUser deletes a user
@@ -754,6 +830,11 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	actorID := actorIDFromContext(ctx)
 	s.logAuditEvent(ctx, "identity", "user_management", "user.deleted", "success",
 		actorID, userID, "user", nil)
+
+	// Revoke sessions + API keys and publish session-revocation markers BEFORE
+	// removing the user row, so a concurrent refresh grant can't slip through
+	// against a still-present user.
+	s.deprovisionUser(ctx, userID, org.ID, true)
 
 	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
 	if err != nil {

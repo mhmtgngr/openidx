@@ -548,7 +548,77 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 		UPDATE scim_users SET data = $2, updated_at = $3 WHERE id = $1 AND org_id = $4
 	`, userID, data, now, org.ID)
 
+	// SCIM `active:false` is the standard IdP deprovisioning signal. Flipping the
+	// flag alone left live sessions and tokens valid; revoke them so an upstream
+	// IdP deprovision actually cuts off access. UpdateSCIMUser is the single
+	// choke point for both PUT and PATCH(active), so this covers both.
+	if !user.Active {
+		s.deprovisionUser(ctx, userID, org.ID, false)
+	}
+
 	return user, nil
+}
+
+// revokedSessionTTL matches the identity service's marker lifetime — it must
+// outlast the longest refresh-token lifetime so a deprovisioned user's in-flight
+// refresh tokens keep failing the oauth-service's revoked-session check.
+const revokedSessionTTL = 30 * 24 * time.Hour
+
+// deprovisionUser revokes a user's live sessions (marking them revoked and
+// publishing the `revoked_session:<id>` markers the oauth-service honors) and
+// active API keys. hardDelete removes the child rows outright. Best-effort and
+// idempotent; OAuth tokens are additionally neutralized by the oauth-service's
+// user-active check on the refresh grant. Mirrors identity.Service.deprovisionUser
+// so a SCIM-driven deprovision has the same effect as an admin-console one.
+func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID)
+	if err != nil {
+		s.logger.Warn("deprovision: list sessions failed", zap.String("user_id", userID), zap.Error(err))
+	} else {
+		var sessionIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err == nil {
+				sessionIDs = append(sessionIDs, id)
+			}
+		}
+		rows.Close()
+		if s.redis != nil {
+			for _, id := range sessionIDs {
+				if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionTTL).Err(); err != nil {
+					s.logger.Warn("deprovision: publish revoked-session marker failed",
+						zap.String("session_id", id), zap.Error(err))
+				}
+			}
+		}
+	}
+
+	if hardDelete {
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
+			s.logger.Warn("deprovision: delete sessions failed", zap.String("user_id", userID), zap.Error(err))
+		}
+		//orgscope:ignore user_sessions is keyed by globally-unique user_id (no org_id column)
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID); err != nil {
+			s.logger.Warn("deprovision: delete user_sessions failed", zap.String("user_id", userID), zap.Error(err))
+		}
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
+			s.logger.Warn("deprovision: delete api_keys failed", zap.String("user_id", userID), zap.Error(err))
+		}
+		return
+	}
+
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE sessions SET revoked = true, revoked_at = NOW()
+		 WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`,
+		userID, orgID); err != nil {
+		s.logger.Warn("deprovision: revoke sessions failed", zap.String("user_id", userID), zap.Error(err))
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
+		userID, orgID); err != nil {
+		s.logger.Warn("deprovision: revoke api_keys failed", zap.String("user_id", userID), zap.Error(err))
+	}
 }
 
 // DeleteSCIMUser deletes a user via SCIM
@@ -564,6 +634,9 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 	actorID := actorIDFromContext(ctx)
 	s.logAuditEvent(ctx, "provisioning", "scim", "scim.user_deleted", "success",
 		actorID, userID, "user", nil)
+
+	// Revoke sessions + API keys before removing the user row.
+	s.deprovisionUser(ctx, userID, org.ID, true)
 
 	// Delete from users table (CASCADE will delete from scim_users)
 	_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
