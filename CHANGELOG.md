@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Guided Ziti Network Setup** — new admin-console page **Network Setup** (`/ziti-setup`) that makes
+  the OpenZiti onboarding understandable, visual, and self-explanatory:
+  - **Topology strip**: Clients → Edge Routers → Control Plane → Applications with live status dots.
+  - **Setup checklist**: ordered steps (controller connection, CA trust, access-proxy identity,
+    edge routers, app exposure, user-identity sync, client access) — each with live status, plain
+    remediation text, and a deep-link action button.
+  - **Install advisor**: which pieces must be installed *for this deployment* — controller, edge
+    router (with `--tunneler-enabled` enrollment commands), BrowZer bootstrapper, client tunneler /
+    OpenIDX Agent, hop nginx — labeled Required / Needed-for-your-setup / Optional.
+  - **Per-route advice**: stored vs *effective* hosting mode (with auto-correct warnings), the full
+    next-hop data path (`edge router → hop nginx :port → upstream`), what the client side needs,
+    per-mode requirements, and the reconciler's live converge state per route.
+  Backend: `GET /api/v1/access/ziti/setup/status` (aggregated checklist/advisor/route payload,
+  reusing the reconciler's `effectiveHostingMode` + install-wide hop-port map so the UI explains
+  exactly what will happen) and `GET /api/v1/access/ziti/reconciler/status` (per-service converge
+  state, previously log-only). `/ziti-network` tabs are now deep-linkable via `?tab=`.
+
 ## [1.15.0] - 2026-07-05
 
 ### Added
