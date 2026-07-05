@@ -377,7 +377,11 @@ func main() {
 
 			if cfg.ZitiReconcilerEnabled {
 				reconciler := access.NewZitiReconciler(db, log, zitiProvider, cfg.ZitiBrowZerHopAddr)
-				reconciler.Start(zitiCtx)
+				// Process-lifetime context, NOT zitiCtx: an admin-panel reconnect
+				// Swaps the provider slot and cancels zitiCtx, which used to kill
+				// the reconciler loop for good. The loop is cheap and no-ops while
+				// no live manager is present, so it simply rides across swaps.
+				reconciler.Start(orgctx.WithBypassRLS(context.Background()))
 				accessService.SetZitiReconciler(reconciler)
 				// The admin-console one-click toggle must defer to the reconciler too:
 				// only write proxy_routes flags, never imperatively provision Ziti.

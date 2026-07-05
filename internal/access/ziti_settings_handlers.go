@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -11,6 +12,26 @@ import (
 
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// validateZitiConnSettings rejects obviously-broken connection settings at
+// save time, so a typo'd controller URL can't be persisted silently and only
+// discovered at the next (failing) connect.
+func validateZitiConnSettings(in ZitiConnSettingsView) string {
+	if in.ControllerURL == "" {
+		return "controller_url is required"
+	}
+	u, err := url.Parse(in.ControllerURL)
+	if err != nil || u.Host == "" {
+		return "controller_url must be a valid URL (e.g. https://ziti-controller:1280)"
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "controller_url scheme must be https (or http for a lab)"
+	}
+	if in.AdminUser == "" {
+		return "admin_user is required"
+	}
+	return ""
+}
 
 // requireAdminRole guards the Ziti connection-management endpoints. In
 // production the router wraps these in middleware.Auth (which sets "roles" from
@@ -77,6 +98,10 @@ func (s *Service) handlePutZitiSettings(c *gin.Context) {
 	var in ZitiConnSettingsView
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if msg := validateZitiConnSettings(in); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 	userID, _ := c.Get("user_id")
@@ -176,13 +201,14 @@ func (s *Service) handleZitiConnect(c *gin.Context) {
 	zm.StartCertificateMonitor(mctx)
 	zm.StartUserSyncPoller(mctx)
 	zm.StartPostureResultExpiryChecker(mctx)
-	// TODO(reconciler-reconnect): when ZITI_RECONCILER is on, this admin reconnect
-	// path swaps the manager but the reconciler's loop (bound to the prior context)
-	// has exited — leaving a dead reconciler plus this imperative HostAllServices.
-	// Phase 2 must run the reconciler on a swap-surviving context and Enqueue() here
-	// instead of hosting imperatively, so the reconciler stays the sole mutator.
-	go zm.HostAllServices(mctx)
+	// Reconciler mode: the reconciler (running on a swap-surviving context)
+	// stays the sole mutator — wake it to converge routes against the fresh
+	// manager. Only the legacy imperative path hosts directly.
+	if s.zitiReconciler == nil {
+		go zm.HostAllServices(mctx)
+	}
 	p.Swap(zm, cancel)
+	s.enqueueReconcile()
 
 	// Persist enabled=true.
 	if st, ok, _ := loadZitiConnSettings(ctx, s.db); ok {

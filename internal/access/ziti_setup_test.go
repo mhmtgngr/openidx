@@ -114,3 +114,22 @@ func TestBuildSetupComponents(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateZitiConnSettings(t *testing.T) {
+	ok := ZitiConnSettingsView{ControllerURL: "https://ziti-controller:1280", AdminUser: "admin"}
+	if msg := validateZitiConnSettings(ok); msg != "" {
+		t.Errorf("valid settings rejected: %s", msg)
+	}
+	cases := map[string]ZitiConnSettingsView{
+		"empty url":  {AdminUser: "admin"},
+		"no host":    {ControllerURL: "https://", AdminUser: "admin"},
+		"bad scheme": {ControllerURL: "ftp://ctrl:1280", AdminUser: "admin"},
+		"no admin":   {ControllerURL: "https://ctrl:1280"},
+		"not a url":  {ControllerURL: "://nope", AdminUser: "admin"},
+	}
+	for name, in := range cases {
+		if msg := validateZitiConnSettings(in); msg == "" {
+			t.Errorf("%s: expected rejection, got none", name)
+		}
+	}
+}

@@ -26,6 +26,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exactly what will happen) and `GET /api/v1/access/ziti/reconciler/status` (per-service converge
   state, previously log-only). `/ziti-network` tabs are now deep-linkable via `?tab=`.
 
+### Fixed
+
+- **Ziti reconciler survives admin-panel reconnects** — the reconciler ran on the provider slot's
+  context, so `POST /ziti/connect` (which Swaps the slot and cancels that context) silently killed
+  the reconcile loop for good; subsequent route changes were never converged. It now runs on a
+  process-lifetime context (no-ops while disconnected), and the connect handler wakes it via
+  `Enqueue()` instead of imperatively hosting services alongside it — the reconciler stays the
+  sole mutator, eliminating the double-hosting 502 path.
+- **`PUT /ziti/settings` validates before persisting** — a malformed/empty controller URL or empty
+  admin user is now rejected with 400 instead of being saved silently and only failing at the next
+  connect. CI: the Benchmarks job could never post its PR comment (workflow token is read-only) and
+  failed after the benchmarks had passed; it now has job-level write permission and degrades to a
+  warning when the token can't comment.
+
+### Security
+
+- **Disabled/deleted IAM users are deprovisioned from Ziti** — the user-sync poller now sweeps
+  Ziti identities whose user is disabled or gone (controller delete + mirror-row delete, batched,
+  retried). Previously a revoked user's enrolled tunneler kept a valid Ziti identity — and network
+  access — indefinitely. Infrastructure identities (access-proxy, admin, routers) are untouched.
+
 ## [1.15.0] - 2026-07-05
 
 ### Added
