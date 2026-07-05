@@ -754,6 +754,13 @@ func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 // check until they expire on their own.
 const revokedSessionTTL = 30 * 24 * time.Hour
 
+// scrubLogValue strips CR/LF from a value before it is placed in a log field,
+// so a caller-supplied identifier can't forge extra log lines (defense in depth
+// on top of the JSON encoder, and it clears CodeQL's log-injection sink).
+func scrubLogValue(s string) string {
+	return strings.NewReplacer("\n", "", "\r", "").Replace(s)
+}
+
 // deprovisionUser revokes everything that keeps a user's access alive after
 // they are disabled or deleted: active sessions (marked revoked + a Redis
 // `revoked_session:<id>` marker the oauth-service honors on every refresh
@@ -764,13 +771,17 @@ const revokedSessionTTL = 30 * 24 * time.Hour
 // tokens are additionally neutralized by the oauth-service's user-active check
 // on the refresh grant, so no cross-service token call is needed here.
 func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
+	// One scoped logger with the (scrubbed) user id, so the per-step warnings
+	// below never re-embed caller-supplied input directly.
+	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
+
 	// Collect the user's live session IDs so we can publish revocation markers
 	// that the oauth-service checks (it has its own Redis view; the marker is
 	// the cross-service signal).
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID)
 	if err != nil {
-		s.logger.Warn("deprovision: list sessions failed", zap.String("user_id", userID), zap.Error(err))
+		log.Warn("deprovision: list sessions failed", zap.Error(err))
 	} else {
 		var sessionIDs []string
 		for rows.Next() {
@@ -783,8 +794,7 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		if s.redis != nil {
 			for _, id := range sessionIDs {
 				if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionTTL).Err(); err != nil {
-					s.logger.Warn("deprovision: publish revoked-session marker failed",
-						zap.String("session_id", id), zap.Error(err))
+					log.Warn("deprovision: publish revoked-session marker failed", zap.Error(err))
 				}
 			}
 		}
@@ -792,14 +802,14 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 
 	if hardDelete {
 		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
-			s.logger.Warn("deprovision: delete sessions failed", zap.String("user_id", userID), zap.Error(err))
+			log.Warn("deprovision: delete sessions failed", zap.Error(err))
 		}
 		//orgscope:ignore user_sessions is keyed by globally-unique user_id (no org_id column); deleting a deprovisioned user's rows
 		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID); err != nil {
-			s.logger.Warn("deprovision: delete user_sessions failed", zap.String("user_id", userID), zap.Error(err))
+			log.Warn("deprovision: delete user_sessions failed", zap.Error(err))
 		}
 		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
-			s.logger.Warn("deprovision: delete api_keys failed", zap.String("user_id", userID), zap.Error(err))
+			log.Warn("deprovision: delete api_keys failed", zap.Error(err))
 		}
 		return
 	}
@@ -808,12 +818,12 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 		`UPDATE sessions SET revoked = true, revoked_at = NOW()
 		 WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`,
 		userID, orgID); err != nil {
-		s.logger.Warn("deprovision: revoke sessions failed", zap.String("user_id", userID), zap.Error(err))
+		log.Warn("deprovision: revoke sessions failed", zap.Error(err))
 	}
 	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
 		userID, orgID); err != nil {
-		s.logger.Warn("deprovision: revoke api_keys failed", zap.String("user_id", userID), zap.Error(err))
+		log.Warn("deprovision: revoke api_keys failed", zap.Error(err))
 	}
 }
 
