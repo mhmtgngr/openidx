@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-05
+
+### Added
+
+- **Guacamole recording legal-hold** (#318) — place a legal-hold on a Guacamole session's recording
+  so it is never deleted by the retention purger. New `guacamole_recording_legal_holds` table
+  (migration **v68**, FK → `guacamole_sessions` with a UNIQUE active-hold index), the recording
+  retention sweeper (`sweepExpiredGuacRecordings`) now excludes sessions under an active hold, and
+  admin-gated, audited endpoints:
+  - `POST   /api/v1/access/guacamole/sessions/:id/legal-hold` (409 if one is already active)
+  - `DELETE /api/v1/access/guacamole/sessions/:id/legal-hold`
+  - `GET    /api/v1/access/guacamole/sessions/:id/legal-holds`
+  Each endpoint verifies the session is visible under the caller's org before acting. Mirrors the
+  existing remote-support legal-hold; a testcontainer test proves a held recording survives the
+  sweep and is purged once released.
+
+### Upgrade
+
+- Migration **v68** adds a table (additive). Run `cmd/migrate up` (or the compose `migrate` service)
+  before/at deploy.
+
 ## [1.14.1] - 2026-07-04
 
 ### Changed
@@ -1466,7 +1487,8 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.14.1...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/mhmtgngr/openidx/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/mhmtgngr/openidx/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/mhmtgngr/openidx/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/mhmtgngr/openidx/compare/v1.13.0...v1.13.1
