@@ -359,67 +359,77 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guided network setup: checklist + install advisor + per-route advice
 		api.GET("/ziti/setup/status", svc.handleZitiSetupStatus)
 		api.GET("/ziti/reconciler/status", svc.handleZitiReconcilerStatus)
+		// Ziti management mutations are admin-only: creating identities/services
+		// mints overlay-join credentials and reconfigures the zero-trust fabric,
+		// so a plain authenticated tenant user must NOT reach them. GET reads stay
+		// open to any authenticated user (org-scoped lists/status), and genuine
+		// data-plane POSTs (device posture self-report, posture evaluate) stay open
+		// because a device submits its own posture. `adminOnly` is the shared gate.
+		adminOnly := svc.requireAdminRole()
+
 		// Runtime connection control (admin-only): configure + connect/disconnect
 		// the OpenZiti controller from the admin panel with no restart.
-		api.GET("/ziti/settings", svc.requireAdminRole(), svc.handleGetZitiSettings)
-		api.PUT("/ziti/settings", svc.requireAdminRole(), svc.handlePutZitiSettings)
-		api.POST("/ziti/settings/test", svc.requireAdminRole(), svc.handleTestZitiSettings)
-		api.POST("/ziti/connect", svc.requireAdminRole(), svc.handleZitiConnect)
-		api.POST("/ziti/disconnect", svc.requireAdminRole(), svc.handleZitiDisconnect)
+		api.GET("/ziti/settings", adminOnly, svc.handleGetZitiSettings)
+		api.PUT("/ziti/settings", adminOnly, svc.handlePutZitiSettings)
+		api.POST("/ziti/settings/test", adminOnly, svc.handleTestZitiSettings)
+		api.POST("/ziti/connect", adminOnly, svc.handleZitiConnect)
+		api.POST("/ziti/disconnect", adminOnly, svc.handleZitiDisconnect)
 		api.GET("/ziti/services", svc.handleListZitiServices)
-		api.POST("/ziti/services", svc.handleCreateZitiService)
-		api.DELETE("/ziti/services/:id", svc.handleDeleteZitiService)
+		api.POST("/ziti/services", adminOnly, svc.handleCreateZitiService)
+		api.DELETE("/ziti/services/:id", adminOnly, svc.handleDeleteZitiService)
 		api.GET("/ziti/identities", svc.handleListZitiIdentities)
-		api.POST("/ziti/identities", svc.handleCreateZitiIdentity)
-		api.DELETE("/ziti/identities/:id", svc.handleDeleteZitiIdentity)
-		api.GET("/ziti/identities/:id/enrollment-jwt", svc.handleGetEnrollmentJWT)
-		api.POST("/ziti/routes/:id/enable", svc.handleEnableZitiOnRoute)
-		api.POST("/ziti/routes/:id/disable", svc.handleDisableZitiOnRoute)
+		api.POST("/ziti/identities", adminOnly, svc.handleCreateZitiIdentity)
+		api.DELETE("/ziti/identities/:id", adminOnly, svc.handleDeleteZitiIdentity)
+		// Enrollment JWT is a bearer network-join credential — admin-only read.
+		api.GET("/ziti/identities/:id/enrollment-jwt", adminOnly, svc.handleGetEnrollmentJWT)
+		api.POST("/ziti/routes/:id/enable", adminOnly, svc.handleEnableZitiOnRoute)
+		api.POST("/ziti/routes/:id/disable", adminOnly, svc.handleDisableZitiOnRoute)
 
 		// Phase 2: Fabric & Router management
 		api.GET("/ziti/fabric/overview", svc.handleGetFabricOverview)
 		api.GET("/ziti/fabric/routers", svc.handleListEdgeRouters)
 		api.GET("/ziti/fabric/routers/:id", svc.handleGetEdgeRouter)
 		api.GET("/ziti/fabric/health", svc.handleGetHealth)
-		api.POST("/ziti/fabric/reconnect", svc.handleReconnect)
+		api.POST("/ziti/fabric/reconnect", adminOnly, svc.handleReconnect)
 		api.GET("/ziti/fabric/metrics", svc.handleGetMetrics)
 		api.GET("/ziti/fabric/service-policies", svc.handleListServicePolicies)
 
-		// Ziti service connectivity test
+		// Ziti service connectivity test (diagnostic dial; read-like)
 		api.POST("/ziti/services/:id/test", svc.handleTestZitiService)
 
 		// Edge router policy CRUD
 		api.GET("/ziti/edge-router-policies", svc.handleListEdgeRouterPolicies)
-		api.POST("/ziti/edge-router-policies", svc.handleCreateEdgeRouterPolicy)
-		api.PUT("/ziti/edge-router-policies/:id", svc.handleUpdateEdgeRouterPolicy)
-		api.DELETE("/ziti/edge-router-policies/:id", svc.handleDeleteEdgeRouterPolicy)
+		api.POST("/ziti/edge-router-policies", adminOnly, svc.handleCreateEdgeRouterPolicy)
+		api.PUT("/ziti/edge-router-policies/:id", adminOnly, svc.handleUpdateEdgeRouterPolicy)
+		api.DELETE("/ziti/edge-router-policies/:id", adminOnly, svc.handleDeleteEdgeRouterPolicy)
 
 		// Service policy CRUD
-		api.POST("/ziti/service-policies", svc.handleCreateServicePolicy)
-		api.PUT("/ziti/service-policies/:id", svc.handleUpdateServicePolicy)
-		api.DELETE("/ziti/service-policies/:id", svc.handleDeleteServicePolicy)
+		api.POST("/ziti/service-policies", adminOnly, svc.handleCreateServicePolicy)
+		api.PUT("/ziti/service-policies/:id", adminOnly, svc.handleUpdateServicePolicy)
+		api.DELETE("/ziti/service-policies/:id", adminOnly, svc.handleDeleteServicePolicy)
 
 		// Identity attribute management
-		api.PATCH("/ziti/identities/:id/attributes", svc.handlePatchIdentityAttributes)
+		api.PATCH("/ziti/identities/:id/attributes", adminOnly, svc.handlePatchIdentityAttributes)
 
 		// User-to-Ziti identity sync
 		api.GET("/ziti/sync/status", svc.handleGetSyncStatus)
 		api.GET("/ziti/sync/unsynced", svc.handleGetUnsyncedUsers)
 		api.GET("/ziti/sync/user-map", svc.handleGetUserZitiMap)
 		api.GET("/ziti/sync/my-identity", svc.handleGetMyZitiIdentity)
-		api.POST("/ziti/sync/users", svc.handleSyncAllUsers)
-		api.POST("/ziti/sync/users/:userId", svc.handleSyncSingleUser)
-		api.POST("/ziti/sync/groups", svc.handleSyncAllGroups)
-		api.POST("/ziti/sync/device-trust/:userId", svc.handleSyncDeviceTrust)
+		api.POST("/ziti/sync/users", adminOnly, svc.handleSyncAllUsers)
+		api.POST("/ziti/sync/users/:userId", adminOnly, svc.handleSyncSingleUser)
+		api.POST("/ziti/sync/groups", adminOnly, svc.handleSyncAllGroups)
+		api.POST("/ziti/sync/device-trust/:userId", adminOnly, svc.handleSyncDeviceTrust)
 
 		// Enriched device management (unified view)
 		api.GET("/devices/enriched", svc.handleGetEnrichedDevices)
 
-		// Phase 3: Posture checks
+		// Phase 3: Posture checks (definitions are admin-managed; device
+		// self-report + evaluate are data-plane and stay open).
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
-		api.POST("/ziti/posture/checks", svc.handleCreatePostureCheck)
-		api.PUT("/ziti/posture/checks/:id", svc.handleUpdatePostureCheck)
-		api.DELETE("/ziti/posture/checks/:id", svc.handleDeletePostureCheck)
+		api.POST("/ziti/posture/checks", adminOnly, svc.handleCreatePostureCheck)
+		api.PUT("/ziti/posture/checks/:id", adminOnly, svc.handleUpdatePostureCheck)
+		api.DELETE("/ziti/posture/checks/:id", adminOnly, svc.handleDeletePostureCheck)
 		api.GET("/ziti/posture/identities/:id", svc.handleGetIdentityPosture)
 		api.POST("/ziti/posture/identities/:id/evaluate", svc.handleEvaluateIdentityPosture)
 		api.GET("/ziti/posture/summary", svc.handleGetPostureSummary)
@@ -427,62 +437,62 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// Phase 3: Policy sync
 		api.GET("/ziti/policy-sync", svc.handleListPolicySyncStates)
-		api.POST("/ziti/policy-sync", svc.handleSyncGovernancePolicy)
-		api.POST("/ziti/policy-sync/:id/trigger", svc.handleTriggerPolicySync)
-		api.DELETE("/ziti/policy-sync/:id", svc.handleDeletePolicySyncState)
+		api.POST("/ziti/policy-sync", adminOnly, svc.handleSyncGovernancePolicy)
+		api.POST("/ziti/policy-sync/:id/trigger", adminOnly, svc.handleTriggerPolicySync)
+		api.DELETE("/ziti/policy-sync/:id", adminOnly, svc.handleDeletePolicySyncState)
 
 		// Config types & configs management
 		api.GET("/ziti/config-types", svc.handleListConfigTypes)
 		api.GET("/ziti/configs", svc.handleListConfigs)
-		api.POST("/ziti/configs", svc.handleCreateConfig)
-		api.PUT("/ziti/configs/:id", svc.handleUpdateConfig)
-		api.DELETE("/ziti/configs/:id", svc.handleDeleteConfig)
+		api.POST("/ziti/configs", adminOnly, svc.handleCreateConfig)
+		api.PUT("/ziti/configs/:id", adminOnly, svc.handleUpdateConfig)
+		api.DELETE("/ziti/configs/:id", adminOnly, svc.handleDeleteConfig)
 
 		// Auth policies & JWT signers management
 		api.GET("/ziti/auth-policies", svc.handleListAuthPolicies)
-		api.POST("/ziti/auth-policies", svc.handleCreateAuthPolicy)
-		api.PUT("/ziti/auth-policies/:id", svc.handleUpdateAuthPolicy)
-		api.DELETE("/ziti/auth-policies/:id", svc.handleDeleteAuthPolicy)
+		api.POST("/ziti/auth-policies", adminOnly, svc.handleCreateAuthPolicy)
+		api.PUT("/ziti/auth-policies/:id", adminOnly, svc.handleUpdateAuthPolicy)
+		api.DELETE("/ziti/auth-policies/:id", adminOnly, svc.handleDeleteAuthPolicy)
 		api.GET("/ziti/jwt-signers", svc.handleListJWTSigners)
-		api.POST("/ziti/jwt-signers", svc.handleCreateJWTSigner)
-		api.PUT("/ziti/jwt-signers/:id", svc.handleUpdateJWTSigner)
-		api.DELETE("/ziti/jwt-signers/:id", svc.handleDeleteJWTSigner)
+		api.POST("/ziti/jwt-signers", adminOnly, svc.handleCreateJWTSigner)
+		api.PUT("/ziti/jwt-signers/:id", adminOnly, svc.handleUpdateJWTSigner)
+		api.DELETE("/ziti/jwt-signers/:id", adminOnly, svc.handleDeleteJWTSigner)
 
 		// Terminators management
 		api.GET("/ziti/terminators", svc.handleListTerminators)
 		api.GET("/ziti/terminators/:id", svc.handleGetTerminator)
-		api.DELETE("/ziti/terminators/:id", svc.handleDeleteTerminator)
+		api.DELETE("/ziti/terminators/:id", adminOnly, svc.handleDeleteTerminator)
 
 		// Ziti session visibility
 		api.GET("/ziti/sessions", svc.handleListZitiSessions)
-		api.DELETE("/ziti/sessions/:id", svc.handleDeleteZitiSession)
-		api.POST("/ziti/sessions/batch-terminate", svc.handleBatchDeleteZitiSessions)
+		api.DELETE("/ziti/sessions/:id", adminOnly, svc.handleDeleteZitiSession)
+		api.POST("/ziti/sessions/batch-terminate", adminOnly, svc.handleBatchDeleteZitiSessions)
 
 		// Phase 5: Certificates
 		api.GET("/ziti/certificates", svc.handleListCertificates)
 		api.GET("/ziti/certificates/expiry-alerts", svc.handleGetCertExpiryAlerts)
-		api.POST("/ziti/certificates/:id/rotate", svc.handleRotateCertificate)
+		api.POST("/ziti/certificates/:id/rotate", adminOnly, svc.handleRotateCertificate)
 
 		// BrowZer management endpoints
 		api.GET("/ziti/browzer/status", svc.handleBrowZerStatus)
-		api.POST("/ziti/browzer/enable", svc.handleEnableBrowZer)
-		api.POST("/ziti/browzer/disable", svc.handleDisableBrowZer)
-		api.POST("/ziti/browzer/services/:id/enable", svc.handleEnableBrowZerOnService)
-		api.POST("/ziti/browzer/services/:id/disable", svc.handleDisableBrowZerOnService)
+		api.POST("/ziti/browzer/enable", adminOnly, svc.handleEnableBrowZer)
+		api.POST("/ziti/browzer/disable", adminOnly, svc.handleDisableBrowZer)
+		api.POST("/ziti/browzer/services/:id/enable", adminOnly, svc.handleEnableBrowZerOnService)
+		api.POST("/ziti/browzer/services/:id/disable", adminOnly, svc.handleDisableBrowZerOnService)
 
 		// BrowZer bootstrapper management panel endpoints
 		api.GET("/ziti/browzer/management", svc.handleBrowZerManagement)
-		api.POST("/ziti/browzer/certificates", svc.handleBrowZerCertUpload)
-		api.DELETE("/ziti/browzer/certificates", svc.handleBrowZerCertRevert)
-		api.PUT("/ziti/browzer/domain", svc.handleBrowZerDomainChange)
-		api.POST("/ziti/browzer/restart", svc.handleBrowZerRestart)
+		api.POST("/ziti/browzer/certificates", adminOnly, svc.handleBrowZerCertUpload)
+		api.DELETE("/ziti/browzer/certificates", adminOnly, svc.handleBrowZerCertRevert)
+		api.PUT("/ziti/browzer/domain", adminOnly, svc.handleBrowZerDomainChange)
+		api.POST("/ziti/browzer/restart", adminOnly, svc.handleBrowZerRestart)
 
 		// Platform certificate management
 		api.GET("/certificates/platform", svc.handleGetPlatformCert)
-		api.POST("/certificates/platform", svc.handleUploadPlatformCert)
-		api.DELETE("/certificates/platform", svc.handleRevertPlatformCert)
-		api.POST("/certificates/apisix/enable", svc.handleEnableAPISIXSSL)
-		api.POST("/certificates/apisix/disable", svc.handleDisableAPISIXSSL)
+		api.POST("/certificates/platform", adminOnly, svc.handleUploadPlatformCert)
+		api.DELETE("/certificates/platform", adminOnly, svc.handleRevertPlatformCert)
+		api.POST("/certificates/apisix/enable", adminOnly, svc.handleEnableAPISIXSSL)
+		api.POST("/certificates/apisix/disable", adminOnly, svc.handleDisableAPISIXSSL)
 		api.GET("/certificates/status", svc.handleGetCertStatus)
 
 		// Forward-auth endpoint for APISIX
