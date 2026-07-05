@@ -503,6 +503,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// Guacamole active-session management (Task 5 — PAM M3)
 		api.GET("/guacamole/sessions", svc.requireAdminRole(), svc.handleListActiveGuacSessions)
 		api.POST("/guacamole/sessions/:id/terminate", svc.requireAdminRole(), svc.handleTerminateGuacSession)
+		api.POST("/guacamole/sessions/:id/legal-hold", svc.requireAdminRole(), svc.handlePlaceGuacLegalHold)
+		api.DELETE("/guacamole/sessions/:id/legal-hold", svc.requireAdminRole(), svc.handleReleaseGuacLegalHold)
+		api.GET("/guacamole/sessions/:id/legal-holds", svc.requireAdminRole(), svc.handleListGuacLegalHolds)
 
 		// Guacamole transcript download (Task 3 — PAM M4)
 		api.GET("/guacamole/sessions/:id/transcript", svc.requireAdminRole(), svc.handleGetGuacTranscript)
