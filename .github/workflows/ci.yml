@@ -380,6 +380,12 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.go_changed == 'true' && github.event_name == 'pull_request'
     timeout-minutes: 15
+    # The workflow-level permissions block is read-only; this job posts the
+    # benchstat comparison as a PR comment, which needs write.
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
 
     steps:
       - uses: actions/checkout@v4
@@ -435,12 +441,18 @@ jobs:
             const fs = require('fs');
             const output = fs.readFileSync('benchstat_output.txt', 'utf8');
             const body = `### Benchmark Results\n\n\`\`\`\n${output}\n\`\`\``;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
+            // The comment is a nicety — never fail the job over it (a fork
+            // PR's token stays read-only; results live in the artifact).
+            try {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } catch (e) {
+              core.warning(`Could not post benchmark comment: ${e.message}`);
+            }
 
   # Lint
   lint:
