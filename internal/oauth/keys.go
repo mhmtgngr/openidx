@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 var (
@@ -89,6 +90,7 @@ type KeyManager struct {
 	db            *database.PostgresDB
 	logger        *zap.Logger
 	issuer        string
+	cipher        *secretcrypt.Cipher // encrypts private keys at rest
 	currentKey    *rsa.PrivateKey
 	currentKeyID  string
 	publicKeys    map[string]*rsa.PublicKey // kid -> public key
@@ -96,12 +98,21 @@ type KeyManager struct {
 	rotationMutex sync.Mutex
 }
 
-// NewKeyManager creates a new key manager
-func NewKeyManager(db *database.PostgresDB, logger *zap.Logger, issuer string) (*KeyManager, error) {
+// NewKeyManager creates a new key manager. encryptionKey (32 bytes) encrypts the
+// stored RSA private keys at rest; an empty/invalid key falls back to plaintext
+// with a warning (matching the rest of the codebase's secret-at-rest posture).
+func NewKeyManager(db *database.PostgresDB, logger *zap.Logger, issuer, encryptionKey string) (*KeyManager, error) {
+	l := logger.With(zap.String("component", "key_manager"))
+	cipher, cerr := secretcrypt.New(encryptionKey)
+	if cerr != nil {
+		l.Warn("signing keys will be stored WITHOUT encryption at rest (plaintext); set a 32-byte ENCRYPTION_KEY", zap.Error(cerr))
+		cipher = secretcrypt.NewNoop()
+	}
 	km := &KeyManager{
 		db:         db,
-		logger:     logger.With(zap.String("component", "key_manager")),
+		logger:     l,
 		issuer:     issuer,
+		cipher:     cipher,
 		publicKeys: make(map[string]*rsa.PublicKey),
 	}
 
@@ -122,6 +133,15 @@ func NewKeyManager(db *database.PostgresDB, logger *zap.Logger, issuer string) (
 	}
 
 	return km, nil
+}
+
+// keyCipher returns the private-key cipher, tolerating a nil field (e.g. a
+// KeyManager built as a struct literal in tests) by falling back to passthrough.
+func (km *KeyManager) keyCipher() *secretcrypt.Cipher {
+	if km.cipher == nil {
+		return secretcrypt.NewNoop()
+	}
+	return km.cipher
 }
 
 // loadKeysFromDatabase loads keys from the database
@@ -151,8 +171,13 @@ func (km *KeyManager) loadKeysFromDatabase(ctx context.Context) error {
 		return fmt.Errorf("failed to query signing keys: %w", err)
 	}
 
-	// Parse the private key
-	privateKey, err := km.parsePrivateKey(keyMeta.PrivateKey)
+	// Decrypt the private key at rest (legacy plaintext rows pass through
+	// unchanged), then parse.
+	privPEM, derr := km.keyCipher().Decrypt(keyMeta.PrivateKey)
+	if derr != nil {
+		return fmt.Errorf("failed to decrypt private key: %w", derr)
+	}
+	privateKey, err := km.parsePrivateKey(privPEM)
 	if err != nil {
 		return fmt.Errorf("failed to parse private key: %w", err)
 	}
@@ -218,8 +243,11 @@ func (km *KeyManager) generateAndStoreInitialKey(ctx context.Context) error {
 		return fmt.Errorf("failed to generate RSA key: %w", err)
 	}
 
-	// Encode keys as PEM
-	privateKeyPEM := km.encodePrivateKey(privateKey)
+	// Encode keys as PEM; the private key is encrypted at rest.
+	privateKeyPEM, encErr := km.keyCipher().Encrypt(km.encodePrivateKey(privateKey))
+	if encErr != nil {
+		return fmt.Errorf("failed to encrypt private key: %w", encErr)
+	}
 	publicKeyPEM := km.encodePublicKey(&privateKey.PublicKey)
 
 	// Store in database
@@ -326,8 +354,12 @@ func (km *KeyManager) RotateKey(ctx context.Context) error {
 	// Generate new key ID
 	newKeyID := fmt.Sprintf("openidx-key-%d", time.Now().Unix())
 
-	// Encode keys
-	privateKeyPEM := km.encodePrivateKey(newKey)
+	// Encode keys; the private key is encrypted at rest.
+	privateKeyPEM, encErr := km.keyCipher().Encrypt(km.encodePrivateKey(newKey))
+	if encErr != nil {
+		km.mu.Unlock()
+		return fmt.Errorf("failed to encrypt rotated private key: %w", encErr)
+	}
 	publicKeyPEM := km.encodePublicKey(&newKey.PublicKey)
 
 	// Store new key
