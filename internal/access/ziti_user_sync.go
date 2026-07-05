@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -487,5 +488,60 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 			continue
 		}
 		zm.SyncGroupAttributesForUser(ctx, userID)
+	}
+
+	zm.runDeprovisionSweep(ctx)
+}
+
+// runDeprovisionSweep is the revocation half of the users→Ziti mirror: it
+// deletes Ziti identities whose IAM user has been disabled or deleted, so a
+// revoked user's enrolled tunneler stops dialing within one poll interval.
+// Without this, disabling a user in OpenIDX left their Ziti identity (and
+// network access) alive indefinitely. Only user-linked identities are swept —
+// infrastructure identities (access-proxy, admin, routers) have no user_id.
+func (zm *ZitiManager) runDeprovisionSweep(ctx context.Context) {
+	rows, err := zm.db.Pool.Query(ctx,
+		//orgscope:ignore Ziti user-sync background poller sweep across all orgs (install-wide users -> Ziti mirror)
+		`SELECT zi.id, zi.ziti_id, zi.user_id
+		 FROM ziti_identities zi
+		 LEFT JOIN users u ON u.id = zi.user_id
+		 WHERE zi.user_id IS NOT NULL AND zi.user_id != ''
+		   AND (u.id IS NULL OR u.enabled = false)
+		 LIMIT 10`)
+	if err != nil {
+		zm.logger.Warn("Deprovision sweep query failed", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	type doomed struct{ rowID, zitiID, userID string }
+	var targets []doomed
+	for rows.Next() {
+		var d doomed
+		if err := rows.Scan(&d.rowID, &d.zitiID, &d.userID); err != nil {
+			continue
+		}
+		targets = append(targets, d)
+	}
+
+	for _, d := range targets {
+		if err := zm.DeleteIdentity(ctx, d.zitiID); err != nil {
+			// Already gone on the controller (e.g. deleted out-of-band) is fine —
+			// proceed to drop the DB row; anything else is retried next tick.
+			if !strings.Contains(err.Error(), "status 404") {
+				zm.logger.Warn("Deprovision: controller delete failed (will retry)",
+					zap.String("user_id", d.userID), zap.String("ziti_id", d.zitiID), zap.Error(err))
+				continue
+			}
+		}
+		if _, err := zm.db.Pool.Exec(ctx,
+			//orgscope:ignore keyed by primary key from the annotated install-wide sweep above (users -> Ziti mirror)
+			`DELETE FROM ziti_identities WHERE id = $1`, d.rowID); err != nil {
+			zm.logger.Warn("Deprovision: DB row delete failed",
+				zap.String("user_id", d.userID), zap.Error(err))
+			continue
+		}
+		zm.logger.Info("Deprovisioned Ziti identity for disabled/deleted user",
+			zap.String("user_id", d.userID), zap.String("ziti_id", d.zitiID))
 	}
 }

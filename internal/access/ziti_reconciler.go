@@ -396,6 +396,18 @@ func (rec *ZitiReconciler) setStatus(svc, s string) {
 	rec.status[svc] = s
 }
 
+// StatusSnapshot returns a copy of the per-service converge state
+// (serviceName -> "synced" | "error: ..."), for the setup/status API.
+func (rec *ZitiReconciler) StatusSnapshot() map[string]string {
+	rec.statusMu.Lock()
+	defer rec.statusMu.Unlock()
+	out := make(map[string]string, len(rec.status))
+	for k, v := range rec.status {
+		out[k] = v
+	}
+	return out
+}
+
 // reconcileRoute converges one route, error-isolated, recording per-object status.
 func (rec *ZitiReconciler) reconcileRoute(ctx context.Context, zm *ZitiManager, d DesiredRoute) {
 	steps := []func(context.Context, *ZitiManager, DesiredRoute) error{

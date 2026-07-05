@@ -27,6 +27,7 @@ export { SocialProvidersPage as SocialProviders } from './social-providers'
 
 // Network & Access
 export { ProxyRoutesPage as ProxyRoutes } from './proxy-routes'
+export { ZitiSetupPage as ZitiSetup } from './ziti-setup'
 export { ZitiNetworkPage as ZitiNetwork } from './ziti-network'
 export { ZitiDiscoveryPage as ZitiDiscovery } from './ziti-discovery'
 export { BrowZerManagementPage as BrowzerManagement } from './browzer-management'

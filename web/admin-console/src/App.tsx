@@ -39,6 +39,7 @@ import {
   FederationConfig,
   SocialProviders,
   ProxyRoutes,
+  ZitiSetup,
   ZitiNetwork,
   ZitiDiscovery,
   BrowzerManagement,
@@ -201,6 +202,7 @@ function App() {
         {/* Network & Access - Admin Protected */}
         <Route path="zero-trust" element={<ZeroTrust />} />
         <Route path="proxy-routes" element={<ProxyRoutes />} />
+        <Route path="ziti-setup" element={<ZitiSetup />} />
         <Route path="ziti-network" element={<ZitiNetwork />} />
         <Route path="ziti-discovery" element={<ZitiDiscovery />} />
         <Route path="browzer-management" element={<BrowzerManagement />} />

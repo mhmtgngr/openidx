@@ -356,6 +356,9 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// OpenZiti management endpoints
 		api.GET("/ziti/status", svc.handleZitiStatus)
+		// Guided network setup: checklist + install advisor + per-route advice
+		api.GET("/ziti/setup/status", svc.handleZitiSetupStatus)
+		api.GET("/ziti/reconciler/status", svc.handleZitiReconcilerStatus)
 		// Runtime connection control (admin-only): configure + connect/disconnect
 		// the OpenZiti controller from the admin panel with no restart.
 		api.GET("/ziti/settings", svc.requireAdminRole(), svc.handleGetZitiSettings)

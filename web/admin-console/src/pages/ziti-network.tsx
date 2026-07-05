@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Network, Server, Users2, Copy, CheckCircle,
@@ -345,8 +346,13 @@ function SearchInput({ value, onChange, placeholder }: { value: string; onChange
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
+const ZITI_TABS = ['connection', 'overview', 'services', 'identities', 'security', 'remote-access']
+
 export function ZitiNetworkPage() {
-  const [activeTab, setActiveTab] = useState('overview')
+  // Deep-linkable tabs (e.g. /ziti-network?tab=connection from Network Setup).
+  const [searchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab') ?? ''
+  const [activeTab, setActiveTab] = useState(ZITI_TABS.includes(requestedTab) ? requestedTab : 'overview')
 
   const { data: status } = useQuery({
     queryKey: ['ziti-status'],
