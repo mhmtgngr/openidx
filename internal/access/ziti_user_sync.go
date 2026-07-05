@@ -535,6 +535,7 @@ func (zm *ZitiManager) runDeprovisionSweep(ctx context.Context) {
 			}
 		}
 		if _, err := zm.db.Pool.Exec(ctx,
+			//orgscope:ignore keyed by primary key from the annotated install-wide sweep above (users -> Ziti mirror)
 			`DELETE FROM ziti_identities WHERE id = $1`, d.rowID); err != nil {
 			zm.logger.Warn("Deprovision: DB row delete failed",
 				zap.String("user_id", d.userID), zap.Error(err))
