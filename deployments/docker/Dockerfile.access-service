@@ -42,7 +42,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # Stage 2: Runtime
 # ============================================
 # NOTE: Access service needs Alpine for shell script entrypoint
-FROM alpine:3.20
+FROM alpine:3.24
 
 # Install runtime dependencies, create user and directories, cleanup in single layer.
 # guacamole-server provides the guaclog CLI used for transcript generation
