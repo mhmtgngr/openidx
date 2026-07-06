@@ -548,7 +548,87 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 		UPDATE scim_users SET data = $2, updated_at = $3 WHERE id = $1 AND org_id = $4
 	`, userID, data, now, org.ID)
 
+	// SCIM `active:false` is the standard IdP deprovisioning signal. Flipping the
+	// flag alone left live sessions and tokens valid; revoke them so an upstream
+	// IdP deprovision actually cuts off access. UpdateSCIMUser is the single
+	// choke point for both PUT and PATCH(active), so this covers both.
+	if !user.Active {
+		s.deprovisionUser(ctx, userID, org.ID, false)
+	}
+
 	return user, nil
+}
+
+// revokedSessionTTL matches the identity service's marker lifetime — it must
+// outlast the longest refresh-token lifetime so a deprovisioned user's in-flight
+// refresh tokens keep failing the oauth-service's revoked-session check.
+const revokedSessionTTL = 30 * 24 * time.Hour
+
+// deprovisionUser revokes a user's live sessions (marking them revoked and
+// publishing the `revoked_session:<id>` markers the oauth-service honors) and
+// active API keys. hardDelete removes the child rows outright. Best-effort and
+// idempotent; OAuth tokens are additionally neutralized by the oauth-service's
+// user-active check on the refresh grant. Mirrors identity.Service.deprovisionUser
+// so a SCIM-driven deprovision has the same effect as an admin-console one.
+func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
+	// One scoped logger with the (scrubbed) user id, so the per-step warnings
+	// below never re-embed caller-supplied input directly.
+	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID)
+	if err != nil {
+		log.Warn("deprovision: list sessions failed", zap.Error(err))
+	} else {
+		var sessionIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err == nil {
+				sessionIDs = append(sessionIDs, id)
+			}
+		}
+		rows.Close()
+		if s.redis != nil {
+			for _, id := range sessionIDs {
+				if err := s.redis.Client.Set(ctx, "revoked_session:"+id, "1", revokedSessionTTL).Err(); err != nil {
+					log.Warn("deprovision: publish revoked-session marker failed", zap.Error(err))
+				}
+			}
+		}
+	}
+
+	if hardDelete {
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
+			log.Warn("deprovision: delete sessions failed", zap.Error(err))
+		}
+		//orgscope:ignore user_sessions is keyed by globally-unique user_id (no org_id column)
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM user_sessions WHERE user_id = $1`, userID); err != nil {
+			log.Warn("deprovision: delete user_sessions failed", zap.Error(err))
+		}
+		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1 AND org_id = $2`, userID, orgID); err != nil {
+			log.Warn("deprovision: delete api_keys failed", zap.Error(err))
+		}
+		return
+	}
+
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE sessions SET revoked = true, revoked_at = NOW()
+		 WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false)`,
+		userID, orgID); err != nil {
+		log.Warn("deprovision: revoke sessions failed", zap.Error(err))
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE api_keys SET status = 'revoked' WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
+		userID, orgID); err != nil {
+		log.Warn("deprovision: revoke api_keys failed", zap.Error(err))
+	}
+}
+
+// scrubLogValue strips CR/LF from a value before it goes into a log field, so a
+// caller-supplied identifier can't forge extra log lines (clears CodeQL's
+// log-injection sink; defense in depth on top of the JSON encoder).
+func scrubLogValue(s string) string {
+	return strings.NewReplacer("\n", "", "\r", "").Replace(s)
 }
 
 // DeleteSCIMUser deletes a user via SCIM
@@ -564,6 +644,9 @@ func (s *Service) DeleteSCIMUser(ctx context.Context, userID string) error {
 	actorID := actorIDFromContext(ctx)
 	s.logAuditEvent(ctx, "provisioning", "scim", "scim.user_deleted", "success",
 		actorID, userID, "user", nil)
+
+	// Revoke sessions + API keys before removing the user row.
+	s.deprovisionUser(ctx, userID, org.ID, true)
 
 	// Delete from users table (CASCADE will delete from scim_users)
 	_, err = s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
@@ -881,19 +964,119 @@ func (s *Service) applyUserPatchOperation(user *SCIMUser, op SCIMPatchOperation)
 			if familyName, ok := op.Value.(string); ok {
 				user.Name.FamilyName = familyName
 			}
+		case "emails":
+			// Replace the whole emails collection with the supplied set.
+			user.Emails = parseSCIMEmails(op.Value)
 		}
 	case "add":
-		// Add operation (e.g., add emails, groups)
+		// SCIM `add` on a multi-valued attribute unions the supplied values
+		// into the existing collection (RFC 7644 §3.5.2.1). Emails are the
+		// user attribute IdPs actually push; group membership for a user is
+		// managed through the Group resource (see applyGroupPatchOperation),
+		// not the read-only User.groups sub-attribute.
 		if op.Path == "emails" {
-			// Add email to user
+			user.Emails = mergeSCIMEmails(user.Emails, parseSCIMEmails(op.Value))
 		}
 	case "remove":
-		// Remove operation
+		// SCIM `remove` with no value clears the targeted collection; with a
+		// value it removes the matching members (RFC 7644 §3.5.2.2).
 		if op.Path == "emails" {
-			// Remove email from user
+			if op.Value == nil {
+				user.Emails = nil
+			} else {
+				user.Emails = removeSCIMEmails(user.Emails, parseSCIMEmails(op.Value))
+			}
 		}
 	}
 	return nil
+}
+
+// parseSCIMEmails coerces a SCIM PATCH value into a slice of SCIMEmail. The
+// value may be a single email object or an array of them; entries without a
+// usable "value" are dropped.
+func parseSCIMEmails(value interface{}) []SCIMEmail {
+	toEmail := func(m map[string]interface{}) (SCIMEmail, bool) {
+		addr, ok := m["value"].(string)
+		if !ok || addr == "" {
+			return SCIMEmail{}, false
+		}
+		email := SCIMEmail{Value: addr}
+		if t, ok := m["type"].(string); ok {
+			email.Type = t
+		}
+		if p, ok := m["primary"].(bool); ok {
+			email.Primary = p
+		}
+		return email, true
+	}
+
+	var emails []SCIMEmail
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				if email, ok := toEmail(m); ok {
+					emails = append(emails, email)
+				}
+			}
+		}
+	case map[string]interface{}:
+		if email, ok := toEmail(v); ok {
+			emails = append(emails, email)
+		}
+	case string:
+		// Bare string form: PATCH path was "emails.value".
+		if v != "" {
+			emails = append(emails, SCIMEmail{Value: v})
+		}
+	}
+	return emails
+}
+
+// mergeSCIMEmails unions incoming emails into existing ones, deduping by
+// address (case-insensitive). When an incoming email is marked primary it
+// becomes the sole primary, matching SCIM's single-primary invariant.
+func mergeSCIMEmails(existing, incoming []SCIMEmail) []SCIMEmail {
+	index := make(map[string]int, len(existing))
+	merged := make([]SCIMEmail, len(existing))
+	copy(merged, existing)
+	for i, e := range merged {
+		index[strings.ToLower(e.Value)] = i
+	}
+	for _, in := range incoming {
+		if in.Primary {
+			for i := range merged {
+				merged[i].Primary = false
+			}
+		}
+		if pos, ok := index[strings.ToLower(in.Value)]; ok {
+			merged[pos] = in
+			continue
+		}
+		index[strings.ToLower(in.Value)] = len(merged)
+		merged = append(merged, in)
+	}
+	return merged
+}
+
+// removeSCIMEmails drops any existing email whose address matches one of the
+// supplied emails (case-insensitive).
+func removeSCIMEmails(existing, toRemove []SCIMEmail) []SCIMEmail {
+	drop := make(map[string]struct{}, len(toRemove))
+	for _, e := range toRemove {
+		drop[strings.ToLower(e.Value)] = struct{}{}
+	}
+	kept := make([]SCIMEmail, 0, len(existing))
+	for _, e := range existing {
+		if _, ok := drop[strings.ToLower(e.Value)]; ok {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // applyGroupPatchOperation applies a PATCH operation to a group
@@ -910,42 +1093,67 @@ func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperati
 		}
 	case "add":
 		if op.Path == "members" {
-			// Add members to group
-			if members, ok := op.Value.([]interface{}); ok {
-				for _, m := range members {
-					if memberMap, ok := m.(map[string]interface{}); ok {
-						if value, ok := memberMap["value"].(string); ok {
-							group.Members = append(group.Members, SCIMMember{
-								Value: value,
-								Type:  "User",
-							})
-						}
-					}
+			// Union the supplied members into the group, deduping by user id.
+			existing := make(map[string]struct{}, len(group.Members))
+			for _, m := range group.Members {
+				existing[m.Value] = struct{}{}
+			}
+			for _, value := range parseSCIMMemberValues(op.Value) {
+				if _, ok := existing[value]; ok {
+					continue
 				}
+				existing[value] = struct{}{}
+				group.Members = append(group.Members, SCIMMember{Value: value, Type: "User"})
 			}
 		}
 	case "remove":
 		if op.Path == "members" {
-			// Remove members from group
-			if members, ok := op.Value.([]interface{}); ok {
-				for _, m := range members {
-					if memberMap, ok := m.(map[string]interface{}); ok {
-						if value, ok := memberMap["value"].(string); ok {
-							// Remove member from group.Members
-							var newMembers []SCIMMember
-							for _, existingMember := range group.Members {
-								if existingMember.Value != value {
-									newMembers = append(newMembers, existingMember)
-								}
-							}
-							group.Members = newMembers
-						}
-					}
-				}
+			// A remove with no value clears every member; with a value it drops
+			// the matching ones. Either way the result must be a non-nil slice
+			// so UpdateSCIMGroup persists the (possibly empty) membership set —
+			// a nil slice is treated as "members not supplied" and skipped,
+			// which previously made removing the last member a silent no-op.
+			if op.Value == nil {
+				group.Members = []SCIMMember{}
+				break
 			}
+			drop := make(map[string]struct{})
+			for _, value := range parseSCIMMemberValues(op.Value) {
+				drop[value] = struct{}{}
+			}
+			kept := make([]SCIMMember, 0, len(group.Members))
+			for _, m := range group.Members {
+				if _, ok := drop[m.Value]; ok {
+					continue
+				}
+				kept = append(kept, m)
+			}
+			group.Members = kept
 		}
 	}
 	return nil
+}
+
+// parseSCIMMemberValues extracts member user ids from a SCIM PATCH value, which
+// may be an array of member objects or a single member object.
+func parseSCIMMemberValues(value interface{}) []string {
+	var values []string
+	appendFromMap := func(m map[string]interface{}) {
+		if v, ok := m["value"].(string); ok && v != "" {
+			values = append(values, v)
+		}
+	}
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				appendFromMap(m)
+			}
+		}
+	case map[string]interface{}:
+		appendFromMap(v)
+	}
+	return values
 }
 
 func (s *Service) handleDeleteUser(c *gin.Context) {

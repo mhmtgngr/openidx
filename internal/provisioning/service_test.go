@@ -731,3 +731,149 @@ func TestRuleConditionFieldTypes(t *testing.T) {
 		}
 	})
 }
+
+// svcForPatch builds a bare Service usable for the pure in-memory patch-apply
+// helpers (they don't touch the DB).
+func svcForPatch(t *testing.T) *Service {
+	return &Service{logger: zaptest.NewLogger(t)}
+}
+
+// TestApplyUserPatch_AddEmail verifies SCIM `add` unions a new email into the
+// existing set instead of silently dropping it (M2 regression).
+func TestApplyUserPatch_AddEmail(t *testing.T) {
+	s := svcForPatch(t)
+	user := &SCIMUser{Emails: []SCIMEmail{{Value: "old@example.com", Type: "work", Primary: true}}}
+
+	err := s.applyUserPatchOperation(user, SCIMPatchOperation{
+		Op:   "add",
+		Path: "emails",
+		Value: []interface{}{
+			map[string]interface{}{"value": "new@example.com", "type": "home"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, user.Emails, 2)
+	assert.Equal(t, "new@example.com", user.Emails[1].Value)
+	assert.Equal(t, "home", user.Emails[1].Type)
+}
+
+// TestApplyUserPatch_AddPrimaryEmailMovesPrimary verifies a newly added primary
+// email becomes the sole primary.
+func TestApplyUserPatch_AddPrimaryEmailMovesPrimary(t *testing.T) {
+	s := svcForPatch(t)
+	user := &SCIMUser{Emails: []SCIMEmail{{Value: "old@example.com", Primary: true}}}
+
+	err := s.applyUserPatchOperation(user, SCIMPatchOperation{
+		Op:    "add",
+		Path:  "emails",
+		Value: map[string]interface{}{"value": "new@example.com", "primary": true},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, user.Emails, 2)
+	assert.False(t, user.Emails[0].Primary, "previous primary must be demoted")
+	assert.True(t, user.Emails[1].Primary)
+}
+
+// TestApplyUserPatch_AddDuplicateEmailReplaces verifies adding an existing
+// address updates it in place rather than duplicating.
+func TestApplyUserPatch_AddDuplicateEmailReplaces(t *testing.T) {
+	s := svcForPatch(t)
+	user := &SCIMUser{Emails: []SCIMEmail{{Value: "dup@example.com", Type: "work"}}}
+
+	err := s.applyUserPatchOperation(user, SCIMPatchOperation{
+		Op:    "add",
+		Path:  "emails",
+		Value: map[string]interface{}{"value": "DUP@example.com", "type": "home"},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, user.Emails, 1)
+	assert.Equal(t, "home", user.Emails[0].Type)
+}
+
+// TestApplyUserPatch_ReplaceEmails verifies `replace` swaps the whole set.
+func TestApplyUserPatch_ReplaceEmails(t *testing.T) {
+	s := svcForPatch(t)
+	user := &SCIMUser{Emails: []SCIMEmail{{Value: "a@example.com"}, {Value: "b@example.com"}}}
+
+	err := s.applyUserPatchOperation(user, SCIMPatchOperation{
+		Op:    "replace",
+		Path:  "emails",
+		Value: []interface{}{map[string]interface{}{"value": "only@example.com"}},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, user.Emails, 1)
+	assert.Equal(t, "only@example.com", user.Emails[0].Value)
+}
+
+// TestApplyUserPatch_RemoveEmailByValue verifies a targeted `remove`.
+func TestApplyUserPatch_RemoveEmailByValue(t *testing.T) {
+	s := svcForPatch(t)
+	user := &SCIMUser{Emails: []SCIMEmail{{Value: "keep@example.com"}, {Value: "drop@example.com"}}}
+
+	err := s.applyUserPatchOperation(user, SCIMPatchOperation{
+		Op:    "remove",
+		Path:  "emails",
+		Value: map[string]interface{}{"value": "drop@example.com"},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, user.Emails, 1)
+	assert.Equal(t, "keep@example.com", user.Emails[0].Value)
+}
+
+// TestApplyUserPatch_RemoveAllEmails verifies a valueless `remove` clears them.
+func TestApplyUserPatch_RemoveAllEmails(t *testing.T) {
+	s := svcForPatch(t)
+	user := &SCIMUser{Emails: []SCIMEmail{{Value: "a@example.com"}, {Value: "b@example.com"}}}
+
+	err := s.applyUserPatchOperation(user, SCIMPatchOperation{Op: "remove", Path: "emails"})
+	assert.NoError(t, err)
+	assert.Empty(t, user.Emails)
+}
+
+// TestApplyGroupPatch_AddMemberDedup verifies adding members unions without
+// duplicating an existing member.
+func TestApplyGroupPatch_AddMemberDedup(t *testing.T) {
+	s := svcForPatch(t)
+	group := &SCIMGroup{Members: []SCIMMember{{Value: "u1", Type: "User"}}}
+
+	err := s.applyGroupPatchOperation(group, SCIMPatchOperation{
+		Op:   "add",
+		Path: "members",
+		Value: []interface{}{
+			map[string]interface{}{"value": "u1"},
+			map[string]interface{}{"value": "u2"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.Len(t, group.Members, 2)
+	assert.Equal(t, "u2", group.Members[1].Value)
+}
+
+// TestApplyGroupPatch_RemoveLastMemberPersists verifies removing the only
+// member yields a non-nil empty slice so UpdateSCIMGroup actually clears
+// membership (the silent-no-op deprovisioning bug).
+func TestApplyGroupPatch_RemoveLastMemberPersists(t *testing.T) {
+	s := svcForPatch(t)
+	group := &SCIMGroup{Members: []SCIMMember{{Value: "u1", Type: "User"}}}
+
+	err := s.applyGroupPatchOperation(group, SCIMPatchOperation{
+		Op:    "remove",
+		Path:  "members",
+		Value: []interface{}{map[string]interface{}{"value": "u1"}},
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, group.Members, "empty result must be non-nil so UpdateSCIMGroup persists it")
+	assert.Empty(t, group.Members)
+}
+
+// TestApplyGroupPatch_RemoveAllMembers verifies a valueless remove clears all
+// members into a non-nil empty slice.
+func TestApplyGroupPatch_RemoveAllMembers(t *testing.T) {
+	s := svcForPatch(t)
+	group := &SCIMGroup{Members: []SCIMMember{{Value: "u1"}, {Value: "u2"}}}
+
+	err := s.applyGroupPatchOperation(group, SCIMPatchOperation{Op: "remove", Path: "members"})
+	assert.NoError(t, err)
+	assert.NotNil(t, group.Members)
+	assert.Empty(t, group.Members)
+}

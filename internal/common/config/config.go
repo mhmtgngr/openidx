@@ -14,6 +14,15 @@ import (
 // "sslmode=" form).
 var sslmodeRe = regexp.MustCompile(`sslmode=([a-zA-Z-]+)`)
 
+// Built-in default admin passwords. They exist only so the local docker stack
+// boots without extra config; ValidateProduction rejects them when the
+// corresponding integration is enabled, so a prod deploy can't ship with a
+// credential that is published in this source tree.
+const (
+	defaultZitiAdminPassword      = "openidx_ziti_admin"
+	defaultGuacamoleAdminPassword = "guacadmin"
+)
+
 // Config holds all configuration for the application
 type Config struct {
 	// Service identification
@@ -483,7 +492,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("ziti_reconciler", false)
 	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
 	v.SetDefault("ziti_admin_user", "admin")
-	v.SetDefault("ziti_admin_password", "openidx_ziti_admin")
+	v.SetDefault("ziti_admin_password", defaultZitiAdminPassword)
 	v.SetDefault("ziti_identity_dir", "/ziti")
 	v.SetDefault("ziti_insecure_skip_verify", false)
 
@@ -494,7 +503,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	// Guacamole defaults
 	v.SetDefault("guacamole_url", "")
 	v.SetDefault("guacamole_admin_user", "guacadmin")
-	v.SetDefault("guacamole_admin_password", "guacadmin")
+	v.SetDefault("guacamole_admin_password", defaultGuacamoleAdminPassword)
 	v.SetDefault("guacamole_recording_path", "/var/lib/openidx/recordings/guacamole")
 
 	// BrowZer defaults
@@ -994,6 +1003,20 @@ func (c *Config) ValidateProduction() error {
 	if c.ZitiInsecureSkipVerify {
 		criticalIssues = append(criticalIssues,
 			"ziti_insecure_skip_verify must be false in production; setting it to true disables Ziti controller TLS validation")
+	}
+
+	// Critical: the published default admin passwords must be overridden in
+	// production. These defaults exist only so the local docker stack boots
+	// without extra config; leaving them lets anyone who read the source log
+	// into the Ziti controller / Guacamole with a known credential. Only guard
+	// components that are actually enabled.
+	if c.ZitiEnabled && c.ZitiAdminPassword == defaultZitiAdminPassword {
+		criticalIssues = append(criticalIssues,
+			"ziti_admin_password is the built-in default; set ZITI_ADMIN_PASSWORD to a unique secret in production")
+	}
+	if c.GuacamoleURL != "" && c.GuacamoleAdminPassword == defaultGuacamoleAdminPassword {
+		criticalIssues = append(criticalIssues,
+			"guacamole_admin_password is the built-in default; set GUACAMOLE_ADMIN_PASSWORD to a unique secret in production")
 	}
 
 	if len(criticalIssues) > 0 {

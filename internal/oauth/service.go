@@ -24,6 +24,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -196,43 +197,85 @@ func (s *Service) withDBTimeout(ctx context.Context) (context.Context, context.C
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger, idSvc *identity.Service) (*Service, error) {
 	// Try to load RSA key from database, generate if not found
 	var privateKey *rsa.PrivateKey
-	var keyPEMStr string
+	var storedRaw string
 
 	// Use timeout context for database operations during initialization
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// The OAuth signing key mints every token in the system — a DB read of a
+	// plaintext key means full token forgery. Encrypt it at rest with the same
+	// AES-256 cipher used for IdP secrets. Reads tolerate both forms so existing
+	// plaintext rows keep working (and are re-encrypted in place below).
+	keyCipher, kcerr := secretcrypt.New(cfg.EncryptionKey)
+	if kcerr != nil {
+		logger.Warn("OAuth signing key will be stored WITHOUT encryption at rest (plaintext); set a 32-byte ENCRYPTION_KEY", zap.Error(kcerr))
+		keyCipher = secretcrypt.NewNoop()
+	}
+
 	err := db.Pool.QueryRow(ctx,
-		"SELECT value::text FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&keyPEMStr)
-	if err == nil && len(keyPEMStr) > 0 {
+		"SELECT value::text FROM system_settings WHERE key = 'oauth_rsa_private_key'").Scan(&storedRaw)
+	storedWasPlaintext := false
+	if err == nil && len(storedRaw) > 0 {
 		// value is stored as a JSON string, strip quotes
-		keyPEMStr = strings.Trim(keyPEMStr, "\"")
-		keyPEMStr = strings.ReplaceAll(keyPEMStr, "\\n", "\n")
-		block, _ := pem.Decode([]byte(keyPEMStr))
-		if block != nil {
-			privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-			if err != nil {
-				logger.Warn("Failed to parse stored RSA key, generating new one", zap.Error(err))
-				privateKey = nil
+		stored := strings.Trim(storedRaw, "\"")
+		var keyPEMStr string
+		if secretcrypt.IsEncrypted(stored) {
+			// Ciphertext: decrypt to recover the exact PEM (real newlines).
+			if dec, derr := keyCipher.Decrypt(stored); derr == nil {
+				keyPEMStr = dec
+			} else {
+				logger.Warn("Failed to decrypt stored RSA key, generating new one", zap.Error(derr))
+			}
+		} else {
+			// Legacy plaintext JSON string: unescape the PEM newlines.
+			keyPEMStr = strings.ReplaceAll(stored, "\\n", "\n")
+			storedWasPlaintext = true
+		}
+		if keyPEMStr != "" {
+			block, _ := pem.Decode([]byte(keyPEMStr))
+			if block != nil {
+				privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+				if err != nil {
+					logger.Warn("Failed to parse stored RSA key, generating new one", zap.Error(err))
+					privateKey = nil
+				}
 			}
 		}
 	}
+
+	storeKey := func(privKey *rsa.PrivateKey) {
+		keyBytes := x509.MarshalPKCS1PrivateKey(privKey)
+		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
+		pemBytes := pem.EncodeToMemory(keyBlock)
+		enc, eerr := keyCipher.Encrypt(string(pemBytes))
+		if eerr != nil {
+			logger.Error("failed to encrypt OAuth signing key; not persisting", zap.Error(eerr))
+			return
+		}
+		encJSON, _ := json.Marshal(enc)
+		db.Pool.Exec(ctx,
+			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb",
+			string(encJSON))
+	}
+
 	if privateKey == nil {
 		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
 		}
-		// Store the key as JSON string in jsonb column
-		keyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
-		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
-		pemBytes := pem.EncodeToMemory(keyBlock)
-		pemJSON, _ := json.Marshal(string(pemBytes))
-		db.Pool.Exec(ctx,
-			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb",
-			string(pemJSON))
-		logger.Info("RSA signing key generated and persisted to database")
+		storeKey(privateKey)
+		logger.Info("RSA signing key generated and persisted to database (encrypted at rest)")
 	} else {
 		logger.Info("RSA signing key loaded from database")
+		// Lazy migration: re-encrypt a legacy plaintext key in place, but only
+		// when a real cipher is configured (Encrypt tags its output).
+		if storedWasPlaintext {
+			if probe, perr := keyCipher.Encrypt("probe"); perr == nil && secretcrypt.IsEncrypted(probe) {
+				storeKey(privateKey)
+				logger.Info("Re-encrypted legacy plaintext OAuth signing key at rest")
+			}
+		}
 	}
 
 	// Use configured issuer URL or fall back to default
@@ -2840,6 +2883,27 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 	c.JSON(200, response)
 }
 
+// userIsActive reports whether the user still exists and is enabled. Keyed by
+// the globally-unique user id (UUID PK), so no org context is required — the
+// refresh-token grant runs without one.
+func (s *Service) userIsActive(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, nil
+	}
+	var enabled bool
+	err := s.db.Pool.QueryRow(ctx,
+		//orgscope:ignore keyed by globally-unique users.id (UUID PK); refresh grant has no org context
+		"SELECT enabled FROM users WHERE id = $1", userID).Scan(&enabled)
+	if err != nil {
+		// No row → user deleted; treat as inactive, not an error.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return enabled, nil
+}
+
 func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	refreshToken := c.PostForm("refresh_token")
 	clientID := c.PostForm("client_id")
@@ -2865,6 +2929,23 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 			zap.String("token_client_id", token.ClientID),
 			zap.String("request_client_id", clientID))
 		c.JSON(400, gin.H{"error": "invalid_grant"})
+		return
+	}
+
+	// Re-validate the token's subject: a refresh token outlives its access
+	// token, so a user disabled or deleted AFTER the grant would keep minting
+	// fresh access tokens until the refresh token itself expired. Gate issuance
+	// on the user still existing and being enabled — this is the actual
+	// kill-switch behind user disable/delete/SCIM-deprovision.
+	if active, err := s.userIsActive(c.Request.Context(), token.UserID); err != nil {
+		s.logger.Error("refresh grant: failed to check user status",
+			zap.String("user_id", token.UserID), zap.Error(err))
+		c.JSON(500, gin.H{"error": "server_error"})
+		return
+	} else if !active {
+		s.logger.Info("refresh grant denied: user disabled or deleted",
+			zap.String("user_id", token.UserID))
+		c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "user_inactive"})
 		return
 	}
 

@@ -770,6 +770,72 @@ func TestValidateProduction(t *testing.T) {
 		assert.Contains(t, err.Error(), "ziti_insecure_skip_verify")
 	})
 
+	t.Run("Fails when Ziti enabled with default admin password", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+			ZitiEnabled:               true,
+			ZitiAdminPassword:         defaultZitiAdminPassword,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ziti_admin_password")
+	})
+
+	t.Run("Fails when Guacamole configured with default admin password", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "require",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+			GuacamoleURL:              "http://guacamole:8080",
+			GuacamoleAdminPassword:    defaultGuacamoleAdminPassword,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "guacamole_admin_password")
+	})
+
+	t.Run("Passes when Ziti disabled even with default password", func(t *testing.T) {
+		cfg := &Config{
+			Environment:               "production",
+			AccessSessionSecret:       "secure-key-32-bytes-long!!!!",
+			JWTSecret:                 "secure-key-32-bytes-long!!!!!!!!",
+			EncryptionKey:             "secure-key-32-bytes-long!!!!!!!!",
+			CORSAllowedOrigins:        "https://example.com",
+			CSRFEnabled:               true,
+			DatabaseSSLMode:           "verify-full",
+			RedisTLSEnabled:           true,
+			TLS:                       TLSConfig{Enabled: true},
+			AuditStreamAllowedOrigins: "https://example.com",
+			DebugOTPInResponse:        false,
+			VaultKEK:                  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+			ZitiEnabled:               false,
+			ZitiAdminPassword:         defaultZitiAdminPassword,
+		}
+
+		err := cfg.ValidateProduction()
+		assert.NoError(t, err)
+	})
+
 	t.Run("Passes with fully secure config", func(t *testing.T) {
 		cfg := &Config{
 			Environment:               "production",
