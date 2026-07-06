@@ -397,6 +397,8 @@ services:
       - ZITI_ADMIN_USER=${ZITI_ADMIN_USER:-admin}
       - ZITI_ADMIN_PASSWORD=${ZITI_PWD:?ZITI_PWD required}
       - ZITI_IDENTITY_DIR=/ziti
+      # Browser-facing ZAC console URL; empty derives <ZITI_CTRL_URL>/zac/
+      - ZITI_CONSOLE_URL=${ZITI_CONSOLE_URL:-}
       - GUACAMOLE_URL=http://guacamole:8080/guacamole
       - GUACAMOLE_ADMIN_USER=guacadmin
       - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required}

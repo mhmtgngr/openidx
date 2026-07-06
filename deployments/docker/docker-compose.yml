@@ -552,6 +552,8 @@ services:
     restart: unless-stopped
     environment:
       - ZITI_BOOTSTRAP=true
+      # Serve the bundled ZAC admin console at https://ziti-controller.localtest.me:11280/zac/
+      - ZITI_BOOTSTRAP_CONSOLE=true
       - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
       - ZITI_CTRL_ADVERTISED_PORT=1280
       - ZITI_PWD=${ZITI_PWD:?ZITI_PWD required - run scripts/generate-secrets.sh}
@@ -1198,6 +1200,8 @@ services:
       - ZITI_ADMIN_USER=admin
       - ZITI_ADMIN_PASSWORD=${ZITI_PWD:?ZITI_PWD required - run scripts/generate-secrets.sh}
       - ZITI_IDENTITY_DIR=/ziti
+      # Browser-facing ZAC console URL (host port 11280 maps to controller 1280)
+      - ZITI_CONSOLE_URL=https://ziti-controller.localtest.me:11280/zac/
       - GUACAMOLE_URL=http://guacamole:8080/guacamole
       - GUACAMOLE_ADMIN_USER=guacadmin
       - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required - run scripts/generate-secrets.sh}

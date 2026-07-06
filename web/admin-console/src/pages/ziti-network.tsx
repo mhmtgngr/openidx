@@ -66,6 +66,7 @@ interface ZitiStatus {
   controller_reachable?: boolean
   controller_error?: string
   controller_version?: Record<string, unknown>
+  console_url?: string
   services_count: number
   identities_count: number
 }
@@ -386,6 +387,14 @@ export function ZitiNetworkPage() {
               </div>
               <Badge variant="outline">{status.services_count} services</Badge>
               <Badge variant="outline">{status.identities_count} identities</Badge>
+              {status.console_url && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={status.console_url} target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-4 w-4 mr-1.5" />
+                    Ziti Console
+                  </a>
+                </Button>
+              )}
             </>
           )}
         </div>

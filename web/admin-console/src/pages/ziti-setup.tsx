@@ -16,6 +16,7 @@ import {
   Lock,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   RefreshCw,
   Network,
   Globe,
@@ -93,6 +94,7 @@ interface SetupSyncStatus {
 interface SetupStatus {
   ready: boolean
   summary: string
+  console_url?: string
   steps: SetupStep[]
   components: SetupComponent[]
   routes: RouteAdvice[] | null
@@ -485,6 +487,14 @@ export function ZitiSetupPage() {
               <Shield className="h-4 w-4" />
               {data.ready ? 'Network ready' : data.summary}
             </span>
+          )}
+          {data?.console_url && (
+            <Button variant="outline" size="sm" asChild>
+              <a href={data.console_url} target="_blank" rel="noreferrer">
+                <ExternalLink className="mr-1.5 h-4 w-4" />
+                Ziti Console
+              </a>
+            </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`mr-1.5 h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />

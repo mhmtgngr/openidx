@@ -3,6 +3,11 @@
 > A full view of how OpenIDX and OpenZiti fit together, how to use them, and
 > where the "Ziti client" actually lives. Reflects the running deployment on
 > this box (`192.168.31.76`, podman, native Go services) as of 2026-06-23.
+>
+> Just want to get the fabric running? See
+> [ZITI_EASY_DEPLOYMENT.md](./ZITI_EASY_DEPLOYMENT.md) — `make ziti-quickstart`
+> brings up the controller (with the bundled ZAC console) and a router in one
+> command.
 
 ---
 

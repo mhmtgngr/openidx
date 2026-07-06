@@ -78,6 +78,7 @@ type ZitiSetupRouteAdvice struct {
 type ZitiSetupStatusResponse struct {
 	Ready      bool                   `json:"ready"`
 	Summary    string                 `json:"summary"`
+	ConsoleURL string                 `json:"console_url,omitempty"`
 	Steps      []ZitiSetupStep        `json:"steps"`
 	Components []ZitiSetupComponent   `json:"components"`
 	Routes     []ZitiSetupRouteAdvice `json:"routes"`
@@ -228,7 +229,7 @@ func (s *Service) handleZitiSetupStatus(c *gin.Context) {
 		return
 	}
 
-	resp := ZitiSetupStatusResponse{}
+	resp := ZitiSetupStatusResponse{ConsoleURL: s.zitiConsoleURL(ctx)}
 
 	// ---- Resolve the effective connection config (DB row wins, else env) ----
 	st, hasRow, _ := loadZitiConnSettings(ctx, s.db)
