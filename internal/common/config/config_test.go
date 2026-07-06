@@ -1052,7 +1052,7 @@ func TestConfigDefaults(t *testing.T) {
 	assert.Equal(t, "http://localhost:8281", cfg.OPAURL)
 	assert.False(t, cfg.EnableOPAAuthz)
 	assert.False(t, cfg.ZitiEnabled)
-	assert.False(t, cfg.ZitiReconcilerEnabled)
+	assert.True(t, cfg.ZitiReconcilerEnabled)
 	assert.False(t, cfg.ContinuousVerifyEnabled)
 	assert.False(t, cfg.BrowZerEnabled)
 	assert.False(t, cfg.APISIXEdgeEnabled)
@@ -1086,11 +1086,30 @@ func TestConfigDefaults(t *testing.T) {
 	assert.Equal(t, 70, cfg.AdaptiveMFA.HighRiskThreshold)
 }
 
-func TestZitiReconcilerFlagDefaultsFalse(t *testing.T) {
+func TestZitiReconcilerFlagDefaultsTrue(t *testing.T) {
 	os.Unsetenv("ZITI_RECONCILER")
-	c := &Config{}
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("DATABASE_URL")
+	c, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !c.ZitiReconcilerEnabled {
+		t.Fatalf("ZitiReconcilerEnabled should default to true")
+	}
+}
+
+func TestZitiReconcilerFlagCanBeDisabled(t *testing.T) {
+	os.Setenv("ZITI_RECONCILER", "false")
+	os.Setenv("DATABASE_URL", "postgres://localhost/test")
+	defer os.Unsetenv("ZITI_RECONCILER")
+	defer os.Unsetenv("DATABASE_URL")
+	c, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 	if c.ZitiReconcilerEnabled {
-		t.Fatalf("ZitiReconcilerEnabled should default to false")
+		t.Fatalf("ZITI_RECONCILER=false should disable the reconciler")
 	}
 }
 

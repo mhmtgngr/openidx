@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent docker-build-agent
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -163,6 +163,12 @@ dev-logs:
 dev-clean:
 	@echo "🧹 Cleaning development environment..."
 	$(DOCKER_COMPOSE) -f deployments/docker/docker-compose.yml down -v --remove-orphans
+
+ziti-quickstart:
+	@./scripts/ziti-quickstart.sh
+
+ziti-down:
+	@./scripts/ziti-quickstart.sh down
 
 #---------------------------------------------------------------------------
 # Profiling

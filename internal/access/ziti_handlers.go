@@ -2,9 +2,11 @@
 package access
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,19 +17,37 @@ import (
 
 // ---- Ziti Status ----
 
+// zitiConsoleURL returns the browser-facing URL of the controller-hosted ZAC
+// console. An explicit ZITI_CONSOLE_URL wins (needed when the browser reaches
+// the controller on a mapped host/port); otherwise it is derived from the
+// effective controller URL as <ctrl>/zac/. Empty when nothing is configured.
+func (s *Service) zitiConsoleURL(ctx context.Context) string {
+	if s.config != nil && s.config.ZitiConsoleURL != "" {
+		return s.config.ZitiConsoleURL
+	}
+	ctrlURL, _, _, _, _, _, err := s.buildZitiConnParams(ctx)
+	if err != nil || ctrlURL == "" {
+		return ""
+	}
+	return strings.TrimRight(ctrlURL, "/") + "/zac/"
+}
+
 func (s *Service) handleZitiStatus(c *gin.Context) {
+	consoleURL := s.zitiConsoleURL(c.Request.Context())
 	if s.ziti() == nil {
 		c.JSON(http.StatusOK, gin.H{
-			"enabled":   false,
-			"message":   "OpenZiti integration is not configured",
-			"sdk_ready": false,
+			"enabled":     false,
+			"message":     "OpenZiti integration is not configured",
+			"sdk_ready":   false,
+			"console_url": consoleURL,
 		})
 		return
 	}
 
 	status := gin.H{
-		"enabled":   true,
-		"sdk_ready": s.ziti().IsInitialized(),
+		"enabled":     true,
+		"sdk_ready":   s.ziti().IsInitialized(),
+		"console_url": consoleURL,
 	}
 
 	// Check controller connectivity

@@ -66,13 +66,17 @@ func TestEnroll_WithZitiJWT(t *testing.T) {
 	require.NoError(t, readErr, "ziti-enrollment.jwt should be created")
 	assert.Equal(t, fakeJWT, string(data))
 
-	// ZitiIdentityFile path should be set in config and result.
+	// ZitiIdentityFile path should be set in config (on disk too) so a later
+	// successful enrollment is picked up by the transport factory.
 	expectedIdentityPath := filepath.Join(dir, "ziti-identity.json")
 	assert.Equal(t, expectedIdentityPath, result.AgentConfig.ZitiIdentityFile)
-	assert.Equal(t, expectedIdentityPath, result.ZitiIdentity)
 
-	// Config on disk should also reflect the ZitiIdentityFile path.
-	assert.Equal(t, expectedIdentityPath, result.AgentConfig.ZitiIdentityFile)
+	// The fake JWT cannot be exchanged for an identity, so the automatic
+	// enrollment must fail gracefully: no identity file, empty result path,
+	// and the JWT kept on disk for a manual retry.
+	assert.Empty(t, result.ZitiIdentity)
+	_, statErr := os.Stat(expectedIdentityPath)
+	assert.True(t, os.IsNotExist(statErr), "ziti-identity.json should not exist for an invalid JWT")
 }
 
 func TestEnroll_ServerError(t *testing.T) {

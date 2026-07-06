@@ -547,11 +547,16 @@ services:
   #---------------------------------------------------------------------------
 
   ziti-controller:
-    image: openziti/ziti-controller:latest
+    # Pinned: this codebase embeds sdk-golang v1.7.0, verified against
+    # controller 1.6.12 (see docs/OPENIDX_ZITI_ARCHITECTURE.md §9 on version
+    # skew). Bump this tag together with the SDK, not independently.
+    image: openziti/ziti-controller:${ZITI_VERSION:-1.6.12}
     container_name: openidx-ziti-controller
     restart: unless-stopped
     environment:
       - ZITI_BOOTSTRAP=true
+      # Serve the bundled ZAC admin console at https://ziti-controller.localtest.me:11280/zac/
+      - ZITI_BOOTSTRAP_CONSOLE=true
       - ZITI_CTRL_ADVERTISED_ADDRESS=ziti-controller.localtest.me
       - ZITI_CTRL_ADVERTISED_PORT=1280
       - ZITI_PWD=${ZITI_PWD:?ZITI_PWD required - run scripts/generate-secrets.sh}
@@ -574,7 +579,7 @@ services:
           - ziti-controller.localtest.me
 
   ziti-router-init:
-    image: openziti/ziti-controller:latest
+    image: openziti/ziti-controller:${ZITI_VERSION:-1.6.12}
     container_name: openidx-ziti-router-init
     user: "0:0"
     entrypoint: /bin/bash
@@ -618,7 +623,7 @@ services:
       - openidx-network
 
   ziti-router:
-    image: openziti/ziti-router:latest
+    image: openziti/ziti-router:${ZITI_VERSION:-1.6.12}
     container_name: openidx-ziti-router
     restart: unless-stopped
     environment:
@@ -629,88 +634,13 @@ services:
       - ZITI_ROUTER_ADVERTISED_ADDRESS=ziti-router
       - ZITI_ROUTER_PORT=3022
       - ZITI_ENROLL_TOKEN=/ziti-shared/router.jwt
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - |
-        set -e
-        exec 3>/dev/null
-        CONFIG="config.yml"
-
-        # Source the bootstrap script
-        source "/bootstrap.bash"
-
-        # Step 1: Generate config (if not already present)
-        if [[ ! -s "$$CONFIG" ]]; then
-          echo "==> Generating router config..."
-          makeConfig "$$CONFIG"
-        fi
-
-        # Step 2: Patch config BEFORE enrollment (so CSR SANs include WSS hostname)
-        # Add ziti-controller.localtest.me to CSR SANs
-        if ! grep -q "ziti-controller.localtest.me" "$$CONFIG"; then
-          echo "==> Adding ziti-controller.localtest.me to CSR SANs..."
-          sed -i '/dns:/a\        - ziti-controller.localtest.me' "$$CONFIG"
-          echo "==> CSR SAN added"
-        fi
-        # Add browzer.localtest.me to CSR SANs for WSS listener
-        if ! grep -q "browzer.localtest.me" "$$CONFIG"; then
-          echo "==> Adding browzer.localtest.me to CSR SANs..."
-          sed -i '/dns:/a\        - browzer.localtest.me' "$$CONFIG"
-          echo "==> browzer.localtest.me CSR SAN added"
-        fi
-
-        # Add WSS listener (idempotent)
-        if ! grep -q "wss:" "$$CONFIG"; then
-          echo "==> Adding WSS listener..."
-          awk '/- binding:.*tunnel/ {
-            print "  - binding: edge"
-            print "    address: wss:0.0.0.0:3023"
-            print "    options:"
-            print "      advertise: browzer.localtest.me:3023"
-            print "      connectTimeoutMs: 5000"
-            print "      getSessionTimeout: 60"
-          } { print }' "$$CONFIG" > "$$CONFIG.tmp" && mv "$$CONFIG.tmp" "$$CONFIG"
-          echo "==> WSS listener added"
-        fi
-
-        # Uncomment and fill alt_server_certs (idempotent)
-        if grep -q "#alt_server_certs:" "$$CONFIG"; then
-          echo "==> Configuring alt_server_certs..."
-          sed -i 's|#alt_server_certs:|alt_server_certs:|' "$$CONFIG"
-          sed -i 's|#  - server_cert:  ""|  - server_cert: "/browzer-certs/browzer-tls.crt"|' "$$CONFIG"
-          sed -i 's|#    server_key:   ""|    server_key:  "/browzer-certs/browzer-tls.key"|' "$$CONFIG"
-          echo "==> alt_server_certs configured"
-        fi
-
-        # Uncomment transport.ws section (idempotent)
-        if grep -q "#transport:" "$$CONFIG"; then
-          echo "==> Uncommenting transport.ws..."
-          sed -i 's|^#transport:|transport:|' "$$CONFIG"
-          sed -i 's|^#  ws:|  ws:|' "$$CONFIG"
-          sed -i 's|^#    writeTimeout:|    writeTimeout:|' "$$CONFIG"
-          sed -i 's|^#    readTimeout:|    readTimeout:|' "$$CONFIG"
-          sed -i 's|^#    idleTimeout:|    idleTimeout:|' "$$CONFIG"
-          sed -i 's|^#    pongTimeout:|    pongTimeout:|' "$$CONFIG"
-          sed -i 's|^#    pingInterval:|    pingInterval:|' "$$CONFIG"
-          sed -i 's|^#    handshakeTimeout:|    handshakeTimeout:|' "$$CONFIG"
-          sed -i 's|^#    readBufferSize:|    readBufferSize:|' "$$CONFIG"
-          sed -i 's|^#    writeBufferSize:|    writeBufferSize:|' "$$CONFIG"
-          sed -i 's|^#    enableCompression:|    enableCompression:|' "$$CONFIG"
-          echo "==> transport.ws uncommented"
-        fi
-
-        echo "==> Patched config:"
-        cat "$$CONFIG"
-
-        # Step 3: Enroll (if not already enrolled)
-        if [[ "$${ZITI_BOOTSTRAP_ENROLLMENT:-}" == true ]]; then
-          enroll "$$CONFIG"
-        fi
-
-        echo "==> Starting router with WSS support..."
-        exec ziti router run "$$CONFIG"
+    # Run from the version-controlled config + entrypoint in ./ziti-router/
+    # (replaces the old generate-then-sed/awk-patch startup). The config is
+    # copied into the volume on first start; the volume copy then wins.
+    entrypoint: ["/bin/bash", "/openidx/entrypoint.bash"]
     volumes:
+      - ./ziti-router/entrypoint.bash:/openidx/entrypoint.bash:ro
+      - ./ziti-router/config.yml:/etc/ziti/router-config.yml:ro
       - ziti_router_data:/ziti-router
       - ziti_router_shared:/ziti-shared:ro
       - browzer_certs:/browzer-certs:ro
@@ -737,7 +667,7 @@ services:
   #---------------------------------------------------------------------------
 
   browzer-cert-init:
-    image: openziti/ziti-controller:latest
+    image: openziti/ziti-controller:${ZITI_VERSION:-1.6.12}
     container_name: openidx-browzer-cert-init
     user: "0:0"
     entrypoint: /bin/bash
@@ -1198,6 +1128,8 @@ services:
       - ZITI_ADMIN_USER=admin
       - ZITI_ADMIN_PASSWORD=${ZITI_PWD:?ZITI_PWD required - run scripts/generate-secrets.sh}
       - ZITI_IDENTITY_DIR=/ziti
+      # Browser-facing ZAC console URL (host port 11280 maps to controller 1280)
+      - ZITI_CONSOLE_URL=https://ziti-controller.localtest.me:11280/zac/
       - GUACAMOLE_URL=http://guacamole:8080/guacamole
       - GUACAMOLE_ADMIN_USER=guacadmin
       - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required - run scripts/generate-secrets.sh}

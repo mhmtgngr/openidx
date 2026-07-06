@@ -1,11 +1,14 @@
 package enrollment
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/openziti/sdk-golang/ziti"
+	"github.com/openziti/sdk-golang/ziti/enroll"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/agent"
@@ -46,22 +49,30 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 
 	result := &EnrollResult{AgentConfig: cfg}
 
-	// Step 3: Ziti enrollment (if server provided a Ziti JWT)
-	// Save the JWT to disk so the operator (or a future automated step) can
-	// complete Ziti identity enrollment against a running controller.
-	// The transport factory picks up ziti-identity.json on the next run once
-	// enrollment has been completed.
+	// Step 3: Ziti enrollment (if server provided a Ziti JWT). The JWT is
+	// exchanged for a Ziti identity right here — no operator step — and the
+	// transport factory picks up ziti-identity.json on the next run. The JWT
+	// is also kept on disk so a failed exchange can be retried manually
+	// (`ziti edge enroll ziti-enrollment.jwt`).
 	if resp.ZitiJWT != "" {
 		jwtPath := filepath.Join(configDir, "ziti-enrollment.jwt")
 		if err := os.WriteFile(jwtPath, []byte(resp.ZitiJWT), 0600); err != nil {
 			logger.Warn("Failed to save Ziti JWT", zap.Error(err))
 		} else {
 			logger.Info("Ziti enrollment JWT saved", zap.String("path", jwtPath))
-			// Update config with the identity file path (will exist after ziti enrollment).
-			cfg.ZitiIdentityFile = filepath.Join(configDir, "ziti-identity.json")
-			result.ZitiIdentity = cfg.ZitiIdentityFile
+			identityPath := filepath.Join(configDir, "ziti-identity.json")
+			cfg.ZitiIdentityFile = identityPath
 			if err := cfg.Save(configDir); err != nil {
 				logger.Warn("Failed to update config with Ziti identity path", zap.Error(err))
+			}
+			if err := enrollZitiIdentity(resp.ZitiJWT, identityPath); err != nil {
+				// Not fatal: the agent still works over HTTPS, and the saved
+				// JWT allows a later retry while it is still valid.
+				logger.Warn("Ziti identity enrollment failed; agent will use HTTPS transport",
+					zap.Error(err), zap.String("jwt", jwtPath))
+			} else {
+				logger.Info("Ziti identity enrolled", zap.String("path", identityPath))
+				result.ZitiIdentity = identityPath
 			}
 		}
 	}
@@ -71,4 +82,38 @@ func Enroll(logger *zap.Logger, serverURL, token, configDir string) (*EnrollResu
 		zap.String("agent_id", cfg.AgentID))
 
 	return result, nil
+}
+
+// enrollZitiIdentity exchanges a one-time enrollment JWT for a Ziti identity
+// (key + certs) and writes it to identityPath. Mirrors the access-service's
+// own SDK enrollment flow.
+func enrollZitiIdentity(jwtStr, identityPath string) error {
+	claims, jwtToken, err := enroll.ParseToken(jwtStr)
+	if err != nil {
+		return fmt.Errorf("parse enrollment JWT: %w", err)
+	}
+
+	var keyAlg ziti.KeyAlgVar
+	if err := keyAlg.Set("EC"); err != nil {
+		return fmt.Errorf("set key algorithm: %w", err)
+	}
+
+	zitiCfg, err := enroll.Enroll(enroll.EnrollmentFlags{
+		Token:     claims,
+		JwtToken:  jwtToken,
+		JwtString: jwtStr,
+		KeyAlg:    keyAlg,
+	})
+	if err != nil {
+		return fmt.Errorf("enroll identity: %w", err)
+	}
+
+	data, err := json.MarshalIndent(zitiCfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal identity: %w", err)
+	}
+	if err := os.WriteFile(identityPath, data, 0600); err != nil {
+		return fmt.Errorf("write identity file: %w", err)
+	}
+	return nil
 }

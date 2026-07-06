@@ -115,6 +115,11 @@ type Config struct {
 	ZitiAdminPassword      string `mapstructure:"ziti_admin_password"`
 	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
 	ZitiInsecureSkipVerify bool   `mapstructure:"ziti_insecure_skip_verify"`
+	// Browser-facing URL of the controller-hosted ZAC console. When empty the
+	// URL is derived from the controller URL (<ctrl>/zac/); set explicitly when
+	// the browser reaches the controller on a different host/port than the
+	// access-service does (e.g. compose port mappings).
+	ZitiConsoleURL string `mapstructure:"ziti_console_url"`
 
 	// Continuous verification
 	ContinuousVerifyEnabled  bool `mapstructure:"continuous_verify_enabled"`
@@ -489,12 +494,16 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// OpenZiti defaults
 	v.SetDefault("ziti_enabled", false)
-	v.SetDefault("ziti_reconciler", false)
+	// Desired-state reconciler is the default control path (DB as source of
+	// truth, self-healing); set ZITI_RECONCILER=false to fall back to the
+	// legacy imperative hosting path.
+	v.SetDefault("ziti_reconciler", true)
 	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
 	v.SetDefault("ziti_admin_user", "admin")
 	v.SetDefault("ziti_admin_password", defaultZitiAdminPassword)
 	v.SetDefault("ziti_identity_dir", "/ziti")
 	v.SetDefault("ziti_insecure_skip_verify", false)
+	v.SetDefault("ziti_console_url", "")
 
 	// Continuous verification defaults
 	v.SetDefault("continuous_verify_enabled", false)
@@ -644,6 +653,7 @@ func bindEnvVars(v *viper.Viper) {
 		"ziti_admin_password":                 "ZITI_ADMIN_PASSWORD",
 		"ziti_identity_dir":                   "ZITI_IDENTITY_DIR",
 		"ziti_insecure_skip_verify":           "ZITI_INSECURE_SKIP_VERIFY",
+		"ziti_console_url":                    "ZITI_CONSOLE_URL",
 		"continuous_verify_enabled":           "CONTINUOUS_VERIFY_ENABLED",
 		"continuous_verify_interval":          "CONTINUOUS_VERIFY_INTERVAL",
 		"geoip_service_url":                   "GEOIP_SERVICE_URL",

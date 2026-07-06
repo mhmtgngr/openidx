@@ -229,8 +229,12 @@ func TestComposeServicePortBinding(t *testing.T) {
 			continue
 		}
 
-		// Check next 2000 characters for port mapping (access-service has many env vars)
-		serviceSection := contentStr[serviceIndex : serviceIndex+2000]
+		// Slice to the end of this service's block (the next 2-space-indented
+		// key, or EOF) — a fixed byte window overflows on long env lists.
+		serviceSection := contentStr[serviceIndex:]
+		if end := regexp.MustCompile(`\n  \S`).FindStringIndex(serviceSection[len(serviceStart):]); end != nil {
+			serviceSection = serviceSection[:len(serviceStart)+end[0]]
+		}
 
 		// Should bind to 127.0.0.1 only
 		// Note: The actual file uses double quotes around the port mapping

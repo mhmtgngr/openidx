@@ -78,6 +78,7 @@ type ZitiSetupRouteAdvice struct {
 type ZitiSetupStatusResponse struct {
 	Ready      bool                   `json:"ready"`
 	Summary    string                 `json:"summary"`
+	ConsoleURL string                 `json:"console_url,omitempty"`
 	Steps      []ZitiSetupStep        `json:"steps"`
 	Components []ZitiSetupComponent   `json:"components"`
 	Routes     []ZitiSetupRouteAdvice `json:"routes"`
@@ -228,7 +229,7 @@ func (s *Service) handleZitiSetupStatus(c *gin.Context) {
 		return
 	}
 
-	resp := ZitiSetupStatusResponse{}
+	resp := ZitiSetupStatusResponse{ConsoleURL: s.zitiConsoleURL(ctx)}
 
 	// ---- Resolve the effective connection config (DB row wins, else env) ----
 	st, hasRow, _ := loadZitiConnSettings(ctx, s.db)
@@ -436,7 +437,7 @@ func (s *Service) handleZitiSetupStatus(c *gin.Context) {
 	case s.zitiReconciler == nil:
 		stepRoutes.Status = setupWarning
 		stepRoutes.Detail = fmt.Sprintf("%d route(s) configured, but the reconciler is disabled — provisioning is imperative-only.", len(routes))
-		stepRoutes.Remediation = "Set ZITI_RECONCILER=true so routes continuously self-heal."
+		stepRoutes.Remediation = "Remove ZITI_RECONCILER=false so routes continuously self-heal (the reconciler is on by default)."
 	default:
 		stepRoutes.Status = setupComplete
 		stepRoutes.Detail = fmt.Sprintf("%d route(s) exposed via Ziti.", len(routes))

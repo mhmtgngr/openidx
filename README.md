@@ -175,6 +175,7 @@ openidx/
 - [API Reference](docs/api-reference.md)
 - [Configuration Guide](docs/configuration.md)
 - [Deployment Guide](docs/deployment.md)
+- [Zero Trust Network: Easy Ziti Deployment](docs/ZITI_EASY_DEPLOYMENT.md)
 - [Security Best Practices](docs/security.md)
 
 ## Roadmap
