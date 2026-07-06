@@ -964,19 +964,119 @@ func (s *Service) applyUserPatchOperation(user *SCIMUser, op SCIMPatchOperation)
 			if familyName, ok := op.Value.(string); ok {
 				user.Name.FamilyName = familyName
 			}
+		case "emails":
+			// Replace the whole emails collection with the supplied set.
+			user.Emails = parseSCIMEmails(op.Value)
 		}
 	case "add":
-		// Add operation (e.g., add emails, groups)
+		// SCIM `add` on a multi-valued attribute unions the supplied values
+		// into the existing collection (RFC 7644 §3.5.2.1). Emails are the
+		// user attribute IdPs actually push; group membership for a user is
+		// managed through the Group resource (see applyGroupPatchOperation),
+		// not the read-only User.groups sub-attribute.
 		if op.Path == "emails" {
-			// Add email to user
+			user.Emails = mergeSCIMEmails(user.Emails, parseSCIMEmails(op.Value))
 		}
 	case "remove":
-		// Remove operation
+		// SCIM `remove` with no value clears the targeted collection; with a
+		// value it removes the matching members (RFC 7644 §3.5.2.2).
 		if op.Path == "emails" {
-			// Remove email from user
+			if op.Value == nil {
+				user.Emails = nil
+			} else {
+				user.Emails = removeSCIMEmails(user.Emails, parseSCIMEmails(op.Value))
+			}
 		}
 	}
 	return nil
+}
+
+// parseSCIMEmails coerces a SCIM PATCH value into a slice of SCIMEmail. The
+// value may be a single email object or an array of them; entries without a
+// usable "value" are dropped.
+func parseSCIMEmails(value interface{}) []SCIMEmail {
+	toEmail := func(m map[string]interface{}) (SCIMEmail, bool) {
+		addr, ok := m["value"].(string)
+		if !ok || addr == "" {
+			return SCIMEmail{}, false
+		}
+		email := SCIMEmail{Value: addr}
+		if t, ok := m["type"].(string); ok {
+			email.Type = t
+		}
+		if p, ok := m["primary"].(bool); ok {
+			email.Primary = p
+		}
+		return email, true
+	}
+
+	var emails []SCIMEmail
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				if email, ok := toEmail(m); ok {
+					emails = append(emails, email)
+				}
+			}
+		}
+	case map[string]interface{}:
+		if email, ok := toEmail(v); ok {
+			emails = append(emails, email)
+		}
+	case string:
+		// Bare string form: PATCH path was "emails.value".
+		if v != "" {
+			emails = append(emails, SCIMEmail{Value: v})
+		}
+	}
+	return emails
+}
+
+// mergeSCIMEmails unions incoming emails into existing ones, deduping by
+// address (case-insensitive). When an incoming email is marked primary it
+// becomes the sole primary, matching SCIM's single-primary invariant.
+func mergeSCIMEmails(existing, incoming []SCIMEmail) []SCIMEmail {
+	index := make(map[string]int, len(existing))
+	merged := make([]SCIMEmail, len(existing))
+	copy(merged, existing)
+	for i, e := range merged {
+		index[strings.ToLower(e.Value)] = i
+	}
+	for _, in := range incoming {
+		if in.Primary {
+			for i := range merged {
+				merged[i].Primary = false
+			}
+		}
+		if pos, ok := index[strings.ToLower(in.Value)]; ok {
+			merged[pos] = in
+			continue
+		}
+		index[strings.ToLower(in.Value)] = len(merged)
+		merged = append(merged, in)
+	}
+	return merged
+}
+
+// removeSCIMEmails drops any existing email whose address matches one of the
+// supplied emails (case-insensitive).
+func removeSCIMEmails(existing, toRemove []SCIMEmail) []SCIMEmail {
+	drop := make(map[string]struct{}, len(toRemove))
+	for _, e := range toRemove {
+		drop[strings.ToLower(e.Value)] = struct{}{}
+	}
+	kept := make([]SCIMEmail, 0, len(existing))
+	for _, e := range existing {
+		if _, ok := drop[strings.ToLower(e.Value)]; ok {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // applyGroupPatchOperation applies a PATCH operation to a group
@@ -993,42 +1093,67 @@ func (s *Service) applyGroupPatchOperation(group *SCIMGroup, op SCIMPatchOperati
 		}
 	case "add":
 		if op.Path == "members" {
-			// Add members to group
-			if members, ok := op.Value.([]interface{}); ok {
-				for _, m := range members {
-					if memberMap, ok := m.(map[string]interface{}); ok {
-						if value, ok := memberMap["value"].(string); ok {
-							group.Members = append(group.Members, SCIMMember{
-								Value: value,
-								Type:  "User",
-							})
-						}
-					}
+			// Union the supplied members into the group, deduping by user id.
+			existing := make(map[string]struct{}, len(group.Members))
+			for _, m := range group.Members {
+				existing[m.Value] = struct{}{}
+			}
+			for _, value := range parseSCIMMemberValues(op.Value) {
+				if _, ok := existing[value]; ok {
+					continue
 				}
+				existing[value] = struct{}{}
+				group.Members = append(group.Members, SCIMMember{Value: value, Type: "User"})
 			}
 		}
 	case "remove":
 		if op.Path == "members" {
-			// Remove members from group
-			if members, ok := op.Value.([]interface{}); ok {
-				for _, m := range members {
-					if memberMap, ok := m.(map[string]interface{}); ok {
-						if value, ok := memberMap["value"].(string); ok {
-							// Remove member from group.Members
-							var newMembers []SCIMMember
-							for _, existingMember := range group.Members {
-								if existingMember.Value != value {
-									newMembers = append(newMembers, existingMember)
-								}
-							}
-							group.Members = newMembers
-						}
-					}
-				}
+			// A remove with no value clears every member; with a value it drops
+			// the matching ones. Either way the result must be a non-nil slice
+			// so UpdateSCIMGroup persists the (possibly empty) membership set —
+			// a nil slice is treated as "members not supplied" and skipped,
+			// which previously made removing the last member a silent no-op.
+			if op.Value == nil {
+				group.Members = []SCIMMember{}
+				break
 			}
+			drop := make(map[string]struct{})
+			for _, value := range parseSCIMMemberValues(op.Value) {
+				drop[value] = struct{}{}
+			}
+			kept := make([]SCIMMember, 0, len(group.Members))
+			for _, m := range group.Members {
+				if _, ok := drop[m.Value]; ok {
+					continue
+				}
+				kept = append(kept, m)
+			}
+			group.Members = kept
 		}
 	}
 	return nil
+}
+
+// parseSCIMMemberValues extracts member user ids from a SCIM PATCH value, which
+// may be an array of member objects or a single member object.
+func parseSCIMMemberValues(value interface{}) []string {
+	var values []string
+	appendFromMap := func(m map[string]interface{}) {
+		if v, ok := m["value"].(string); ok && v != "" {
+			values = append(values, v)
+		}
+	}
+	switch v := value.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				appendFromMap(m)
+			}
+		}
+	case map[string]interface{}:
+		appendFromMap(v)
+	}
+	return values
 }
 
 func (s *Service) handleDeleteUser(c *gin.Context) {
