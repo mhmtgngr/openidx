@@ -70,7 +70,23 @@ You should never need to hand-create Ziti objects for the standard flows:
 End users need **no certificate enrollment** for browser apps: BrowZer uses
 their OpenIDX OIDC login as the overlay identity (Ziti *external JWT signers*).
 Only native tunneler users (Ziti Desktop Edge, `ziti-edge-tunnel`) download a
-one-time `.jwt` from **My Devices**.
+one-time `.jwt` from **My Devices**. The endpoint agent enrolls its own Ziti
+identity automatically during `agent enroll` — no operator step.
+
+## Defaults that keep the fabric healthy
+
+- **Reconciler is on by default** (`ZITI_RECONCILER=false` reverts to the
+  legacy imperative path): the DB is the source of truth and a serialized loop
+  continuously converges the controller, so crashed bootstrappers, stale
+  terminators, and half-applied toggles self-heal instead of drifting.
+- **Pinned Ziti images**: compose pins `openziti/ziti-controller` and
+  `openziti/ziti-router` to a version verified against the embedded
+  sdk-golang (override with `ZITI_VERSION`). SDK↔controller skew has caused
+  silent dial failures before — bump the tag and the SDK together.
+- **Version-controlled router config**: the dev router runs from
+  `deployments/docker/ziti-router/config.yml` (WSS listener, BrowZer alt
+  certs, CSR SANs all declared) instead of a config generated in the container
+  and patched with sed/awk at startup.
 
 ---
 

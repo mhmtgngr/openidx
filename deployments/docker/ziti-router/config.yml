@@ -1,0 +1,103 @@
+# OpenZiti edge router config for the dev compose stack.
+#
+# This file is the complete, version-controlled router configuration — it
+# replaces the old approach of generating a config in the container and
+# patching it with sed/awk at startup. It is mounted read-only and copied
+# into the router volume on first start (see entrypoint.bash); after that the
+# copy in the volume is authoritative, so a reset requires removing the
+# ziti_router_data volume.
+#
+# Shape follows the upstream template (ziti/cmd/create/config_templates/
+# router.yml, format v3) plus the two OpenIDX additions the entrypoint used
+# to patch in:
+#   - a WSS edge listener on :3023 for BrowZer (browsers can only use WSS)
+#   - alt_server_certs presenting the browser-trusted BrowZer cert
+v: 3
+
+identity:
+  # Written by `ziti router enroll` on first start; paths live in the
+  # ziti_router_data volume so the identity survives restarts.
+  cert:        "/ziti-router/router.cert"
+  server_cert: "/ziti-router/router.server.chain.cert"
+  key:         "/ziti-router/router.key"
+  ca:          "/ziti-router/router.cas"
+  # Browser-trusted cert for the WSS listener (BrowZer). The browzer_certs
+  # volume is populated by the BrowZer cert bootstrap before the router starts.
+  alt_server_certs:
+    - server_cert: "/browzer-certs/browzer-tls.crt"
+      server_key:  "/browzer-certs/browzer-tls.key"
+
+ctrl:
+  endpoint:      tls:ziti-controller.localtest.me:1280
+  endpointsFile: /ziti-router/endpoints.yml
+
+link:
+  dialers:
+    - binding: transport
+  listeners:
+    - binding:   transport
+      bind:      tls:0.0.0.0:3022
+      advertise: tls:ziti-router:3022
+      options:
+        outQueueSize: 4
+
+listeners:
+  # bindings of edge and tunnel require the "edge" section below
+  - binding: edge
+    address: tls:0.0.0.0:3022
+    options:
+      advertise: ziti-router:3022
+      connectTimeoutMs: 5000
+      getSessionTimeout: 60
+  # WSS listener for BrowZer clients (the in-browser Ziti runtime dials wss://)
+  - binding: edge
+    address: wss:0.0.0.0:3023
+    options:
+      advertise: browzer.localtest.me:3023
+      connectTimeoutMs: 5000
+      getSessionTimeout: 60
+  - binding: tunnel
+    options:
+      mode: host #tproxy|host
+
+edge:
+  csr:
+    country: US
+    province: NC
+    locality: Charlotte
+    organization: NetFoundry
+    organizationalUnit: Ziti
+    sans:
+      dns:
+        - localhost
+        - ziti-router
+        # WSS/BrowZer hostnames must be in the CSR SANs so the enrolled cert
+        # covers them (added before enrollment; changing them means re-enroll)
+        - ziti-controller.localtest.me
+        - browzer.localtest.me
+      ip:
+        - "127.0.0.1"
+        - "::1"
+
+transport:
+  ws:
+    writeTimeout: 10
+    readTimeout: 5
+    idleTimeout: 120
+    pongTimeout: 60
+    pingInterval: 54
+    handshakeTimeout: 10
+    readBufferSize: 4096
+    writeBufferSize: 4096
+    enableCompression: true
+
+forwarder:
+  latencyProbeInterval: 0
+  xgressDialQueueLength: 1000
+  xgressDialWorkerCount: 128
+  linkDialQueueLength: 1000
+  linkDialWorkerCount: 32
+
+metrics:
+  reportInterval: 1m
+  messageQueueSize: 10

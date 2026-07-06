@@ -132,7 +132,7 @@ Backing stores: **PostgreSQL** `oidx-pg` (`:55432`), **Redis** `oidx-redis` (`:5
 | `ziti_browzer.go` | `BootstrapBrowZer()` — provisions the BrowZer control objects (see §4.4). |
 | `browzer_targets.go` | Generates the bootstrapper `config.json` (vhost→service map) and the `browzer-router.conf` nginx config. |
 | `feature_manager.go` / `feature_handlers.go` | The **per-route feature toggle** engine (ziti / browzer / guacamole) — see §4.2. |
-| `ziti_reconciler.go` | Newer **desired-state reconciler** (DB = source of truth; converges Ziti). Flag-gated `ZITI_RECONCILER` (default OFF). Per-route `hosting_mode` (`identity`\|`direct`). |
+| `ziti_reconciler.go` | **Desired-state reconciler** (DB = source of truth; converges Ziti). **Default ON**; `ZITI_RECONCILER=false` reverts to the legacy imperative path. Per-route `hosting_mode` (`identity`\|`direct`). |
 | `ziti_fabric.go`, `ziti_handlers.go`, `ziti_*_handlers.go` | Health monitoring + CRUD endpoints for services, identities, policies, terminators, sessions. |
 
 On startup the access-service: loads `access-proxy.json` → initializes the SDK
@@ -278,8 +278,8 @@ BROWZER_ROUTER_HOST=127.0.0.1
 BROWZER_ROUTER_PORT=8094
 ```
 
-> `ZITI_RECONCILER` (default OFF) gates the desired-state reconciler. With it
-> off, the access-service uses the imperative hosting path on startup.
+> `ZITI_RECONCILER` (default ON) gates the desired-state reconciler. Set it to
+> `false` to fall back to the legacy imperative hosting path on startup.
 
 ---
 

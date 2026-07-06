@@ -31,7 +31,7 @@ export ACCESS_APPS_DOMAIN="tdv.org"
 
 # --- OpenZiti --------------------------------------------------------------
 export ZITI_ENABLED=true
-export ZITI_RECONCILER=true
+# Reconciler is on by default; set ZITI_RECONCILER=false for the legacy path.
 export ZITI_CTRL_URL="https://ziti-controller.localtest.me:1280"
 export ZITI_ADMIN_USER=admin
 export ZITI_ADMIN_PASSWORD="$(cat /home/cmit/oidx-runtime/oidx-ziti/ziti_pwd)"  # adapt path

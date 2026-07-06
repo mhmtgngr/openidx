@@ -494,7 +494,10 @@ func setDefaults(v *viper.Viper, serviceName string) {
 
 	// OpenZiti defaults
 	v.SetDefault("ziti_enabled", false)
-	v.SetDefault("ziti_reconciler", false)
+	// Desired-state reconciler is the default control path (DB as source of
+	// truth, self-healing); set ZITI_RECONCILER=false to fall back to the
+	// legacy imperative hosting path.
+	v.SetDefault("ziti_reconciler", true)
 	v.SetDefault("ziti_ctrl_url", "https://ziti-controller:1280")
 	v.SetDefault("ziti_admin_user", "admin")
 	v.SetDefault("ziti_admin_password", defaultZitiAdminPassword)

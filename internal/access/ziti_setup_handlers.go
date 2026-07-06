@@ -437,7 +437,7 @@ func (s *Service) handleZitiSetupStatus(c *gin.Context) {
 	case s.zitiReconciler == nil:
 		stepRoutes.Status = setupWarning
 		stepRoutes.Detail = fmt.Sprintf("%d route(s) configured, but the reconciler is disabled — provisioning is imperative-only.", len(routes))
-		stepRoutes.Remediation = "Set ZITI_RECONCILER=true so routes continuously self-heal."
+		stepRoutes.Remediation = "Remove ZITI_RECONCILER=false so routes continuously self-heal (the reconciler is on by default)."
 	default:
 		stepRoutes.Status = setupComplete
 		stepRoutes.Detail = fmt.Sprintf("%d route(s) exposed via Ziti.", len(routes))
