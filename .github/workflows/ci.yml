@@ -128,6 +128,11 @@ jobs:
             fi
           done
 
+      # Compile the build-tagged integration suite so it can't silently rot.
+      # (The full run, which needs the services up, lives in test-integration.)
+      - name: Compile integration tests
+        run: go vet -tags=integration ./test/integration/...
+
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
