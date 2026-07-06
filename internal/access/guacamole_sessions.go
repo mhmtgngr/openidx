@@ -223,6 +223,8 @@ type GuacSessionRow struct {
 	Status                string     `json:"status"`
 	TranscriptAvailable   bool       `json:"transcript_available"`
 	TranscriptGeneratedAt *time.Time `json:"transcript_generated_at,omitempty"`
+	RecordingAvailable    bool       `json:"recording_available"`
+	OnLegalHold           bool       `json:"on_legal_hold"`
 }
 
 // ---- handleListGuacSessionHistory ----
@@ -231,8 +233,9 @@ type GuacSessionRow struct {
 // Lists DB-backed guacamole_sessions rows for the org (most recent first), so the
 // console can offer per-session transcript downloads (keyed by row id). RLS enforces
 // org scoping via the request context's app.org_id; the explicit org_id filter is
-// defence in depth (same pattern as handleListGuacSessionRequests). Returns only a
-// transcript-availability boolean, never the recording/transcript file paths.
+// defence in depth (same pattern as handleListGuacSessionRequests). Returns only
+// availability booleans and a legal-hold flag — never the on-disk
+// recording_path or transcript_path.
 func (s *Service) handleListGuacSessionHistory(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -246,7 +249,11 @@ func (s *Service) handleListGuacSessionHistory(c *gin.Context) {
 		`SELECT id, connection_id, user_id, guac_session_uuid,
 		        started_at, ended_at, status,
 		        (COALESCE(transcript_path, '') <> '') AS transcript_available,
-		        transcript_generated_at
+		        transcript_generated_at,
+		        (COALESCE(recording_path, '') <> '') AS recording_available,
+		        EXISTS (SELECT 1 FROM guacamole_recording_legal_holds h
+		                 WHERE h.session_id = guacamole_sessions.id
+		                   AND h.released_at IS NULL) AS on_legal_hold
 		   FROM guacamole_sessions
 		  WHERE org_id = $1
 		  ORDER BY started_at DESC
@@ -266,11 +273,17 @@ func (s *Service) handleListGuacSessionHistory(c *gin.Context) {
 			&r.ID, &r.ConnectionID, &r.UserID, &r.GuacSessionUUID,
 			&r.StartedAt, &r.EndedAt, &r.Status,
 			&r.TranscriptAvailable, &r.TranscriptGeneratedAt,
+			&r.RecordingAvailable, &r.OnLegalHold,
 		); err != nil {
 			s.logger.Warn("handleListGuacSessionHistory: scan failed", zap.Error(err))
 			continue
 		}
 		sessions = append(sessions, r)
+	}
+	if err := rows.Err(); err != nil {
+		s.logger.Error("handleListGuacSessionHistory: rows iteration failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list session history"})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
