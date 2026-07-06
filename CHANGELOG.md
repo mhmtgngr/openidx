@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-07-06
+
+### Added
+
+- **Guacamole recording legal-hold — admin console UI** (#329) — the Session History table on the
+  Guacamole Sessions page now has per-recording **Place hold** / **Release hold** controls (with a
+  reason prompt) and an **On hold** badge, wired to the existing legal-hold endpoints
+  (`POST/DELETE /api/v1/access/guacamole/sessions/:id/legal-hold`). Previously those endpoints — which
+  exempt a held recording from the retention sweeper — could only be driven by `curl`. The
+  `session-history` list endpoint now returns two read-only, org-scoped flags (`recording_available`,
+  `on_legal_hold`) so the UI can render the correct state. No schema change (uses the v68
+  `guacamole_recording_legal_holds` table shipped in v1.15.0).
+
 ## [1.17.0] - 2026-07-06
 
 ### Added
