@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **IAM→Ziti revocation sweep failed on a uuid `user_id`** — the deprovision sweep added in v1.16.0
+  queried `WHERE zi.user_id != ''` against the uuid column `ziti_identities.user_id`, which forced an
+  empty-string→uuid cast and failed the whole query (`22P02`) every poll, so a disabled user's Ziti
+  identity was never deleted. Dropped the redundant `!= ''` (`IS NOT NULL` suffices for a uuid column)
+  and added a regression test. (Shipped in v1.16.0 as a hotfix: **v1.16.1**.)
+
 ## [1.16.0] - 2026-07-05
 
 ### Added
