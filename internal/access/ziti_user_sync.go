@@ -500,12 +500,12 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 // network access) alive indefinitely. Only user-linked identities are swept —
 // infrastructure identities (access-proxy, admin, routers) have no user_id.
 func (zm *ZitiManager) runDeprovisionSweep(ctx context.Context) {
+	// zi.user_id is a uuid column, so the previous `AND zi.user_id != ''` forced a
+	// cast of the empty-string literal to uuid and failed the whole query with 22P02
+	// every sweep — leaving the revocation sweep inert. IS NOT NULL alone is correct
+	// (and sufficient) for a uuid column.
 	rows, err := zm.db.Pool.Query(ctx,
 		//orgscope:ignore Ziti user-sync background poller sweep across all orgs (install-wide users -> Ziti mirror)
-		// zi.user_id is a uuid column, so the previous `AND zi.user_id != ''`
-		// forced a cast of the empty-string literal to uuid and failed the whole
-		// query with 22P02 every sweep — leaving the revocation sweep inert. The
-		// IS NOT NULL check alone is correct (and sufficient) for a uuid column.
 		`SELECT zi.id, zi.ziti_id, zi.user_id
 		 FROM ziti_identities zi
 		 LEFT JOIN users u ON u.id = zi.user_id
