@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+// The session-history DTO must expose the legal-hold + recording availability
+// booleans the console needs to render place-vs-release controls.
+func TestGuacSessionRowExposesLegalHoldFlags(t *testing.T) {
+	b, _ := json.Marshal(GuacSessionRow{})
+	s := string(b)
+	for _, want := range []string{"recording_available", "on_legal_hold"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("GuacSessionRow is missing JSON field %q: %s", want, b)
+		}
+	}
+}
+
 // The session-history DTO must expose only a transcript/recording availability
 // boolean — never the on-disk recording_path or transcript_path.
 func TestGuacSessionRowHidesFilePaths(t *testing.T) {
