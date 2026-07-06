@@ -5,7 +5,7 @@ All notable changes to OpenIDX are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.16.1] - 2026-07-06
 
 ### Fixed
 
@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queried `WHERE zi.user_id != ''` against the uuid column `ziti_identities.user_id`, which forced an
   empty-string→uuid cast and failed the whole query (`22P02`) every poll, so a disabled user's Ziti
   identity was never deleted. Dropped the redundant `!= ''` (`IS NOT NULL` suffices for a uuid column)
-  and added a regression test. (Shipped in v1.16.0 as a hotfix: **v1.16.1**.)
+  and added a regression test. Hotfix on top of v1.16.0.
 
 ## [1.16.0] - 2026-07-05
 
@@ -1537,7 +1537,7 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.16.0...HEAD
+[1.16.1]: https://github.com/mhmtgngr/openidx/compare/v1.16.0...v1.16.1
 [1.16.0]: https://github.com/mhmtgngr/openidx/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/mhmtgngr/openidx/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/mhmtgngr/openidx/compare/v1.14.0...v1.14.1
