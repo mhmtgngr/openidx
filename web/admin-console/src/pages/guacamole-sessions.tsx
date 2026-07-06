@@ -8,6 +8,8 @@ import {
   Download,
   StopCircle,
   Eye,
+  Lock,
+  Unlock,
 } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -75,6 +77,8 @@ interface GuacSessionRow {
   status: string
   transcript_available: boolean
   transcript_generated_at?: string
+  recording_available: boolean
+  on_legal_hold: boolean
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -444,6 +448,35 @@ function ActiveSessionsTab() {
 
 function SessionHistoryTab() {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
+
+  const placeHoldMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post(`/api/v1/access/guacamole/sessions/${id}/legal-hold`, { reason }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['guac-session-history'] })
+      toast({ title: 'Recording placed on legal hold — exempt from retention sweep.' })
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Failed to place hold'
+      toast({ title: msg, variant: 'destructive' })
+    },
+  })
+
+  const releaseHoldMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.delete(`/api/v1/access/guacamole/sessions/${id}/legal-hold`, {
+        data: { reason },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['guac-session-history'] })
+      toast({ title: 'Legal hold released — recording subject to retention again.' })
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Failed to release hold'
+      toast({ title: msg, variant: 'destructive' })
+    },
+  })
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['guac-session-history'],
@@ -481,7 +514,7 @@ function SessionHistoryTab() {
                 <TableHead>Started</TableHead>
                 <TableHead>Ended</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-40" />
+                <TableHead className="w-64" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -501,20 +534,63 @@ function SessionHistoryTab() {
                     <SessionStatusBadge status={s.status} />
                   </TableCell>
                   <TableCell>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!s.transcript_available}
-                      title={
-                        s.transcript_available
-                          ? 'Download keystroke transcript'
-                          : 'Transcript not available'
-                      }
-                      onClick={() => downloadTranscript(s.id, toast)}
-                    >
-                      <Download className="mr-1 h-3 w-3" />
-                      Transcript
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!s.transcript_available}
+                        title={
+                          s.transcript_available
+                            ? 'Download keystroke transcript'
+                            : 'Transcript not available'
+                        }
+                        onClick={() => downloadTranscript(s.id, toast)}
+                      >
+                        <Download className="mr-1 h-3 w-3" />
+                        Transcript
+                      </Button>
+                      {s.recording_available &&
+                        (s.on_legal_hold ? (
+                          <>
+                            <Badge variant="secondary" className="text-amber-700">
+                              On hold
+                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              title="Release legal hold (recording becomes subject to retention again)"
+                              onClick={() => {
+                                const reason = window.prompt(
+                                  'Reason for releasing this legal hold (logged in audit):',
+                                  '',
+                                )
+                                if (reason === null) return
+                                releaseHoldMutation.mutate({ id: s.id, reason })
+                              }}
+                            >
+                              <Unlock className="mr-1 h-3 w-3 text-amber-600" />
+                              Release hold
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            title="Place this recording on legal hold (exempt from retention sweep)"
+                            onClick={() => {
+                              const reason = window.prompt(
+                                'Reason for the legal hold (e.g. "litigation case #1234"):',
+                                '',
+                              )
+                              if (!reason) return
+                              placeHoldMutation.mutate({ id: s.id, reason })
+                            }}
+                          >
+                            <Lock className="mr-1 h-3 w-3" />
+                            Place hold
+                          </Button>
+                        ))}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

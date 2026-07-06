@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -51,6 +51,8 @@ const sessionRowWithTranscript = {
   ended_at: '2026-06-30T09:00:00Z',
   status: 'completed',
   transcript_available: true,
+  recording_available: true,
+  on_legal_hold: false,
 }
 
 const sessionRowNoTranscript = {
@@ -60,6 +62,20 @@ const sessionRowNoTranscript = {
   started_at: '2026-06-29T08:00:00Z',
   status: 'active',
   transcript_available: false,
+  recording_available: false,
+  on_legal_hold: false,
+}
+
+const sessionRowOnHold = {
+  id: 'hist-row-3',
+  connection_id: 'conn-app-02',
+  user_id: 'user-erin',
+  started_at: '2026-06-28T08:00:00Z',
+  ended_at: '2026-06-28T09:00:00Z',
+  status: 'completed',
+  transcript_available: true,
+  recording_available: true,
+  on_legal_hold: true,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -71,7 +87,9 @@ function routeGet(url: string) {
     return Promise.resolve({ requests: [pendingRequest] })
   }
   if (url.includes('/session-history')) {
-    return Promise.resolve({ sessions: [sessionRowWithTranscript, sessionRowNoTranscript] })
+    return Promise.resolve({
+      sessions: [sessionRowWithTranscript, sessionRowNoTranscript, sessionRowOnHold],
+    })
   }
   if (url.includes('/sessions') && !url.includes('/transcript')) {
     return Promise.resolve({ sessions: [activeSession] })
@@ -98,6 +116,7 @@ describe('GuacamoleSessionsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
+    window.prompt = vi.fn()
     vi.mocked(api.get).mockImplementation(
       (url: string) => routeGet(url) as ReturnType<typeof api.get>,
     )
@@ -268,5 +287,62 @@ describe('GuacamoleSessionsPage', () => {
         { responseType: 'blob' },
       )
     })
+  })
+
+  it('recorded, un-held row shows "Place hold" and calls POST /legal-hold with a reason', async () => {
+    const user = userEvent.setup()
+    window.prompt = vi.fn().mockReturnValue('litigation case #1234')
+    vi.mocked(api.post).mockResolvedValueOnce({})
+
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Pending Session Requests')
+    await user.click(screen.getByRole('tab', { name: /session history/i }))
+    await screen.findByText('user-charlie')
+
+    const placeBtns = await screen.findAllByRole('button', { name: /place hold/i })
+    fireEvent.click(placeBtns[0]) // hist-row-1
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        '/api/v1/access/guacamole/sessions/hist-row-1/legal-hold',
+        { reason: 'litigation case #1234' },
+      )
+    })
+  })
+
+  it('held row shows "Release hold" + an On hold badge and calls DELETE /legal-hold', async () => {
+    const user = userEvent.setup()
+    window.prompt = vi.fn().mockReturnValue('case closed')
+    vi.mocked(api.delete).mockResolvedValueOnce({})
+
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Pending Session Requests')
+    await user.click(screen.getByRole('tab', { name: /session history/i }))
+    await screen.findByText('user-erin')
+
+    expect(screen.getByText(/on hold/i)).toBeInTheDocument()
+
+    const releaseBtn = await screen.findByRole('button', { name: /release hold/i })
+    fireEvent.click(releaseBtn)
+
+    await waitFor(() => {
+      expect(api.delete).toHaveBeenCalledWith(
+        '/api/v1/access/guacamole/sessions/hist-row-3/legal-hold',
+        { data: { reason: 'case closed' } },
+      )
+    })
+  })
+
+  it('row without a recording shows no legal-hold button', async () => {
+    const user = userEvent.setup()
+    render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
+    await screen.findByText('Pending Session Requests')
+    await user.click(screen.getByRole('tab', { name: /session history/i }))
+    const daveCell = await screen.findByText('user-dave')
+    const daveRow = daveCell.closest('tr') as HTMLElement
+    expect(daveRow).toBeTruthy()
+    const { queryByRole } = within(daveRow)
+    expect(queryByRole('button', { name: /place hold/i })).toBeNull()
+    expect(queryByRole('button', { name: /release hold/i })).toBeNull()
   })
 })
