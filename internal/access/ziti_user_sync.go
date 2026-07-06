@@ -502,10 +502,14 @@ func (zm *ZitiManager) runAutoSync(ctx context.Context) {
 func (zm *ZitiManager) runDeprovisionSweep(ctx context.Context) {
 	rows, err := zm.db.Pool.Query(ctx,
 		//orgscope:ignore Ziti user-sync background poller sweep across all orgs (install-wide users -> Ziti mirror)
+		// zi.user_id is a uuid column, so the previous `AND zi.user_id != ''`
+		// forced a cast of the empty-string literal to uuid and failed the whole
+		// query with 22P02 every sweep — leaving the revocation sweep inert. The
+		// IS NOT NULL check alone is correct (and sufficient) for a uuid column.
 		`SELECT zi.id, zi.ziti_id, zi.user_id
 		 FROM ziti_identities zi
 		 LEFT JOIN users u ON u.id = zi.user_id
-		 WHERE zi.user_id IS NOT NULL AND zi.user_id != ''
+		 WHERE zi.user_id IS NOT NULL
 		   AND (u.id IS NULL OR u.enabled = false)
 		 LIMIT 10`)
 	if err != nil {
