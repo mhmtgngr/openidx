@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-07-06
+
+### Added
+
+- **OpenZiti made easy** (#326) — the Ziti reconciler is now on by default (`ziti_reconciler=true`), the
+  dev compose bundles the ZAC console (`ziti_console_url`), the router runs from a version-controlled
+  declarative config (`deployments/docker/ziti-router/`) instead of sed/awk-patching at startup, agents
+  auto-enroll, and a one-command Ziti quickstart (`scripts/ziti-quickstart.sh` + guided setup page).
+- **One-command box deploy script** (#323) — `scripts/deploy-box.sh` automates the release recipe
+  (backup → migrate → roll binaries → verify).
+
+### Changed
+
+- **Security hardening** (#324) — access-revocation and privilege checks tightened; OAuth signing keys
+  are now **encrypted at rest** (via the prefix-aware `secretcrypt` helper — legacy plaintext keys are
+  read transparently and re-encrypted on rotation); SCIM PATCH support extended in provisioning; the
+  published default `ziti_admin_password`/`guacamole_admin_password` must be overridden in production
+  (new `ValidateProduction` check).
+- Dependency bumps: `go-ldap/ldap/v3` 3.4.8→3.4.12 (#325); Docker base images alpine 3.20→3.24 (#262),
+  nginx (#93), node (#94). CI now compiles the integration test suite on every build (#73).
+
+## [1.16.1] - 2026-07-06
+
 ### Fixed
 
 - **IAM→Ziti revocation sweep failed on a uuid `user_id`** — the deprovision sweep added in v1.16.0
   queried `WHERE zi.user_id != ''` against the uuid column `ziti_identities.user_id`, which forced an
   empty-string→uuid cast and failed the whole query (`22P02`) every poll, so a disabled user's Ziti
   identity was never deleted. Dropped the redundant `!= ''` (`IS NOT NULL` suffices for a uuid column)
-  and added a regression test. (Shipped in v1.16.0 as a hotfix: **v1.16.1**.)
+  and added a regression test. Released as a hotfix on top of v1.16.0.
 
 ## [1.16.0] - 2026-07-05
 
@@ -1537,7 +1560,9 @@ The first tagged release: a hardened, single-tenant, self-hostable v1.
   reverse-proxy hop-by-hop header stripping, and audit-stream SIEM config
   endpoints.
 
-[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/mhmtgngr/openidx/compare/v1.17.0...HEAD
+[1.17.0]: https://github.com/mhmtgngr/openidx/compare/v1.16.1...v1.17.0
+[1.16.1]: https://github.com/mhmtgngr/openidx/compare/v1.16.0...v1.16.1
 [1.16.0]: https://github.com/mhmtgngr/openidx/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/mhmtgngr/openidx/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/mhmtgngr/openidx/compare/v1.14.0...v1.14.1
