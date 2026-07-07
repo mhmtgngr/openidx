@@ -512,9 +512,12 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 	if promoted {
 		if c, ok := rot.(PostRotateCleaner); ok {
 			if cerr := c.Cleanup(orgCtx, p.ConnectorConfig); cerr != nil {
+				// Log run_id (server-generated UUID) rather than the policy_id/connector_type
+				// request/DB-sourced strings: run_id correlates to the credential_rotations
+				// ledger row (which already records policy_id + connector_type) and avoids
+				// logging tainted values (log-injection).
 				s.logger.Warn("credentials: post-rotate cleanup failed (new credential is live; old may linger)",
-					zap.String("policy_id", policyID),
-					zap.String("connector_type", p.ConnectorType),
+					zap.String("run_id", runID),
 					zap.Error(cerr))
 			}
 		}
