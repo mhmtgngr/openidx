@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-07-07
+
+### Added
+
+- **AWS IAM access-key rotation connector** (#335) — a new `aws_iam` PAM rotation connector that rotates
+  an IAM user's access keys, selectable from the Rotation Policies admin page. Introduces an engine
+  "minter" seam (`Minter` + `PostRotateCleaner`) for providers that mint the secret themselves: the
+  connector calls `CreateAccessKey`, verifies the new key via STS `GetCallerIdentity` (retrying for IAM
+  eventual consistency), and retires the superseded key only after the new one is promoted. AWS calls
+  sit behind small interfaces so the connector is covered by mocked-SDK unit tests. Config:
+  `target_user`, `admin_secret_id` (a vault secret holding admin AWS creds as
+  `{access_key_id, secret_access_key}` JSON), `region`. The target IAM user must be dedicated to
+  rotation (cleanup deletes all its access keys except the newest). GCP service-account keys are a
+  planned follow-up on the same seam.
+
 ## [1.20.0] - 2026-07-07
 
 ### Changed
