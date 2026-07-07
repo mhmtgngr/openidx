@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-07-07
+
+### Changed
+
+- **Admin console code-splitting follow-ups** (#341) — `lucide-react` and `@tanstack` now build into
+  their own cacheable chunks (`icons`, `query`; the `vendor` chunk drops ~1,176→1,071 kB), and the
+  `Layout` outlet is wrapped in its own `<Suspense>` so navigating to an unvisited page spins only the
+  content area (the sidebar/header stay rendered) instead of a full-screen fallback. Frontend-only.
+
 ## [1.22.0] - 2026-07-07
 
 ### Added
