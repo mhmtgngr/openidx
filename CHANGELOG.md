@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.2] - 2026-07-07
+
+### Fixed
+
+- **JWT signature verification on OAuth logout/session endpoints** (#345, security) — `handleLogoutAll`,
+  `handleSessionInfo`, and `handleLogout` (end-session) parsed the caller's JWT with `ParseUnverified`
+  and acted on the unverified `sub`, so a forged/unsigned token could revoke another user's sessions or
+  read their session info. Added `parseVerifiedClaims` (RS256-pinned signature check against the service
+  key, alg-confusion-proof, with an expiry-tolerant mode for the OIDC `id_token_hint`) and routed all
+  parse sites through it; logout-all/session-info now return 401 on an unverified token, and end-session
+  no longer acts on an unverified subject. Clears `go/missing-jwt-signature-check` (high ×3).
+
 ## [1.23.1] - 2026-07-07
 
 ### Fixed
