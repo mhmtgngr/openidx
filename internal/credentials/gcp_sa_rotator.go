@@ -238,7 +238,10 @@ func newestGCPKey(keys []*iam.ServiceAccountKey) string {
 }
 
 func realGCPKeyClient(ctx context.Context, adminJSON []byte) (gcpKeyAPI, error) {
-	svc, err := iam.NewService(ctx, option.WithCredentialsJSON(adminJSON))
+	// nolint:staticcheck // SA1019: WithCredentialsJSON is deprecated over the risk of accepting
+	// untrusted external-account credential *config*; here adminJSON is a service-account KEY
+	// resolved from our own vault (a trusted, operator-controlled source), so that risk does not apply.
+	svc, err := iam.NewService(ctx, option.WithCredentialsJSON(adminJSON)) //nolint:staticcheck
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +268,10 @@ func (a *realGCPKeyAPI) DeleteKey(ctx context.Context, keyName string) error {
 }
 
 func realGCPTokenCheck(ctx context.Context, keyJSON []byte) error {
-	creds, err := google.CredentialsFromJSON(ctx, keyJSON, "https://www.googleapis.com/auth/cloud-platform")
+	// nolint:staticcheck // SA1019: CredentialsFromJSON is deprecated over the risk of accepting
+	// untrusted, unvalidated credential *config*; here keyJSON is the service-account KEY we just
+	// minted via the IAM API (a trusted, self-produced source), so that risk does not apply.
+	creds, err := google.CredentialsFromJSON(ctx, keyJSON, "https://www.googleapis.com/auth/cloud-platform") //nolint:staticcheck
 	if err != nil {
 		return fmt.Errorf("gcp_sa: parse new key: %w", err)
 	}
