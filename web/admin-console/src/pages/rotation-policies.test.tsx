@@ -107,7 +107,7 @@ describe('RotationPoliciesPage', () => {
     expect(await screen.findByText('unknown-sec')).toBeInTheDocument()
   })
 
-  it('connector dropdown offers exactly Directory and Generate-only', async () => {
+  it('connector dropdown offers all six connector types', async () => {
     const user = userEvent.setup()
     render(<RotationPoliciesPage />, { wrapper: createWrapper() })
     await screen.findByText('Rotation Policies')
@@ -115,17 +115,18 @@ describe('RotationPoliciesPage', () => {
     await user.click(screen.getByRole('button', { name: /new policy/i }))
     await screen.findByText('New Rotation Policy')
 
-    // Open the connector select
-    const connectorTrigger = screen.getByTestId('connector-select')
-    await user.click(connectorTrigger)
+    await user.click(screen.getByTestId('connector-select'))
 
-    const options = screen.getAllByRole('option')
-    const connectorOptions = options.filter(
-      (o) => o.textContent === 'Directory' || o.textContent === 'Generate-only'
-    )
-    expect(connectorOptions).toHaveLength(2)
-    expect(connectorOptions.map((o) => o.textContent)).toEqual(
-      expect.arrayContaining(['Directory', 'Generate-only'])
+    const labels = screen.getAllByRole('option').map((o) => o.textContent)
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        'Directory',
+        'Generate-only',
+        'SSH (password)',
+        'SSH key-pair',
+        'PostgreSQL',
+        'MySQL',
+      ]),
     )
   })
 

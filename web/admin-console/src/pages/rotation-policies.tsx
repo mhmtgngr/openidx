@@ -53,11 +53,88 @@ function formatInterval(seconds: number): string {
 const connectorLabels: Record<string, string> = {
   directory: 'Directory',
   generate_only: 'Generate-only',
+  ssh: 'SSH (password)',
+  ssh_key: 'SSH key-pair',
+  postgres: 'PostgreSQL',
+  mysql: 'MySQL',
 }
 
 const connectorColors: Record<string, string> = {
   directory: 'bg-blue-100 text-blue-800',
   generate_only: 'bg-green-100 text-green-800',
+  ssh: 'bg-purple-100 text-purple-800',
+  ssh_key: 'bg-purple-100 text-purple-800',
+  postgres: 'bg-sky-100 text-sky-800',
+  mysql: 'bg-orange-100 text-orange-800',
+}
+
+// ── Connector config schema ──────────────────────────────────────────────────
+// One declarative table drives both the dynamic form fields and validation.
+// Keys/required-ness mirror the backend validators (sshConfigFromMap /
+// pgConfigFromMap / mysqlConfigFromMap in internal/credentials/).
+type ConnectorFieldType = 'text' | 'number' | 'secret' | 'textarea' | 'select' | 'checkbox'
+interface ConnectorField {
+  key: string
+  label: string
+  required: boolean
+  type: ConnectorFieldType
+  placeholder?: string
+  options?: { value: string; label: string }[]
+  default?: string
+}
+
+// ssh and ssh_key share the exact same config (sshConfigFromMap).
+const SSH_FIELDS: ConnectorField[] = [
+  { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'ssh.example.com' },
+  { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '22', default: '22' },
+  { key: 'username', label: 'Target username', required: true, type: 'text', placeholder: 'svc-account' },
+  { key: 'admin_secret_id', label: 'Admin secret', required: true, type: 'secret' },
+  { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'root' },
+  {
+    key: 'admin_auth', label: 'Admin auth method', required: false, type: 'select', default: 'password',
+    options: [{ value: 'password', label: 'Password' }, { value: 'key', label: 'Key' }],
+  },
+  { key: 'host_key', label: 'Host key (pinned)', required: true, type: 'textarea', placeholder: 'ssh-ed25519 AAAA...' },
+]
+
+const CONNECTOR_FIELDS: Record<string, ConnectorField[]> = {
+  ssh: SSH_FIELDS,
+  ssh_key: SSH_FIELDS,
+  postgres: [
+    { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'db.example.com' },
+    { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '5432', default: '5432' },
+    { key: 'dbname', label: 'Database', required: true, type: 'text', placeholder: 'appdb' },
+    {
+      key: 'sslmode', label: 'SSL mode', required: false, type: 'select', default: 'require',
+      options: ['disable', 'require', 'verify-ca', 'verify-full'].map((v) => ({ value: v, label: v })),
+    },
+    { key: 'admin_secret_id', label: 'Admin secret', required: true, type: 'secret' },
+    { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'postgres' },
+    { key: 'target_role', label: 'Target role', required: true, type: 'text', placeholder: 'app_role' },
+  ],
+  mysql: [
+    { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'db.example.com' },
+    { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '3306', default: '3306' },
+    { key: 'dbname', label: 'Database (optional)', required: false, type: 'text', placeholder: 'appdb' },
+    { key: 'tls', label: 'Use TLS', required: false, type: 'checkbox' },
+    { key: 'admin_secret_id', label: 'Admin secret', required: true, type: 'secret' },
+    { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'root' },
+    { key: 'target_user', label: 'Target user', required: true, type: 'text', placeholder: 'app_user' },
+    { key: 'target_host', label: 'Target host', required: false, type: 'text', placeholder: '%', default: '%' },
+  ],
+}
+
+// Connector types whose config is driven by CONNECTOR_FIELDS (vs the bespoke
+// directory branch and the config-less generate_only).
+const SCHEMA_CONNECTORS = ['ssh', 'ssh_key', 'postgres', 'mysql']
+
+// Seed a config bag with the schema's default values when a connector is chosen.
+function seedConnectorConfig(type: string): Record<string, string> {
+  const fields = CONNECTOR_FIELDS[type]
+  if (!fields) return {}
+  const bag: Record<string, string> = {}
+  for (const f of fields) if (f.default !== undefined) bag[f.key] = f.default
+  return bag
 }
 
 const defaultGenPolicy: VaultGenerationPolicy = {
@@ -94,6 +171,7 @@ interface PolicyFormState {
   connectorType: string
   directoryId: string
   username: string
+  connectorConfig: Record<string, string>
   intervalValue: number
   intervalUnit: IntervalUnit
   rotateOnCheckout: boolean
@@ -111,6 +189,7 @@ function blankForm(): PolicyFormState {
     connectorType: 'generate_only',
     directoryId: '',
     username: '',
+    connectorConfig: {},
     intervalValue: 7,
     intervalUnit: 'days',
     rotateOnCheckout: false,
@@ -131,6 +210,7 @@ function policyToForm(p: VaultRotationPolicy): PolicyFormState {
     connectorType: p.connector_type,
     directoryId: cfg.directory_id ?? '',
     username: cfg.username ?? '',
+    connectorConfig: SCHEMA_CONNECTORS.includes(p.connector_type) ? cfg : {},
     intervalValue: value,
     intervalUnit: unit,
     rotateOnCheckout: p.rotate_on_checkout,
@@ -443,7 +523,9 @@ export function RotationPoliciesPage() {
               <label className="text-sm font-medium">Connector Type *</label>
               <Select
                 value={form.connectorType}
-                onValueChange={(v) => setForm((f) => ({ ...f, connectorType: v }))}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, connectorType: v, connectorConfig: seedConnectorConfig(v) }))
+                }
               >
                 <SelectTrigger className="mt-1" data-testid="connector-select">
                   <SelectValue />
@@ -451,6 +533,10 @@ export function RotationPoliciesPage() {
                 <SelectContent>
                   <SelectItem value="directory">Directory</SelectItem>
                   <SelectItem value="generate_only">Generate-only</SelectItem>
+                  <SelectItem value="ssh">SSH (password)</SelectItem>
+                  <SelectItem value="ssh_key">SSH key-pair</SelectItem>
+                  <SelectItem value="postgres">PostgreSQL</SelectItem>
+                  <SelectItem value="mysql">MySQL</SelectItem>
                 </SelectContent>
               </Select>
             </div>
