@@ -107,7 +107,7 @@ describe('RotationPoliciesPage', () => {
     expect(await screen.findByText('unknown-sec')).toBeInTheDocument()
   })
 
-  it('connector dropdown offers exactly Directory and Generate-only', async () => {
+  it('connector dropdown offers all six connector types', async () => {
     const user = userEvent.setup()
     render(<RotationPoliciesPage />, { wrapper: createWrapper() })
     await screen.findByText('Rotation Policies')
@@ -115,17 +115,18 @@ describe('RotationPoliciesPage', () => {
     await user.click(screen.getByRole('button', { name: /new policy/i }))
     await screen.findByText('New Rotation Policy')
 
-    // Open the connector select
-    const connectorTrigger = screen.getByTestId('connector-select')
-    await user.click(connectorTrigger)
+    await user.click(screen.getByTestId('connector-select'))
 
-    const options = screen.getAllByRole('option')
-    const connectorOptions = options.filter(
-      (o) => o.textContent === 'Directory' || o.textContent === 'Generate-only'
-    )
-    expect(connectorOptions).toHaveLength(2)
-    expect(connectorOptions.map((o) => o.textContent)).toEqual(
-      expect.arrayContaining(['Directory', 'Generate-only'])
+    const labels = screen.getAllByRole('option').map((o) => o.textContent)
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        'Directory',
+        'Generate-only',
+        'SSH (password)',
+        'SSH key-pair',
+        'PostgreSQL',
+        'MySQL',
+      ]),
     )
   })
 
@@ -177,5 +178,128 @@ describe('RotationPoliciesPage', () => {
         expect.objectContaining({ secret_id: 'sec-1', connector_type: 'generate_only' })
       )
     })
+  })
+
+  it('MySQL connector reveals its fields and builds connector_config on submit', async () => {
+    const user = userEvent.setup()
+    render(<RotationPoliciesPage />, { wrapper: createWrapper() })
+    await screen.findByText('Rotation Policies')
+
+    await user.click(screen.getByRole('button', { name: /new policy/i }))
+    await screen.findByText('New Rotation Policy')
+
+    await user.click(screen.getByTestId('secret-select'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByTestId('connector-select'))
+    await user.click(screen.getByRole('option', { name: 'MySQL' }))
+
+    expect(screen.getByTestId('cc-host')).toBeInTheDocument()
+    expect(screen.getByTestId('cc-target_user')).toBeInTheDocument()
+
+    await user.type(screen.getByTestId('cc-host'), 'db.example.com')
+    await user.type(screen.getByTestId('cc-admin_username'), 'root')
+    await user.type(screen.getByTestId('cc-target_user'), 'app_user')
+    await user.click(screen.getByTestId('cc-admin_secret_id'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByRole('button', { name: /create policy/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(api.vault.createPolicy)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          secret_id: 'sec-1',
+          connector_type: 'mysql',
+          connector_config: expect.objectContaining({
+            host: 'db.example.com',
+            admin_username: 'root',
+            admin_secret_id: 'sec-1',
+            target_user: 'app_user',
+            target_host: '%',
+            port: 3306,
+          }),
+        }),
+      )
+    })
+  })
+
+  it('SSH key-pair connector reveals the host-key textarea and admin-secret picker', async () => {
+    const user = userEvent.setup()
+    render(<RotationPoliciesPage />, { wrapper: createWrapper() })
+    await screen.findByText('Rotation Policies')
+
+    await user.click(screen.getByRole('button', { name: /new policy/i }))
+    await screen.findByText('New Rotation Policy')
+
+    await user.click(screen.getByTestId('connector-select'))
+    await user.click(screen.getByRole('option', { name: 'SSH key-pair' }))
+
+    expect(screen.getByTestId('cc-host_key')).toBeInTheDocument()
+    expect(screen.getByTestId('cc-admin_secret_id')).toBeInTheDocument()
+    expect(screen.getByTestId('cc-username')).toBeInTheDocument()
+  })
+
+  it('SSH admin auth "SSH private key" submits admin_auth=private_key', async () => {
+    const user = userEvent.setup()
+    render(<RotationPoliciesPage />, { wrapper: createWrapper() })
+    await screen.findByText('Rotation Policies')
+
+    await user.click(screen.getByRole('button', { name: /new policy/i }))
+    await screen.findByText('New Rotation Policy')
+
+    await user.click(screen.getByTestId('secret-select'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByTestId('connector-select'))
+    await user.click(screen.getByRole('option', { name: 'SSH (password)' }))
+
+    // fill required ssh fields
+    await user.type(screen.getByTestId('cc-host'), 'ssh.example.com')
+    await user.type(screen.getByTestId('cc-username'), 'svc')
+    await user.type(screen.getByTestId('cc-admin_username'), 'root')
+    await user.type(screen.getByTestId('cc-host_key'), 'ssh-ed25519 AAAA')
+    await user.click(screen.getByTestId('cc-admin_secret_id'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    // switch admin auth to private key
+    await user.click(screen.getByTestId('cc-admin_auth'))
+    await user.click(screen.getByRole('option', { name: 'SSH private key' }))
+
+    await user.click(screen.getByRole('button', { name: /create policy/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(api.vault.createPolicy)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connector_type: 'ssh',
+          connector_config: expect.objectContaining({ admin_auth: 'private_key' }),
+        }),
+      )
+    })
+  })
+
+  it('submit stays disabled until a connector\'s required fields are filled', async () => {
+    const user = userEvent.setup()
+    render(<RotationPoliciesPage />, { wrapper: createWrapper() })
+    await screen.findByText('Rotation Policies')
+
+    await user.click(screen.getByRole('button', { name: /new policy/i }))
+    await screen.findByText('New Rotation Policy')
+
+    await user.click(screen.getByTestId('secret-select'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByTestId('connector-select'))
+    await user.click(screen.getByRole('option', { name: 'PostgreSQL' }))
+
+    expect(screen.getByRole('button', { name: /create policy/i })).toBeDisabled()
+
+    await user.type(screen.getByTestId('cc-host'), 'db.example.com')
+    await user.type(screen.getByTestId('cc-dbname'), 'appdb')
+    await user.type(screen.getByTestId('cc-admin_username'), 'postgres')
+    await user.type(screen.getByTestId('cc-target_role'), 'app_role')
+    await user.click(screen.getByTestId('cc-admin_secret_id'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    expect(screen.getByRole('button', { name: /create policy/i })).not.toBeDisabled()
   })
 })
