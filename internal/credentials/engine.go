@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,6 +64,18 @@ func zero(b []byte) {
 	}
 }
 
+// sanitizeLogValue strips CR, LF, and other ASCII control characters from a string before it
+// is written to a log, preventing log-forging via attacker-influenced values (e.g. a connector
+// error that echoes user-provided connector_config).
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // candidateVault is the minimal vault interface used by runRotation.
 type candidateVault interface {
 	AddCandidateVersion(ctx context.Context, secretID string, value []byte, by string) (int, error)
@@ -83,10 +96,16 @@ type candidateVault interface {
 func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVault, gp GenerationPolicy, cfg map[string]any) (status string, promoted bool, candidateVersion int) {
 	var newValue []byte
 	var err error
-	if g, ok := r.(ValueGenerator); ok {
-		newValue, err = g.Generate(gp)
-	} else {
-		newValue, err = generateSecret(gp)
+	minter, isMinter := r.(Minter)
+	switch {
+	case isMinter:
+		newValue, err = minter.Mint(ctx, cfg)
+	default:
+		if g, ok := r.(ValueGenerator); ok {
+			newValue, err = g.Generate(gp)
+		} else {
+			newValue, err = generateSecret(gp)
+		}
 	}
 	if err != nil {
 		return "failed", false, 0
@@ -102,8 +121,11 @@ func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVau
 		return "failed", false, 0
 	}
 
-	if err := r.Apply(ctx, cfg, newValue); err != nil {
-		return "failed", false, candidate
+	// Minted credentials are already live on the provider — skip Apply.
+	if !isMinter {
+		if err := r.Apply(ctx, cfg, newValue); err != nil {
+			return "failed", false, candidate
+		}
 	}
 
 	if err := r.Verify(ctx, cfg, newValue); err != nil && !errors.Is(err, ErrVerifyUnsupported) {
@@ -497,6 +519,22 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 
 	// 6. Execute the rotation state machine.
 	status, promoted, candidateVer := runRotation(orgCtx, p.SecretID, rot, s.vault, gp, p.ConnectorConfig)
+
+	// 6a. Best-effort retire of the superseded credential (minter connectors). Runs only
+	// after a successful promote, so a failed verify/promote never deletes the live old key.
+	if promoted {
+		if c, ok := rot.(PostRotateCleaner); ok {
+			if cerr := c.Cleanup(orgCtx, p.ConnectorConfig); cerr != nil {
+				// Log run_id (server-generated UUID) for correlation to the credential_rotations
+				// ledger row (which already records policy_id + connector_type). The connector
+				// error may echo user-provided connector_config, so sanitize it (strip control
+				// characters) before logging to prevent log-forging.
+				s.logger.Warn("credentials: post-rotate cleanup failed (new credential is live; old may linger)",
+					zap.String("run_id", runID),
+					zap.String("error", sanitizeLogValue(cerr.Error())))
+			}
+		}
+	}
 
 	// 7. Determine candidate version from vault (if promoted, it's current_version now).
 	//    We capture candidate inside the rotation to update version_to.

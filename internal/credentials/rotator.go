@@ -35,6 +35,21 @@ type ConfigValidator interface {
 	ValidateConfig(cfg map[string]any) error
 }
 
+// Minter lets a connector mint the new credential on the target system itself and return it,
+// for providers that generate the secret material (e.g. cloud IAM keys). When a Rotator also
+// implements Minter, runRotation calls Mint instead of the generate-value path, uses the
+// returned bytes as the candidate version, and does NOT call Apply. Verify still runs.
+type Minter interface {
+	Mint(ctx context.Context, cfg map[string]any) ([]byte, error)
+}
+
+// PostRotateCleaner is invoked best-effort AFTER a candidate is promoted, to retire the
+// superseded credential on the target (e.g. delete the old IAM access key). Its error is
+// logged but does NOT fail the rotation — the new credential is already live and promoted.
+type PostRotateCleaner interface {
+	Cleanup(ctx context.Context, cfg map[string]any) error
+}
+
 // GenerationPolicy controls generateSecret. Zero value → length 24, all character classes.
 type GenerationPolicy struct {
 	Length  int  `json:"length"`

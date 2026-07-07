@@ -239,6 +239,41 @@ describe('RotationPoliciesPage', () => {
     expect(screen.getByTestId('cc-username')).toBeInTheDocument()
   })
 
+  it('AWS IAM connector reveals its fields and builds connector_config on submit', async () => {
+    const user = userEvent.setup()
+    render(<RotationPoliciesPage />, { wrapper: createWrapper() })
+    await screen.findByText('Rotation Policies')
+
+    await user.click(screen.getByRole('button', { name: /new policy/i }))
+    await screen.findByText('New Rotation Policy')
+
+    await user.click(screen.getByTestId('secret-select'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByTestId('connector-select'))
+    await user.click(screen.getByRole('option', { name: 'AWS IAM' }))
+
+    expect(screen.getByTestId('cc-target_user')).toBeInTheDocument()
+    await user.type(screen.getByTestId('cc-target_user'), 'svc-rotated')
+    await user.click(screen.getByTestId('cc-admin_secret_id'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByRole('button', { name: /create policy/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(api.vault.createPolicy)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connector_type: 'aws_iam',
+          connector_config: expect.objectContaining({
+            target_user: 'svc-rotated',
+            admin_secret_id: 'sec-1',
+            region: 'us-east-1',
+          }),
+        }),
+      )
+    })
+  })
+
   it('SSH admin auth "SSH private key" submits admin_auth=private_key', async () => {
     const user = userEvent.setup()
     render(<RotationPoliciesPage />, { wrapper: createWrapper() })
