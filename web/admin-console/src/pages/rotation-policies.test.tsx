@@ -274,6 +274,40 @@ describe('RotationPoliciesPage', () => {
     })
   })
 
+  it('GCP Service Account connector reveals its fields and builds connector_config on submit', async () => {
+    const user = userEvent.setup()
+    render(<RotationPoliciesPage />, { wrapper: createWrapper() })
+    await screen.findByText('Rotation Policies')
+
+    await user.click(screen.getByRole('button', { name: /new policy/i }))
+    await screen.findByText('New Rotation Policy')
+
+    await user.click(screen.getByTestId('secret-select'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByTestId('connector-select'))
+    await user.click(screen.getByRole('option', { name: 'GCP Service Account' }))
+
+    expect(screen.getByTestId('cc-service_account_email')).toBeInTheDocument()
+    await user.type(screen.getByTestId('cc-service_account_email'), 'rotated@proj.iam.gserviceaccount.com')
+    await user.click(screen.getByTestId('cc-admin_secret_id'))
+    await user.click(screen.getByRole('option', { name: 'prod-db-password' }))
+
+    await user.click(screen.getByRole('button', { name: /create policy/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(api.vault.createPolicy)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connector_type: 'gcp_sa',
+          connector_config: expect.objectContaining({
+            service_account_email: 'rotated@proj.iam.gserviceaccount.com',
+            admin_secret_id: 'sec-1',
+          }),
+        }),
+      )
+    })
+  })
+
   it('SSH admin auth "SSH private key" submits admin_auth=private_key', async () => {
     const user = userEvent.setup()
     render(<RotationPoliciesPage />, { wrapper: createWrapper() })

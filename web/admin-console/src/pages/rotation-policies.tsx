@@ -58,6 +58,7 @@ const connectorLabels: Record<string, string> = {
   postgres: 'PostgreSQL',
   mysql: 'MySQL',
   aws_iam: 'AWS IAM',
+  gcp_sa: 'GCP Service Account',
 }
 
 const connectorColors: Record<string, string> = {
@@ -68,6 +69,7 @@ const connectorColors: Record<string, string> = {
   postgres: 'bg-sky-100 text-sky-800',
   mysql: 'bg-orange-100 text-orange-800',
   aws_iam: 'bg-yellow-100 text-yellow-800',
+  gcp_sa: 'bg-red-100 text-red-800',
 }
 
 // ── Connector config schema ──────────────────────────────────────────────────
@@ -129,11 +131,15 @@ const CONNECTOR_FIELDS: Record<string, ConnectorField[]> = {
     { key: 'target_user', label: 'Target user', required: true, type: 'text', placeholder: 'app_user' },
     { key: 'target_host', label: 'Target host', required: false, type: 'text', placeholder: '%', default: '%' },
   ],
+  gcp_sa: [
+    { key: 'service_account_email', label: 'Service account email', required: true, type: 'text', placeholder: 'rotated@proj.iam.gserviceaccount.com' },
+    { key: 'admin_secret_id', label: 'Admin secret (GCP SA key JSON)', required: true, type: 'secret' },
+  ],
 }
 
 // Connector types whose config is driven by CONNECTOR_FIELDS (vs the bespoke
 // directory branch and the config-less generate_only).
-const SCHEMA_CONNECTORS = ['ssh', 'ssh_key', 'aws_iam', 'postgres', 'mysql']
+const SCHEMA_CONNECTORS = ['ssh', 'ssh_key', 'aws_iam', 'postgres', 'mysql', 'gcp_sa']
 
 // Seed a config bag with the schema's default values when a connector is chosen.
 function seedConnectorConfig(type: string): Record<string, string> {
@@ -587,6 +593,7 @@ export function RotationPoliciesPage() {
                   <SelectItem value="postgres">PostgreSQL</SelectItem>
                   <SelectItem value="mysql">MySQL</SelectItem>
                   <SelectItem value="aws_iam">AWS IAM</SelectItem>
+                  <SelectItem value="gcp_sa">GCP Service Account</SelectItem>
                 </SelectContent>
               </Select>
             </div>
