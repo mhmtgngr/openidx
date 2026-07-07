@@ -92,7 +92,7 @@ const SSH_FIELDS: ConnectorField[] = [
   { key: 'admin_username', label: 'Admin username', required: true, type: 'text', placeholder: 'root' },
   {
     key: 'admin_auth', label: 'Admin auth method', required: false, type: 'select', default: 'password',
-    options: [{ value: 'password', label: 'Password' }, { value: 'key', label: 'Key' }],
+    options: [{ value: 'password', label: 'Password' }, { value: 'private_key', label: 'SSH private key' }],
   },
   { key: 'host_key', label: 'Host key (pinned)', required: true, type: 'textarea', placeholder: 'ssh-ed25519 AAAA...' },
 ]
@@ -135,6 +135,47 @@ function seedConnectorConfig(type: string): Record<string, string> {
   const bag: Record<string, string> = {}
   for (const f of fields) if (f.default !== undefined) bag[f.key] = f.default
   return bag
+}
+
+// Assemble the backend connector_config from the string bag: coerce port to a
+// number, tls to a boolean, and drop empty optional values.
+function buildConnectorConfig(type: string, bag: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const field of CONNECTOR_FIELDS[type] ?? []) {
+    const raw = bag[field.key]
+    if (field.type === 'checkbox') {
+      if (raw === 'true') out[field.key] = true
+      else if (raw === 'false') out[field.key] = false
+      continue
+    }
+    if (raw === undefined || raw === '') continue
+    if (field.type === 'number') {
+      const n = parseInt(raw, 10)
+      out[field.key] = Number.isNaN(n) ? raw : n
+    } else {
+      out[field.key] = raw
+    }
+  }
+  return out
+}
+
+// Load a saved policy's connector_config back into the string bag for editing.
+function configToBag(cfg: Record<string, unknown>): Record<string, string> {
+  const bag: Record<string, string> = {}
+  for (const [k, v] of Object.entries(cfg ?? {})) {
+    bag[k] = typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v)
+  }
+  return bag
+}
+
+function connectorConfigValid(f: PolicyFormState): boolean {
+  if (f.connectorType === 'directory') return !!f.directoryId && !!f.username
+  if (SCHEMA_CONNECTORS.includes(f.connectorType)) {
+    return (CONNECTOR_FIELDS[f.connectorType] ?? []).every(
+      (field) => !field.required || !!f.connectorConfig[field.key],
+    )
+  }
+  return true // generate_only needs no config
 }
 
 const defaultGenPolicy: VaultGenerationPolicy = {
@@ -204,13 +245,15 @@ function blankForm(): PolicyFormState {
 
 function policyToForm(p: VaultRotationPolicy): PolicyFormState {
   const { value, unit } = fromSeconds(p.interval_seconds)
-  const cfg = p.connector_config as Record<string, string>
+  const cfg = p.connector_config as Record<string, unknown>
   return {
     secretId: p.secret_id,
     connectorType: p.connector_type,
-    directoryId: cfg.directory_id ?? '',
-    username: cfg.username ?? '',
-    connectorConfig: SCHEMA_CONNECTORS.includes(p.connector_type) ? cfg : {},
+    directoryId: (cfg.directory_id as string) ?? '',
+    username: (cfg.username as string) ?? '',
+    connectorConfig: SCHEMA_CONNECTORS.includes(p.connector_type)
+      ? configToBag(p.connector_config as Record<string, unknown>)
+      : {},
     intervalValue: value,
     intervalUnit: unit,
     rotateOnCheckout: p.rotate_on_checkout,
@@ -227,7 +270,9 @@ function formToInput(f: PolicyFormState): VaultRotationPolicyInput {
   const connectorConfig: Record<string, unknown> =
     f.connectorType === 'directory'
       ? { directory_id: f.directoryId, username: f.username }
-      : {}
+      : SCHEMA_CONNECTORS.includes(f.connectorType)
+        ? buildConnectorConfig(f.connectorType, f.connectorConfig)
+        : {}
   return {
     secret_id: f.secretId,
     connector_type: f.connectorType,
@@ -328,10 +373,7 @@ export function RotationPoliciesPage() {
 
   const isPending = createMutation.isPending || updateMutation.isPending
 
-  const isFormValid =
-    !!form.secretId &&
-    !!form.connectorType &&
-    (form.connectorType !== 'directory' || (!!form.directoryId && !!form.username))
+  const isFormValid = !!form.secretId && !!form.connectorType && connectorConfigValid(form)
 
   return (
     <div className="space-y-6">
@@ -567,6 +609,26 @@ export function RotationPoliciesPage() {
               </>
             )}
 
+            {/* Schema-driven connector fields (ssh / ssh_key / postgres / mysql) */}
+            {SCHEMA_CONNECTORS.includes(form.connectorType) && (
+              <div className="space-y-3">
+                {CONNECTOR_FIELDS[form.connectorType].map((field) => (
+                  <ConnectorFieldInput
+                    key={field.key}
+                    field={field}
+                    value={form.connectorConfig[field.key] ?? ''}
+                    secrets={secrets}
+                    onChange={(val) =>
+                      setForm((f) => ({
+                        ...f,
+                        connectorConfig: { ...f.connectorConfig, [field.key]: val },
+                      }))
+                    }
+                  />
+                ))}
+              </div>
+            )}
+
             {/* Interval */}
             <div>
               <label className="text-sm font-medium">Rotation Interval (0 = manual)</label>
@@ -681,6 +743,111 @@ export function RotationPoliciesPage() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function ConnectorFieldInput({
+  field,
+  value,
+  secrets,
+  onChange,
+}: {
+  field: ConnectorField
+  value: string
+  secrets: VaultSecretMeta[]
+  onChange: (val: string) => void
+}) {
+  const label = `${field.label}${field.required ? ' *' : ''}`
+  const testId = `cc-${field.key}`
+
+  if (field.type === 'secret') {
+    return (
+      <div>
+        <label htmlFor={testId} className="text-sm font-medium">{label}</label>
+        <Select value={value} onValueChange={onChange}>
+          <SelectTrigger id={testId} className="mt-1" data-testid={testId}>
+            <SelectValue placeholder="Select a secret" />
+          </SelectTrigger>
+          <SelectContent>
+            {secrets.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
+  if (field.type === 'select') {
+    return (
+      <div>
+        <label htmlFor={testId} className="text-sm font-medium">{label}</label>
+        <Select value={value} onValueChange={onChange}>
+          <SelectTrigger id={testId} className="mt-1" data-testid={testId}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(field.options ?? []).map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
+  if (field.type === 'textarea') {
+    return (
+      <div>
+        <label htmlFor={testId} className="text-sm font-medium">{label}</label>
+        <textarea
+          id={testId}
+          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+          rows={2}
+          placeholder={field.placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          data-testid={testId}
+        />
+      </div>
+    )
+  }
+
+  if (field.type === 'checkbox') {
+    return (
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          id={testId}
+          checked={value === 'true'}
+          onChange={(e) => onChange(e.target.checked ? 'true' : '')}
+          data-testid={testId}
+        />
+        <label htmlFor={testId} className="text-sm font-medium">
+          {field.label}
+        </label>
+      </div>
+    )
+  }
+
+  // 'text' | 'number'
+  return (
+    <div>
+      <label htmlFor={testId} className="text-sm font-medium">{label}</label>
+      <Input
+        id={testId}
+        className="mt-1"
+        type={field.type === 'number' ? 'number' : 'text'}
+        placeholder={field.placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        data-testid={testId}
+      />
     </div>
   )
 }
