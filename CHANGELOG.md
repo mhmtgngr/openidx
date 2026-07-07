@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-07-07
+
+### Added
+
+- **GCP service-account key rotation connector** (#339) — a new `gcp_sa` PAM rotation connector that
+  rotates a Google Cloud service-account key, completing the cloud-IAM rotation pair (AWS shipped in
+  v1.21.0). It reuses the engine `Minter`/`PostRotateCleaner` seam: `Mint` creates a new key via the IAM
+  API (deleting the oldest USER_MANAGED key first if at GCP's 10-key limit) and stores the decoded
+  key-file JSON; `Verify` obtains an OAuth token from the new key (retrying for propagation); cleanup
+  deletes all USER_MANAGED keys except the newest after promotion. Selectable from the Rotation Policies
+  admin page. Config: `service_account_email`, `admin_secret_id` (a vault secret holding an admin SA
+  key-file JSON). The target service account must be dedicated to rotation. Google IAM calls sit behind
+  a small interface so the connector is covered by mocked-SDK unit tests. Adds `google.golang.org/api`.
+
 ## [1.21.1] - 2026-07-07
 
 ### Fixed
