@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -61,6 +62,18 @@ func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// sanitizeLogValue strips CR, LF, and other ASCII control characters from a string before it
+// is written to a log, preventing log-forging via attacker-influenced values (e.g. a connector
+// error that echoes user-provided connector_config).
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || r < 0x20 {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // candidateVault is the minimal vault interface used by runRotation.
@@ -512,13 +525,13 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 	if promoted {
 		if c, ok := rot.(PostRotateCleaner); ok {
 			if cerr := c.Cleanup(orgCtx, p.ConnectorConfig); cerr != nil {
-				// Log run_id (server-generated UUID) rather than the policy_id/connector_type
-				// request/DB-sourced strings: run_id correlates to the credential_rotations
-				// ledger row (which already records policy_id + connector_type) and avoids
-				// logging tainted values (log-injection).
+				// Log run_id (server-generated UUID) for correlation to the credential_rotations
+				// ledger row (which already records policy_id + connector_type). The connector
+				// error may echo user-provided connector_config, so sanitize it (strip control
+				// characters) before logging to prevent log-forging.
 				s.logger.Warn("credentials: post-rotate cleanup failed (new credential is live; old may linger)",
 					zap.String("run_id", runID),
-					zap.Error(cerr))
+					zap.String("error", sanitizeLogValue(cerr.Error())))
 			}
 		}
 	}
