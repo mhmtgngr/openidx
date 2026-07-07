@@ -14,6 +14,8 @@ export default defineConfig({
           if (id.includes('recharts') || id.includes('/d3-') || id.includes('victory')) return 'charts'
           if (id.includes('react-router')) return 'router'
           if (id.includes('@radix-ui')) return 'radix'
+          if (id.includes('lucide-react')) return 'icons'
+          if (id.includes('@tanstack')) return 'query'
           if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) return 'react'
           return 'vendor'
         },
