@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-07-07
+
+### Fixed
+
+- **CodeQL critical/high remediation** (#343) — (a) `database.go envInt32` now uses
+  `strconv.ParseInt(s, 10, 32)` instead of `int32(strconv.Atoi(...))`, fixing a silent integer-overflow
+  truncation of pool-sizing env vars (go/incorrect-integer-conversion ×2); (b) the Ziti management-API
+  calls route through a new `mgmtURL()` helper that parses + validates `ZitiCtrlURL` (scheme/host) and
+  the response-derived identity ID is `url.PathEscape`'d, clearing the server-side request-forgery
+  vectors (go/request-forgery). The MySQL `ALTER USER` DDL (which cannot bind identifiers/passwords and
+  is charset-validated + escaped) and the Ziti call against the trusted operator-configured controller
+  base URL are documented false positives. No runtime behavior change.
+
 ## [1.23.0] - 2026-07-07
 
 ### Changed
