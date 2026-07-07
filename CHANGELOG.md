@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-07-07
+
+### Changed
+
+- **Admin console bundle code-splitting** (#333) — the console shipped as a single ~3.4 MB (875 KB
+  gzip) JS chunk. Route pages are now lazy-loaded (`React.lazy` + `<Suspense>`) and `node_modules`
+  vendors are split into cacheable chunks via vite `manualChunks`. The initial entry chunk drops from
+  ~3,394 KB to ~62 KB (17 KB gzip); heavy libs now load only with the page that needs them
+  (`swagger-ui-react` → API-docs page, `recharts` → dashboard). Frontend-only, no behavior change
+  beyond a brief loading spinner on first visit to a route.
+
 ## [1.19.0] - 2026-07-07
 
 ### Added
