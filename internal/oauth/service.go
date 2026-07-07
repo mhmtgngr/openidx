@@ -3156,6 +3156,32 @@ func (s *Service) handleRevoke(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "revoked"})
 }
 
+// parseVerifiedClaims signature-verifies a JWT against the service's RSA signing key (RS256 pinned,
+// preventing alg-confusion) and returns its claims. allowExpired skips exp/nbf validation — used only
+// for the OIDC id_token_hint, which the spec permits to be expired — while STILL requiring a valid
+// signature.
+func (s *Service) parseVerifiedClaims(tokenString string, allowExpired bool) (jwt.MapClaims, error) {
+	keyfunc := func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return s.publicKey, nil
+	}
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
+	if allowExpired {
+		opts = append(opts, jwt.WithoutClaimsValidation())
+	}
+	token, err := jwt.NewParser(opts...).Parse(tokenString, keyfunc)
+	if err != nil || !token.Valid {
+		return nil, fmt.Errorf("token signature verification failed: %w", err)
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, errors.New("invalid token claims")
+	}
+	return claims, nil
+}
+
 func (s *Service) handleUserInfo(c *gin.Context) {
 	// CORS is handled by the APISIX gateway for all routes
 	if c.Request.Method == "OPTIONS" {
@@ -3510,13 +3536,11 @@ func (s *Service) handleLogout(c *gin.Context) {
 	var bearerToken string
 
 	if idTokenHint != "" {
-		// Parse the ID token (don't validate expiry since it may be expired)
-		token, _, err := new(jwt.Parser).ParseUnverified(idTokenHint, jwt.MapClaims{})
-		if err == nil {
-			if claims, ok := token.Claims.(jwt.MapClaims); ok {
-				if sub, ok := claims["sub"].(string); ok {
-					userID = sub
-				}
+		// Parse the ID token (don't validate expiry since it may be expired per OIDC spec,
+		// but signature must still be valid to prevent forged id_token_hint attacks).
+		if hintClaims, err := s.parseVerifiedClaims(idTokenHint, true); err == nil {
+			if sub, ok := hintClaims["sub"].(string); ok {
+				userID = sub
 			}
 		}
 	}
@@ -3526,33 +3550,23 @@ func (s *Service) handleLogout(c *gin.Context) {
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		bearerToken = strings.TrimPrefix(authHeader, "Bearer ")
 		if userID == "" {
-			token, _, err := new(jwt.Parser).ParseUnverified(bearerToken, jwt.MapClaims{})
-			if err == nil {
-				if claims, ok := token.Claims.(jwt.MapClaims); ok {
-					if sub, ok := claims["sub"].(string); ok {
-						userID = sub
-					}
+			if bearerClaims, err := s.parseVerifiedClaims(bearerToken, false); err == nil {
+				if sub, ok := bearerClaims["sub"].(string); ok {
+					userID = sub
 				}
 			}
 		}
 	}
 
-	// Per-token blacklist for the bearer: signature-verify it first so we
-	// only spend a Redis entry on a token we actually issued. The intent
-	// is to make this specific access token stop working at /oauth/userinfo
-	// from the next request onward, even if the broader per-user
-	// revocation marker isn't set (single-session logout doesn't have to
-	// invalidate sibling sessions).
+	// Per-token blacklist for the bearer: verify it (RS256-pinned) so we only
+	// spend a Redis entry on a token we actually issued. The intent is to make
+	// this specific access token stop working at /oauth/userinfo from the next
+	// request onward, even if the broader per-user revocation marker isn't set
+	// (single-session logout doesn't have to invalidate sibling sessions).
 	if bearerToken != "" {
-		parsed, err := jwt.Parse(bearerToken, func(*jwt.Token) (interface{}, error) {
-			return s.publicKey, nil
-		})
-		if err == nil && parsed != nil && parsed.Valid {
-			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
-				expSec, _ := claims["exp"].(float64)
-				if expSec > 0 {
-					_ = s.MarkAccessTokenRevoked(c.Request.Context(), bearerToken, time.Unix(int64(expSec), 0))
-				}
+		if claims, err := s.parseVerifiedClaims(bearerToken, false); err == nil {
+			if expSec, ok := claims["exp"].(float64); ok && expSec > 0 {
+				_ = s.MarkAccessTokenRevoked(c.Request.Context(), bearerToken, time.Unix(int64(expSec), 0))
 			}
 		}
 	}
@@ -3606,14 +3620,8 @@ func (s *Service) handleLogoutAll(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+	claims, err := s.parseVerifiedClaims(tokenStr, false)
 	if err != nil {
-		c.JSON(401, gin.H{"error": "invalid_token"})
-		return
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
 		c.JSON(401, gin.H{"error": "invalid_token"})
 		return
 	}
@@ -3655,14 +3663,8 @@ func (s *Service) handleSessionInfo(c *gin.Context) {
 	}
 
 	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, jwt.MapClaims{})
+	claims, err := s.parseVerifiedClaims(tokenStr, false)
 	if err != nil {
-		c.JSON(401, gin.H{"error": "invalid_token"})
-		return
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
 		c.JSON(401, gin.H{"error": "invalid_token"})
 		return
 	}
