@@ -301,6 +301,7 @@ func main() {
 			credentials.NewPostgresRotator(vaultSvc),
 			credentials.NewMySQLRotator(vaultSvc),
 			credentials.NewAWSIAMRotator(vaultSvc),
+			credentials.NewGCPSARotator(vaultSvc),
 		}
 		credSvc := credentials.NewService(db, vaultSvc, rotators, unifiedAudit, cfg.CredentialsRotationDefaultLength, log)
 		credSvc.RegisterRoutes(vaultGroup)
