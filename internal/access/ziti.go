@@ -535,6 +535,19 @@ func (l *singleConnListener) Addr() net.Addr {
 }
 
 // resolveCallerFromSessions queries the Ziti management API to find the identity
+// mgmtURL joins pathAndQuery onto the validated Ziti controller base URL. It parses
+// ZitiCtrlURL and requires an http/https scheme with a host, then rebuilds the base from
+// only the scheme+host — so a malformed or hostile controller URL can't redirect management
+// calls elsewhere (mitigates go/request-forgery). Callers MUST url.PathEscape any dynamic
+// path segment they interpolate into pathAndQuery.
+func (zm *ZitiManager) mgmtURL(pathAndQuery string) (string, error) {
+	base, err := url.Parse(zm.cfg.ZitiCtrlURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+		return "", fmt.Errorf("ziti: invalid controller URL")
+	}
+	return base.Scheme + "://" + base.Host + pathAndQuery, nil
+}
+
 // that created the most recent Dial session for the given service. This is used as
 // a fallback when SourceIdentifier() is empty (e.g., BrowZer JS SDK connections).
 func (zm *ZitiManager) resolveCallerFromSessions(serviceName string) string {
@@ -545,8 +558,11 @@ func (zm *ZitiManager) resolveCallerFromSessions(serviceName string) string {
 
 	// Query Dial sessions (Ziti API doesn't support service.name filter or sort)
 	filter := url.QueryEscape(`type="Dial"`)
-	reqURL := fmt.Sprintf("%s/edge/management/v1/sessions?filter=%s&limit=1",
-		zm.cfg.ZitiCtrlURL, filter)
+	reqURL, err := zm.mgmtURL("/edge/management/v1/sessions?filter=" + filter + "&limit=1")
+	if err != nil {
+		zm.logger.Warn("Failed to build sessions request URL", zap.Error(err))
+		return ""
+	}
 
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -581,8 +597,10 @@ func (zm *ZitiManager) resolveCallerFromSessions(serviceName string) string {
 	zitiIdentityID := result.Data[0].IdentityID
 
 	// Look up the identity name (which is the OpenIDX user ID) from the Ziti identity ID
-	identityReqURL := fmt.Sprintf("%s/edge/management/v1/identities/%s",
-		zm.cfg.ZitiCtrlURL, zitiIdentityID)
+	identityReqURL, err := zm.mgmtURL("/edge/management/v1/identities/" + url.PathEscape(zitiIdentityID))
+	if err != nil {
+		return ""
+	}
 	identReq, err := http.NewRequest("GET", identityReqURL, nil)
 	if err != nil {
 		return ""
@@ -660,8 +678,12 @@ func (zm *ZitiManager) authenticate() error {
 		"password": zm.cfg.ZitiAdminPassword,
 	})
 
+	authURL, err := zm.mgmtURL("/edge/management/v1/authenticate?method=password")
+	if err != nil {
+		return fmt.Errorf("management API auth: %w", err)
+	}
 	resp, err := zm.mgmtClient.Post(
-		zm.cfg.ZitiCtrlURL+"/edge/management/v1/authenticate?method=password",
+		authURL,
 		"application/json",
 		bytes.NewReader(body))
 	if err != nil {

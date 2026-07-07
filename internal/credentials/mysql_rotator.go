@@ -198,6 +198,10 @@ func (r *mysqlRotator) Apply(ctx context.Context, cfg map[string]any, newValue [
 
 	// Identifiers validated to the safe charset; password is escaped-and-quoted.
 	// Never log this DDL (it contains the new secret).
+	// CodeQL go/sql-injection here is a false positive: MySQL DDL cannot bind identifiers or the
+	// password, so this is built with fmt.Sprintf — but targetUser/targetHost are validated against
+	// mysqlIdentRE and the password is escaped via mysqlQuoteLiteral on a pinned conn with sql_mode
+	// NO_BACKSLASH_ESCAPES stripped + utf8mb4 (injection-smoke-tested in v1.14.0). Dismissed as FP.
 	ddl := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY %s", conf.targetUser, conf.targetHost, quoted)
 	if _, err := conn.ExecContext(cctx, ddl); err != nil {
 		return fmt.Errorf("mysql: alter user: %w", err)

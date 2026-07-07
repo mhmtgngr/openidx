@@ -41,7 +41,9 @@ func envInt32(name string, def, min int32) int32 {
 	if s == "" {
 		return def
 	}
-	n, err := strconv.Atoi(s)
+	// ParseInt with bitSize 32 bounds the result to int32 and errors on overflow, so a huge
+	// env value (e.g. "3000000000") falls back to the default instead of silently wrapping.
+	n, err := strconv.ParseInt(s, 10, 32)
 	if err != nil || int32(n) < min {
 		return def
 	}
