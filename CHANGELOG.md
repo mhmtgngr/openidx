@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-07-07
+
+### Added
+
+- **Rotation-policies admin UI — SSH / SSH-key / PostgreSQL / MySQL connectors** (#331) — the Rotation
+  Policies page can now create policies for all six registered rotators, not just `directory` and
+  `generate_only`. The Connector Type dropdown gains **SSH (password)**, **SSH key-pair**,
+  **PostgreSQL**, and **MySQL**, each rendering its required config fields (host, port, admin
+  credential secret-picker, target user/role, DB name, SSL/TLS, pinned host key, …) driven by a
+  declarative field schema that mirrors the backend validators. The SSH/DB rotation connectors shipped
+  in v1.14.0 were previously creatable only via `curl`. Frontend-only — no backend or schema change
+  (`connector_config` is a free-form map validated server-side by each connector's `ValidateConfig`).
+
 ## [1.18.0] - 2026-07-06
 
 ### Added
