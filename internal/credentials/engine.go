@@ -83,10 +83,16 @@ type candidateVault interface {
 func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVault, gp GenerationPolicy, cfg map[string]any) (status string, promoted bool, candidateVersion int) {
 	var newValue []byte
 	var err error
-	if g, ok := r.(ValueGenerator); ok {
-		newValue, err = g.Generate(gp)
-	} else {
-		newValue, err = generateSecret(gp)
+	minter, isMinter := r.(Minter)
+	switch {
+	case isMinter:
+		newValue, err = minter.Mint(ctx, cfg)
+	default:
+		if g, ok := r.(ValueGenerator); ok {
+			newValue, err = g.Generate(gp)
+		} else {
+			newValue, err = generateSecret(gp)
+		}
 	}
 	if err != nil {
 		return "failed", false, 0
@@ -102,8 +108,11 @@ func runRotation(ctx context.Context, secretID string, r Rotator, v candidateVau
 		return "failed", false, 0
 	}
 
-	if err := r.Apply(ctx, cfg, newValue); err != nil {
-		return "failed", false, candidate
+	// Minted credentials are already live on the provider — skip Apply.
+	if !isMinter {
+		if err := r.Apply(ctx, cfg, newValue); err != nil {
+			return "failed", false, candidate
+		}
 	}
 
 	if err := r.Verify(ctx, cfg, newValue); err != nil && !errors.Is(err, ErrVerifyUnsupported) {
@@ -497,6 +506,19 @@ func (s *Service) RotateSecret(ctx context.Context, policyID, trigger string) er
 
 	// 6. Execute the rotation state machine.
 	status, promoted, candidateVer := runRotation(orgCtx, p.SecretID, rot, s.vault, gp, p.ConnectorConfig)
+
+	// 6a. Best-effort retire of the superseded credential (minter connectors). Runs only
+	// after a successful promote, so a failed verify/promote never deletes the live old key.
+	if promoted {
+		if c, ok := rot.(PostRotateCleaner); ok {
+			if cerr := c.Cleanup(orgCtx, p.ConnectorConfig); cerr != nil {
+				s.logger.Warn("credentials: post-rotate cleanup failed (new credential is live; old may linger)",
+					zap.String("policy_id", policyID),
+					zap.String("connector_type", p.ConnectorType),
+					zap.Error(cerr))
+			}
+		}
+	}
 
 	// 7. Determine candidate version from vault (if promoted, it's current_version now).
 	//    We capture candidate inside the rotation to update version_to.
