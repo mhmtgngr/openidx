@@ -64,12 +64,13 @@ import {
   RefreshCw,
   MonitorPlay,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
 import { NotificationBell } from './notification-bell'
 import { ErrorBoundary } from './error-boundary'
+import { LoadingSpinner } from './ui/loading-spinner'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Avatar, AvatarFallback } from './ui/avatar'
@@ -429,7 +430,17 @@ export function Layout() {
                 instead of white-screening the whole console, and clears when
                 the user navigates away. */}
             <ErrorBoundary key={location.pathname}>
-              <Outlet />
+              {/* Inner Suspense so a lazy page load spins only the content area —
+                  the sidebar/header stay rendered (vs the app-level full-screen fallback). */}
+              <Suspense
+                fallback={
+                  <div className="flex justify-center py-12">
+                    <LoadingSpinner size="lg" />
+                  </div>
+                }
+              >
+                <Outlet />
+              </Suspense>
             </ErrorBoundary>
           </div>
         </main>
