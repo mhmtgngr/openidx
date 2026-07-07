@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/layout'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import {
   Dashboard,
   Users,
@@ -155,8 +156,15 @@ function App() {
   }
 
   return (
-    <Routes>
-      {/* Public routes */}
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center">
+          <LoadingSpinner size="lg" />
+        </div>
+      }
+    >
+      <Routes>
+        {/* Public routes */}
       <Route path="/login" element={<Login />} />
       <Route path="/landing" element={<Landing />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -295,6 +303,7 @@ function App() {
       {/* Root redirect */}
       <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />} />
     </Routes>
+    </Suspense>
   )
 }
 
