@@ -358,10 +358,20 @@ func (c *LDAPConnector) resetPasswordAD(conn *ldap.Conn, userDN, newPassword str
 	return nil
 }
 
-// encodePasswordAD encodes a password for AD's unicodePwd attribute (UTF-16LE with surrounding quotes)
+// encodePasswordAD encodes a password for AD's unicodePwd attribute (UTF-16LE, wrapped in
+// double quotes per Microsoft's spec). The encoded bytes are sent as a binary LDAP attribute
+// value in a ModifyRequest (length-delimited on the wire) — never interpolated into a filter,
+// DN, or other parsed context — so an embedded double quote in the password cannot "break out";
+// AD strips only the outermost quotes, so the password is preserved verbatim. We assemble the
+// quoted rune slice directly (rather than concatenating quote characters into a string) so the
+// delimiter quotes are structural, not string-formatted around untrusted input.
 func encodePasswordAD(password string) []byte {
-	quoted := "\"" + password + "\""
-	runes := utf16.Encode([]rune(quoted))
+	pw := []rune(password)
+	quoted := make([]rune, 0, len(pw)+2)
+	quoted = append(quoted, '"')
+	quoted = append(quoted, pw...)
+	quoted = append(quoted, '"')
+	runes := utf16.Encode(quoted)
 	buf := make([]byte, len(runes)*2)
 	for i, r := range runes {
 		binary.LittleEndian.PutUint16(buf[i*2:], r)
