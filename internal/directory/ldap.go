@@ -366,21 +366,23 @@ func (c *LDAPConnector) resetPasswordAD(conn *ldap.Conn, userDN, newPassword str
 // quoted rune slice directly (rather than concatenating quote characters into a string) so the
 // delimiter quotes are structural, not string-formatted around untrusted input.
 func encodePasswordAD(password string) []byte {
-	pw := []rune(password)
-	quoted := make([]rune, 0, len(pw)+2)
-	quoted = append(quoted, '"')
-	quoted = append(quoted, pw...)
-	quoted = append(quoted, '"')
-	runes := utf16.Encode(quoted)
-	// Bound the size input before computing len(runes)*2 to rule out integer overflow in the
-	// allocation (a real AD password is at most 256 chars; anything near this cap is invalid).
-	if len(runes) > 1<<20 {
+	pw := utf16.Encode([]rune(password))
+	// Bound the length before any size computation to rule out integer overflow in the
+	// allocation below (a real AD password is at most 256 chars; anything near this cap is
+	// invalid input, not a legitimate password).
+	if len(pw) > 1<<20 {
 		return nil
 	}
-	buf := make([]byte, len(runes)*2)
-	for i, r := range runes {
-		binary.LittleEndian.PutUint16(buf[i*2:], r)
+	// One allocation: the UTF-16LE password bracketed by two literal quote code units. Writing
+	// the quote code units directly (rather than concatenating quote characters into a string)
+	// keeps the delimiters structural — the bytes are identical to UTF-16LE of `"`+password+`"`.
+	const quoteLE = uint16('"')
+	buf := make([]byte, (len(pw)+2)*2)
+	binary.LittleEndian.PutUint16(buf[0:], quoteLE)
+	for i, r := range pw {
+		binary.LittleEndian.PutUint16(buf[(i+1)*2:], r)
 	}
+	binary.LittleEndian.PutUint16(buf[(len(pw)+1)*2:], quoteLE)
 	return buf
 }
 
