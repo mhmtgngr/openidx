@@ -1706,7 +1706,14 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 		reqBody = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequest(method, zm.cfg.ZitiCtrlURL+path, reqBody)
+	// Build against the validated controller base (scheme/host checked) so a malformed or
+	// hostile ZitiCtrlURL can't redirect management calls elsewhere (go/request-forgery).
+	fullURL, err := zm.mgmtURL(path)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	req, err := http.NewRequest(method, fullURL, reqBody)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1741,7 +1748,7 @@ func (zm *ZitiManager) mgmtRequest(method, path string, body []byte) ([]byte, in
 		if body != nil {
 			reqBody = bytes.NewReader(body)
 		}
-		req, _ = http.NewRequest(method, zm.cfg.ZitiCtrlURL+path, reqBody)
+		req, _ = http.NewRequest(method, fullURL, reqBody)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("zt-session", token)
 
