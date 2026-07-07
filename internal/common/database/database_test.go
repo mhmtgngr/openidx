@@ -682,6 +682,12 @@ func TestEnvInt32(t *testing.T) {
 	if got := envInt32("OIDX_TEST_MAXC", 25, 1); got != 25 {
 		t.Fatalf("below-min: want default 25, got %d", got)
 	}
+	// Overflow: a value beyond int32 must fall back to the default, not wrap (guards the
+	// go/incorrect-integer-conversion fix — ParseInt(…,32) errors instead of truncating).
+	t.Setenv("OIDX_TEST_MAXC", "3000000000")
+	if got := envInt32("OIDX_TEST_MAXC", 25, 1); got != 25 {
+		t.Fatalf("overflow: want default 25, got %d", got)
+	}
 }
 
 // TestNewElasticsearchFromConfig_PingAuth verifies the construction ping checks the
