@@ -1049,8 +1049,28 @@ func TestEncodePasswordAD(t *testing.T) {
 			// Length should be (password length + 2 for quotes) * 2 bytes per char
 			expectedLen := (len(tt.password) + 2) * 2
 			assert.Equal(t, expectedLen, len(encoded))
+			// Wrapped in UTF-16LE double quotes (0x22, 0x00) at both ends.
+			assert.Equal(t, []byte{0x22, 0x00}, encoded[:2], "must start with a UTF-16LE quote")
+			assert.Equal(t, []byte{0x22, 0x00}, encoded[len(encoded)-2:], "must end with a UTF-16LE quote")
 		})
 	}
+
+	// Byte-exact anchors: prove the exact UTF-16LE encoding (guards the encodePasswordAD
+	// refactor from the "\"" + password + "\"" concatenation to a directly-assembled rune
+	// slice — the bytes must be identical).
+	assert.Equal(t,
+		[]byte{0x22, 0x00, 0x41, 0x00, 0x22, 0x00}, // "A"
+		encodePasswordAD("A"),
+		`encoding of "A" must be UTF-16LE of "A"`)
+
+	// A password containing a double quote is encoded as a literal interior quote wrapped by
+	// the outer delimiter quotes — it does NOT terminate the value early (the CodeQL
+	// go/unsafe-quoting concern is moot: this is a binary LDAP attribute value, not a parsed
+	// quoted context). Expected: " A " B " → each char in UTF-16LE.
+	assert.Equal(t,
+		[]byte{0x22, 0x00, 0x41, 0x00, 0x22, 0x00, 0x42, 0x00, 0x22, 0x00}, // "A"B" → wrap('A"B')
+		encodePasswordAD(`A"B`),
+		"an embedded double quote must be preserved as a literal interior character")
 }
 
 // TestNewAzureADConnector tests Azure AD connector creation
