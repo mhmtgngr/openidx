@@ -372,6 +372,11 @@ func encodePasswordAD(password string) []byte {
 	quoted = append(quoted, pw...)
 	quoted = append(quoted, '"')
 	runes := utf16.Encode(quoted)
+	// Bound the size input before computing len(runes)*2 to rule out integer overflow in the
+	// allocation (a real AD password is at most 256 chars; anything near this cap is invalid).
+	if len(runes) > 1<<20 {
+		return nil
+	}
 	buf := make([]byte, len(runes)*2)
 	for i, r := range runes {
 		binary.LittleEndian.PutUint16(buf[i*2:], r)
