@@ -57,6 +57,7 @@ const connectorLabels: Record<string, string> = {
   ssh_key: 'SSH key-pair',
   postgres: 'PostgreSQL',
   mysql: 'MySQL',
+  aws_iam: 'AWS IAM',
 }
 
 const connectorColors: Record<string, string> = {
@@ -66,6 +67,7 @@ const connectorColors: Record<string, string> = {
   ssh_key: 'bg-purple-100 text-purple-800',
   postgres: 'bg-sky-100 text-sky-800',
   mysql: 'bg-orange-100 text-orange-800',
+  aws_iam: 'bg-yellow-100 text-yellow-800',
 }
 
 // ── Connector config schema ──────────────────────────────────────────────────
@@ -100,6 +102,11 @@ const SSH_FIELDS: ConnectorField[] = [
 const CONNECTOR_FIELDS: Record<string, ConnectorField[]> = {
   ssh: SSH_FIELDS,
   ssh_key: SSH_FIELDS,
+  aws_iam: [
+    { key: 'target_user', label: 'IAM user', required: true, type: 'text', placeholder: 'svc-rotated' },
+    { key: 'admin_secret_id', label: 'Admin secret (AWS creds)', required: true, type: 'secret' },
+    { key: 'region', label: 'Region', required: false, type: 'text', placeholder: 'us-east-1', default: 'us-east-1' },
+  ],
   postgres: [
     { key: 'host', label: 'Host', required: true, type: 'text', placeholder: 'db.example.com' },
     { key: 'port', label: 'Port', required: false, type: 'number', placeholder: '5432', default: '5432' },
@@ -126,7 +133,7 @@ const CONNECTOR_FIELDS: Record<string, ConnectorField[]> = {
 
 // Connector types whose config is driven by CONNECTOR_FIELDS (vs the bespoke
 // directory branch and the config-less generate_only).
-const SCHEMA_CONNECTORS = ['ssh', 'ssh_key', 'postgres', 'mysql']
+const SCHEMA_CONNECTORS = ['ssh', 'ssh_key', 'aws_iam', 'postgres', 'mysql']
 
 // Seed a config bag with the schema's default values when a connector is chosen.
 function seedConnectorConfig(type: string): Record<string, string> {
@@ -579,6 +586,7 @@ export function RotationPoliciesPage() {
                   <SelectItem value="ssh_key">SSH key-pair</SelectItem>
                   <SelectItem value="postgres">PostgreSQL</SelectItem>
                   <SelectItem value="mysql">MySQL</SelectItem>
+                  <SelectItem value="aws_iam">AWS IAM</SelectItem>
                 </SelectContent>
               </Select>
             </div>
