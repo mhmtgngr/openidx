@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-07-07
+
+### Fixed
+
+- **CodeQL `go/unsafe-quoting` (critical) in AD `unicodePwd` encoding** (#337) — `encodePasswordAD`
+  built the Active Directory password value by concatenating double quotes around the password
+  (`"\"" + password + "\""`) before UTF-16LE encoding. The encoded bytes are sent as a binary LDAP
+  attribute in a `ModifyRequest` (never interpolated into a filter/DN/parsed context), so this was not
+  exploitable, but the pattern is now rewritten to a single bounded allocation that writes the quote
+  code units directly — clearing the alert (and an allocation-size-overflow on the same function) with
+  byte-identical output. Added byte-exact and embedded-quote regression tests.
+
 ## [1.21.0] - 2026-07-07
 
 ### Added
