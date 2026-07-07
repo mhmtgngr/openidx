@@ -1,122 +1,124 @@
+import { lazy } from 'react'
+
 // This file exports all page components for the admin console
 
 // Core Pages
-export { DashboardPage as Dashboard } from './dashboard'
-export { UsersPage as Users } from './users'
-export { AccessReviewsPage as AccessReviews } from './access-reviews'
-export { PoliciesPage as Policies } from './policies'
-export { AuditLogsPage as AuditLogs } from './audit-logs'
-export { SettingsPage as Settings } from './settings'
+export const Dashboard = lazy(() => import('./dashboard').then((m) => ({ default: m.DashboardPage })))
+export const Users = lazy(() => import('./users').then((m) => ({ default: m.UsersPage })))
+export const AccessReviews = lazy(() => import('./access-reviews').then((m) => ({ default: m.AccessReviewsPage })))
+export const Policies = lazy(() => import('./policies').then((m) => ({ default: m.PoliciesPage })))
+export const AuditLogs = lazy(() => import('./audit-logs').then((m) => ({ default: m.AuditLogsPage })))
+export const Settings = lazy(() => import('./settings').then((m) => ({ default: m.SettingsPage })))
 
 // Identity & Access
-export { GroupsPage as Groups } from './groups'
-export { RolesPage as Roles } from './roles'
-export { DirectoriesPage as Directories } from './directories'
-export { ServiceAccountsPage as ServiceAccounts } from './service-accounts'
-export { IdentityProvidersPage as IdentityProviders } from './identity-providers'
+export const Groups = lazy(() => import('./groups').then((m) => ({ default: m.GroupsPage })))
+export const Roles = lazy(() => import('./roles').then((m) => ({ default: m.RolesPage })))
+export const Directories = lazy(() => import('./directories').then((m) => ({ default: m.DirectoriesPage })))
+export const ServiceAccounts = lazy(() => import('./service-accounts').then((m) => ({ default: m.ServiceAccountsPage })))
+export const IdentityProviders = lazy(() => import('./identity-providers').then((m) => ({ default: m.IdentityProvidersPage })))
 
 // Applications
-export { ApplicationsPage as Applications } from './applications'
-export { AppLauncherPage as AppLauncher } from './app-launcher'
-export { AppPublishPage as AppPublish } from './app-publish'
-export { ZeroTrustPage as ZeroTrust } from './zero-trust'
-export { ProvisioningRulesPage as ProvisioningRules } from './provisioning-rules'
-export { LifecycleWorkflowsPage as LifecycleWorkflows } from './lifecycle-workflows'
-export { FederationConfigPage as FederationConfig } from './federation-config'
-export { SocialProvidersPage as SocialProviders } from './social-providers'
+export const Applications = lazy(() => import('./applications').then((m) => ({ default: m.ApplicationsPage })))
+export const AppLauncher = lazy(() => import('./app-launcher').then((m) => ({ default: m.AppLauncherPage })))
+export const AppPublish = lazy(() => import('./app-publish').then((m) => ({ default: m.AppPublishPage })))
+export const ZeroTrust = lazy(() => import('./zero-trust').then((m) => ({ default: m.ZeroTrustPage })))
+export const ProvisioningRules = lazy(() => import('./provisioning-rules').then((m) => ({ default: m.ProvisioningRulesPage })))
+export const LifecycleWorkflows = lazy(() => import('./lifecycle-workflows').then((m) => ({ default: m.LifecycleWorkflowsPage })))
+export const FederationConfig = lazy(() => import('./federation-config').then((m) => ({ default: m.FederationConfigPage })))
+export const SocialProviders = lazy(() => import('./social-providers').then((m) => ({ default: m.SocialProvidersPage })))
 
 // Network & Access
-export { ProxyRoutesPage as ProxyRoutes } from './proxy-routes'
-export { ZitiSetupPage as ZitiSetup } from './ziti-setup'
-export { ZitiNetworkPage as ZitiNetwork } from './ziti-network'
-export { ZitiDiscoveryPage as ZitiDiscovery } from './ziti-discovery'
-export { BrowZerManagementPage as BrowzerManagement } from './browzer-management'
-export { CertificatesPage as Certificates } from './certificates'
-export { DevicesPage as Devices } from './devices'
-export { AgentFleetPage as AgentFleet } from './agent-fleet'
-export { KioskPoliciesPage as KioskPolicies } from './kiosk-policies'
-export { RemoteSupportPage as RemoteSupport } from './remote-support'
+export const ProxyRoutes = lazy(() => import('./proxy-routes').then((m) => ({ default: m.ProxyRoutesPage })))
+export const ZitiSetup = lazy(() => import('./ziti-setup').then((m) => ({ default: m.ZitiSetupPage })))
+export const ZitiNetwork = lazy(() => import('./ziti-network').then((m) => ({ default: m.ZitiNetworkPage })))
+export const ZitiDiscovery = lazy(() => import('./ziti-discovery').then((m) => ({ default: m.ZitiDiscoveryPage })))
+export const BrowzerManagement = lazy(() => import('./browzer-management').then((m) => ({ default: m.BrowZerManagementPage })))
+export const Certificates = lazy(() => import('./certificates').then((m) => ({ default: m.CertificatesPage })))
+export const Devices = lazy(() => import('./devices').then((m) => ({ default: m.DevicesPage })))
+export const AgentFleet = lazy(() => import('./agent-fleet').then((m) => ({ default: m.AgentFleetPage })))
+export const KioskPolicies = lazy(() => import('./kiosk-policies').then((m) => ({ default: m.KioskPoliciesPage })))
+export const RemoteSupport = lazy(() => import('./remote-support').then((m) => ({ default: m.RemoteSupportPage })))
 
 // Governance
-export { ApprovalPoliciesPage as ApprovalPolicies } from './approval-policies'
-export { CertificationCampaignsPage as CertificationCampaigns } from './certification-campaigns'
-export { EntitlementsPage as Entitlements } from './entitlements'
-export { ABACPoliciesPage as ABACPolicies } from './abac-policies'
-export { SessionsAdminPage as SessionsAdmin } from './sessions-admin'
-export { SecurityAlertsPage as SecurityAlerts } from './security-alerts'
-export { PrivacyDashboardPage as PrivacyDashboard } from './privacy-dashboard'
-export { ConsentManagementPage as ConsentManagement } from './consent-management'
+export const ApprovalPolicies = lazy(() => import('./approval-policies').then((m) => ({ default: m.ApprovalPoliciesPage })))
+export const CertificationCampaigns = lazy(() => import('./certification-campaigns').then((m) => ({ default: m.CertificationCampaignsPage })))
+export const Entitlements = lazy(() => import('./entitlements').then((m) => ({ default: m.EntitlementsPage })))
+export const ABACPolicies = lazy(() => import('./abac-policies').then((m) => ({ default: m.ABACPoliciesPage })))
+export const SessionsAdmin = lazy(() => import('./sessions-admin').then((m) => ({ default: m.SessionsAdminPage })))
+export const SecurityAlerts = lazy(() => import('./security-alerts').then((m) => ({ default: m.SecurityAlertsPage })))
+export const PrivacyDashboard = lazy(() => import('./privacy-dashboard').then((m) => ({ default: m.PrivacyDashboardPage })))
+export const ConsentManagement = lazy(() => import('./consent-management').then((m) => ({ default: m.ConsentManagementPage })))
 
 // Security & MFA
-export { default as MFAManagement } from './mfa-management'
-export { RiskPoliciesPage as RiskPolicies } from './risk-policies'
-export { default as LoginAnomalies } from './login-anomalies'
-export { HardwareTokensPage as HardwareTokens } from './hardware-tokens'
-export { DeviceTrustApprovalPage as DeviceTrustApproval } from './device-trust-approval'
-export { MFABypassCodesPage as MFABypassCodes } from './mfa-bypass-codes'
-export { PasswordlessSettingsPage as PasswordlessSettings } from './passwordless-settings'
-export { SecurityKeysPage as SecurityKeys } from './security-keys'
-export { PushDevicesPage as PushDevices } from './push-devices'
+export const MFAManagement = lazy(() => import('./mfa-management'))
+export const RiskPolicies = lazy(() => import('./risk-policies').then((m) => ({ default: m.RiskPoliciesPage })))
+export const LoginAnomalies = lazy(() => import('./login-anomalies'))
+export const HardwareTokens = lazy(() => import('./hardware-tokens').then((m) => ({ default: m.HardwareTokensPage })))
+export const DeviceTrustApproval = lazy(() => import('./device-trust-approval').then((m) => ({ default: m.DeviceTrustApprovalPage })))
+export const MFABypassCodes = lazy(() => import('./mfa-bypass-codes').then((m) => ({ default: m.MFABypassCodesPage })))
+export const PasswordlessSettings = lazy(() => import('./passwordless-settings').then((m) => ({ default: m.PasswordlessSettingsPage })))
+export const SecurityKeys = lazy(() => import('./security-keys').then((m) => ({ default: m.SecurityKeysPage })))
+export const PushDevices = lazy(() => import('./push-devices').then((m) => ({ default: m.PushDevicesPage })))
 
 // Audit & Reports
-export { UnifiedAuditPage as UnifiedAudit } from './unified-audit'
-export { AdminAuditLogPage as AdminAuditLog } from './admin-audit-log'
-export { LoginAnalyticsPage as LoginAnalytics } from './login-analytics'
-export { AuthAnalyticsPage as AuthAnalytics } from './auth-analytics'
-export { UsageAnalyticsPage as UsageAnalytics } from './usage-analytics'
-export { RiskDashboardPage as RiskDashboard } from './risk-dashboard'
-export { ComplianceReportsPage as ComplianceReports } from './compliance-reports'
-export { ComplianceDashboardPage as ComplianceDashboard } from './compliance-dashboard'
-export { ReportsPage as Reports } from './reports'
+export const UnifiedAudit = lazy(() => import('./unified-audit').then((m) => ({ default: m.UnifiedAuditPage })))
+export const AdminAuditLog = lazy(() => import('./admin-audit-log').then((m) => ({ default: m.AdminAuditLogPage })))
+export const LoginAnalytics = lazy(() => import('./login-analytics').then((m) => ({ default: m.LoginAnalyticsPage })))
+export const AuthAnalytics = lazy(() => import('./auth-analytics').then((m) => ({ default: m.AuthAnalyticsPage })))
+export const UsageAnalytics = lazy(() => import('./usage-analytics').then((m) => ({ default: m.UsageAnalyticsPage })))
+export const RiskDashboard = lazy(() => import('./risk-dashboard').then((m) => ({ default: m.RiskDashboardPage })))
+export const ComplianceReports = lazy(() => import('./compliance-reports').then((m) => ({ default: m.ComplianceReportsPage })))
+export const ComplianceDashboard = lazy(() => import('./compliance-dashboard').then((m) => ({ default: m.ComplianceDashboardPage })))
+export const Reports = lazy(() => import('./reports').then((m) => ({ default: m.ReportsPage })))
 
 // AI & Intelligence
-export { AIAgentsPage as AIAgents } from './ai-agents'
-export { ISPMDashboardPage as ISPMDashboard } from './ispm-dashboard'
-export { AIRecommendationsPage as AIRecommendations } from './ai-recommendations'
-export { PredictiveAnalyticsPage as PredictiveAnalytics } from './predictive-analytics'
+export const AIAgents = lazy(() => import('./ai-agents').then((m) => ({ default: m.AIAgentsPage })))
+export const ISPMDashboard = lazy(() => import('./ispm-dashboard').then((m) => ({ default: m.ISPMDashboardPage })))
+export const AIRecommendations = lazy(() => import('./ai-recommendations').then((m) => ({ default: m.AIRecommendationsPage })))
+export const PredictiveAnalytics = lazy(() => import('./predictive-analytics').then((m) => ({ default: m.PredictiveAnalyticsPage })))
 
 // Enterprise
-export { SAMLServiceProvidersPage as SAMLServiceProviders } from './saml-service-providers'
-export { BulkOperationsPage as BulkOperations } from './bulk-operations'
-export { EmailTemplatesPage as EmailTemplates } from './email-templates'
-export { LifecyclePoliciesPage as LifecyclePolicies } from './lifecycle-policies'
-export { AttestationCampaignsPage as AttestationCampaigns } from './attestation-campaigns'
-export { AuditArchivalPage as AuditArchival } from './audit-archival'
-export { VaultSecretsPage as VaultSecrets } from './vault-secrets'
-export { RotationPoliciesPage as RotationPolicies } from './rotation-policies'
-export { GuacamoleSessionsPage as GuacamoleSessions } from './guacamole-sessions'
+export const SAMLServiceProviders = lazy(() => import('./saml-service-providers').then((m) => ({ default: m.SAMLServiceProvidersPage })))
+export const BulkOperations = lazy(() => import('./bulk-operations').then((m) => ({ default: m.BulkOperationsPage })))
+export const EmailTemplates = lazy(() => import('./email-templates').then((m) => ({ default: m.EmailTemplatesPage })))
+export const LifecyclePolicies = lazy(() => import('./lifecycle-policies').then((m) => ({ default: m.LifecyclePoliciesPage })))
+export const AttestationCampaigns = lazy(() => import('./attestation-campaigns').then((m) => ({ default: m.AttestationCampaignsPage })))
+export const AuditArchival = lazy(() => import('./audit-archival').then((m) => ({ default: m.AuditArchivalPage })))
+export const VaultSecrets = lazy(() => import('./vault-secrets').then((m) => ({ default: m.VaultSecretsPage })))
+export const RotationPolicies = lazy(() => import('./rotation-policies').then((m) => ({ default: m.RotationPoliciesPage })))
+export const GuacamoleSessions = lazy(() => import('./guacamole-sessions').then((m) => ({ default: m.GuacamoleSessionsPage })))
 
 // Developer
-export { ApiExplorerPage as APIExplorer } from './api-explorer'
-export { OAuthPlaygroundPage as OAuthPlayground } from './oauth-playground'
-export { DeveloperSettingsPage as DeveloperSettings } from './developer-settings'
-export { ErrorCatalogPage as ErrorCatalog } from './error-catalog'
-export { ApiDocsPage as APIDocs } from './api-docs'
+export const APIExplorer = lazy(() => import('./api-explorer').then((m) => ({ default: m.ApiExplorerPage })))
+export const OAuthPlayground = lazy(() => import('./oauth-playground').then((m) => ({ default: m.OAuthPlaygroundPage })))
+export const DeveloperSettings = lazy(() => import('./developer-settings').then((m) => ({ default: m.DeveloperSettingsPage })))
+export const ErrorCatalog = lazy(() => import('./error-catalog').then((m) => ({ default: m.ErrorCatalogPage })))
+export const APIDocs = lazy(() => import('./api-docs').then((m) => ({ default: m.ApiDocsPage })))
 
 // System
-export { SystemHealthPage as SystemHealth } from './system-health'
-export { OrganizationsPage as Organizations } from './organizations'
-export { BrandingPage as Branding } from './branding'
-export { DelegationsPage as Delegations } from './delegations'
-export { WebhooksPage as Webhooks } from './webhooks'
-export { TenantManagementPage as TenantManagement } from './tenant-management'
-export { NotificationAdminPage as NotificationAdmin } from './notification-admin'
+export const SystemHealth = lazy(() => import('./system-health').then((m) => ({ default: m.SystemHealthPage })))
+export const Organizations = lazy(() => import('./organizations').then((m) => ({ default: m.OrganizationsPage })))
+export const Branding = lazy(() => import('./branding').then((m) => ({ default: m.BrandingPage })))
+export const Delegations = lazy(() => import('./delegations').then((m) => ({ default: m.DelegationsPage })))
+export const Webhooks = lazy(() => import('./webhooks').then((m) => ({ default: m.WebhooksPage })))
+export const TenantManagement = lazy(() => import('./tenant-management').then((m) => ({ default: m.TenantManagementPage })))
+export const NotificationAdmin = lazy(() => import('./notification-admin').then((m) => ({ default: m.NotificationAdminPage })))
 
 // User-facing pages
-export { LoginPage as Login } from './login'
-export { LandingPage as Landing } from './landing'
-export { ForgotPasswordPage as ForgotPassword } from './forgot-password'
-export { ResetPasswordPage as ResetPassword } from './reset-password'
-export { MagicLinkVerifyPage as MagicLinkVerify } from './magic-link-verify'
+export const Login = lazy(() => import('./login').then((m) => ({ default: m.LoginPage })))
+export const Landing = lazy(() => import('./landing').then((m) => ({ default: m.LandingPage })))
+export const ForgotPassword = lazy(() => import('./forgot-password').then((m) => ({ default: m.ForgotPasswordPage })))
+export const ResetPassword = lazy(() => import('./reset-password').then((m) => ({ default: m.ResetPasswordPage })))
+export const MagicLinkVerify = lazy(() => import('./magic-link-verify').then((m) => ({ default: m.MagicLinkVerifyPage })))
 
 // My Pages
-export { UserProfilePage as UserProfile } from './user-profile'
-export { MyAccessPage as MyAccess } from './my-access'
-export { MyDevicesPage as MyDevices } from './my-devices'
-export { TrustedBrowsersPage as TrustedBrowsers } from './trusted-browsers'
-export { AccessRequestsPage as AccessRequests } from './access-requests'
-export { NotificationCenterPage as NotificationCenter } from './notification-center'
-export { NotificationPreferencesPage as NotificationPreferences } from './notification-preferences'
+export const UserProfile = lazy(() => import('./user-profile').then((m) => ({ default: m.UserProfilePage })))
+export const MyAccess = lazy(() => import('./my-access').then((m) => ({ default: m.MyAccessPage })))
+export const MyDevices = lazy(() => import('./my-devices').then((m) => ({ default: m.MyDevicesPage })))
+export const TrustedBrowsers = lazy(() => import('./trusted-browsers').then((m) => ({ default: m.TrustedBrowsersPage })))
+export const AccessRequests = lazy(() => import('./access-requests').then((m) => ({ default: m.AccessRequestsPage })))
+export const NotificationCenter = lazy(() => import('./notification-center').then((m) => ({ default: m.NotificationCenterPage })))
+export const NotificationPreferences = lazy(() => import('./notification-preferences').then((m) => ({ default: m.NotificationPreferencesPage })))
 
 // Other pages
-export { ReviewDetailPage as ReviewDetail } from './review-detail'
+export const ReviewDetail = lazy(() => import('./review-detail').then((m) => ({ default: m.ReviewDetailPage })))

@@ -5,6 +5,21 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('swagger-ui')) return 'swagger'
+          if (id.includes('recharts') || id.includes('/d3-') || id.includes('victory')) return 'charts'
+          if (id.includes('react-router')) return 'router'
+          if (id.includes('@radix-ui')) return 'radix'
+          if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) return 'react'
+          return 'vendor'
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
