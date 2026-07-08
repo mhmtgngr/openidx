@@ -214,11 +214,11 @@ func LoggingWithConfig(cfg LoggingConfig) gin.HandlerFunc {
 			logFields = append(logFields, zap.String("referer", entry.Referer))
 		}
 
-		// Handle errors
+		// Handle errors. The request is logged via logFields (below), not by
+		// marshalling entry, so assigning entry.Error here was dead — append the
+		// error field directly.
 		if len(c.Errors) > 0 {
-			err := c.Errors.String()
-			entry.Error = err
-			logFields = append(logFields, zap.String("error", err))
+			logFields = append(logFields, zap.String("error", c.Errors.String()))
 		}
 
 		// Log at appropriate level based on status code
