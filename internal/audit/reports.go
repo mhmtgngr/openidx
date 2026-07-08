@@ -19,6 +19,13 @@ import (
 
 const reportDir = "/tmp/openidx-reports"
 
+// reportFilePath joins a report file name under reportDir, constraining it to a single path
+// element via filepath.Base so a path-traversing report_type/format in the export request
+// cannot escape reportDir (go/path-injection).
+func reportFilePath(fileName string) string {
+	return filepath.Join(reportDir, filepath.Base(fileName))
+}
+
 // ReportExport represents an exported report file
 type ReportExport struct {
 	ID                string     `json:"id"`
@@ -129,7 +136,7 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 	}
 
 	fileName := fmt.Sprintf("%s_%s_%s.%s", export.ReportType, export.ID[:8], time.Now().Format("20060102150405"), export.Format)
-	filePath := filepath.Join(reportDir, fileName)
+	filePath := reportFilePath(fileName)
 
 	switch export.Format {
 	case "csv":
