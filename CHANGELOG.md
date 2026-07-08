@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.4] - 2026-07-08
+
+### Fixed
+
+- **Audit report export path-injection** (#349, security) — the compliance report exporter built its
+  output file path from the request-controlled `report_type`/`format` (`filepath.Join(reportDir, fileName)`)
+  with no sanitization, so a `report_type`/`format` containing `../` could write/stat a file outside the
+  report directory. Now routed through `reportFilePath()`, which applies `filepath.Base` to constrain the
+  name to a single element under `reportDir`. Clears `go/path-injection` (high ×3).
+
 ## [1.23.3] - 2026-07-08
 
 ### Fixed
