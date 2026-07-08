@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.6] - 2026-07-08
+
+### Changed
+
+- **Backfill the federated identity link for email-matched JIT users** (#369) — completes the
+  #364/#367 migration: when a returning OIDC user is matched by email (created before the
+  `idp_id`/`external_user_id` binding existed), the login handler now best-effort backfills those
+  columns (only when currently unset), so subsequent logins match by `(idp_id, sub)`. Keyed by the
+  matched `users.id`; nil-guarded and error-logged, never affects login.
+
 ## [1.24.5] - 2026-07-08
 
 ### Changed
