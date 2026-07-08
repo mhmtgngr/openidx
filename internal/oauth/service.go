@@ -2604,6 +2604,19 @@ func (s *Service) handleCallback(c *gin.Context) {
 			c.JSON(500, gin.H{"error": "failed to provision user"})
 			return
 		}
+		// Bind the JIT-provisioned user to the IdP subject so it is a stable
+		// federated link (users.idp_id + external_user_id), not just an
+		// email-matched account. Best-effort: a unique (idp_id, external_user_id)
+		// collision or write error must not fail the login. The UPDATE is
+		// RLS-scoped to the caller's org via the pool's acquire hook.
+		if claims.Sub != "" {
+			if _, err := s.db.Pool.Exec(c.Request.Context(),
+				`UPDATE users SET idp_id = $1, external_user_id = $2 WHERE id = $3`,
+				idp.ID, claims.Sub, user.ID); err != nil {
+				s.logger.Warn("Failed to persist federated identity link for JIT user",
+					zap.String("user_id", user.ID), zap.Error(err))
+			}
+		}
 	}
 
 	authCode := &AuthorizationCode{
