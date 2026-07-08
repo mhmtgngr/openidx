@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.2] - 2026-07-08
+
+### Security
+
+- **Audit report export filename built from allowlisted constants** (#357) — the export file name
+  was assembled from the raw request `report_type`/`format` strings, so CodeQL traced
+  caller-controlled data to `os.Stat`/`os.Create` even behind the `filepath.Base` + `reportDir`-prefix
+  guards it doesn't model. Both fields are already validated against fixed enums; the name is now
+  built from a compile-time-constant `typeSlug`/`ext` chosen inside those switches (plus the
+  server-generated ID and timestamp), so no request string reaches `filepath.*`. Closes the last
+  three `go/path-injection` alerts as fixed — the repo is now at **0 open critical and 0 open high**
+  CodeQL alerts. The `reportFilePath` clean+prefix guard remains as defense-in-depth.
+
 ## [1.24.1] - 2026-07-08
 
 ### Security
