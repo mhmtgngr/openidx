@@ -2586,12 +2586,32 @@ func (s *Service) handleCallback(c *gin.Context) {
 		return
 	}
 
-	// Check if user already exists (JIT provisioning)
-	existingUsers, _, _ := s.identityService.ListUsers(c.Request.Context(), 0, 1, claims.Email)
+	// Check if user already exists (JIT provisioning).
 	var user *identity.User
-	if len(existingUsers) > 0 {
-		user = &existingUsers[0]
-	} else {
+
+	// 1. Prefer the stable federated identity (idp_id + sub): a returning user is
+	// matched by the IdP subject even if their email changed at the IdP, which
+	// also avoids creating a duplicate that would collide with the unique
+	// (idp_id, external_user_id) index. RLS-scoped via the pool acquire hook.
+	if claims.Sub != "" {
+		var uid string
+		if err := s.db.Pool.QueryRow(c.Request.Context(),
+			`SELECT id FROM users WHERE idp_id = $1 AND external_user_id = $2 LIMIT 1`,
+			idp.ID, claims.Sub).Scan(&uid); err == nil && uid != "" {
+			user = &identity.User{ID: uid}
+		}
+	}
+
+	// 2. Fall back to matching by email.
+	if user == nil {
+		existingUsers, _, _ := s.identityService.ListUsers(c.Request.Context(), 0, 1, claims.Email)
+		if len(existingUsers) > 0 {
+			user = &existingUsers[0]
+		}
+	}
+
+	// 3. Otherwise provision a new user.
+	if user == nil {
 		user = &identity.User{
 			UserName:      claims.Email,
 			Enabled:       true,
