@@ -503,8 +503,10 @@ func (s *Service) clearIdPSession(c *gin.Context, sessionToken string) {
 			"DELETE FROM user_sessions WHERE session_token = $1 AND org_id = $2", sessionToken, org.ID)
 	}
 
-	// Clear cookie
-	c.SetCookie("openidx_session", "", -1, "/", "", false, true)
+	// Clear cookie. Secure is tied to production (matching the proxy session
+	// cookie convention) so the deletion is still honored over plain HTTP in
+	// dev while carrying the Secure attribute in production.
+	c.SetCookie("openidx_session", "", -1, "/", "", s.config.IsProduction(), true)
 }
 
 // showLogoutConfirmationPage shows a logout confirmation page
