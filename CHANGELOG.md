@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.3] - 2026-07-08
+
+### Fixed
+
+- **Out-of-bounds read in `User.GetFormattedName`** (#359) — the method returned
+  `parts[0] + " " + parts[1]` whenever any name component was present, but `parts` holds only one
+  element when a user has only a given name or only a family name, so `parts[1]` panicked with an
+  index-out-of-range. Now joins the collected parts, which is correct for one or two components.
+  Clears the repo's only `error`-severity CodeQL alert (`go/index-out-of-bounds`).
+
 ## [1.24.2] - 2026-07-08
 
 ### Security
