@@ -12,14 +12,14 @@ func TestMatchesDomain(t *testing.T) {
 		host, domain string
 		want         bool
 	}{
-		{"example.com", "example.com", true},          // exact
+		{"example.com", "example.com", true},           // exact
 		{"app.example.com", "example.com", true},       // subdomain
-		{"a.b.example.com", "example.com", true},        // nested subdomain
-		{"EXAMPLE.com", "example.COM", true},            // case-insensitive
-		{"notexample.com", "example.com", false},        // suffix without dot boundary
-		{"example.com.evil.com", "example.com", false},  // classic prefix trick
-		{"evil.com", "example.com", false},              // unrelated
-		{"", "example.com", false},                      // empty host
+		{"a.b.example.com", "example.com", true},       // nested subdomain
+		{"EXAMPLE.com", "example.COM", true},           // case-insensitive
+		{"notexample.com", "example.com", false},       // suffix without dot boundary
+		{"example.com.evil.com", "example.com", false}, // classic prefix trick
+		{"evil.com", "example.com", false},             // unrelated
+		{"", "example.com", false},                     // empty host
 	}
 	for _, tc := range cases {
 		if got := matchesDomain(tc.host, tc.domain); got != tc.want {
