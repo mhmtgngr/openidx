@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.1] - 2026-07-08
+
+### Security
+
+- **Audit report export path containment proven to static analysis** (#355) — `reportFilePath`
+  already constrained the export file to a single element under `reportDir` via `filepath.Base`
+  (#349), but CodeQL does not model `Base`-through-`Join` as a path-injection barrier, so the
+  `os.Stat`/`os.Create` sinks stayed flagged. Added an explicit `filepath.Clean` + `reportDir`-prefix
+  check (returning an error the caller handles) so containment is provable to static analysis,
+  closing the three `go/path-injection` alerts as fixed. With this and the ziti request-forgery
+  findings confirmed as trusted-config false positives, the repo is at **0 open critical and
+  0 open high** CodeQL alerts.
+
 ## [1.24.0] - 2026-07-08
 
 ### Security
