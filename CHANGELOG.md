@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.3] - 2026-07-08
+
+### Fixed
+
+- **Ziti management-API request hardening + dependency security bump** (#347) — the generic Ziti
+  `mgmtRequest` helper now builds requests through the validated `mgmtURL()` (parses `ZitiCtrlURL`,
+  pins scheme+host) instead of raw string concatenation, so a malformed/hostile controller URL cannot
+  redirect management calls. Also bumps the indirect `quic-go` dependency v0.59.0→v0.59.1 to resolve
+  `GO-2026-5676` (govulncheck). The residual `go/request-forgery` findings on this helper are documented
+  false positives (the host is pinned; the appended path holds only internal Ziti resource IDs).
+
 ## [1.23.2] - 2026-07-07
 
 ### Fixed
