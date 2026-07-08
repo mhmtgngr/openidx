@@ -252,7 +252,7 @@ func writeCompletionToFile(ctx *CommandContext, shell, dest string) error {
 	return os.WriteFile(dest, output, 0644)
 }
 
-func appendToCompletionFile(ctx *CommandContext, shell, configFile string) error {
+func appendToCompletionFile(ctx *CommandContext, shell, configFile string) (err error) {
 	// Generate completion script
 	cliPath := "openidx"
 	if len(os.Args) > 0 {
@@ -269,10 +269,15 @@ func appendToCompletionFile(ctx *CommandContext, shell, configFile string) error
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	// Capture a Close error on the success path so a failed final flush to the
+	// shell config isn't silently ignored.
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
-	_, err = f.Write([]byte("\n# OpenIDX completion\n"))
-	if err != nil {
+	if _, err = f.Write([]byte("\n# OpenIDX completion\n")); err != nil {
 		return err
 	}
 
