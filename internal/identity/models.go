@@ -3,6 +3,7 @@ package identity
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -512,7 +513,9 @@ func (u *User) GetFormattedName() string {
 	}
 
 	if len(parts) > 0 {
-		return parts[0] + " " + parts[1]
+		// parts may hold only the given OR only the family name; joining avoids the
+		// out-of-bounds read that parts[1] caused for single-component names.
+		return strings.Join(parts, " ")
 	}
 
 	if u.DisplayName != nil && *u.DisplayName != "" {
