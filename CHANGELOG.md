@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.5] - 2026-07-08
+
+### Fixed
+
+- **Hardware-token secrets encrypted at rest** (#351, security) — the hardware-token (YubiKey OATH-HOTP)
+  handler stored the TOTP/HOTP seed as `hex(sha256(secret)) + ":" + secret`, i.e. the seed was
+  recoverable in plaintext (the hash prefix was security-theater). It's now encrypted with the identity
+  service's AES-256-GCM `secretcrypt` cipher (the KEK-backed cipher already used for IdP client secrets);
+  decrypt reads both the new `encv1:` format and the legacy format, so existing rows keep working and
+  upgrade on the next write. Clears `go/weak-sensitive-data-hashing` (high).
+
 ## [1.23.4] - 2026-07-08
 
 ### Fixed
