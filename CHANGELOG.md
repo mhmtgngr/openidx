@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.5] - 2026-07-08
+
+### Changed
+
+- **OIDC JIT provisioning matches returning users by IdP subject before email** (#367) — the login
+  handler now looks an existing user up by `(idp_id, sub)` first (explicitly org-scoped), falling
+  back to email, then creating. A federated user whose email changed at the IdP is no longer treated
+  as new (which would have created a duplicate colliding with the unique `(idp_id, external_user_id)`
+  index #364 populates). Additive: any lookup miss/error falls through to the prior email path, so
+  existing behavior is preserved.
+
 ## [1.24.4] - 2026-07-08
 
 ### Security
