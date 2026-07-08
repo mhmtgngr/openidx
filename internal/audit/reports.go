@@ -113,19 +113,27 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 	var headers []string
 	var err error
 
+	// typeSlug is a compile-time-constant file-name token chosen by the validated report
+	// type, never the request string itself — this is what keeps the export path free of
+	// caller-controlled data (go/path-injection).
+	var typeSlug string
 	switch export.ReportType {
 	case "user_access":
 		data, err = s.getUserAccessData(ctx, export.OrgID)
 		headers = []string{"user_id", "username", "email", "role_name", "group_name"}
+		typeSlug = "user_access"
 	case "compliance":
 		data, err = s.getComplianceData(ctx, export.OrgID)
 		headers = []string{"event_type", "category", "outcome", "event_count"}
+		typeSlug = "compliance"
 	case "entitlement":
 		data, err = s.getEntitlementData(ctx, export.OrgID)
 		headers = []string{"user_id", "username", "role_name", "group_name", "assigned_at"}
+		typeSlug = "entitlement"
 	case "activity":
 		data, err = s.getActivityData(ctx, export.OrgID)
 		headers = []string{"action", "event_count", "last_occurred"}
+		typeSlug = "activity"
 	default:
 		err = fmt.Errorf("unsupported report type: %s", export.ReportType)
 	}
@@ -143,7 +151,23 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 		return
 	}
 
-	fileName := fmt.Sprintf("%s_%s_%s.%s", export.ReportType, export.ID[:8], time.Now().Format("20060102150405"), export.Format)
+	// ext is likewise a constant token selected by the validated format, so the file name is
+	// assembled entirely from server-controlled values (typeSlug, the server-generated export
+	// ID, a timestamp, ext) — no request string reaches the filesystem path.
+	var ext string
+	switch export.Format {
+	case "csv":
+		ext = "csv"
+	case "json":
+		ext = "json"
+	default:
+		err = fmt.Errorf("unsupported format: %s", export.Format)
+		s.logger.Error("Failed to write report file", zap.Error(err))
+		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, err.Error())
+		return
+	}
+
+	fileName := fmt.Sprintf("%s_%s_%s.%s", typeSlug, export.ID[:8], time.Now().Format("20060102150405"), ext)
 	filePath, pathErr := reportFilePath(fileName)
 	if pathErr != nil {
 		s.logger.Error("Rejected report export path", zap.Error(pathErr))
@@ -151,13 +175,11 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 		return
 	}
 
-	switch export.Format {
+	switch ext {
 	case "csv":
 		err = s.writeCSVFile(filePath, headers, data)
 	case "json":
 		err = s.writeJSONFile(filePath, data)
-	default:
-		err = fmt.Errorf("unsupported format: %s", export.Format)
 	}
 
 	if err != nil {
