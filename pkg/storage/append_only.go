@@ -96,7 +96,7 @@ func (s *FileAppendOnlyStore) loadLastHash() {
 }
 
 // Append adds data to the end of the file with exclusive locking
-func (s *FileAppendOnlyStore) Append(data []byte) error {
+func (s *FileAppendOnlyStore) Append(data []byte) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -105,7 +105,13 @@ func (s *FileAppendOnlyStore) Append(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file for appending: %w", err)
 	}
-	defer file.Close()
+	// Report a Close failure on the success path — for a writable file the final
+	// flush can only surface at Close, and losing it would silently drop the append.
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file: %w", cerr)
+		}
+	}()
 
 	// Acquire exclusive lock on the file for concurrent safety
 	// This works across processes using the same file

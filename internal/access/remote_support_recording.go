@@ -95,7 +95,7 @@ func (s *filesystemRecordingStore) Key(sessionID string) string {
 	return filepath.Join(filepath.Base(s.root), sessionID, "recording.webm")
 }
 
-func (s *filesystemRecordingStore) Append(sessionID string, _ int, body io.Reader) (int64, error) {
+func (s *filesystemRecordingStore) Append(sessionID string, _ int, body io.Reader) (n int64, err error) {
 	full := s.path(sessionID)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return 0, err
@@ -104,7 +104,14 @@ func (s *filesystemRecordingStore) Append(sessionID string, _ int, body io.Reade
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	// Surface a Close error on the success path: for a writable file, buffered
+	// writes may only fail when the handle is closed, and dropping that error
+	// would silently truncate the recording.
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if s.ring == nil {
 		// Plaintext mode — back-compat for deployments without an
