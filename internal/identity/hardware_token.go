@@ -6,16 +6,16 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
 // HardwareToken represents a physical security token
@@ -85,7 +85,10 @@ func (s *Service) CreateHardwareToken(ctx context.Context, req *CreateHardwareTo
 	}
 
 	// Encrypt the secret before storing
-	encryptedSecret := s.encryptSecret(secretKey)
+	encryptedSecret, err := s.encryptSecret(secretKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt token secret: %w", err)
+	}
 
 	id := uuid.New().String()
 	query := `
@@ -97,7 +100,7 @@ func (s *Service) CreateHardwareToken(ctx context.Context, req *CreateHardwareTo
 	`
 
 	var createdAt time.Time
-	err := s.db.Pool.QueryRow(ctx, query,
+	err = s.db.Pool.QueryRow(ctx, query,
 		id, req.SerialNumber, req.Name, tokenType, encryptedSecret,
 		req.Manufacturer, req.Model, req.FirmwareVersion, req.Notes,
 	).Scan(&createdAt)
@@ -450,18 +453,36 @@ func (s *Service) logTokenEvent(ctx context.Context, tokenID string, userID *str
 	s.db.Pool.Exec(ctx, query, uuid.New().String(), tokenID, userID, eventType, ipAddress, userAgent, details)
 }
 
-// encryptSecret encrypts a secret key (simplified - use proper encryption in production)
-func (s *Service) encryptSecret(secret string) string {
-	// In production, use AES-256-GCM with a proper key management system
-	hash := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(hash[:]) + ":" + secret
+// encryptSecret encrypts a hardware-token secret (e.g. a TOTP/HOTP seed) for storage at rest using
+// the service's AES-256-GCM cipher (secretcrypt). Returns an "encv1:"-prefixed ciphertext; with no
+// KEK configured (dev) the Noop cipher passes the value through, matching the idpCipher behavior.
+func (s *Service) encryptSecret(secret string) (string, error) {
+	return s.idpCipher.Encrypt(secret)
 }
 
-// decryptSecret decrypts a secret key
-func (s *Service) decryptSecret(encrypted string) string {
-	parts := strings.SplitN(encrypted, ":", 2)
-	if len(parts) == 2 {
-		return parts[1]
+// decryptSecret decrypts a hardware-token secret. It reads both the current AES-GCM format and the
+// legacy "<64-hex sha256>:<secret>" format written before encryption was added (those rows upgrade to
+// AES-GCM on the next write).
+func (s *Service) decryptSecret(stored string) string {
+	if secretcrypt.IsEncrypted(stored) {
+		if v, err := s.idpCipher.Decrypt(stored); err == nil {
+			return v
+		}
+		return ""
 	}
-	return encrypted
+	// Legacy: "<64-hex sha256>:<secret>" — the hash prefix was security-theater; return the secret.
+	if i := strings.IndexByte(stored, ':'); i == 64 && isHex(stored[:i]) {
+		return stored[i+1:]
+	}
+	return stored
+}
+
+// isHex reports whether s is all hex digits.
+func isHex(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
