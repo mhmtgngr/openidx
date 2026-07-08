@@ -2608,6 +2608,18 @@ func (s *Service) handleCallback(c *gin.Context) {
 		existingUsers, _, _ := s.identityService.ListUsers(c.Request.Context(), 0, 1, claims.Email)
 		if len(existingUsers) > 0 {
 			user = &existingUsers[0]
+			// Backfill the federated link for a user that predates the (idp_id, sub)
+			// binding (created before #364) so subsequent logins match by subject.
+			// Only fills when currently unset; best-effort, keyed by the matched PK.
+			if claims.Sub != "" {
+				if _, err := s.db.Pool.Exec(c.Request.Context(),
+					//orgscope:ignore keyed by globally-unique users.id (UUID PK) from the email match above
+					`UPDATE users SET idp_id = $1, external_user_id = $2 WHERE id = $3 AND external_user_id IS NULL`,
+					idp.ID, claims.Sub, user.ID); err != nil {
+					s.logger.Warn("Failed to backfill federated identity link for existing user",
+						zap.String("user_id", user.ID), zap.Error(err))
+				}
+			}
 		}
 	}
 
