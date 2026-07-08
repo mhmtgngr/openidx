@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-07-08
+
+### Security
+
+- **CodeQL critical + high remediation complete.** This release closes the backup-encryption weak-KDF
+  (#353) and caps a sweep that brought the repo to **0 open critical and 0 open high** CodeQL alerts —
+  via real fixes across v1.23.1–v1.23.5 (integer-overflow env parsing, Ziti management-API SSRF hardening,
+  OAuth logout/session JWT signature verification, audit report path-injection, hardware-token secret
+  encryption at rest) plus documented false-positive dismissals (HIBP SHA-1 k-anonymity, MySQL DDL,
+  trusted-config Ziti base URL, e2e-test regex/randomness, helm empty-password placeholders, dev-profiler
+  cert-check) and the structured-`zap`-field log-injection class.
+- **Backup encryption KDF → scrypt** (#353) — `internal/backup` derived its AES-256 key from a raw
+  `sha256(passphrase)`; it now uses `scrypt` (N=1<<15, r=8, p=1) over a random salt in a versioned,
+  magic-prefixed format, with a legacy `sha256` fallback so existing encrypted backups still decrypt.
+  Removed the dead `EncryptPassword` helper.
+
 ## [1.23.5] - 2026-07-08
 
 ### Fixed
