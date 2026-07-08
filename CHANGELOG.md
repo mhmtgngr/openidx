@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.4] - 2026-07-08
+
+### Security
+
+- **Go toolchain → go1.25.12** (#363) — the pinned `toolchain go1.25.11` forced builds onto a
+  `crypto/tls` affected by **GO-2026-5856**, failing the govulncheck gate and shipping the vulnerable
+  TLS stack in binaries. Bumped to go1.25.12 (govulncheck clean).
+- **SAML SLO session-cookie cleared with `Secure` in production** (#362) — `clearIdPSession` cleared
+  `openidx_session` with `Secure=false` unconditionally; now tied to `IsProduction()` (matching the
+  proxy session-cookie convention), so the deletion still clears over plain HTTP in dev while carrying
+  `Secure` in production. Clears `go/cookie-secure-not-set`.
+
+### Fixed
+
+- **Capture `Close` errors on writable files** (#361) — three writable-file writers
+  (session-recording append, append-only store, shell-completion install) deferred a bare `Close()`,
+  discarding the error; for a writable handle the final flush can surface only at `Close`, so this
+  silently dropped data. Each now propagates the `Close` error. Clears `go/unhandled-writable-file-close`.
+- **Bind JIT-provisioned users to the IdP subject** (#364) — the OIDC login handler captured the ID
+  token `sub` but discarded it, leaving `users.idp_id`/`external_user_id` unpopulated. It now persists
+  the federated link on JIT create (best-effort, RLS-scoped). Resolves the dropped-value
+  `go/useless-assignment-to-field` on `claims.Sub`.
+- **Drop dead `entry.Error` assignment in the request logger** (#365) — the access logger emits via
+  `logFields`, not by marshalling the entry, so the assignment was never read; the error is still
+  logged. Clears `go/useless-assignment-to-field`.
+
 ## [1.24.3] - 2026-07-08
 
 ### Fixed
