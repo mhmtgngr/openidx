@@ -2592,12 +2592,13 @@ func (s *Service) handleCallback(c *gin.Context) {
 	// 1. Prefer the stable federated identity (idp_id + sub): a returning user is
 	// matched by the IdP subject even if their email changed at the IdP, which
 	// also avoids creating a duplicate that would collide with the unique
-	// (idp_id, external_user_id) index. RLS-scoped via the pool acquire hook.
-	if claims.Sub != "" {
+	// (idp_id, external_user_id) index. Explicitly org-scoped (belt-and-braces
+	// with the RLS the pool acquire hook already applies).
+	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil && claims.Sub != "" {
 		var uid string
 		if err := s.db.Pool.QueryRow(c.Request.Context(),
-			`SELECT id FROM users WHERE idp_id = $1 AND external_user_id = $2 LIMIT 1`,
-			idp.ID, claims.Sub).Scan(&uid); err == nil && uid != "" {
+			`SELECT id FROM users WHERE org_id = $1 AND idp_id = $2 AND external_user_id = $3 LIMIT 1`,
+			org.ID, idp.ID, claims.Sub).Scan(&uid); err == nil && uid != "" {
 			user = &identity.User{ID: uid}
 		}
 	}
@@ -2631,6 +2632,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 		// RLS-scoped to the caller's org via the pool's acquire hook.
 		if claims.Sub != "" {
 			if _, err := s.db.Pool.Exec(c.Request.Context(),
+				//orgscope:ignore keyed by globally-unique users.id (UUID PK) just returned from CreateUser
 				`UPDATE users SET idp_id = $1, external_user_id = $2 WHERE id = $3`,
 				idp.ID, claims.Sub, user.ID); err != nil {
 				s.logger.Warn("Failed to persist federated identity link for JIT user",
