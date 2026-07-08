@@ -9,7 +9,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,7 +20,20 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/crypto/scrypt"
 )
+
+// backupKeyMagic marks the scrypt-derived backup ciphertext format (MAGIC || salt || nonce || sealed).
+// Backups written before this marker used a raw sha256(passphrase) key and are still decryptable
+// (legacy branch in decrypt). The 8-byte marker makes the two formats unambiguous.
+var backupKeyMagic = []byte("OIDXbk2\x00")
+
+const backupSaltLen = 16
+
+// deriveBackupKey derives a 32-byte AES-256 key from the passphrase using scrypt over salt.
+func deriveBackupKey(passphrase string, salt []byte) ([]byte, error) {
+	return scrypt.Key([]byte(passphrase), salt, 1<<15, 8, 1, 32)
+}
 
 // Backup represents a database backup with metadata
 type Backup struct {
@@ -554,42 +566,67 @@ func (m *Manager) decompress(data []byte) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-// encrypt encrypts data using AES-256-GCM
+// encrypt encrypts data using AES-256-GCM with a scrypt-derived key over a random salt.
+// Output format: backupKeyMagic || salt || nonce || sealed.
 func (m *Manager) encrypt(data []byte, passphrase string) ([]byte, error) {
-	// Derive key from passphrase
-	key := sha256.Sum256([]byte(passphrase))
-
-	block, err := aes.NewCipher(key[:])
+	salt := make([]byte, backupSaltLen)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, err
+	}
+	key, err := deriveBackupKey(passphrase, salt)
 	if err != nil {
 		return nil, err
 	}
 
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
 
-	// Generate random nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
 
-	// Encrypt and prepend nonce
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext, nil
+	// magic || salt || nonce || sealed
+	out := append([]byte{}, backupKeyMagic...)
+	out = append(out, salt...)
+	out = append(out, nonce...)
+	return gcm.Seal(out, nonce, data, nil), nil
 }
 
-// decrypt decrypts AES-256-GCM encrypted data
+// decrypt decrypts AES-256-GCM data. New backups (backupKeyMagic prefix) use a scrypt-derived key
+// over the embedded salt; legacy backups (no prefix) fall back to the old raw-sha256(passphrase) key
+// so existing encrypted backups remain decryptable.
 func (m *Manager) decrypt(data []byte, passphrase string) ([]byte, error) {
-	// Derive key from passphrase
-	key := sha256.Sum256([]byte(passphrase))
+	var key []byte
 
-	block, err := aes.NewCipher(key[:])
+	if bytes.HasPrefix(data, backupKeyMagic) {
+		body := data[len(backupKeyMagic):]
+		if len(body) < backupSaltLen {
+			return nil, fmt.Errorf("ciphertext too short")
+		}
+		salt := body[:backupSaltLen]
+		data = body[backupSaltLen:] // remaining: nonce || sealed
+		k, err := deriveBackupKey(passphrase, salt)
+		if err != nil {
+			return nil, err
+		}
+		key = k
+	} else {
+		// Legacy format (pre-scrypt): raw sha256(passphrase) key, no salt.
+		sum := sha256.Sum256([]byte(passphrase))
+		key = sum[:]
+	}
+
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -599,13 +636,11 @@ func (m *Manager) decrypt(data []byte, passphrase string) ([]byte, error) {
 	if len(data) < nonceSize {
 		return nil, fmt.Errorf("ciphertext too short")
 	}
-
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, err
 	}
-
 	return plaintext, nil
 }
 
@@ -704,22 +739,6 @@ func (m *Manager) GetSchedule() *ScheduleInfo {
 		Enabled: m.config.ScheduleEnabled,
 		Cron:    m.config.ScheduleCron,
 	}
-}
-
-// EncryptPassword encrypts a password for storage in config files
-func EncryptPassword(password string) (string, error) {
-	// Generate a random salt
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", err
-	}
-
-	// Derive key
-	key := sha256.Sum256(append(salt, []byte(password)...))
-
-	// Return base64 encoded salt:key
-	combined := append(salt, key[:]...)
-	return base64.StdEncoding.EncodeToString(combined), nil
 }
 
 // ParseDatabaseURL extracts database name and connection details from URL
