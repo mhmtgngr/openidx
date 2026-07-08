@@ -21,7 +21,10 @@ func TestReportFilePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := reportFilePath(tc.fileName)
+			got, err := reportFilePath(tc.fileName)
+			if err != nil {
+				t.Fatalf("reportFilePath(%q) unexpected error: %v", tc.fileName, err)
+			}
 			// Must resolve to a direct child of reportDir — no escape.
 			if dir := filepath.Dir(got); dir != reportDir {
 				t.Errorf("reportFilePath(%q) = %q; parent dir %q != %q (escaped reportDir)", tc.fileName, got, dir, reportDir)

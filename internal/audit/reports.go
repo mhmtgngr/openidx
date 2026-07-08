@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,10 +21,17 @@ import (
 const reportDir = "/tmp/openidx-reports"
 
 // reportFilePath joins a report file name under reportDir, constraining it to a single path
-// element via filepath.Base so a path-traversing report_type/format in the export request
-// cannot escape reportDir (go/path-injection).
-func reportFilePath(fileName string) string {
-	return filepath.Join(reportDir, filepath.Base(fileName))
+// element via filepath.Base and then verifying the cleaned result stays within reportDir, so a
+// path-traversing report_type/format in the export request cannot escape reportDir
+// (go/path-injection). The explicit prefix check is what makes the containment provable to
+// static analysis, not just to filepath.Base.
+func reportFilePath(fileName string) (string, error) {
+	p := filepath.Join(reportDir, filepath.Base(fileName))
+	clean := filepath.Clean(p)
+	if clean != reportDir && !strings.HasPrefix(clean, reportDir+string(os.PathSeparator)) {
+		return "", fmt.Errorf("report path %q escapes report directory", fileName)
+	}
+	return clean, nil
 }
 
 // ReportExport represents an exported report file
@@ -136,7 +144,12 @@ func (s *Service) generateReportAsync(export *ReportExport) {
 	}
 
 	fileName := fmt.Sprintf("%s_%s_%s.%s", export.ReportType, export.ID[:8], time.Now().Format("20060102150405"), export.Format)
-	filePath := reportFilePath(fileName)
+	filePath, pathErr := reportFilePath(fileName)
+	if pathErr != nil {
+		s.logger.Error("Rejected report export path", zap.Error(pathErr))
+		s.updateExportStatus(ctx, export.ID, "failed", "", 0, 0, pathErr.Error())
+		return
+	}
 
 	switch export.Format {
 	case "csv":
