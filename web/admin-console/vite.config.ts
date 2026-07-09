@@ -5,23 +5,11 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id: string) {
-          if (!id.includes('node_modules')) return
-          if (id.includes('swagger-ui')) return 'swagger'
-          if (id.includes('recharts') || id.includes('/d3-') || id.includes('victory')) return 'charts'
-          if (id.includes('react-router')) return 'router'
-          if (id.includes('@radix-ui')) return 'radix'
-          if (id.includes('lucide-react')) return 'icons'
-          if (id.includes('@tanstack')) return 'query'
-          if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) return 'react'
-          return 'vendor'
-        },
-      },
-    },
-  },
+  // NOTE: custom manualChunks removed — isolating react/react-dom into a separate
+  // chunk from its consumers (radix/router/query/charts/swagger/vendor) caused
+  // "Cannot read properties of undefined (reading 'useLayoutEffect')" at runtime
+  // when a consumer chunk initialised before the react chunk. Vite's default
+  // chunking orders React correctly. Reintroduce splitting only if browser-verified.
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
