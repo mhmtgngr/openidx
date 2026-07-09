@@ -81,7 +81,7 @@ export function VaultSecretsPage() {
   const [formMetaPairs, setFormMetaPairs] = useState<Array<{ key: string; val: string }>>([])
 
   // Queries
-  const { data: listData, isLoading } = useQuery({
+  const { data: listData, isLoading, error: listError } = useQuery({
     queryKey: ['vault-secrets'],
     queryFn: () => api.vault.listSecrets(),
   })
@@ -370,6 +370,12 @@ export function VaultSecretsPage() {
           {isLoading ? (
             <div className="flex justify-center py-12">
               <LoadingSpinner size="lg" />
+            </div>
+          ) : listError ? (
+            <div className="py-8 text-center text-sm text-red-600">
+              {(listError as { response?: { status?: number } })?.response?.status === 403
+                ? 'Vault admin access required'
+                : 'Failed to load vault secrets'}
             </div>
           ) : (
             <Table>

@@ -352,7 +352,11 @@ export function DashboardPage() {
             <CardDescription>Vault secrets, credential rotation, and brokered privileged sessions</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Link to="/pam-dashboard" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
+                <Shield className="h-4 w-4 text-purple-600" />
+                PAM Dashboard
+              </Link>
               <Link to="/vault-secrets" className="flex items-center gap-2 rounded-md border bg-background p-3 text-sm font-medium transition-shadow hover:shadow-md">
                 <KeyRound className="h-4 w-4 text-purple-600" />
                 Vault Secrets

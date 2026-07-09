@@ -306,6 +306,10 @@ func main() {
 		credSvc := credentials.NewService(db, vaultSvc, rotators, unifiedAudit, cfg.CredentialsRotationDefaultLength, log)
 		credSvc.RegisterRoutes(vaultGroup)
 		go credSvc.StartScheduler(ctx, redis.Client, time.Duration(cfg.CredentialsRotationSchedulerIntervalSeconds)*time.Second)
+
+		// PAM overview stats for the admin console's PAM dashboard — same
+		// admin-guarded group as the vault and rotation routes.
+		admin.RegisterPAMRoutes(vaultGroup, adminService)
 	}
 
 	// Create HTTP server

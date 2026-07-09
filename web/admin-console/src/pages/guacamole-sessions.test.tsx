@@ -291,7 +291,6 @@ describe('GuacamoleSessionsPage', () => {
 
   it('recorded, un-held row shows "Place hold" and calls POST /legal-hold with a reason', async () => {
     const user = userEvent.setup()
-    window.prompt = vi.fn().mockReturnValue('litigation case #1234')
     vi.mocked(api.post).mockResolvedValueOnce({})
 
     render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
@@ -301,6 +300,17 @@ describe('GuacamoleSessionsPage', () => {
 
     const placeBtns = await screen.findAllByRole('button', { name: /place hold/i })
     fireEvent.click(placeBtns[0]) // hist-row-1
+
+    // Reason dialog appears; confirm is disabled until a reason is entered
+    expect(await screen.findByText('Place legal hold?')).toBeInTheDocument()
+    const dialog = screen.getByRole('alertdialog')
+    const confirmBtn = within(dialog).getByRole('button', { name: /^place hold$/i })
+    expect(confirmBtn).toBeDisabled()
+
+    fireEvent.change(within(dialog).getByPlaceholderText(/litigation case/i), {
+      target: { value: 'litigation case #1234' },
+    })
+    fireEvent.click(confirmBtn)
 
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
@@ -312,7 +322,6 @@ describe('GuacamoleSessionsPage', () => {
 
   it('held row shows "Release hold" + an On hold badge and calls DELETE /legal-hold', async () => {
     const user = userEvent.setup()
-    window.prompt = vi.fn().mockReturnValue('case closed')
     vi.mocked(api.delete).mockResolvedValueOnce({})
 
     render(<GuacamoleSessionsPage />, { wrapper: createWrapper() })
@@ -324,6 +333,14 @@ describe('GuacamoleSessionsPage', () => {
 
     const releaseBtn = await screen.findByRole('button', { name: /release hold/i })
     fireEvent.click(releaseBtn)
+
+    // Reason dialog appears; the reason is optional for a release
+    expect(await screen.findByText('Release legal hold?')).toBeInTheDocument()
+    const dialog = screen.getByRole('alertdialog')
+    fireEvent.change(within(dialog).getByPlaceholderText(/litigation case/i), {
+      target: { value: 'case closed' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^release hold$/i }))
 
     await waitFor(() => {
       expect(api.delete).toHaveBeenCalledWith(

@@ -96,6 +96,8 @@ import {
   ReviewDetail,
   RotationPolicies,
   GuacamoleSessions,
+  PAMDashboard,
+  MyPrivilegedAccess,
 } from '@/pages'
 import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/lib/auth'
@@ -124,6 +126,19 @@ function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
+// AdminRoute wrapper for pages that must never render for non-admins.
+// The backend still enforces authorization (403) — this guard just keeps
+// admin-only consoles from mounting client-side for regular users.
+function AdminRoute({ children }: ProtectedRouteProps) {
+  const { hasRole } = useAuth()
+
+  if (!hasRole('admin')) {
+    return <Navigate to="/dashboard" replace />
   }
 
   return <>{children}</>
@@ -187,6 +202,7 @@ function App() {
         <Route path="profile" element={<UserProfile />} />
         <Route path="app-launcher" element={<AppLauncher />} />
         <Route path="my-access" element={<MyAccess />} />
+        <Route path="my-privileged-access" element={<MyPrivilegedAccess />} />
         <Route path="my-devices" element={<MyDevices />} />
         <Route path="trusted-browsers" element={<TrustedBrowsers />} />
         <Route path="access-requests" element={<AccessRequests />} />
@@ -271,9 +287,10 @@ function App() {
         <Route path="audit-archival" element={<AuditArchival />} />
 
         {/* Privileged Access - Admin Protected */}
-        <Route path="vault-secrets" element={<VaultSecrets />} />
-        <Route path="rotation-policies" element={<RotationPolicies />} />
-        <Route path="guacamole-sessions" element={<GuacamoleSessions />} />
+        <Route path="pam-dashboard" element={<AdminRoute><PAMDashboard /></AdminRoute>} />
+        <Route path="vault-secrets" element={<AdminRoute><VaultSecrets /></AdminRoute>} />
+        <Route path="rotation-policies" element={<AdminRoute><RotationPolicies /></AdminRoute>} />
+        <Route path="guacamole-sessions" element={<AdminRoute><GuacamoleSessions /></AdminRoute>} />
 
         {/* Developer - Admin Protected */}
         <Route path="api-explorer" element={<APIExplorer />} />

@@ -105,6 +105,7 @@ const navigationSections: NavSection[] = [
       { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
       { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
       { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
+      { name: 'Privileged Access', href: '/my-privileged-access', icon: KeyRound, adminOnly: false },
       { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
       { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, adminOnly: false },
       { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
@@ -225,6 +226,7 @@ const navigationSections: NavSection[] = [
     label: 'Privileged Access',
     adminOnly: true,
     items: [
+      { name: 'PAM Dashboard', href: '/pam-dashboard', icon: Gauge, adminOnly: true },
       { name: 'Vault Secrets', href: '/vault-secrets', icon: KeyRound, adminOnly: true },
       { name: 'Rotation Policies', href: '/rotation-policies', icon: RefreshCw, adminOnly: true },
       { name: 'Privileged Sessions', href: '/guacamole-sessions', icon: MonitorPlay, adminOnly: true },
