@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PAM finalization — end-user self-service** — non-admin users get a first-class PAM surface:
+  - `GET /api/v1/access/guacamole/my-connections` — org-scoped catalog of brokered Guacamole
+    connections with the PAM flags the launcher needs (approval required / recorded /
+    credential injected); never exposes the vault secret id or Guacamole-internal identifiers.
+  - `GET /api/v1/access/guacamole/my-session-requests` — the caller's own session requests
+    (previously only admins could list requests), joined with route info so an approved
+    request can be launched.
+  - New **My Privileged Access** console page (`/my-privileged-access`, in the user nav):
+    launch/request brokered remote sessions, track request status, and manage JIT credential
+    checkouts (one-shot retrieve + early return) in one place.
+- **PAM finalization — management dashboard** — new aggregated stats endpoint
+  `GET /api/v1/pam/overview` (admin-api, admin-guarded; explicit org predicates on top of
+  FORCE-RLS) covering vault inventory by type, rotation health (enabled/failing/overdue
+  policies, 30-day runs/failures), checkout activity (active leases, 30-day checkouts,
+  pending JIT credential requests), and privileged sessions (active, 30-day, pending
+  approvals, recordings on legal hold). New **PAM Dashboard** console page
+  (`/pam-dashboard`) renders it with health labels and manage links; linked from the
+  dashboard's Privileged Access card and the Privileged Access nav section.
+
+### Changed
+
+- **Admin PAM routes are now role-gated client-side** — `/pam-dashboard`, `/vault-secrets`,
+  `/rotation-policies`, and `/guacamole-sessions` no longer mount for non-admins (redirect
+  to the dashboard); the backend 403 remains the enforcement layer. Vault Secrets and
+  Privileged Sessions now render a friendly "admin access required" state on 403 (matching
+  Rotation Policies) instead of a generic failure.
+- **Legal-hold reasons via a proper dialog** — the Session History place/release legal-hold
+  flow uses an accessible reason dialog (reason required to place a hold) instead of
+  `window.prompt`.
+
 ## [1.24.11] - 2026-07-09
 
 ### Changed

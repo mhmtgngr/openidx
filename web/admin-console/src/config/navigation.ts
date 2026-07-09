@@ -124,6 +124,7 @@ export const navigation: NavDomainGroup[] = [
           { name: 'My Profile', href: '/profile', icon: User, minRole: 'user', keywords: ['account', 'password'] },
           { name: 'My Apps', href: '/app-launcher', icon: Rocket, minRole: 'user', keywords: ['launcher', 'portal'] },
           { name: 'My Access', href: '/my-access', icon: Eye, minRole: 'user', keywords: ['entitlements', 'permissions'] },
+          { name: 'My Privileged Access', href: '/my-privileged-access', icon: KeyRound, minRole: 'user', keywords: ['pam', 'my secrets', 'checkout', 'privileged'] },
           { name: 'My Devices', href: '/my-devices', icon: Smartphone, minRole: 'user', keywords: ['phone', 'enrollment'] },
           { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, minRole: 'user', keywords: ['remembered'] },
           { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, minRole: 'user', keywords: ['request access', 'approvals'] },
@@ -231,6 +232,7 @@ export const navigation: NavDomainGroup[] = [
       {
         label: '',
         items: [
+          { name: 'PAM Dashboard', href: '/pam-dashboard', icon: Gauge, minRole: 'admin', keywords: ['pam overview', 'privileged access', 'summary'] },
           { name: 'Vault Secrets', href: '/vault-secrets', icon: KeyRound, minRole: 'admin', keywords: ['pam', 'secrets', 'credentials', 'vault'] },
           { name: 'Rotation Policies', href: '/rotation-policies', icon: RefreshCw, minRole: 'admin', keywords: ['password rotation', 'rotate'] },
           { name: 'Privileged Sessions', href: '/guacamole-sessions', icon: MonitorPlay, minRole: 'operator', keywords: ['rdp', 'ssh', 'vnc', 'session recording', 'guacamole'] },
