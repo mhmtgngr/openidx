@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.9] - 2026-07-09
+
+### Fixed
+
+- **SSO audit events now counted in compliance reports & statistics** (#392) — the OIDC SSO audit
+  events added in v1.24.7/v1.24.8 used `event_type=sso.login` (with `category=authentication`),
+  backwards from the platform convention where authentication events use `event_type=authentication`
+  and the compliance/statistics queries filter on it. As a result SSO activity was excluded from
+  compliance reports and failed-auth stats. Normalized all OIDC SSO events to
+  `event_type=authentication`, `category=sso` (the `sso.*` descriptor is retained as the `action`,
+  e.g. `sso_login`, `sso_user_provisioned`), so SSO logins/failures are counted like every other
+  authentication event.
+
 ## [1.24.8] - 2026-07-09
 
 ### Added
