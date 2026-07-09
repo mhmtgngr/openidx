@@ -1,6 +1,6 @@
 {
   "name": "openidx-admin-console",
-  "version": "1.24.11",
+  "version": "1.24.12",
   "description": "OpenIDX Admin Console - Zero Trust Access Platform Administration",
   "type": "module",
   "scripts": {
