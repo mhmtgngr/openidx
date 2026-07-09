@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.10] - 2026-07-09
+
+### Changed
+
+- **Frontend build/type tooling majors** — `@types/node` 22→25, `globals` 15→17, `@vitejs/plugin-react`
+  4→5 (from the flagged dependabot backlog). `tsc`+`vite build` clean, `eslint` 0 errors; admin-console
+  dist rebuilt + deployed. `eslint` 9→10 is **deferred** — the eslint-10 ecosystem isn't ready
+  (`eslint-plugin-react-hooks` peer-requires eslint≤9; eslint 10 drops bundled `@eslint/js`).
+
 ## [1.24.9] - 2026-07-09
 
 ### Fixed
