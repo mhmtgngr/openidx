@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.11] - 2026-07-09
+
+### Changed
+
+- **tailwind-merge 2→3** (#54, flagged dependabot runtime major) — used only via the default
+  `twMerge(clsx(...))` `cn()` helper, so v3's custom-config breaking changes don't apply. Validated by
+  `vite build`, eslint, and 730 vitest tests; admin-console dist rebuilt + deployed.
+
 ## [1.24.10] - 2026-07-09
 
 ### Changed
