@@ -103,14 +103,14 @@ export function ApiExplorerPage() {
   // Queries
   const { data: endpoints = [], isLoading } = useQuery({
     queryKey: ['api-endpoints'],
-    queryFn: () => api.get<ApiEndpoint[]>('/api/v1/admin/developer/api-endpoints'),
+    queryFn: () => api.get<ApiEndpoint[]>('/api/v1/developer/api-catalog'),
   })
 
   const { data: codeSamples } = useQuery({
     queryKey: ['code-samples', selectedEndpoint?.path, selectedEndpoint?.method],
     queryFn: () =>
       api.get<CodeSamples>(
-        `/api/v1/admin/developer/code-samples?endpoint=${encodeURIComponent(selectedEndpoint!.path)}&method=${selectedEndpoint!.method}`
+        `/api/v1/developer/code-samples?endpoint=${encodeURIComponent(selectedEndpoint!.path)}&method=${selectedEndpoint!.method}`
       ),
     enabled: !!selectedEndpoint,
   })

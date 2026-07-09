@@ -68,13 +68,13 @@ export function BulkOperationsPage() {
 
   const { data: opsData, isLoading } = useQuery({
     queryKey: ['bulk-operations'],
-    queryFn: () => api.get<{ data: BulkOperation[] }>('/api/v1/admin/bulk-operations'),
+    queryFn: () => api.get<{ data: BulkOperation[] }>('/api/v1/bulk-operations'),
     refetchInterval: 5000,
   })
 
   const { data: detailData } = useQuery({
     queryKey: ['bulk-operation-detail', selectedOpId],
-    queryFn: () => api.get<{ operation: BulkOperation; items: BulkOperationItem[] }>(`/api/v1/admin/bulk-operations/${selectedOpId}`),
+    queryFn: () => api.get<{ operation: BulkOperation; items: BulkOperationItem[] }>(`/api/v1/bulk-operations/${selectedOpId}`),
     enabled: !!selectedOpId,
     refetchInterval: 3000,
   })
@@ -96,7 +96,7 @@ export function BulkOperationsPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: { type: string; user_ids: string[]; parameters: Record<string, string> }) =>
-      api.post('/api/v1/admin/bulk-operations', data),
+      api.post('/api/v1/bulk-operations', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bulk-operations'] })
       setSelectedType('')
@@ -117,7 +117,7 @@ export function BulkOperationsPage() {
   }
 
   const handleExportCSV = async () => {
-    const data = await api.get<string>('/api/v1/admin/bulk-operations/export/users')
+    const data = await api.get<string>('/api/v1/bulk-operations/export/users')
     const blob = new Blob([data], { type: 'text/csv' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')

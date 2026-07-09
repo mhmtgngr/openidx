@@ -74,7 +74,7 @@ export function ErrorCatalogPage() {
 
   const { data: errors = [], isLoading } = useQuery({
     queryKey: ['error-catalog'],
-    queryFn: () => api.get<ErrorEntry[]>('/api/v1/admin/error-catalog'),
+    queryFn: () => api.get<ErrorEntry[]>('/api/v1/error-catalog'),
   })
 
   // Filter errors

@@ -155,7 +155,7 @@ export function OAuthPlaygroundPage() {
   const createSessionMutation = useMutation({
     mutationFn: () =>
       api.post<PlaygroundSession>(
-        '/api/v1/admin/developer/playground/session'
+        '/api/v1/developer/playground/sessions'
       ),
     onSuccess: (data) => {
       setSession(data)
@@ -177,7 +177,7 @@ export function OAuthPlaygroundPage() {
   const exchangeTokenMutation = useMutation({
     mutationFn: () =>
       api.post<TokenResponse>(
-        '/api/v1/admin/developer/playground/execute',
+        '/api/v1/developer/playground/execute',
         {
           session_id: session!.session_id,
           action: 'exchange_token',
@@ -203,7 +203,7 @@ export function OAuthPlaygroundPage() {
   const userInfoMutation = useMutation({
     mutationFn: () =>
       api.post<UserInfoResponse>(
-        '/api/v1/admin/developer/playground/execute',
+        '/api/v1/developer/playground/execute',
         {
           session_id: session!.session_id,
           action: 'userinfo',

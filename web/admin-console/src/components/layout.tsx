@@ -1,78 +1,29 @@
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard,
-  Users,
-  Users2,
-  AppWindow,
-  ClipboardCheck,
-  FileText,
   Settings,
   LogOut,
   Shield,
   Menu,
-  Scale,
-  ShieldCheck,
-  ClipboardList,
-  Key as KeyIcon,
   User,
-  Workflow,
   Network,
-  FolderSync,
-  Smartphone,
-  Bell,
-  GitPullRequest,
-  ShieldAlert,
-  Monitor,
-  Building2,
-  BarChart3,
-  Rocket,
-  Eye,
-  Fingerprint,
-  KeyRound,
-  ShieldOff,
-  Link2,
-  Activity,
+  ChevronDown,
   Search,
-  Layers,
-  Globe,
-  FileKey,
-  Upload,
-  BookOpen,
-  Target,
-  Package,
-  Gauge,
-  UserCheck,
-  Filter,
-  Code2,
-  Play,
-  HeartPulse,
-  AlertTriangle,
-  ScrollText,
-  TrendingUp,
-  PieChart,
-  Fingerprint as FingerprintIcon,
-  Bot,
-  Lightbulb,
-  Mail,
-  UserMinus,
-  ClipboardSignature,
-  ArchiveRestore,
-  FileCheck,
-  Send,
-  Video,
-  Lock,
-  RefreshCw,
-  MonitorPlay,
+  X,
 } from 'lucide-react'
 import { useState, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../lib/auth'
 import { api } from '../lib/api'
+import { useAppStore } from '../lib/store'
+import { roleLevel, ROLE_LEVELS } from '../lib/roles'
+import { filterNavigation, type ViewMode } from '../config/navigation'
 import { NotificationBell } from './notification-bell'
+import { TenantSelector } from './tenant-selector'
 import { ErrorBoundary } from './error-boundary'
 import { LoadingSpinner } from './ui/loading-spinner'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
+import { Input } from './ui/input'
 import { Avatar, AvatarFallback } from './ui/avatar'
 import {
   DropdownMenu,
@@ -82,181 +33,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu'
-
-interface NavItem {
-  name: string
-  href: string
-  icon: React.ComponentType<{ className?: string }>
-  adminOnly: boolean
-}
-
-interface NavSection {
-  label: string
-  adminOnly: boolean
-  items: NavItem[]
-}
-
-const navigationSections: NavSection[] = [
-  {
-    label: '',
-    adminOnly: false,
-    items: [
-      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, adminOnly: false },
-      { name: 'My Profile', href: '/profile', icon: User, adminOnly: false },
-      { name: 'My Apps', href: '/app-launcher', icon: Rocket, adminOnly: false },
-      { name: 'My Access', href: '/my-access', icon: Eye, adminOnly: false },
-      { name: 'Privileged Access', href: '/my-privileged-access', icon: KeyRound, adminOnly: false },
-      { name: 'My Devices', href: '/my-devices', icon: Smartphone, adminOnly: false },
-      { name: 'Trusted Browsers', href: '/trusted-browsers', icon: Monitor, adminOnly: false },
-      { name: 'Access Requests', href: '/access-requests', icon: GitPullRequest, adminOnly: false },
-      { name: 'Notifications', href: '/notification-center', icon: Bell, adminOnly: false },
-    ],
-  },
-  {
-    label: 'Identity',
-    adminOnly: true,
-    items: [
-      { name: 'Users', href: '/users', icon: Users, adminOnly: true },
-      { name: 'Groups', href: '/groups', icon: Users2, adminOnly: true },
-      { name: 'Roles', href: '/roles', icon: ShieldCheck, adminOnly: true },
-      { name: 'Directories', href: '/directories', icon: FolderSync, adminOnly: true },
-      { name: 'Service Accounts', href: '/service-accounts', icon: KeyIcon, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Applications',
-    adminOnly: true,
-    items: [
-      { name: 'Applications', href: '/applications', icon: AppWindow, adminOnly: true },
-      { name: 'Identity Providers', href: '/identity-providers', icon: KeyIcon, adminOnly: true },
-      { name: 'Provisioning Rules', href: '/provisioning-rules', icon: Workflow, adminOnly: true },
-      { name: 'Lifecycle Workflows', href: '/lifecycle-workflows', icon: Workflow, adminOnly: true },
-      { name: 'Social Providers', href: '/social-providers', icon: Globe, adminOnly: true },
-      { name: 'Federation', href: '/federation-config', icon: Link2, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Network & Access',
-    adminOnly: true,
-    items: [
-      { name: 'Zero Trust Access', href: '/zero-trust', icon: Shield, adminOnly: true },
-      { name: 'Proxy Routes', href: '/proxy-routes', icon: Network, adminOnly: true },
-      { name: 'Network Setup', href: '/ziti-setup', icon: Network, adminOnly: true },
-      { name: 'Ziti Network', href: '/ziti-network', icon: Shield, adminOnly: true },
-      { name: 'Ziti Discovery', href: '/ziti-discovery', icon: Search, adminOnly: true },
-      { name: 'BrowZer', href: '/browzer-management', icon: Globe, adminOnly: true },
-      { name: 'App Publish', href: '/app-publish', icon: Upload, adminOnly: true },
-      { name: 'Certificates', href: '/certificates', icon: FileKey, adminOnly: true },
-      { name: 'Devices', href: '/devices', icon: Smartphone, adminOnly: true },
-      { name: 'Agent Fleet', href: '/agent-fleet', icon: Smartphone, adminOnly: true },
-      { name: 'Kiosk Policies', href: '/kiosk-policies', icon: Lock, adminOnly: true },
-      { name: 'Remote Support', href: '/remote-support', icon: Video, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Governance',
-    adminOnly: true,
-    items: [
-      { name: 'Policies', href: '/policies', icon: Scale, adminOnly: true },
-      { name: 'Approval Policies', href: '/approval-policies', icon: ShieldCheck, adminOnly: true },
-      { name: 'Access Reviews', href: '/access-reviews', icon: ClipboardCheck, adminOnly: true },
-      { name: 'Cert Campaigns', href: '/certification-campaigns', icon: Target, adminOnly: true },
-      { name: 'Entitlements', href: '/entitlements', icon: Package, adminOnly: true },
-      { name: 'ABAC Policies', href: '/abac-policies', icon: Filter, adminOnly: true },
-      { name: 'Sessions', href: '/sessions', icon: Monitor, adminOnly: true },
-      { name: 'Security Alerts', href: '/security-alerts', icon: ShieldAlert, adminOnly: true },
-      { name: 'Privacy Dashboard', href: '/privacy-dashboard', icon: Shield, adminOnly: true },
-      { name: 'Consent Mgmt', href: '/consent-management', icon: FileCheck, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Security & MFA',
-    adminOnly: true,
-    items: [
-      { name: 'MFA Management', href: '/mfa-management', icon: Shield, adminOnly: true },
-      { name: 'Risk Policies', href: '/risk-policies', icon: Activity, adminOnly: true },
-      { name: 'Login Anomalies', href: '/login-anomalies', icon: AlertTriangle, adminOnly: true },
-      { name: 'Hardware Tokens', href: '/hardware-tokens', icon: KeyRound, adminOnly: true },
-      { name: 'Device Trust Approval', href: '/device-trust-approval', icon: Fingerprint, adminOnly: true },
-      { name: 'MFA Bypass Codes', href: '/mfa-bypass-codes', icon: ShieldOff, adminOnly: true },
-      { name: 'Passwordless', href: '/passwordless-settings', icon: Link2, adminOnly: true },
-      { name: 'Security Keys', href: '/security-keys', icon: KeyRound, adminOnly: true },
-      { name: 'Push Devices', href: '/push-devices', icon: Bell, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Audit & Reports',
-    adminOnly: true,
-    items: [
-      { name: 'Audit Logs', href: '/audit-logs', icon: FileText, adminOnly: true },
-      { name: 'Unified Audit', href: '/unified-audit', icon: Layers, adminOnly: true },
-      { name: 'Admin Audit Log', href: '/admin-audit-log', icon: ScrollText, adminOnly: true },
-      { name: 'Login Analytics', href: '/login-analytics', icon: Activity, adminOnly: true },
-      { name: 'Auth Analytics', href: '/auth-analytics', icon: TrendingUp, adminOnly: true },
-      { name: 'Usage Analytics', href: '/usage-analytics', icon: PieChart, adminOnly: true },
-      { name: 'Risk Dashboard', href: '/risk-dashboard', icon: AlertTriangle, adminOnly: true },
-      { name: 'Compliance', href: '/compliance-reports', icon: ClipboardList, adminOnly: true },
-      { name: 'Compliance Posture', href: '/compliance-dashboard', icon: Gauge, adminOnly: true },
-      { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
-    ],
-  },
-  {
-    label: 'AI & Intelligence',
-    adminOnly: true,
-    items: [
-      { name: 'AI Agents', href: '/ai-agents', icon: Bot, adminOnly: true },
-      { name: 'Security Posture', href: '/ispm', icon: ShieldCheck, adminOnly: true },
-      { name: 'Recommendations', href: '/ai-recommendations', icon: Lightbulb, adminOnly: true },
-      { name: 'Predictions', href: '/predictive-analytics', icon: TrendingUp, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Enterprise',
-    adminOnly: true,
-    items: [
-      { name: 'SAML Providers', href: '/saml-service-providers', icon: FingerprintIcon, adminOnly: true },
-      { name: 'Bulk Operations', href: '/bulk-operations', icon: Layers, adminOnly: true },
-      { name: 'Email Templates', href: '/email-templates', icon: Mail, adminOnly: true },
-      { name: 'Lifecycle Policies', href: '/lifecycle-policies', icon: UserMinus, adminOnly: true },
-      { name: 'Attestation', href: '/attestation-campaigns', icon: ClipboardSignature, adminOnly: true },
-      { name: 'Audit Archival', href: '/audit-archival', icon: ArchiveRestore, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Privileged Access',
-    adminOnly: true,
-    items: [
-      { name: 'PAM Dashboard', href: '/pam-dashboard', icon: Gauge, adminOnly: true },
-      { name: 'Vault Secrets', href: '/vault-secrets', icon: KeyRound, adminOnly: true },
-      { name: 'Rotation Policies', href: '/rotation-policies', icon: RefreshCw, adminOnly: true },
-      { name: 'Privileged Sessions', href: '/guacamole-sessions', icon: MonitorPlay, adminOnly: true },
-    ],
-  },
-  {
-    label: 'Developer',
-    adminOnly: true,
-    items: [
-      { name: 'API Explorer', href: '/api-explorer', icon: Code2, adminOnly: true },
-      { name: 'OAuth Playground', href: '/oauth-playground', icon: Play, adminOnly: true },
-      { name: 'Developer Settings', href: '/developer-settings', icon: Settings, adminOnly: true },
-      { name: 'Error Catalog', href: '/error-catalog', icon: AlertTriangle, adminOnly: true },
-    ],
-  },
-  {
-    label: 'System',
-    adminOnly: true,
-    items: [
-      { name: 'System Health', href: '/system-health', icon: HeartPulse, adminOnly: true },
-      { name: 'Organizations', href: '/organizations', icon: Building2, adminOnly: true },
-      { name: 'Delegations', href: '/delegations', icon: UserCheck, adminOnly: true },
-      { name: 'Webhooks', href: '/webhooks', icon: Bell, adminOnly: true },
-      { name: 'API Docs', href: '/api-docs', icon: BookOpen, adminOnly: true },
-      { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
-      { name: 'Tenant Mgmt', href: '/tenant-management', icon: Building2, adminOnly: true },
-      { name: 'Notification Mgmt', href: '/notification-admin', icon: Send, adminOnly: true },
-    ],
-  },
-]
 
 function ZitiStatusIndicator() {
   const navigate = useNavigate()
@@ -295,11 +71,62 @@ function ZitiStatusIndicator() {
   )
 }
 
+// Console lenses: Administration is the full console, Management the operator
+// slice, Reporting the auditor slice. Options above the user's level are
+// hidden; users below operator get no switcher at all.
+const VIEW_OPTIONS: { mode: ViewMode; label: string; minLevel: number }[] = [
+  { mode: 'admin', label: 'Admin', minLevel: ROLE_LEVELS.admin },
+  { mode: 'management', label: 'Manage', minLevel: ROLE_LEVELS.operator },
+  { mode: 'reporting', label: 'Report', minLevel: ROLE_LEVELS.auditor },
+]
+
+function ViewModeSwitcher({ level }: { level: number }) {
+  const { viewMode, setViewMode } = useAppStore()
+  const options = VIEW_OPTIONS.filter((o) => level >= o.minLevel)
+  if (level < ROLE_LEVELS.operator) return null
+
+  return (
+    <div
+      className="flex rounded-lg border bg-gray-50 p-0.5"
+      role="group"
+      aria-label="Console view"
+    >
+      {options.map((option) => (
+        <button
+          key={option.mode}
+          onClick={() => setViewMode(option.mode)}
+          className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+            viewMode === option.mode
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-gray-500 hover:text-gray-800'
+          }`}
+          aria-pressed={viewMode === option.mode}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function Layout() {
   const { user, logout, hasRole } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [query, setQuery] = useState('')
+  const { viewMode, collapsedDomains, toggleDomain } = useAppStore()
   const navigate = useNavigate()
   const location = useLocation()
+
+  const roles = user?.roles ?? []
+  const level = roleLevel(roles)
+  // Only operator+ can narrow the console; everyone else gets their natural scope.
+  const effectiveViewMode: ViewMode = level >= ROLE_LEVELS.operator ? viewMode : 'admin'
+  const searching = query.trim().length > 0
+
+  const groups = filterNavigation({ roles, viewMode: effectiveViewMode, query })
+
+  const isPlatformAdmin = level >= ROLE_LEVELS.super_admin || hasRole('super_admin')
+  const isAdmin = level >= ROLE_LEVELS.admin
 
   const initials = user?.name
     ?.split(' ')
@@ -327,47 +154,93 @@ export function Layout() {
             variant="ghost"
             size="icon"
             onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle sidebar"
           >
             <Menu className="h-5 w-5" />
           </Button>
         </div>
 
+        {/* View switcher + quick search */}
+        {sidebarOpen && (
+          <div className="space-y-2 px-4 pt-3">
+            <ViewModeSwitcher level={level} />
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
+              <Input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search menu..."
+                aria-label="Search menu"
+                className="h-9 pl-8 pr-8 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searching && (
+                <button
+                  onClick={() => setQuery('')}
+                  className="absolute right-2 top-2.5 text-gray-400 hover:text-gray-600"
+                  aria-label="Clear menu search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-          {navigationSections
-            .filter((section) => !section.adminOnly || hasRole('admin'))
-            .map((section, sIdx) => {
-              const visibleItems = section.items.filter(
-                (item) => !item.adminOnly || hasRole('admin')
-              )
-              if (visibleItems.length === 0) return null
-              return (
-                <div key={sIdx}>
-                  {section.label && sidebarOpen && (
-                    <div className="px-3 pt-4 pb-1 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                      {section.label}
+          {groups.length === 0 && sidebarOpen && (
+            <p className="px-3 py-2 text-sm text-gray-400">No menu items match.</p>
+          )}
+          {groups.map((group, gIdx) => {
+            // While searching, everything relevant stays visible.
+            const collapsed = !searching && collapsedDomains.includes(group.id)
+            return (
+              <div key={group.id}>
+                {group.label && sidebarOpen && (
+                  <button
+                    onClick={() => toggleDomain(group.id)}
+                    className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                    aria-expanded={!collapsed}
+                  >
+                    <group.icon className="h-3.5 w-3.5" />
+                    <span className="flex-1 text-left">{group.label}</span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+                    />
+                  </button>
+                )}
+                {!sidebarOpen && gIdx > 0 && <div className="my-2 border-t" />}
+                {(!collapsed || !sidebarOpen) &&
+                  group.sections.map((section, sIdx) => (
+                    <div key={`${group.id}-${sIdx}`}>
+                      {section.label && sidebarOpen && (
+                        <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-gray-400">
+                          {section.label}
+                        </div>
+                      )}
+                      {section.items.map((item) => (
+                        <NavLink
+                          key={item.href}
+                          to={item.href}
+                          title={sidebarOpen ? undefined : item.name}
+                          className={({ isActive }) =>
+                            `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                              isActive
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'text-gray-600 hover:bg-gray-100'
+                            }`
+                          }
+                        >
+                          <item.icon className="h-5 w-5 flex-shrink-0" />
+                          {sidebarOpen && <span className="text-sm">{item.name}</span>}
+                        </NavLink>
+                      ))}
                     </div>
-                  )}
-                  {!section.label && sIdx > 0 && <div className="my-2 border-t" />}
-                  {visibleItems.map((item) => (
-                    <NavLink
-                      key={item.name}
-                      to={item.href}
-                      className={({ isActive }) =>
-                        `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                          isActive
-                            ? 'bg-blue-50 text-blue-700'
-                            : 'text-gray-600 hover:bg-gray-100'
-                        }`
-                      }
-                    >
-                      <item.icon className="h-5 w-5 flex-shrink-0" />
-                      {sidebarOpen && <span className="text-sm">{item.name}</span>}
-                    </NavLink>
                   ))}
-                </div>
-              )
-            })}
+              </div>
+            )
+          })}
         </nav>
 
         {/* User menu */}
@@ -403,7 +276,7 @@ export function Layout() {
                 <User className="mr-2 h-4 w-4" />
                 My Profile
               </DropdownMenuItem>
-              {hasRole('admin') && (
+              {isAdmin && (
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
@@ -421,9 +294,10 @@ export function Layout() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar with status indicators and notification bell */}
+        {/* Top bar with tenant selector, status indicators and notification bell */}
         <header className="h-16 border-b bg-white flex items-center justify-end px-8 gap-4">
-          {hasRole('admin') && <ZitiStatusIndicator />}
+          {isPlatformAdmin && <TenantSelector />}
+          {isAdmin && <ZitiStatusIndicator />}
           <NotificationBell />
         </header>
         <main className="flex-1 overflow-auto">

@@ -109,7 +109,7 @@ export function PrivacyDashboardPage() {
 
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['privacy-dashboard'],
-    queryFn: () => api.get<PrivacyDashboardData>('/api/v1/admin/privacy/dashboard'),
+    queryFn: () => api.get<PrivacyDashboardData>('/api/v1/privacy/dashboard'),
     refetchInterval: 60000,
   })
 

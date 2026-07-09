@@ -20,6 +20,7 @@ import {
   PrivacyDashboard,
   ConsentManagement,
   AuditLogs,
+  AuditDashboard,
   UnifiedAudit,
   AdminAuditLog,
   LoginAnalytics,
@@ -262,6 +263,7 @@ function App() {
 
         {/* Audit & Reports - Admin Protected */}
         <Route path="audit-logs" element={<AuditLogs />} />
+        <Route path="audit/dashboard" element={<AuditDashboard />} />
         <Route path="unified-audit" element={<UnifiedAudit />} />
         <Route path="admin-audit-log" element={<AdminAuditLog />} />
         <Route path="login-analytics" element={<LoginAnalytics />} />

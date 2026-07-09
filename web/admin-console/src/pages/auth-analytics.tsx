@@ -58,7 +58,7 @@ export function AuthAnalyticsPage() {
     queryKey: ['auth-analytics', period],
     queryFn: () =>
       api.get<{ dashboard: AuthDashboard }>(
-        `/api/v1/admin/analytics/auth-dashboard?period=${period}`
+        `/api/v1/analytics/auth-dashboard?period=${period}`
       ),
   })
 

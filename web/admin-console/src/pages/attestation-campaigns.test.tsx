@@ -59,7 +59,7 @@ const campaignB = {
 }
 
 function routeGet(url: string) {
-  if (url.includes('/admin/attestation-campaigns') && !url.includes('/items') && !url.includes('/progress')) {
+  if (url.includes('/attestation-campaigns') && !url.includes('/items') && !url.includes('/progress')) {
     return Promise.resolve({ data: [campaignA, campaignB] })
   }
   if (url.includes('/items')) return Promise.resolve({ data: [] })

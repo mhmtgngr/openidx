@@ -193,7 +193,7 @@ test.describe('Login Anomalies Page', () => {
 
 test.describe('Notification Admin Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/admin/notifications/routing-rules*', async (route) => {
+    await page.route('**/api/v1/notifications/routing-rules*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -214,7 +214,7 @@ test.describe('Notification Admin Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/notifications/broadcasts*', async (route) => {
+    await page.route('**/api/v1/notifications/broadcasts*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -240,7 +240,7 @@ test.describe('Notification Admin Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/notifications/stats*', async (route) => {
+    await page.route('**/api/v1/notifications/stats*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -353,7 +353,7 @@ test.describe('Notification Center Page', () => {
 
 test.describe('Tenant Management Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/admin/organizations*', async (route) => {
+    await page.route('**/api/v1/organizations*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -366,7 +366,7 @@ test.describe('Tenant Management Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/tenants/*/branding*', async (route) => {
+    await page.route('**/api/v1/tenants/*/branding*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -387,7 +387,7 @@ test.describe('Tenant Management Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/tenants/*/settings*', async (route) => {
+    await page.route('**/api/v1/tenants/*/settings*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -399,7 +399,7 @@ test.describe('Tenant Management Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/tenants/*/domains*', async (route) => {
+    await page.route('**/api/v1/tenants/*/domains*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -439,7 +439,7 @@ test.describe('Tenant Management Page', () => {
 
 test.describe('Privacy Dashboard Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/admin/privacy/dashboard*', async (route) => {
+    await page.route('**/api/v1/privacy/dashboard*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -494,7 +494,7 @@ test.describe('Privacy Dashboard Page', () => {
 
 test.describe('Consent Management Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/admin/privacy/consents*', async (route) => {
+    await page.route('**/api/v1/privacy/consents*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -515,7 +515,7 @@ test.describe('Consent Management Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/privacy/dsars*', async (route) => {
+    await page.route('**/api/v1/privacy/dsars*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -537,7 +537,7 @@ test.describe('Consent Management Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/privacy/retention*', async (route) => {
+    await page.route('**/api/v1/privacy/retention*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -557,7 +557,7 @@ test.describe('Consent Management Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/privacy/assessments*', async (route) => {
+    await page.route('**/api/v1/privacy/assessments*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -601,7 +601,7 @@ test.describe('Consent Management Page', () => {
 
 test.describe('Federation Config Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/admin/federation/rules*', async (route) => {
+    await page.route('**/api/v1/federation/rules*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -633,7 +633,7 @@ test.describe('Federation Config Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/applications*', async (route) => {
+    await page.route('**/api/v1/applications*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -646,7 +646,7 @@ test.describe('Federation Config Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/users/*/identity-links*', async (route) => {
+    await page.route('**/api/v1/users/*/identity-links*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -654,7 +654,7 @@ test.describe('Federation Config Page', () => {
       });
     });
 
-    await page.route('**/api/v1/admin/applications/*/claims*', async (route) => {
+    await page.route('**/api/v1/applications/*/claims*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -683,7 +683,7 @@ test.describe('Federation Config Page', () => {
 
 test.describe('Social Providers Page', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/v1/admin/social-providers*', async (route) => {
+    await page.route('**/api/v1/social-providers*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -740,7 +740,7 @@ test.describe('Social Providers Page', () => {
   });
 
   test('should show empty state when no providers', async ({ page }) => {
-    await page.route('**/api/v1/admin/social-providers*', async (route) => {
+    await page.route('**/api/v1/social-providers*', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

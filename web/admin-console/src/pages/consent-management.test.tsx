@@ -65,10 +65,10 @@ const assessment = {
 }
 
 function routeGet(url: string) {
-  if (url.includes('/admin/privacy/consents')) return Promise.resolve({ data: [consent] })
-  if (url.includes('/admin/privacy/dsars')) return Promise.resolve({ data: [dsar] })
-  if (url.includes('/admin/privacy/retention')) return Promise.resolve({ data: [retentionPolicy] })
-  if (url.includes('/admin/privacy/assessments')) return Promise.resolve({ data: [assessment] })
+  if (url.includes('/privacy/consents')) return Promise.resolve({ data: [consent] })
+  if (url.includes('/privacy/dsars')) return Promise.resolve({ data: [dsar] })
+  if (url.includes('/privacy/retention')) return Promise.resolve({ data: [retentionPolicy] })
+  if (url.includes('/privacy/assessments')) return Promise.resolve({ data: [assessment] })
   return Promise.resolve({ data: [] })
 }
 

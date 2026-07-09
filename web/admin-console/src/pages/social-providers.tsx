@@ -103,7 +103,7 @@ export function SocialProvidersPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['social-providers'],
     queryFn: () =>
-      api.get<{ data: SocialProvider[] }>('/api/v1/admin/social-providers'),
+      api.get<{ data: SocialProvider[] }>('/api/v1/social-providers'),
   })
 
   const providers = data?.data || []
@@ -117,7 +117,7 @@ export function SocialProvidersPage() {
           .map((d) => d.trim())
           .filter(Boolean),
       }
-      return api.post('/api/v1/admin/social-providers', payload)
+      return api.post('/api/v1/social-providers', payload)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['social-providers'] })
@@ -139,7 +139,7 @@ export function SocialProvidersPage() {
           .map((d) => d.trim())
           .filter(Boolean),
       }
-      return api.put(`/api/v1/admin/social-providers/${id}`, payload)
+      return api.put(`/api/v1/social-providers/${id}`, payload)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['social-providers'] })
@@ -155,7 +155,7 @@ export function SocialProvidersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/v1/admin/social-providers/${id}`),
+      api.delete(`/api/v1/social-providers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['social-providers'] })
       setDeleteTarget(null)

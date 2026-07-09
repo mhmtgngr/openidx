@@ -200,7 +200,7 @@ export function AdminAuditLogPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['admin-audit-log', queryParams],
     queryFn: () =>
-      api.get<AuditResponse>(`/api/v1/admin/admin-audit?${queryParams}`),
+      api.get<AuditResponse>(`/api/v1/audit-log?${queryParams}`),
   })
 
   const entries = data?.items || []

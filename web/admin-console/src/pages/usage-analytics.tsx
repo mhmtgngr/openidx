@@ -75,18 +75,18 @@ function methodBadge(method: string) {
 export function UsageAnalyticsPage() {
   const { data: usageData, isLoading: usageLoading } = useQuery<{ usage: UsageData }>({
     queryKey: ['usage-analytics'],
-    queryFn: () => api.get<{ usage: UsageData }>('/api/v1/admin/analytics/usage'),
+    queryFn: () => api.get<{ usage: UsageData }>('/api/v1/analytics/usage'),
   })
 
   const { data: adoptionData, isLoading: adoptionLoading } = useQuery<{ adoption: FeatureAdoption }>({
     queryKey: ['feature-adoption'],
     queryFn: () =>
-      api.get<{ adoption: FeatureAdoption }>('/api/v1/admin/analytics/feature-adoption'),
+      api.get<{ adoption: FeatureAdoption }>('/api/v1/analytics/feature-adoption'),
   })
 
   const { data: apiData, isLoading: apiLoading } = useQuery<{ api_usage: APIUsage }>({
     queryKey: ['api-usage'],
-    queryFn: () => api.get<{ api_usage: APIUsage }>('/api/v1/admin/analytics/api-usage'),
+    queryFn: () => api.get<{ api_usage: APIUsage }>('/api/v1/analytics/api-usage'),
   })
 
   const usage = usageData?.usage

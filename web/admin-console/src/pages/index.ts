@@ -61,6 +61,7 @@ export const SecurityKeys = lazy(() => import('./security-keys').then((m) => ({ 
 export const PushDevices = lazy(() => import('./push-devices').then((m) => ({ default: m.PushDevicesPage })))
 
 // Audit & Reports
+export const AuditDashboard = lazy(() => import('./audit').then((m) => ({ default: m.AuditDashboard })))
 export const UnifiedAudit = lazy(() => import('./unified-audit').then((m) => ({ default: m.UnifiedAuditPage })))
 export const AdminAuditLog = lazy(() => import('./admin-audit-log').then((m) => ({ default: m.AdminAuditLogPage })))
 export const LoginAnalytics = lazy(() => import('./login-analytics').then((m) => ({ default: m.LoginAnalyticsPage })))

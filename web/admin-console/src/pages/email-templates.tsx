@@ -52,12 +52,12 @@ export function EmailTemplatesPage() {
 
   const { data: templatesData, isLoading } = useQuery({
     queryKey: ['email-templates'],
-    queryFn: () => api.get<{ data: EmailTemplate[] }>('/api/v1/admin/email-templates'),
+    queryFn: () => api.get<{ data: EmailTemplate[] }>('/api/v1/email-templates'),
   })
 
   const { data: brandingData } = useQuery({
     queryKey: ['email-branding'],
-    queryFn: () => api.get<EmailBranding>('/api/v1/admin/email-branding'),
+    queryFn: () => api.get<EmailBranding>('/api/v1/email-branding'),
   })
 
   // Sync branding data when loaded
@@ -67,14 +67,14 @@ export function EmailTemplatesPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, ...data }: { id: string; subject: string; html_body: string; text_body: string }) =>
-      api.put(`/api/v1/admin/email-templates/${id}`, data),
+      api.put(`/api/v1/email-templates/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['email-templates'] })
     },
   })
 
   const resetMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/admin/email-templates/${id}/reset`, {}),
+    mutationFn: (id: string) => api.post(`/api/v1/email-templates/${id}/reset`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['email-templates'] })
       setSelectedId(null)
@@ -82,7 +82,7 @@ export function EmailTemplatesPage() {
   })
 
   const brandingMutation = useMutation({
-    mutationFn: (data: EmailBranding) => api.put('/api/v1/admin/email-branding', data),
+    mutationFn: (data: EmailBranding) => api.put('/api/v1/email-branding', data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['email-branding'] }),
   })
 
@@ -101,7 +101,7 @@ export function EmailTemplatesPage() {
 
   const handlePreview = async () => {
     if (!selectedId) return
-    const result = await api.post<{ html: string }>(`/api/v1/admin/email-templates/${selectedId}/preview`, {})
+    const result = await api.post<{ html: string }>(`/api/v1/email-templates/${selectedId}/preview`, {})
     setPreviewHtml(result.html)
   }
 

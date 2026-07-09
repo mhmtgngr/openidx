@@ -52,8 +52,8 @@ const branding = {
 }
 
 function routeGet(url: string) {
-  if (url.includes('/admin/email-templates')) return Promise.resolve({ data: [welcomeTpl, resetTpl] })
-  if (url.includes('/admin/email-branding')) return Promise.resolve(branding)
+  if (url.includes('/email-templates')) return Promise.resolve({ data: [welcomeTpl, resetTpl] })
+  if (url.includes('/email-branding')) return Promise.resolve(branding)
   return Promise.resolve({ data: [] })
 }
 

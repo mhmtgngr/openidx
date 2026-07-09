@@ -23,7 +23,7 @@ const acmeOrg = { id: 'org-1', name: 'Acme Inc' }
 const widgetsOrg = { id: 'org-2', name: 'Widgets Co' }
 
 function routeGet(url: string) {
-  if (url.includes('/admin/organizations')) {
+  if (url.includes('/organizations')) {
     return Promise.resolve({ data: [acmeOrg, widgetsOrg] })
   }
   if (url.includes('/branding')) return Promise.resolve({})
