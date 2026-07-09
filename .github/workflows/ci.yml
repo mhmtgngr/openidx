@@ -134,7 +134,7 @@ jobs:
         run: go vet -tags=integration ./test/integration/...
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binaries-${{ matrix.go-version }}
           path: bin/
@@ -229,7 +229,7 @@ jobs:
           go test -v -race -coverprofile=coverage_${{ matrix.package }}.out -covermode=atomic ./${{ matrix.package }}/... || true
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-${{ matrix.package }}
           path: coverage_${{ matrix.package }}.out
@@ -430,7 +430,7 @@ jobs:
           benchstat base_bench.txt pr_bench.txt | tee benchstat_output.txt
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-results
           path: |
@@ -490,7 +490,7 @@ jobs:
       - name: Run golangci-lint
         # v7 of the action runs golangci-lint v2, which is built with a recent
         # enough Go to analyze this go1.25 module (v1 cannot).
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
 

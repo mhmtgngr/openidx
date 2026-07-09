@@ -106,7 +106,7 @@ jobs:
           scan-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:main
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: steps.pull.outputs.available == 'true'
         with:
           sarif_file: 'trivy-results.sarif'
@@ -124,7 +124,7 @@ jobs:
           fi
 
       - name: Upload scan results as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: steps.pull.outputs.available == 'true'
         with:
           name: trivy-results-${{ matrix.service }}
@@ -155,7 +155,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload govulncheck results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: govulncheck-report
           path: govulncheck-report.txt
@@ -175,7 +175,7 @@ jobs:
           vuln-type: 'library'
 
       - name: Upload Trivy FS results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-fs-results.sarif'
@@ -216,7 +216,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload npm audit results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npm-audit-report
           path: web/admin-console/npm-audit-report.json
@@ -233,7 +233,7 @@ jobs:
           vuln-type: 'library'
 
       - name: Upload Trivy npm results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-npm-results.sarif'
@@ -271,7 +271,7 @@ jobs:
 
       - name: Upload Gitleaks report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gitleaks-report
           path: gitleaks-report.json
@@ -321,7 +321,7 @@ jobs:
       # doesn't turn the workflow red — the findings still surface in the
       # step summary / artifact when present.
       - name: Upload Semgrep results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         continue-on-error: true
         if: always() && hashFiles('semgrep-report.sarif') != ''
         with:
@@ -329,7 +329,7 @@ jobs:
           category: 'semgrep-sast'
 
       - name: Upload Semgrep report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         continue-on-error: true
         if: always() && hashFiles('semgrep-report.json') != ''
         with:
@@ -369,7 +369,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload license report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: go-licenses
           path: licenses-go
@@ -389,7 +389,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload npm license report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npm-licenses
           path: npm-licenses.json
