@@ -321,6 +321,8 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	authnReq, err := s.decodeAndParseAuthnRequest(samlRequest)
 	if err != nil {
 		s.logger.Error("Failed to decode AuthnRequest", zap.Error(err))
+		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+			"", c.ClientIP(), "", "service_provider", map[string]interface{}{"reason": "invalid_authn_request"})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid SAMLRequest", "details": err.Error()})
 		return
 	}
@@ -338,11 +340,15 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 			zap.String("entity_id", authnReq.Issuer),
 			zap.Error(err),
 		)
+		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+			"", c.ClientIP(), authnReq.Issuer, "service_provider", map[string]interface{}{"reason": "unknown_service_provider", "entity_id": authnReq.Issuer})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown service provider"})
 		return
 	}
 
 	if !sp.Enabled {
+		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "sp_disabled", "sp_entity_id": sp.EntityID})
 		c.JSON(http.StatusForbidden, gin.H{"error": "Service provider is disabled"})
 		return
 	}
@@ -353,6 +359,8 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 			zap.String("request_acs", authnReq.AssertionConsumerServiceURL),
 			zap.String("registered_acs", sp.ACSURL),
 		)
+		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+			"", c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "acs_url_mismatch", "sp_entity_id": sp.EntityID, "requested_acs": authnReq.AssertionConsumerServiceURL})
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ACS URL"})
 		return
 	}
@@ -393,6 +401,8 @@ func (s *Service) handleIdPSSO(c *gin.Context) {
 	samlResponse, nameID, nameIDFormat, err := s.buildSAMLResponseForUser(user, sp, authnReq)
 	if err != nil {
 		s.logger.Error("Failed to build SAML Response", zap.Error(err))
+		s.logAuditEvent(c.Request.Context(), "authentication", "saml_idp", "sso", "failure",
+			user.ID, c.ClientIP(), sp.EntityID, "service_provider", map[string]interface{}{"reason": "response_build_failed", "sp_entity_id": sp.EntityID})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build SAML Response"})
 		return
 	}
@@ -1094,7 +1104,9 @@ type IdPTransform struct {
 	Algorithm string   `xml:"Algorithm,attr"`
 }
 
-// logAuditEvent logs an audit event (placeholder - should integrate with audit service)
+// logAuditEvent records an audit event: it emits a structured application log AND
+// persists a row to the audit_events table (async, org-scoped, best-effort) so
+// SSO/OAuth/SAML activity is queryable via the audit API and compliance reports.
 func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action, status string,
 	userID, ipAddress, resourceID, resourceType string, metadata map[string]interface{}) {
 
