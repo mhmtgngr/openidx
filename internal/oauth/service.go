@@ -2512,7 +2512,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	// 2. Retrieve original request parameters from Redis
 	paramsJSON, err := s.redis.Client.Get(c.Request.Context(), "sso_state:"+state).Result()
 	if err != nil {
-		s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "failure",
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
 			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "invalid_state"})
 		c.JSON(400, gin.H{"error": "invalid_state"})
 		return
@@ -2542,7 +2542,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	}
 	token, err := oauth2Config.Exchange(c.Request.Context(), code)
 	if err != nil {
-		s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "failure",
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
 			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "token_exchange_failed", "idp_id": idp.ID.String()})
 		c.JSON(500, gin.H{"error": "failed to exchange token"})
 		return
@@ -2570,7 +2570,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	})
 	if err != nil {
 		s.logger.Error("Failed to verify ID token", zap.Error(err))
-		s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "failure",
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
 			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "id_token_verification_failed", "idp_id": idp.ID.String()})
 		c.JSON(401, gin.H{"error": "invalid_id_token", "error_description": "ID token signature verification failed"})
 		return
@@ -2588,7 +2588,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 	}
 
 	if claims.Email == "" {
-		s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "failure",
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
 			"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "missing_email_claim", "idp_id": idp.ID.String()})
 		c.JSON(400, gin.H{"error": "invalid_claims", "error_description": "email claim is required"})
 		return
@@ -2608,7 +2608,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 			`SELECT id FROM users WHERE org_id = $1 AND idp_id = $2 AND external_user_id = $3 LIMIT 1`,
 			org.ID, idp.ID, claims.Sub).Scan(&uid); err == nil && uid != "" {
 			user = &identity.User{ID: uid}
-			s.logAuditEvent(c.Request.Context(), "sso.identity.matched", "authentication", "sso_identity_matched", "success",
+			s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_identity_matched", "success",
 				uid, c.ClientIP(), uid, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
 		}
 	}
@@ -2629,7 +2629,7 @@ func (s *Service) handleCallback(c *gin.Context) {
 					s.logger.Warn("Failed to backfill federated identity link for existing user",
 						zap.String("user_id", user.ID), zap.Error(err))
 				} else if tag.RowsAffected() > 0 {
-					s.logAuditEvent(c.Request.Context(), "sso.identity.backfilled", "authentication", "sso_identity_backfilled", "success",
+					s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_identity_backfilled", "success",
 						user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
 				}
 			}
@@ -2647,12 +2647,12 @@ func (s *Service) handleCallback(c *gin.Context) {
 		user.SetFirstName(claims.Name)
 		if err := s.identityService.CreateUser(c.Request.Context(), user); err != nil {
 			s.logger.Error("Failed to create SSO user", zap.Error(err))
-			s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "failure",
+			s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "failure",
 				"", c.ClientIP(), "", "user", map[string]interface{}{"reason": "provisioning_failed", "idp_id": idp.ID.String(), "email": claims.Email})
 			c.JSON(500, gin.H{"error": "failed to provision user"})
 			return
 		}
-		s.logAuditEvent(c.Request.Context(), "sso.user.provisioned", "authentication", "sso_user_provisioned", "success",
+		s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_user_provisioned", "success",
 			user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "email": claims.Email})
 		// Bind the JIT-provisioned user to the IdP subject so it is a stable
 		// federated link (users.idp_id + external_user_id), not just an
@@ -2667,13 +2667,13 @@ func (s *Service) handleCallback(c *gin.Context) {
 				s.logger.Warn("Failed to persist federated identity link for JIT user",
 					zap.String("user_id", user.ID), zap.Error(err))
 			} else {
-				s.logAuditEvent(c.Request.Context(), "sso.identity.linked", "authentication", "sso_identity_linked", "success",
+				s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_identity_linked", "success",
 					user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
 			}
 		}
 	}
 
-	s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "success",
+	s.logAuditEvent(c.Request.Context(), "authentication", "sso", "sso_login", "success",
 		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
 
 	authCode := &AuthorizationCode{
