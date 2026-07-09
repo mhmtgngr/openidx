@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.8] - 2026-07-09
+
+### Added
+
+- **Failed-login audit for SSO/SAML** (#388, #389) — the OIDC callback and SAML IdP SSO handler
+  now emit `outcome=failure` audit events at every failure exit (OIDC: invalid_state,
+  token_exchange_failed, id_token_verification_failed, missing_email_claim, provisioning_failed;
+  SAML: invalid_authn_request, unknown_service_provider, acs_url_mismatch, sp_disabled,
+  response_build_failed). This surfaces attacks/misconfiguration (forged tokens, unregistered-SP
+  probing, ACS-URL tampering) in the audit trail, complementing the success events from v1.24.7.
+- **Audit events queryable by target** (#390) — `GET /api/v1/audit/events` now honours a
+  `target_id` filter (the `AuditQuery.TargetID` field was previously unused), so auditors can scope
+  the trail to everything affecting a specific user or resource.
+
+### Changed
+
+- **Dependency bumps** (#386, #387) — `go.uber.org/zap` 1.27→1.28, `pquerna/otp` 1.4→1.5,
+  `spf13/viper` 1.18→1.21; frontend `autoprefixer`, `lucide-react`, `eslint-plugin-react-refresh`.
+  Part of clearing the dependabot backlog (superseded/stale PRs closed; major bumps flagged for review).
+
 ## [1.24.7] - 2026-07-09
 
 ### Added
