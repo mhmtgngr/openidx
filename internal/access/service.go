@@ -507,6 +507,12 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/guacamole/connections/:routeId/connect", svc.handleGuacamoleConnect)
 		api.PUT("/guacamole/connections/:routeId/credential", svc.requireAdminRole(), svc.handleSetGuacCredential)
 
+		// Guacamole end-user self-service (PAM finalization): brokered-connection
+		// catalog + the caller's own session-request status. Static paths avoid
+		// the /connections/:routeId and /session-requests/:id wildcard conflicts.
+		api.GET("/guacamole/my-connections", svc.handleListMyGuacConnections)
+		api.GET("/guacamole/my-session-requests", svc.handleListMyGuacSessionRequests)
+
 		// Guacamole pre-session approval lifecycle (Task 4 — PAM M3)
 		api.POST("/guacamole/connections/:routeId/request", svc.handleRequestGuacSession)
 		api.POST("/guacamole/session-requests/:id/approve", svc.requireAdminRole(), svc.handleApproveGuacSession)

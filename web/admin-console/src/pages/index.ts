@@ -87,6 +87,7 @@ export const AuditArchival = lazy(() => import('./audit-archival').then((m) => (
 export const VaultSecrets = lazy(() => import('./vault-secrets').then((m) => ({ default: m.VaultSecretsPage })))
 export const RotationPolicies = lazy(() => import('./rotation-policies').then((m) => ({ default: m.RotationPoliciesPage })))
 export const GuacamoleSessions = lazy(() => import('./guacamole-sessions').then((m) => ({ default: m.GuacamoleSessionsPage })))
+export const PAMDashboard = lazy(() => import('./pam-dashboard').then((m) => ({ default: m.PAMDashboardPage })))
 
 // Developer
 export const APIExplorer = lazy(() => import('./api-explorer').then((m) => ({ default: m.ApiExplorerPage })))
@@ -114,6 +115,7 @@ export const MagicLinkVerify = lazy(() => import('./magic-link-verify').then((m)
 // My Pages
 export const UserProfile = lazy(() => import('./user-profile').then((m) => ({ default: m.UserProfilePage })))
 export const MyAccess = lazy(() => import('./my-access').then((m) => ({ default: m.MyAccessPage })))
+export const MyPrivilegedAccess = lazy(() => import('./my-privileged-access').then((m) => ({ default: m.MyPrivilegedAccessPage })))
 export const MyDevices = lazy(() => import('./my-devices').then((m) => ({ default: m.MyDevicesPage })))
 export const TrustedBrowsers = lazy(() => import('./trusted-browsers').then((m) => ({ default: m.TrustedBrowsersPage })))
 export const AccessRequests = lazy(() => import('./access-requests').then((m) => ({ default: m.AccessRequestsPage })))

@@ -126,7 +126,7 @@ function PendingRequestsTab() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['guac-session-requests'],
     queryFn: () =>
       api.get<{ requests: GuacSessionRequest[] }>(
@@ -171,7 +171,9 @@ function PendingRequestsTab() {
           </div>
         ) : isError ? (
           <p className="py-8 text-center text-destructive">
-            Failed to load session requests.
+            {(error as { response?: { status?: number } })?.response?.status === 403
+              ? 'Admin access required'
+              : 'Failed to load session requests.'}
           </p>
         ) : (
           <Table>
@@ -324,7 +326,9 @@ function ActiveSessionsTab() {
             </p>
           ) : isError ? (
             <p className="py-8 text-center text-destructive">
-              Failed to load active sessions.
+              {(error as { response?: { status?: number } })?.response?.status === 403
+                ? 'Admin access required'
+                : 'Failed to load active sessions.'}
             </p>
           ) : (
             <Table>
@@ -449,6 +453,11 @@ function ActiveSessionsTab() {
 function SessionHistoryTab() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const [holdTarget, setHoldTarget] = useState<{
+    session: GuacSessionRow
+    action: 'place' | 'release'
+  } | null>(null)
+  const [holdReason, setHoldReason] = useState('')
 
   const placeHoldMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
@@ -456,6 +465,8 @@ function SessionHistoryTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-session-history'] })
       toast({ title: 'Recording placed on legal hold — exempt from retention sweep.' })
+      setHoldTarget(null)
+      setHoldReason('')
     },
     onError: (err: any) => {
       const msg = err?.response?.data?.error || 'Failed to place hold'
@@ -471,6 +482,8 @@ function SessionHistoryTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guac-session-history'] })
       toast({ title: 'Legal hold released — recording subject to retention again.' })
+      setHoldTarget(null)
+      setHoldReason('')
     },
     onError: (err: any) => {
       const msg = err?.response?.data?.error || 'Failed to release hold'
@@ -478,7 +491,7 @@ function SessionHistoryTab() {
     },
   })
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['guac-session-history'],
     queryFn: () =>
       api.get<{ sessions: GuacSessionRow[] }>(
@@ -489,6 +502,7 @@ function SessionHistoryTab() {
   const sessions: GuacSessionRow[] = data?.sessions ?? []
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
@@ -503,7 +517,9 @@ function SessionHistoryTab() {
           </div>
         ) : isError ? (
           <p className="py-8 text-center text-destructive">
-            Failed to load session history.
+            {(error as { response?: { status?: number } })?.response?.status === 403
+              ? 'Admin access required'
+              : 'Failed to load session history.'}
           </p>
         ) : (
           <Table>
@@ -560,12 +576,8 @@ function SessionHistoryTab() {
                               variant="outline"
                               title="Release legal hold (recording becomes subject to retention again)"
                               onClick={() => {
-                                const reason = window.prompt(
-                                  'Reason for releasing this legal hold (logged in audit):',
-                                  '',
-                                )
-                                if (reason === null) return
-                                releaseHoldMutation.mutate({ id: s.id, reason })
+                                setHoldTarget({ session: s, action: 'release' })
+                                setHoldReason('')
                               }}
                             >
                               <Unlock className="mr-1 h-3 w-3 text-amber-600" />
@@ -578,12 +590,8 @@ function SessionHistoryTab() {
                             variant="outline"
                             title="Place this recording on legal hold (exempt from retention sweep)"
                             onClick={() => {
-                              const reason = window.prompt(
-                                'Reason for the legal hold (e.g. "litigation case #1234"):',
-                                '',
-                              )
-                              if (!reason) return
-                              placeHoldMutation.mutate({ id: s.id, reason })
+                              setHoldTarget({ session: s, action: 'place' })
+                              setHoldReason('')
                             }}
                           >
                             <Lock className="mr-1 h-3 w-3" />
@@ -609,6 +617,60 @@ function SessionHistoryTab() {
         )}
       </CardContent>
     </Card>
+
+    {/* Legal-hold reason dialog — replaces the old window.prompt flow so the
+        audited reason gets a proper, accessible input */}
+    <AlertDialog
+      open={!!holdTarget}
+      onOpenChange={(open) => {
+        if (!open) {
+          setHoldTarget(null)
+          setHoldReason('')
+        }
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {holdTarget?.action === 'place' ? 'Place legal hold?' : 'Release legal hold?'}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {holdTarget?.action === 'place'
+              ? 'The recording will be exempt from the retention sweep until the hold is released.'
+              : 'The recording becomes subject to retention again.'}{' '}
+            The reason is logged in the audit trail.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="py-2">
+          <label className="text-sm font-medium">
+            Reason{holdTarget?.action === 'place' && <span className="text-red-500 ml-1">*</span>}
+          </label>
+          <Input
+            className="mt-1"
+            placeholder='e.g. "litigation case #1234"'
+            value={holdReason}
+            onChange={(e) => setHoldReason(e.target.value)}
+          />
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={holdTarget?.action === 'place' && !holdReason.trim()}
+            onClick={() => {
+              if (!holdTarget) return
+              if (holdTarget.action === 'place') {
+                placeHoldMutation.mutate({ id: holdTarget.session.id, reason: holdReason })
+              } else {
+                releaseHoldMutation.mutate({ id: holdTarget.session.id, reason: holdReason })
+              }
+            }}
+          >
+            {holdTarget?.action === 'place' ? 'Place hold' : 'Release hold'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 
