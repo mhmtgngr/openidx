@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.7] - 2026-07-09
+
+### Added
+
+- **SSO/OAuth audit events are now persisted** (#384) — the oauth service's `logAuditEvent`
+  previously logged only to the application log, so SSO/OAuth/SAML activity (logins, logouts,
+  single-logout, JIT provisioning) never reached the `audit_events` table and was absent from the
+  audit query API (`GET /api/v1/audit/events`) and compliance reports. It now persists to
+  `audit_events` (async, org-scoped, best-effort — never blocks or fails the request), matching the
+  identity service's pattern; the application log is retained.
+- **SSO JIT lifecycle audit trail** (#384) — the OIDC callback now emits `sso.user.provisioned`,
+  `sso.identity.linked`, `sso.identity.matched`, `sso.identity.backfilled`, and `sso.login`,
+  giving a queryable record of how SSO accounts are provisioned, federated-linked, and
+  authenticated (builds on the federated-identity work in v1.24.4–v1.24.6).
+
 ## [1.24.6] - 2026-07-08
 
 ### Changed
