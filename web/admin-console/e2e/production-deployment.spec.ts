@@ -111,7 +111,7 @@ test.describe('Production Deployment - API Gateway', () => {
       '/api/v1/governance/health',
       '/api/v1/provisioning/health',
       '/api/v1/audit/health',
-      '/api/v1/admin/health',
+      '/api/v1/health',
       '/api/v1/access/health',
     ]
 

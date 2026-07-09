@@ -90,26 +90,26 @@ export function NotificationAdminPage() {
 
   const { data: rulesData, isLoading: rulesLoading } = useQuery({
     queryKey: ['routing-rules'],
-    queryFn: () => api.get<{ data: RoutingRule[] }>('/api/v1/admin/notifications/routing-rules'),
+    queryFn: () => api.get<{ data: RoutingRule[] }>('/api/v1/notifications/routing-rules'),
   })
   const rules = rulesData?.data || []
 
   const { data: broadcastsData, isLoading: broadcastsLoading } = useQuery({
     queryKey: ['broadcasts'],
-    queryFn: () => api.get<{ data: Broadcast[] }>('/api/v1/admin/notifications/broadcasts'),
+    queryFn: () => api.get<{ data: Broadcast[] }>('/api/v1/notifications/broadcasts'),
   })
   const broadcasts = broadcastsData?.data || []
 
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ['notification-stats'],
-    queryFn: () => api.get<NotificationStats>('/api/v1/admin/notifications/stats'),
+    queryFn: () => api.get<NotificationStats>('/api/v1/notifications/stats'),
   })
 
   // ── Routing Rules Mutations ─────────────────────────────────────────────
 
   const createRuleMutation = useMutation({
     mutationFn: (data: typeof ruleForm) =>
-      api.post('/api/v1/admin/notifications/routing-rules', {
+      api.post('/api/v1/notifications/routing-rules', {
         ...data,
         conditions: {},
         template_overrides: {},
@@ -125,7 +125,7 @@ export function NotificationAdminPage() {
 
   const updateRuleMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<RoutingRule> }) =>
-      api.put(`/api/v1/admin/notifications/routing-rules/${id}`, data),
+      api.put(`/api/v1/notifications/routing-rules/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
       toast({ title: 'Routing rule updated' })
@@ -136,7 +136,7 @@ export function NotificationAdminPage() {
 
   const deleteRuleMutation = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/v1/admin/notifications/routing-rules/${id}`),
+      api.delete(`/api/v1/notifications/routing-rules/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
       toast({ title: 'Routing rule deleted' })
@@ -146,7 +146,7 @@ export function NotificationAdminPage() {
 
   const toggleRuleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.put(`/api/v1/admin/notifications/routing-rules/${id}`, { enabled }),
+      api.put(`/api/v1/notifications/routing-rules/${id}`, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routing-rules'] })
       toast({ title: 'Rule status updated' })
@@ -158,7 +158,7 @@ export function NotificationAdminPage() {
 
   const createBroadcastMutation = useMutation({
     mutationFn: (data: typeof broadcastForm) =>
-      api.post('/api/v1/admin/notifications/broadcasts', {
+      api.post('/api/v1/notifications/broadcasts', {
         ...data,
         target_ids: data.target_type === 'all' ? [] : data.target_ids.split('\n').map(s => s.trim()).filter(Boolean),
       }),
@@ -172,7 +172,7 @@ export function NotificationAdminPage() {
 
   const sendBroadcastMutation = useMutation({
     mutationFn: (id: string) =>
-      api.post(`/api/v1/admin/notifications/broadcasts/${id}/send`),
+      api.post(`/api/v1/notifications/broadcasts/${id}/send`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['broadcasts'] })
       toast({ title: 'Broadcast sent' })
@@ -182,7 +182,7 @@ export function NotificationAdminPage() {
 
   const deleteBroadcastMutation = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/v1/admin/notifications/broadcasts/${id}`),
+      api.delete(`/api/v1/notifications/broadcasts/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['broadcasts'] })
       toast({ title: 'Broadcast deleted' })

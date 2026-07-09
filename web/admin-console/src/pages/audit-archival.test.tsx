@@ -56,8 +56,8 @@ const archive = {
 }
 
 function routeGet(url: string) {
-  if (url.includes('/admin/audit-retention')) return Promise.resolve({ data: [retentionPolicy, disabledPolicy] })
-  if (url.includes('/admin/audit-archives')) return Promise.resolve({ data: [archive] })
+  if (url.includes('/audit-retention')) return Promise.resolve({ data: [retentionPolicy, disabledPolicy] })
+  if (url.includes('/audit-archives')) return Promise.resolve({ data: [archive] })
   return Promise.resolve({ data: [] })
 }
 
@@ -137,8 +137,8 @@ describe('AuditArchivalPage', () => {
   it('shows the empty-archives state when no archives exist', async () => {
     const user = userEvent.setup()
     vi.mocked(api.get).mockImplementation((url: string) => {
-      if (url.includes('/admin/audit-archives')) return Promise.resolve({ data: [] })
-      if (url.includes('/admin/audit-retention')) return Promise.resolve({ data: [] })
+      if (url.includes('/audit-archives')) return Promise.resolve({ data: [] })
+      if (url.includes('/audit-retention')) return Promise.resolve({ data: [] })
       return Promise.resolve({ data: [] })
     })
     render(<AuditArchivalPage />, { wrapper: createWrapper() })

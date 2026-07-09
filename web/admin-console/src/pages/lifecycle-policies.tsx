@@ -68,17 +68,17 @@ export function LifecyclePoliciesPage() {
 
   const { data: policiesData, isLoading } = useQuery({
     queryKey: ['lifecycle-policies'],
-    queryFn: () => api.get<{ data: LifecyclePolicy[] }>('/api/v1/admin/lifecycle-policies'),
+    queryFn: () => api.get<{ data: LifecyclePolicy[] }>('/api/v1/lifecycle-policies'),
   })
 
   const { data: executionsData } = useQuery({
     queryKey: ['lifecycle-executions', selectedPolicy],
-    queryFn: () => api.get<{ data: LifecycleExecution[] }>(`/api/v1/admin/lifecycle-policies/${selectedPolicy}/executions`),
+    queryFn: () => api.get<{ data: LifecycleExecution[] }>(`/api/v1/lifecycle-policies/${selectedPolicy}/executions`),
     enabled: !!selectedPolicy,
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/admin/lifecycle-policies', data),
+    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/lifecycle-policies', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lifecycle-policies'] })
       setShowCreate(false)
@@ -89,14 +89,14 @@ export function LifecyclePoliciesPage() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.put(`/api/v1/admin/lifecycle-policies/${id}`, { enabled }),
+      api.put(`/api/v1/lifecycle-policies/${id}`, { enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['lifecycle-policies'] }),
   })
 
   const executeMutation = useMutation({
     mutationFn: ({ id, dry_run }: { id: string; dry_run: boolean }) =>
       api.post<{ affected_users?: AffectedUser[]; execution_id?: string; affected_count?: number }>(
-        `/api/v1/admin/lifecycle-policies/${id}/execute`, { dry_run }),
+        `/api/v1/lifecycle-policies/${id}/execute`, { dry_run }),
     onSuccess: (data, vars) => {
       if (vars.dry_run && data.affected_users) {
         setPreviewData(data.affected_users)
@@ -108,7 +108,7 @@ export function LifecyclePoliciesPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/lifecycle-policies/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/lifecycle-policies/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lifecycle-policies'] })
       setSelectedPolicy(null)

@@ -91,19 +91,19 @@ function riskScoreColor(score: number): string {
 export function RiskDashboardPage() {
   const { data: riskData, isLoading: riskLoading } = useQuery<{ risk: RiskOverview }>({
     queryKey: ['risk-overview'],
-    queryFn: () => api.get<{ risk: RiskOverview }>('/api/v1/admin/analytics/risk'),
+    queryFn: () => api.get<{ risk: RiskOverview }>('/api/v1/analytics/risk'),
   })
 
   const { data: timelineData, isLoading: timelineLoading } = useQuery<{ timeline: RiskTimeline }>({
     queryKey: ['risk-timeline'],
     queryFn: () =>
-      api.get<{ timeline: RiskTimeline }>('/api/v1/admin/analytics/risk-timeline?days=30'),
+      api.get<{ timeline: RiskTimeline }>('/api/v1/analytics/risk-timeline?days=30'),
   })
 
   const { data: alertsData, isLoading: alertsLoading } = useQuery<{ alerts: SecurityAlert[] }>({
     queryKey: ['security-alerts-recent'],
     queryFn: () =>
-      api.get<{ alerts: SecurityAlert[] }>('/api/v1/admin/security-alerts?limit=10'),
+      api.get<{ alerts: SecurityAlert[] }>('/api/v1/security-alerts?limit=10'),
   })
 
   const risk = riskData?.risk

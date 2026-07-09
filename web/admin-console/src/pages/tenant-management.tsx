@@ -60,7 +60,7 @@ export function TenantManagementPage() {
 
   const { data: orgsData } = useQuery({
     queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Organization[] }>('/api/v1/admin/organizations'),
+    queryFn: () => api.get<{ data: Organization[] }>('/api/v1/organizations'),
   })
   const orgs = orgsData?.data || []
 
@@ -68,7 +68,7 @@ export function TenantManagementPage() {
 
   const { data: brandingData, isLoading: brandingLoading } = useQuery({
     queryKey: ['tenant-branding', selectedOrgId],
-    queryFn: () => api.get<TenantBranding>(`/api/v1/admin/tenants/${selectedOrgId}/branding`),
+    queryFn: () => api.get<TenantBranding>(`/api/v1/tenants/${selectedOrgId}/branding`),
     enabled: !!selectedOrgId,
   })
 
@@ -76,7 +76,7 @@ export function TenantManagementPage() {
 
   const { data: settingsData, isLoading: settingsLoading } = useQuery({
     queryKey: ['tenant-settings', selectedOrgId],
-    queryFn: () => api.get<TenantSettings>(`/api/v1/admin/tenants/${selectedOrgId}/settings`),
+    queryFn: () => api.get<TenantSettings>(`/api/v1/tenants/${selectedOrgId}/settings`),
     enabled: !!selectedOrgId,
   })
 
@@ -90,7 +90,7 @@ export function TenantManagementPage() {
 
   const { data: domainsData, isLoading: domainsLoading } = useQuery({
     queryKey: ['tenant-domains', selectedOrgId],
-    queryFn: () => api.get<{ data: TenantDomain[] }>(`/api/v1/admin/tenants/${selectedOrgId}/domains`),
+    queryFn: () => api.get<{ data: TenantDomain[] }>(`/api/v1/tenants/${selectedOrgId}/domains`),
     enabled: !!selectedOrgId,
   })
   const domains = domainsData?.data || []
@@ -98,32 +98,32 @@ export function TenantManagementPage() {
   const invalidate = (key: string) => () => queryClient.invalidateQueries({ queryKey: [key, selectedOrgId] })
 
   const saveBrandingMutation = useMutation({
-    mutationFn: (data: TenantBranding) => api.put(`/api/v1/admin/tenants/${selectedOrgId}/branding`, data),
+    mutationFn: (data: TenantBranding) => api.put(`/api/v1/tenants/${selectedOrgId}/branding`, data),
     onSuccess: () => { invalidate('tenant-branding')(); toast({ title: 'Branding saved' }) },
     onError: () => toast({ title: 'Failed to save branding', variant: 'destructive' }),
   })
 
   const saveSettingsMutation = useMutation({
     mutationFn: ({ category, value }: { category: string; value: string }) =>
-      api.put(`/api/v1/admin/tenants/${selectedOrgId}/settings`, { category, settings: JSON.parse(value) }),
+      api.put(`/api/v1/tenants/${selectedOrgId}/settings`, { category, settings: JSON.parse(value) }),
     onSuccess: () => { invalidate('tenant-settings')(); toast({ title: 'Settings saved' }) },
     onError: (err: Error) => toast({ title: 'Failed to save settings', description: err.message, variant: 'destructive' }),
   })
 
   const addDomainMutation = useMutation({
-    mutationFn: (body: { domain: string; domain_type: string }) => api.post(`/api/v1/admin/tenants/${selectedOrgId}/domains`, body),
+    mutationFn: (body: { domain: string; domain_type: string }) => api.post(`/api/v1/tenants/${selectedOrgId}/domains`, body),
     onSuccess: () => { invalidate('tenant-domains')(); toast({ title: 'Domain added' }); setAddDomainOpen(false); setNewDomain('') },
     onError: () => toast({ title: 'Failed to add domain', variant: 'destructive' }),
   })
 
   const verifyDomainMutation = useMutation({
-    mutationFn: (domainId: string) => api.post(`/api/v1/admin/tenants/${selectedOrgId}/domains/${domainId}/verify`, { token: '' }),
+    mutationFn: (domainId: string) => api.post(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}/verify`, { token: '' }),
     onSuccess: () => { invalidate('tenant-domains')(); toast({ title: 'Domain verified' }) },
     onError: () => toast({ title: 'Verification failed', variant: 'destructive' }),
   })
 
   const deleteDomainMutation = useMutation({
-    mutationFn: (domainId: string) => api.delete(`/api/v1/admin/tenants/${selectedOrgId}/domains/${domainId}`),
+    mutationFn: (domainId: string) => api.delete(`/api/v1/tenants/${selectedOrgId}/domains/${domainId}`),
     onSuccess: () => { invalidate('tenant-domains')(); toast({ title: 'Domain removed' }) },
     onError: () => toast({ title: 'Failed to delete domain', variant: 'destructive' }),
   })

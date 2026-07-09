@@ -48,7 +48,7 @@ const providers = [
 ]
 
 function routeGet(url: string) {
-  if (url.includes('/admin/federation/rules')) return Promise.resolve({ data: [corpRule, partnerRule] })
+  if (url.includes('/federation/rules')) return Promise.resolve({ data: [corpRule, partnerRule] })
   if (url.includes('/identity/providers')) return Promise.resolve(providers)
   return Promise.resolve({ data: [] })
 }
@@ -131,7 +131,7 @@ describe('FederationConfigPage', () => {
 
   it('renders the empty rules state when no rules are configured', async () => {
     vi.mocked(api.get).mockImplementation((url: string) => {
-      if (url.includes('/admin/federation/rules')) {
+      if (url.includes('/federation/rules')) {
         return Promise.resolve({ data: [] }) as ReturnType<typeof api.get>
       }
       return routeGet(url) as ReturnType<typeof api.get>

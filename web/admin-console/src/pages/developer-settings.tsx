@@ -87,7 +87,7 @@ export function DeveloperSettingsPage() {
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['developer-settings'],
-    queryFn: () => api.get<DeveloperSettings>('/api/v1/admin/developer/settings'),
+    queryFn: () => api.get<DeveloperSettings>('/api/v1/developer/settings'),
   })
 
   const [formData, setFormData] = useState<DeveloperSettings | null>(null)
@@ -100,7 +100,7 @@ export function DeveloperSettingsPage() {
 
   const updateMutation = useMutation({
     mutationFn: (data: DeveloperSettings) =>
-      api.put('/api/v1/admin/developer/settings', data),
+      api.put('/api/v1/developer/settings', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['developer-settings'] })
       toast({ title: 'Settings saved', description: 'Developer settings updated successfully.' })

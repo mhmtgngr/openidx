@@ -66,18 +66,18 @@ export function AuditArchivalPage() {
 
   const { data: retentionData, isLoading: retLoading } = useQuery({
     queryKey: ['audit-retention'],
-    queryFn: () => api.get<{ data: RetentionPolicy[] }>('/api/v1/admin/audit-retention'),
+    queryFn: () => api.get<{ data: RetentionPolicy[] }>('/api/v1/audit-retention'),
   })
 
   const { data: archivesData, isLoading: arcLoading } = useQuery({
     queryKey: ['audit-archives'],
-    queryFn: () => api.get<{ data: AuditArchive[] }>('/api/v1/admin/audit-archives'),
+    queryFn: () => api.get<{ data: AuditArchive[] }>('/api/v1/audit-archives'),
     refetchInterval: 5000,
   })
 
   // Retention mutations
   const createRetentionMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/admin/audit-retention', data),
+    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/audit-retention', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['audit-retention'] })
       setShowCreateRetention(false)
@@ -87,18 +87,18 @@ export function AuditArchivalPage() {
 
   const toggleRetentionMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.put(`/api/v1/admin/audit-retention/${id}`, { enabled }),
+      api.put(`/api/v1/audit-retention/${id}`, { enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-retention'] }),
   })
 
   const deleteRetentionMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/audit-retention/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/audit-retention/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-retention'] }),
   })
 
   // Archive mutations
   const createArchiveMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/admin/audit-archives', data),
+    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/audit-archives', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['audit-archives'] })
       setShowCreateArchive(false)
@@ -107,7 +107,7 @@ export function AuditArchivalPage() {
   })
 
   const restoreMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/admin/audit-archives/${id}/restore`, {}),
+    mutationFn: (id: string) => api.post(`/api/v1/audit-archives/${id}/restore`, {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-archives'] }),
   })
 

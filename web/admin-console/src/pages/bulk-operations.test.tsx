@@ -51,10 +51,10 @@ const role = { id: 'role-eng', name: 'Engineering' }
 const group = { id: 'grp-eng', name: 'Engineering' }
 
 function routeGet(url: string) {
-  if (url.includes('/admin/bulk-operations/export/users')) {
+  if (url.includes('/bulk-operations/export/users')) {
     return Promise.resolve('id,email\n' as unknown as ReturnType<typeof api.get>)
   }
-  if (url.includes('/admin/bulk-operations')) {
+  if (url.includes('/bulk-operations')) {
     return Promise.resolve({ data: [completedOp, runningOp] })
   }
   if (url.includes('/identity/roles')) return Promise.resolve({ data: [role] })
@@ -124,7 +124,7 @@ describe('BulkOperationsPage', () => {
 
   it('shows the empty state when no operations exist', async () => {
     vi.mocked(api.get).mockImplementation((url: string) => {
-      if (url.includes('/admin/bulk-operations')) {
+      if (url.includes('/bulk-operations')) {
         return Promise.resolve({ data: [] }) as ReturnType<typeof api.get>
       }
       return routeGet(url) as ReturnType<typeof api.get>

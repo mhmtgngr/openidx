@@ -79,25 +79,25 @@ export function AttestationCampaignsPage() {
 
   const { data: campaignsData, isLoading } = useQuery({
     queryKey: ['attestation-campaigns'],
-    queryFn: () => api.get<{ data: AttestationCampaign[] }>('/api/v1/admin/attestation-campaigns'),
+    queryFn: () => api.get<{ data: AttestationCampaign[] }>('/api/v1/attestation-campaigns'),
   })
 
   const { data: itemsData } = useQuery({
     queryKey: ['attestation-items', selectedCampaign],
-    queryFn: () => api.get<{ data: AttestationItem[] }>(`/api/v1/admin/attestation-campaigns/${selectedCampaign}/items`),
+    queryFn: () => api.get<{ data: AttestationItem[] }>(`/api/v1/attestation-campaigns/${selectedCampaign}/items`),
     enabled: !!selectedCampaign,
   })
 
   const { data: progressData } = useQuery({
     queryKey: ['attestation-progress', selectedCampaign],
     queryFn: () => api.get<{ total: number; certified: number; revoked: number; pending: number; delegated: number; completion_pct: number }>(
-      `/api/v1/admin/attestation-campaigns/${selectedCampaign}/progress`),
+      `/api/v1/attestation-campaigns/${selectedCampaign}/progress`),
     enabled: !!selectedCampaign,
     refetchInterval: 5000,
   })
 
   const createMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/admin/attestation-campaigns', data),
+    mutationFn: (data: Record<string, unknown>) => api.post('/api/v1/attestation-campaigns', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attestation-campaigns'] })
       setShowCreate(false)
@@ -107,7 +107,7 @@ export function AttestationCampaignsPage() {
   })
 
   const launchMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/v1/admin/attestation-campaigns/${id}/launch`, {}),
+    mutationFn: (id: string) => api.post(`/api/v1/attestation-campaigns/${id}/launch`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attestation-campaigns'] })
       queryClient.invalidateQueries({ queryKey: ['attestation-items'] })
@@ -116,7 +116,7 @@ export function AttestationCampaignsPage() {
 
   const decideMutation = useMutation({
     mutationFn: ({ campaignId, itemId, decision, comments }: { campaignId: string; itemId: string; decision: string; comments: string }) =>
-      api.post(`/api/v1/admin/attestation-campaigns/${campaignId}/items/${itemId}/decide`, { decision, comments }),
+      api.post(`/api/v1/attestation-campaigns/${campaignId}/items/${itemId}/decide`, { decision, comments }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attestation-items'] })
       queryClient.invalidateQueries({ queryKey: ['attestation-progress'] })

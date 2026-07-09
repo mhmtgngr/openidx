@@ -162,7 +162,7 @@ function UserConsentsTab() {
 
   const { data: consentsData, isLoading } = useQuery({
     queryKey: ['privacy-consents'],
-    queryFn: () => api.get<{ data: Consent[] }>('/api/v1/admin/privacy/consents'),
+    queryFn: () => api.get<{ data: Consent[] }>('/api/v1/privacy/consents'),
   })
 
   const consents = consentsData?.data || []
@@ -247,12 +247,12 @@ function DSARsTab() {
 
   const { data: dsarsData, isLoading } = useQuery({
     queryKey: ['privacy-dsars'],
-    queryFn: () => api.get<{ data: DSAR[] }>('/api/v1/admin/privacy/dsars'),
+    queryFn: () => api.get<{ data: DSAR[] }>('/api/v1/privacy/dsars'),
   })
 
   const createMutation = useMutation({
     mutationFn: (data: { user_id: string; request_type: string; reason: string }) =>
-      api.post('/api/v1/admin/privacy/dsars', data),
+      api.post('/api/v1/privacy/dsars', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-dsars'] })
       queryClient.invalidateQueries({ queryKey: ['privacy-dashboard'] })
@@ -269,7 +269,7 @@ function DSARsTab() {
 
   const processMutation = useMutation({
     mutationFn: (id: string) =>
-      api.put(`/api/v1/admin/privacy/dsars/${id}`, { status: 'in_progress' }),
+      api.put(`/api/v1/privacy/dsars/${id}`, { status: 'in_progress' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-dsars'] })
       queryClient.invalidateQueries({ queryKey: ['privacy-dashboard'] })
@@ -282,7 +282,7 @@ function DSARsTab() {
 
   const executeMutation = useMutation({
     mutationFn: (id: string) =>
-      api.post(`/api/v1/admin/privacy/dsars/${id}/execute`),
+      api.post(`/api/v1/privacy/dsars/${id}/execute`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-dsars'] })
       queryClient.invalidateQueries({ queryKey: ['privacy-dashboard'] })
@@ -448,7 +448,7 @@ function RetentionPoliciesTab() {
 
   const { data: retentionData, isLoading } = useQuery({
     queryKey: ['privacy-retention'],
-    queryFn: () => api.get<{ data: RetentionPolicy[] }>('/api/v1/admin/privacy/retention'),
+    queryFn: () => api.get<{ data: RetentionPolicy[] }>('/api/v1/privacy/retention'),
   })
 
   const createMutation = useMutation({
@@ -457,7 +457,7 @@ function RetentionPoliciesTab() {
       data_category: string
       retention_days: number
       action: string
-    }) => api.post('/api/v1/admin/privacy/retention', data),
+    }) => api.post('/api/v1/privacy/retention', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-retention'] })
       setShowCreate(false)
@@ -474,7 +474,7 @@ function RetentionPoliciesTab() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.put(`/api/v1/admin/privacy/retention/${id}`, { enabled }),
+      api.put(`/api/v1/privacy/retention/${id}`, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-retention'] })
       toast({ title: 'Policy updated' })
@@ -485,7 +485,7 @@ function RetentionPoliciesTab() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/privacy/retention/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/privacy/retention/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-retention'] })
       toast({ title: 'Policy deleted' })
@@ -650,7 +650,7 @@ function ImpactAssessmentsTab() {
 
   const { data: assessmentsData, isLoading } = useQuery({
     queryKey: ['privacy-assessments'],
-    queryFn: () => api.get<{ data: ImpactAssessment[] }>('/api/v1/admin/privacy/assessments'),
+    queryFn: () => api.get<{ data: ImpactAssessment[] }>('/api/v1/privacy/assessments'),
   })
 
   const createMutation = useMutation({
@@ -660,7 +660,7 @@ function ImpactAssessmentsTab() {
       risk_level: string
       data_categories: string[]
       processing_purposes: string[]
-    }) => api.post('/api/v1/admin/privacy/assessments', data),
+    }) => api.post('/api/v1/privacy/assessments', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['privacy-assessments'] })
       setShowCreate(false)

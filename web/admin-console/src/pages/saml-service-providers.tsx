@@ -77,7 +77,7 @@ export function SAMLServiceProvidersPage() {
     queryKey: ['saml-service-providers', search],
     queryFn: () =>
       api.get<{ service_providers: SAMLServiceProvider[] }>(
-        `/api/v1/admin/saml-service-providers?search=${encodeURIComponent(search)}`
+        `/api/v1/saml/service-providers?search=${encodeURIComponent(search)}`
       ),
   })
 
@@ -95,7 +95,7 @@ export function SAMLServiceProvidersPage() {
 
   const createMutation = useMutation({
     mutationFn: (body: SPFormState) =>
-      api.post('/api/v1/admin/saml-service-providers', body),
+      api.post('/api/v1/saml/service-providers', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       setCreateOpen(false)
@@ -109,7 +109,7 @@ export function SAMLServiceProvidersPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: SPFormState }) =>
-      api.put(`/api/v1/admin/saml-service-providers/${id}`, body),
+      api.put(`/api/v1/saml/service-providers/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       setEditTarget(null)
@@ -123,7 +123,7 @@ export function SAMLServiceProvidersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/v1/admin/saml-service-providers/${id}`),
+      api.delete(`/api/v1/saml/service-providers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       setDeleteTarget(null)
@@ -136,7 +136,7 @@ export function SAMLServiceProvidersPage() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.put(`/api/v1/admin/saml-service-providers/${id}`, { enabled }),
+      api.put(`/api/v1/saml/service-providers/${id}`, { enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['saml-service-providers'] })
       toast({ title: 'Service provider status updated' })
@@ -165,7 +165,7 @@ export function SAMLServiceProvidersPage() {
 
   async function downloadIdPMetadata() {
     try {
-      const metadata = await api.get<string>('/api/v1/oauth/saml/idp/metadata', {
+      const metadata = await api.get<string>('/saml/idp/metadata', {
         responseType: 'text',
         headers: { Accept: 'application/xml' },
       })

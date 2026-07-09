@@ -176,7 +176,7 @@ function FederationRulesTab() {
   const { data, isLoading } = useQuery({
     queryKey: ['federation-rules'],
     queryFn: () =>
-      api.get<{ data: FederationRule[] }>('/api/v1/admin/federation/rules'),
+      api.get<{ data: FederationRule[] }>('/api/v1/federation/rules'),
   })
 
   const rules = data?.data || []
@@ -191,7 +191,7 @@ function FederationRulesTab() {
 
   const createMutation = useMutation({
     mutationFn: (body: RuleFormData) =>
-      api.post('/api/v1/admin/federation/rules', body),
+      api.post('/api/v1/federation/rules', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['federation-rules'] })
       setFormOpen(false)
@@ -205,7 +205,7 @@ function FederationRulesTab() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: RuleFormData }) =>
-      api.put(`/api/v1/admin/federation/rules/${id}`, body),
+      api.put(`/api/v1/federation/rules/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['federation-rules'] })
       setEditTarget(null)
@@ -220,7 +220,7 @@ function FederationRulesTab() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/v1/admin/federation/rules/${id}`),
+      api.delete(`/api/v1/federation/rules/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['federation-rules'] })
       setDeleteTarget(null)
@@ -487,7 +487,7 @@ function IdentityLinksTab() {
     queryKey: ['identity-links', searchUserId],
     queryFn: () =>
       api.get<{ data: IdentityLink[] }>(
-        `/api/v1/admin/users/${searchUserId}/identity-links`
+        `/api/v1/users/${searchUserId}/identity-links`
       ),
     enabled: !!searchUserId,
   })
@@ -496,7 +496,7 @@ function IdentityLinksTab() {
 
   const unlinkMutation = useMutation({
     mutationFn: (linkId: string) =>
-      api.delete(`/api/v1/admin/users/${searchUserId}/identity-links/${linkId}`),
+      api.delete(`/api/v1/users/${searchUserId}/identity-links/${linkId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['identity-links', searchUserId] })
       setUnlinkTarget(null)
@@ -653,7 +653,7 @@ function ClaimsMappingTab() {
   const { data: appsData } = useQuery({
     queryKey: ['applications-list'],
     queryFn: () =>
-      api.get<{ data: SimpleApplication[] }>('/api/v1/admin/applications'),
+      api.get<{ data: SimpleApplication[] }>('/api/v1/applications'),
   })
 
   const applications = appsData?.data || []
@@ -662,7 +662,7 @@ function ClaimsMappingTab() {
     queryKey: ['custom-claims', selectedAppId],
     queryFn: () =>
       api.get<{ data: CustomClaim[] }>(
-        `/api/v1/admin/applications/${selectedAppId}/claims`
+        `/api/v1/applications/${selectedAppId}/claims`
       ),
     enabled: !!selectedAppId,
   })
@@ -671,7 +671,7 @@ function ClaimsMappingTab() {
 
   const createMutation = useMutation({
     mutationFn: (body: ClaimFormData) =>
-      api.post(`/api/v1/admin/applications/${selectedAppId}/claims`, body),
+      api.post(`/api/v1/applications/${selectedAppId}/claims`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['custom-claims', selectedAppId] })
       setFormOpen(false)
@@ -685,7 +685,7 @@ function ClaimsMappingTab() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: ClaimFormData }) =>
-      api.put(`/api/v1/admin/applications/${selectedAppId}/claims/${id}`, body),
+      api.put(`/api/v1/applications/${selectedAppId}/claims/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['custom-claims', selectedAppId] })
       setEditTarget(null)
@@ -700,7 +700,7 @@ function ClaimsMappingTab() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/v1/admin/applications/${selectedAppId}/claims/${id}`),
+      api.delete(`/api/v1/applications/${selectedAppId}/claims/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['custom-claims', selectedAppId] })
       setDeleteTarget(null)

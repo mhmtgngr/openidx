@@ -108,7 +108,7 @@ test.describe('API Gateway - Service Routing', () => {
   });
 
   test('Proxies requests to admin service', async ({ request }) => {
-    const response = await request.get('/api/v1/admin/dashboard');
+    const response = await request.get('/api/v1/dashboard');
 
     // May return 401 if auth is required
     expect([200, 401, 403, 502, 503]).toContain(response.status());
