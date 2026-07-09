@@ -320,6 +320,14 @@ func (s *Service) QueryEvents(ctx context.Context, query *AuditQuery) ([]Service
 		argIndex++
 	}
 
+	if query.TargetID != "" {
+		baseQuery += " AND target_id = $" + strconv.Itoa(argIndex)
+		countQuery += " AND target_id = $" + strconv.Itoa(argIndex)
+		args = append(args, query.TargetID)
+		countArgs = append(countArgs, query.TargetID)
+		argIndex++
+	}
+
 	// Get total count
 	var total int
 	err = s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
@@ -1189,6 +1197,9 @@ func (s *Service) handleListEvents(c *gin.Context) {
 	}
 	if actorID := c.Query("actor_id"); actorID != "" {
 		query.ActorID = actorID
+	}
+	if targetID := c.Query("target_id"); targetID != "" {
+		query.TargetID = targetID
 	}
 
 	events, total, err := s.QueryEvents(c.Request.Context(), query)
