@@ -1,4 +1,23 @@
 import { create } from 'zustand'
+import type { ViewMode } from '@/config/navigation'
+
+const VIEW_MODE_KEY = 'nav_view_mode'
+const COLLAPSED_KEY = 'nav_collapsed_domains'
+
+function loadCollapsed(): string[] {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function loadViewMode(): ViewMode {
+  const stored = localStorage.getItem(VIEW_MODE_KEY)
+  return stored === 'management' || stored === 'reporting' ? stored : 'admin'
+}
 
 interface AppState {
   theme: 'light' | 'dark' | 'system'
@@ -6,6 +25,12 @@ interface AppState {
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
   toggleSidebar: () => void
+  /** Console lens: full admin, management (operator) or reporting (auditor). */
+  viewMode: ViewMode
+  setViewMode: (mode: ViewMode) => void
+  /** Sidebar domain groups the user collapsed. Domains default to expanded. */
+  collapsedDomains: string[]
+  toggleDomain: (domain: string) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -17,6 +42,20 @@ export const useAppStore = create<AppState>((set) => ({
   sidebarOpen: true,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  viewMode: loadViewMode(),
+  setViewMode: (mode) => {
+    localStorage.setItem(VIEW_MODE_KEY, mode)
+    set({ viewMode: mode })
+  },
+  collapsedDomains: loadCollapsed(),
+  toggleDomain: (domain) =>
+    set((state) => {
+      const collapsed = state.collapsedDomains.includes(domain)
+        ? state.collapsedDomains.filter((d) => d !== domain)
+        : [...state.collapsedDomains, domain]
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
+      return { collapsedDomains: collapsed }
+    }),
 }))
 
 interface AuthUser {
