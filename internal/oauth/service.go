@@ -2600,6 +2600,8 @@ func (s *Service) handleCallback(c *gin.Context) {
 			`SELECT id FROM users WHERE org_id = $1 AND idp_id = $2 AND external_user_id = $3 LIMIT 1`,
 			org.ID, idp.ID, claims.Sub).Scan(&uid); err == nil && uid != "" {
 			user = &identity.User{ID: uid}
+			s.logAuditEvent(c.Request.Context(), "sso.identity.matched", "authentication", "sso_identity_matched", "success",
+				uid, c.ClientIP(), uid, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
 		}
 	}
 
@@ -2612,12 +2614,15 @@ func (s *Service) handleCallback(c *gin.Context) {
 			// binding (created before #364) so subsequent logins match by subject.
 			// Only fills when currently unset; best-effort, keyed by the matched PK.
 			if claims.Sub != "" {
-				if _, err := s.db.Pool.Exec(c.Request.Context(),
+				if tag, err := s.db.Pool.Exec(c.Request.Context(),
 					//orgscope:ignore keyed by globally-unique users.id (UUID PK) from the email match above
 					`UPDATE users SET idp_id = $1, external_user_id = $2 WHERE id = $3 AND external_user_id IS NULL`,
 					idp.ID, claims.Sub, user.ID); err != nil {
 					s.logger.Warn("Failed to backfill federated identity link for existing user",
 						zap.String("user_id", user.ID), zap.Error(err))
+				} else if tag.RowsAffected() > 0 {
+					s.logAuditEvent(c.Request.Context(), "sso.identity.backfilled", "authentication", "sso_identity_backfilled", "success",
+						user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
 				}
 			}
 		}
@@ -2637,6 +2642,8 @@ func (s *Service) handleCallback(c *gin.Context) {
 			c.JSON(500, gin.H{"error": "failed to provision user"})
 			return
 		}
+		s.logAuditEvent(c.Request.Context(), "sso.user.provisioned", "authentication", "sso_user_provisioned", "success",
+			user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "email": claims.Email})
 		// Bind the JIT-provisioned user to the IdP subject so it is a stable
 		// federated link (users.idp_id + external_user_id), not just an
 		// email-matched account. Best-effort: a unique (idp_id, external_user_id)
@@ -2649,9 +2656,15 @@ func (s *Service) handleCallback(c *gin.Context) {
 				idp.ID, claims.Sub, user.ID); err != nil {
 				s.logger.Warn("Failed to persist federated identity link for JIT user",
 					zap.String("user_id", user.ID), zap.Error(err))
+			} else {
+				s.logAuditEvent(c.Request.Context(), "sso.identity.linked", "authentication", "sso_identity_linked", "success",
+					user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String(), "external_user_id": claims.Sub})
 			}
 		}
 	}
+
+	s.logAuditEvent(c.Request.Context(), "sso.login", "authentication", "sso_login", "success",
+		user.ID, c.ClientIP(), user.ID, "user", map[string]interface{}{"idp_id": idp.ID.String()})
 
 	authCode := &AuthorizationCode{
 		Code:        GenerateRandomToken(32),
