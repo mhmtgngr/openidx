@@ -1109,6 +1109,44 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 		zap.String("resource_type", resourceType),
 		any("metadata", metadata),
 	)
+
+	// Persist to audit_events so SSO/OAuth/SAML activity is queryable via the audit
+	// API and compliance reports — not just the application log. Best-effort: the org
+	// is read synchronously (the write runs on a detached context), and a failure is
+	// logged, never surfaced to the caller. Mirrors internal/identity's proven pattern.
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
+	args := buildAuditInsertArgs(ctx, eventType, category, action, status, userID, ipAddress, resourceID, resourceType, metadata)
+	go func() {
+		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := s.db.Pool.Exec(bg, `
+			INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome,
+			                          actor_id, actor_type, actor_ip, target_id, target_type,
+			                          resource_id, details, org_id)
+			VALUES (gen_random_uuid(), NOW(), $1, $2, $3, $4, $5, 'user', $6, $7, $8, $7, $9, $10)
+		`, args...); err != nil {
+			s.logger.Warn("failed to persist oauth audit event",
+				zap.String("event_type", eventType),
+				zap.String("action", action),
+				zap.Error(err))
+		}
+	}()
+}
+
+// buildAuditInsertArgs resolves the org (default-org fallback when none is on the
+// context) and marshals the metadata, returning the positional args for the
+// audit_events INSERT in logAuditEvent. Extracted for unit testing the org fallback
+// and field mapping without a database.
+func buildAuditInsertArgs(ctx context.Context, eventType, category, action, status,
+	userID, ipAddress, resourceID, resourceType string, metadata map[string]interface{}) []interface{} {
+	orgID := "00000000-0000-0000-0000-000000000010"
+	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
+		orgID = org.ID
+	}
+	detailsJSON, _ := json.Marshal(metadata)
+	return []interface{}{eventType, category, action, status, userID, ipAddress, resourceID, resourceType, string(detailsJSON), orgID}
 }
 
 // any is a helper for logging arbitrary data
