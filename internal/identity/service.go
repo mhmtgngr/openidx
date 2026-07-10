@@ -2785,11 +2785,24 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 		return nil // Fail open: no org context, don't block
 	}
 
-	// Query all enabled policies (for this org) with their rules
+	// Query all enabled policies (for this org) with their rules.
+	//
+	// The policy_rules table stores rule_type + two JSONB columns (conditions,
+	// actions), NOT columns named condition/effect/priority. The governance
+	// service is the writer: it persists rule.Condition into `conditions`, and
+	// {effect, priority} into `actions` (falling back to rule_type for the
+	// effect). Selecting the non-existent pr.condition/pr.effect/pr.priority
+	// made this query error on every call, and the error path below fails open
+	// — so separation-of-duty was never actually enforced. Read the real
+	// columns and reshape them into the {condition, effect, priority} the
+	// evaluators below expect, mirroring governance.loadPolicyRules.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT p.id, p.name, p.type, p.priority,
 		       COALESCE(json_agg(json_build_object(
-		           'id', pr.id, 'condition', pr.condition, 'effect', pr.effect, 'priority', pr.priority
+		           'id', pr.id,
+		           'condition', pr.conditions,
+		           'effect', COALESCE(NULLIF(pr.actions->>'effect', ''), pr.rule_type),
+		           'priority', COALESCE((pr.actions->>'priority')::int, 0)
 		       )) FILTER (WHERE pr.id IS NOT NULL), '[]'::json) as rules
 		FROM policies p
 		LEFT JOIN policy_rules pr ON pr.policy_id = p.id AND pr.org_id = p.org_id
