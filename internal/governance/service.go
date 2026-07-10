@@ -1988,6 +1988,11 @@ func computeNextRunAt(schedule string, from time.Time) *time.Time {
 
 // CreateCampaign inserts a new certification campaign
 func (s *Service) CreateCampaign(ctx context.Context, campaign *ScheduledCampaign) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Creating certification campaign", zap.String("name", campaign.Name))
 
 	if campaign.ID == "" {
@@ -2001,15 +2006,15 @@ func (s *Service) CreateCampaign(ctx context.Context, campaign *ScheduledCampaig
 	}
 	campaign.NextRunAt = computeNextRunAt(campaign.Schedule, now)
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO certification_campaigns (id, name, description, type, schedule, reviewer_strategy,
 			reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
-			status, next_run_at, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			status, next_run_at, created_by, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`, campaign.ID, campaign.Name, campaign.Description, campaign.Type, campaign.Schedule,
 		campaign.ReviewerStrategy, campaign.ReviewerID, campaign.ReviewerRole,
 		campaign.AutoRevoke, campaign.GracePeriodDays, campaign.DurationDays,
-		campaign.Status, campaign.NextRunAt, campaign.CreatedBy, campaign.CreatedAt, campaign.UpdatedAt)
+		campaign.Status, campaign.NextRunAt, campaign.CreatedBy, campaign.CreatedAt, campaign.UpdatedAt, org.ID)
 
 	return err
 }
@@ -2204,10 +2209,10 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO campaign_runs (id, campaign_id, review_id, status, started_at, deadline,
-			total_items, reviewed_items, auto_revoked_items, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			total_items, reviewed_items, auto_revoked_items, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, run.ID, run.CampaignID, run.ReviewID, run.Status, run.StartedAt,
-		run.Deadline, run.TotalItems, run.ReviewedItems, run.AutoRevokedItems, run.CreatedAt)
+		run.Deadline, run.TotalItems, run.ReviewedItems, run.AutoRevokedItems, run.CreatedAt, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create campaign run: %w", err)
 	}
@@ -2382,7 +2387,7 @@ func (s *Service) StartCampaignScheduler(ctx context.Context) {
 // checkCampaignSchedules finds active campaigns whose next_run_at has passed and triggers them.
 func (s *Service) checkCampaignSchedules(ctx context.Context) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id FROM certification_campaigns
+		SELECT id, org_id FROM certification_campaigns
 		WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= NOW()
 	`)
 	if err != nil {
@@ -2391,27 +2396,31 @@ func (s *Service) checkCampaignSchedules(ctx context.Context) {
 	}
 	defer rows.Close()
 
-	var campaignIDs []string
+	type dueCampaign struct {
+		id    string
+		orgID string
+	}
+	var due []dueCampaign
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var c dueCampaign
+		if err := rows.Scan(&c.id, &c.orgID); err != nil {
 			s.logger.Error("Failed to scan campaign ID", zap.Error(err))
 			continue
 		}
-		campaignIDs = append(campaignIDs, id)
+		due = append(due, c)
 	}
 
-	// certification_campaigns/campaign_runs are global, install-wide tables with
-	// no org_id (the feature predates multi-tenancy). The scheduler has no request
-	// context, so it runs each campaign under the default org; the access reviews it
-	// generates are org-scoped to the default org. Per-campaign org targeting is a
-	// future enhancement once campaigns carry an org_id.
-	runCtx := orgctx.With(ctx, orgctx.Org{ID: "00000000-0000-0000-0000-000000000010"})
-	for _, id := range campaignIDs {
-		s.logger.Info("Scheduler triggering campaign run", zap.String("campaign_id", id))
-		if _, err := s.RunCampaign(runCtx, id); err != nil {
+	// certification_campaigns/campaign_runs are org-scoped (v69). The SELECT above
+	// runs under WithBypassRLS (set in StartCampaignScheduler) so it sees due
+	// campaigns across all orgs; each campaign is then run under its own org so the
+	// access reviews and campaign_run rows it generates land in the right tenant and
+	// satisfy the FORCE-RLS WITH CHECK belt.
+	for _, c := range due {
+		s.logger.Info("Scheduler triggering campaign run", zap.String("campaign_id", c.id))
+		runCtx := orgctx.With(ctx, orgctx.Org{ID: c.orgID})
+		if _, err := s.RunCampaign(runCtx, c.id); err != nil {
 			s.logger.Error("Scheduler failed to run campaign",
-				zap.String("campaign_id", id), zap.Error(err))
+				zap.String("campaign_id", c.id), zap.Error(err))
 		}
 	}
 }
@@ -2550,6 +2559,11 @@ type ABACEvaluationResult struct {
 
 // CreateABACPolicy creates a new ABAC policy
 func (s *Service) CreateABACPolicy(ctx context.Context, policy *ABACPolicy) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Creating ABAC policy", zap.String("name", policy.Name))
 
 	if policy.ID == "" {
@@ -2565,10 +2579,10 @@ func (s *Service) CreateABACPolicy(ctx context.Context, policy *ABACPolicy) erro
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO abac_policies (id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO abac_policies (id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, policy.ID, policy.Name, policy.Description, policy.ResourceType, policy.ResourceID,
-		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, policy.CreatedAt, policy.UpdatedAt)
+		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, policy.CreatedAt, policy.UpdatedAt, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to insert ABAC policy: %w", err)
 	}

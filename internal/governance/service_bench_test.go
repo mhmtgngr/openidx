@@ -398,8 +398,8 @@ func BenchmarkEvaluateABACPolicies(b *testing.B) {
 
 	for i := 0; i < policyCount; i++ {
 		svc.db.Pool.Exec(ctx, `
-			INSERT INTO abac_policies (id, name, description, resource_type, effect, enabled, conditions, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, true, $6, $7, $7)
+			INSERT INTO abac_policies (id, name, description, resource_type, effect, enabled, conditions, created_at, updated_at, org_id)
+			VALUES ($1, $2, $3, $4, $5, true, $6, $7, $7, '00000000-0000-0000-0000-000000000010')
 		`, "bench_abac_"+randomString(8), "ABAC Policy "+randomString(4), "Description", "document", "allow", `[{"attribute":"department","operator":"equals","value":"finance"}]`, now)
 	}
 

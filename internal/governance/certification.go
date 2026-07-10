@@ -104,6 +104,10 @@ func NewCertificationService(db *database.PostgresDB, logger *zap.Logger) *Certi
 
 // CreateCampaign creates a new access certification campaign
 func (s *CertificationService) CreateCampaign(ctx context.Context, name, description, createdBy string, scope CampaignScope, reviewers []CampaignReviewer, deadline time.Time, autoRevoke bool, gracePeriodDays int) (*CertificationCampaign, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if name == "" {
 		return nil, fmt.Errorf("campaign name is required")
 	}
@@ -133,9 +137,9 @@ func (s *CertificationService) CreateCampaign(ctx context.Context, name, descrip
 
 	// Create the campaign
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO certification_campaigns (id, name, description, status, scope, reviewers, deadline, created_by, created_at, updated_at, auto_revoke, grace_period_days)
-		 VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $8, $9, $10)`,
-		id, name, description, scopeJSON, reviewersJSON, deadline, createdBy, now, autoRevoke, gracePeriodDays)
+		`INSERT INTO certification_campaigns (id, name, description, status, scope, reviewers, deadline, created_by, created_at, updated_at, auto_revoke, grace_period_days, org_id)
+		 VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $8, $9, $10, $11)`,
+		id, name, description, scopeJSON, reviewersJSON, deadline, createdBy, now, autoRevoke, gracePeriodDays, org.ID)
 	if err != nil {
 		s.logger.Error("Failed to create certification campaign",
 			zap.String("name", name),
