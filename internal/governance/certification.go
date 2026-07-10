@@ -662,36 +662,13 @@ func (s *CertificationService) revokeAccess(ctx context.Context, resourceType, u
 	// (revokeUnreviewedItems) calls this with no org context; user_id is globally
 	// unique to a single org, so the (user_id, resource_id) key is org-bounded
 	// either way, but the explicit filter is applied for request-path callers.
-	filter := ""
-	args := []interface{}{userID, resourceID}
+	orgID := ""
 	if org, oerr := orgctx.From(ctx); oerr == nil {
-		filter = " AND org_id = $3"
-		args = append(args, org.ID)
+		orgID = org.ID
 	}
-
-	switch resourceType {
-	case "role":
-		_, err := s.db.Pool.Exec(ctx,
-			`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`+filter, args...)
-		if err != nil {
-			return fmt.Errorf("revoke role: %w", err)
-		}
-	case "group":
-		_, err := s.db.Pool.Exec(ctx,
-			`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2`+filter, args...)
-		if err != nil {
-			return fmt.Errorf("revoke group: %w", err)
-		}
-	case "application":
-		_, err := s.db.Pool.Exec(ctx,
-			`DELETE FROM user_application_assignments WHERE user_id = $1 AND application_id = $2`+filter, args...)
-		if err != nil {
-			return fmt.Errorf("revoke application: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported certification resource type %q", resourceType)
-	}
-	return nil
+	// Delegates to the shared revocation executor so certification and the
+	// access-review decision path remove access identically.
+	return revokeResourceAssignment(ctx, s.db.Pool, resourceType, userID, resourceID, orgID)
 }
 
 func (s *CertificationService) revokeUnreviewedItems(ctx context.Context, campaignID string) {

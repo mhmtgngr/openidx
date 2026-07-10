@@ -550,13 +550,55 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 	}
 
 	now := time.Now()
-	_, err = s.db.Pool.Exec(ctx, `
+
+	// Recording the decision and enforcing it must be atomic: a review item
+	// marked "revoked" while the user keeps the access is exactly the silent
+	// hole access reviews exist to close. Wrap both in one transaction so a
+	// failed revocation rolls the decision back instead of leaving it hollow.
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE review_items
 		SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
 		WHERE id = $1 AND org_id = $6
 	`, itemID, decision, comments, decidedBy, now, org.ID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Only enforce when a matching item was actually updated.
+	if decision == ReviewDecisionRevoked && tag.RowsAffected() > 0 {
+		if err = s.revokeReviewItemAccess(ctx, tx, itemID, org.ID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+// revokeReviewItemAccess removes the underlying access a review item points at,
+// running inside the caller's transaction. Shared by the single- and
+// batch-decision paths so a "revoked" decision always removes access. Items
+// without a concrete (user, resource) target carry nothing to revoke.
+func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID, orgID string) error {
+	var resourceType string
+	var userID, resourceID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT resource_type, user_id, resource_id FROM review_items WHERE id = $1 AND org_id = $2
+	`, itemID, orgID).Scan(&resourceType, &userID, &resourceID); err != nil {
+		return fmt.Errorf("load review item %s for revocation: %w", itemID, err)
+	}
+	if userID == nil || resourceID == nil {
+		return nil
+	}
+	if err := revokeResourceAssignment(ctx, tx, resourceType, *userID, *resourceID, orgID); err != nil {
+		return fmt.Errorf("revoke access for review item %s: %w", itemID, err)
+	}
+	return nil
 }
 
 // CreatePolicy creates a new policy
@@ -1292,15 +1334,21 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 	}
 	defer tx.Rollback(ctx)
 
-	// Update each item
+	// Update each item, and for revocations remove the underlying access in the
+	// same transaction — otherwise a batch "revoke" only relabels rows.
 	for _, itemID := range itemIDs {
-		_, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE review_items
 			SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
 			WHERE id = $1 AND review_id = $6 AND org_id = $7
 		`, itemID, decision, comments, decidedBy, now, reviewID, org.ID)
 		if err != nil {
 			return err
+		}
+		if decision == ReviewDecisionRevoked && tag.RowsAffected() > 0 {
+			if err := s.revokeReviewItemAccess(ctx, tx, itemID, org.ID); err != nil {
+				return err
+			}
 		}
 	}
 
