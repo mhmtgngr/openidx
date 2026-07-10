@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/api"
+	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
@@ -191,7 +192,11 @@ func main() {
 	// unauthenticated, including in development. The interactive OIDC flow
 	// endpoints (consent, step-up) are authenticated only outside development,
 	// preserving the friction-free local login flow.
-	authMW := middleware.Auth(cfg.OAuthJWKSURL)
+	// Accept both OAuth JWTs and minted API keys / service-account PATs on the
+	// authenticated surfaces (client-management API, and the flow endpoints
+	// outside development).
+	apiKeyService := apikeys.NewService(db, redis, log)
+	authMW := middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator())
 	var flowAuth []gin.HandlerFunc
 	if cfg.Environment != "development" {
 		flowAuth = append(flowAuth, authMW)

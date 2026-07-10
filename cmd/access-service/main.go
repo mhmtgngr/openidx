@@ -14,6 +14,7 @@ import (
 
 	"github.com/openidx/openidx/internal/access"
 	"github.com/openidx/openidx/internal/api"
+	"github.com/openidx/openidx/internal/apikeys"
 	"github.com/openidx/openidx/internal/audit"
 	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
@@ -434,7 +435,9 @@ func main() {
 
 	// Register routes (admin API is protected in non-dev environments)
 	if cfg.Environment != "development" {
-		access.RegisterRoutes(router, accessService, middleware.Auth(cfg.OAuthJWKSURL))
+		// Accept both OAuth JWTs and minted API keys / service-account PATs.
+		apiKeyService := apikeys.NewService(db, redis, log)
+		access.RegisterRoutes(router, accessService, middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
 	} else {
 		access.RegisterRoutes(router, accessService)
 	}

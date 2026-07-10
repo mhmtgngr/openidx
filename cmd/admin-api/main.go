@@ -234,7 +234,8 @@ func main() {
 	// API v1 routes
 	v1 := router.Group("/api/v1")
 	if cfg.Environment != "development" {
-		v1.Use(middleware.Auth(cfg.OAuthJWKSURL))
+		// Accept both OAuth JWTs and minted API keys / service-account PATs.
+		v1.Use(middleware.AuthWithAPIKey(cfg.OAuthJWKSURL, apiKeyService.MiddlewareValidator()))
 	} else {
 		// In dev mode, use soft auth to identify caller without blocking
 		v1.Use(middleware.SoftAuth(cfg.OAuthJWKSURL))
