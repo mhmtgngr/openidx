@@ -302,12 +302,18 @@ func (s *Service) AddMember(ctx context.Context, orgID, userID, role, invitedBy 
 	memberID := uuid.New().String()
 	now := time.Now().UTC()
 
+	// invited_by is a nullable UUID; store NULL rather than an empty string
+	// (which would fail the UUID cast) when the inviter is unknown.
+	var inviter interface{}
+	if invitedBy != "" {
+		inviter = invitedBy
+	}
 	_, err := s.db.Pool.Exec(ctx,
 		`INSERT INTO organization_members (id, organization_id, user_id, role, joined_at, invited_by)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (organization_id, user_id)
 		 DO UPDATE SET role = EXCLUDED.role`,
-		memberID, orgID, userID, role, now, invitedBy,
+		memberID, orgID, userID, role, now, inviter,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to add member: %w", err)
@@ -342,6 +348,21 @@ func (s *Service) RemoveMember(ctx context.Context, orgID, userID string) error 
 	)
 
 	return nil
+}
+
+// GetMemberRole returns the caller's role within an organization, or "" if they
+// are not a member. Used to authorize per-org write operations. The scalar
+// subquery is wrapped in COALESCE so the query always returns exactly one row
+// (empty string for a non-member) rather than a no-rows error.
+func (s *Service) GetMemberRole(ctx context.Context, orgID, userID string) (string, error) {
+	var role string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE((SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2), '')`,
+		orgID, userID).Scan(&role)
+	if err != nil {
+		return "", err
+	}
+	return role, nil
 }
 
 // ListMembers returns a paginated list of organization members with user info
@@ -447,10 +468,15 @@ func (s *Service) handleCreateOrganization(c *gin.Context) {
 		return
 	}
 
+	// Creating an organization records the caller as its owner. Fall back to no
+	// seed identity: an unauthenticated caller must not be able to mint a tenant
+	// as the seed admin (reachable under SoftAuth in dev). Require a real
+	// authenticated user.
 	userID, _ := c.Get("user_id")
 	creatorUserID, _ := userID.(string)
 	if creatorUserID == "" {
-		creatorUserID = "00000000-0000-0000-0000-000000000001"
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "authentication required to create an organization"})
+		return
 	}
 
 	org := &Organization{
@@ -485,6 +511,9 @@ func (s *Service) handleGetOrganization(c *gin.Context) {
 
 func (s *Service) handleUpdateOrganization(c *gin.Context) {
 	orgID := c.Param("id")
+	if !s.requireOrgAdmin(c, orgID) {
+		return
+	}
 
 	var req struct {
 		Name   string `json:"name" binding:"required"`
@@ -535,6 +564,9 @@ func (s *Service) handleListMembers(c *gin.Context) {
 
 func (s *Service) handleAddMember(c *gin.Context) {
 	orgID := c.Param("id")
+	if !s.requireOrgAdmin(c, orgID) {
+		return
+	}
 
 	var req struct {
 		UserID string `json:"user_id" binding:"required"`
@@ -546,11 +578,10 @@ func (s *Service) handleAddMember(c *gin.Context) {
 		return
 	}
 
+	// The inviter is the authenticated caller; AddMember stores NULL when unknown
+	// rather than substituting the seed admin identity.
 	inviterID, _ := c.Get("user_id")
 	invitedBy, _ := inviterID.(string)
-	if invitedBy == "" {
-		invitedBy = "00000000-0000-0000-0000-000000000001"
-	}
 
 	if err := s.AddMember(c.Request.Context(), orgID, req.UserID, req.Role, invitedBy); err != nil {
 		s.logger.Error("failed to add member", zap.Error(err))
@@ -564,6 +595,9 @@ func (s *Service) handleAddMember(c *gin.Context) {
 func (s *Service) handleRemoveMember(c *gin.Context) {
 	orgID := c.Param("id")
 	userID := c.Param("userId")
+	if !s.requireOrgAdmin(c, orgID) {
+		return
+	}
 
 	if err := s.RemoveMember(c.Request.Context(), orgID, userID); err != nil {
 		s.logger.Error("failed to remove member", zap.Error(err))
@@ -589,6 +623,37 @@ func (s *Service) handleGetMyOrganizations(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, orgs)
+}
+
+// requireOrgAdmin authorizes a per-org write operation. The caller must be a
+// platform admin, or an owner/admin member of orgID. It fails closed: an
+// unauthenticated caller (no user_id) or any lookup error is denied. On failure
+// it writes the HTTP response and returns false, so handlers can `if
+// !s.requireOrgAdmin(c, orgID) { return }`. The platform-admin bypass mirrors
+// the list handler and the tenant resolver's cross-org model (crossing orgs as
+// platform admin is expected and separately audited).
+func (s *Service) requireOrgAdmin(c *gin.Context, orgID string) bool {
+	ctx := c.Request.Context()
+	if orgctx.IsPlatformAdmin(ctx) {
+		return true
+	}
+	uid, _ := c.Get("user_id")
+	callerID, _ := uid.(string)
+	if callerID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "authentication required"})
+		return false
+	}
+	role, err := s.GetMemberRole(ctx, orgID, callerID)
+	if err != nil {
+		s.logger.Error("failed to check organization membership", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return false
+	}
+	if role != "owner" && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "must be an owner or admin of this organization"})
+		return false
+	}
+	return true
 }
 
 // RegisterRoutes registers organization HTTP routes on the given router group

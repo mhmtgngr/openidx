@@ -36,6 +36,86 @@ func TestHandleListOrganizations_NonAdminForbidden(t *testing.T) {
 	}
 }
 
+// TestHandleCreateOrganization_Unauthenticated guards the seed-identity hole:
+// creating an org used to fall back to the seed admin id when no user_id was
+// set, letting an unauthenticated caller (reachable under SoftAuth) mint a
+// tenant as the seed admin. An unauthenticated caller must now be refused. The
+// refusal happens before any DB access, so a zero-value Service exercises it.
+func TestHandleCreateOrganization_Unauthenticated(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/organizations",
+		strings.NewReader(`{"name":"Acme","slug":"acme"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	// Not platform-admin, no user_id.
+
+	s.handleCreateOrganization(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — an unauthenticated caller must not create a tenant",
+			w.Code, http.StatusForbidden)
+	}
+}
+
+// TestHandleUpdateOrganization_NonMemberForbidden guards the per-org write hole:
+// updating an org used to require only authentication, so any user could rename
+// or re-plan any tenant. A caller who is neither a platform admin nor an
+// owner/admin of the org must be refused. The refusal happens before any DB
+// access (no user_id), so a zero-value Service exercises it.
+func TestHandleUpdateOrganization_NonMemberForbidden(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "org-1"}}
+	c.Request = httptest.NewRequest(http.MethodPut, "/organizations/org-1", nil)
+
+	s.handleUpdateOrganization(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — a non-admin caller must not update the org",
+			w.Code, http.StatusForbidden)
+	}
+}
+
+// TestHandleAddMember_NonMemberForbidden guards the membership hole: adding a
+// member used to require only authentication, so any user could add anyone
+// (including themselves) to any org with any role. A caller who is neither a
+// platform admin nor an owner/admin of the org must be refused.
+func TestHandleAddMember_NonMemberForbidden(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "org-1"}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/organizations/org-1/members", nil)
+
+	s.handleAddMember(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — a non-admin caller must not add members",
+			w.Code, http.StatusForbidden)
+	}
+}
+
+// TestHandleRemoveMember_NonMemberForbidden guards the membership hole: removing
+// a member used to require only authentication, so any user could remove any
+// member (including an owner) from any org. A caller who is neither a platform
+// admin nor an owner/admin of the org must be refused.
+func TestHandleRemoveMember_NonMemberForbidden(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: "org-1"}, {Key: "userId", Value: "user-9"}}
+	c.Request = httptest.NewRequest(http.MethodDelete, "/organizations/org-1/members/user-9", nil)
+
+	s.handleRemoveMember(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — a non-admin caller must not remove members",
+			w.Code, http.StatusForbidden)
+	}
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }
