@@ -337,8 +337,12 @@ func (s *Service) CalculateEnhancedRiskScore(ctx context.Context, userID, ip, co
 	s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM mfa_totp WHERE user_id = $1 AND enabled = true AND org_id = $2`, userID, org.ID).Scan(&mfaCount)
 	var webauthnCount int
+	// WebAuthn credentials live in mfa_webauthn (the phantom webauthn_credentials
+	// table is never created), so this used to always read 0 — the risk engine
+	// treated every user as having no WebAuthn. Org-scoped like the mfa_totp
+	// count above.
 	s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1`, userID).Scan(&webauthnCount)
+		`SELECT COUNT(*) FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2`, userID, org.ID).Scan(&webauthnCount)
 	if mfaCount == 0 && webauthnCount == 0 {
 		breakdown.Factors["no_mfa"] = 20
 		breakdown.Anomalies = append(breakdown.Anomalies, "No MFA method configured for this user")
