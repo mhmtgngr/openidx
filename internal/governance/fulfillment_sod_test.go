@@ -73,8 +73,10 @@ func TestCheckSoDForRoleGrant(t *testing.T) {
 	for id, name := range map[string]string{adminRole: "admin", auditorRole: "auditor", viewerRole: "viewer"} {
 		exec(`INSERT INTO roles (id, name, org_id) VALUES ($1,$2,$3)`, id, name, orgID)
 	}
-	exec(`INSERT INTO policies (id, name, type, enabled, priority, org_id)
-	      VALUES ($1, 'SoD: admin vs auditor', 'separation_of_duty', true, 100, $2)`, policyID, orgID)
+	// description must be non-NULL: GetPolicy scans it into a plain string
+	// (production writes "" via CreatePolicy, never NULL).
+	exec(`INSERT INTO policies (id, name, description, type, enabled, priority, org_id)
+	      VALUES ($1, 'SoD: admin vs auditor', '', 'separation_of_duty', true, 100, $2)`, policyID, orgID)
 	exec(`INSERT INTO policy_rules (id, policy_id, rule_type, conditions, actions, org_id)
 	      VALUES (gen_random_uuid(), $1, 'deny', $2, $3, $4)`,
 		policyID, `{"conflicting_roles": ["admin", "auditor"]}`, `{"effect": "deny", "priority": 10}`, orgID)
