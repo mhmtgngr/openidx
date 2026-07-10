@@ -1032,10 +1032,17 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 		auditDetails, _ := json.Marshal(map[string]any{
 			"request_id": request.ID, "secret_id": request.ResourceID, "expires_at": request.ExpiresAt,
 		})
-		_, _ = s.db.Pool.Exec(ctx,
-			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+		if _, err := s.db.Pool.Exec(ctx,
+			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
 			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_granted', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
-			request.RequesterID, request.ResourceID, string(auditDetails), org.ID)
+			request.RequesterID, request.ResourceID, string(auditDetails), org.ID); err != nil {
+			// The column was `ip_address`, which does not exist on audit_events
+			// (the real column is actor_ip), so this INSERT silently failed and the
+			// checkout was never audited. Log the error now so any future breakage
+			// is visible instead of lost.
+			s.logger.Warn("Failed to write jit_credential.checkout_granted audit event",
+				zap.String("request_id", request.ID), zap.Error(err))
+		}
 	default:
 		// Fail loudly. Marking a request "fulfilled" without granting
 		// anything is exactly the bug the P1.1 audit found — an approved
@@ -1182,9 +1189,12 @@ func (s *Service) handleReturnCredential(c *gin.Context) {
 	s.bumpRotationOnReturn(ctx, resourceID)
 	// Best-effort audit.
 	retDetails, _ := json.Marshal(map[string]any{"request_id": reqID, "secret_id": resourceID})
-	_, _ = s.db.Pool.Exec(ctx,
-		`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+	if _, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
 		 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_returned', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
-		userID, resourceID, string(retDetails), org.ID)
+		userID, resourceID, string(retDetails), org.ID); err != nil {
+		s.logger.Warn("Failed to write jit_credential.checkout_returned audit event",
+			zap.String("request_id", reqID), zap.Error(err))
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "returned"})
 }
