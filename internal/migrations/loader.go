@@ -509,5 +509,12 @@ func allMigrations() []*Migration {
 			UpSQL:       tempAccessOrgIsolationUp,
 			DownSQL:     tempAccessOrgIsolationDown,
 		},
+		{
+			Version:     72,
+			Name:        "device_trust_requests_org_isolation",
+			Description: "Add org_id (backfilled from the requesting user, NOT NULL, FK) + index to device_trust_requests (admin device-trust approval workflow, created by v39 with no org_id). Its approve/reject acted by bare id and its COUNT queries had no org filter — a cross-tenant IDOR letting an admin approve/reject another org's requests and read global pending counts. Service methods now carry an org predicate. Not RLS-belted (ExpireOldRequests sweeps across orgs). Idempotent.",
+			UpSQL:       deviceTrustReqOrgIsolationUp,
+			DownSQL:     deviceTrustReqOrgIsolationDown,
+		},
 	}
 }
