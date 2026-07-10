@@ -6,11 +6,15 @@
 > what Okta + SailPoint + CyberArk + Zscaler do together, at a fraction of the
 > cost, and does things *none of them can* because it's one platform.
 >
-> This document is the **strategy and sequenced roadmap**. Its companion,
-> [`MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md), is the
+> This document is the **strategy and sequenced roadmap**. Its companions:
+> [`MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md) is the
 > **detailed per-pillar gap register** (every gap, market evidence, code status,
-> and a codebase-specific recommendation) that this plan draws on. Read the
-> executive summary here first; use the register as the backlog.
+> and a codebase-specific recommendation), and
+> [`IMPLEMENTATION_PLAN_PARALLEL.md`](./IMPLEMENTATION_PLAN_PARALLEL.md) turns
+> the register into **parallel-executable workstreams** (package ownership,
+> dependency waves, startable tasks) — the board you assign from. Read the
+> executive summary here first; use the register as the backlog and the parallel
+> plan as the work board.
 >
 > Produced from a skeptical multi-agent audit of the live code plus market
 > research across 12 categories. Last refreshed 2026-07-10.
