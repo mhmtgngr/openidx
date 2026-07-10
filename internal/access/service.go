@@ -537,11 +537,15 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/guacamole/session-history", svc.requireAdminRole(), svc.handleListGuacSessionHistory)
 
 		// Temporary access links for support/vendor access
-		api.GET("/temp-access", svc.handleListTempAccess)
-		api.POST("/temp-access", svc.handleCreateTempAccess)
-		api.GET("/temp-access/:id", svc.handleGetTempAccess)
-		api.DELETE("/temp-access/:id", svc.handleRevokeTempAccess)
-		api.GET("/temp-access/:id/usage", svc.handleGetTempAccessUsage)
+		// PAM vendor access to internal SSH/RDP/VNC hosts is a privileged
+		// operation — gate management to admins, matching the guacamole PAM
+		// routes above. (The public token-redemption route is registered
+		// separately on the root router, without auth.)
+		api.GET("/temp-access", adminOnly, svc.handleListTempAccess)
+		api.POST("/temp-access", adminOnly, svc.handleCreateTempAccess)
+		api.GET("/temp-access/:id", adminOnly, svc.handleGetTempAccess)
+		api.DELETE("/temp-access/:id", adminOnly, svc.handleRevokeTempAccess)
+		api.GET("/temp-access/:id/usage", adminOnly, svc.handleGetTempAccessUsage)
 
 		// Quick service creation (route + Ziti + BrowZer in one call)
 		api.POST("/services/quick-create", svc.handleQuickCreate)

@@ -495,5 +495,19 @@ func allMigrations() []*Migration {
 			UpSQL:       governanceOrgIsolationUp,
 			DownSQL:     governanceOrgIsolationDown,
 		},
+		{
+			Version:     70,
+			Name:        "users_manager_id",
+			Description: "Add the self-referential users.manager_id (nullable, ON DELETE SET NULL) + index that certification resolveReviewer's manager strategy already queries but no migration created — its absence made every 'manager' campaign silently fall back to the system admin. Populated from the SCIM enterprise-extension manager.value. No backfill; users is already under the v37 RLS belt (RI checks bypass RLS, so the self-FK resolves cross-GUC). Idempotent.",
+			UpSQL:       usersManagerIDUp,
+			DownSQL:     usersManagerIDDown,
+		},
+		{
+			Version:     71,
+			Name:        "temp_access_links_org_isolation",
+			Description: "Add org_id (backfilled from the creating user, NOT NULL, FK) + index to temp_access_links (PAM vendor SSH/RDP/VNC access, created by v54 with no org_id). Its list/get/revoke handlers filtered by id only — a cross-tenant IDOR letting any authenticated user enumerate/read/revoke every org's access links. Handlers now add an org predicate + admin gate. Deliberately NOT RLS-belted: the public token-redemption path has no org context and the token is a unique secret. Idempotent.",
+			UpSQL:       tempAccessOrgIsolationUp,
+			DownSQL:     tempAccessOrgIsolationDown,
+		},
 	}
 }

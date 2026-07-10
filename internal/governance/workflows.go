@@ -241,8 +241,14 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			}
 		case ApprovalStepTypeRole:
 			if step.RoleID != "" {
+				// Role membership lives in the user_roles join table — users has
+				// no `roles` column, so the old `$1 = ANY(roles)` query errored on
+				// every call, was swallowed, and created ZERO approver rows: a
+				// role-based approval tier silently approved nothing (and a mixed
+				// [user, role] policy auto-fulfilled once the user approved).
+				// DISTINCT guards against a user holding the role via >1 grant.
 				roleRows, err := s.db.Pool.Query(ctx,
-					`SELECT id FROM users WHERE $1 = ANY(roles) AND org_id = $2`, step.RoleID, org.ID,
+					`SELECT DISTINCT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2`, step.RoleID, org.ID,
 				)
 				if err != nil {
 					s.logger.Error("Failed to query users by role", zap.Error(err), zap.String("role_id", step.RoleID))
