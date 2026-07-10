@@ -66,6 +66,28 @@ type SCIMUser struct {
 	Active      bool           `json:"active"`
 	Groups      []SCIMGroupRef `json:"groups,omitempty"`
 	Meta        SCIMMeta       `json:"meta,omitempty"`
+	// Enterprise carries the SCIM 2.0 enterprise user extension. The JSON key
+	// is the full schema URN, which encoding/json maps verbatim.
+	Enterprise *SCIMEnterpriseUser `json:"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User,omitempty"`
+}
+
+// scimEnterpriseUserSchema is the URN of the SCIM 2.0 enterprise user extension.
+const scimEnterpriseUserSchema = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+
+// SCIMEnterpriseUser is the SCIM 2.0 enterprise user extension. Only the
+// attributes OpenIDX consumes are modeled; unknown attributes are ignored.
+type SCIMEnterpriseUser struct {
+	EmployeeNumber string       `json:"employeeNumber,omitempty"`
+	Department     string       `json:"department,omitempty"`
+	Manager        *SCIMManager `json:"manager,omitempty"`
+}
+
+// SCIMManager is the enterprise-extension manager reference. Per RFC 7643 §4.3,
+// Value is the SCIM id of the User's manager resource (our users.id).
+type SCIMManager struct {
+	Value       string `json:"value,omitempty"`
+	Ref         string `json:"$ref,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // SCIMName represents a name in SCIM format
@@ -408,6 +430,32 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 
 // SCIM 2.0 User Operations
 
+// resolveManagerID maps a SCIM enterprise-extension manager reference to a
+// local users.id, scoped to the caller's org. Per RFC 7643 §4.3, manager.value
+// is the SCIM id of the manager (our users.id). Returns nil when no manager is
+// supplied or the reference does not resolve to a user in this org: a dangling
+// reference must not fail the whole provisioning call, and the users.manager_id
+// self-FK would otherwise reject an unknown id with a 500. The id::text compare
+// avoids a uuid-cast error on a malformed value (it yields no rows instead).
+func (s *Service) resolveManagerID(ctx context.Context, orgID string, user *SCIMUser) *string {
+	if user.Enterprise == nil || user.Enterprise.Manager == nil {
+		return nil
+	}
+	ref := strings.TrimSpace(user.Enterprise.Manager.Value)
+	if ref == "" {
+		return nil
+	}
+	var managerID string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM users WHERE id::text = $1 AND org_id = $2`, ref, orgID).Scan(&managerID)
+	if err != nil {
+		s.logger.Warn("SCIM manager reference did not resolve to an in-org user; leaving manager unset",
+			zap.String("manager_ref", scrubLogValue(ref)))
+		return nil
+	}
+	return &managerID
+}
+
 // CreateSCIMUser creates a new user via SCIM
 func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser, error) {
 	s.logger.Info("Creating SCIM user", zap.String("username", user.UserName))
@@ -419,6 +467,9 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 		LastModified: now,
 	}
 	user.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:User"}
+	if user.Enterprise != nil {
+		user.Schemas = append(user.Schemas, scimEnterpriseUserSchema)
+	}
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
@@ -431,13 +482,17 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 		email = user.Emails[0].Value
 	}
 
+	// Resolve the optional enterprise-extension manager to a local user id
+	// (nil -> stored NULL); an unknown reference is dropped, not fatal.
+	managerID := s.resolveManagerID(ctx, org.ID, user)
+
 	// Create user in users table
 	var userID string
 	err = s.db.Pool.QueryRow(ctx, `
-		INSERT INTO users (username, email, first_name, last_name, enabled, email_verified, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO users (username, email, first_name, last_name, enabled, email_verified, created_at, updated_at, org_id, manager_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
-	`, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, false, now, now, org.ID).Scan(&userID)
+	`, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, false, now, now, org.ID, managerID).Scan(&userID)
 
 	if err != nil {
 		s.logger.Error("Failed to create user in users table", zap.Error(err))
@@ -531,12 +586,19 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 		email = user.Emails[0].Value
 	}
 
+	// Resolve the optional enterprise-extension manager. COALESCE preserves the
+	// existing manager when this update carries no (or an unresolvable) manager
+	// reference — so a plain PUT or an `active:false` deprovision PATCH routed
+	// through here can't silently wipe an already-set manager.
+	managerID := s.resolveManagerID(ctx, org.ID, user)
+
 	// Update user in users table
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE users
-		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7
+		SET username = $2, email = $3, first_name = $4, last_name = $5, enabled = $6, updated_at = $7,
+		    manager_id = COALESCE($9::uuid, manager_id)
 		WHERE id = $1 AND org_id = $8
-	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID)
+	`, userID, user.UserName, email, user.Name.GivenName, user.Name.FamilyName, user.Active, now, org.ID, managerID)
 
 	if err != nil {
 		return nil, err

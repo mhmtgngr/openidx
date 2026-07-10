@@ -314,10 +314,13 @@ func (s *CertificationService) resolveReviewer(ctx context.Context, campaign *Ce
 	for _, reviewerConfig := range campaign.Reviewers {
 		switch reviewerConfig.Type {
 		case "manager":
-			// Get user's manager
+			// Get the user's manager (users.manager_id, added in v70 and
+			// populated from the SCIM enterprise-extension manager.value). The
+			// IS NOT NULL guard means an unset manager yields no row (fall
+			// through to the default) rather than scanning NULL into a string.
 			var managerID string
 			err := s.db.Pool.QueryRow(ctx,
-				`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2`, userID, org.ID).Scan(&managerID)
+				`SELECT manager_id FROM users WHERE id = $1 AND org_id = $2 AND manager_id IS NOT NULL`, userID, org.ID).Scan(&managerID)
 			if err == nil && managerID != "" {
 				return managerID, nil
 			}

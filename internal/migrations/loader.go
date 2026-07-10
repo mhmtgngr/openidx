@@ -495,5 +495,12 @@ func allMigrations() []*Migration {
 			UpSQL:       governanceOrgIsolationUp,
 			DownSQL:     governanceOrgIsolationDown,
 		},
+		{
+			Version:     70,
+			Name:        "users_manager_id",
+			Description: "Add the self-referential users.manager_id (nullable, ON DELETE SET NULL) + index that certification resolveReviewer's manager strategy already queries but no migration created — its absence made every 'manager' campaign silently fall back to the system admin. Populated from the SCIM enterprise-extension manager.value. No backfill; users is already under the v37 RLS belt (RI checks bypass RLS, so the self-FK resolves cross-GUC). Idempotent.",
+			UpSQL:       usersManagerIDUp,
+			DownSQL:     usersManagerIDDown,
+		},
 	}
 }
