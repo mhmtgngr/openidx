@@ -41,6 +41,9 @@ type ServiceAuditEvent struct {
 	Details    map[string]interface{} `json:"details,omitempty"`
 	SessionID  string                 `json:"session_id,omitempty"`
 	RequestID  string                 `json:"request_id,omitempty"`
+	// OrgID scopes the event to a tenant. Stamped by LogEvent so the
+	// Elasticsearch document carries the org and audit search can filter by it.
+	OrgID string `json:"org_id,omitempty"`
 }
 
 // EventType defines the type of audit event
@@ -183,7 +186,8 @@ const auditIndexMapping = `{
 			"resource_id": { "type": "keyword" },
 			"details":     { "type": "object", "enabled": true },
 			"session_id":  { "type": "keyword" },
-			"request_id":  { "type": "keyword" }
+			"request_id":  { "type": "keyword" },
+			"org_id":      { "type": "keyword" }
 		}
 	}
 }`
@@ -215,6 +219,10 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 	if org, oerr := orgctx.From(ctx); oerr == nil {
 		orgID = org.ID
 	}
+	// Stamp the resolved org onto the event so the Elasticsearch document (which
+	// is this marshaled struct) carries it — otherwise ES audit search cannot be
+	// tenant-scoped and leaks across orgs.
+	event.OrgID = orgID
 
 	data, _ := json.Marshal(event)
 	_, err := s.db.Pool.Exec(ctx, `
@@ -1055,6 +1063,15 @@ func (s *Service) handleSearchEvents(c *gin.Context) {
 		return
 	}
 
+	// Scope the search to the caller's tenant. The org is derived from the
+	// request context (the resolved tenant), never a client-supplied parameter,
+	// so it cannot be spoofed to read another org's audit trail. Fail closed.
+	org, oerr := orgctx.From(c.Request.Context())
+	if oerr != nil {
+		c.JSON(403, gin.H{"error": "organization context required"})
+		return
+	}
+
 	q := c.Query("q")
 	from := c.Query("from")
 	to := c.Query("to")
@@ -1097,6 +1114,11 @@ func (s *Service) handleSearchEvents(c *gin.Context) {
 			"range": map[string]interface{}{"timestamp": timeRange},
 		})
 	}
+
+	// Mandatory tenant filter — always applied regardless of the query params.
+	filter = append(filter, map[string]interface{}{
+		"term": map[string]interface{}{"org_id": org.ID},
+	})
 
 	if len(must) == 0 {
 		must = append(must, map[string]interface{}{"match_all": map[string]interface{}{}})
