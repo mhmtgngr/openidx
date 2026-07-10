@@ -1276,12 +1276,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/passwordless/initiate", svc.handlePasswordlessInitiate)
 	router.POST("/passwordless/verify", svc.handlePasswordlessVerify)
 	router.GET("/passwordless/methods", svc.handlePasswordlessListMethods)
-
-	// AI Policy Recommendations
-	router.POST("/ai/analyze-access", svc.handleAIAnalyzeAccess)
-	router.GET("/ai/recommendations", svc.handleAIPolicyRecommendations)
-	router.POST("/ai/recommendations/:id/apply", svc.handleAIApplyRecommendation)
-	router.GET("/ai/compliance-gaps", svc.handleAIComplianceGaps)
 }
 
 // HTTP Handlers
