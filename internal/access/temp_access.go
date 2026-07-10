@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // TempAccessLink represents a temporary access link for support/vendor access
@@ -83,6 +85,12 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 	var req CreateTempAccessRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
 		return
 	}
 
@@ -166,9 +174,9 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 			id, token, name, description, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
 			allowed_ips, require_mfa, notify_on_use, notify_email, route_id,
-			guacamole_connection_id, access_url, status, created_at, updated_at
+			guacamole_connection_id, access_url, status, created_at, updated_at, org_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 		)`
 
 	_, err = s.db.Pool.Exec(c.Request.Context(), query,
@@ -177,7 +185,7 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 		link.CreatedByEmail, link.ExpiresAt, link.MaxUses, link.CurrentUses,
 		link.AllowedIPs, link.RequireMFA, link.NotifyOnUse, link.NotifyEmail,
 		link.RouteID, link.GuacConnectionID, link.AccessURL, link.Status,
-		link.CreatedAt, link.UpdatedAt,
+		link.CreatedAt, link.UpdatedAt, org.ID,
 	)
 	if err != nil {
 		s.logger.Error("failed to create temp access link", zap.Error(err))
@@ -200,6 +208,12 @@ func (s *Service) handleCreateTempAccess(c *gin.Context) {
 func (s *Service) handleListTempAccess(c *gin.Context) {
 	status := c.DefaultQuery("status", "")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	query := `
 		SELECT id, token, name, description, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
@@ -207,11 +221,11 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
 			created_at, updated_at
 		FROM temp_access_links
-		WHERE ($1 = '' OR status = $1)
+		WHERE org_id = $2 AND ($1 = '' OR status = $1)
 		ORDER BY created_at DESC
 		LIMIT 100`
 
-	rows, err := s.db.Pool.Query(c.Request.Context(), query, status)
+	rows, err := s.db.Pool.Query(c.Request.Context(), query, status, org.ID)
 	if err != nil {
 		s.logger.Error("failed to list temp access links", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list access links"})
@@ -254,6 +268,12 @@ func (s *Service) handleListTempAccess(c *gin.Context) {
 func (s *Service) handleGetTempAccess(c *gin.Context) {
 	id := c.Param("id")
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
 	query := `
 		SELECT id, token, name, description, protocol, target_host, target_port, username,
 			created_by, created_by_email, expires_at, max_uses, current_uses,
@@ -261,10 +281,10 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 			guacamole_connection_id, access_url, status, last_used_at, last_used_ip,
 			created_at, updated_at
 		FROM temp_access_links
-		WHERE id = $1`
+		WHERE id = $1 AND org_id = $2`
 
 	var link TempAccessLink
-	err := s.db.Pool.QueryRow(c.Request.Context(), query, id).Scan(
+	err = s.db.Pool.QueryRow(c.Request.Context(), query, id, org.ID).Scan(
 		&link.ID, &link.Token, &link.Name, &link.Description, &link.Protocol,
 		&link.TargetHost, &link.TargetPort, &link.Username, &link.CreatedBy,
 		&link.CreatedByEmail, &link.ExpiresAt, &link.MaxUses, &link.CurrentUses,
@@ -284,8 +304,14 @@ func (s *Service) handleGetTempAccess(c *gin.Context) {
 func (s *Service) handleRevokeTempAccess(c *gin.Context) {
 	id := c.Param("id")
 
-	query := `UPDATE temp_access_links SET status = 'revoked', updated_at = $1 WHERE id = $2`
-	result, err := s.db.Pool.Exec(c.Request.Context(), query, time.Now(), id)
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	query := `UPDATE temp_access_links SET status = 'revoked', updated_at = $1 WHERE id = $2 AND org_id = $3`
+	result, err := s.db.Pool.Exec(c.Request.Context(), query, time.Now(), id, org.ID)
 	if err != nil {
 		s.logger.Error("failed to revoke temp access link", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke access link"})
@@ -307,6 +333,7 @@ func (s *Service) handleRevokeTempAccess(c *gin.Context) {
 func (s *Service) handleUseTempAccess(c *gin.Context) {
 	token := c.Param("token")
 
+	//orgscope:ignore public token-redemption path — no authenticated org context; keyed by a globally-unique unguessable secret token, not an enumerable id
 	query := `
 		SELECT id, token, name, protocol, target_host, target_port, username,
 			expires_at, max_uses, current_uses, allowed_ips, require_mfa,
@@ -376,6 +403,7 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 	}
 
 	// Update usage stats
+	//orgscope:ignore public token-redemption path — id resolved from the unique-token lookup above; redeemer has no org context
 	updateQuery := `
 		UPDATE temp_access_links
 		SET current_uses = current_uses + 1, last_used_at = $1, last_used_ip = $2, updated_at = $1
@@ -416,6 +444,21 @@ func (s *Service) handleUseTempAccess(c *gin.Context) {
 // handleGetTempAccessUsage gets usage history for a temp access link
 func (s *Service) handleGetTempAccessUsage(c *gin.Context) {
 	linkID := c.Param("id")
+
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "organization context required"})
+		return
+	}
+
+	// Verify the link belongs to the caller's org before returning its usage
+	// history, so a cross-org id can't read another tenant's access record.
+	var ok bool
+	if err := s.db.Pool.QueryRow(c.Request.Context(),
+		`SELECT EXISTS(SELECT 1 FROM temp_access_links WHERE id = $1 AND org_id = $2)`, linkID, org.ID).Scan(&ok); err != nil || !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "access link not found"})
+		return
+	}
 
 	query := `
 		SELECT id, link_id, ip_address, user_agent, connected_at, disconnected_at

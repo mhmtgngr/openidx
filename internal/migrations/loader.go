@@ -502,5 +502,12 @@ func allMigrations() []*Migration {
 			UpSQL:       usersManagerIDUp,
 			DownSQL:     usersManagerIDDown,
 		},
+		{
+			Version:     71,
+			Name:        "temp_access_links_org_isolation",
+			Description: "Add org_id (backfilled from the creating user, NOT NULL, FK) + index to temp_access_links (PAM vendor SSH/RDP/VNC access, created by v54 with no org_id). Its list/get/revoke handlers filtered by id only — a cross-tenant IDOR letting any authenticated user enumerate/read/revoke every org's access links. Handlers now add an org predicate + admin gate. Deliberately NOT RLS-belted: the public token-redemption path has no org context and the token is a unique secret. Idempotent.",
+			UpSQL:       tempAccessOrgIsolationUp,
+			DownSQL:     tempAccessOrgIsolationDown,
+		},
 	}
 }
