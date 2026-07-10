@@ -50,33 +50,17 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			continue
 		}
 
-		// Revoke the granted access based on resource type
-		switch resourceType {
-		case "role":
-			_, err := s.db.Pool.Exec(ctx,
-				`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3`,
-				requesterID, resourceID, orgID)
-			if err != nil {
-				s.logger.Error("Failed to revoke expired role assignment",
-					zap.String("request_id", id),
-					zap.String("user_id", requesterID),
-					zap.String("role_id", resourceID),
-					zap.Error(err))
-				continue
-			}
-		case "group":
-			_, err := s.db.Pool.Exec(ctx,
-				`DELETE FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3`,
-				requesterID, resourceID, orgID)
-			if err != nil {
-				s.logger.Error("Failed to revoke expired group membership",
-					zap.String("request_id", id),
-					zap.String("user_id", requesterID),
-					zap.String("group_id", resourceID),
-					zap.Error(err))
-				continue
-			}
-		case "vault_credential":
+		// Revoke the granted access. vault_credential is special — there is no
+		// stored assignment to delete (the reveal grant auto-expires via its own
+		// expires_at); we only wake the M1b rotation scheduler and write its
+		// specific audit. Every other type removes the actual grant via the shared
+		// revokeResourceAssignment — the single place role/group/application
+		// revocation lives — so a JIT expiry revokes exactly what an access-review
+		// revoke does. Previously "application" (and any unmapped type) hit a
+		// log-only default yet the request was still marked expired with a
+		// 'success' audit: the grant persisted forever while the trail claimed it
+		// had been revoked.
+		if resourceType == "vault_credential" {
 			// Reveal grant auto-expires via its expires_at; here we only wake the
 			// M1b rotation scheduler so the credential rotates on the next tick.
 			if _, err := s.db.Pool.Exec(ctx,
@@ -84,7 +68,7 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				`UPDATE credential_rotation_policies SET next_run_at = NOW()
 				 WHERE secret_id = $1 AND rotate_on_checkout = true`, resourceID); err != nil {
 				s.logger.Warn("vault_credential rotate-on-return bump failed",
-					zap.String("secret_id", resourceID), zap.Error(err))
+					zap.String("secret_id", sanitizeForLog(resourceID)), zap.Error(err))
 			}
 			// Specific audit event for vault credential checkout expiry.
 			credExpDetails, _ := json.Marshal(map[string]string{
@@ -97,11 +81,19 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_expired', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
 				requesterID, resourceID, string(credExpDetails), orgID); err != nil {
 				s.logger.Warn("Failed to write jit_credential.checkout_expired audit event",
-					zap.String("request_id", id), zap.Error(err))
+					zap.String("request_id", sanitizeForLog(id)), zap.Error(err))
 			}
-		default:
-			s.logger.Warn("No revocation handler for resource type",
-				zap.String("resource_type", resourceType))
+		} else if err := revokeResourceAssignment(ctx, s.db.Pool, resourceType, requesterID, resourceID, orgID); err != nil {
+			// Includes unknown resource types (revokeResourceAssignment fails
+			// loud on those). Skip marking the request expired so we never write
+			// a false 'success' for access that still exists — it is retried on
+			// the next tick, surfacing the unmapped type instead of hiding it.
+			s.logger.Error("Failed to revoke expired JIT access",
+				zap.String("request_id", sanitizeForLog(id)),
+				zap.String("user_id", sanitizeForLog(requesterID)),
+				zap.String("resource_type", sanitizeForLog(resourceType)),
+				zap.Error(err))
+			continue
 		}
 
 		// Mark the access request as expired
