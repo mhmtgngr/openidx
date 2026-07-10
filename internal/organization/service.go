@@ -15,6 +15,7 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // Organization represents a tenant organization in the system
@@ -385,6 +386,29 @@ func (s *Service) ListMembers(ctx context.Context, orgID string, limit, offset i
 // HTTP Handlers
 
 func (s *Service) handleListOrganizations(c *gin.Context) {
+	// Enumerating every tenant (name/slug/plan/member count) is a platform-admin
+	// operation. A non-admin caller is scoped to the organizations they belong
+	// to — otherwise any authenticated user could list all tenants. The
+	// organizations table is deliberately outside the RLS belt, so this gate is
+	// enforced here rather than by row-level security.
+	if !orgctx.IsPlatformAdmin(c.Request.Context()) {
+		userID, _ := c.Get("user_id")
+		uid, _ := userID.(string)
+		if uid == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "error_description": "authentication required to list organizations"})
+			return
+		}
+		orgs, err := s.GetUserOrganizations(c.Request.Context(), uid)
+		if err != nil {
+			s.logger.Error("failed to get user organizations", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Header("X-Total-Count", strconv.Itoa(len(orgs)))
+		c.JSON(http.StatusOK, orgs)
+		return
+	}
+
 	offset := 0
 	if o := c.Query("offset"); o != "" {
 		if parsed, err := strconv.Atoi(o); err == nil {

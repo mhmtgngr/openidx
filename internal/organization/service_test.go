@@ -3,6 +3,8 @@ package organization
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,26 @@ import (
 
 	"github.com/openidx/openidx/internal/common/config"
 )
+
+// TestHandleListOrganizations_NonAdminForbidden is the regression guard for the
+// tenant-enumeration hole: GET /organizations used to return every tenant to any
+// authenticated caller. A caller that is neither a platform admin nor an
+// identified user must now be refused (not handed the full tenant list). This
+// path returns before any DB access, so a zero-value Service exercises it.
+func TestHandleListOrganizations_NonAdminForbidden(t *testing.T) {
+	s := &Service{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/organizations", nil)
+	// Context is not platform-admin and no user_id is set.
+
+	s.handleListOrganizations(c)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — a non-admin caller must not enumerate all tenants",
+			w.Code, http.StatusForbidden)
+	}
+}
 
 func init() {
 	gin.SetMode(gin.TestMode)
