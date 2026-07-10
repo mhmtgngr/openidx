@@ -24,7 +24,8 @@ const widgetsOrg = { id: 'org-2', name: 'Widgets Co' }
 
 function routeGet(url: string) {
   if (url.includes('/organizations')) {
-    return Promise.resolve({ data: [acmeOrg, widgetsOrg] })
+    // Backend returns a bare array (with X-Total-Count), not { data: [...] }.
+    return Promise.resolve([acmeOrg, widgetsOrg])
   }
   if (url.includes('/branding')) return Promise.resolve({})
   if (url.includes('/settings')) return Promise.resolve({})
