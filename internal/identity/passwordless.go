@@ -443,13 +443,20 @@ func (s *Service) UpdatePasswordlessPreferences(ctx context.Context, userID stri
 
 // EnableWebAuthnOnlyLogin enables passwordless WebAuthn-only login for a user
 func (s *Service) EnableWebAuthnOnlyLogin(ctx context.Context, userID string) error {
-	// Verify user has WebAuthn credentials registered
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	// Verify the user has WebAuthn credentials registered. Creds live in
+	// mfa_webauthn — the phantom `webauthn_credentials` table is never created.
 	var credCount int
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1",
-		userID,
-	).Scan(&credCount)
-	if err != nil || credCount == 0 {
+	if err := s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2",
+		userID, org.ID,
+	).Scan(&credCount); err != nil {
+		return err
+	}
+	if credCount == 0 {
 		return errors.New("user must have at least one WebAuthn credential registered")
 	}
 
