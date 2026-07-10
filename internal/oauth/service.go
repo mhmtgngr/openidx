@@ -1877,35 +1877,54 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 	}
 
-	// Check if user has MFA enabled and get available methods
+	// Gather available MFA methods. MFA enforcement must key on ANY enrolled
+	// primary factor (TOTP, WebAuthn, push, SMS, email OTP) — not TOTP alone.
+	// Previously mfaEnabled was `totpStatus.Enabled`, so a user enrolled solely
+	// in WebAuthn/push/SMS/email silently bypassed MFA on password login.
+	// Backup and bypass codes are supplemental and never independently force MFA.
 	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
-	mfaEnabled := totpStatus != nil && totpStatus.Enabled
 
-	// Gather available MFA methods
 	var availableMFAMethods []string
+	var hasPrimaryFactor bool
+
 	if totpStatus != nil && totpStatus.Enabled {
 		availableMFAMethods = append(availableMFAMethods, "totp")
-	}
-	// Check for backup codes
-	backupCount, _ := s.identityService.GetBackupCodeCount(c.Request.Context(), user.ID)
-	if backupCount > 0 {
-		availableMFAMethods = append(availableMFAMethods, "backup")
-	}
-	// Check for active bypass codes (admin-generated)
-	hasActiveBypass, _ := s.identityService.HasActiveBypassCode(c.Request.Context(), user.ID)
-	if hasActiveBypass {
-		availableMFAMethods = append(availableMFAMethods, "bypass")
+		hasPrimaryFactor = true
 	}
 	// Check for WebAuthn credentials
 	webauthnCreds, _ := s.identityService.GetWebAuthnCredentials(c.Request.Context(), user.ID)
 	if len(webauthnCreds) > 0 {
 		availableMFAMethods = append(availableMFAMethods, "webauthn")
+		hasPrimaryFactor = true
 	}
 	// Check for push MFA devices
 	pushDevices, _ := s.identityService.GetPushDevices(c.Request.Context(), user.ID)
 	if len(pushDevices) > 0 {
 		availableMFAMethods = append(availableMFAMethods, "push")
+		hasPrimaryFactor = true
 	}
+	// Check for verified SMS OTP enrollment
+	if smsEnr, _ := s.identityService.GetSMSEnrollment(c.Request.Context(), user.ID); smsEnr != nil && smsEnr.Verified && smsEnr.Enabled {
+		availableMFAMethods = append(availableMFAMethods, "sms")
+		hasPrimaryFactor = true
+	}
+	// Check for email OTP enrollment
+	if emailEnr, _ := s.identityService.GetEmailOTPEnrollment(c.Request.Context(), user.ID); emailEnr != nil && emailEnr.Enabled {
+		availableMFAMethods = append(availableMFAMethods, "email")
+		hasPrimaryFactor = true
+	}
+	// Check for backup codes (supplemental — only offered alongside a primary factor)
+	backupCount, _ := s.identityService.GetBackupCodeCount(c.Request.Context(), user.ID)
+	if backupCount > 0 {
+		availableMFAMethods = append(availableMFAMethods, "backup")
+	}
+	// Check for active bypass codes (admin-generated, supplemental)
+	hasActiveBypass, _ := s.identityService.HasActiveBypassCode(c.Request.Context(), user.ID)
+	if hasActiveBypass {
+		availableMFAMethods = append(availableMFAMethods, "bypass")
+	}
+
+	mfaEnabled := hasPrimaryFactor
 
 	// Check for trusted browser — skip MFA if browser is trusted
 	var browserTrusted bool
