@@ -46,6 +46,24 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 			user_id UUID NOT NULL,
 			group_id UUID NOT NULL,
 			org_id UUID NOT NULL);
+		CREATE TABLE audit_events (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			timestamp TIMESTAMPTZ DEFAULT NOW(),
+			event_type VARCHAR(100) NOT NULL,
+			category VARCHAR(50) NOT NULL,
+			action VARCHAR(255) NOT NULL,
+			outcome VARCHAR(50) NOT NULL,
+			actor_id VARCHAR(255),
+			actor_type VARCHAR(50),
+			actor_ip VARCHAR(45),
+			target_id VARCHAR(255),
+			target_type VARCHAR(100),
+			resource_id VARCHAR(255),
+			details JSONB,
+			session_id VARCHAR(255),
+			request_id VARCHAR(255),
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			org_id UUID);
 	`); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -112,6 +130,16 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 		}
 		if got := itemDecision(item); got != string(ReviewDecisionRevoked) {
 			t.Errorf("decision: want revoked, got %q", got)
+		}
+		// The revocation must also land a governance audit event in the same tx.
+		var auditCount int
+		if err := db.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM audit_events WHERE action='access_review.revoked' AND target_id=$1 AND org_id=$2`,
+			user, orgID).Scan(&auditCount); err != nil {
+			t.Fatalf("count audit: %v", err)
+		}
+		if auditCount != 1 {
+			t.Errorf("revocation must land exactly one audit row, got %d", auditCount)
 		}
 	})
 

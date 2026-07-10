@@ -3,9 +3,18 @@ package governance
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// sanitizeForLog strips CR/LF from user-supplied values before they are written
+// to logs, preventing forged or split log entries (CWE-117 log injection).
+func sanitizeForLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
+}
 
 // revocationExecer is satisfied by both *pgxpool.Pool and pgx.Tx, so the shared
 // revocation can run standalone (background sweeps that have no surrounding

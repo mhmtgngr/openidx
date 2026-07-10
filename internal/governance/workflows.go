@@ -1194,7 +1194,7 @@ func (s *Service) handleReturnCredential(c *gin.Context) {
 		 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_returned', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
 		userID, resourceID, string(retDetails), org.ID); err != nil {
 		s.logger.Warn("Failed to write jit_credential.checkout_returned audit event",
-			zap.String("request_id", reqID), zap.Error(err))
+			zap.String("request_id", sanitizeForLog(reqID)), zap.Error(err))
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "returned"})
 }

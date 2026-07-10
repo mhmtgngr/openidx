@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
@@ -571,34 +572,78 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 	}
 
 	// Only enforce when a matching item was actually updated.
+	var revokedUserID string
 	if decision == ReviewDecisionRevoked && tag.RowsAffected() > 0 {
-		if err = s.revokeReviewItemAccess(ctx, tx, itemID, org.ID); err != nil {
+		revokedUserID, err = s.revokeReviewItemAccess(ctx, tx, itemID, org.ID, decidedBy)
+		if err != nil {
 			return err
 		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Redis is not transactional with Postgres, so invalidate the revoked user's
+	// sessions only after the revocation has committed.
+	if revokedUserID != "" {
+		s.killUserSessions(ctx, revokedUserID)
+	}
+	return nil
 }
 
 // revokeReviewItemAccess removes the underlying access a review item points at,
-// running inside the caller's transaction. Shared by the single- and
-// batch-decision paths so a "revoked" decision always removes access. Items
-// without a concrete (user, resource) target carry nothing to revoke.
-func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID, orgID string) error {
+// running inside the caller's transaction, and records a governance audit event
+// for the revocation in the same transaction so the trail commits atomically
+// with the change. Shared by the single- and batch-decision paths so a
+// "revoked" decision always removes access and is always audited. It returns the
+// affected user's id (empty when the item has no concrete (user, resource)
+// target) so the caller can invalidate that user's sessions after commit.
+func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID, orgID, decidedBy string) (string, error) {
 	var resourceType string
 	var userID, resourceID *string
 	if err := tx.QueryRow(ctx, `
 		SELECT resource_type, user_id, resource_id FROM review_items WHERE id = $1 AND org_id = $2
 	`, itemID, orgID).Scan(&resourceType, &userID, &resourceID); err != nil {
-		return fmt.Errorf("load review item %s for revocation: %w", itemID, err)
+		return "", fmt.Errorf("load review item %s for revocation: %w", itemID, err)
 	}
 	if userID == nil || resourceID == nil {
-		return nil
+		return "", nil
 	}
 	if err := revokeResourceAssignment(ctx, tx, resourceType, *userID, *resourceID, orgID); err != nil {
-		return fmt.Errorf("revoke access for review item %s: %w", itemID, err)
+		return "", fmt.Errorf("revoke access for review item %s: %w", itemID, err)
 	}
-	return nil
+
+	// Audit the revocation in the same transaction: if the revoke rolls back, so
+	// does its audit row. actor = the reviewer, target = the affected user.
+	details, _ := json.Marshal(map[string]any{
+		"review_item_id": itemID,
+		"resource_type":  resourceType,
+		"resource_id":    *resourceID,
+	})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
+		VALUES (gen_random_uuid(), 'access', 'governance', 'access_review.revoked', 'success', $1, '0.0.0.0', $2, 'user', $3, NOW(), $4)
+	`, decidedBy, *userID, string(details), orgID); err != nil {
+		return "", fmt.Errorf("audit access-review revocation for item %s: %w", itemID, err)
+	}
+
+	return *userID, nil
+}
+
+// killUserSessions forces a user to re-authenticate by setting the user-wide
+// token-revocation marker the auth middleware checks, so a live session cannot
+// keep using access an access review just revoked. Best-effort: the revocation
+// has already committed, so a Redis hiccup must not fail the request. Guards a
+// missing Redis (e.g. in tests) rather than panicking.
+func (s *Service) killUserSessions(ctx context.Context, userID string) {
+	if s.redis == nil || s.redis.Client == nil {
+		return
+	}
+	if err := s.redis.Client.Set(ctx, auth.UserRevocationKey(userID), time.Now().Unix(), 24*time.Hour).Err(); err != nil {
+		s.logger.Warn("failed to invalidate sessions after access-review revocation",
+			zap.String("user_id", userID), zap.Error(err))
+	}
 }
 
 // CreatePolicy creates a new policy
@@ -1336,6 +1381,7 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 
 	// Update each item, and for revocations remove the underlying access in the
 	// same transaction — otherwise a batch "revoke" only relabels rows.
+	var revokedUserIDs []string
 	for _, itemID := range itemIDs {
 		tag, err := tx.Exec(ctx, `
 			UPDATE review_items
@@ -1346,13 +1392,25 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 			return err
 		}
 		if decision == ReviewDecisionRevoked && tag.RowsAffected() > 0 {
-			if err := s.revokeReviewItemAccess(ctx, tx, itemID, org.ID); err != nil {
+			uid, err := s.revokeReviewItemAccess(ctx, tx, itemID, org.ID, decidedBy)
+			if err != nil {
 				return err
+			}
+			if uid != "" {
+				revokedUserIDs = append(revokedUserIDs, uid)
 			}
 		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Invalidate revoked users' sessions after the batch has committed.
+	for _, uid := range revokedUserIDs {
+		s.killUserSessions(ctx, uid)
+	}
+	return nil
 }
 
 // populateReviewItems generates review items when a review is started
