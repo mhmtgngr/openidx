@@ -56,6 +56,9 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 	user := "bbbbbbbb-0000-0000-0000-000000000001"
 	roleID := "aaaaaaaa-0000-0000-0000-000000000001"
 	groupID := "eeeeeeee-0000-0000-0000-000000000001"
+	// decided_by is a UUID column in production (the authenticated user id);
+	// pass a real UUID, not a display name.
+	decidedBy := "99999999-0000-0000-0000-000000000009"
 
 	countUserRole := func() int {
 		var n int
@@ -101,7 +104,7 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 		item := "cccccccc-0000-0000-0000-000000000001"
 		seedItem(item, "role", roleID)
 
-		if err := s.SubmitReviewDecision(ctx, item, ReviewDecisionRevoked, "no longer needed", "admin"); err != nil {
+		if err := s.SubmitReviewDecision(ctx, item, ReviewDecisionRevoked, "no longer needed", decidedBy); err != nil {
 			t.Fatalf("SubmitReviewDecision: %v", err)
 		}
 		if got := countUserRole(); got != 0 {
@@ -116,7 +119,7 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 		item := "cccccccc-0000-0000-0000-000000000002"
 		seedItem(item, "role", roleID)
 
-		if err := s.SubmitReviewDecision(ctx, item, ReviewDecisionApproved, "looks good", "admin"); err != nil {
+		if err := s.SubmitReviewDecision(ctx, item, ReviewDecisionApproved, "looks good", decidedBy); err != nil {
 			t.Fatalf("SubmitReviewDecision: %v", err)
 		}
 		if got := countUserRole(); got != 1 {
@@ -128,7 +131,7 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 		item := "cccccccc-0000-0000-0000-000000000003"
 		seedItem(item, "privileged_role", roleID)
 
-		if err := s.SubmitReviewDecision(ctx, item, ReviewDecisionRevoked, "sod", "admin"); err != nil {
+		if err := s.SubmitReviewDecision(ctx, item, ReviewDecisionRevoked, "sod", decidedBy); err != nil {
 			t.Fatalf("SubmitReviewDecision: %v", err)
 		}
 		if got := countUserRole(); got != 0 {
@@ -140,7 +143,7 @@ func TestSubmitReviewDecision_ActuallyRevokes(t *testing.T) {
 		item := "cccccccc-0000-0000-0000-000000000004"
 		seedItem(item, "role", roleID)
 
-		if err := s.BatchSubmitDecisions(ctx, reviewID, []string{item}, ReviewDecisionRevoked, "bulk", "admin"); err != nil {
+		if err := s.BatchSubmitDecisions(ctx, reviewID, []string{item}, ReviewDecisionRevoked, "bulk", decidedBy); err != nil {
 			t.Fatalf("BatchSubmitDecisions: %v", err)
 		}
 		if got := countUserRole(); got != 0 {
