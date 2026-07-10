@@ -92,10 +92,13 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 				"resource_name": resourceName,
 			})
 			//orgscope:ignore background sweep across orgs; bounded by the row being expired
-			s.db.Pool.Exec(ctx,
-				`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+			if _, err := s.db.Pool.Exec(ctx,
+				`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
 				 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_credential.checkout_expired', 'success', $1, '0.0.0.0', $2, 'vault_credential', $3, NOW(), $4)`,
-				requesterID, resourceID, string(credExpDetails), orgID)
+				requesterID, resourceID, string(credExpDetails), orgID); err != nil {
+				s.logger.Warn("Failed to write jit_credential.checkout_expired audit event",
+					zap.String("request_id", id), zap.Error(err))
+			}
 		default:
 			s.logger.Warn("No revocation handler for resource type",
 				zap.String("resource_type", resourceType))
@@ -116,10 +119,13 @@ func (s *Service) revokeExpiredJITAccess(ctx context.Context) {
 			"request_id":    id,
 			"resource_name": resourceName,
 		})
-		s.db.Pool.Exec(ctx,
-			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, ip_address, target_id, target_type, details, created_at, org_id)
+		if _, err := s.db.Pool.Exec(ctx,
+			`INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
 			 VALUES (gen_random_uuid(), 'access', 'provisioning', 'jit_access_expired', 'success', $1, '0.0.0.0', $2, $3, $4, NOW(), $5)`,
-			requesterID, resourceID, resourceType, string(details), orgID)
+			requesterID, resourceID, resourceType, string(details), orgID); err != nil {
+			s.logger.Warn("Failed to write jit_access_expired audit event",
+				zap.String("request_id", id), zap.Error(err))
+		}
 
 		revokedCount++
 		s.logger.Info("Revoked expired JIT access",

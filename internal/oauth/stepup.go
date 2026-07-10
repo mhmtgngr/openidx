@@ -6,10 +6,13 @@ package oauth
 import (
 	"context"
 	"crypto/rsa"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"go.uber.org/zap"
@@ -228,10 +231,49 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 		return
 	}
 
+	// The submitted factor MUST actually verify before the challenge is
+	// completed and a step-up token issued. Previously this handler marked the
+	// challenge completed and minted a signed step_up JWT without ever checking
+	// req.Code — any authenticated session could rubber-stamp a step-up.
+	if req.Method == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":             "invalid_request",
+			"error_description": "method is required",
+		})
+		return
+	}
+	verified, verifyErr := s.verifyStepUpFactor(ctx, userID, req.Method, req.Code, c.ClientIP(), c.GetHeader("User-Agent"))
+	if verifyErr != nil || !verified {
+		// Sanitize request-derived values before logging so a CR/LF in the body
+		// cannot forge or split log entries (CWE-117 log injection).
+		errMsg := ""
+		if verifyErr != nil {
+			errMsg = sanitizeForLog(verifyErr.Error())
+		}
+		s.logger.Warn("Step-up verification failed",
+			zap.String("user_id", sanitizeForLog(userID)),
+			zap.String("challenge_id", sanitizeForLog(req.ChallengeID)),
+			zap.String("method", sanitizeForLog(req.Method)),
+			zap.String("error", errMsg),
+		)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.logAuditEvent(ctx, "authentication", "security", "step_up_failed", "failure",
+				userID, c.ClientIP(), userID, "user",
+				map[string]interface{}{"challenge_id": req.ChallengeID, "method": req.Method})
+		}()
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":             "invalid_mfa_code",
+			"error_description": "verification failed",
+		})
+		return
+	}
+
 	// Retrieve the reason for the step-up token claims
 	_ = s.db.Pool.QueryRow(ctx, `SELECT reason FROM stepup_challenges WHERE id = $1 AND org_id = $2`, req.ChallengeID, org.ID).Scan(&reason)
 
-	// Mark challenge as completed (actual MFA verification is handled by existing MFA handlers)
+	// Mark challenge as completed now that the factor is verified
 	_, err = s.db.Pool.Exec(ctx, `
 		UPDATE stepup_challenges SET status = 'completed', completed_at = NOW() WHERE id = $1 AND org_id = $2`,
 		req.ChallengeID, org.ID,
@@ -342,6 +384,58 @@ func (s *Service) handleStepUpStatus(c *gin.Context) {
 		"expires_at":   expiresAt.UTC().Format(time.RFC3339),
 		"reason":       reason,
 	})
+}
+
+// sanitizeForLog strips CR/LF from user-supplied values before they are written
+// to logs, preventing forged or split log entries (CWE-117 log injection).
+func sanitizeForLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
+}
+
+// verifyStepUpFactor verifies an MFA factor for step-up authentication using the
+// same verifiers as the primary login MFA flow (handleMFAVerify). It returns true
+// only when the supplied credential is genuinely valid for the user, so a step-up
+// token is never issued without a real second-factor check.
+func (s *Service) verifyStepUpFactor(ctx context.Context, userID, method, code, clientIP, userAgent string) (bool, error) {
+	switch method {
+	case "totp":
+		return s.identityService.VerifyTOTP(ctx, userID, code)
+	case "backup":
+		return s.identityService.VerifyBackupCode(ctx, userID, code)
+	case "bypass":
+		return s.identityService.VerifyBypassCode(ctx, userID, code, clientIP, userAgent)
+	case "sms", "email":
+		if err := s.identityService.VerifyOTP(ctx, userID, method, code); err != nil {
+			return false, err
+		}
+		return true, nil
+	case "webauthn":
+		user, err := s.identityService.GetUser(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+		parsed, err := protocol.ParseCredentialRequestResponseBody(strings.NewReader(code))
+		if err != nil {
+			return false, err
+		}
+		if _, err := s.identityService.FinishWebAuthnAuthentication(ctx, user.UserName, parsed); err != nil {
+			return false, err
+		}
+		return true, nil
+	case "push":
+		challenge, err := s.identityService.GetPushMFAChallenge(ctx, code)
+		if err != nil {
+			return false, err
+		}
+		if challenge.UserID != userID || challenge.Status != "approved" || time.Now().After(challenge.ExpiresAt) {
+			return false, nil
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported MFA method: %s", method)
+	}
 }
 
 // generateStepUpToken creates a short-lived RS256 JWT with step-up claims.

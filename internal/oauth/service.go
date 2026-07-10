@@ -1877,35 +1877,54 @@ func (s *Service) handleLogin(c *gin.Context) {
 		}
 	}
 
-	// Check if user has MFA enabled and get available methods
+	// Gather available MFA methods. MFA enforcement must key on ANY enrolled
+	// primary factor (TOTP, WebAuthn, push, SMS, email OTP) — not TOTP alone.
+	// Previously mfaEnabled was `totpStatus.Enabled`, so a user enrolled solely
+	// in WebAuthn/push/SMS/email silently bypassed MFA on password login.
+	// Backup and bypass codes are supplemental and never independently force MFA.
 	totpStatus, _ := s.identityService.GetTOTPStatus(c.Request.Context(), user.ID)
-	mfaEnabled := totpStatus != nil && totpStatus.Enabled
 
-	// Gather available MFA methods
 	var availableMFAMethods []string
+	var hasPrimaryFactor bool
+
 	if totpStatus != nil && totpStatus.Enabled {
 		availableMFAMethods = append(availableMFAMethods, "totp")
-	}
-	// Check for backup codes
-	backupCount, _ := s.identityService.GetBackupCodeCount(c.Request.Context(), user.ID)
-	if backupCount > 0 {
-		availableMFAMethods = append(availableMFAMethods, "backup")
-	}
-	// Check for active bypass codes (admin-generated)
-	hasActiveBypass, _ := s.identityService.HasActiveBypassCode(c.Request.Context(), user.ID)
-	if hasActiveBypass {
-		availableMFAMethods = append(availableMFAMethods, "bypass")
+		hasPrimaryFactor = true
 	}
 	// Check for WebAuthn credentials
 	webauthnCreds, _ := s.identityService.GetWebAuthnCredentials(c.Request.Context(), user.ID)
 	if len(webauthnCreds) > 0 {
 		availableMFAMethods = append(availableMFAMethods, "webauthn")
+		hasPrimaryFactor = true
 	}
 	// Check for push MFA devices
 	pushDevices, _ := s.identityService.GetPushDevices(c.Request.Context(), user.ID)
 	if len(pushDevices) > 0 {
 		availableMFAMethods = append(availableMFAMethods, "push")
+		hasPrimaryFactor = true
 	}
+	// Check for verified SMS OTP enrollment
+	if smsEnr, _ := s.identityService.GetSMSEnrollment(c.Request.Context(), user.ID); smsEnr != nil && smsEnr.Verified && smsEnr.Enabled {
+		availableMFAMethods = append(availableMFAMethods, "sms")
+		hasPrimaryFactor = true
+	}
+	// Check for email OTP enrollment
+	if emailEnr, _ := s.identityService.GetEmailOTPEnrollment(c.Request.Context(), user.ID); emailEnr != nil && emailEnr.Enabled {
+		availableMFAMethods = append(availableMFAMethods, "email")
+		hasPrimaryFactor = true
+	}
+	// Check for backup codes (supplemental — only offered alongside a primary factor)
+	backupCount, _ := s.identityService.GetBackupCodeCount(c.Request.Context(), user.ID)
+	if backupCount > 0 {
+		availableMFAMethods = append(availableMFAMethods, "backup")
+	}
+	// Check for active bypass codes (admin-generated, supplemental)
+	hasActiveBypass, _ := s.identityService.HasActiveBypassCode(c.Request.Context(), user.ID)
+	if hasActiveBypass {
+		availableMFAMethods = append(availableMFAMethods, "bypass")
+	}
+
+	mfaEnabled := hasPrimaryFactor
 
 	// Check for trusted browser — skip MFA if browser is trusted
 	var browserTrusted bool
@@ -2700,6 +2719,21 @@ func (s *Service) handleCallback(c *gin.Context) {
 }
 
 func (s *Service) handleAuthorizeConsent(c *gin.Context) {
+	// The subject MUST come from the authenticated session, never the request
+	// body. This endpoint previously minted an authorization code for a
+	// client-supplied user_id — and because the interactive-flow routes run
+	// without auth in development, any caller could obtain a code for any user.
+	// The real login flow (POST /oauth/login) derives the user server-side and
+	// does not use this endpoint.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{
+			"error":             "unauthorized",
+			"error_description": "authenticated session required",
+		})
+		return
+	}
+
 	var req struct {
 		ClientID            string `json:"client_id"`
 		RedirectURI         string `json:"redirect_uri"`
@@ -2709,11 +2743,29 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 		Nonce               string `json:"nonce"`
 		CodeChallenge       string `json:"code_challenge"`
 		CodeChallengeMethod string `json:"code_challenge_method"`
-		UserID              string `json:"user_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	// Validate redirect_uri against the registered client (previously unchecked
+	// here — an open-redirect / code-delivery surface).
+	client, err := s.GetClient(c.Request.Context(), req.ClientID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_client"})
+		return
+	}
+	validRedirect := false
+	for _, uri := range client.RedirectURIs {
+		if uri == req.RedirectURI {
+			validRedirect = true
+			break
+		}
+	}
+	if !validRedirect {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
 		return
 	}
 
@@ -2723,7 +2775,7 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	authCode := &AuthorizationCode{
 		Code:                code,
 		ClientID:            req.ClientID,
-		UserID:              req.UserID,
+		UserID:              userID,
 		RedirectURI:         req.RedirectURI,
 		Scope:               req.Scope,
 		State:               req.State,
@@ -2754,9 +2806,20 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 // handleAuthorizeConsentV2 handles authorization consent using the new AuthorizeHandler
 // This is called after user authentication and consent
 func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
+	// Subject comes from the authenticated session, never the request body (see
+	// handleAuthorizeConsent). Previously user_id was a required body field, so
+	// a caller could mint a code for any user against a stored auth session.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{
+			"error":             "unauthorized",
+			"error_description": "authenticated session required",
+		})
+		return
+	}
+
 	var req struct {
 		AuthSession string `json:"auth_session" binding:"required"`
-		UserID      string `json:"user_id" binding:"required"`
 		SessionID   string `json:"session_id,omitempty"` // Optional session ID for linkage
 	}
 
@@ -2766,7 +2829,7 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	}
 
 	// Issue authorization code using the handler
-	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, req.UserID, req.SessionID)
+	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, userID, req.SessionID)
 	if err != nil {
 		s.logger.Error("Failed to issue authorization code", zap.Error(err))
 		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})

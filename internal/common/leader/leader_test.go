@@ -56,10 +56,15 @@ func TestIsLeaderForTick_NewBucketAllowsRunAgain(t *testing.T) {
 
 	// Use a tiny interval so the time bucket rolls over within the test.
 	interval := time.Second
+	// Align to just after a bucket boundary so the two same-bucket calls below
+	// are guaranteed to share a bucket. bucket = UnixMilli()/interval, so two
+	// back-to-back calls a few microseconds apart could otherwise straddle a
+	// 1-second boundary and make the "same bucket" assertion flake under -race.
+	alignToBucketStart(interval)
 	if !IsLeaderForTick(ctx, rdb, "rollover", interval) {
 		t.Fatal("first bucket should win")
 	}
-	// Within the same second, a second call loses.
+	// Within the same (freshly-entered) bucket, a second call loses.
 	if IsLeaderForTick(ctx, rdb, "rollover", interval) {
 		t.Fatal("same bucket should not win twice")
 	}
@@ -68,6 +73,16 @@ func TestIsLeaderForTick_NewBucketAllowsRunAgain(t *testing.T) {
 	if !IsLeaderForTick(ctx, rdb, "rollover", interval) {
 		t.Fatal("next bucket should win again")
 	}
+}
+
+// alignToBucketStart sleeps until just after the next interval boundary so that
+// back-to-back IsLeaderForTick calls fall in the same time bucket
+// (bucket = UnixMilli()/interval). Entering a fresh bucket leaves ~interval of
+// headroom before the next boundary, which removes the flaky straddle window.
+func alignToBucketStart(interval time.Duration) {
+	ms := interval.Milliseconds()
+	untilBoundary := ms - (time.Now().UnixMilli() % ms)
+	time.Sleep(time.Duration(untilBoundary+30) * time.Millisecond)
 }
 
 func TestRunPeriodic_StopsOnContextCancel(t *testing.T) {

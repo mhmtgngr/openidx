@@ -488,5 +488,12 @@ func allMigrations() []*Migration {
 			UpSQL:       guacRecordingLegalHoldsUp,
 			DownSQL:     guacRecordingLegalHoldsDown,
 		},
+		{
+			Version:     69,
+			Name:        "governance_org_isolation",
+			Description: "Add org_id + FORCE RLS to certification_campaigns, campaign_runs, abac_policies",
+			UpSQL:       governanceOrgIsolationUp,
+			DownSQL:     governanceOrgIsolationDown,
+		},
 	}
 }

@@ -52,18 +52,21 @@ export function OrganizationsPage() {
   const [form, setForm] = useState({ name: '', slug: '', plan: 'free', max_users: 10, max_applications: 5 })
   const [memberForm, setMemberForm] = useState({ user_id: '', role: 'member' })
 
+  // The backend returns a bare JSON array with an X-Total-Count header (the
+  // convention across list endpoints), not a wrapped { organizations, total }
+  // object — reading a wrapper key left the org list permanently empty.
   const { data, isLoading } = useQuery({
     queryKey: ['organizations'],
-    queryFn: () => api.get<{ organizations: Organization[]; total: number }>('/api/v1/organizations'),
+    queryFn: () => api.get<Organization[]>('/api/v1/organizations'),
   })
-  const orgs = data?.organizations || []
+  const orgs = data || []
 
   const { data: membersData } = useQuery({
     queryKey: ['org-members', membersOrg?.id],
-    queryFn: () => api.get<{ members: OrgMember[]; total: number }>(`/api/v1/organizations/${membersOrg!.id}/members`),
+    queryFn: () => api.get<OrgMember[]>(`/api/v1/organizations/${membersOrg!.id}/members`),
     enabled: !!membersOrg,
   })
-  const members = membersData?.members || []
+  const members = membersData || []
 
   const createMutation = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/organizations', body),

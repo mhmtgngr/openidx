@@ -1,5 +1,13 @@
 # IAM Competitor Analysis & Feature Comparison
 
+> **⚠️ Superseded (2026-07-10).** This document (Jan 2026) is stale: passwordless/
+> WebAuthn, adaptive risk MFA, AD/LDAP directory sync, and SCIM are now built, and
+> it only compares the IAM pillar against three workforce vendors. For the current,
+> code-verified, four-pillar (IAM · IGA · PAM · ZTNA) gap analysis across 12 market
+> categories, see **[`MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md)**
+> and the strategy in **[`ULTIMATE_PRODUCT_PLAN.md`](./ULTIMATE_PRODUCT_PLAN.md)**.
+> Kept below for historical context only.
+
 ## Executive Summary
 
 This document provides a comprehensive analysis of what IAM users expect from modern Identity and Access Management platforms in 2026, comparing OpenIDX against leading competitors: Microsoft Entra ID, Okta, and Duo Security.

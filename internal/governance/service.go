@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/internal/auth"
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/leader"
@@ -550,13 +551,99 @@ func (s *Service) SubmitReviewDecision(ctx context.Context, itemID string, decis
 	}
 
 	now := time.Now()
-	_, err = s.db.Pool.Exec(ctx, `
+
+	// Recording the decision and enforcing it must be atomic: a review item
+	// marked "revoked" while the user keeps the access is exactly the silent
+	// hole access reviews exist to close. Wrap both in one transaction so a
+	// failed revocation rolls the decision back instead of leaving it hollow.
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE review_items
 		SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
 		WHERE id = $1 AND org_id = $6
 	`, itemID, decision, comments, decidedBy, now, org.ID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Only enforce when a matching item was actually updated.
+	var revokedUserID string
+	if decision == ReviewDecisionRevoked && tag.RowsAffected() > 0 {
+		revokedUserID, err = s.revokeReviewItemAccess(ctx, tx, itemID, org.ID, decidedBy)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Redis is not transactional with Postgres, so invalidate the revoked user's
+	// sessions only after the revocation has committed.
+	if revokedUserID != "" {
+		s.killUserSessions(ctx, revokedUserID)
+	}
+	return nil
+}
+
+// revokeReviewItemAccess removes the underlying access a review item points at,
+// running inside the caller's transaction, and records a governance audit event
+// for the revocation in the same transaction so the trail commits atomically
+// with the change. Shared by the single- and batch-decision paths so a
+// "revoked" decision always removes access and is always audited. It returns the
+// affected user's id (empty when the item has no concrete (user, resource)
+// target) so the caller can invalidate that user's sessions after commit.
+func (s *Service) revokeReviewItemAccess(ctx context.Context, tx pgx.Tx, itemID, orgID, decidedBy string) (string, error) {
+	var resourceType string
+	var userID, resourceID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT resource_type, user_id, resource_id FROM review_items WHERE id = $1 AND org_id = $2
+	`, itemID, orgID).Scan(&resourceType, &userID, &resourceID); err != nil {
+		return "", fmt.Errorf("load review item %s for revocation: %w", itemID, err)
+	}
+	if userID == nil || resourceID == nil {
+		return "", nil
+	}
+	if err := revokeResourceAssignment(ctx, tx, resourceType, *userID, *resourceID, orgID); err != nil {
+		return "", fmt.Errorf("revoke access for review item %s: %w", itemID, err)
+	}
+
+	// Audit the revocation in the same transaction: if the revoke rolls back, so
+	// does its audit row. actor = the reviewer, target = the affected user.
+	details, _ := json.Marshal(map[string]any{
+		"review_item_id": itemID,
+		"resource_type":  resourceType,
+		"resource_id":    *resourceID,
+	})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
+		VALUES (gen_random_uuid(), 'access', 'governance', 'access_review.revoked', 'success', $1, '0.0.0.0', $2, 'user', $3, NOW(), $4)
+	`, decidedBy, *userID, string(details), orgID); err != nil {
+		return "", fmt.Errorf("audit access-review revocation for item %s: %w", itemID, err)
+	}
+
+	return *userID, nil
+}
+
+// killUserSessions forces a user to re-authenticate by setting the user-wide
+// token-revocation marker the auth middleware checks, so a live session cannot
+// keep using access an access review just revoked. Best-effort: the revocation
+// has already committed, so a Redis hiccup must not fail the request. Guards a
+// missing Redis (e.g. in tests) rather than panicking.
+func (s *Service) killUserSessions(ctx context.Context, userID string) {
+	if s.redis == nil || s.redis.Client == nil {
+		return
+	}
+	if err := s.redis.Client.Set(ctx, auth.UserRevocationKey(userID), time.Now().Unix(), 24*time.Hour).Err(); err != nil {
+		s.logger.Warn("failed to invalidate sessions after access-review revocation",
+			zap.String("user_id", userID), zap.Error(err))
+	}
 }
 
 // CreatePolicy creates a new policy
@@ -1292,9 +1379,11 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 	}
 	defer tx.Rollback(ctx)
 
-	// Update each item
+	// Update each item, and for revocations remove the underlying access in the
+	// same transaction — otherwise a batch "revoke" only relabels rows.
+	var revokedUserIDs []string
 	for _, itemID := range itemIDs {
-		_, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE review_items
 			SET decision = $2, comments = $3, decided_by = $4, decided_at = $5
 			WHERE id = $1 AND review_id = $6 AND org_id = $7
@@ -1302,9 +1391,26 @@ func (s *Service) BatchSubmitDecisions(ctx context.Context, reviewID string, ite
 		if err != nil {
 			return err
 		}
+		if decision == ReviewDecisionRevoked && tag.RowsAffected() > 0 {
+			uid, err := s.revokeReviewItemAccess(ctx, tx, itemID, org.ID, decidedBy)
+			if err != nil {
+				return err
+			}
+			if uid != "" {
+				revokedUserIDs = append(revokedUserIDs, uid)
+			}
+		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Invalidate revoked users' sessions after the batch has committed.
+	for _, uid := range revokedUserIDs {
+		s.killUserSessions(ctx, uid)
+	}
+	return nil
 }
 
 // populateReviewItems generates review items when a review is started
@@ -1882,6 +1988,11 @@ func computeNextRunAt(schedule string, from time.Time) *time.Time {
 
 // CreateCampaign inserts a new certification campaign
 func (s *Service) CreateCampaign(ctx context.Context, campaign *ScheduledCampaign) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Creating certification campaign", zap.String("name", campaign.Name))
 
 	if campaign.ID == "" {
@@ -1895,15 +2006,15 @@ func (s *Service) CreateCampaign(ctx context.Context, campaign *ScheduledCampaig
 	}
 	campaign.NextRunAt = computeNextRunAt(campaign.Schedule, now)
 
-	_, err := s.db.Pool.Exec(ctx, `
+	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO certification_campaigns (id, name, description, type, schedule, reviewer_strategy,
 			reviewer_id, reviewer_role, auto_revoke, grace_period_days, duration_days,
-			status, next_run_at, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			status, next_run_at, created_by, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`, campaign.ID, campaign.Name, campaign.Description, campaign.Type, campaign.Schedule,
 		campaign.ReviewerStrategy, campaign.ReviewerID, campaign.ReviewerRole,
 		campaign.AutoRevoke, campaign.GracePeriodDays, campaign.DurationDays,
-		campaign.Status, campaign.NextRunAt, campaign.CreatedBy, campaign.CreatedAt, campaign.UpdatedAt)
+		campaign.Status, campaign.NextRunAt, campaign.CreatedBy, campaign.CreatedAt, campaign.UpdatedAt, org.ID)
 
 	return err
 }
@@ -2098,10 +2209,10 @@ func (s *Service) RunCampaign(ctx context.Context, campaignID string) (*Campaign
 
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO campaign_runs (id, campaign_id, review_id, status, started_at, deadline,
-			total_items, reviewed_items, auto_revoked_items, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			total_items, reviewed_items, auto_revoked_items, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, run.ID, run.CampaignID, run.ReviewID, run.Status, run.StartedAt,
-		run.Deadline, run.TotalItems, run.ReviewedItems, run.AutoRevokedItems, run.CreatedAt)
+		run.Deadline, run.TotalItems, run.ReviewedItems, run.AutoRevokedItems, run.CreatedAt, org.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create campaign run: %w", err)
 	}
@@ -2276,7 +2387,7 @@ func (s *Service) StartCampaignScheduler(ctx context.Context) {
 // checkCampaignSchedules finds active campaigns whose next_run_at has passed and triggers them.
 func (s *Service) checkCampaignSchedules(ctx context.Context) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id FROM certification_campaigns
+		SELECT id, org_id FROM certification_campaigns
 		WHERE status = 'active' AND next_run_at IS NOT NULL AND next_run_at <= NOW()
 	`)
 	if err != nil {
@@ -2285,27 +2396,31 @@ func (s *Service) checkCampaignSchedules(ctx context.Context) {
 	}
 	defer rows.Close()
 
-	var campaignIDs []string
+	type dueCampaign struct {
+		id    string
+		orgID string
+	}
+	var due []dueCampaign
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var c dueCampaign
+		if err := rows.Scan(&c.id, &c.orgID); err != nil {
 			s.logger.Error("Failed to scan campaign ID", zap.Error(err))
 			continue
 		}
-		campaignIDs = append(campaignIDs, id)
+		due = append(due, c)
 	}
 
-	// certification_campaigns/campaign_runs are global, install-wide tables with
-	// no org_id (the feature predates multi-tenancy). The scheduler has no request
-	// context, so it runs each campaign under the default org; the access reviews it
-	// generates are org-scoped to the default org. Per-campaign org targeting is a
-	// future enhancement once campaigns carry an org_id.
-	runCtx := orgctx.With(ctx, orgctx.Org{ID: "00000000-0000-0000-0000-000000000010"})
-	for _, id := range campaignIDs {
-		s.logger.Info("Scheduler triggering campaign run", zap.String("campaign_id", id))
-		if _, err := s.RunCampaign(runCtx, id); err != nil {
+	// certification_campaigns/campaign_runs are org-scoped (v69). The SELECT above
+	// runs under WithBypassRLS (set in StartCampaignScheduler) so it sees due
+	// campaigns across all orgs; each campaign is then run under its own org so the
+	// access reviews and campaign_run rows it generates land in the right tenant and
+	// satisfy the FORCE-RLS WITH CHECK belt.
+	for _, c := range due {
+		s.logger.Info("Scheduler triggering campaign run", zap.String("campaign_id", c.id))
+		runCtx := orgctx.With(ctx, orgctx.Org{ID: c.orgID})
+		if _, err := s.RunCampaign(runCtx, c.id); err != nil {
 			s.logger.Error("Scheduler failed to run campaign",
-				zap.String("campaign_id", id), zap.Error(err))
+				zap.String("campaign_id", c.id), zap.Error(err))
 		}
 	}
 }
@@ -2444,6 +2559,11 @@ type ABACEvaluationResult struct {
 
 // CreateABACPolicy creates a new ABAC policy
 func (s *Service) CreateABACPolicy(ctx context.Context, policy *ABACPolicy) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.logger.Info("Creating ABAC policy", zap.String("name", policy.Name))
 
 	if policy.ID == "" {
@@ -2459,10 +2579,10 @@ func (s *Service) CreateABACPolicy(ctx context.Context, policy *ABACPolicy) erro
 	}
 
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO abac_policies (id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO abac_policies (id, name, description, resource_type, resource_id, conditions, effect, priority, enabled, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, policy.ID, policy.Name, policy.Description, policy.ResourceType, policy.ResourceID,
-		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, policy.CreatedAt, policy.UpdatedAt)
+		conditionsJSON, policy.Effect, policy.Priority, policy.Enabled, policy.CreatedAt, policy.UpdatedAt, org.ID)
 	if err != nil {
 		return fmt.Errorf("failed to insert ABAC policy: %w", err)
 	}

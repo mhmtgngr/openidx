@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Building2, Palette, Settings, Globe, Plus, Trash2, CheckCircle, Copy, Save } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
@@ -58,11 +58,13 @@ export function TenantManagementPage() {
   const [newDomain, setNewDomain] = useState('')
   const [newDomainType, setNewDomainType] = useState('subdomain')
 
+  // Backend returns a bare JSON array (with X-Total-Count), not { data: [...] };
+  // reading orgsData.data left the tenant picker permanently empty.
   const { data: orgsData } = useQuery({
     queryKey: ['organizations'],
-    queryFn: () => api.get<{ data: Organization[] }>('/api/v1/organizations'),
+    queryFn: () => api.get<Organization[]>('/api/v1/organizations'),
   })
-  const orgs = orgsData?.data || []
+  const orgs = useMemo(() => orgsData || [], [orgsData])
 
   useEffect(() => { if (orgs.length > 0 && !selectedOrgId) setSelectedOrgId(orgs[0].id) }, [orgs, selectedOrgId])
 

@@ -2772,6 +2772,18 @@ func (e *PolicyViolationError) Error() string {
 	return fmt.Sprintf("policy violation: %s - %s", e.Violations[0].PolicyName, e.Violations[0].Reason)
 }
 
+// policyEvaluationDenied builds a fail-closed denial used when CheckPolicies
+// cannot evaluate the governance policies (e.g. a DB error). A preventive
+// control that cannot run must deny rather than silently allow.
+func policyEvaluationDenied(reason string) *PolicyViolationError {
+	return &PolicyViolationError{Violations: []PolicyViolation{{
+		PolicyName: "governance",
+		PolicyType: "evaluation_error",
+		Reason:     reason,
+		Effect:     "deny",
+	}}}
+}
+
 // CheckPolicies evaluates all enabled governance policies against the given operation context.
 // Returns a PolicyViolationError if any policy denies the action, nil otherwise.
 func (s *Service) CheckPolicies(ctx context.Context, userID string, action string, targetRoleIDs []string, clientIP string) error {
@@ -2785,11 +2797,24 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 		return nil // Fail open: no org context, don't block
 	}
 
-	// Query all enabled policies (for this org) with their rules
+	// Query all enabled policies (for this org) with their rules.
+	//
+	// The policy_rules table stores rule_type + two JSONB columns (conditions,
+	// actions), NOT columns named condition/effect/priority. The governance
+	// service is the writer: it persists rule.Condition into `conditions`, and
+	// {effect, priority} into `actions` (falling back to rule_type for the
+	// effect). Selecting the non-existent pr.condition/pr.effect/pr.priority
+	// made this query error on every call, and the error path below fails open
+	// — so separation-of-duty was never actually enforced. Read the real
+	// columns and reshape them into the {condition, effect, priority} the
+	// evaluators below expect, mirroring governance.loadPolicyRules.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT p.id, p.name, p.type, p.priority,
 		       COALESCE(json_agg(json_build_object(
-		           'id', pr.id, 'condition', pr.condition, 'effect', pr.effect, 'priority', pr.priority
+		           'id', pr.id,
+		           'condition', pr.conditions,
+		           'effect', COALESCE(NULLIF(pr.actions->>'effect', ''), pr.rule_type),
+		           'priority', COALESCE((pr.actions->>'priority')::int, 0)
 		       )) FILTER (WHERE pr.id IS NOT NULL), '[]'::json) as rules
 		FROM policies p
 		LEFT JOIN policy_rules pr ON pr.policy_id = p.id AND pr.org_id = p.org_id
@@ -2798,8 +2823,11 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 		ORDER BY p.priority DESC
 	`, org.ID)
 	if err != nil {
-		s.logger.Error("Failed to query policies", zap.Error(err))
-		return nil // Fail open: don't block if we can't check policies
+		// Fail closed: a preventive control that cannot read its policies must not
+		// wave the operation through. Blocking a role change on a transient DB
+		// error is safer than silently permitting a separation-of-duty violation.
+		s.logger.Error("Failed to query governance policies; failing closed", zap.Error(err))
+		return policyEvaluationDenied("unable to evaluate governance policies")
 	}
 	defer rows.Close()
 
@@ -2808,8 +2836,10 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 	if action == "assign_role" || action == "update_roles" {
 		currentRoles, err = s.GetUserRoles(ctx, userID)
 		if err != nil {
-			s.logger.Error("Failed to get user roles for policy check", zap.Error(err))
-			return nil
+			// Fail closed for the same reason: without the user's current roles we
+			// cannot tell whether the target roles create a conflict.
+			s.logger.Error("Failed to get user roles for policy check; failing closed", zap.Error(err))
+			return policyEvaluationDenied("unable to evaluate separation-of-duty policies")
 		}
 	}
 

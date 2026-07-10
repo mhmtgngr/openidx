@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -108,6 +109,26 @@ func TestGenerateStepUpToken_PassesReasonThrough(t *testing.T) {
 		got, _ := tok.Claims.(jwt.MapClaims)["reason"].(string)
 		if got != reason {
 			t.Errorf("reason round-trip: passed %q, got back %q", reason, got)
+		}
+	}
+}
+
+// TestVerifyStepUpFactor_DefaultDenies is the regression guard for the step-up
+// rubber-stamp bug: handleStepUpVerify used to complete the challenge and mint a
+// step_up token without verifying req.Code at all. verifyStepUpFactor is now the
+// gate, and its switch must default-deny — any method that is not an explicitly
+// supported, verified factor returns (false, error) so no token is issued.
+// The default branch touches no Service fields, so a zero-value Service exercises
+// it without a database or identity service.
+func TestVerifyStepUpFactor_DefaultDenies(t *testing.T) {
+	s := &Service{}
+	for _, method := range []string{"", "none", "unknown", "password", "magic-link", "trust-me"} {
+		ok, err := s.verifyStepUpFactor(context.Background(), "user-1", method, "any-code", "127.0.0.1", "ua")
+		if ok {
+			t.Errorf("verifyStepUpFactor(method=%q) returned ok=true; unsupported methods must never verify", method)
+		}
+		if err == nil {
+			t.Errorf("verifyStepUpFactor(method=%q) returned nil error; want an unsupported-method error", method)
 		}
 	}
 }

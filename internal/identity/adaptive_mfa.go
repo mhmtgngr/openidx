@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -472,12 +473,23 @@ func (s *Service) GetEnabledRiskPolicies(ctx context.Context) ([]RiskPolicy, err
 			return nil, err
 		}
 
-		// Parse JSON
+		// Parse the JSONB conditions/actions. A policy whose rules cannot be
+		// parsed is skipped (and logged) rather than applied with empty rules —
+		// previously parseJSON was a no-op, so EVERY policy loaded with nil
+		// Conditions/Actions and silently never applied.
 		if len(conditionsJSON) > 0 {
-			parseJSON(conditionsJSON, &policy.Conditions)
+			if err := parseJSON(conditionsJSON, &policy.Conditions); err != nil {
+				s.logger.Warn("Skipping risk policy: failed to parse conditions",
+					zap.String("policy_id", policy.ID), zap.Error(err))
+				continue
+			}
 		}
 		if len(actionsJSON) > 0 {
-			parseJSON(actionsJSON, &policy.Actions)
+			if err := parseJSON(actionsJSON, &policy.Actions); err != nil {
+				s.logger.Warn("Skipping risk policy: failed to parse actions",
+					zap.String("policy_id", policy.ID), zap.Error(err))
+				continue
+			}
 		}
 
 		policies = append(policies, policy)
@@ -634,7 +646,13 @@ func contains(s, substr string) bool {
 	return false
 }
 
-func parseJSON(data []byte, v interface{}) {
-	// Simple JSON parse - in production use encoding/json
-	// This is handled by pgx automatically for JSONB
+// parseJSON unmarshals a JSONB column value into v. It returns an error instead
+// of silently succeeding: the previous implementation was a no-op, which left
+// every risk policy's Conditions/Actions nil so no admin-configured policy ever
+// took effect at login despite the CRUD API and UI implying otherwise.
+func parseJSON(data []byte, v interface{}) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, v)
 }

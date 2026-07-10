@@ -406,9 +406,17 @@ func (ts *TokenService) blacklistKey(tokenString string) string {
 	return fmt.Sprintf("auth:revoked:%s", tokenString)
 }
 
+// UserRevocationKey returns the Redis key for the user-wide token-revocation
+// marker checked by the auth middleware. Exported so other services can force a
+// user to re-authenticate (e.g. after an access review revokes their access)
+// without duplicating the key format.
+func UserRevocationKey(userID string) string {
+	return fmt.Sprintf("auth:user_revoked:%s", userID)
+}
+
 // userRevocationKey returns the Redis key for a user revocation marker
 func (ts *TokenService) userRevocationKey(userID string) string {
-	return fmt.Sprintf("auth:user_revoked:%s", userID)
+	return UserRevocationKey(userID)
 }
 
 // ExtractSubject extracts the subject (user ID) from a token without validating signature

@@ -44,12 +44,16 @@ const widgetsOrg = {
   created_at: '2026-02-15T00:00:00Z',
 }
 
+// The backend returns bare JSON arrays (with an X-Total-Count header) for both
+// the organization list and a group's members — not wrapped objects. Mocking the
+// real contract is what makes these tests catch the wrapper-shape regression that
+// previously left the org list rendering empty.
 function routeGet(url: string) {
   if (url.includes('/organizations/')) {
-    return Promise.resolve({ members: [], total: 0 })
+    return Promise.resolve([])
   }
   if (url.includes('/organizations')) {
-    return Promise.resolve({ organizations: [acmeOrg, widgetsOrg], total: 2 })
+    return Promise.resolve([acmeOrg, widgetsOrg])
   }
   return Promise.resolve({})
 }
@@ -115,7 +119,7 @@ describe('OrganizationsPage', () => {
   })
 
   it('shows the empty state when there are no organizations', async () => {
-    vi.mocked(api.get).mockResolvedValue({ organizations: [], total: 0 })
+    vi.mocked(api.get).mockResolvedValue([])
 
     render(<OrganizationsPage />, { wrapper: createWrapper() })
 
