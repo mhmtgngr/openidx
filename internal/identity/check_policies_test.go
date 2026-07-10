@@ -144,3 +144,32 @@ func TestCheckPolicies_SeparationOfDuty(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckPolicies_FailsClosedOnDBError verifies the preventive control fails
+// closed: when the policy query cannot run (here, the policies table is absent),
+// CheckPolicies must deny the operation rather than silently allow it — the
+// opposite of the original fail-open behavior.
+func TestCheckPolicies_FailsClosedOnDBError(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	if db == nil {
+		return
+	}
+	defer cleanup()
+
+	const orgID = "00000000-0000-0000-0000-000000000010"
+	ctx := orgctx.With(context.Background(), orgctx.Org{ID: orgID})
+
+	// Deliberately do NOT create the policies/policy_rules tables, so the query
+	// inside CheckPolicies errors on a missing relation.
+	svc := &Service{db: db, logger: zap.NewNop()}
+
+	err := svc.CheckPolicies(ctx, "bbbbbbbb-0000-0000-0000-000000000001", "update_roles",
+		[]string{"aaaaaaaa-0000-0000-0000-000000000002"}, "1.2.3.4")
+	if err == nil {
+		t.Fatal("expected a fail-closed denial when policies cannot be evaluated, got nil")
+	}
+	var pv *PolicyViolationError
+	if !errors.As(err, &pv) {
+		t.Fatalf("expected *PolicyViolationError, got %T: %v", err, err)
+	}
+}
