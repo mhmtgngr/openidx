@@ -67,10 +67,22 @@ func TestTempAccess_TenantIsolation(t *testing.T) {
 		linkA = "aaaaaaaa-0000-0000-0000-000000000001"
 		linkB = "bbbbbbbb-0000-0000-0000-000000000001"
 	)
+	// Provide non-NULL values for every column the handlers Scan into a
+	// non-pointer field (description, username, created_by, created_by_email,
+	// allowed_ips, notify_email, route_id, guacamole_connection_id, access_url,
+	// last_used_ip). Production's create handler writes these (empty strings for
+	// the optionals); a NULL would fail the row Scan and the handler would
+	// return 404 rather than the row. last_used_at stays NULL (scanned into a
+	// *time.Time).
 	seed := func(id, org string) {
 		if _, err := db.Pool.Exec(ctx, `
-			INSERT INTO temp_access_links (id, token, name, protocol, target_host, target_port, expires_at, status, org_id)
-			VALUES ($1, $2, 'vendor', 'ssh', 'db.internal', 22, $3, 'active', $4)`,
+			INSERT INTO temp_access_links
+				(id, token, name, description, protocol, target_host, target_port, username,
+				 created_by, created_by_email, expires_at, allowed_ips, notify_email, route_id,
+				 guacamole_connection_id, access_url, last_used_ip, status, org_id)
+			VALUES ($1, $2, 'vendor', '', 'ssh', 'db.internal', 22, '',
+				'00000000-0000-0000-0000-000000000001', 'creator@example.com', $3, '{}', '',
+				'00000000-0000-0000-0000-000000000002', '', 'https://x/temp-access', '', 'active', $4)`,
 			id, "tok-"+id, time.Now().Add(time.Hour), org); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
