@@ -244,11 +244,17 @@ func (s *Service) handleStepUpVerify(c *gin.Context) {
 	}
 	verified, verifyErr := s.verifyStepUpFactor(ctx, userID, req.Method, req.Code, c.ClientIP(), c.GetHeader("User-Agent"))
 	if verifyErr != nil || !verified {
+		// Sanitize request-derived values before logging so a CR/LF in the body
+		// cannot forge or split log entries (CWE-117 log injection).
+		errMsg := ""
+		if verifyErr != nil {
+			errMsg = sanitizeForLog(verifyErr.Error())
+		}
 		s.logger.Warn("Step-up verification failed",
-			zap.String("user_id", userID),
-			zap.String("challenge_id", req.ChallengeID),
-			zap.String("method", req.Method),
-			zap.Error(verifyErr),
+			zap.String("user_id", sanitizeForLog(userID)),
+			zap.String("challenge_id", sanitizeForLog(req.ChallengeID)),
+			zap.String("method", sanitizeForLog(req.Method)),
+			zap.String("error", errMsg),
 		)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -378,6 +384,14 @@ func (s *Service) handleStepUpStatus(c *gin.Context) {
 		"expires_at":   expiresAt.UTC().Format(time.RFC3339),
 		"reason":       reason,
 	})
+}
+
+// sanitizeForLog strips CR/LF from user-supplied values before they are written
+// to logs, preventing forged or split log entries (CWE-117 log injection).
+func sanitizeForLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
 }
 
 // verifyStepUpFactor verifies an MFA factor for step-up authentication using the
