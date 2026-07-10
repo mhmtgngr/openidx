@@ -972,6 +972,94 @@ func (s *Service) handleDeleteApprovalPolicy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Approval policy deleted"})
 }
 
+// SoDViolationError signals that fulfilling a role request would create a
+// separation-of-duty conflict with the requester's existing roles.
+type SoDViolationError struct{ PolicyName string }
+
+func (e *SoDViolationError) Error() string {
+	return fmt.Sprintf("separation-of-duty violation: role conflicts with existing roles under policy %q", e.PolicyName)
+}
+
+// checkSoDForRoleGrant fails closed if granting targetRoleID to userID would
+// violate any enabled separation-of-duty policy, given the roles the user
+// already holds. It reuses the canonical governance SoD evaluator
+// (evaluateSoDPolicy) so the access-request fulfillment path enforces the same
+// rule as the direct role-update path — closing the back door where a user
+// could obtain a conflicting role by requesting it instead of being assigned it.
+func (s *Service) checkSoDForRoleGrant(ctx context.Context, userID, targetRoleID string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Role names the user would hold after the grant: current (non-expired) + target.
+	roleNames := []interface{}{}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT r.name FROM roles r
+		JOIN user_roles ur ON r.id = ur.role_id
+		WHERE ur.user_id = $1 AND ur.org_id = $2 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+	`, userID, org.ID)
+	if err != nil {
+		return fmt.Errorf("load current roles for SoD check: %w", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan current role for SoD check: %w", err)
+		}
+		roleNames = append(roleNames, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate current roles for SoD check: %w", err)
+	}
+
+	var targetName string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT name FROM roles WHERE id = $1 AND org_id = $2`, targetRoleID, org.ID).Scan(&targetName); err != nil {
+		return fmt.Errorf("load target role for SoD check: %w", err)
+	}
+	roleNames = append(roleNames, targetName)
+
+	request := map[string]interface{}{"roles": roleNames}
+
+	// Evaluate every enabled SoD policy; any violation blocks the grant.
+	rows, err = s.db.Pool.Query(ctx,
+		`SELECT id FROM policies WHERE enabled = true AND type = $1 AND org_id = $2`, string(PolicyTypeSoD), org.ID)
+	if err != nil {
+		return fmt.Errorf("load SoD policies for check: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan SoD policy id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate SoD policies: %w", err)
+	}
+
+	for _, pid := range ids {
+		policy, err := s.GetPolicy(ctx, pid)
+		if err != nil {
+			return fmt.Errorf("load SoD policy %s: %w", pid, err)
+		}
+		allowed, err := s.evaluateSoDPolicy(ctx, policy, request)
+		if err != nil {
+			return fmt.Errorf("evaluate SoD policy %s: %w", pid, err)
+		}
+		if !allowed {
+			return &SoDViolationError{PolicyName: policy.Name}
+		}
+	}
+	return nil
+}
+
 // fulfillRequest provisions the approved access by granting the requested resource
 // to the requester. The supported resource types are exactly the three that
 // access requests can be raised against: role, group, and application. An
@@ -986,6 +1074,13 @@ func (s *Service) fulfillRequest(ctx context.Context, request *AccessRequest) er
 	}
 	switch request.ResourceType {
 	case "role":
+		// SoD gate: fulfilling an access request must not hand a user a role that
+		// conflicts with one they already hold. Without this, the request workflow
+		// is a back door around the direct role-update SoD check (a user requests
+		// the conflicting role instead of being assigned it).
+		if err := s.checkSoDForRoleGrant(ctx, request.RequesterID, request.ResourceID); err != nil {
+			return err
+		}
 		_, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO user_roles (user_id, role_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
 			request.RequesterID, request.ResourceID, org.ID,
