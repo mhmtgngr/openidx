@@ -2719,6 +2719,21 @@ func (s *Service) handleCallback(c *gin.Context) {
 }
 
 func (s *Service) handleAuthorizeConsent(c *gin.Context) {
+	// The subject MUST come from the authenticated session, never the request
+	// body. This endpoint previously minted an authorization code for a
+	// client-supplied user_id — and because the interactive-flow routes run
+	// without auth in development, any caller could obtain a code for any user.
+	// The real login flow (POST /oauth/login) derives the user server-side and
+	// does not use this endpoint.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{
+			"error":             "unauthorized",
+			"error_description": "authenticated session required",
+		})
+		return
+	}
+
 	var req struct {
 		ClientID            string `json:"client_id"`
 		RedirectURI         string `json:"redirect_uri"`
@@ -2728,11 +2743,29 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 		Nonce               string `json:"nonce"`
 		CodeChallenge       string `json:"code_challenge"`
 		CodeChallengeMethod string `json:"code_challenge_method"`
-		UserID              string `json:"user_id"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "invalid_request"})
+		return
+	}
+
+	// Validate redirect_uri against the registered client (previously unchecked
+	// here — an open-redirect / code-delivery surface).
+	client, err := s.GetClient(c.Request.Context(), req.ClientID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_client"})
+		return
+	}
+	validRedirect := false
+	for _, uri := range client.RedirectURIs {
+		if uri == req.RedirectURI {
+			validRedirect = true
+			break
+		}
+	}
+	if !validRedirect {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
 		return
 	}
 
@@ -2742,7 +2775,7 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	authCode := &AuthorizationCode{
 		Code:                code,
 		ClientID:            req.ClientID,
-		UserID:              req.UserID,
+		UserID:              userID,
 		RedirectURI:         req.RedirectURI,
 		Scope:               req.Scope,
 		State:               req.State,
@@ -2773,9 +2806,20 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 // handleAuthorizeConsentV2 handles authorization consent using the new AuthorizeHandler
 // This is called after user authentication and consent
 func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
+	// Subject comes from the authenticated session, never the request body (see
+	// handleAuthorizeConsent). Previously user_id was a required body field, so
+	// a caller could mint a code for any user against a stored auth session.
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(401, gin.H{
+			"error":             "unauthorized",
+			"error_description": "authenticated session required",
+		})
+		return
+	}
+
 	var req struct {
 		AuthSession string `json:"auth_session" binding:"required"`
-		UserID      string `json:"user_id" binding:"required"`
 		SessionID   string `json:"session_id,omitempty"` // Optional session ID for linkage
 	}
 
@@ -2785,7 +2829,7 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	}
 
 	// Issue authorization code using the handler
-	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, req.UserID, req.SessionID)
+	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, userID, req.SessionID)
 	if err != nil {
 		s.logger.Error("Failed to issue authorization code", zap.Error(err))
 		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
