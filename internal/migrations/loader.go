@@ -516,5 +516,12 @@ func allMigrations() []*Migration {
 			UpSQL:       deviceTrustReqOrgIsolationUp,
 			DownSQL:     deviceTrustReqOrgIsolationDown,
 		},
+		{
+			Version:     73,
+			Name:        "published_apps_org_isolation",
+			Description: "Add org_id (published_apps backfilled from created_by's org, discovered_paths from its parent app; orphans -> oldest org; NOT NULL, FK ON DELETE CASCADE) + indexes to published_apps and discovered_paths (access App-Publish tables, created by v40 with no org_id). The app-publish handlers acted on rows by bare id with no org filter — a cross-tenant IDOR letting any caller list/read/delete another org's apps and paths. Handlers now carry an org predicate. Not RLS-belted (runAppDiscovery runs in a background goroutine with no org ctx; the integrity doctor sweeps all orgs under bypass-RLS). Idempotent.",
+			UpSQL:       publishedAppsOrgIsolationUp,
+			DownSQL:     publishedAppsOrgIsolationDown,
+		},
 	}
 }
