@@ -541,8 +541,14 @@ func TestSessionService_Refresh(t *testing.T) {
 	// Store original expiry
 	originalExpiry := session.ExpiresAt
 
-	// Wait a bit
+	// Advance miniredis TTLs, and also sleep briefly in real wall-clock time.
+	// FastForward moves only miniredis's clock, not time.Now(), and Create/Refresh
+	// both derive ExpiresAt/LastSeen from time.Now(). The session round-trips
+	// through JSON in Redis, which strips the monotonic clock reading, so without
+	// a real delay the two time.Now() values can round to the same wall-clock tick
+	// and make the After() assertions below flaky (seen under -race in CI).
 	s.FastForward(5 * time.Minute)
+	time.Sleep(10 * time.Millisecond)
 
 	// Refresh the session
 	err = ss.Refresh(ctx, session.ID)
