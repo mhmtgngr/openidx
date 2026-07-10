@@ -1,5 +1,11 @@
 # OpenIDX Feature Priority Implementation Plan
 
+> **⚠️ Superseded (2026-07-10).** For the current, code-verified market gap
+> analysis and the phased "ultimate product" roadmap (IAM · IGA · PAM · ZTNA),
+> see **[`ULTIMATE_PRODUCT_PLAN.md`](./ULTIMATE_PRODUCT_PLAN.md)** and
+> **[`MARKET_GAP_ANALYSIS_2026.md`](./MARKET_GAP_ANALYSIS_2026.md)**. The note
+> below remains accurate: this early wishlist is historical context.
+
 > **⚠️ Status note (2026-05-20): much of this plan is already implemented.**
 > This was an early competitor-analysis wishlist. As of now, the "critical"
 > features below are **shipped**, not pending:
