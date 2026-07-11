@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/signingkeys"
 )
 
 // OAuth 2.0 Token Error Codes (RFC 6749 Section 5.2)
@@ -64,10 +66,15 @@ type TokenFlow struct {
 	issuer     string
 	logger     *zap.Logger
 	privateKey interface{} // RSA private key for JWT signing
+	signingKid string      // kid stamped into signed token headers
 }
 
-// NewTokenFlow creates a new token flow handler
-func NewTokenFlow(clients *ClientRepository, store *Store, privateKey interface{}, issuer string, logger *zap.Logger) *TokenFlow {
+// NewTokenFlow creates a new token flow handler. signingKid is the key ID
+// matching privateKey in the JWKS document.
+func NewTokenFlow(clients *ClientRepository, store *Store, privateKey interface{}, signingKid string, issuer string, logger *zap.Logger) *TokenFlow {
+	if signingKid == "" {
+		signingKid = signingkeys.LegacyKid
+	}
 	return &TokenFlow{
 		clients:    clients,
 		store:      store,
@@ -75,6 +82,7 @@ func NewTokenFlow(clients *ClientRepository, store *Store, privateKey interface{
 		issuer:     issuer,
 		logger:     logger.With(zap.String("flow", "token")),
 		privateKey: privateKey,
+		signingKid: signingKid,
 	}
 }
 
@@ -539,7 +547,7 @@ func (f *TokenFlow) generateIDToken(client *Client, userID, scope, accessToken s
 	// (its oauth_signing_keys table exists in no runner migration), and the
 	// fallback signed with a nil key.
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "openidx-key-1"
+	token.Header["kid"] = f.signingKid
 	idToken, err := token.SignedString(f.privateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign ID token: %w", err)
