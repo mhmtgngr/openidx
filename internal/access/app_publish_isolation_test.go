@@ -61,7 +61,7 @@ func TestPublishedApps_TenantIsolation(t *testing.T) {
 	// name/target_url/status are scanned into non-pointer strings — seed them.
 	app := func(id, org string) {
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO published_apps (id, name, target_url, status, org_id)
-			VALUES ($1, 'app-'||$1, 'https://up.internal', 'discovered', $2)`, id, org); err != nil {
+			VALUES ($1, $2, 'https://up.internal', 'discovered', $3)`, id, "app-"+id, org); err != nil {
 			t.Fatalf("seed app: %v", err)
 		}
 	}
