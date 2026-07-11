@@ -764,12 +764,15 @@ func scrubLogValue(s string) string {
 // deprovisionUser revokes everything that keeps a user's access alive after
 // they are disabled or deleted: active sessions (marked revoked + a Redis
 // `revoked_session:<id>` marker the oauth-service honors on every refresh
-// grant) and active API keys. hardDelete removes the child rows outright
-// (user is gone); otherwise they are marked revoked and kept for audit.
-// Best-effort and idempotent — a failure to revoke one class is logged, not
-// fatal, so the caller's primary mutation still completes. OAuth access/refresh
-// tokens are additionally neutralized by the oauth-service's user-active check
-// on the refresh grant, so no cross-service token call is needed here.
+// grant), active API keys, and live PAM state (active vault checkouts, direct
+// user vault grants, JIT role elevations). hardDelete removes the child rows
+// outright (user is gone); otherwise they are marked revoked and kept for
+// audit. Best-effort and idempotent — a failure to revoke one class is logged,
+// not fatal, so the caller's primary mutation still completes. OAuth
+// access/refresh tokens are additionally neutralized by the oauth-service's
+// user-active check on the refresh grant. Ziti network identities and live
+// Guacamole transports are torn down by the access-service's deprovision and
+// lifecycle sweeps (only it holds those clients), within one 30s tick.
 func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, hardDelete bool) {
 	// One scoped logger with the (scrubbed) user id, so the per-step warnings
 	// below never re-embed caller-supplied input directly.
@@ -798,6 +801,34 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 				}
 			}
 		}
+	}
+
+	// PAM: live privileged access must die with the account, in both the soft
+	// and hard paths. Checkouts and direct user grants have no FK to users
+	// (principal_id is a bare UUID), so they would otherwise survive even a
+	// hard delete. Role-mediated vault grants are left intact — they belong to
+	// the role, and the user's role assignments are what get removed. The live
+	// Guacamole transport is severed by the access-service lifecycle sweep
+	// (only it holds the Guacamole client); these row updates are what stop
+	// any further reveal/checkout immediately.
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE vault_checkouts SET status = 'revoked', returned_at = NOW()
+		 WHERE principal_id = $1 AND org_id = $2 AND status = 'active'`,
+		userID, orgID); err != nil {
+		log.Warn("deprovision: revoke vault checkouts failed", zap.Error(err))
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE vault_access_grants SET expires_at = NOW()
+		 WHERE principal_type = 'user' AND principal_id = $1 AND org_id = $2
+		   AND (expires_at IS NULL OR expires_at > NOW())`,
+		userID, orgID); err != nil {
+		log.Warn("deprovision: expire vault grants failed", zap.Error(err))
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE jit_grants SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
+		 WHERE user_id = $1 AND org_id = $2 AND status = 'active'`,
+		userID, orgID); err != nil {
+		log.Warn("deprovision: revoke jit grants failed", zap.Error(err))
 	}
 
 	if hardDelete {

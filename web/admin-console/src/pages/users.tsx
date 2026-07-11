@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
-import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight, Users, Network } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Mail, Edit, Trash2, Key, Shield, Download, Upload, ChevronLeft, ChevronRight, Users, Network, LayoutGrid } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Card, CardContent, CardHeader } from '../components/ui/card'
@@ -94,6 +95,7 @@ interface ZitiInfo {
 
 export function UsersPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
   const [addUserModal, setAddUserModal] = useState(false)
@@ -522,6 +524,11 @@ export function UsersPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => navigate(`/users/${user.id}/access-360`)}>
+                              <LayoutGrid className="mr-2 h-4 w-4" />
+                              Access 360
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => handleEditUser(user)}>
                               <Edit className="mr-2 h-4 w-4" />
                               Edit User

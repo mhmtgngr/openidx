@@ -153,9 +153,15 @@ func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	}
 }
 
-// ziti returns the live OpenZiti manager (nil when disconnected). All call
+// ziti returns the live OpenZiti manager (nil when disconnected, or when no
+// provider was wired — e.g. bare Service construction in tests). All call
 // sites read through this accessor so the manager can be swapped at runtime.
-func (s *Service) ziti() *ZitiManager { return s.zitiProvider.Get() }
+func (s *Service) ziti() *ZitiManager {
+	if s.zitiProvider == nil {
+		return nil
+	}
+	return s.zitiProvider.Get()
+}
 
 // ZitiProvider exposes the shared provider (for the connect/disconnect handlers).
 func (s *Service) ZitiProvider() *ZitiProvider { return s.zitiProvider }
@@ -423,6 +429,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 
 		// Enriched device management (unified view)
 		api.GET("/devices/enriched", svc.handleGetEnrichedDevices)
+
+		// Cross-pillar user correlation (IAM ⇄ PAM ⇄ Ziti): one map of
+		// everything a user can reach, and one switch that severs it all.
+		api.GET("/users/:id/access-map", adminOnly, svc.handleUserAccessMap)
+		api.POST("/users/:id/kill-switch", adminOnly, svc.handleUserKillSwitch)
 
 		// Phase 3: Posture checks (definitions are admin-managed; device
 		// self-report + evaluate are data-plane and stay open).

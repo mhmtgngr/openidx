@@ -258,6 +258,65 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  # --- Cross-pillar user correlation (IAM / PAM / Ziti) ---
+  /api/v1/access/users/{id}/access-map:
+    get:
+      tags: [Cross-Pillar]
+      summary: Cross-pillar access map for one user (admin)
+      description: >
+        Correlates a user's access across all three pillars in one response:
+        IAM (roles, groups, live sessions, API keys), PAM (vault grants incl.
+        role-mediated, active checkouts, JIT elevations, live privileged
+        sessions with their Ziti-overlay flag), Ziti (identity, enrolled
+        devices, matching dial policies, reachable services), plus the recent
+        unified audit trail across all sources.
+      operationId: getUserAccessMap
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: The user's cross-pillar access map
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/access/users/{id}/kill-switch:
+    post:
+      tags: [Cross-Pillar]
+      summary: Sever a user's live access across IAM, PAM and Ziti (admin)
+      description: >
+        One action that revokes IAM sessions (with cross-service revocation
+        markers), revokes active vault checkouts and direct user grants,
+        revokes JIT elevations, terminates live Guacamole sessions, and
+        severs the user's Ziti edge + API sessions on the controller. With
+        disable_user=true the account is disabled and the Ziti identity is
+        deleted immediately. Every step is best-effort; the response reports
+        exactly what was severed and any warnings.
+      operationId: userKillSwitch
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                disable_user:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Per-pillar severance report
+        '400':
+          description: Refused (e.g. kill-switching your own account)
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   # --- Ziti Status ---
   /api/v1/access/ziti/status:
     get:
