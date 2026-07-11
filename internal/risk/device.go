@@ -379,9 +379,14 @@ func (f *DeviceFingerprinter) GetUserDevices(ctx context.Context, userID string)
 	if err != nil {
 		return nil, err
 	}
+	// name/ip_address/user_agent/location are nullable — location in particular
+	// is never written by GetOrRegisterDevice — and a NULL scanned into a plain
+	// string errors out, so without COALESCE every such row is silently dropped.
 	rows, err := f.db.Pool.Query(ctx,
-		`SELECT id, user_id, fingerprint, name, ip_address, user_agent, location,
-		        trusted, seen_count, COALESCE(created_at, NOW()), COALESCE(last_seen_at, created_at, NOW()), created_at
+		`SELECT id, user_id, fingerprint, COALESCE(name, ''), COALESCE(ip_address, ''),
+		        COALESCE(user_agent, ''), COALESCE(location, ''),
+		        trusted, seen_count, COALESCE(created_at, NOW()), COALESCE(last_seen_at, created_at, NOW()),
+		        COALESCE(created_at, NOW())
 		 FROM known_devices
 		 WHERE user_id = $1 AND org_id = $2
 		 ORDER BY last_seen_at DESC NULLS LAST`,
