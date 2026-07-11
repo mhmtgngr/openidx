@@ -23,7 +23,8 @@ var deviceSchema = []string{
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, org_id UUID,
 		fingerprint VARCHAR(128), name VARCHAR(255), device_type VARCHAR(50),
 		ip_address VARCHAR(45), user_agent TEXT, trusted BOOLEAN DEFAULT false,
-		last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+		last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(user_id, fingerprint))`,
 	`CREATE TABLE IF NOT EXISTS enrolled_agents (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(), agent_id VARCHAR(64) UNIQUE,
 		ziti_identity_id VARCHAR(255), status VARCHAR(20) DEFAULT 'active',
