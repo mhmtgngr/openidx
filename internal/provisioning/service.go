@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -722,24 +723,46 @@ func (s *Service) ListSCIMUsers(ctx context.Context, startIndex, count int, filt
 		return nil, err
 	}
 
-	var total int
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
+	// Translate the SCIM filter (e.g. userName eq "x") into a parameterized
+	// predicate. A nil predicate means no filter; errUnsupportedFilter is
+	// surfaced to the handler as 400 invalidFilter rather than silently
+	// returning an unfiltered page (which would break IdP dedup/existence).
+	pred, err := parseSCIMFilter(filter, scimUserFilterAttrs)
 	if err != nil {
+		return nil, err
+	}
+
+	// COUNT: $1 = org.ID, the filter value (if any) binds at $2. The predicate
+	// must be applied here too so totalResults reflects the filter.
+	countSQL := "SELECT COUNT(*) FROM users WHERE org_id = $1"
+	countArgs := []interface{}{org.ID}
+	if pred != nil {
+		countSQL += pred.clause(2)
+		countArgs = append(countArgs, pred.value)
+	}
+	var total int
+	if err = s.db.Pool.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
 		return nil, err
 	}
 
 	// Build query with optional filter. NOTE: this SELECT is assigned to
 	// a variable before being passed to Query, so orgscope does not flag
 	// it — the org_id filter here is still required for correctness.
+	// $1 = offset, $2 = limit, $3 = org.ID, the filter value (if any) = $4.
 	query := `
 		SELECT id, username, email, first_name, last_name, enabled, created_at, updated_at
 		FROM users
-		WHERE org_id = $3
+		WHERE org_id = $3`
+	listArgs := []interface{}{startIndex - 1, count, org.ID}
+	if pred != nil {
+		query += pred.clause(4)
+		listArgs = append(listArgs, pred.value)
+	}
+	query += `
 		ORDER BY created_at
-		OFFSET $1 LIMIT $2
-	`
+		OFFSET $1 LIMIT $2`
 
-	rows, err := s.db.Pool.Query(ctx, query, startIndex-1, count, org.ID)
+	rows, err := s.db.Pool.Query(ctx, query, listArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -861,6 +884,15 @@ func (s *Service) handleListUsers(c *gin.Context) {
 
 	resp, err := s.ListSCIMUsers(c.Request.Context(), startIndex, count, filter)
 	if err != nil {
+		if errors.Is(err, errUnsupportedFilter) {
+			c.JSON(400, SCIMError{
+				Schemas:  []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
+				Status:   "400",
+				ScimType: "invalidFilter",
+				Detail:   err.Error(),
+			})
+			return
+		}
 		s.logger.Error("failed to list SCIM users", zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
@@ -1418,16 +1450,35 @@ func (s *Service) ListSCIMGroups(ctx context.Context, startIndex, count int, fil
 		return nil, err
 	}
 
-	var total int
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM groups WHERE org_id = $1", org.ID).Scan(&total)
+	pred, err := parseSCIMFilter(filter, scimGroupFilterAttrs)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := s.db.Pool.Query(ctx, `
+	// COUNT: $1 = org.ID, the filter value (if any) binds at $2.
+	countSQL := "SELECT COUNT(*) FROM groups WHERE org_id = $1"
+	countArgs := []interface{}{org.ID}
+	if pred != nil {
+		countSQL += pred.clause(2)
+		countArgs = append(countArgs, pred.value)
+	}
+	var total int
+	if err = s.db.Pool.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
+		return nil, err
+	}
+
+	// $1 = offset, $2 = limit, $3 = org.ID, the filter value (if any) = $4.
+	query := `
 		SELECT id, name, description, created_at, updated_at
-		FROM groups WHERE org_id = $3 ORDER BY created_at OFFSET $1 LIMIT $2
-	`, startIndex-1, count, org.ID)
+		FROM groups WHERE org_id = $3`
+	listArgs := []interface{}{startIndex - 1, count, org.ID}
+	if pred != nil {
+		query += pred.clause(4)
+		listArgs = append(listArgs, pred.value)
+	}
+	query += ` ORDER BY created_at OFFSET $1 LIMIT $2`
+
+	rows, err := s.db.Pool.Query(ctx, query, listArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1488,6 +1539,15 @@ func (s *Service) handleListGroups(c *gin.Context) {
 
 	resp, err := s.ListSCIMGroups(c.Request.Context(), startIndex, count, filter)
 	if err != nil {
+		if errors.Is(err, errUnsupportedFilter) {
+			c.JSON(400, SCIMError{
+				Schemas:  []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
+				Status:   "400",
+				ScimType: "invalidFilter",
+				Detail:   err.Error(),
+			})
+			return
+		}
 		s.logger.Error("failed to list SCIM groups", zap.Error(err))
 		c.JSON(500, SCIMError{
 			Schemas: []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
