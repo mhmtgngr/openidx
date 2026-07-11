@@ -189,8 +189,12 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 	var seenCount int
 	var firstSeen, lastSeen time.Time
 
+	// Timestamps live in the real v19 columns: created_at is the first-seen
+	// time, last_seen_at the last-seen time. The old query referenced
+	// first_seen/last_seen columns that never existed, so this SELECT — and
+	// with it the whole update path — errored on every call.
 	dbErr := f.db.Pool.QueryRow(ctx,
-		`SELECT id, trusted, seen_count, first_seen, last_seen
+		`SELECT id, trusted, seen_count, COALESCE(created_at, NOW()), COALESCE(last_seen_at, created_at, NOW())
 		 FROM known_devices
 		 WHERE user_id = $1 AND fingerprint = $2 AND org_id = $3`,
 		userID, fingerprint, org.ID).Scan(&deviceID, &trusted, &seenCount, &firstSeen, &lastSeen)
@@ -203,9 +207,9 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 
 		_, err := f.db.Pool.Exec(ctx,
 			`UPDATE known_devices
-			 SET seen_count = $3, last_seen = $4, ip_address = $5, user_agent = $6
-			 WHERE id = $1 AND org_id = $7`,
-			deviceID, userID, seenCount, lastSeen, req.IP, req.UserAgent, org.ID)
+			 SET seen_count = $2, last_seen_at = $3, ip_address = $4, user_agent = $5
+			 WHERE id = $1 AND org_id = $6`,
+			deviceID, seenCount, lastSeen, req.IP, req.UserAgent, org.ID)
 		if err != nil {
 			f.logger.Warn("Failed to update device record", zap.Error(err))
 		}
@@ -241,7 +245,7 @@ func (f *DeviceFingerprinter) GetOrRegisterDevice(ctx context.Context, userID st
 
 	var newDeviceID string
 	err = f.db.Pool.QueryRow(ctx,
-		`INSERT INTO known_devices (user_id, fingerprint, name, ip_address, user_agent, seen_count, first_seen, last_seen, trusted, org_id)
+		`INSERT INTO known_devices (user_id, fingerprint, name, ip_address, user_agent, seen_count, created_at, last_seen_at, trusted, org_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING id`,
 		userID, fingerprint, f.generateDeviceName(req.UserAgent), req.IP, req.UserAgent,
@@ -377,10 +381,10 @@ func (f *DeviceFingerprinter) GetUserDevices(ctx context.Context, userID string)
 	}
 	rows, err := f.db.Pool.Query(ctx,
 		`SELECT id, user_id, fingerprint, name, ip_address, user_agent, location,
-		        trusted, seen_count, first_seen, last_seen, created_at
+		        trusted, seen_count, COALESCE(created_at, NOW()), COALESCE(last_seen_at, created_at, NOW()), created_at
 		 FROM known_devices
 		 WHERE user_id = $1 AND org_id = $2
-		 ORDER BY last_seen DESC`,
+		 ORDER BY last_seen_at DESC NULLS LAST`,
 		userID, org.ID)
 	if err != nil {
 		return nil, err
@@ -424,7 +428,7 @@ func (f *DeviceFingerprinter) checkForSuspiciousFingerprint(ctx context.Context,
 	rows, err := f.db.Pool.Query(ctx,
 		`SELECT fingerprint, seen_count FROM known_devices
 		 WHERE user_id = $1 AND org_id = $2
-		 ORDER BY last_seen DESC
+		 ORDER BY last_seen_at DESC NULLS LAST
 		 LIMIT 5`,
 		userID, org.ID)
 	if err != nil {
