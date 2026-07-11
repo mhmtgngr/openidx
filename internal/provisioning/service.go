@@ -522,6 +522,10 @@ func (s *Service) CreateSCIMUser(ctx context.Context, user *SCIMUser) (*SCIMUser
 			"username": user.UserName,
 		})
 
+	// Apply the org's enabled user_created provisioning rules (best-effort:
+	// rule evaluation never fails the SCIM create).
+	s.applyProvisioningRules(ctx, TriggerUserCreated, user)
+
 	return user, nil
 }
 
@@ -618,6 +622,10 @@ func (s *Service) UpdateSCIMUser(ctx context.Context, userID string, user *SCIMU
 	if !user.Active {
 		s.deprovisionUser(ctx, userID, org.ID, false)
 	}
+
+	// Apply the org's enabled user_updated provisioning rules (best-effort;
+	// supported actions are additive and idempotent).
+	s.applyProvisioningRules(ctx, TriggerUserUpdated, user)
 
 	return user, nil
 }
