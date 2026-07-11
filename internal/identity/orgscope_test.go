@@ -377,14 +377,20 @@ func TestSCIMLookups_requireOrgContext(t *testing.T) {
 	})
 }
 
-func TestCheckPolicies_failsOpenWithoutOrgContext(t *testing.T) {
-	// CheckPolicies fails open (returns nil) when it can't evaluate —
-	// including when there's no org on the context — rather than
-	// blocking the operation. With a nil pool, returning nil proves it
-	// bailed at the org guard before touching the database.
+func TestCheckPolicies_failsClosedWithoutOrgContext(t *testing.T) {
+	// CheckPolicies is a preventive separation-of-duty control. Without org
+	// context it can neither scope nor run its policy query, so it must DENY
+	// (return a *PolicyViolationError) rather than wave the operation through —
+	// the routed callers only block on that type; any other return value is
+	// ignored and the role/group change proceeds. With a nil pool, returning a
+	// denial proves it failed closed at the org guard before touching the DB.
 	s := newUnboundService(t)
-	if err := s.CheckPolicies(context.Background(), "u-1", "assign_role", []string{"r-1"}, "1.2.3.4"); err != nil {
-		t.Fatalf("CheckPolicies without org = %v, want nil (fail-open before DB access)", err)
+	err := s.CheckPolicies(context.Background(), "u-1", "assign_role", []string{"r-1"}, "1.2.3.4")
+	if err == nil {
+		t.Fatal("CheckPolicies without org = nil (fail-open); want a policy violation (fail-closed)")
+	}
+	if _, ok := err.(*PolicyViolationError); !ok {
+		t.Fatalf("CheckPolicies without org = %T; want *PolicyViolationError so the caller returns 403", err)
 	}
 }
 

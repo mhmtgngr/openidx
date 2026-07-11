@@ -2794,7 +2794,14 @@ func (s *Service) CheckPolicies(ctx context.Context, userID string, action strin
 
 	org, err := orgctx.From(ctx)
 	if err != nil {
-		return nil // Fail open: no org context, don't block
+		// Fail closed: without org context we cannot scope (or even run) this
+		// preventive control, and the callers only block on a
+		// *PolicyViolationError — any other error is ignored and the operation
+		// proceeds. Returning a denial is the only value that actually blocks,
+		// consistent with the DB-error and roles-lookup paths below. The org
+		// guard runs before any DB access, so a nil pool never panics here.
+		s.logger.Error("No organization context for governance policy check; failing closed", zap.Error(err))
+		return policyEvaluationDenied("unable to evaluate governance policies: no organization context")
 	}
 
 	// Query all enabled policies (for this org) with their rules.
