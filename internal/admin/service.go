@@ -1273,9 +1273,6 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.POST("/continuous-auth/update", svc.handleContinuousAuthUpdate)
 
 	// Passwordless Authentication
-	router.POST("/passwordless/initiate", svc.handlePasswordlessInitiate)
-	router.POST("/passwordless/verify", svc.handlePasswordlessVerify)
-	router.GET("/passwordless/methods", svc.handlePasswordlessListMethods)
 }
 
 // HTTP Handlers
