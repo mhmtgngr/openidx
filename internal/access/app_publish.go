@@ -124,9 +124,14 @@ func (s *Service) handleListApps(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var total int
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM published_apps`).Scan(&total)
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM published_apps WHERE org_id=$1`, org.ID).Scan(&total)
 	c.Header("x-total-count", strconv.Itoa(total))
 
 	rows, err := s.db.Pool.Query(ctx, `
@@ -134,7 +139,7 @@ func (s *Service) handleListApps(c *gin.Context) {
 		       status, discovery_started_at, discovery_completed_at, discovery_error,
 		       discovery_strategies, total_paths_discovered, total_paths_published,
 		       created_at, updated_at
-		FROM published_apps ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
+		FROM published_apps WHERE org_id=$3 ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -186,11 +191,20 @@ func (s *Service) handleRegisterApp(c *gin.Context) {
 
 	id := uuid.New().String()
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+	createdBy := ""
+	if uid, exists := c.Get("user_id"); exists {
+		createdBy, _ = uid.(string)
+	}
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO published_apps (id, name, description, target_url, spec_url, status)
-		VALUES ($1, $2, $3, $4, $5, 'pending')`,
-		id, req.Name, req.Description, req.TargetURL, req.SpecURL)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO published_apps (id, name, description, target_url, spec_url, status, org_id, created_by)
+		VALUES ($1, $2, $3, $4, $5, 'pending', $6, NULLIF($7,'')::uuid)`,
+		id, req.Name, req.Description, req.TargetURL, req.SpecURL, org.ID, createdBy)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -206,18 +220,23 @@ func (s *Service) handleRegisterApp(c *gin.Context) {
 func (s *Service) handleGetApp(c *gin.Context) {
 	appID := c.Param("appId")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var a PublishedApp
 	var strategiesJSON []byte
 	var startedAt, completedAt *time.Time
 	var discErr *string
 
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id, name, COALESCE(description,''), target_url, COALESCE(spec_url,''),
 		       status, discovery_started_at, discovery_completed_at, discovery_error,
 		       discovery_strategies, total_paths_discovered, total_paths_published,
 		       created_at, updated_at
-		FROM published_apps WHERE id=$1`, appID).
+		FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).
 		Scan(&a.ID, &a.Name, &a.Description, &a.TargetURL, &a.SpecURL,
 			&a.Status, &startedAt, &completedAt, &discErr,
 			&strategiesJSON, &a.TotalPathsDiscovered, &a.TotalPathsPublished,
@@ -246,8 +265,13 @@ func (s *Service) handleGetApp(c *gin.Context) {
 func (s *Service) handleDeleteApp(c *gin.Context) {
 	appID := c.Param("appId")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
-	tag, err := s.db.Pool.Exec(ctx, `DELETE FROM published_apps WHERE id=$1`, appID)
+	tag, err := s.db.Pool.Exec(ctx, `DELETE FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID)
 	if err != nil || tag.RowsAffected() == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return
@@ -260,9 +284,14 @@ func (s *Service) handleDeleteApp(c *gin.Context) {
 func (s *Service) handleStartDiscovery(c *gin.Context) {
 	appID := c.Param("appId")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var status string
-	err := s.db.Pool.QueryRow(ctx, `SELECT status FROM published_apps WHERE id=$1`, appID).Scan(&status)
+	err = s.db.Pool.QueryRow(ctx, `SELECT status FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).Scan(&status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return
@@ -272,13 +301,16 @@ func (s *Service) handleStartDiscovery(c *gin.Context) {
 		return
 	}
 
-	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='discovering', discovery_started_at=NOW(), discovery_error=NULL, updated_at=NOW() WHERE id=$1`, appID)
+	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='discovering', discovery_started_at=NOW(), discovery_error=NULL, updated_at=NOW() WHERE id=$1 AND org_id=$2`, appID, org.ID)
 
-	// Run app discovery in background with timeout
+	// Run app discovery in background with timeout. The org id is threaded
+	// explicitly because the background context has no org (so RLS/orgctx are
+	// unavailable) — every discovery query scopes by this org id.
+	orgID := org.ID
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		s.runAppDiscovery(ctx, appID)
+		s.runAppDiscovery(ctx, appID, orgID)
 	}()
 
 	s.logAuditEvent(c, "app_discovery_started", appID, "published_app", nil)
@@ -288,17 +320,22 @@ func (s *Service) handleStartDiscovery(c *gin.Context) {
 func (s *Service) handleListDiscoveredPaths(c *gin.Context) {
 	appID := c.Param("appId")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 	classification := c.Query("classification")
 
 	query := `SELECT id, app_id, path, http_methods, classification, classification_source,
 	          COALESCE(discovery_strategy,''), COALESCE(suggested_policy,''),
 	          require_auth, allowed_roles, require_device_trust, published, route_id,
 	          metadata, created_at, updated_at
-	          FROM discovered_paths WHERE app_id=$1`
-	args := []interface{}{appID}
+	          FROM discovered_paths WHERE app_id=$1 AND org_id=$2`
+	args := []interface{}{appID, org.ID}
 
 	if classification != "" {
-		query += ` AND classification=$2`
+		query += ` AND classification=$3`
 		args = append(args, classification)
 	}
 	query += ` ORDER BY CASE classification WHEN 'critical' THEN 1 WHEN 'sensitive' THEN 2 WHEN 'protected' THEN 3 WHEN 'public' THEN 4 END, path`
@@ -338,6 +375,11 @@ func (s *Service) handleListDiscoveredPaths(c *gin.Context) {
 func (s *Service) handleUpdatePathClassification(c *gin.Context) {
 	pathID := c.Param("pathId")
 	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
 
 	var req UpdatePathClassificationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -385,12 +427,15 @@ func (s *Service) handleUpdatePathClassification(c *gin.Context) {
 		"updated_at = NOW()",
 	)
 	args = append(args, pathID)
+	pathIdx := len(args)
+	args = append(args, org.ID)
 
-	// Table name + WHERE column are package-literal strings. The SET
+	// Table name + WHERE columns are package-literal strings. The SET
 	// clause comes from setClauses, every entry of which has been
-	// allow-listed by buildUpdateClause.
+	// allow-listed by buildUpdateClause. The org_id predicate scopes the
+	// update to the caller's tenant (cross-tenant path ids can't be updated).
 	query := "UPDATE discovered_paths SET " + strings.Join(setClauses, ", ") +
-		" WHERE id = $" + strconv.Itoa(len(args))
+		" WHERE id = $" + strconv.Itoa(pathIdx) + " AND org_id = $" + strconv.Itoa(len(args))
 
 	tag, err := s.db.Pool.Exec(ctx, query, args...)
 	if err != nil || tag.RowsAffected() == 0 {
@@ -496,7 +541,7 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 	var appName, appDesc, targetURL, publicHostCol, landingPathCol string
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT name, COALESCE(description,''), target_url, COALESCE(public_host,''), COALESCE(landing_path,'/')
-		 FROM published_apps WHERE id=$1`, appID).
+		 FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).
 		Scan(&appName, &appDesc, &targetURL, &publicHostCol, &landingPathCol)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
@@ -538,13 +583,13 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 	for _, pathID := range req.PathIDs {
 		var pth string
 		if e := s.db.Pool.QueryRow(ctx,
-			`SELECT path FROM discovered_paths WHERE id=$1 AND app_id=$2`, pathID, appID).Scan(&pth); e != nil {
+			`SELECT path FROM discovered_paths WHERE id=$1 AND app_id=$2 AND org_id=$3`, pathID, appID, org.ID).Scan(&pth); e != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("path %s: not found", pathID))
 			result.TotalFailed++
 			continue
 		}
 		s.db.Pool.Exec(ctx,
-			`UPDATE discovered_paths SET published=true, route_id=$1, updated_at=NOW() WHERE id=$2`, appRouteID, pathID)
+			`UPDATE discovered_paths SET published=true, route_id=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`, appRouteID, pathID, org.ID)
 		result.Published = append(result.Published, PublishedPathRoute{
 			PathID: pathID, RouteID: appRouteID, Path: pth, Name: appName,
 		})
@@ -573,8 +618,8 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 	s.registerAccessProxyCallback(ctx, publicHost)
 	s.db.Pool.Exec(ctx, `
 		UPDATE published_apps SET public_host=$1, landing_path=$2, status='published',
-			total_paths_published = (SELECT COUNT(*) FROM discovered_paths WHERE app_id=$3 AND published=true),
-			updated_at=NOW() WHERE id=$3`, publicHost, landingPath, appID)
+			total_paths_published = (SELECT COUNT(*) FROM discovered_paths WHERE app_id=$3 AND published=true AND org_id=$4),
+			updated_at=NOW() WHERE id=$3 AND org_id=$4`, publicHost, landingPath, appID, org.ID)
 
 	s.logAuditEvent(c, "app_paths_published", appID, "published_app", map[string]interface{}{
 		"route_id":        appRouteID,
@@ -630,7 +675,7 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 
 	var appName, appDesc, targetURL string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT name, COALESCE(description,''), target_url FROM published_apps WHERE id=$1`, appID).
+		`SELECT name, COALESCE(description,''), target_url FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).
 		Scan(&appName, &appDesc, &targetURL)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
@@ -672,8 +717,8 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 
 	// Record the public host / landing path on the app for display + idempotency.
 	s.db.Pool.Exec(ctx,
-		`UPDATE published_apps SET public_host=$1, landing_path=$2, status='published', updated_at=NOW() WHERE id=$3`,
-		publicHost, landingPath, appID)
+		`UPDATE published_apps SET public_host=$1, landing_path=$2, status='published', updated_at=NOW() WHERE id=$3 AND org_id=$4`,
+		publicHost, landingPath, appID, org.ID)
 
 	s.logAuditEvent(c, "app_published_oneclick", appID, "published_app", map[string]interface{}{
 		"public_host": publicHost, "route_id": routeID,
@@ -690,13 +735,16 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 
 // ---- Discovery engine ----
 
-func (s *Service) runAppDiscovery(ctx context.Context, appID string) {
+// runAppDiscovery runs in a background goroutine (no org context), so the org
+// id is passed in explicitly and every query scopes by it — the app was already
+// org-verified by the handler that launched the discovery.
+func (s *Service) runAppDiscovery(ctx context.Context, appID, orgID string) {
 	var targetURL, specURL string
-	err := s.db.Pool.QueryRow(ctx, `SELECT target_url, COALESCE(spec_url,'') FROM published_apps WHERE id=$1`, appID).
+	err := s.db.Pool.QueryRow(ctx, `SELECT target_url, COALESCE(spec_url,'') FROM published_apps WHERE id=$1 AND org_id=$2`, appID, orgID).
 		Scan(&targetURL, &specURL)
 	if err != nil {
-		s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='error', discovery_error=$1, updated_at=NOW() WHERE id=$2`,
-			err.Error(), appID)
+		s.db.Pool.Exec(ctx, `UPDATE published_apps SET status='error', discovery_error=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
+			err.Error(), appID, orgID)
 		return
 	}
 
@@ -736,7 +784,7 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID string) {
 	}
 
 	// Clear old auto-classified unpublished paths (allow re-discovery)
-	s.db.Pool.Exec(ctx, `DELETE FROM discovered_paths WHERE app_id=$1 AND published=false`, appID)
+	s.db.Pool.Exec(ctx, `DELETE FROM discovered_paths WHERE app_id=$1 AND published=false AND org_id=$2`, appID, orgID)
 
 	// Insert discovered paths
 	for _, p := range unique {
@@ -747,8 +795,8 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID string) {
 		s.db.Pool.Exec(ctx, `
 			INSERT INTO discovered_paths (id, app_id, path, http_methods, classification,
 				classification_source, discovery_strategy, suggested_policy,
-				require_auth, allowed_roles, require_device_trust, metadata)
-			VALUES ($1, $2, $3, $4, $5, 'auto', $6, $7, $8, $9, $10, $11)
+				require_auth, allowed_roles, require_device_trust, metadata, org_id)
+			VALUES ($1, $2, $3, $4, $5, 'auto', $6, $7, $8, $9, $10, $11, $12)
 			ON CONFLICT (app_id, path) DO UPDATE SET
 				http_methods = EXCLUDED.http_methods,
 				classification = CASE WHEN discovered_paths.classification_source = 'manual'
@@ -756,7 +804,7 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID string) {
 				updated_at = NOW()`,
 			uuid.New().String(), appID, p.Path, methodsJSON, p.Classification,
 			p.DiscoveryStrategy, p.SuggestedPolicy, p.RequireAuth, rolesJSON,
-			p.RequireDeviceTrust, metadataJSON)
+			p.RequireDeviceTrust, metadataJSON, orgID)
 	}
 
 	// Update app
@@ -766,12 +814,12 @@ func (s *Service) runAppDiscovery(ctx context.Context, appID string) {
 		finalStatus = "error"
 		s.db.Pool.Exec(ctx, `UPDATE published_apps SET status=$1, discovery_completed_at=NOW(),
 			discovery_strategies=$2, total_paths_discovered=0, discovery_error='no paths discovered',
-			updated_at=NOW() WHERE id=$3`, finalStatus, strategiesJSON, appID)
+			updated_at=NOW() WHERE id=$3 AND org_id=$4`, finalStatus, strategiesJSON, appID, orgID)
 		return
 	}
 	s.db.Pool.Exec(ctx, `UPDATE published_apps SET status=$1, discovery_completed_at=NOW(),
-		discovery_strategies=$2, total_paths_discovered=$3, updated_at=NOW() WHERE id=$4`,
-		finalStatus, strategiesJSON, len(unique), appID)
+		discovery_strategies=$2, total_paths_discovered=$3, updated_at=NOW() WHERE id=$4 AND org_id=$5`,
+		finalStatus, strategiesJSON, len(unique), appID, orgID)
 
 	s.logger.Info("App discovery completed",
 		zap.String("app_id", appID),
@@ -1219,8 +1267,8 @@ func (s *Service) handleConsolidateApp(c *gin.Context) {
 func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID string) (string, int, error) {
 	var appName, appDesc, targetURL, publicHostCol string
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT name, COALESCE(description,''), target_url, COALESCE(public_host,'') FROM published_apps WHERE id=$1`,
-		appID).Scan(&appName, &appDesc, &targetURL, &publicHostCol); err != nil {
+		`SELECT name, COALESCE(description,''), target_url, COALESCE(public_host,'') FROM published_apps WHERE id=$1 AND org_id=$2`,
+		appID, orgID).Scan(&appName, &appDesc, &targetURL, &publicHostCol); err != nil {
 		return "", 0, fmt.Errorf("app not found: %w", err)
 	}
 	publicHost, err := s.resolveAppPublicHost(publicHostCol, appName)
@@ -1233,7 +1281,7 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 	// plus any proxy_route on this host (the exploded per-path ones carry a path).
 	routeIDs := map[string]bool{}
 	if rows, e := s.db.Pool.Query(ctx,
-		`SELECT DISTINCT route_id FROM discovered_paths WHERE app_id=$1 AND route_id IS NOT NULL`, appID); e == nil {
+		`SELECT DISTINCT route_id FROM discovered_paths WHERE app_id=$1 AND route_id IS NOT NULL AND org_id=$2`, appID, orgID); e == nil {
 		for rows.Next() {
 			var id string
 			if rows.Scan(&id) == nil {
@@ -1283,7 +1331,7 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 	// openidx-<app>. Precise computation avoids matching a different app's prefix.
 	if zm != nil {
 		canonicalSvc := "openidx-" + sanitizeName(appName)
-		if rows, e := s.db.Pool.Query(ctx, `SELECT path FROM discovered_paths WHERE app_id=$1`, appID); e == nil {
+		if rows, e := s.db.Pool.Query(ctx, `SELECT path FROM discovered_paths WHERE app_id=$1 AND org_id=$2`, appID, orgID); e == nil {
 			var paths []string
 			for rows.Next() {
 				var p string
@@ -1303,7 +1351,7 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 		}
 	}
 	// Unlink discovered_paths first (FK is ON DELETE SET NULL; unlink keeps it explicit).
-	s.db.Pool.Exec(ctx, `UPDATE discovered_paths SET route_id=NULL WHERE app_id=$1`, appID)
+	s.db.Pool.Exec(ctx, `UPDATE discovered_paths SET route_id=NULL WHERE app_id=$1 AND org_id=$2`, appID, orgID)
 	for id := range routeIDs {
 		s.db.Pool.Exec(ctx, `DELETE FROM proxy_routes WHERE id=$1 AND org_id=$2`, id, orgID)
 		s.deleteAppTile(ctx, id)
@@ -1315,7 +1363,7 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 		return "", 0, err
 	}
 	res, _ := s.db.Pool.Exec(ctx,
-		`UPDATE discovered_paths SET route_id=$1, published=true, updated_at=NOW() WHERE app_id=$2`, canonicalID, appID)
+		`UPDATE discovered_paths SET route_id=$1, published=true, updated_at=NOW() WHERE app_id=$2 AND org_id=$3`, canonicalID, appID, orgID)
 	pathCount := int(res.RowsAffected())
 
 	// Re-enable Ziti/BrowZer once on the canonical route (clean service name).
@@ -1339,8 +1387,8 @@ func (s *Service) consolidateApp(ctx context.Context, orgID, appID, userID strin
 	s.registerAccessProxyCallback(ctx, publicHost)
 	s.db.Pool.Exec(ctx, `
 		UPDATE published_apps SET public_host=$1, status='published',
-			total_paths_published=(SELECT COUNT(*) FROM discovered_paths WHERE app_id=$2 AND published=true),
-			updated_at=NOW() WHERE id=$2`, publicHost, appID)
+			total_paths_published=(SELECT COUNT(*) FROM discovered_paths WHERE app_id=$2 AND published=true AND org_id=$3),
+			updated_at=NOW() WHERE id=$2 AND org_id=$3`, publicHost, appID, orgID)
 
 	// Regenerate the edge (prunes stale browzer-* APISIX routes) + reconcile Ziti.
 	if s.browzerTargetManager != nil {
@@ -1366,7 +1414,7 @@ func (s *Service) handleGetAppZitiServices(c *gin.Context) {
 	}
 
 	var appName string
-	err = s.db.Pool.QueryRow(ctx, `SELECT name FROM published_apps WHERE id=$1`, appID).Scan(&appName)
+	err = s.db.Pool.QueryRow(ctx, `SELECT name FROM published_apps WHERE id=$1 AND org_id=$2`, appID, org.ID).Scan(&appName)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return
