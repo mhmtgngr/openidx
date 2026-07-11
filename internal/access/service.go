@@ -578,18 +578,23 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/ziti/import/bulk", svc.handleBulkImportZitiServices)
 		api.GET("/ziti/unmanaged/count", svc.handleGetUnmanagedServicesCount)
 
-		// App publishing (register, discover, classify, publish)
-		api.GET("/apps", svc.handleListApps)
-		api.POST("/apps", svc.handleRegisterApp)
-		api.GET("/apps/:appId", svc.handleGetApp)
-		api.DELETE("/apps/:appId", svc.handleDeleteApp)
-		api.POST("/apps/:appId/discover", svc.handleStartDiscovery)
-		api.GET("/apps/:appId/paths", svc.handleListDiscoveredPaths)
-		api.PUT("/apps/:appId/paths/:pathId", svc.handleUpdatePathClassification)
-		api.POST("/apps/:appId/publish", svc.handlePublishPaths)
-		api.POST("/apps/:appId/publish-app", svc.handlePublishApp)
-		api.POST("/apps/:appId/consolidate", svc.handleConsolidateApp)
-		api.GET("/apps/:appId/ziti-services", svc.handleGetAppZitiServices)
+		// App publishing (register, discover, classify, publish). These are
+		// admin management routes — registering an internal app and publishing
+		// it as a proxy route exposes infrastructure — so they carry the shared
+		// `adminOnly` gate like every sibling management surface (ziti/*,
+		// guacamole credentials, temp-access). Without it any authenticated
+		// user could register/discover/publish/delete apps.
+		api.GET("/apps", adminOnly, svc.handleListApps)
+		api.POST("/apps", adminOnly, svc.handleRegisterApp)
+		api.GET("/apps/:appId", adminOnly, svc.handleGetApp)
+		api.DELETE("/apps/:appId", adminOnly, svc.handleDeleteApp)
+		api.POST("/apps/:appId/discover", adminOnly, svc.handleStartDiscovery)
+		api.GET("/apps/:appId/paths", adminOnly, svc.handleListDiscoveredPaths)
+		api.PUT("/apps/:appId/paths/:pathId", adminOnly, svc.handleUpdatePathClassification)
+		api.POST("/apps/:appId/publish", adminOnly, svc.handlePublishPaths)
+		api.POST("/apps/:appId/publish-app", adminOnly, svc.handlePublishApp)
+		api.POST("/apps/:appId/consolidate", adminOnly, svc.handleConsolidateApp)
+		api.GET("/apps/:appId/ziti-services", adminOnly, svc.handleGetAppZitiServices)
 
 		// Relations & Integrity Doctor
 		api.GET("/health/relations", svc.handleHealthRelations)

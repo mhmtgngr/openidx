@@ -588,6 +588,15 @@ func (s *Service) GetMyDevices(ctx context.Context, userID string) ([]UserDevice
 
 // RegisterDevice registers a new device for a user
 func (s *Service) RegisterDevice(ctx context.Context, userID, name, fingerprint, ipAddress, userAgent, location string) (*UserDevice, error) {
+	// Resolve the tenant explicitly: without this the INSERT below relied on
+	// the known_devices.org_id column DEFAULT (the primary org), silently
+	// mis-tenanting every portal-registered device — org-scoped consumers
+	// (isKnownIP / trustDevice / isCorporateDevice) could never match them.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	device := &UserDevice{
 		ID:          uuid.New().String(),
 		UserID:      userID,
@@ -608,18 +617,21 @@ func (s *Service) RegisterDevice(ctx context.Context, userID, name, fingerprint,
 	}
 	device.DeviceType = detectDeviceType(userAgent)
 
+	// org_id = EXCLUDED.org_id on conflict also heals rows that were
+	// mis-tenanted to the column default before this fix, the next time the
+	// same device re-registers.
 	query := `
-		INSERT INTO known_devices (id, user_id, fingerprint, name, ip_address, user_agent, location, trusted, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO known_devices (id, user_id, fingerprint, name, ip_address, user_agent, location, trusted, created_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (user_id, fingerprint) DO UPDATE
 		SET name = EXCLUDED.name, ip_address = EXCLUDED.ip_address, user_agent = EXCLUDED.user_agent,
-		    location = EXCLUDED.location, last_seen_at = NOW()
+		    location = EXCLUDED.location, last_seen_at = NOW(), org_id = EXCLUDED.org_id
 		RETURNING id
 	`
 
-	err := s.db.Pool.QueryRow(ctx, query,
+	err = s.db.Pool.QueryRow(ctx, query,
 		device.ID, device.UserID, device.Fingerprint, device.Name,
-		device.IPAddress, device.UserAgent, device.Location, device.Trusted, device.CreatedAt,
+		device.IPAddress, device.UserAgent, device.Location, device.Trusted, device.CreatedAt, org.ID,
 	).Scan(&device.ID)
 
 	if err != nil {

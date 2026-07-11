@@ -1052,6 +1052,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service) {
 		// Enhanced compliance reports (Phase 12)
 		audit.POST("/reports/soc2-detailed", svc.handleGenerateSOC2DetailedV2)
 		audit.POST("/reports/iso27001-detailed", svc.handleGenerateISO27001DetailedV2)
+		// GDPR metrics report (consent / DSAR / deletion metrics) — the
+		// handler existed but was never routed, so the GDPR Art.7 consent
+		// view was unreachable.
+		audit.POST("/reports/gdpr-detailed", svc.handleGenerateGDPRReport)
 		audit.GET("/reports/:id/evidence", svc.handleDownloadEvidence)
 	}
 }
