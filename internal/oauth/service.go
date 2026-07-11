@@ -149,7 +149,6 @@ type Service struct {
 	idpCipher        *secretcrypt.Cipher // decrypts identity_providers.client_secret (social login raw read)
 	privateKey       *rsa.PrivateKey
 	publicKey        *rsa.PublicKey
-	keyManager       *KeyManager // KeyManager for Ed25519 and RSA key management
 	issuer           string
 	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
 	identityService  *identity.Service
@@ -171,16 +170,6 @@ func (s *Service) SetRiskService(rs *risk.Service) {
 // SetWebhookService sets the webhook service for event publishing
 func (s *Service) SetWebhookService(ws WebhookPublisher) {
 	s.webhookService = ws
-}
-
-// SetKeyManager sets the key manager for RSA key management
-func (s *Service) SetKeyManager(km *KeyManager) {
-	s.keyManager = km
-	// Also update the legacy privateKey/publicKey fields for backward compatibility
-	if km != nil {
-		s.privateKey = km.GetSigningKey()
-		s.publicKey = &km.GetSigningKey().PublicKey
-	}
 }
 
 // AuthorizeHandler returns the authorization handler
