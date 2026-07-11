@@ -86,7 +86,7 @@ func (s *Service) handleStepUpChallenge(c *gin.Context) {
 		enrolled, mErr := s.identityService.GetUserMFAMethods(ctx, userID)
 		if mErr != nil {
 			s.logger.Warn("Failed to look up MFA methods for step-up",
-				zap.String("user_id", userID),
+				zap.String("user_id", sanitizeForLog(userID)),
 				zap.Error(mErr),
 			)
 		} else {
