@@ -37,8 +37,8 @@ func TestRecordingRetentionPolicy_DBBacked(t *testing.T) {
 		adminUID   = "aaaaaaaa-0000-0000-0000-0000000000ad"
 	)
 	if _, err := db.Pool.Exec(ctx,
-		`INSERT INTO organizations (id, name) VALUES ($1::uuid, $2)`,
-		otherOrg, "retention-other-org"); err != nil {
+		`INSERT INTO organizations (id, name, slug) VALUES ($1::uuid, $2, $3)`,
+		otherOrg, "retention-other-org", "retention-other-org"); err != nil {
 		t.Fatalf("seed second org: %v", err)
 	}
 
