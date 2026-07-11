@@ -3,6 +3,7 @@ package identity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -265,20 +266,30 @@ func (s *Service) GetApplicableBiometricPolicy(ctx context.Context, userID strin
 		return nil, err
 	}
 
-	// Get user's groups and roles
+	// Get user's groups and roles. Read the real membership table
+	// group_memberships (org-scoped) — the previous query hit a phantom
+	// `user_groups` table that no migration creates, so it always errored and
+	// left userGroups empty, making any group-scoped biometric policy silently
+	// never match (fail-open). Fail closed if group resolution errors.
 	var userGroups []string
 	var userRoles []string
 
-	rows, _ := s.db.Pool.Query(ctx,
-		"SELECT group_id FROM user_groups WHERE user_id = $1",
-		userID,
+	rows, err := s.db.Pool.Query(ctx,
+		"SELECT group_id FROM group_memberships WHERE user_id = $1 AND org_id = $2",
+		userID, org.ID,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve user groups: %w", err)
+	}
 	for rows.Next() {
 		var groupID string
 		rows.Scan(&groupID)
 		userGroups = append(userGroups, groupID)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("resolve user groups: %w", err)
+	}
 
 	s.db.Pool.QueryRow(ctx,
 		"SELECT roles FROM users WHERE id = $1 AND org_id = $2",
