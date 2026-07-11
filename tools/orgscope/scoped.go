@@ -52,6 +52,8 @@ var scopedTables = map[string]bool{
 	"group_memberships":            true,
 	"user_application_assignments": true,
 	"mfa_backup_codes":             true,
+	"risk_factors":                 true,
+	"session_risks":                true,
 	"mfa_policies":                 true,
 	"mfa_push_challenges":          true,
 	"mfa_push_devices":             true,
