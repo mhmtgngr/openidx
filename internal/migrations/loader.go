@@ -558,5 +558,12 @@ func allMigrations() []*Migration {
 			UpSQL:       recordingRetentionPoliciesUp,
 			DownSQL:     recordingRetentionPoliciesDown,
 		},
+		{
+			Version:     79,
+			Name:        "oauth_signing_keys",
+			Description: "Create oauth_signing_keys for DB-backed signing key rotation (internal/signingkeys). The OAuth service previously held a single RSA key in system_settings hardcoded to kid openidx-key-1, so rotation was impossible without invalidating every outstanding token. One active key (enforced by a partial unique index, which also gives EnsureActive a race-safe ON CONFLICT target) plus retired keys servable from JWKS until not_after. The legacy system_settings key is imported under its original kid on first boot so pre-upgrade tokens keep verifying. Install-wide (no org_id) like system_settings; private_key_pem encrypted at rest via ENCRYPTION_KEY. Idempotent.",
+			UpSQL:       oauthSigningKeysUp,
+			DownSQL:     oauthSigningKeysDown,
+		},
 	}
 }

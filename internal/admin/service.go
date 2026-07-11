@@ -1170,6 +1170,10 @@ func RegisterRoutes(router *gin.RouterGroup, svc *Service) {
 	router.GET("/audit-archives/:id", svc.handleGetAuditArchive)
 	router.POST("/audit-archives/:id/restore", svc.handleRestoreAuditArchive)
 
+	// OAuth signing key rotation (install-wide; consumed by the oauth service)
+	router.GET("/oauth/signing-keys", svc.handleListOAuthSigningKeys)
+	router.POST("/oauth/signing-keys/rotate", svc.handleRotateOAuthSigningKey)
+
 	// Phase 17: Multi-Tenancy, Privacy, Federation & Notifications
 
 	// 17A: Tenant Branding & Management

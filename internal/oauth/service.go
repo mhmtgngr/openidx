@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +37,7 @@ import (
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
+	"github.com/openidx/openidx/internal/signingkeys"
 )
 
 // OAuthClient represents an OAuth 2.0 client application
@@ -149,6 +151,8 @@ type Service struct {
 	idpCipher        *secretcrypt.Cipher // decrypts identity_providers.client_secret (social login raw read)
 	privateKey       *rsa.PrivateKey
 	publicKey        *rsa.PublicKey
+	keyStore         *signingkeys.Store
+	signer           atomic.Pointer[signerSnapshot]
 	issuer           string
 	tenantBaseDomain string // when set, JWT iss is derived per-tenant (https://<slug>.<base>)
 	identityService  *identity.Service
@@ -233,39 +237,20 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		}
 	}
 
-	storeKey := func(privKey *rsa.PrivateKey) {
-		keyBytes := x509.MarshalPKCS1PrivateKey(privKey)
-		keyBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
-		pemBytes := pem.EncodeToMemory(keyBlock)
-		enc, eerr := keyCipher.Encrypt(string(pemBytes))
-		if eerr != nil {
-			logger.Error("failed to encrypt OAuth signing key; not persisting", zap.Error(eerr))
-			return
-		}
-		encJSON, _ := json.Marshal(enc)
-		db.Pool.Exec(ctx,
-			"INSERT INTO system_settings (key, value) VALUES ('oauth_rsa_private_key', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb",
-			string(encJSON))
+	// The rotatable key set lives in oauth_signing_keys (v79). A legacy
+	// system_settings key (loaded above) is imported under its original kid
+	// on first boot so outstanding tokens keep verifying; after that the
+	// settings row is vestigial and no longer written.
+	keyStore := signingkeys.NewStore(db.Pool, cfg.EncryptionKey, logger)
+	activeKey, err := keyStore.EnsureActive(ctx, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("ensure active signing key: %w", err)
 	}
-
-	if privateKey == nil {
-		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
-		}
-		storeKey(privateKey)
-		logger.Info("RSA signing key generated and persisted to database (encrypted at rest)")
-	} else {
-		logger.Info("RSA signing key loaded from database")
-		// Lazy migration: re-encrypt a legacy plaintext key in place, but only
-		// when a real cipher is configured (Encrypt tags its output).
-		if storedWasPlaintext {
-			if probe, perr := keyCipher.Encrypt("probe"); perr == nil && secretcrypt.IsEncrypted(probe) {
-				storeKey(privateKey)
-				logger.Info("Re-encrypted legacy plaintext OAuth signing key at rest")
-			}
-		}
+	if privateKey != nil && activeKey.Kid == signingkeys.LegacyKid && storedWasPlaintext {
+		logger.Info("Imported legacy plaintext OAuth signing key into oauth_signing_keys (encrypted at rest)")
 	}
+	privateKey = activeKey.Private
+	logger.Info("OAuth signing key loaded", zap.String("kid", activeKey.Kid))
 
 	// Use configured issuer URL or fall back to default
 	issuer := cfg.OAuthIssuer
@@ -287,6 +272,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		idpCipher:        idpCipher,
 		privateKey:       privateKey,
 		publicKey:        &privateKey.PublicKey,
+		keyStore:         keyStore,
 		issuer:           issuer,
 		tenantBaseDomain: cfg.TenantBaseDomain,
 		identityService:  idSvc,
@@ -294,6 +280,14 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 
 	// Initialize authorize handler
 	svc.authorizeHandler = NewAuthorizeHandler(svc, svc.logger)
+
+	// Build the signing snapshot (active key + verification set + JWKS) and
+	// keep it fresh so rotations by the admin service take effect without a
+	// restart.
+	if err := svc.refreshSigner(ctx); err != nil {
+		return nil, fmt.Errorf("load signing key set: %w", err)
+	}
+	go svc.signerRefreshLoop(context.Background(), 5*time.Minute)
 
 	return svc, nil
 }
@@ -975,9 +969,10 @@ func (s *Service) GenerateJWT(ctx context.Context, userID, clientID, scope strin
 		claims["sid"] = sessionID[0]
 	}
 
+	kid, signKey := s.signingKey()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "openidx-key-1"
-	return token.SignedString(s.privateKey)
+	token.Header["kid"] = kid
+	return token.SignedString(signKey)
 }
 
 // GenerateIDToken generates an OIDC ID token
@@ -1080,9 +1075,10 @@ func (s *Service) GenerateIDToken(ctx context.Context, userID, clientID, nonce s
 		claims["sid"] = sessionID[0]
 	}
 
+	kid, signKey := s.signingKey()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "openidx-key-1"
-	return token.SignedString(s.privateKey)
+	token.Header["kid"] = kid
+	return token.SignedString(signKey)
 }
 
 // GetUserInfo retrieves user information for UserInfo endpoint
@@ -1339,15 +1335,24 @@ func (s *Service) handleDiscovery(c *gin.Context) {
 }
 
 func (s *Service) handleJWKS(c *gin.Context) {
-	// CORS is handled by the APISIX gateway for all routes
-	c.Header("Cache-Control", "public, max-age=3600")
+	// CORS is handled by the APISIX gateway for all routes.
+	// Short max-age so rotated-in keys propagate to verifier caches quickly.
+	c.Header("Cache-Control", "public, max-age=300")
 
 	if c.Request.Method == "OPTIONS" {
 		c.AbortWithStatus(204)
 		return
 	}
 
-	// Convert RSA public key to JWK (base64url without padding per RFC 7517)
+	// Serve every verification key (active first, then retired keys inside
+	// their grace) so consumers keep validating tokens across rotations.
+	if snap := s.signer.Load(); snap != nil {
+		c.JSON(200, snap.jwks)
+		return
+	}
+
+	// No snapshot (unit tests construct Service directly): single-key JWKS
+	// from the legacy fields (base64url without padding per RFC 7517).
 	n := base64.RawURLEncoding.EncodeToString(s.publicKey.N.Bytes())
 	e := base64.RawURLEncoding.EncodeToString([]byte{byte(s.publicKey.E >> 16), byte(s.publicKey.E >> 8), byte(s.publicKey.E)})
 
@@ -1356,7 +1361,7 @@ func (s *Service) handleJWKS(c *gin.Context) {
 			{
 				Kty: "RSA",
 				Use: "sig",
-				Kid: "openidx-key-1",
+				Kid: signingkeys.LegacyKid,
 				Alg: "RS256",
 				N:   n,
 				E:   e,
@@ -3165,9 +3170,7 @@ func (s *Service) handleIntrospect(c *gin.Context) {
 	}
 
 	// Try to parse as JWT
-	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
-		return s.publicKey, nil
-	})
+	parsed, err := jwt.Parse(token, s.verificationKeyfunc)
 	if err != nil || !parsed.Valid {
 		// Check if it's a refresh token (scoped to the caller's org)
 		org, oerr := orgctx.From(c.Request.Context())
@@ -3258,9 +3261,7 @@ func (s *Service) handleRevoke(c *gin.Context) {
 		// before reading exp — only blacklist tokens we actually issued. A
 		// garbage / forged token isn't worth a Redis entry, and verifying
 		// here lets us read the claim shape with confidence.
-		parsed, err := jwt.Parse(token, func(*jwt.Token) (interface{}, error) {
-			return s.publicKey, nil
-		})
+		parsed, err := jwt.Parse(token, s.verificationKeyfunc)
 		if err == nil && parsed != nil && parsed.Valid {
 			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
 				expSec, _ := claims["exp"].(float64)
@@ -3287,7 +3288,7 @@ func (s *Service) parseVerifiedClaims(tokenString string, allowExpired bool) (jw
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		return s.publicKey, nil
+		return s.verificationKeyfunc(t)
 	}
 	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256"})}
 	if allowExpired {
@@ -3321,9 +3322,7 @@ func (s *Service) handleUserInfo(c *gin.Context) {
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
 	// Parse and validate JWT
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return s.publicKey, nil
-	})
+	token, err := jwt.Parse(tokenString, s.verificationKeyfunc)
 
 	if err != nil || !token.Valid {
 		c.JSON(401, gin.H{"error": "invalid_token"})
@@ -3846,8 +3845,10 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 		claims["email_verified"] = true
 	}
 
+	signKid, signKey := s.signingKey()
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	signedToken, err := jwtToken.SignedString(s.privateKey)
+	jwtToken.Header["kid"] = signKid
+	signedToken, err := jwtToken.SignedString(signKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign access token: %w", err)
 	}
@@ -3880,8 +3881,10 @@ func (s *Service) generateTokensForUser(ctx context.Context, user *SAMLUser, cli
 			idClaims["family_name"] = user.LastName
 		}
 
+		idKid, idSignKey := s.signingKey()
 		idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
-		signedIDToken, err := idToken.SignedString(s.privateKey)
+		idToken.Header["kid"] = idKid
+		signedIDToken, err := idToken.SignedString(idSignKey)
 		if err == nil {
 			response.IDToken = signedIDToken
 		}
