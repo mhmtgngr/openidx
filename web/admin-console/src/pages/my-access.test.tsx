@@ -33,6 +33,19 @@ const overview = {
     { id: 'g-1', name: 'Backend Team' },
     { id: 'g-2', name: 'SRE' },
   ],
+  privileged: {
+    vault_grants: 4,
+    active_checkouts: 1,
+    active_jit_grants: 2,
+    active_sessions: 0,
+    pending_session_requests: 1,
+  },
+  network: {
+    ziti_linked: true,
+    ziti_enrolled: true,
+    devices: 3,
+    trusted_device: true,
+  },
 }
 
 const availableGroups = {
@@ -99,8 +112,24 @@ describe('MyAccessPage', () => {
     render(<MyAccessPage />, { wrapper: createWrapper() })
     expect(await screen.findByText('My Access')).toBeInTheDocument()
     expect(
-      screen.getByText(/view your access rights and request additional permissions/i),
+      screen.getByText(/identity, privileged access, and zero-trust network/i),
     ).toBeInTheDocument()
+  })
+
+  it('renders the cross-pillar privileged + network panels from the overview', async () => {
+    render(<MyAccessPage />, { wrapper: createWrapper() })
+    // Wait for data to resolve via a role name, then assert the new panels.
+    expect(await screen.findByText('Engineer')).toBeInTheDocument()
+
+    expect(screen.getByText('My Privileged Access')).toBeInTheDocument()
+    expect(screen.getByText('Vault secrets')).toBeInTheDocument()
+    expect(screen.getByText('JIT elevations')).toBeInTheDocument()
+    expect(screen.getByText(/session request\(s\) pending approval/i)).toBeInTheDocument()
+
+    expect(screen.getByText('My Network Access')).toBeInTheDocument()
+    expect(screen.getByText('Zero-Trust Identity')).toBeInTheDocument()
+    expect(screen.getByText('Enrolled')).toBeInTheDocument()
+    expect(screen.getByText(/you have a trusted device/i)).toBeInTheDocument()
   })
 
   it('shows the four overview cards with their labels', async () => {

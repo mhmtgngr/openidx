@@ -95,6 +95,7 @@ import {
   NotificationCenter,
   NotificationPreferences,
   ReviewDetail,
+  UserAccess360,
   RotationPolicies,
   GuacamoleSessions,
   PAMDashboard,
@@ -314,6 +315,7 @@ function App() {
         {/* Additional Routes */}
         <Route path="notification-preferences" element={<NotificationPreferences />} />
         <Route path="reviews/:id" element={<ReviewDetail />} />
+        <Route path="users/:id/access-360" element={<AdminRoute><UserAccess360 /></AdminRoute>} />
 
         {/* Catch all - redirect to dashboard */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

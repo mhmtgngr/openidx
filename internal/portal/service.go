@@ -43,7 +43,9 @@ type GroupJoinRequest struct {
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-// AccessOverview represents a summary of a user's current access
+// AccessOverview represents a summary of a user's current access across all
+// three pillars: IAM (roles/groups/apps), PAM (privileged access), and the
+// Ziti zero-trust network — the user-side face of the unified store.
 type AccessOverview struct {
 	RolesCount      int                      `json:"roles_count"`
 	GroupsCount     int                      `json:"groups_count"`
@@ -51,6 +53,27 @@ type AccessOverview struct {
 	PendingRequests int                      `json:"pending_requests"`
 	Roles           []map[string]interface{} `json:"roles"`
 	Groups          []map[string]interface{} `json:"groups"`
+	Privileged      PrivilegedOverview       `json:"privileged"`
+	Network         NetworkOverview          `json:"network"`
+}
+
+// PrivilegedOverview is the PAM slice of the user's own access: what
+// privileged material they hold right now.
+type PrivilegedOverview struct {
+	VaultGrants       int `json:"vault_grants"`
+	ActiveCheckouts   int `json:"active_checkouts"`
+	ActiveJITGrants   int `json:"active_jit_grants"`
+	ActiveSessions    int `json:"active_sessions"`
+	PendingSessionReq int `json:"pending_session_requests"`
+}
+
+// NetworkOverview is the Ziti slice of the user's own access: their network
+// identity and enrolled devices.
+type NetworkOverview struct {
+	ZitiLinked    bool `json:"ziti_linked"`
+	ZitiEnrolled  bool `json:"ziti_enrolled"`
+	Devices       int  `json:"devices"`
+	TrustedDevice bool `json:"trusted_device"`
 }
 
 // Service provides portal business logic
@@ -347,6 +370,50 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 	}
 	if err := groupRows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating group rows: %w", err)
+	}
+
+	// PAM pillar: the user's own privileged surface. All tables live in the
+	// same Postgres, so cross-pillar is a set of scoped counts, not a call to
+	// another service. Vault grants count both direct user grants and grants
+	// on any of the user's roles.
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT
+		   (SELECT COUNT(DISTINCT vg.secret_id) FROM vault_access_grants vg
+		     WHERE vg.org_id = $2
+		       AND (vg.expires_at IS NULL OR vg.expires_at > NOW())
+		       AND ((vg.principal_type = 'user' AND vg.principal_id = $1)
+		         OR (vg.principal_type = 'role' AND vg.principal_id IN
+		              (SELECT role_id FROM user_roles WHERE user_id = $1 AND org_id = $2)))),
+		   (SELECT COUNT(*) FROM vault_checkouts
+		     WHERE principal_id = $1 AND org_id = $2 AND status = 'active'),
+		   (SELECT COUNT(*) FROM jit_grants
+		     WHERE user_id = $1 AND org_id = $2 AND status = 'active' AND expires_at > NOW()),
+		   (SELECT COUNT(*) FROM guacamole_sessions
+		     WHERE user_id = $1 AND org_id = $2 AND status = 'active'),
+		   (SELECT COUNT(*) FROM guacamole_session_requests
+		     WHERE requester_id = $1 AND org_id = $2 AND status = 'pending'
+		       AND (expires_at IS NULL OR expires_at > NOW()))`,
+		userID, org.ID,
+	).Scan(&overview.Privileged.VaultGrants, &overview.Privileged.ActiveCheckouts,
+		&overview.Privileged.ActiveJITGrants, &overview.Privileged.ActiveSessions,
+		&overview.Privileged.PendingSessionReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query privileged overview: %w", err)
+	}
+
+	// Ziti pillar: network identity + devices. enrolled_agents has no org_id;
+	// it is scoped through the org-verified user key.
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT
+		   EXISTS(SELECT 1 FROM ziti_identities WHERE user_id = $1 AND org_id = $2),
+		   COALESCE((SELECT enrolled FROM ziti_identities WHERE user_id = $1 AND org_id = $2 LIMIT 1), false),
+		   (SELECT COUNT(*) FROM enrolled_agents WHERE enrolled_by_user_id = $1),
+		   EXISTS(SELECT 1 FROM known_devices WHERE user_id = $1 AND org_id = $2 AND trusted = true)`,
+		userID, org.ID,
+	).Scan(&overview.Network.ZitiLinked, &overview.Network.ZitiEnrolled,
+		&overview.Network.Devices, &overview.Network.TrustedDevice)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query network overview: %w", err)
 	}
 
 	return overview, nil

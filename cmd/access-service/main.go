@@ -299,6 +299,11 @@ func main() {
 		accessService.StartContinuousVerification(bgCtx, cfg.ContinuousVerifyInterval)
 	}
 
+	// Cross-pillar lifecycle enforcement: revoke live PAM access (vault
+	// leases, JIT elevations, Guacamole sessions) of users disabled through
+	// any path — the PAM counterpart of the Ziti deprovision sweep.
+	accessService.StartLifecycleEnforcement(bgCtx, 30*time.Second)
+
 	// Resolve the OpenZiti connection: persisted admin-panel settings win, else
 	// env (cfg.Ziti*). Lets a box that booted disabled be connected later from
 	// the panel with no restart, and vice-versa.

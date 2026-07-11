@@ -125,3 +125,4 @@ export const NotificationPreferences = lazy(() => import('./notification-prefere
 
 // Other pages
 export const ReviewDetail = lazy(() => import('./review-detail').then((m) => ({ default: m.ReviewDetailPage })))
+export const UserAccess360 = lazy(() => import('./user-access-360').then((m) => ({ default: m.UserAccess360Page })))

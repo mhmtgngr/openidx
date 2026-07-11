@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Shield, Users, Key, Clock, CheckCircle, XCircle } from 'lucide-react'
+import { Shield, Users, Key, Clock, CheckCircle, XCircle, Lock, Network, Laptop, ArrowRight, Fingerprint } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -16,6 +17,19 @@ interface AccessOverview {
   pending_requests: number
   roles: { id: string; name: string }[]
   groups: { id: string; name: string }[]
+  privileged: {
+    vault_grants: number
+    active_checkouts: number
+    active_jit_grants: number
+    active_sessions: number
+    pending_session_requests: number
+  }
+  network: {
+    ziti_linked: boolean
+    ziti_enrolled: boolean
+    devices: number
+    trusted_device: boolean
+  }
 }
 
 interface AvailableGroup {
@@ -104,7 +118,7 @@ export function MyAccessPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">My Access</h1>
-        <p className="text-muted-foreground">View your access rights and request additional permissions</p>
+        <p className="text-muted-foreground">Everything you can reach — identity, privileged access, and zero-trust network — in one place</p>
       </div>
 
       {/* Overview Cards */}
@@ -185,6 +199,113 @@ export function MyAccessPage() {
                 ))}
               </div>
             ) : <p className="text-sm text-muted-foreground">No groups assigned</p>}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Cross-pillar: Privileged Access (PAM) + Zero-Trust Network (Ziti) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Lock className="h-5 w-5 text-amber-600" />My Privileged Access
+              </CardTitle>
+              <Link to="/my-privileged-access">
+                <Button variant="ghost" size="sm">Manage<ArrowRight className="ml-1 h-4 w-4" /></Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {overview?.privileged ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                  <Key className="h-5 w-5 text-amber-600" />
+                  <div>
+                    <p className="text-xl font-bold">{overview.privileged.vault_grants}</p>
+                    <p className="text-xs text-muted-foreground">Vault secrets</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                  <Clock className="h-5 w-5 text-blue-600" />
+                  <div>
+                    <p className="text-xl font-bold">{overview.privileged.active_checkouts}</p>
+                    <p className="text-xs text-muted-foreground">Active checkouts</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                  <Shield className="h-5 w-5 text-purple-600" />
+                  <div>
+                    <p className="text-xl font-bold">{overview.privileged.active_jit_grants}</p>
+                    <p className="text-xs text-muted-foreground">JIT elevations</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                  <Lock className="h-5 w-5 text-red-600" />
+                  <div>
+                    <p className="text-xl font-bold">{overview.privileged.active_sessions}</p>
+                    <p className="text-xs text-muted-foreground">Live sessions</p>
+                  </div>
+                </div>
+                {overview.privileged.pending_session_requests > 0 && (
+                  <div className="col-span-2">
+                    <Badge variant="secondary">
+                      <Clock className="mr-1 h-3 w-3" />
+                      {overview.privileged.pending_session_requests} session request(s) pending approval
+                    </Badge>
+                  </div>
+                )}
+              </div>
+            ) : <p className="text-sm text-muted-foreground">No privileged access</p>}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Network className="h-5 w-5 text-green-600" />My Network Access
+              </CardTitle>
+              <Link to="/my-devices">
+                <Button variant="ghost" size="sm">Devices<ArrowRight className="ml-1 h-4 w-4" /></Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {overview?.network ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <Network className="h-4 w-4 text-green-600" />Zero-Trust Identity
+                  </span>
+                  {overview.network.ziti_linked ? (
+                    <Badge variant="outline" className={overview.network.ziti_enrolled
+                      ? 'bg-green-50 text-green-700 border-green-200'
+                      : 'bg-yellow-50 text-yellow-700 border-yellow-200'}>
+                      {overview.network.ziti_enrolled ? 'Enrolled' : 'Awaiting enrollment'}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-muted-foreground">Not linked</Badge>
+                  )}
+                </div>
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <Laptop className="h-4 w-4 text-slate-600" />Enrolled Devices
+                  </span>
+                  <span className="text-xl font-bold">{overview.network.devices}</span>
+                </div>
+                {overview.network.trusted_device && (
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                    <Fingerprint className="mr-1 h-3 w-3" />You have a trusted device
+                  </Badge>
+                )}
+                {!overview.network.ziti_enrolled && overview.network.ziti_linked && (
+                  <p className="text-xs text-muted-foreground">
+                    Enroll a device to activate your zero-trust network access.
+                  </p>
+                )}
+              </div>
+            ) : <p className="text-sm text-muted-foreground">No network access</p>}
           </CardContent>
         </Card>
       </div>
