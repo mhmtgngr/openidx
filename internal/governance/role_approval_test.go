@@ -33,6 +33,7 @@ func TestCreateApprovalRows_RoleStep(t *testing.T) {
 			resource_type VARCHAR(50) NOT NULL,
 			resource_id UUID,
 			approval_steps JSONB NOT NULL,
+			auto_approve_conditions JSONB,
 			enabled BOOLEAN DEFAULT true,
 			org_id UUID NOT NULL);
 		CREATE TABLE user_roles (

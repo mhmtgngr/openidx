@@ -104,9 +104,11 @@ func TestAutoApproveConditions(t *testing.T) {
 	if ok := s.tryAutoApprove(ctxA, reqID, &AutoApproveConditions{AllowedRoles: []string{"employee"}}); !ok {
 		t.Fatal("tryAutoApprove should succeed for a passing condition set")
 	}
+	// fulfillRequest advances a successfully-granted request to 'fulfilled'
+	// (the same terminal state the manual decision path produces).
 	var status string
-	if err := db.Pool.QueryRow(ctx, `SELECT status FROM access_requests WHERE id = $1`, reqID).Scan(&status); err != nil || status != "approved" {
-		t.Fatalf("request status: want approved, got %q (err %v)", status, err)
+	if err := db.Pool.QueryRow(ctx, `SELECT status FROM access_requests WHERE id = $1`, reqID).Scan(&status); err != nil || status != "fulfilled" {
+		t.Fatalf("request status: want fulfilled, got %q (err %v)", status, err)
 	}
 	var memberships int
 	db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM group_memberships WHERE user_id = $1 AND group_id = $2 AND org_id = $3`,
