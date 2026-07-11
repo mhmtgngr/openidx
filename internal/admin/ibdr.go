@@ -529,7 +529,7 @@ func (s *ibdrService) executePartialQuarantine(ctx context.Context, incident *Br
 	for _, userID := range incident.AffectedUserIDs {
 		if orgErr != nil {
 			s.logger.Warn("partial quarantine: no org in context; enhanced-monitoring not recorded",
-				zap.String("user_id", userID), zap.Error(orgErr))
+				zap.String("user_id", sanitizeLogValue(userID)), zap.Error(orgErr))
 			continue
 		}
 		if _, err := s.db.Pool.Exec(ctx, `
@@ -537,7 +537,7 @@ func (s *ibdrService) executePartialQuarantine(ctx context.Context, incident *Br
 			VALUES (gen_random_uuid(), 'security', 'ibdr', 'user.enhanced_monitoring', 'success', $1, '0.0.0.0', $2, 'user', $3, NOW(), $4)
 		`, actorID, userID, fmt.Sprintf(`{"incident_id":%q,"level":"enhanced"}`, incident.ID), org.ID); err != nil {
 			s.logger.Error("partial quarantine: failed to record enhanced monitoring",
-				zap.String("user_id", userID), zap.Error(err))
+				zap.String("user_id", sanitizeLogValue(userID)), zap.Error(err))
 			continue
 		}
 		actions = append(actions, fmt.Sprintf("enhanced_monitoring_%s", userID))
@@ -567,7 +567,7 @@ func (s *ibdrService) blockIPAddress(ctx context.Context, ipAddress string) {
 		SET threat_type = 'breach_response', reason = EXCLUDED.reason, is_active = true
 	`, ipAddress); err != nil {
 		s.logger.Error("breach response: failed to block IP",
-			zap.String("ip_address", ipAddress), zap.Error(err))
+			zap.String("ip_address", sanitizeLogValue(ipAddress)), zap.Error(err))
 	}
 }
 

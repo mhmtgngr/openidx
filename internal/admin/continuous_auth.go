@@ -157,7 +157,7 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	`, sessionID, risk.OverallRisk, risk.RiskLevel, risk.ActionRequired,
 		[]byte("{}"), previousRisk, risk.RiskDelta, org.ID); err != nil {
 		s.logger.Warn("failed to store session risk history",
-			zap.String("session_id", sessionID), zap.Error(err))
+			zap.String("session_id", sanitizeLogValue(sessionID)), zap.Error(err))
 	}
 
 	return risk, nil
