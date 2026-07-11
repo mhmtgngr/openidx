@@ -4,7 +4,6 @@ package admin
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -490,57 +489,6 @@ func formatTimePtr(t *time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
-// --- Handlers ---
-
-// handleImportUsersCSV handles POST /api/v1/admin/users/import
-func (s *Service) handleImportUsersCSV(c *gin.Context) {
-	if !requireAdmin(c) {
-		return
-	}
-
-	// Get file from form
-	fileHeader, err := c.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
-		return
-	}
-
-	// Open file
-	file, err := fileHeader.Open()
-	if err != nil {
-		s.logger.Error("Failed to open uploaded file", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
-		return
-	}
-	defer file.Close()
-
-	// Import users
-	result, err := s.ImportUsersFromCSV(c.Request.Context(), file)
-	if err != nil {
-		s.logger.Error("Failed to import users from CSV", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Log import as audit event
-	auditJSON, _ := json.Marshal(map[string]interface{}{
-		"success_count": result.SuccessCount,
-		"error_count":   result.ErrorCount,
-		"total_rows":    result.TotalRows,
-	})
-	userID, _ := c.Get("user_id")
-	auditOrgID := "00000000-0000-0000-0000-000000000010"
-	if org, oerr := orgctx.From(c.Request.Context()); oerr == nil {
-		auditOrgID = org.ID
-	}
-	_, _ = s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO audit_events (id, timestamp, event_type, category, action, outcome, actor_id, details, org_id)
-		VALUES ($1, NOW(), 'admin', 'bulk_import', 'users_import', 'success', $2, $3, $4)
-	`, uuid.New().String(), nilIfEmpty(userID.(string)), auditJSON, auditOrgID)
-
-	c.JSON(http.StatusOK, result)
-}
-
 // handleExportUsersCSV handles GET /api/v1/admin/users/export
 func (s *Service) handleExportUsersCSV(c *gin.Context) {
 	if !requireAdmin(c) {
@@ -567,20 +515,4 @@ func (s *Service) handleExportUsersCSV(c *gin.Context) {
 			return
 		}
 	}
-}
-
-// handleGetImportTemplate handles GET /api/v1/admin/users/import/template
-func (s *Service) handleGetImportTemplate(c *gin.Context) {
-	c.Header("Content-Type", "text/csv")
-	c.Header("Content-Disposition", "attachment; filename=user_import_template.csv")
-
-	csvWriter := csv.NewWriter(c.Writer)
-	defer csvWriter.Flush()
-
-	// Write header with example data
-	header := []string{"username", "email", "first_name", "last_name", "enabled", "roles", "groups"}
-	example := []string{"john.doe", "john.doe@example.com", "John", "Doe", "true", "user", "developers"}
-
-	csvWriter.Write(header)
-	csvWriter.Write(example)
 }
