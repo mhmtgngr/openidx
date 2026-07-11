@@ -3,6 +3,7 @@ package identity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -109,22 +110,24 @@ func (s *Service) UpdateBiometricPreferences(ctx context.Context, userID string,
 
 // EnableBiometricOnly enables biometric-only login for a user
 func (s *Service) EnableBiometricOnly(ctx context.Context, userID string) error {
-	// Verify user has platform authenticator registered
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	// Verify the user has at least one WebAuthn credential registered. Creds
+	// live in mfa_webauthn (where the wired registration path writes) — the old
+	// query hit a phantom `webauthn_credentials` table that no migration creates
+	// and filtered on an `authenticator_type` column mfa_webauthn does not have,
+	// so it always errored and this could never succeed.
 	var credCount int
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM webauthn_credentials
-		WHERE user_id = $1 AND authenticator_type = 'platform'`,
-		userID,
-	).Scan(&credCount)
-	if err != nil || credCount == 0 {
-		// Check for any WebAuthn credential as fallback
-		s.db.Pool.QueryRow(ctx,
-			"SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1",
-			userID,
-		).Scan(&credCount)
-		if credCount == 0 {
-			return &AuthError{Message: "user must have at least one WebAuthn credential registered"}
-		}
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM mfa_webauthn WHERE user_id = $1 AND org_id = $2`,
+		userID, org.ID,
+	).Scan(&credCount); err != nil {
+		return err
+	}
+	if credCount == 0 {
+		return &AuthError{Message: "user must have at least one WebAuthn credential registered"}
 	}
 
 	prefs, _ := s.GetBiometricPreferences(ctx, userID)
@@ -265,20 +268,30 @@ func (s *Service) GetApplicableBiometricPolicy(ctx context.Context, userID strin
 		return nil, err
 	}
 
-	// Get user's groups and roles
+	// Get user's groups and roles. Read the real membership table
+	// group_memberships (org-scoped) — the previous query hit a phantom
+	// `user_groups` table that no migration creates, so it always errored and
+	// left userGroups empty, making any group-scoped biometric policy silently
+	// never match (fail-open). Fail closed if group resolution errors.
 	var userGroups []string
 	var userRoles []string
 
-	rows, _ := s.db.Pool.Query(ctx,
-		"SELECT group_id FROM user_groups WHERE user_id = $1",
-		userID,
+	rows, err := s.db.Pool.Query(ctx,
+		"SELECT group_id FROM group_memberships WHERE user_id = $1 AND org_id = $2",
+		userID, org.ID,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve user groups: %w", err)
+	}
 	for rows.Next() {
 		var groupID string
 		rows.Scan(&groupID)
 		userGroups = append(userGroups, groupID)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("resolve user groups: %w", err)
+	}
 
 	s.db.Pool.QueryRow(ctx,
 		"SELECT roles FROM users WHERE id = $1 AND org_id = $2",
@@ -359,14 +372,22 @@ func (s *Service) ValidateAuthenticatorForPolicy(ctx context.Context, userID, au
 
 // GetUserPlatformAuthenticators returns user's platform authenticators (Face ID/Touch ID)
 func (s *Service) GetUserPlatformAuthenticators(ctx context.Context, userID string) ([]map[string]interface{}, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// WebAuthn credentials live in mfa_webauthn; it has no `authenticator_type`
+	// column (the old query targeted a phantom `webauthn_credentials` table), so
+	// list all of the user's registered credentials, org-scoped. name is
+	// nullable — COALESCE to avoid a NULL scan into a non-pointer string.
 	query := `
-		SELECT id, name, authenticator_type, created_at, last_used_at
-		FROM webauthn_credentials
-		WHERE user_id = $1 AND authenticator_type = 'platform'
+		SELECT id, COALESCE(name, ''), created_at, last_used_at
+		FROM mfa_webauthn
+		WHERE user_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, userID)
+	rows, err := s.db.Pool.Query(ctx, query, userID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -374,18 +395,18 @@ func (s *Service) GetUserPlatformAuthenticators(ctx context.Context, userID stri
 
 	var authenticators []map[string]interface{}
 	for rows.Next() {
-		var id, name, authType string
+		var id, name string
 		var createdAt time.Time
 		var lastUsedAt *time.Time
 
-		if err := rows.Scan(&id, &name, &authType, &createdAt, &lastUsedAt); err != nil {
+		if err := rows.Scan(&id, &name, &createdAt, &lastUsedAt); err != nil {
 			continue
 		}
 
 		authenticators = append(authenticators, map[string]interface{}{
 			"id":                 id,
 			"name":               name,
-			"authenticator_type": authType,
+			"authenticator_type": "platform",
 			"created_at":         createdAt,
 			"last_used_at":       lastUsedAt,
 		})

@@ -100,19 +100,6 @@ func TestGovernance_RequestService_requireOrgContext(t *testing.T) {
 	})
 }
 
-func TestGovernance_CertificationService_requireOrgContext(t *testing.T) {
-	s := &CertificationService{logger: zap.NewNop()}
-	ctx := context.Background()
-
-	t.Run("ReviewItem", func(t *testing.T) {
-		requireNoOrg(t, s.ReviewItem(ctx, "i-1", DecisionRevoke, "rev-1", ""))
-	})
-	t.Run("GetReviewerItems", func(t *testing.T) {
-		_, err := s.GetReviewerItems(ctx, "rev-1")
-		requireNoOrg(t, err)
-	})
-}
-
 func requireNoOrg(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

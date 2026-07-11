@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -142,25 +143,12 @@ func (s *Service) handleEvaluateRisk(c *gin.Context) {
 	failedAttempts := s.risk.GetRecentFailedAttempts(c.Request.Context(), req.UserID)
 
 	// Get user groups (within the caller's org)
-	var groups []string
 	org, oerr := orgctx.From(c.Request.Context())
 	if oerr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return
 	}
-	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT g.name FROM groups g
-		 JOIN user_groups ug ON g.id = ug.group_id
-		 WHERE ug.user_id = $1 AND g.org_id = $2`, req.UserID, org.ID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var name string
-			if rows.Scan(&name) == nil {
-				groups = append(groups, name)
-			}
-		}
-	}
+	groups := s.userGroupNames(c.Request.Context(), req.UserID, org.ID)
 
 	// Evaluate policies
 	loginCtx := risk.EvaluateLoginContext{
@@ -195,6 +183,32 @@ func (s *Service) handleEvaluateRisk(c *gin.Context) {
 			"user_groups":     groups,
 		},
 	})
+}
+
+// userGroupNames returns the names of the groups the user belongs to, scoped to
+// the given org. It reads the real membership table group_memberships — the
+// previous query joined a phantom `user_groups` table that no migration ever
+// creates, so it always errored and left the risk evaluation's group context
+// empty (group-scoped risk policies silently never matched — fail-open). A
+// query error degrades to an empty slice, matching the prior best-effort
+// behaviour for this advisory signal.
+func (s *Service) userGroupNames(ctx context.Context, userID, orgID string) []string {
+	var groups []string
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT g.name FROM groups g
+		 JOIN group_memberships ug ON g.id = ug.group_id
+		 WHERE ug.user_id = $1 AND g.org_id = $2`, userID, orgID)
+	if err != nil {
+		return groups
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			groups = append(groups, name)
+		}
+	}
+	return groups
 }
 
 // handleGetRiskStats returns risk statistics for the dashboard
