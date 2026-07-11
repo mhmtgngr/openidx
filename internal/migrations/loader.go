@@ -523,5 +523,12 @@ func allMigrations() []*Migration {
 			UpSQL:       publishedAppsOrgIsolationUp,
 			DownSQL:     publishedAppsOrgIsolationDown,
 		},
+		{
+			Version:     74,
+			Name:        "detailed_compliance_reports",
+			Description: "Create the detailed_compliance_reports table (org-scoped: org_id NOT NULL, FK ON DELETE CASCADE, indexes). internal/audit's storeDetailedReport persisted every generated SOC 2 / ISO 27001 detailed report into this table, but no migration created it — every INSERT silently failed and GET /reports/:id/evidence always degraded to the basic compliance_reports fallback, so control-level evidence was never downloadable. The audit queries now carry an explicit org predicate (read is scoped by id AND org_id, closing the would-be cross-tenant evidence fetch). Not RLS-belted, matching v72/v73 precedent. Idempotent.",
+			UpSQL:       detailedComplianceReportsUp,
+			DownSQL:     detailedComplianceReportsDown,
+		},
 	}
 }

@@ -98,8 +98,13 @@ func (s *Service) GenerateSOC2DetailedReport(ctx context.Context, startDate, end
 	report.Summary = fmt.Sprintf("SOC 2 Assessment: %d/%d controls compliant, %d partial, %d non-compliant. Overall score: %.1f%%",
 		compliant, len(controls), partial, nonCompliant, report.OverallScore)
 
-	// Store the detailed report
-	s.storeDetailedReport(ctx, report)
+	// Store the detailed report. Generation already succeeded, so a
+	// persistence failure only degrades later evidence download — log it
+	// loudly but still return the report.
+	if storeErr := s.storeDetailedReport(ctx, report); storeErr != nil {
+		s.logger.Error("Failed to store detailed compliance report",
+			zap.Error(storeErr), zap.String("report_id", report.ID))
+	}
 
 	return report, nil
 }
@@ -640,8 +645,13 @@ func (s *Service) GenerateISO27001DetailedReport(ctx context.Context, startDate,
 	report.Summary = fmt.Sprintf("ISO 27001 Assessment: %d/%d controls compliant, %d partial, %d non-compliant. Overall score: %.1f%%",
 		compliant, len(controls), partial, nonCompliant, report.OverallScore)
 
-	// Store the detailed report
-	s.storeDetailedReport(ctx, report)
+	// Store the detailed report. Generation already succeeded, so a
+	// persistence failure only degrades later evidence download — log it
+	// loudly but still return the report.
+	if storeErr := s.storeDetailedReport(ctx, report); storeErr != nil {
+		s.logger.Error("Failed to store detailed compliance report",
+			zap.Error(storeErr), zap.String("report_id", report.ID))
+	}
 
 	return report, nil
 }
@@ -1134,13 +1144,20 @@ func (s *Service) handleDownloadEvidence(c *gin.Context) {
 	reportID := c.Param("id")
 	ctx := c.Request.Context()
 
-	// Load the stored detailed report
+	// Load the stored detailed report, org-scoped: a report id from another
+	// tenant must behave exactly like a missing report (the fallback below is
+	// org-scoped too via GetComplianceReport).
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "report not found"})
+		return
+	}
 	var reportJSON []byte
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT report_data
 		FROM detailed_compliance_reports
-		WHERE id = $1
-	`, reportID).Scan(&reportJSON)
+		WHERE id = $1 AND org_id = $2
+	`, reportID, org.ID).Scan(&reportJSON)
 	if err != nil {
 		// Fallback: try loading from compliance_reports and reconstruct
 		report, fallbackErr := s.GetComplianceReport(ctx, reportID)
@@ -1190,23 +1207,30 @@ func (s *Service) handleDownloadEvidence(c *gin.Context) {
 	c.JSON(http.StatusOK, evidencePackage)
 }
 
-// storeDetailedReport persists a DetailedComplianceReport to the database.
-func (s *Service) storeDetailedReport(ctx context.Context, report *DetailedComplianceReport) {
-	reportJSON, err := json.Marshal(report)
+// storeDetailedReport persists a DetailedComplianceReport to the database,
+// scoped to the caller's org (detailed_compliance_reports is created by
+// migration v74 — it was previously a phantom table and every store silently
+// failed). Returns the error so callers surface persistence failures loudly
+// instead of swallowing them at Warn.
+func (s *Service) storeDetailedReport(ctx context.Context, report *DetailedComplianceReport) error {
+	org, err := orgctx.From(ctx)
 	if err != nil {
-		s.logger.Error("Failed to marshal detailed report", zap.Error(err))
-		return
+		return err
 	}
 
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO detailed_compliance_reports (id, framework, period, generated_at, overall_score, summary, report_data)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (id) DO NOTHING
-	`, report.ID, report.Framework, report.Period, report.GeneratedAt, report.OverallScore, report.Summary, reportJSON)
+	reportJSON, err := json.Marshal(report)
 	if err != nil {
-		s.logger.Warn("Failed to store detailed compliance report", zap.Error(err),
-			zap.String("report_id", report.ID))
+		return fmt.Errorf("marshal detailed report: %w", err)
 	}
+
+	if _, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO detailed_compliance_reports (id, org_id, framework, period, generated_at, overall_score, summary, report_data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (id) DO NOTHING
+	`, report.ID, org.ID, report.Framework, report.Period, report.GeneratedAt, report.OverallScore, report.Summary, reportJSON); err != nil {
+		return fmt.Errorf("insert detailed report: %w", err)
+	}
+	return nil
 }
 
 // scoreToStatus converts a numeric score (0-100) to a compliance status string.
