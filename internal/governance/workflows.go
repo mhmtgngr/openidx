@@ -205,13 +205,13 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 	}
 
 	// Try to find a matching policy (specific resource first, then generic)
-	var stepsJSON []byte
+	var stepsJSON, condJSON []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT approval_steps FROM approval_policies
+		`SELECT approval_steps, auto_approve_conditions FROM approval_policies
 		 WHERE resource_type = $1 AND (resource_id = $2 OR resource_id IS NULL) AND enabled = true AND org_id = $3
 		 ORDER BY resource_id NULLS LAST LIMIT 1`,
 		resourceType, resourceID, org.ID,
-	).Scan(&stepsJSON)
+	).Scan(&stepsJSON, &condJSON)
 	if err != nil {
 		// No matching policy — create a default admin approval
 		adminID := "00000000-0000-0000-0000-000000000001"
@@ -221,6 +221,19 @@ func (s *Service) createApprovalRows(ctx context.Context, requestID, resourceTyp
 			uuid.New().String(), requestID, adminID, 1, "pending", time.Now(), org.ID,
 		)
 		return
+	}
+
+	// V-007: evaluate the policy's typed auto_approve_conditions before
+	// creating approval rows. Fail-closed — only a fully-supported,
+	// fully-held condition set short-circuits the manual approval chain.
+	if len(condJSON) > 0 && string(condJSON) != "null" {
+		var cond AutoApproveConditions
+		if uerr := json.Unmarshal(condJSON, &cond); uerr != nil {
+			s.logger.Warn("createApprovalRows: malformed auto_approve_conditions; ignoring",
+				zap.String("request_id", requestID), zap.Error(uerr))
+		} else if s.tryAutoApprove(ctx, requestID, &cond) {
+			return
+		}
 	}
 
 	var steps []ApprovalStep
