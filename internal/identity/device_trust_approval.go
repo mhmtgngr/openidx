@@ -50,12 +50,17 @@ type DeviceTrustSettings struct {
 
 // CreateDeviceTrustRequest creates a new trust request
 func (s *Service) CreateDeviceTrustRequest(ctx context.Context, userID, deviceID, deviceFingerprint, deviceName, deviceType, ipAddress, userAgent, justification string) (*DeviceTrustRequest, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check if there's already a pending request for this device
 	var existing string
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT id FROM device_trust_requests
-		WHERE user_id = $1 AND device_fingerprint = $2 AND status = 'pending'`,
-		userID, deviceFingerprint,
+		WHERE user_id = $1 AND device_fingerprint = $2 AND status = 'pending' AND org_id = $3`,
+		userID, deviceFingerprint, org.ID,
 	).Scan(&existing)
 	if err == nil {
 		return nil, errors.New("a trust request for this device is already pending")
@@ -95,8 +100,8 @@ func (s *Service) CreateDeviceTrustRequest(ctx context.Context, userID, deviceID
 		INSERT INTO device_trust_requests (
 			id, user_id, device_id, device_fingerprint, device_name, device_type,
 			ip_address, user_agent, justification, status, reviewed_at, review_notes,
-			auto_expire_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+			auto_expire_at, org_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
 		RETURNING created_at
 	`
 
@@ -104,7 +109,7 @@ func (s *Service) CreateDeviceTrustRequest(ctx context.Context, userID, deviceID
 	err = s.db.Pool.QueryRow(ctx, query,
 		requestID, userID, deviceID, deviceFingerprint, deviceName, deviceType,
 		ipAddress, userAgent, justification, status, reviewedAt, reviewNotes,
-		autoExpireAt,
+		autoExpireAt, org.ID,
 	).Scan(&createdAt)
 	if err != nil {
 		return nil, err
@@ -140,6 +145,10 @@ func (s *Service) CreateDeviceTrustRequest(ctx context.Context, userID, deviceID
 
 // ListDeviceTrustRequests returns trust requests with optional filtering
 func (s *Service) ListDeviceTrustRequests(ctx context.Context, status string, userID string, limit, offset int) ([]DeviceTrustRequest, int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -147,11 +156,11 @@ func (s *Service) ListDeviceTrustRequests(ctx context.Context, status string, us
 	// Count total
 	countQuery := `
 		SELECT COUNT(*) FROM device_trust_requests
-		WHERE ($1 = '' OR status = $1)
+		WHERE org_id = $3 AND ($1 = '' OR status = $1)
 		  AND ($2 = '' OR user_id::text = $2)
 	`
 	var total int
-	s.db.Pool.QueryRow(ctx, countQuery, status, userID).Scan(&total)
+	s.db.Pool.QueryRow(ctx, countQuery, status, userID, org.ID).Scan(&total)
 
 	// Get requests with user info
 	query := `
@@ -162,13 +171,13 @@ func (s *Service) ListDeviceTrustRequests(ctx context.Context, status string, us
 			dtr.reviewed_by, dtr.reviewed_at, dtr.review_notes, dtr.auto_expire_at, dtr.created_at
 		FROM device_trust_requests dtr
 		JOIN users u ON dtr.user_id = u.id
-		WHERE ($1 = '' OR dtr.status = $1)
+		WHERE dtr.org_id = $5 AND ($1 = '' OR dtr.status = $1)
 		  AND ($2 = '' OR dtr.user_id::text = $2)
 		ORDER BY dtr.created_at DESC
 		LIMIT $3 OFFSET $4
 	`
 
-	rows, err := s.db.Pool.Query(ctx, query, status, userID, limit, offset)
+	rows, err := s.db.Pool.Query(ctx, query, status, userID, limit, offset, org.ID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -194,11 +203,17 @@ func (s *Service) ListDeviceTrustRequests(ctx context.Context, status string, us
 
 // ApproveDeviceTrustRequest approves a trust request
 func (s *Service) ApproveDeviceTrustRequest(ctx context.Context, requestID, adminID, notes string) error {
-	// Get request details
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Get request details (scoped to the caller's org so an admin can't act on
+	// another tenant's request by id).
 	var userID, fingerprint, status string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT user_id, device_fingerprint, status FROM device_trust_requests WHERE id = $1",
-		requestID,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id, device_fingerprint, status FROM device_trust_requests WHERE id = $1 AND org_id = $2",
+		requestID, org.ID,
 	).Scan(&userID, &fingerprint, &status)
 	if err != nil {
 		return errors.New("request not found")
@@ -212,8 +227,8 @@ func (s *Service) ApproveDeviceTrustRequest(ctx context.Context, requestID, admi
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE device_trust_requests
 		SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2
-		WHERE id = $3`,
-		adminID, notes, requestID,
+		WHERE id = $3 AND org_id = $4`,
+		adminID, notes, requestID, org.ID,
 	)
 	if err != nil {
 		return err
@@ -233,10 +248,15 @@ func (s *Service) ApproveDeviceTrustRequest(ctx context.Context, requestID, admi
 
 // RejectDeviceTrustRequest rejects a trust request
 func (s *Service) RejectDeviceTrustRequest(ctx context.Context, requestID, adminID, notes string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+
 	var userID, status string
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT user_id, status FROM device_trust_requests WHERE id = $1",
-		requestID,
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT user_id, status FROM device_trust_requests WHERE id = $1 AND org_id = $2",
+		requestID, org.ID,
 	).Scan(&userID, &status)
 	if err != nil {
 		return errors.New("request not found")
@@ -249,8 +269,8 @@ func (s *Service) RejectDeviceTrustRequest(ctx context.Context, requestID, admin
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE device_trust_requests
 		SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), review_notes = $2
-		WHERE id = $3`,
-		adminID, notes, requestID,
+		WHERE id = $3 AND org_id = $4`,
+		adminID, notes, requestID, org.ID,
 	)
 	if err != nil {
 		return err
@@ -352,9 +372,13 @@ func (s *Service) UpdateDeviceTrustSettings(ctx context.Context, settings *Devic
 
 // GetPendingRequestCount returns count of pending requests
 func (s *Service) GetPendingRequestCount(ctx context.Context) (int, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	err := s.db.Pool.QueryRow(ctx,
-		"SELECT COUNT(*) FROM device_trust_requests WHERE status = 'pending'",
+	err = s.db.Pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM device_trust_requests WHERE status = 'pending' AND org_id = $1", org.ID,
 	).Scan(&count)
 	return count, err
 }
@@ -362,6 +386,7 @@ func (s *Service) GetPendingRequestCount(ctx context.Context) (int, error) {
 // ExpireOldRequests expires requests past their auto_expire_at
 func (s *Service) ExpireOldRequests(ctx context.Context) (int, error) {
 	result, err := s.db.Pool.Exec(ctx,
+		//orgscope:ignore background maintenance sweep across orgs; bounded by auto_expire_at, not tenant-scoped
 		`UPDATE device_trust_requests
 		SET status = 'expired'
 		WHERE status = 'pending' AND auto_expire_at IS NOT NULL AND auto_expire_at < NOW()`,
