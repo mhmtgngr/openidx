@@ -367,7 +367,7 @@ func (s *Service) handleFeatureAdoption(c *gin.Context) {
 			Args  []interface{}
 		}{
 			{"mfa_totp", "SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1", []interface{}{org.ID}},
-			{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM webauthn_credentials", nil},
+			{"mfa_webauthn", "SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1", []interface{}{org.ID}},
 			{"passkey_login", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'passkey_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
 			{"magic_link", "SELECT COUNT(DISTINCT actor_id) FROM audit_events WHERE action = 'magic_link_login' AND timestamp > NOW() - INTERVAL '30 days' AND org_id = $1", []interface{}{org.ID}},
 			{"api_keys", "SELECT COUNT(DISTINCT COALESCE(user_id, service_account_id)) FROM api_keys WHERE revoked_at IS NULL AND org_id = $1", []interface{}{org.ID}},
