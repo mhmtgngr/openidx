@@ -347,11 +347,11 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 			for rows.Next() {
 				var userID, username, roleID, roleName string
 				if err := rows.Scan(&userID, &username, &roleID, &roleName); err == nil {
-					// Use admin as default reviewer
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'role', $3, $4)`,
-						ac.ID, userID, roleID, roleName, org.ID)
+						 VALUES ($1, $5, $6, $2, 'role', $3, $4)`,
+						ac.ID, userID, roleID, roleName, org.ID,
+						s.resolveItemReviewer(ctx, org.ID, ac.ReviewerStrategy, userID))
 					if err == nil {
 						count++
 					}
@@ -374,8 +374,9 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &appID, &appName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'application', $3, $4)`,
-						ac.ID, userID, appID, appName, org.ID)
+						 VALUES ($1, $5, $6, $2, 'application', $3, $4)`,
+						ac.ID, userID, appID, appName, org.ID,
+						s.resolveItemReviewer(ctx, org.ID, ac.ReviewerStrategy, userID))
 					if err == nil {
 						count++
 					}
@@ -398,8 +399,9 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &groupID, &groupName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'group', $3, $4)`,
-						ac.ID, userID, groupID, groupName, org.ID)
+						 VALUES ($1, $5, $6, $2, 'group', $3, $4)`,
+						ac.ID, userID, groupID, groupName, org.ID,
+						s.resolveItemReviewer(ctx, org.ID, ac.ReviewerStrategy, userID))
 					if err == nil {
 						count++
 					}
@@ -422,8 +424,9 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 				if err := rows.Scan(&userID, &username, &roleID, &roleName); err == nil {
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1), $2, 'entitlement', $3, $4)`,
-						ac.ID, userID, roleID, pf("Role: %s", roleName), org.ID)
+						 VALUES ($1, $5, $6, $2, 'entitlement', $3, $4)`,
+						ac.ID, userID, roleID, pf("Role: %s", roleName), org.ID,
+						s.resolveItemReviewer(ctx, org.ID, ac.ReviewerStrategy, userID))
 					if err == nil {
 						count++
 					}
@@ -443,11 +446,14 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 			for rows.Next() {
 				var grantID, secretName, principalID, actions string
 				if err := rows.Scan(&grantID, &secretName, &principalID, &actions); err == nil {
+					// The principal may be a user; if so and the strategy is
+					// manager, its manager reviews the grant.
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, $5, (SELECT id FROM users WHERE username = 'admin' AND org_id = $5 LIMIT 1),
+						 VALUES ($1, $5, $6,
 						         NULLIF($2, '')::uuid, 'vault_access', $3::uuid, $4)`,
-						ac.ID, principalID, grantID, pf("%s:%s", secretName, actions), org.ID)
+						ac.ID, principalID, grantID, pf("%s:%s", secretName, actions), org.ID,
+						s.resolveItemReviewer(ctx, org.ID, ac.ReviewerStrategy, principalID))
 					if err == nil {
 						count++
 					}
@@ -467,11 +473,13 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 			for rows.Next() {
 				var policyID, secretName, connectorType string
 				if err := rows.Scan(&policyID, &secretName, &connectorType); err == nil {
+					// No subject user: always falls back to the org admin.
 					_, err := s.db.Pool.Exec(ctx,
 						`INSERT INTO attestation_items (campaign_id, org_id, reviewer_id, user_id, resource_type, resource_id, resource_name)
-						 VALUES ($1, $4, (SELECT id FROM users WHERE username = 'admin' AND org_id = $4 LIMIT 1),
+						 VALUES ($1, $4, $5,
 						         NULL, 'rotation_policy', $2::uuid, $3)`,
-						ac.ID, policyID, pf("%s:%s", secretName, connectorType), org.ID)
+						ac.ID, policyID, pf("%s:%s", secretName, connectorType), org.ID,
+						s.resolveItemReviewer(ctx, org.ID, ac.ReviewerStrategy, ""))
 					if err == nil {
 						count++
 					}
@@ -481,6 +489,34 @@ func (s *Service) generateAttestationItems(ctx context.Context, ac AttestationCa
 	}
 
 	return count
+}
+
+// resolveItemReviewer picks the reviewer for an attestation item according to
+// the campaign's reviewer_strategy. "manager" resolves the subject user's
+// manager (users.manager_id, populated by the SCIM enterprise extension since
+// v70) and falls back to the org admin when the user has none; every other
+// strategy — and items without a subject user — get the org-admin default.
+// Before this the strategy was stored and echoed by the API but ignored:
+// every generated item was assigned to the org admin.
+func (s *Service) resolveItemReviewer(ctx context.Context, orgID, strategy, subjectUserID string) *string {
+	if strategy == "manager" && subjectUserID != "" {
+		var mgr string
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT manager_id::text FROM users WHERE id = $1 AND org_id = $2 AND manager_id IS NOT NULL`,
+			subjectUserID, orgID,
+		).Scan(&mgr); err == nil {
+			return &mgr
+		}
+	}
+	var admin string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT id::text FROM users WHERE username = 'admin' AND org_id = $1 LIMIT 1`,
+		orgID,
+	).Scan(&admin); err == nil {
+		return &admin
+	}
+	// No admin user either — insert a NULL reviewer rather than dropping the item.
+	return nil
 }
 
 func (s *Service) handleListAttestationItems(c *gin.Context) {
