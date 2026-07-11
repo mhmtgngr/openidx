@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // AuthContext represents the current authentication context of a session
@@ -89,11 +90,16 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 		return nil, fmt.Errorf("failed to get auth context: %w", err)
 	}
 
+	org, orgErr := orgctx.From(ctx)
+	if orgErr != nil {
+		return nil, fmt.Errorf("organization context required: %w", orgErr)
+	}
+
 	// Get previous risk score for delta calculation
 	var previousRisk float64
 	s.db.Pool.QueryRow(ctx, `
-		SELECT overall_risk FROM session_risks WHERE session_id = $1 ORDER BY calculated_at DESC LIMIT 1
-	`, sessionID).Scan(&previousRisk)
+		SELECT overall_risk FROM session_risks WHERE session_id = $1 AND org_id = $2 ORDER BY calculated_at DESC LIMIT 1
+	`, sessionID, org.ID).Scan(&previousRisk)
 
 	risk := &SessionRisk{
 		SessionID:    sessionID,
@@ -143,12 +149,16 @@ func (s *continuousAuthService) CalculateSessionRisk(ctx context.Context, sessio
 	// Also clamp overall risk to 0-100 range
 	risk.OverallRisk = math.Max(0, math.Min(100, risk.OverallRisk))
 
-	// Store risk calculation
-	_, _ = s.db.Pool.Exec(ctx, `
-		INSERT INTO session_risks (session_id, overall_risk, risk_level, action_required, risk_factors, calculated_at, previous_risk, risk_delta)
-		VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
+	// Store risk calculation (v77 created session_risks; failures are logged,
+	// not swallowed — the risk score is still returned either way)
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO session_risks (session_id, overall_risk, risk_level, action_required, risk_factors, calculated_at, previous_risk, risk_delta, org_id)
+		VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)
 	`, sessionID, risk.OverallRisk, risk.RiskLevel, risk.ActionRequired,
-		[]byte("{}"), previousRisk, risk.RiskDelta)
+		[]byte("{}"), previousRisk, risk.RiskDelta, org.ID); err != nil {
+		s.logger.Warn("failed to store session risk history",
+			zap.String("session_id", sessionID), zap.Error(err))
+	}
 
 	return risk, nil
 }
@@ -242,12 +252,17 @@ func (s *continuousAuthService) RequireReauthentication(ctx context.Context, ses
 
 // GetRiskFactors returns detailed risk factors for a session
 func (s *continuousAuthService) GetRiskFactors(ctx context.Context, sessionID string) ([]RiskFactor, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("organization context required: %w", err)
+	}
+
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, type, severity, description, detected_at, resolved, resolved_at
+		SELECT id, type, severity, COALESCE(description, ''), detected_at, resolved, resolved_at
 		FROM risk_factors
-		WHERE session_id = $1 AND resolved = false
+		WHERE session_id = $1 AND org_id = $2 AND resolved = false
 		ORDER BY severity DESC, detected_at DESC
-	`, sessionID)
+	`, sessionID, org.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -303,12 +318,19 @@ func (s *continuousAuthService) calculateGeoRisk(ctx context.Context, authCtx *A
 }
 
 func (s *continuousAuthService) calculateDeviceRisk(ctx context.Context, authCtx *AuthContext) float64 {
-	// Check if this is a known device
+	// Check against known_devices — the table device trust actually lives in.
+	// The old EXISTS read a nonexistent user_devices table and swallowed the
+	// error, so this factor always contributed 0 and continuous auth
+	// under-scored every session on an unrecognized device.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 25 // no org context → treat as unknown device (conservative)
+	}
 	var isKnown bool
 	s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM user_devices
-			WHERE user_id = $1 AND device_fingerprint = $2 AND trusted = true)
-	`, authCtx.UserID, authCtx.DeviceFingerprint).Scan(&isKnown)
+		SELECT EXISTS(SELECT 1 FROM known_devices
+			WHERE user_id = $1 AND fingerprint = $2 AND trusted = true AND org_id = $3)
+	`, authCtx.UserID, authCtx.DeviceFingerprint, org.ID).Scan(&isKnown)
 
 	if !isKnown {
 		return 25
@@ -332,12 +354,17 @@ func (s *continuousAuthService) calculateBehaviorRisk(ctx context.Context, authC
 }
 
 func (s *continuousAuthService) calculateVelocityRisk(ctx context.Context, authCtx *AuthContext) float64 {
-	// Check for rapid successive actions
+	// Check for rapid successive actions in audit_events (the old query read a
+	// nonexistent audit_logs table, so velocity risk was always 0)
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return 0
+	}
 	var actionCount int
 	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM audit_logs
-		WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 minute'
-	`, authCtx.UserID).Scan(&actionCount)
+		SELECT COUNT(*) FROM audit_events
+		WHERE actor_id = $1 AND org_id = $2 AND created_at > NOW() - INTERVAL '1 minute'
+	`, authCtx.UserID, org.ID).Scan(&actionCount)
 
 	if actionCount > 100 {
 		return 40 // Very high velocity

@@ -335,12 +335,25 @@ func (s *ibdrService) AnalyzeBreachPatterns(ctx context.Context, timeWindow time
 func (s *ibdrService) collectIndicators(ctx context.Context, userID, ipAddress, userAgent string) []BreachIndicator {
 	indicators := []BreachIndicator{}
 
+	// Indicators come from audit_events — the table the auth flow actually
+	// writes (action='login_failed'/'login' with actor_ip/actor_id). The old
+	// queries read a nonexistent audit_logs table and swallowed the error, so
+	// brute-force and login-diversity breaches were never detected.
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		s.logger.Warn("collectIndicators: no org in context; skipping indicators", zap.Error(err))
+		return indicators
+	}
+
 	// Check for multiple failed logins from this IP
 	var failCount int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM audit_logs
-		WHERE event_type = 'failed_login' AND ip_address = $1 AND created_at > NOW() - INTERVAL '1 hour'
-	`, ipAddress).Scan(&failCount)
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM audit_events
+		WHERE action = 'login_failed' AND actor_ip = $1 AND org_id = $2
+		  AND created_at > NOW() - INTERVAL '1 hour'
+	`, ipAddress, org.ID).Scan(&failCount); err != nil {
+		s.logger.Warn("collectIndicators: failed-login lookup failed", zap.Error(err))
+	}
 	if failCount > 10 {
 		indicators = append(indicators, BreachIndicator{
 			ID:          uuid.New().String(),
@@ -353,13 +366,18 @@ func (s *ibdrService) collectIndicators(ctx context.Context, userID, ipAddress, 
 		})
 	}
 
-	// Check for successful logins from different locations
-	var locationCount int
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT country_code) FROM audit_logs
-		WHERE user_id = $1 AND event_type = 'login' AND created_at > NOW() - INTERVAL '24 hours'
-	`, userID).Scan(&locationCount)
-	if locationCount > 3 {
+	// Check for successful logins from many distinct source IPs. audit_events
+	// carries no geo data, so IP diversity is the honest proxy for the old
+	// (never-functional) country_code check.
+	var sourceIPCount int
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT actor_ip) FROM audit_events
+		WHERE actor_id = $1 AND action = 'login' AND outcome = 'success' AND org_id = $2
+		  AND created_at > NOW() - INTERVAL '24 hours'
+	`, userID, org.ID).Scan(&sourceIPCount); err != nil {
+		s.logger.Warn("collectIndicators: login-diversity lookup failed", zap.Error(err))
+	}
+	if sourceIPCount > 3 {
 		indicators = append(indicators, BreachIndicator{
 			ID:          uuid.New().String(),
 			Type:        "geo_anomaly",
@@ -367,7 +385,7 @@ func (s *ibdrService) collectIndicators(ctx context.Context, userID, ipAddress, 
 			Confidence:  0.7,
 			FirstSeen:   time.Now(),
 			LastSeen:    time.Now(),
-			Occurrences: locationCount,
+			Occurrences: sourceIPCount,
 		})
 	}
 
@@ -504,12 +522,24 @@ func (s *ibdrService) executePartialQuarantine(ctx context.Context, incident *Br
 	s.revokeUserSessions(ctx, incident.AffectedUserIDs)
 	actions = append(actions, "revoked_sessions")
 
-	// Enable enhanced monitoring
+	// Record enhanced monitoring as a durable audit event. The old INSERT
+	// targeted a user_monitoring table no migration creates and discarded the
+	// error, so the "enhanced monitoring" action silently did nothing.
+	org, orgErr := orgctx.From(ctx)
 	for _, userID := range incident.AffectedUserIDs {
-		_, _ = s.db.Pool.Exec(ctx, `
-			INSERT INTO user_monitoring (user_id, level, reason, created_at)
-			VALUES ($1, 'enhanced', $2, NOW())
-		`, userID, incident.ID)
+		if orgErr != nil {
+			s.logger.Warn("partial quarantine: no org in context; enhanced-monitoring not recorded",
+				zap.String("user_id", userID), zap.Error(orgErr))
+			continue
+		}
+		if _, err := s.db.Pool.Exec(ctx, `
+			INSERT INTO audit_events (id, event_type, category, action, outcome, actor_id, actor_ip, target_id, target_type, details, created_at, org_id)
+			VALUES (gen_random_uuid(), 'security', 'ibdr', 'user.enhanced_monitoring', 'success', $1, '0.0.0.0', $2, 'user', $3, NOW(), $4)
+		`, actorID, userID, fmt.Sprintf(`{"incident_id":%q,"level":"enhanced"}`, incident.ID), org.ID); err != nil {
+			s.logger.Error("partial quarantine: failed to record enhanced monitoring",
+				zap.String("user_id", userID), zap.Error(err))
+			continue
+		}
 		actions = append(actions, fmt.Sprintf("enhanced_monitoring_%s", userID))
 	}
 
@@ -526,10 +556,19 @@ func (s *ibdrService) revokeUserSessions(ctx context.Context, userIDs []string) 
 }
 
 func (s *ibdrService) blockIPAddress(ctx context.Context, ipAddress string) {
-	_, _ = s.db.Pool.Exec(ctx, `
-		INSERT INTO blocked_ips (ip_address, reason, created_at)
-		VALUES ($1, $2, NOW())
-	`, ipAddress, "breach_response")
+	// Write to ip_threat_list — the install-wide deny-list the access-service
+	// context evaluator actually consults. The old INSERT targeted a
+	// blocked_ips table no migration creates (and nothing reads) and discarded
+	// the error, so a breach-response IP block never blocked anything.
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO ip_threat_list (ip_address, threat_type, reason, is_active)
+		VALUES ($1, 'breach_response', 'Blocked by IBDR breach response', true)
+		ON CONFLICT (ip_address) DO UPDATE
+		SET threat_type = 'breach_response', reason = EXCLUDED.reason, is_active = true
+	`, ipAddress); err != nil {
+		s.logger.Error("breach response: failed to block IP",
+			zap.String("ip_address", ipAddress), zap.Error(err))
+	}
 }
 
 func determineQuarantineAction(actions []string) string {

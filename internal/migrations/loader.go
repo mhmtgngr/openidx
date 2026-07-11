@@ -544,5 +544,12 @@ func allMigrations() []*Migration {
 			UpSQL:       knownDevicesSeenCountUp,
 			DownSQL:     knownDevicesSeenCountDown,
 		},
+		{
+			Version:     77,
+			Name:        "session_risk_history",
+			Description: "Create session_risks and risk_factors for the routed continuous-auth endpoints (internal/admin/continuous_auth.go). Both tables were read and written on every risk calculation but existed in no runner migration: the previous-risk lookup and history INSERT silently failed (errors discarded), so risk deltas were always computed against 0, no history was stored, and GetRiskFactors errored outright. Org-belted (org_id NOT NULL FK) like stepup_challenges. Idempotent.",
+			UpSQL:       sessionRiskHistoryUp,
+			DownSQL:     sessionRiskHistoryDown,
+		},
 	}
 }
