@@ -384,14 +384,15 @@ func (s *Service) getMFAMetrics(ctx context.Context) MFAAdoptionMetrics {
 
 		s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(COUNT(DISTINCT user_id), 0)
-			FROM webauthn_credentials
-		`).Scan(&metrics.UsersWithWebAuthn)
+			FROM mfa_webauthn
+			WHERE org_id = $1
+		`, org.ID).Scan(&metrics.UsersWithWebAuthn)
 
 		s.db.Pool.QueryRow(ctx, `
 			SELECT COALESCE(COUNT(DISTINCT user_id), 0) FROM (
 				SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
 				UNION
-				SELECT user_id FROM webauthn_credentials
+				SELECT user_id FROM mfa_webauthn WHERE org_id = $1
 			) mfa
 		`, org.ID).Scan(&metrics.UsersWithMFA)
 	}

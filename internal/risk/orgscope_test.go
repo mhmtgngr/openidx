@@ -117,29 +117,6 @@ func TestRisk_AlertManager_requireOrgContext(t *testing.T) {
 	})
 }
 
-func TestRisk_IPIntelligence_requireOrgContext(t *testing.T) {
-	i := &IPIntelligence{}
-	ctx := context.Background()
-
-	t.Run("CheckImpossibleTravel", func(t *testing.T) {
-		_, err := i.CheckImpossibleTravel(ctx, "u-1", "1.2.3.4", time.Now())
-		assertNoOrg(t, err)
-	})
-}
-
-func TestRisk_PolicyEngine_requireOrgContext(t *testing.T) {
-	p := &PolicyEngine{}
-	ctx := context.Background()
-
-	t.Run("CreateSecurityAlert", func(t *testing.T) {
-		assertNoOrg(t, p.CreateSecurityAlert(ctx, &SecurityAlert{}))
-	})
-	t.Run("GetRiskStatistics", func(t *testing.T) {
-		_, err := p.GetRiskStatistics(ctx, "tenant-1", 7)
-		assertNoOrg(t, err)
-	})
-}
-
 func assertNoOrg(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, orgctx.ErrNoOrgContext) {

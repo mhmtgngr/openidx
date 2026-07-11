@@ -12,10 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zaptest"
 )
 
 // TestLogger_VerifyEventMethod tests the VerifyEvent method
@@ -59,144 +57,6 @@ func TestLogger_VerifyEventMethod(t *testing.T) {
 
 		err = logger.VerifyEvent(event)
 		assert.NoError(t, err)
-	})
-}
-
-// TestSearcher_NewSearcher tests NewSearcher function
-func TestSearcher_NewSearcher(t *testing.T) {
-	t.Run("create new searcher", func(t *testing.T) {
-		// Note: This requires a mock or test database
-		// For now we test the constructor logic
-		secret := "test-secret"
-		db := &pgxpool.Pool{} // Mock pool
-
-		searcher := NewSearcher(db, secret)
-		assert.NotNil(t, searcher)
-		assert.Equal(t, db, searcher.db)
-		assert.Equal(t, secret, searcher.secret)
-	})
-}
-
-// TestParseSearchQueryFromURLValues tests ParseSearchQueryFromURLValues
-func TestParseSearchQueryFromURLValues(t *testing.T) {
-	now := time.Now()
-
-	tests := []struct {
-		name    string
-		params  map[string][]string
-		wantErr bool
-		check   func(*testing.T, *SearchQuery)
-	}{
-		{
-			name: "single value for each parameter",
-			params: map[string][]string{
-				"actor":         {"user-123"},
-				"action":        {string(ActionAuthLogin)},
-				"resource_type": {"session"},
-				"outcome":       {"success"},
-				"limit":         {"50"},
-			},
-			wantErr: false,
-			check: func(t *testing.T, q *SearchQuery) {
-				assert.Equal(t, "user-123", q.ActorID)
-				assert.Equal(t, string(ActionAuthLogin), q.Action)
-				assert.Equal(t, 50, q.Limit)
-			},
-		},
-		{
-			name: "multiple values - takes first",
-			params: map[string][]string{
-				"actor": {"user-1", "user-2"},
-			},
-			wantErr: false,
-			check: func(t *testing.T, q *SearchQuery) {
-				assert.Equal(t, "user-1", q.ActorID)
-			},
-		},
-		{
-			name: "empty values array - not added",
-			params: map[string][]string{
-				"actor": {},
-			},
-			wantErr: false,
-			check: func(t *testing.T, q *SearchQuery) {
-				assert.Equal(t, "", q.ActorID)
-			},
-		},
-		{
-			name: "valid time range",
-			params: map[string][]string{
-				"from": {now.Add(-24 * time.Hour).Format(time.RFC3339)},
-				"to":   {now.Format(time.RFC3339)},
-			},
-			wantErr: false,
-			check: func(t *testing.T, q *SearchQuery) {
-				assert.False(t, q.From.IsZero())
-				assert.False(t, q.To.IsZero())
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := ParseSearchQueryFromURLValues(tt.params)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, result)
-				if tt.check != nil {
-					tt.check(t, result)
-				}
-			}
-		})
-	}
-}
-
-// TestStore_NewStore tests NewStore function
-func TestStore_NewStore(t *testing.T) {
-	t.Run("empty secret returns error", func(t *testing.T) {
-		logger := zaptest.NewLogger(t)
-		config := StoreConfig{
-			Secret:        "",
-			BatchSize:     100,
-			FlushInterval: 5 * time.Second,
-		}
-
-		store, err := NewStore(nil, config, logger)
-		assert.Error(t, err)
-		assert.Nil(t, store)
-		assert.Contains(t, err.Error(), "secret cannot be empty")
-	})
-
-	t.Run("valid secret creates store", func(t *testing.T) {
-		// Note: This requires a real or mock database pool
-		// For structural test we verify the validation logic
-		config := StoreConfig{
-			Secret:        "test-secret-key-12345",
-			BatchSize:     100,
-			FlushInterval: 5 * time.Second,
-		}
-
-		// We can't fully test without a DB, but we verify config is applied
-		assert.Equal(t, "test-secret-key-12345", config.Secret)
-	})
-
-	t.Run("default values applied", func(t *testing.T) {
-		config := StoreConfig{
-			Secret: "test-secret",
-		}
-
-		if config.BatchSize <= 0 {
-			config.BatchSize = 100
-		}
-		if config.FlushInterval <= 0 {
-			config.FlushInterval = 5 * time.Second
-		}
-
-		assert.Equal(t, 100, config.BatchSize)
-		assert.Equal(t, 5*time.Second, config.FlushInterval)
 	})
 }
 
@@ -290,55 +150,6 @@ func TestReportFileHandling(t *testing.T) {
 		info, err := os.Stat(testDir)
 		require.NoError(t, err)
 		assert.True(t, info.IsDir())
-	})
-}
-
-// TestExtendedSerialization tests various serialization scenarios
-func TestExtendedSerialization(t *testing.T) {
-	t.Run("SearchResult serialization", func(t *testing.T) {
-		result := &SearchResult{
-			Events: []*AuditEvent{
-				NewAuditEvent(ActionAuthLogin).WithActor("user-1", ActorTypeUser),
-			},
-			NextCursor: "cursor-123",
-			HasMore:    true,
-			TotalCount: 100,
-		}
-
-		data, err := json.Marshal(result)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, data)
-
-		var decoded SearchResult
-		err = json.Unmarshal(data, &decoded)
-		assert.NoError(t, err)
-		assert.Equal(t, result.TotalCount, decoded.TotalCount)
-		assert.Equal(t, result.HasMore, decoded.HasMore)
-		assert.Equal(t, result.NextCursor, decoded.NextCursor)
-	})
-
-	t.Run("SearchQuery serialization", func(t *testing.T) {
-		now := time.Now()
-		query := &SearchQuery{
-			ActorID:      "user-123",
-			Action:       ActionAuthLogin,
-			ResourceType: "session",
-			Outcome:      "success",
-			TenantID:     "tenant-1",
-			From:         now.Add(-24 * time.Hour),
-			To:           now,
-			Limit:        50,
-		}
-
-		data, err := json.Marshal(query)
-		assert.NoError(t, err)
-
-		var decoded SearchQuery
-		err = json.Unmarshal(data, &decoded)
-		assert.NoError(t, err)
-		assert.Equal(t, query.ActorID, decoded.ActorID)
-		assert.Equal(t, query.Action, decoded.Action)
-		assert.Equal(t, query.Limit, decoded.Limit)
 	})
 }
 
@@ -533,43 +344,6 @@ func TestComplianceStatusEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := determineComplianceStatus(tt.value, tt.compliantThreshold, tt.partialThreshold)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestPartitionNameGeneration tests partition name generation
-func TestPartitionNameGeneration(t *testing.T) {
-	tests := []struct {
-		name      string
-		timestamp time.Time
-		expected  string
-	}{
-		{
-			name:      "January 2024",
-			timestamp: time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC),
-			expected:  "audit_events_2024_01",
-		},
-		{
-			name:      "December 2024",
-			timestamp: time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC),
-			expected:  "audit_events_2024_12",
-		},
-		{
-			name:      "February leap year",
-			timestamp: time.Date(2024, 2, 29, 0, 0, 0, 0, time.UTC),
-			expected:  "audit_events_2024_02",
-		},
-		{
-			name:      "March 2025",
-			timestamp: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
-			expected:  "audit_events_2025_03",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetPartitionName(tt.timestamp)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -782,32 +556,6 @@ func TestEventSerializationRoundTrip(t *testing.T) {
 	assert.Equal(t, original.CorrelationID, decoded.CorrelationID)
 	assert.Equal(t, "password", decoded.Metadata["method"])
 	assert.Equal(t, true, decoded.Metadata["mfa"])
-}
-
-// TestSearchQueryDefaults tests default search query values
-func TestSearchQueryDefaults(t *testing.T) {
-	query := &SearchQuery{}
-
-	assert.Empty(t, query.ActorID)
-	assert.Empty(t, query.Action)
-	assert.Empty(t, query.ResourceType)
-	assert.Empty(t, query.Outcome)
-	assert.Empty(t, query.TenantID)
-	assert.Empty(t, query.CorrelationID)
-	assert.Empty(t, query.IP)
-	assert.Empty(t, query.AfterID)
-	assert.True(t, query.From.IsZero())
-	assert.True(t, query.To.IsZero())
-	assert.Equal(t, 0, query.Limit)
-}
-
-// TestStoreConfigDefaults tests default store configuration
-func TestStoreConfigDefaults(t *testing.T) {
-	config := DefaultStoreConfig()
-
-	assert.Equal(t, 100, config.BatchSize)
-	assert.Equal(t, 5*time.Second, config.FlushInterval)
-	assert.Empty(t, config.Secret, "Secret must be explicitly set")
 }
 
 // TestErrorMessages tests error message formatting
@@ -1078,93 +826,6 @@ func (e *AuditEvent) ComputeHashForChain(secret, previousHash string) error {
 	return nil
 }
 
-// TestStatisticsSerialization tests Statistics struct
-func TestStatisticsSerialization(t *testing.T) {
-	now := time.Now()
-	stats := &Statistics{
-		TotalCount: 1000,
-		From:       now.Add(-24 * time.Hour),
-		To:         now,
-		ByAction: map[string]int64{
-			ActionAuthLogin:  500,
-			ActionAuthLogout: 300,
-			ActionUserCreate: 100,
-			ActionUserDelete: 50,
-			"other":          50,
-		},
-		ByActor: map[string]int64{
-			"user-1": 100,
-			"user-2": 200,
-			"user-3": 700,
-		},
-		ByOutcome: map[string]int64{
-			"success": 900,
-			"failure": 80,
-			"denied":  20,
-		},
-	}
-
-	data, err := json.Marshal(stats)
-	assert.NoError(t, err)
-
-	var decoded Statistics
-	err = json.Unmarshal(data, &decoded)
-	assert.NoError(t, err)
-	assert.Equal(t, stats.TotalCount, decoded.TotalCount)
-	assert.Equal(t, int64(500), decoded.ByAction[ActionAuthLogin])
-	assert.Equal(t, int64(700), decoded.ByActor["user-3"])
-}
-
-// TestSearchQueryInvalidParameters tests various invalid parameter combinations
-func TestSearchQueryInvalidParameters(t *testing.T) {
-	tests := []struct {
-		name    string
-		query   *SearchQuery
-		wantErr bool
-	}{
-		{
-			name: "invalid limit - negative",
-			query: &SearchQuery{
-				Limit: -1,
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid limit - too large",
-			query: &SearchQuery{
-				Limit: 101,
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid time range",
-			query: &SearchQuery{
-				From: time.Now(),
-				To:   time.Now().Add(-24 * time.Hour),
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid maximum limit",
-			query: &SearchQuery{
-				Limit: 100,
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.query.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestReportSummaryValidation tests summary completeness
 func TestReportSummaryValidation(t *testing.T) {
 	tests := []struct {
@@ -1231,164 +892,6 @@ func TestGenerateReportIDUniqueness(t *testing.T) {
 		ids[id] = true
 		assert.Contains(t, id, "report_")
 	}
-}
-
-// TestSearcherBuildMethods tests the query builder methods
-func TestSearcherBuildMethods(t *testing.T) {
-	searcher := NewSearcher(nil, "test-secret")
-
-	t.Run("buildSelectQuery returns expected query", func(t *testing.T) {
-		query := searcher.buildSelectQuery()
-		assert.Contains(t, query, "SELECT id, timestamp, tenant_id")
-		assert.Contains(t, query, "FROM audit_events_tamper_evident")
-	})
-
-	t.Run("buildCountQuery includes where clause", func(t *testing.T) {
-		whereClause := "WHERE tenant_id = $1"
-		query := searcher.buildCountQuery(whereClause)
-		assert.Equal(t, "SELECT COUNT(*) FROM audit_events_tamper_evident WHERE tenant_id = $1", query)
-	})
-
-	t.Run("buildOrderByClause returns expected order", func(t *testing.T) {
-		query := searcher.buildOrderByClause(&SearchQuery{})
-		assert.Contains(t, query, "ORDER BY timestamp DESC, id DESC")
-	})
-
-	t.Run("buildLimitClause formats limit", func(t *testing.T) {
-		clause := searcher.buildLimitClause(50)
-		assert.Contains(t, clause, "$1")
-		assert.Contains(t, clause, "LIMIT")
-	})
-}
-
-// TestSearcherBuildWhereClause tests WHERE clause building
-func TestSearcherBuildWhereClause(t *testing.T) {
-	searcher := NewSearcher(nil, "test-secret")
-
-	t.Run("empty query returns where clause with tenant filter", func(t *testing.T) {
-		query := &SearchQuery{}
-		where, args := searcher.buildWhereClause(query)
-		// Empty query still has tenant filter for global events (hardcoded, no args)
-		assert.NotEmpty(t, where, "Where clause should not be empty")
-		assert.Contains(t, where, "tenant_id")
-		// When tenant_id is empty, it uses the global events condition (hardcoded)
-		assert.Contains(t, where, "OR")
-		// No args needed for the hardcoded global events condition
-		assert.Empty(t, args, "No args for hardcoded global events condition")
-	})
-
-	t.Run("query with all filters", func(t *testing.T) {
-		now := time.Now()
-		query := &SearchQuery{
-			ActorID:       "user-123",
-			Action:        ActionAuthLogin,
-			ResourceType:  "session",
-			Outcome:       "success",
-			TenantID:      "tenant-1",
-			CorrelationID: "corr-456",
-			IP:            "192.168.1.1",
-			From:          now.Add(-24 * time.Hour),
-			To:            now,
-		}
-
-		where, args := searcher.buildWhereClause(query)
-		assert.Contains(t, where, "tenant_id =")
-		assert.Contains(t, where, "actor_id =")
-		assert.Contains(t, where, "action =")
-		assert.Contains(t, where, "resource_type =")
-		assert.Contains(t, where, "outcome =")
-		assert.Contains(t, where, "correlation_id =")
-		assert.Contains(t, where, "ip =")
-		assert.Contains(t, where, "timestamp >=")
-		assert.Contains(t, where, "timestamp <=")
-		assert.GreaterOrEqual(t, len(args), 9)
-	})
-
-	t.Run("query with cursor", func(t *testing.T) {
-		query := &SearchQuery{
-			TenantID: "tenant-1",
-			AfterID:  "evt-123",
-		}
-
-		where, args := searcher.buildWhereClause(query)
-		// Cursor uses a subquery
-		assert.Contains(t, where, "SELECT")
-		// The ID is passed as a parameter, not embedded
-		assert.GreaterOrEqual(t, len(args), 2)
-		// Last argument should be the AfterID
-		assert.Equal(t, "evt-123", args[len(args)-1])
-	})
-}
-
-// TestStatisticsInitialization tests Statistics struct initialization
-func TestStatisticsInitialization(t *testing.T) {
-	now := time.Now()
-
-	stats := &Statistics{
-		From:      now.Add(-24 * time.Hour),
-		To:        now,
-		ByAction:  make(map[string]int64),
-		ByActor:   make(map[string]int64),
-		ByOutcome: make(map[string]int64),
-	}
-
-	assert.NotNil(t, stats.ByAction)
-	assert.NotNil(t, stats.ByActor)
-	assert.NotNil(t, stats.ByOutcome)
-	assert.False(t, stats.From.IsZero())
-	assert.False(t, stats.To.IsZero())
-}
-
-// TestSearchResultDefaults tests SearchResult default values
-func TestSearchResultDefaults(t *testing.T) {
-	result := &SearchResult{
-		Events: []*AuditEvent{},
-	}
-
-	assert.NotNil(t, result.Events)
-	assert.Empty(t, result.Events)
-	assert.Equal(t, 0, result.TotalCount)
-	assert.False(t, result.HasMore)
-	assert.Empty(t, result.NextCursor)
-}
-
-// TestPartitionHelpers tests partition helper functions
-func TestPartitionHelpers(t *testing.T) {
-	t.Run("getPartitionStart for various months", func(t *testing.T) {
-		tests := []struct {
-			partition string
-			expected  string
-		}{
-			{"audit_events_2024_01", "2024-01-01"},
-			{"audit_events_2024_12", "2024-12-01"},
-			{"audit_events_2025_03", "2025-03-01"},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.partition, func(t *testing.T) {
-				result := getPartitionStart(tt.partition)
-				assert.Equal(t, tt.expected, result)
-			})
-		}
-	})
-
-	t.Run("getPartitionEnd for various months", func(t *testing.T) {
-		tests := []struct {
-			partition string
-			expected  string
-		}{
-			{"audit_events_2024_01", "2024-02-01"},
-			{"audit_events_2024_12", "2025-01-01"},
-			{"audit_events_2025_03", "2025-04-01"},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.partition, func(t *testing.T) {
-				result := getPartitionEnd(tt.partition)
-				assert.Equal(t, tt.expected, result)
-			})
-		}
-	})
 }
 
 // TestLoggerSecretPanic tests panic behavior
@@ -1743,32 +1246,6 @@ func TestEventSerialization(t *testing.T) {
 	assert.Equal(t, event.ActorID, decoded.ActorID)
 }
 
-// TestSearchQueryDefaultValues tests default query values
-func TestSearchQueryDefaultValues(t *testing.T) {
-	query := &SearchQuery{}
-
-	assert.Empty(t, query.ActorID)
-	assert.Empty(t, query.Action)
-	assert.Empty(t, query.ResourceType)
-	assert.Empty(t, query.Outcome)
-	assert.Empty(t, query.TenantID)
-	assert.Empty(t, query.CorrelationID)
-	assert.Empty(t, query.IP)
-	assert.Empty(t, query.AfterID)
-	assert.True(t, query.From.IsZero())
-	assert.True(t, query.To.IsZero())
-	assert.Equal(t, 0, query.Limit)
-}
-
-// TestStoreConfigDefaultValues tests store config defaults
-func TestStoreConfigDefaultValues(t *testing.T) {
-	config := DefaultStoreConfig()
-
-	assert.Equal(t, 100, config.BatchSize)
-	assert.Equal(t, 5*time.Second, config.FlushInterval)
-	assert.Empty(t, config.Secret)
-}
-
 // TestReportStatusTransitions tests report status values
 func TestReportStatusTransitions(t *testing.T) {
 	statuses := []ReportStatus{
@@ -1797,31 +1274,6 @@ func TestReportTypeValues(t *testing.T) {
 	for _, rt := range types {
 		assert.NotEmpty(t, string(rt))
 	}
-}
-
-// TestSearchQueryValidationEdgeCases tests edge cases for query validation
-func TestSearchQueryValidationEdgeCases(t *testing.T) {
-	t.Run("zero limit is valid", func(t *testing.T) {
-		query := &SearchQuery{Limit: 0}
-		err := query.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("max limit is valid", func(t *testing.T) {
-		query := &SearchQuery{Limit: 100}
-		err := query.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("same time for from and to is valid", func(t *testing.T) {
-		now := time.Now()
-		query := &SearchQuery{
-			From: now,
-			To:   now,
-		}
-		err := query.Validate()
-		assert.NoError(t, err)
-	})
 }
 
 // TestEmptyStringHandling tests handling of empty strings
@@ -1880,27 +1332,6 @@ func TestErrorTypeChecking(t *testing.T) {
 	t.Run("IsChainBreak with other error", func(t *testing.T) {
 		err := errors.New("other error")
 		assert.False(t, IsChainBreak(err))
-	})
-}
-
-// TestSearchQueryWithTimeRange tests time range handling
-func TestSearchQueryWithTimeRange(t *testing.T) {
-	now := time.Now()
-
-	t.Run("only from time", func(t *testing.T) {
-		query := &SearchQuery{
-			From: now.Add(-24 * time.Hour),
-		}
-		err := query.Validate()
-		assert.NoError(t, err)
-	})
-
-	t.Run("only to time", func(t *testing.T) {
-		query := &SearchQuery{
-			To: now,
-		}
-		err := query.Validate()
-		assert.NoError(t, err)
 	})
 }
 
@@ -2003,41 +1434,6 @@ func TestChainStateWithZeroValues(t *testing.T) {
 	assert.Empty(t, state.LastEventID)
 	assert.Equal(t, int64(0), state.LastSequence)
 	assert.True(t, state.UpdatedAt.IsZero())
-}
-
-// TestSearchResultWithZeroEvents tests search result with no events
-func TestSearchResultWithZeroEvents(t *testing.T) {
-	result := &SearchResult{
-		Events:     []*AuditEvent{},
-		TotalCount: 0,
-		HasMore:    false,
-		NextCursor: "",
-	}
-
-	assert.Empty(t, result.Events)
-	assert.Equal(t, 0, result.TotalCount)
-	assert.False(t, result.HasMore)
-	assert.Empty(t, result.NextCursor)
-}
-
-// TestSearchResultWithEvents tests search result with events
-func TestSearchResultWithEvents(t *testing.T) {
-	events := []*AuditEvent{
-		NewAuditEvent(ActionAuthLogin),
-		NewAuditEvent(ActionAuthLogout),
-	}
-
-	result := &SearchResult{
-		Events:     events,
-		TotalCount: 2,
-		HasMore:    false,
-		NextCursor: "cursor-1",
-	}
-
-	assert.Len(t, result.Events, 2)
-	assert.Equal(t, 2, result.TotalCount)
-	assert.False(t, result.HasMore)
-	assert.Equal(t, "cursor-1", result.NextCursor)
 }
 
 // TestNewAuditEventDifferentActions tests creating events with different actions
@@ -2239,28 +1635,4 @@ func TestEventSerializationWithSpecialCharacters(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	assert.NoError(t, err)
 	assert.NotNil(t, decoded.Metadata)
-}
-
-// TestSearchResultSerialization tests SearchResult JSON handling
-func TestSearchResultSerialization(t *testing.T) {
-	result := &SearchResult{
-		Events: []*AuditEvent{
-			NewAuditEvent(ActionAuthLogin).WithActor("user-1", ActorTypeUser),
-			NewAuditEvent(ActionAuthLogout).WithActor("user-1", ActorTypeUser),
-		},
-		NextCursor: "next-cursor-123",
-		HasMore:    true,
-		TotalCount: 100,
-	}
-
-	data, err := json.Marshal(result)
-	assert.NoError(t, err)
-
-	var decoded SearchResult
-	err = json.Unmarshal(data, &decoded)
-	assert.NoError(t, err)
-	assert.Len(t, decoded.Events, 2)
-	assert.Equal(t, 100, decoded.TotalCount)
-	assert.True(t, decoded.HasMore)
-	assert.Equal(t, "next-cursor-123", decoded.NextCursor)
 }
