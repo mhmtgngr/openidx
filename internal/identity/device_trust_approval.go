@@ -432,11 +432,17 @@ func (s *Service) isCorporateDevice(ctx context.Context, fingerprint string) boo
 		return false
 	}
 	var count int
-	s.db.Pool.QueryRow(ctx,
+	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM known_devices
 		WHERE fingerprint = $1 AND (device_type = 'corporate' OR name LIKE '%Corporate%') AND org_id = $2`,
 		fingerprint, org.ID,
-	).Scan(&count)
+	).Scan(&count); err != nil {
+		// Degrade to "not corporate", but say so: a silently swallowed scan
+		// error is exactly what kept this check returning false while the
+		// device_type column was missing (pre-v75).
+		s.logger.Warn("corporate-device check failed", zap.Error(err))
+		return false
+	}
 	return count > 0
 }
 

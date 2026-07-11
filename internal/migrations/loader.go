@@ -530,5 +530,12 @@ func allMigrations() []*Migration {
 			UpSQL:       detailedComplianceReportsUp,
 			DownSQL:     detailedComplianceReportsDown,
 		},
+		{
+			Version:     75,
+			Name:        "known_devices_device_type",
+			Description: "Add device_type VARCHAR(50) to known_devices. isCorporateDevice (device-trust auto-approval) filtered on this column, which v19 never created: the query errored on every call, the error was swallowed, and the check always returned false — the auto_approve_corporate_devices org setting (v39) was silently inert. With the column present the name-based corporate match works with existing rows and device_type='corporate' can be set by MDM/admin tooling. Idempotent.",
+			UpSQL:       knownDevicesDeviceTypeUp,
+			DownSQL:     knownDevicesDeviceTypeDown,
+		},
 	}
 }
