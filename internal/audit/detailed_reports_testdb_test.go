@@ -113,7 +113,7 @@ func TestDetailedComplianceReports_StoreAndOrgScope(t *testing.T) {
 		reportID = "dddddddd-0000-0000-0000-000000000001"
 	)
 	for _, org := range []string{orgA, orgB} {
-		if _, err := db.Pool.Exec(ctx, `INSERT INTO organizations (id, name) VALUES ($1, $1)`, org); err != nil {
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO organizations (id, name) VALUES ($1, $2)`, org, "org-"+org); err != nil {
 			t.Fatalf("seed org: %v", err)
 		}
 	}
