@@ -127,9 +127,10 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 		Username:   username,
 		ExecutedAt: time.Now().UTC(),
 	}
+	safeUserID := scrubLogValue(userID)
 	warn := func(step string, err error) {
 		s.logger.Warn("kill-switch: step failed",
-			zap.String("step", step), zap.String("user_id", userID), zap.Error(err))
+			zap.String("step", step), zap.String("user_id", safeUserID), zap.Error(err))
 		res.Warnings = append(res.Warnings, step+": "+err.Error())
 	}
 
@@ -282,9 +283,9 @@ func (s *Service) executeKillSwitch(ctx context.Context, orgID, userID, username
 	}
 
 	s.logger.Info("kill-switch executed",
-		zap.String("user_id", userID),
-		zap.String("actor_id", actorID),
-		zap.String("reason", reason),
+		zap.String("user_id", safeUserID),
+		zap.String("actor_id", scrubLogValue(actorID)),
+		zap.String("reason", scrubLogValue(reason)),
 		zap.Bool("disable_user", disableUser),
 		zap.Int64("sessions_revoked", res.SessionsRevoked),
 		zap.Int64("checkouts_revoked", res.CheckoutsRevoked),

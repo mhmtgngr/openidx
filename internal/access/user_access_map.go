@@ -172,7 +172,7 @@ func (s *Service) handleUserAccessMap(c *gin.Context) {
 			return
 		}
 		s.logger.Error("handleUserAccessMap: aggregation failed",
-			zap.String("user_id", userID), zap.Error(err))
+			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build access map"})
 		return
 	}

@@ -99,7 +99,7 @@ func (s *Service) handleUserDevices(c *gin.Context) {
 	devices, err := s.collectUserDevices(ctx, org.ID, userID)
 	if err != nil {
 		s.logger.Error("handleUserDevices: aggregation failed",
-			zap.String("user_id", userID), zap.Error(err))
+			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to correlate devices"})
 		return
 	}
@@ -132,7 +132,7 @@ func (s *Service) handleMyDevices(c *gin.Context) {
 	devices, err := s.collectUserDevices(ctx, org.ID, userID)
 	if err != nil {
 		s.logger.Error("handleMyDevices: aggregation failed",
-			zap.String("user_id", userID), zap.Error(err))
+			zap.String("user_id", scrubLogValue(userID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to correlate devices"})
 		return
 	}
@@ -352,9 +352,10 @@ func (s *Service) handleRevokeUserDevice(c *gin.Context) {
 // each pillar failing is a warning, never aborts the rest.
 func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiIdentityID, knownDeviceID string) *DeviceRevokeResult {
 	res := &DeviceRevokeResult{AgentID: agentID, ExecutedAt: time.Now().UTC()}
+	safeAgentID := scrubLogValue(agentID)
 	warn := func(step string, err error) {
 		s.logger.Warn("device revoke: step failed",
-			zap.String("step", step), zap.String("agent_id", agentID), zap.Error(err))
+			zap.String("step", step), zap.String("agent_id", safeAgentID), zap.Error(err))
 		res.Warnings = append(res.Warnings, step+": "+err.Error())
 	}
 
@@ -397,7 +398,7 @@ func (s *Service) executeDeviceRevoke(ctx context.Context, orgID, agentID, zitiI
 	}
 
 	s.logger.Info("device revoked across pillars",
-		zap.String("agent_id", agentID),
+		zap.String("agent_id", safeAgentID),
 		zap.Bool("ziti_identity_deleted", res.ZitiIdentityDeleted),
 		zap.Int("ziti_edge_sessions", res.ZitiEdgeSessions),
 		zap.Bool("known_device_untrusted", res.KnownDeviceUntrusted))
