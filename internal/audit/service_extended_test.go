@@ -208,9 +208,10 @@ func TestComplianceHandlers(t *testing.T) {
 		// Create a mock service
 		svc := &Service{}
 
-		// Verify methods exist (compile-time check)
-		_ = svc.handleGenerateSOC2Report
-		_ = svc.handleGenerateISO27001Report
+		// Verify methods exist (compile-time check). The unrouted standard
+		// SOC2/ISO handlers were removed (routed POST /reports and the
+		// *-detailed endpoints cover those frameworks); GDPR is now routed
+		// at POST /reports/gdpr-detailed.
 		_ = svc.handleGenerateGDPRReport
 	})
 }
