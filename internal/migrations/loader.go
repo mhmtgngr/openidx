@@ -537,5 +537,12 @@ func allMigrations() []*Migration {
 			UpSQL:       knownDevicesDeviceTypeUp,
 			DownSQL:     knownDevicesDeviceTypeDown,
 		},
+		{
+			Version:     76,
+			Name:        "known_devices_seen_count",
+			Description: "Add seen_count INTEGER NOT NULL DEFAULT 1 to known_devices and retenant portal-registered rows that fell into the primary org by column DEFAULT while their owner belongs to another org. The risk engine's device fingerprinting read/wrote seen_count plus first_seen/last_seen columns v19 never created — the new-device INSERT failed on every call, so risk device tracking never recorded a device and trust levels never progressed. Code now uses created_at/last_seen_at for the timestamps; seen_count is the one column with no existing equivalent. The retenant UPDATE corrects data mis-tenanted by the pre-fix portal RegisterDevice (fix shipped separately) and is not reversed on down. Idempotent.",
+			UpSQL:       knownDevicesSeenCountUp,
+			DownSQL:     knownDevicesSeenCountDown,
+		},
 	}
 }
