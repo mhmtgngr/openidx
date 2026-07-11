@@ -551,5 +551,12 @@ func allMigrations() []*Migration {
 			UpSQL:       sessionRiskHistoryUp,
 			DownSQL:     sessionRiskHistoryDown,
 		},
+		{
+			Version:     78,
+			Name:        "recording_retention_policies",
+			Description: "Create recording_retention_policies for the live per-org remote-support recording retention surface (internal/access/remote_support_retention.go). The GET/PUT /recording-retention-policy routes are mounted by RegisterRetentionAdminRoutes and the background retention enforcer consults the table on every sweep, but no runner migration created it: both routes 500'd and resolveEffectiveRetention silently fell through to the global default, so per-org retention was configurable in name only. org_id PRIMARY KEY (handlers upsert ON CONFLICT (org_id)); retention_days 0 = infinite per the handler contract, CHECK >= 0. Idempotent.",
+			UpSQL:       recordingRetentionPoliciesUp,
+			DownSQL:     recordingRetentionPoliciesDown,
+		},
 	}
 }

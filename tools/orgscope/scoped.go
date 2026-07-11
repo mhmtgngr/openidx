@@ -54,6 +54,7 @@ var scopedTables = map[string]bool{
 	"mfa_backup_codes":             true,
 	"risk_factors":                 true,
 	"session_risks":                true,
+	"recording_retention_policies": true,
 	"mfa_policies":                 true,
 	"mfa_push_challenges":          true,
 	"mfa_push_devices":             true,

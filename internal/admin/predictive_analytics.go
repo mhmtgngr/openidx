@@ -489,6 +489,13 @@ func detectTrend(hist []DailyMetric) string {
 	return "stable"
 }
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func detectFloatTrend(hist []DailyFloat) string {
 	if len(hist) < 7 {
 		return "insufficient_data"
