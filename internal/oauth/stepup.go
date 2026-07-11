@@ -74,35 +74,27 @@ func (s *Service) handleStepUpChallenge(c *gin.Context) {
 		return
 	}
 
-	// Query available MFA methods for the user
+	// Determine available MFA methods from the real enrollment tables via the
+	// identity service (mfa_totp, mfa_sms, mfa_email_otp, mfa_push_devices,
+	// mfa_webauthn). The previous lookup read user_mfa_methods, a view that only
+	// legacy SQL files defined and the migration runner never creates, so it
+	// errored on every call and each challenge advertised an empty method list.
+	// A lookup failure still yields an empty list — never a skipped step-up —
+	// because verification below independently requires a real factor check.
 	availableMethods := []string{}
-	var totpEnabled, smsEnabled, emailOTPEnabled, pushEnabled, webauthnEnabled bool
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT totp_enabled, sms_enabled, email_otp_enabled, push_enabled, webauthn_enabled
-		FROM user_mfa_methods WHERE user_id = $1`,
-		userID,
-	).Scan(&totpEnabled, &smsEnabled, &emailOTPEnabled, &pushEnabled, &webauthnEnabled)
-	if err != nil {
-		// If no MFA methods row exists, return empty list but don't fail
-		s.logger.Warn("No MFA methods found for user",
-			zap.String("user_id", userID),
-			zap.Error(err),
-		)
-	} else {
-		if totpEnabled {
-			availableMethods = append(availableMethods, "totp")
-		}
-		if smsEnabled {
-			availableMethods = append(availableMethods, "sms")
-		}
-		if emailOTPEnabled {
-			availableMethods = append(availableMethods, "email")
-		}
-		if pushEnabled {
-			availableMethods = append(availableMethods, "push")
-		}
-		if webauthnEnabled {
-			availableMethods = append(availableMethods, "webauthn")
+	if s.identityService != nil {
+		enrolled, mErr := s.identityService.GetUserMFAMethods(ctx, userID)
+		if mErr != nil {
+			s.logger.Warn("Failed to look up MFA methods for step-up",
+				zap.String("user_id", userID),
+				zap.Error(mErr),
+			)
+		} else {
+			for _, m := range []string{"totp", "sms", "email", "push", "webauthn"} {
+				if enrolled[m] {
+					availableMethods = append(availableMethods, m)
+				}
+			}
 		}
 	}
 

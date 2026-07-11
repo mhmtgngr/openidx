@@ -53,22 +53,40 @@ type UserMFAStatus struct {
 
 // --- MFA Enrollment Stats Handler ---
 
+// mfaStatusColumns derives per-user MFA enrollment flags from the real
+// enrollment tables. user_mfa_methods was a view only legacy SQL files defined
+// — the migration runner never creates it, so every handler reading it failed.
+// mfa_sms/mfa_email_otp have no org_id column; the others are org-belted.
+const mfaStatusColumns = `
+	EXISTS (SELECT 1 FROM mfa_totp t WHERE t.user_id = u.id AND t.org_id = $1 AND t.enabled) AS totp_enabled,
+	EXISTS (SELECT 1 FROM mfa_sms sm WHERE sm.user_id = u.id AND sm.enabled AND sm.verified) AS sms_enabled,
+	EXISTS (SELECT 1 FROM mfa_email_otp e WHERE e.user_id = u.id AND e.enabled) AS email_otp_enabled,
+	EXISTS (SELECT 1 FROM mfa_push_devices p WHERE p.user_id = u.id AND p.org_id = $1 AND p.enabled) AS push_enabled,
+	EXISTS (SELECT 1 FROM mfa_webauthn w WHERE w.user_id = u.id AND w.org_id = $1) AS webauthn_enabled`
+
 func (s *Service) handleMFAEnrollmentStats(c *gin.Context) {
 	if !requireAdmin(c) {
 		return
 	}
 
+	org, err := orgctx.From(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "organization context required"})
+		return
+	}
+
 	var stats MFAEnrollmentStats
-	err := s.db.Pool.QueryRow(c.Request.Context(),
+	err = s.db.Pool.QueryRow(c.Request.Context(),
 		`SELECT
 			COUNT(*) AS total_users,
-			SUM(CASE WHEN totp_enabled OR sms_enabled OR email_otp_enabled OR push_enabled OR webauthn_enabled THEN 1 ELSE 0 END) AS any_mfa,
-			SUM(CASE WHEN totp_enabled THEN 1 ELSE 0 END) AS totp_count,
-			SUM(CASE WHEN sms_enabled THEN 1 ELSE 0 END) AS sms_count,
-			SUM(CASE WHEN email_otp_enabled THEN 1 ELSE 0 END) AS email_otp_count,
-			SUM(CASE WHEN push_enabled THEN 1 ELSE 0 END) AS push_count,
-			SUM(CASE WHEN webauthn_enabled THEN 1 ELSE 0 END) AS webauthn_count
-		 FROM user_mfa_methods`,
+			COUNT(*) FILTER (WHERE totp_enabled OR sms_enabled OR email_otp_enabled OR push_enabled OR webauthn_enabled) AS any_mfa,
+			COUNT(*) FILTER (WHERE totp_enabled) AS totp_count,
+			COUNT(*) FILTER (WHERE sms_enabled) AS sms_count,
+			COUNT(*) FILTER (WHERE email_otp_enabled) AS email_otp_count,
+			COUNT(*) FILTER (WHERE push_enabled) AS push_count,
+			COUNT(*) FILTER (WHERE webauthn_enabled) AS webauthn_count
+		 FROM (SELECT `+mfaStatusColumns+`
+		       FROM users u WHERE u.org_id = $1) m`, org.ID,
 	).Scan(&stats.TotalUsers, &stats.AnyMFA, &stats.TOTPCount, &stats.SMSCount,
 		&stats.EmailOTPCount, &stats.PushCount, &stats.WebAuthnCount)
 	if err != nil {
@@ -348,20 +366,19 @@ func (s *Service) handleListUserMFAStatus(c *gin.Context) {
 	}
 
 	var total int
-	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM user_mfa_methods").Scan(&total)
+	err = s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE org_id = $1", org.ID).Scan(&total)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to count user MFA records", err))
 		return
 	}
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT m.user_id, m.username, u.email,
-		        m.totp_enabled, m.sms_enabled, m.email_otp_enabled,
-		        m.push_enabled, m.webauthn_enabled, m.backup_codes_remaining
-		 FROM user_mfa_methods m
-		 JOIN users u ON u.id = m.user_id AND u.org_id = $3
-		 ORDER BY m.username
-		 LIMIT $1 OFFSET $2`, limit, offset, org.ID)
+		`SELECT u.id::text, u.username, COALESCE(u.email, ''),`+mfaStatusColumns+`,
+		        (SELECT COUNT(*) FROM mfa_backup_codes b WHERE b.user_id = u.id AND b.org_id = $1 AND NOT b.used) AS backup_codes_remaining
+		 FROM users u
+		 WHERE u.org_id = $1
+		 ORDER BY u.username
+		 LIMIT $2 OFFSET $3`, org.ID, limit, offset)
 	if err != nil {
 		respondError(c, s.logger, apperrors.Internal("Failed to list user MFA status", err))
 		return
@@ -398,12 +415,10 @@ func (s *Service) handleGetUserMFAStatus(c *gin.Context) {
 	id := c.Param("id")
 	var u UserMFAStatus
 	err = s.db.Pool.QueryRow(c.Request.Context(),
-		`SELECT m.user_id, m.username, u.email,
-		        m.totp_enabled, m.sms_enabled, m.email_otp_enabled,
-		        m.push_enabled, m.webauthn_enabled, m.backup_codes_remaining
-		 FROM user_mfa_methods m
-		 JOIN users u ON u.id = m.user_id AND u.org_id = $2
-		 WHERE m.user_id = $1`, id, org.ID,
+		`SELECT u.id::text, u.username, COALESCE(u.email, ''),`+mfaStatusColumns+`,
+		        (SELECT COUNT(*) FROM mfa_backup_codes b WHERE b.user_id = u.id AND b.org_id = $1 AND NOT b.used) AS backup_codes_remaining
+		 FROM users u
+		 WHERE u.org_id = $1 AND u.id::text = $2`, org.ID, id,
 	).Scan(&u.UserID, &u.Username, &u.Email,
 		&u.TOTPEnabled, &u.SMSEnabled, &u.EmailOTPEnabled,
 		&u.PushEnabled, &u.WebAuthnEnabled, &u.BackupCodesRemaining)
