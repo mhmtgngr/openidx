@@ -17,8 +17,9 @@ import (
 
 // mockOTPRedisClient is a mock implementation of OTPRedisClient for testing
 type mockOTPRedisClient struct {
-	data map[string]string
-	ttl  map[string]time.Duration
+	data   map[string]string
+	ttl    map[string]time.Duration
+	getErr error // when set, Get returns this error (simulates a backend failure)
 }
 
 func newMockOTPRedisClient() *mockOTPRedisClient {
@@ -35,6 +36,11 @@ func (m *mockOTPRedisClient) Set(ctx context.Context, key string, value interfac
 }
 
 func (m *mockOTPRedisClient) Get(ctx context.Context, key string) *redis.StringCmd {
+	if m.getErr != nil {
+		cmd := redis.NewStringCmd(ctx)
+		cmd.SetErr(m.getErr)
+		return cmd
+	}
 	if val, ok := m.data[key]; ok {
 		cmd := redis.NewStringCmd(ctx)
 		cmd.SetVal(val)
@@ -184,6 +190,23 @@ func TestOTPService_VerifyOTP(t *testing.T) {
 	otpKey := service.buildOTPKey(userID, OTPTypeEmail)
 	_, exists := redis.data[otpKey]
 	assert.False(t, exists, "OTP should be deleted after successful verification")
+}
+
+// TestOTPService_VerifyOTP_FailsClosedOnCounterError proves that when the
+// brute-force attempt counter cannot be read, VerifyOTP rejects the attempt
+// (returns false + error) instead of proceeding with an unenforced lockout.
+func TestOTPService_VerifyOTP_FailsClosedOnCounterError(t *testing.T) {
+	logger := zap.NewNop()
+	redis := newMockOTPRedisClient()
+	redis.getErr = fmt.Errorf("simulated redis outage")
+	config := DefaultOTPConfig()
+	mockProvider := NewMockProvider(logger)
+	service := NewOTPService(logger, redis, mockProvider, config)
+
+	valid, err := service.VerifyOTP(context.Background(), uuid.New(), OTPTypeEmail, "123456")
+	assert.False(t, valid, "verification must not succeed when the attempt counter is unreadable")
+	require.Error(t, err, "counter-read failure must fail closed, not proceed")
+	assert.Contains(t, err.Error(), "attempt count")
 }
 
 // Test OTP verification with wrong code

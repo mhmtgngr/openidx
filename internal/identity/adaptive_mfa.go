@@ -152,8 +152,15 @@ func (s *Service) AssessLoginRisk(ctx context.Context, lc *LoginContext) (*RiskA
 	}
 
 	// 6. Evaluate risk policies from database
+	policyLoadFailed := false
 	policies, err := s.GetEnabledRiskPolicies(ctx)
-	if err == nil {
+	if err != nil {
+		// The admin-configured policies may mandate MFA, step-up, or denial.
+		// Silently dropping them on a backend error would score a risky login
+		// as if no policy applied. Log it and degrade conservatively below.
+		s.logger.Error("Failed to load risk policies for login risk assessment; degrading to require MFA", zap.Error(err))
+		policyLoadFailed = true
+	} else {
 		for _, policy := range policies {
 			if s.evaluateRiskPolicy(lc, assessment, &policy) {
 				// Apply policy actions
@@ -194,6 +201,18 @@ func (s *Service) AssessLoginRisk(ctx context.Context, lc *LoginContext) (*RiskA
 	if assessment.DenyAccess {
 		assessment.RequiresMFA = false
 		assessment.Level = "critical"
+	}
+
+	// If the admin risk policies could not be evaluated (step 6 failed), we
+	// cannot confirm this login is low-risk — require a second factor rather
+	// than letting a heuristic-only "low" score wave it through without MFA.
+	// Bounded to requiring MFA (never a hard deny) so a transient DB error
+	// doesn't lock every user out.
+	if policyLoadFailed && !assessment.DenyAccess {
+		assessment.RequiresMFA = true
+		if assessment.Level == "low" {
+			assessment.Level = "medium"
+		}
 	}
 
 	s.logger.Info("Risk assessment completed",

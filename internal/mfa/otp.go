@@ -175,11 +175,16 @@ func (s *OTPService) VerifyOTP(ctx context.Context, userID uuid.UUID, otpType OT
 	attemptsKey := s.buildAttemptsKey(userID, otpType)
 	attempts, err := s.getAttemptCount(ctx, attemptsKey)
 	if err != nil {
-		s.logger.Error("Failed to get attempt count",
+		// Fail closed: without the attempt counter we cannot enforce the
+		// brute-force lockout, so proceeding would open an unlimited guessing
+		// window. Reject this attempt; the caller retries once the backend
+		// recovers. (A full Redis outage already fails the OTP fetch below;
+		// this covers an isolated counter-read error.)
+		s.logger.Error("Failed to get OTP attempt count; failing closed",
 			zap.String("user_id", userID.String()),
 			zap.Error(err),
 		)
-		// Continue anyway - don't block on error
+		return false, fmt.Errorf("unable to verify attempt count")
 	}
 
 	if attempts >= s.config.MaxAttempts {

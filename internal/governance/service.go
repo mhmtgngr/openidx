@@ -2741,8 +2741,12 @@ func (s *Service) EvaluateABACPolicies(ctx context.Context, req ABACEvaluationRe
 		ORDER BY priority DESC
 	`, req.ResourceType, req.ResourceID)
 	if err != nil {
-		s.logger.Error("Failed to query ABAC policies for evaluation", zap.Error(err))
-		return ABACEvaluationResult{Allowed: true, Reason: "policy evaluation error, fail-open"}
+		// Fail closed: a policy decision point that cannot read its policies must
+		// deny, not allow. Returning "allowed" here would tell any enforcement
+		// point consuming this decision to permit the action precisely when the
+		// evaluation could not run.
+		s.logger.Error("Failed to query ABAC policies for evaluation; failing closed", zap.Error(err))
+		return ABACEvaluationResult{Allowed: false, Reason: "policy evaluation error, failing closed"}
 	}
 	defer rows.Close()
 
