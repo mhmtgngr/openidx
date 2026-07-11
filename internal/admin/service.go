@@ -2667,12 +2667,17 @@ func (s *Service) GetCompliancePosture(ctx context.Context) (*CompliancePosture,
 		return nil, err
 	}
 
-	// MFA adoption: % of enabled users with at least one MFA method enrolled
+	// MFA adoption: % of enabled users with at least one MFA method enrolled,
+	// derived from the real enrollment tables via mfaStatusColumns. The old
+	// query counted a mfa_enrollments table no migration creates; its single
+	// QueryRow error (Warn-swallowed) also zeroed total_enabled, which dragged
+	// the password compliance rate below to 0% with it.
 	var totalEnabled, mfaEnrolled int
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1),
-			(SELECT COUNT(DISTINCT user_id) FROM mfa_enrollments WHERE status = 'active')
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE totp_enabled OR sms_enabled OR email_otp_enabled OR push_enabled OR webauthn_enabled)
+		FROM (SELECT `+mfaStatusColumns+`
+		      FROM users u WHERE u.enabled = true AND u.org_id = $1) m
 	`, org.ID).Scan(&totalEnabled, &mfaEnrolled)
 	if err != nil {
 		s.logger.Warn("Failed to query MFA adoption", zap.Error(err))
