@@ -175,44 +175,6 @@ func BenchmarkGenerateIDToken(b *testing.B) {
 	}
 }
 
-// BenchmarkValidateToken benchmarks JWT token validation using KeyManager
-func BenchmarkValidateToken(b *testing.B) {
-	svc, _, _ := createTestOAuthServiceForBench(b)
-	if svc == nil {
-		return
-	}
-
-	// Set up KeyManager with a test key
-	if svc.keyManager == nil {
-		// Create a simple test token if no key manager
-		b.Skip("Skipping: KeyManager not set up")
-		return
-	}
-
-	// Generate a valid test token
-	ctx := context.Background()
-	userID := "bench_validate_user_" + randomString(8)
-
-	// Create user
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
-	now := time.Now()
-	svc.db.Pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, password_hash, enabled, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, true, true, $5, $5)
-	`, userID, "validate_user", "validate@example.com", hashedPassword, now)
-
-	token, _ := svc.GenerateJWT(ctx, userID, "bench-client", "openid profile", 3600)
-
-	b.Cleanup(func() {
-		svc.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	})
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = svc.keyManager.ValidateJWT(token)
-	}
-}
-
 // BenchmarkValidateTokenSimple benchmarks simple JWT parsing and validation
 func BenchmarkValidateTokenSimple(b *testing.B) {
 	svc, _, _ := createTestOAuthServiceForBench(b)
