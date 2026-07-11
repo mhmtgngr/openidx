@@ -408,10 +408,75 @@ func (h *AgentAPIHandler) HandleEnrollOAuth(c *gin.Context) {
 	_ = c.ShouldBindJSON(&enrollReq)
 
 	creds := h.issueAgentCredentials(c.Request.Context(), enrollReq, "oauth", userID)
+
+	// Converge the two device registries: a user-bound enrollment means we know
+	// which OpenIDX user owns this machine, so mirror it into the IAM
+	// device-trust registry (known_devices) and link the agent row to it. This
+	// is the join point that lets device trust (IAM) and device compliance
+	// (Ziti posture) be reconciled per physical device. Best-effort: a failure
+	// here never blocks enrollment.
+	h.linkAgentToKnownDevice(c, creds.AgentID, creds.DeviceID, userID, enrollReq)
+
 	writeEnrollResponse(c, creds, "oauth")
 
 	h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
 	h.logAuditEventToDB(c.Request.Context(), "agent.enrolled", creds.AgentID, "success", "method=oauth user="+userID)
+}
+
+// linkAgentToKnownDevice upserts a known_devices row for a user-bound agent
+// enrollment and links the enrolled_agents row to it (migration v80's
+// known_device_id). The fingerprint is namespaced as "agent:<device_id>" so it
+// never collides with a browser fingerprint, and the row starts untrusted —
+// trust is granted separately by an admin or MDM. No-op (logged) when the
+// tenant can't be resolved or the DB is absent.
+func (h *AgentAPIHandler) linkAgentToKnownDevice(c *gin.Context, agentID, deviceID, userID string, req enrollRequest) {
+	if h.db == nil || h.db.Pool == nil {
+		return
+	}
+	ctx := c.Request.Context()
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		h.logger.Debug("agent device link: no tenant context; skipping known_devices mirror",
+			zap.String("agent_id", agentID))
+		return
+	}
+
+	fingerprint := "agent:" + deviceID
+	name := req.Hostname
+	if name == "" {
+		if p := normalizePlatform(req.Platform); p != "unknown" {
+			name = p + " agent"
+		} else {
+			name = "OpenIDX agent"
+		}
+	}
+	userAgent := strings.TrimSpace(strings.Join([]string{req.OS, req.Arch, req.Platform}, " "))
+
+	var knownDeviceID string
+	err = h.db.Pool.QueryRow(ctx, `
+		INSERT INTO known_devices (id, user_id, fingerprint, name, ip_address, user_agent, trusted, device_type, created_at, org_id)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, false, 'agent', NOW(), $6)
+		ON CONFLICT (user_id, fingerprint) DO UPDATE
+		SET name = EXCLUDED.name, ip_address = EXCLUDED.ip_address,
+		    user_agent = EXCLUDED.user_agent, last_seen_at = NOW(), org_id = EXCLUDED.org_id
+		RETURNING id`,
+		userID, fingerprint, name, c.ClientIP(), userAgent, org.ID,
+	).Scan(&knownDeviceID)
+	if err != nil {
+		h.logger.Warn("agent device link: known_devices upsert failed",
+			zap.String("agent_id", agentID), zap.Error(err))
+		return
+	}
+
+	if _, err := h.db.Pool.Exec(ctx,
+		`UPDATE enrolled_agents SET known_device_id = $1 WHERE agent_id = $2`,
+		knownDeviceID, agentID); err != nil {
+		h.logger.Warn("agent device link: enrolled_agents update failed",
+			zap.String("agent_id", agentID), zap.Error(err))
+		return
+	}
+	h.logger.Info("Linked enrolled agent to IAM known device",
+		zap.String("agent_id", agentID), zap.String("known_device_id", knownDeviceID))
 }
 
 // sha256Hex returns the lowercase hex-encoded SHA-256 digest of s.

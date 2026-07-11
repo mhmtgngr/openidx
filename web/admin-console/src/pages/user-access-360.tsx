@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft, Shield, Key, Network, Server, Laptop, Clock,
   Zap, AlertTriangle, Activity, Lock, Fingerprint, RefreshCw,
+  ShieldCheck, ShieldX, ShieldAlert, Link2, MonitorSmartphone, Ban,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -76,6 +77,58 @@ interface AccessMap {
   generated_at: string
 }
 
+interface DevicePostureSummary {
+  check_type: string
+  status: string
+  severity: string
+  reported_at?: string
+}
+
+interface DeviceIAM {
+  known_device_id: string
+  fingerprint: string
+  name: string
+  device_type: string
+  ip_address?: string
+  trusted: boolean
+  last_seen_at?: string
+}
+
+interface DeviceZiti {
+  agent_id: string
+  ziti_identity_id?: string
+  status: string
+  platform?: string
+  management_mode?: string
+  compliance_status: string
+  compliance_score: number
+  posture: DevicePostureSummary[]
+  last_seen_at?: string
+}
+
+interface UserDeviceEntry {
+  source: 'linked' | 'iam' | 'ziti'
+  iam?: DeviceIAM
+  ziti?: DeviceZiti
+}
+
+interface UserDevicesResponse {
+  user_id: string
+  username: string
+  devices: UserDeviceEntry[]
+  generated_at: string
+}
+
+interface DeviceRevokeResult {
+  agent_id: string
+  agent_revoked: boolean
+  ziti_identity_deleted: boolean
+  ziti_edge_sessions_terminated: number
+  ziti_api_sessions_terminated: number
+  known_device_untrusted: boolean
+  warnings?: string[]
+}
+
 interface KillSwitchResult {
   user_id: string
   username: string
@@ -99,6 +152,30 @@ const sourceBadgeClass: Record<string, string> = {
   guacamole: 'bg-purple-50 text-purple-700 border-purple-200',
 }
 
+function complianceBadge(status: string) {
+  switch (status) {
+    case 'compliant':
+      return { cls: 'bg-green-50 text-green-700 border-green-200', Icon: ShieldCheck }
+    case 'non_compliant':
+      return { cls: 'bg-red-50 text-red-700 border-red-200', Icon: ShieldX }
+    case 'grace_period':
+      return { cls: 'bg-yellow-50 text-yellow-700 border-yellow-200', Icon: ShieldAlert }
+    default:
+      return { cls: 'bg-slate-50 text-slate-600 border-slate-200', Icon: Shield }
+  }
+}
+
+function deviceSourceLabel(source: string): { label: string; cls: string } {
+  switch (source) {
+    case 'linked':
+      return { label: 'IAM + Ziti', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
+    case 'iam':
+      return { label: 'IAM only', cls: 'bg-slate-50 text-slate-600 border-slate-200' }
+    default:
+      return { label: 'Ziti only', cls: 'bg-green-50 text-green-700 border-green-200' }
+  }
+}
+
 export function UserAccess360Page() {
   const { id } = useParams<{ id: string }>()
   const queryClient = useQueryClient()
@@ -111,6 +188,27 @@ export function UserAccess360Page() {
     queryKey: ['user-access-map', id],
     queryFn: () => api.get<AccessMap>(`/api/v1/access/users/${id}/access-map`),
     enabled: !!id,
+  })
+
+  const { data: devicesData } = useQuery({
+    queryKey: ['user-devices', id],
+    queryFn: () => api.get<UserDevicesResponse>(`/api/v1/access/users/${id}/devices`),
+    enabled: !!id,
+  })
+
+  const revokeDeviceMutation = useMutation({
+    mutationFn: (agentId: string) =>
+      api.post<DeviceRevokeResult>(`/api/v1/access/users/${id}/devices/${agentId}/revoke`, { reason: 'admin action' }),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['user-devices', id] })
+      queryClient.invalidateQueries({ queryKey: ['user-access-map', id] })
+      const net = res.ziti_edge_sessions_terminated + res.ziti_api_sessions_terminated
+      toast({
+        title: 'Device revoked',
+        description: `Severed ${net} network session(s)${res.ziti_identity_deleted ? ', deleted Ziti identity' : ''}${res.known_device_untrusted ? ', untrusted the device' : ''}.`,
+      })
+    },
+    onError: () => toast({ title: 'Device revoke failed', variant: 'destructive' }),
   })
 
   const killMutation = useMutation({
@@ -439,6 +537,87 @@ export function UserAccess360Page() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Cross-pillar devices */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <MonitorSmartphone className="h-5 w-5" />Devices — IAM Trust ⇄ Ziti Compliance
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!devicesData?.devices?.length ? (
+            <p className="text-center py-6 text-muted-foreground">No devices registered for this user</p>
+          ) : (
+            <div className="space-y-3">
+              {devicesData.devices.map((d, i) => {
+                const comp = d.ziti ? complianceBadge(d.ziti.compliance_status) : null
+                const src = deviceSourceLabel(d.source)
+                const failing = (d.ziti?.posture || []).filter(p => p.status !== 'pass')
+                return (
+                  <div key={i} className="flex items-start justify-between gap-3 p-3 border rounded-lg">
+                    <div className="min-w-0 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Laptop className="h-4 w-4 shrink-0" />
+                        <span className="font-medium truncate">
+                          {d.iam?.name || d.ziti?.agent_id || 'device'}
+                        </span>
+                        <Badge variant="outline" className={`text-xs ${src.cls}`}>
+                          {d.source === 'linked' && <Link2 className="mr-1 h-3 w-3" />}{src.label}
+                        </Badge>
+                        {d.iam && (
+                          <Badge variant="outline" className={`text-xs ${d.iam.trusted
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                            {d.iam.trusted ? <ShieldCheck className="mr-1 h-3 w-3" /> : <Shield className="mr-1 h-3 w-3" />}
+                            {d.iam.trusted ? 'Trusted' : 'Untrusted'}
+                          </Badge>
+                        )}
+                        {comp && d.ziti && (
+                          <Badge variant="outline" className={`text-xs ${comp.cls}`}>
+                            <comp.Icon className="mr-1 h-3 w-3" />
+                            {d.ziti.compliance_status.replace('_', ' ')}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
+                        {d.ziti?.platform && <span>{d.ziti.platform}</span>}
+                        {d.ziti?.management_mode && <span>{d.ziti.management_mode}</span>}
+                        {d.iam?.ip_address && <span>{d.iam.ip_address}</span>}
+                        {d.ziti && <span>score {Math.round(d.ziti.compliance_score)}</span>}
+                        {d.ziti?.status && d.ziti.status !== 'active' && (
+                          <span className="text-red-600">agent {d.ziti.status}</span>
+                        )}
+                      </div>
+                      {failing.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {failing.map((p, j) => (
+                            <Badge key={j} variant="outline" className="text-xs bg-red-50 text-red-700 border-red-200">
+                              {p.check_type}: {p.status}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {d.ziti && d.ziti.status !== 'revoked' && (
+                      <Button variant="outline" size="sm" className="shrink-0 text-red-600 hover:text-red-700"
+                        disabled={revokeDeviceMutation.isPending}
+                        onClick={() => revokeDeviceMutation.mutate(d.ziti!.agent_id)}>
+                        <Ban className="mr-1 h-3.5 w-3.5" />Revoke
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground mt-3">
+            Devices marked <span className="font-medium">IAM + Ziti</span> are the same physical machine seen by both
+            pillars (agent enrolled while signed in). Revoke severs the device's Ziti sessions, deletes its network
+            identity, and untrusts it in IAM.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Cross-pillar activity */}
       <Card>

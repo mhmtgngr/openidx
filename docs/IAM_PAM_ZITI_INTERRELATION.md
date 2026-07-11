@@ -95,6 +95,54 @@ requests) and `network` (Ziti linked/enrolled, device count, device trust)
 alongside the IAM roles/groups/apps — the **My Access** page shows all three
 pillars with links into *My Privileged Access* and *My Devices*.
 
+## The device seam (IAM trust ⇄ Ziti compliance)
+
+A user's *device* is where IAM and Ziti each hold half the picture, historically
+in two disjoint registries:
+
+- **IAM `known_devices`** — browser/endpoint fingerprints with a `trusted`
+  flag, written by the portal and the login risk engine.
+- **Ziti `enrolled_agents`** — endpoint agents, each with a Ziti *Device*
+  identity (`ziti_identity_id`) and posture/compliance reporting.
+
+Nothing linked the `known_devices` row and the `enrolled_agent` running on the
+same physical machine, so device *trust* (IAM) and device *compliance* (Ziti)
+could never be reconciled for one device.
+
+**Convergence.** Migration v80 adds `enrolled_agents.known_device_id` (FK →
+`known_devices`, `ON DELETE SET NULL`). The user-bound (OAuth) agent-enrollment
+path (`internal/access/agent_api.go`, `linkAgentToKnownDevice`) now upserts a
+`known_devices` row for the enrolling device (fingerprint `agent:<device_id>`,
+`device_type='agent'`) and links it. Token-enrolled and legacy agents keep
+`known_device_id` NULL.
+
+**Correlation surface.** `GET /api/v1/access/users/:id/devices` (admin) returns
+the user's devices from both registries, each tagged `source`:
+
+| source | meaning |
+|---|---|
+| `linked` | same physical machine in both pillars (agent enrolled while signed in) |
+| `iam` | browser / known device with no agent |
+| `ziti` | agent with no linked known device (token-enrolled or legacy) |
+
+Each Ziti-side entry carries its latest posture result per check. The admin
+**Access 360** page renders this as a Devices card showing IAM trust and Ziti
+compliance side by side; `GET /api/v1/access/my-devices` gives the user the
+same correlation for their own devices (surfaced in **My Devices** as *My
+Endpoint Agents* with live compliance).
+
+**Device-scoped revoke.** `POST /api/v1/access/users/:id/devices/:agentId/revoke`
+severs one device across pillars: terminates its Ziti edge + API sessions,
+deletes its Ziti Device identity, marks the `enrolled_agent` revoked, and
+untrusts the linked IAM known device — the device-granularity analog of the
+user kill switch.
+
+*Known follow-ups (documented, not yet built):* device trust granted through
+the identity approval workflow reaches Ziti only on the ≤5-min reconcile (the
+admin console path triggers it immediately); Ziti agent compliance does not yet
+feed back into IAM device trust or the risk score; and PAM privileged sessions
+still record their user but not their device.
+
 ## Design rules these seams follow
 
 - **One store, JOINs not integrations** — cross-pillar reads are scoped SQL

@@ -59,6 +59,25 @@ interface Device {
   created_at: string
 }
 
+interface DevicePostureSummary {
+  check_type: string
+  status: string
+  severity: string
+}
+
+interface CorrelatedDevice {
+  source: 'linked' | 'iam' | 'ziti'
+  iam?: { name: string; trusted: boolean; device_type: string }
+  ziti?: {
+    agent_id: string
+    status: string
+    platform?: string
+    compliance_status: string
+    compliance_score: number
+    posture: DevicePostureSummary[]
+  }
+}
+
 export function MyDevicesPage() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
@@ -81,6 +100,13 @@ export function MyDevicesPage() {
   })
 
   const devices = devicesData || []
+
+  // Correlated endpoint agents (Ziti compliance/posture) for the current user.
+  const { data: correlatedData } = useQuery({
+    queryKey: ['my-correlated-devices'],
+    queryFn: () => api.get<{ devices: CorrelatedDevice[] }>('/api/v1/access/my-devices'),
+  })
+  const endpointAgents = (correlatedData?.devices || []).filter(d => d.ziti)
 
   // Register device mutation
   const registerMutation = useMutation({
@@ -290,6 +316,60 @@ export function MyDevicesPage() {
               )}
             </CardContent>
           )}
+        </Card>
+      )}
+
+      {/* Endpoint Agents — Ziti compliance/posture for the user's enrolled agents */}
+      {endpointAgents.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Network className="h-4 w-4 text-green-600" />My Endpoint Agents
+            </CardTitle>
+            <CardDescription>
+              Zero-trust network agents running on your devices, with their live compliance posture.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {endpointAgents.map((d, i) => {
+              const z = d.ziti!
+              const failing = (z.posture || []).filter(p => p.status !== 'pass')
+              const compliant = z.compliance_status === 'compliant'
+              return (
+                <div key={i} className="flex items-start justify-between gap-3 p-3 rounded-lg bg-muted/40">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium truncate">{d.iam?.name || z.agent_id}</span>
+                      {z.platform && <Badge variant="secondary" className="text-xs">{z.platform}</Badge>}
+                      <Badge variant="outline" className={`text-xs ${compliant
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : z.compliance_status === 'non_compliant'
+                          ? 'bg-red-50 text-red-700 border-red-200'
+                          : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>
+                        {compliant ? <ShieldCheck className="mr-1 h-3 w-3" /> : <ShieldX className="mr-1 h-3 w-3" />}
+                        {z.compliance_status.replace('_', ' ')}
+                      </Badge>
+                      {d.source === 'linked' && (
+                        <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          linked to trusted device
+                        </Badge>
+                      )}
+                    </div>
+                    {failing.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {failing.map((p, j) => (
+                          <Badge key={j} variant="outline" className="text-xs bg-red-50 text-red-700 border-red-200">
+                            {p.check_type}: {p.status}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-sm font-semibold shrink-0">{Math.round(z.compliance_score)}%</span>
+                </div>
+              )
+            })}
+          </CardContent>
         </Card>
       )}
 

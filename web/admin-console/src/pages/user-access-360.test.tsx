@@ -69,6 +69,27 @@ const accessMap = {
   generated_at: '2026-07-11T10:32:00Z',
 }
 
+const userDevices = {
+  user_id: 'u-1',
+  username: 'alice',
+  devices: [
+    {
+      source: 'linked',
+      iam: { known_device_id: 'kd-1', fingerprint: 'agent:device-1', name: 'Alice Laptop', device_type: 'agent', trusted: true },
+      ziti: {
+        agent_id: 'agent-1', ziti_identity_id: 'zid-1', status: 'active', platform: 'linux',
+        management_mode: 'device_owner', compliance_status: 'non_compliant', compliance_score: 55,
+        posture: [{ check_type: 'disk_encryption', status: 'fail', severity: 'high' }],
+      },
+    },
+    {
+      source: 'iam',
+      iam: { known_device_id: 'kd-2', fingerprint: 'browserhash', name: 'Alice Browser', device_type: 'desktop', trusted: false },
+    },
+  ],
+  generated_at: '2026-07-11T10:32:00Z',
+}
+
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -88,6 +109,7 @@ describe('UserAccess360Page', () => {
     document.body.innerHTML = ''
     vi.mocked(api.get).mockImplementation((url: string) => {
       if (url.includes('/access-map')) return Promise.resolve(accessMap) as ReturnType<typeof api.get>
+      if (url.includes('/devices')) return Promise.resolve(userDevices) as ReturnType<typeof api.get>
       return Promise.resolve({}) as ReturnType<typeof api.get>
     })
   })
@@ -123,6 +145,38 @@ describe('UserAccess360Page', () => {
     renderPage()
     expect(await screen.findByText('circuit.created')).toBeInTheDocument()
     expect(screen.getByText('session.started')).toBeInTheDocument()
+  })
+
+  it('correlates devices across IAM trust and Ziti compliance', async () => {
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'alice' })).toBeInTheDocument()
+
+    // The linked device shows the IAM+Ziti source badge, IAM trust, Ziti
+    // compliance, and the failing posture check. ("IAM + Ziti" also appears in
+    // the footnote, so assert at least one.)
+    expect(screen.getAllByText('IAM + Ziti').length).toBeGreaterThan(0)
+    expect(screen.getByText('Alice Laptop')).toBeInTheDocument()
+    expect(screen.getByText('Trusted')).toBeInTheDocument()
+    expect(screen.getByText('non compliant')).toBeInTheDocument()
+    expect(screen.getByText(/disk_encryption: fail/)).toBeInTheDocument()
+
+    // The IAM-only browser device is present with no revoke button of its own.
+    expect(screen.getByText('IAM only')).toBeInTheDocument()
+    expect(screen.getByText('Alice Browser')).toBeInTheDocument()
+  })
+
+  it('revokes a device via the device revoke endpoint', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'alice' })).toBeInTheDocument()
+
+    // Only the Ziti-backed (linked) device offers a Revoke button.
+    const revokeButtons = screen.getAllByRole('button', { name: /revoke/i })
+    await user.click(revokeButtons[0])
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/v1/access/users/u-1/devices/agent-1/revoke',
+      expect.objectContaining({ reason: expect.any(String) }),
+    )
   })
 
   it('opens the kill switch dialog and posts to the kill-switch endpoint', async () => {

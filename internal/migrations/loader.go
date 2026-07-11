@@ -565,5 +565,12 @@ func allMigrations() []*Migration {
 			UpSQL:       oauthSigningKeysUp,
 			DownSQL:     oauthSigningKeysDown,
 		},
+		{
+			Version:     80,
+			Name:        "enrolled_agent_device_link",
+			Description: "Add enrolled_agents.known_device_id FK to converge the two per-user device registries. known_devices (IAM device-trust: fingerprints + trusted flag) and enrolled_agents (Ziti endpoint agents with posture/compliance) were disjoint, so device trust and device compliance could never be reconciled for one physical device. The user-bound (OAuth) agent-enrollment path now upserts+links a known_devices row; token-enrolled and legacy agents keep known_device_id NULL. ON DELETE SET NULL. Idempotent.",
+			UpSQL:       enrolledAgentDeviceLinkUp,
+			DownSQL:     enrolledAgentDeviceLinkDown,
+		},
 	}
 }

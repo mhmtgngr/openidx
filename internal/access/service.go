@@ -435,6 +435,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.GET("/users/:id/access-map", adminOnly, svc.handleUserAccessMap)
 		api.POST("/users/:id/kill-switch", adminOnly, svc.handleUserKillSwitch)
 
+		// Cross-pillar device correlation: a user's devices with IAM trust +
+		// Ziti compliance/posture side by side, and a device-scoped revoke.
+		api.GET("/users/:id/devices", adminOnly, svc.handleUserDevices)
+		api.POST("/users/:id/devices/:agentId/revoke", adminOnly, svc.handleRevokeUserDevice)
+		// Self-service: the caller's own correlated devices (compliance visibility).
+		api.GET("/my-devices", svc.handleMyDevices)
+
 		// Phase 3: Posture checks (definitions are admin-managed; device
 		// self-report + evaluate are data-plane and stay open).
 		api.GET("/ziti/posture/checks", svc.handleListPostureChecks)
