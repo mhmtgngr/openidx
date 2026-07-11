@@ -327,7 +327,11 @@ func (s *Service) evaluateCC6LogicalAccess(ctx context.Context, startDate, endDa
 	var totalEnabledUsers, mfaTotpUsers, webauthnUsers int
 	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalEnabledUsers)
 	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_totp WHERE enabled = true AND org_id = $1`, org.ID).Scan(&mfaTotpUsers)
-	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM webauthn_credentials`).Scan(&webauthnUsers)
+	// WebAuthn credentials live in mfa_webauthn (where the wired registration
+	// path writes) — not the phantom `webauthn_credentials` table, which no
+	// migration creates, so the old query errored and left webauthnUsers=0,
+	// under-counting MFA adoption. Org-scoped like its mfa_totp sibling above.
+	s.db.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM mfa_webauthn WHERE org_id = $1`, org.ID).Scan(&webauthnUsers)
 
 	mfaUsers := mfaTotpUsers + webauthnUsers
 	assessment.Evidence = append(assessment.Evidence,
@@ -768,6 +772,25 @@ func (s *Service) evaluateA6Organization(ctx context.Context, startDate, endDate
 }
 
 // evaluateA9AccessControl checks MFA, password policies, and session management.
+// countMFAEnabledUsers returns the number of distinct users in the org with at
+// least one MFA method enrolled — a TOTP secret (mfa_totp) or a WebAuthn
+// credential (mfa_webauthn). WebAuthn credentials live in mfa_webauthn, where
+// the wired registration path writes; the old queries read a phantom
+// `webauthn_credentials` table that no migration creates, which errored and
+// silently under-counted MFA adoption (producing the deterministic "MFA
+// adoption 0.0%" ISO A.9 finding on every install).
+func (s *Service) countMFAEnabledUsers(ctx context.Context, orgID string) int {
+	var n int
+	s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT user_id) FROM (
+			SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
+			UNION
+			SELECT user_id FROM mfa_webauthn WHERE org_id = $1
+		) mfa_combined
+	`, orgID).Scan(&n)
+	return n
+}
+
 func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDate time.Time) ControlAssessment {
 	assessment := ControlAssessment{
 		ControlID: "A.9",
@@ -779,15 +802,9 @@ func (s *Service) evaluateA9AccessControl(ctx context.Context, startDate, endDat
 	org, _ := orgctx.From(ctx)
 
 	// MFA adoption check
-	var totalUsers, mfaUsers int
+	var totalUsers int
 	s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1`, org.ID).Scan(&totalUsers)
-	s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT user_id) FROM (
-			SELECT user_id FROM mfa_totp WHERE enabled = true AND org_id = $1
-			UNION
-			SELECT user_id FROM webauthn_credentials
-		) mfa_combined
-	`, org.ID).Scan(&mfaUsers)
+	mfaUsers := s.countMFAEnabledUsers(ctx, org.ID)
 
 	assessment.Evidence = append(assessment.Evidence,
 		fmt.Sprintf("MFA enabled users: %d/%d", mfaUsers, totalUsers))

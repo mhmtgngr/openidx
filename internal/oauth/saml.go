@@ -641,7 +641,7 @@ func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DISTINCT g.name
 		FROM groups g
-		INNER JOIN user_groups ug ON ug.group_id = g.id
+		INNER JOIN group_memberships ug ON ug.group_id = g.id
 		WHERE ug.user_id = $1 AND g.org_id = $2
 	`, userID, org.ID)
 	if err != nil {

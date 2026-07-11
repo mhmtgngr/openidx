@@ -550,12 +550,18 @@ func (s *Service) getCryptographyMetrics(ctx context.Context) CryptographyMetric
 			}
 		}
 
+		// Key rotations are recorded as audit events — the old query hit a
+		// phantom `key_rotation_events` table (no migration creates it) and
+		// always yielded the zero time with the error discarded.
+		org, _ := orgctx.From(ctx)
 		var lastRotation time.Time
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(created_at), '1970-01-01'::timestamp)
-			FROM key_rotation_events
-			WHERE status = 'completed'
-		`).Scan(&lastRotation)
+		if err := s.db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(MAX(timestamp), '1970-01-01'::timestamptz)
+			FROM audit_events
+			WHERE event_type = 'key_rotation' AND org_id = $1
+		`, org.ID).Scan(&lastRotation); err != nil {
+			s.logger.Warn("key-rotation metric query failed", zap.Error(err))
+		}
 		metrics.LastKeyRotation = lastRotation
 	}
 
@@ -727,43 +733,48 @@ func (s *Service) getConsentMetrics(ctx context.Context) ConsentMetrics {
 	metrics := ConsentMetrics{
 		ComplianceStatus: "compliant",
 	}
+	org, _ := orgctx.From(ctx)
 
 	if s.db != nil && s.db.Pool != nil {
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM consent_records
-		`).Scan(&metrics.TotalConsentRecords)
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM consent_records
-			WHERE status = 'active'
-		`).Scan(&metrics.ActiveConsents)
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM consent_records
-			WHERE status = 'withdrawn'
-		`).Scan(&metrics.WithdrawnConsents)
-
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(COUNT(*), 0)
-			FROM consent_records
-			WHERE status = 'pending'
-		`).Scan(&metrics.PendingConsents)
+		// Consent records live in user_consents — the table the routed
+		// self-service (/users/me/privacy/consents) and admin privacy
+		// endpoints actually write. The old queries hit a phantom
+		// `consent_records` table, every Scan error was discarded, and the
+		// zero value forced ComplianceStatus to non_compliant on every
+		// install regardless of real consent state.
+		var queryErr error
+		scan := func(dst interface{}, q string, args ...interface{}) {
+			if err := s.db.Pool.QueryRow(ctx, q, args...).Scan(dst); err != nil && queryErr == nil {
+				queryErr = err
+			}
+		}
+		scan(&metrics.TotalConsentRecords,
+			`SELECT COUNT(*) FROM user_consents WHERE org_id = $1`, org.ID)
+		scan(&metrics.ActiveConsents,
+			`SELECT COUNT(*) FROM user_consents WHERE granted = true AND revoked_at IS NULL AND org_id = $1`, org.ID)
+		scan(&metrics.WithdrawnConsents,
+			`SELECT COUNT(*) FROM user_consents WHERE revoked_at IS NOT NULL AND org_id = $1`, org.ID)
+		// user_consents has no pending state: a consent either exists
+		// (granted/revoked) or does not.
+		metrics.PendingConsents = 0
 
 		var lastUpdate time.Time
-		s.db.Pool.QueryRow(ctx, `
-			SELECT COALESCE(MAX(updated_at), '1970-01-01'::timestamp)
-			FROM consent_records
-		`).Scan(&lastUpdate)
+		scan(&lastUpdate, `
+			SELECT COALESCE(MAX(COALESCE(revoked_at, granted_at, created_at)), '1970-01-01'::timestamptz)
+			FROM user_consents WHERE org_id = $1`, org.ID)
 		metrics.LastConsentUpdate = lastUpdate
+
+		if queryErr != nil {
+			// Fail visibly: report the metric as unknown instead of letting
+			// an errored query masquerade as a non_compliant finding.
+			s.logger.Warn("consent metrics query failed", zap.Error(queryErr))
+			metrics.ComplianceStatus = "unknown"
+			return metrics
+		}
 	}
 
 	if metrics.TotalConsentRecords == 0 {
 		metrics.ComplianceStatus = "non_compliant"
-	} else if metrics.PendingConsents > 0 {
-		metrics.ComplianceStatus = "partial"
 	}
 
 	return metrics
@@ -936,76 +947,6 @@ func determineComplianceStatus(value, compliantThreshold, partialThreshold float
 }
 
 // HTTP Handlers for standard (non-detailed) compliance reports
-
-// handleGenerateSOC2Report handles POST requests to generate a standard SOC 2 compliance report
-func (s *Service) handleGenerateSOC2Report(c *gin.Context) {
-	var req struct {
-		StartDate string `json:"start_date"`
-		EndDate   string `json:"end_date"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request body: " + err.Error()})
-		return
-	}
-
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start_date format, expected YYYY-MM-DD"})
-		return
-	}
-
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end_date format, expected YYYY-MM-DD"})
-		return
-	}
-	endDate = endDate.Add(24*time.Hour - time.Second)
-
-	report, err := s.GenerateSOC2Report(c.Request.Context(), startDate, endDate, "system")
-	if err != nil {
-		s.logger.Error("Failed to generate SOC 2 report", zap.Error(err))
-		c.JSON(500, gin.H{"error": "failed to generate report"})
-		return
-	}
-
-	c.JSON(201, report)
-}
-
-// handleGenerateISO27001Report handles POST requests to generate a standard ISO 27001 compliance report
-func (s *Service) handleGenerateISO27001Report(c *gin.Context) {
-	var req struct {
-		StartDate string `json:"start_date"`
-		EndDate   string `json:"end_date"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "invalid request body: " + err.Error()})
-		return
-	}
-
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid start_date format, expected YYYY-MM-DD"})
-		return
-	}
-
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "invalid end_date format, expected YYYY-MM-DD"})
-		return
-	}
-	endDate = endDate.Add(24*time.Hour - time.Second)
-
-	report, err := s.GenerateISO27001Report(c.Request.Context(), startDate, endDate, "system")
-	if err != nil {
-		s.logger.Error("Failed to generate ISO 27001 report", zap.Error(err))
-		c.JSON(500, gin.H{"error": "failed to generate report"})
-		return
-	}
-
-	c.JSON(201, report)
-}
 
 // handleGenerateGDPRReport handles POST requests to generate a standard GDPR compliance report
 func (s *Service) handleGenerateGDPRReport(c *gin.Context) {
