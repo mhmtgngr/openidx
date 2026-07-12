@@ -363,7 +363,7 @@ func (s *Service) handlePamImportRDM(c *gin.Context) {
 		if item.EntryType == "group" {
 			if _, err := ensureFolder(splitRDMGroupPath(item.FolderPath)); err != nil {
 				s.logger.Warn("handlePamImportRDM: folder create failed",
-					zap.String("path", item.FolderPath), zap.Error(err))
+					zap.String("path", scrubLogValue(item.FolderPath)), zap.Error(err))
 				result.Skipped = append(result.Skipped, PamImportSkip{Name: item.Name, Reason: "folder create failed"})
 			}
 			continue
@@ -376,7 +376,7 @@ func (s *Service) handlePamImportRDM(c *gin.Context) {
 		folderID, err := ensureFolder(splitRDMGroupPath(item.FolderPath))
 		if err != nil {
 			s.logger.Warn("handlePamImportRDM: folder create failed",
-				zap.String("path", item.FolderPath), zap.Error(err))
+				zap.String("path", scrubLogValue(item.FolderPath)), zap.Error(err))
 			result.Skipped = append(result.Skipped, PamImportSkip{Name: item.Name, Reason: "folder create failed"})
 			continue
 		}
@@ -388,7 +388,7 @@ func (s *Service) handlePamImportRDM(c *gin.Context) {
 			vaultSecretID, err = s.storePamSecret(ctx, entryID, item.EntryType, item.Name, item.Secret, userID)
 			if err != nil {
 				s.logger.Warn("handlePamImportRDM: secret store failed",
-					zap.String("name", item.Name), zap.Error(err))
+					zap.String("name", scrubLogValue(item.Name)), zap.Error(err))
 				result.Skipped = append(result.Skipped, PamImportSkip{Name: item.Name, Reason: "secret store failed; entry imported without secret"})
 			} else {
 				result.SecretsStored++
@@ -415,7 +415,7 @@ func (s *Service) handlePamImportRDM(c *gin.Context) {
 				}
 			}
 			s.logger.Warn("handlePamImportRDM: entry insert failed",
-				zap.String("name", item.Name), zap.Error(err))
+				zap.String("name", scrubLogValue(item.Name)), zap.Error(err))
 			result.Skipped = append(result.Skipped, PamImportSkip{Name: item.Name, Reason: "entry insert failed"})
 			continue
 		}

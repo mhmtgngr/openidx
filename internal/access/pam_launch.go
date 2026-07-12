@@ -226,7 +226,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 	target, err := s.resolvePamLaunchTarget(ctx, org.ID, &entry)
 	if err != nil {
 		s.logger.Warn("handlePamConnect: credential resolution failed",
-			zap.String("entry_id", entryID), zap.Error(err))
+			zap.String("entry_id", scrubLogValue(entryID)), zap.Error(err))
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
@@ -268,7 +268,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 	connID, err := s.ensurePamGuacConnection(ctx, org.ID, &entry, typeInfo.Protocol, params)
 	if err != nil {
 		s.logger.Error("handlePamConnect: guacamole connection failed",
-			zap.String("entry_id", entryID), zap.Error(err))
+			zap.String("entry_id", scrubLogValue(entryID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare session"})
 		return
 	}
@@ -487,7 +487,7 @@ func (s *Service) decidePamRequest(c *gin.Context, newStatus, auditAction string
 		newStatus, approverID, requestID, org.ID)
 	if err != nil {
 		s.logger.Error("decidePamRequest: update failed",
-			zap.String("request_id", requestID), zap.Error(err))
+			zap.String("request_id", scrubLogValue(requestID)), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update request"})
 		return
 	}
