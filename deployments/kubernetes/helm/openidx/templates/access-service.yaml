@@ -65,6 +65,30 @@ spec:
             - name: ZITI_IDENTITY_DIR
               value: "/ziti"
             {{- end }}
+            {{- if .Values.pamBroker.enabled }}
+            # PAM dedicated brokers: route reach_mode=direct → pam-guacamole,
+            # reach_mode=ziti → pam-guacamole-ziti; recordings on the shared PVC.
+            - name: GUACAMOLE_URL
+              value: "http://{{ include "openidx.fullname" . }}-pam-guacamole:8080/guacamole"
+            - name: GUACAMOLE_ADMIN_USER
+              value: "guacadmin"
+            - name: GUACAMOLE_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openidx.fullname" . }}-secrets
+                  key: GUACAMOLE_ADMIN_PASSWORD
+            - name: GUACAMOLE_ZITI_URL
+              value: "http://{{ include "openidx.fullname" . }}-pam-guacamole-ziti:8080/guacamole"
+            - name: GUACAMOLE_ZITI_ADMIN_USER
+              value: "guacadmin"
+            - name: GUACAMOLE_ZITI_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openidx.fullname" . }}-secrets
+                  key: GUACAMOLE_ZITI_ADMIN_PASSWORD
+            - name: GUACAMOLE_RECORDING_PATH
+              value: "/recordings"
+            {{- end }}
             {{- if .Values.serviceTLS.enabled }}
             - name: TLS_ENABLED
               value: "true"
@@ -112,6 +136,10 @@ spec:
               mountPath: /ziti
               readOnly: false
             {{- end }}
+            {{- if .Values.pamBroker.enabled }}
+            - name: pam-recordings
+              mountPath: /recordings
+            {{- end }}
             {{- if .Values.serviceTLS.enabled }}
             - name: tls-certs
               mountPath: /tls
@@ -131,6 +159,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- end }}
+        {{- if .Values.pamBroker.enabled }}
+        - name: pam-recordings
+          persistentVolumeClaim:
+            claimName: {{ include "openidx.fullname" . }}-pam-recordings
         {{- end }}
         {{- if .Values.serviceTLS.enabled }}
         - name: tls-certs
