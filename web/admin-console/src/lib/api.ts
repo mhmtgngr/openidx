@@ -470,7 +470,18 @@ export const api = {
       api.get<{ sessions: PamEntrySession[] }>('/api/v1/access/pam/sessions'),
     importRDM: (data: string, folderId?: string) =>
       api.post<PamImportResult>('/api/v1/access/pam/import/rdm', { data, folder_id: folderId }),
+    brokerStatus: () =>
+      api.get<PamBrokerStatus>('/api/v1/access/pam/broker/status'),
+    enableZiti: (id: string) =>
+      api.post<{ reach_mode: string; ziti_service_name?: string; ziti_intercept_port?: number }>(`/api/v1/access/pam/entries/${id}/ziti/enable`),
+    disableZiti: (id: string) =>
+      api.post<{ reach_mode: string }>(`/api/v1/access/pam/entries/${id}/ziti/disable`),
   },
+}
+
+export interface PamBrokerStatus {
+  available: boolean
+  reach_modes: string[]
 }
 
 // PAM connection-manager types
@@ -513,6 +524,8 @@ export interface PamEntry {
   allow_reveal: boolean
   require_approval: boolean
   record_session: boolean
+  reach_mode: string
+  ziti_enabled: boolean
   favorite: boolean
   last_connected_at?: string
   connect_count: number

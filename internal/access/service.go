@@ -585,6 +585,13 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
 		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)
 
+		// PAM OpenZiti reach mode — per-entry zero-trust target hop toggle,
+		// broker capability probe, and the tunneler binding list.
+		api.GET("/pam/broker/status", svc.handlePamBrokerStatus)
+		api.GET("/pam/broker/ziti-bindings", svc.requireAdminRole(), svc.handlePamZitiBindings)
+		api.POST("/pam/entries/:id/ziti/enable", svc.requireAdminRole(), svc.handlePamEnableZiti)
+		api.POST("/pam/entries/:id/ziti/disable", svc.requireAdminRole(), svc.handlePamDisableZiti)
+
 		// Temporary access links for support/vendor access
 		// PAM vendor access to internal SSH/RDP/VNC hosts is a privileged
 		// operation — gate management to admins, matching the guacamole PAM

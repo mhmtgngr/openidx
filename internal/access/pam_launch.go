@@ -131,6 +131,20 @@ type pamLaunchEntry struct {
 	GuacConnectionID  string
 	RequireApproval   bool
 	RecordSession     bool
+	ReachMode         string
+	ZitiInterceptPort int
+}
+
+// dialTarget returns the host:port guacd should open the protocol connection
+// to. In ziti reach mode this is the broker's loopback intercept (the
+// ziti-tunnel carries it over the overlay to the edge-router-hosted target);
+// in direct mode it is the entry's real target. Falls back to the real target
+// if a ziti entry somehow has no intercept port assigned.
+func (e *pamLaunchEntry) dialTarget() (host string, port int) {
+	if e.ReachMode == "ziti" && e.ZitiInterceptPort > 0 {
+		return "127.0.0.1", e.ZitiInterceptPort
+	}
+	return e.Hostname, e.Port
 }
 
 // handlePamConnect — POST /pam/entries/:id/connect (connect grant or admin).
@@ -154,7 +168,8 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 		SELECT id, name, entry_type, COALESCE(hostname,''), COALESCE(port,0),
 		       COALESCE(username,''), COALESCE(domain,''), COALESCE(url,''), settings,
 		       COALESCE(vault_secret_id::text,''), COALESCE(credential_entry_id::text,''),
-		       COALESCE(guacamole_connection_id,''), require_approval, record_session
+		       COALESCE(guacamole_connection_id,''), require_approval, record_session,
+		       reach_mode, COALESCE(ziti_intercept_port,0)
 		  FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, org.ID)
 
 	var entry pamLaunchEntry
@@ -164,6 +179,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 		&entry.Username, &entry.Domain, &entry.URL, &settingsJSON,
 		&entry.VaultSecretID, &entry.CredentialEntryID,
 		&entry.GuacConnectionID, &entry.RequireApproval, &entry.RecordSession,
+		&entry.ReachMode, &entry.ZitiInterceptPort,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
@@ -218,7 +234,16 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 	}
 
 	if s.guacamoleClient == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Guacamole is not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "no session broker is configured", "code": "broker_unconfigured"})
+		return
+	}
+	// A ziti-reach entry needs a live overlay to carry the target hop; without
+	// it the loopback intercept dials nothing. Fail closed with a clear code.
+	if entry.ReachMode == "ziti" && s.ziti() == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "OpenZiti overlay is unavailable for this Ziti-reach connection",
+			"code":  "ziti_unavailable"})
 		return
 	}
 
@@ -317,15 +342,19 @@ func decodePamSettings(raw []byte) map[string]interface{} {
 // deleted inside Guacamole — is transparently recreated.
 func (s *Service) ensurePamGuacConnection(ctx context.Context, orgID string, entry *pamLaunchEntry, protocol string, params map[string]string) (string, error) {
 	name := "pam-" + entry.ID
+	// In ziti reach mode guacd dials the broker's loopback intercept, which the
+	// ziti-tunnel carries over the overlay to the target; in direct mode it dials
+	// the real target. The injected credential/params are identical either way.
+	dialHost, dialPort := entry.dialTarget()
 	connID := entry.GuacConnectionID
 	if connID != "" {
-		if err := s.guacamoleClient.UpdateConnection(connID, name, protocol, entry.Hostname, entry.Port, params); err == nil {
+		if err := s.guacamoleClient.UpdateConnection(connID, name, protocol, dialHost, dialPort, params); err == nil {
 			return connID, nil
 		}
 		s.logger.Warn("ensurePamGuacConnection: update failed; recreating",
 			zap.String("entry_id", entry.ID), zap.String("guac_conn_id", connID))
 	}
-	newID, err := s.guacamoleClient.CreateConnection(name, protocol, entry.Hostname, entry.Port, params)
+	newID, err := s.guacamoleClient.CreateConnection(name, protocol, dialHost, dialPort, params)
 	if err != nil {
 		return "", err
 	}

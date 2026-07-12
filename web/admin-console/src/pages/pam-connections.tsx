@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Folder, FolderPlus, Plus, Search, Star, Play, Eye, Trash2, Pencil, Upload,
-  Server, Terminal, Monitor, Globe, KeyRound, StickyNote, CreditCard, ShieldCheck,
+  Server, Terminal, Monitor, Globe, KeyRound, StickyNote, CreditCard, ShieldCheck, Shield,
   Send, Copy, Lock,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -190,6 +190,27 @@ export function PamConnectionsPage() {
     },
   })
 
+  const { data: broker } = useQuery({
+    queryKey: ['pam-broker-status'],
+    queryFn: () => api.pam.brokerStatus(),
+  })
+  const zitiAvailable = broker?.reach_modes?.includes('ziti') ?? false
+
+  const toggleZiti = useMutation({
+    mutationFn: (entry: PamEntry) =>
+      entry.ziti_enabled ? api.pam.disableZiti(entry.id) : api.pam.enableZiti(entry.id),
+    onSuccess: (res: { reach_mode: string }) => {
+      invalidate()
+      toast({
+        title: res.reach_mode === 'ziti' ? 'Ziti reach enabled' : 'Ziti reach disabled',
+        description: res.reach_mode === 'ziti'
+          ? 'This connection now reaches its target over the OpenZiti overlay — no inbound target exposure.'
+          : 'Reverted to direct reach.',
+      })
+    },
+    onError: (e: Error) => toast({ title: 'Ziti toggle failed', description: e.message, variant: 'destructive' }),
+  })
+
   const reveal = useMutation({
     mutationFn: () => api.pam.reveal(revealFor!.id, revealReason),
     onSuccess: (res: { value: string }) => setRevealedValue(res.value),
@@ -330,6 +351,7 @@ export function PamConnectionsPage() {
                           {entry.require_approval && <Badge variant="outline" title="Requires approval"><Lock className="h-3 w-3" /></Badge>}
                           {entry.record_session && <Badge variant="outline">rec</Badge>}
                           {entry.has_secret && <Badge variant="outline" title="Vaulted secret"><KeyRound className="h-3 w-3" /></Badge>}
+                          {entry.ziti_enabled && <Badge className="bg-emerald-100 text-emerald-800" title="Reaches target over the OpenZiti overlay (zero-trust)"><Shield className="h-3 w-3 mr-1" />via Ziti</Badge>}
                         </div>
                         <div className="text-xs text-muted-foreground truncate">
                           {entry.hostname && <span>{entry.username ? `${entry.username}@` : ''}{entry.hostname}{entry.port ? `:${entry.port}` : ''}</span>}
@@ -351,6 +373,17 @@ export function PamConnectionsPage() {
                         {entry.has_secret && entry.allow_reveal && (
                           <Button size="sm" variant="outline" onClick={() => { setRevealFor(entry); setRevealReason(''); setRevealedValue(null) }} title="Reveal secret">
                             <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {launchable && (zitiAvailable || entry.ziti_enabled) && (
+                          <Button
+                            size="sm"
+                            variant={entry.ziti_enabled ? 'default' : 'outline'}
+                            onClick={() => toggleZiti.mutate(entry)}
+                            disabled={toggleZiti.isPending}
+                            title={entry.ziti_enabled ? 'Disable Ziti reach (revert to direct)' : 'Enable Ziti reach (zero-trust overlay to target)'}
+                          >
+                            <Shield className="h-4 w-4" />
                           </Button>
                         )}
                         <Button size="sm" variant="ghost" onClick={() => openEdit(entry)} title="Edit">

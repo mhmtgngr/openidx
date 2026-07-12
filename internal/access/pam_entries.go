@@ -198,6 +198,8 @@ type PamEntry struct {
 	AllowReveal         bool                   `json:"allow_reveal"`
 	RequireApproval     bool                   `json:"require_approval"`
 	RecordSession       bool                   `json:"record_session"`
+	ReachMode           string                 `json:"reach_mode"`
+	ZitiEnabled         bool                   `json:"ziti_enabled"`
 	Favorite            bool                   `json:"favorite"`
 	LastConnectedAt     *time.Time             `json:"last_connected_at,omitempty"`
 	ConnectCount        int                    `json:"connect_count"`
@@ -417,7 +419,7 @@ const pamEntrySelectColumns = `
 	e.tags, COALESCE(e.hostname,''), COALESCE(e.port,0), COALESCE(e.username,''),
 	COALESCE(e.domain,''), COALESCE(e.url,''), e.settings,
 	(e.vault_secret_id IS NOT NULL), COALESCE(e.credential_entry_id::text,''), COALESCE(ce.name,''),
-	e.allow_reveal, e.require_approval, e.record_session,
+	e.allow_reveal, e.require_approval, e.record_session, e.reach_mode,
 	e.last_connected_at, e.connect_count, e.created_at, e.updated_at`
 
 type pamEntryScanner interface {
@@ -432,11 +434,12 @@ func scanPamEntry(row pamEntryScanner) (*PamEntry, error) {
 		&e.Tags, &e.Hostname, &e.Port, &e.Username,
 		&e.Domain, &e.URL, &settingsJSON,
 		&e.HasSecret, &e.CredentialEntryID, &e.CredentialEntryName,
-		&e.AllowReveal, &e.RequireApproval, &e.RecordSession,
+		&e.AllowReveal, &e.RequireApproval, &e.RecordSession, &e.ReachMode,
 		&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	e.ZitiEnabled = e.ReachMode == "ziti"
 	if len(settingsJSON) > 0 {
 		_ = json.Unmarshal(settingsJSON, &e.Settings)
 	}
@@ -528,13 +531,14 @@ func (s *Service) handlePamListEntries(c *gin.Context) {
 			&e.Tags, &e.Hostname, &e.Port, &e.Username,
 			&e.Domain, &e.URL, &settingsJSON,
 			&e.HasSecret, &e.CredentialEntryID, &e.CredentialEntryName,
-			&e.AllowReveal, &e.RequireApproval, &e.RecordSession,
+			&e.AllowReveal, &e.RequireApproval, &e.RecordSession, &e.ReachMode,
 			&e.LastConnectedAt, &e.ConnectCount, &e.CreatedAt, &e.UpdatedAt,
 			&e.Favorite,
 		); err != nil {
 			s.logger.Warn("handlePamListEntries: scan failed", zap.Error(err))
 			continue
 		}
+		e.ZitiEnabled = e.ReachMode == "ziti"
 		if len(settingsJSON) > 0 {
 			_ = json.Unmarshal(settingsJSON, &e.Settings)
 		}
@@ -846,11 +850,12 @@ func (s *Service) handlePamDeleteEntry(c *gin.Context) {
 		return
 	}
 
-	var secretID, guacConnID string
+	var secretID, guacConnID, zitiServiceName string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT COALESCE(vault_secret_id::text,''), COALESCE(guacamole_connection_id,'')
+		`SELECT COALESCE(vault_secret_id::text,''), COALESCE(guacamole_connection_id,''),
+		        COALESCE(ziti_service_name,'')
 		   FROM pam_entries WHERE id = $1 AND org_id = $2`, entryID, org.ID).
-		Scan(&secretID, &guacConnID)
+		Scan(&secretID, &guacConnID, &zitiServiceName)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
@@ -888,9 +893,19 @@ func (s *Service) handlePamDeleteEntry(c *gin.Context) {
 				zap.String("guac_conn_id", guacConnID), zap.Error(err))
 		}
 	}
+	// Tear down the per-entry OpenZiti overlay service (host.v1 + bind/dial/serp)
+	// so a ziti-reach entry leaves no orphaned service/policies on the controller.
+	if zitiServiceName != "" {
+		if zm := s.ziti(); zm != nil {
+			if err := zm.TeardownZitiServiceByName(ctx, zitiServiceName); err != nil {
+				s.logger.Warn("handlePamDeleteEntry: ziti service teardown failed",
+					zap.String("service", scrubLogValue(zitiServiceName)), zap.Error(err))
+			}
+		}
+	}
 
 	s.logAuditEvent(c, "pam.entry_deleted", entryID, "pam_entry", map[string]interface{}{
-		"had_secret": secretID != "",
+		"had_secret": secretID != "", "had_ziti": zitiServiceName != "",
 	})
 	c.Status(http.StatusNoContent)
 }
