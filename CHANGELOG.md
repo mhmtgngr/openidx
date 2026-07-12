@@ -7,8 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-07-12
+
+Large security-and-correctness release (workstreams WS-01…WS-05) plus cross-pillar
+correlation, OAuth signing-key rotation, PAM self-service, and a substantial dead-code
+purge. Schema advances **v68 → v80** (migrations v69–v80, all additive). Deployed to the
+reference box via a full catch-up (schema v68→v80, 8-binary swap); functional sweep of all
+services clean.
+
+### Security
+
+- **OAuth step-up MFA bypass closed (WS-01)** — the step-up flow no longer rubber-stamps MFA,
+  and MFA-gating can't be bypassed; the authorize-consent subject is derived from the session,
+  not the request body.
+- **Cross-tenant IDOR fixes (WS-03)** — tenant-scoped `published_apps`/`discovered_paths`,
+  `temp_access_links`, and `device_trust_requests`; `GET /organizations` no longer enumerates
+  other tenants and org write paths are authorized; Elasticsearch audit search is tenant-scoped;
+  portal device registration now stamps the caller's `org_id` (was mis-tenanted to the default org).
+- **Minted API keys now actually authenticate requests (WS-03)** — previously issued keys were inert.
+- **Separation-of-duty enforced and fail-closed (WS-05)** — SoD policies are evaluated at
+  access-request fulfillment and in identity; evaluation failures fail closed.
+- **Fail-open hardening** — `CheckPolicies` fails closed when org context is absent; three
+  fail-open error paths in the live security checks are closed. Approval policies'
+  `auto_approve_conditions` evaluate fail-closed.
+- **Log-injection sanitization** — CR/LF and user-derived values scrubbed from cross-pillar,
+  step-up MFA, and IBDR/continuous-auth log lines (CodeQL).
+
 ### Added
 
+- **Cross-pillar correlation** — correlate IAM, PAM, and Ziti per user: unified access map,
+  kill switch, and lifecycle propagation; a user's devices are correlated across IAM trust and
+  Ziti compliance.
+- **OAuth DB-backed signing-key rotation** — `oauth_signing_keys` (migration v79) backs rotatable
+  RS256 signing keys.
+- **Governance (WS-05)** — audit + session-kill on access-review revocation; manager-based
+  reviewer resolution; `org_id` + FORCE RLS on certification/ABAC tables; JIT expiry now revokes
+  application access.
+- **Provisioning** — provisioning rules are evaluated on SCIM user create/update (safe additive
+  subset); SCIM `filter` applied in `ListSCIMUsers`/`ListSCIMGroups`.
+- **Audit** — `detailed_compliance_reports` table (migration v74) with org-scoped evidence access;
+  GDPR report routed; WebAuthn MFA counted from `mfa_webauthn` in SOC2/ISO metrics.
+- **Identity** — `known_devices.device_type` (migrations v75/v76) so corporate-device
+  auto-approval works.
 - **PAM finalization — end-user self-service** — non-admin users get a first-class PAM surface:
   - `GET /api/v1/access/guacamole/my-connections` — org-scoped catalog of brokered Guacamole
     connections with the PAM flags the launcher needs (approval required / recorded /
@@ -38,6 +78,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Legal-hold reasons via a proper dialog** — the Session History place/release legal-hold
   flow uses an accessible reason dialog (reason required to place a hold) instead of
   `window.prompt`.
+
+### Fixed
+
+- **Governance revocation actually revokes** — access-review revoke decisions now revoke access;
+  role-based approval steps get real approvers; stopped silent audit loss on JIT grant/expiry.
+- **"Phantom table" correctness sweep** — features now read the real schema instead of
+  never-created tables: MFA/WebAuthn metrics from `mfa_webauthn` (not `webauthn_credentials`),
+  GDPR consent from `user_consents` (not `consent_records`), user groups from `group_memberships`
+  (not `user_groups`), breach detection and continuous auth on real tables, MFA method status and
+  biometric/passwordless from real enrollment tables.
+- **Risk** — admin-configured risk policies are applied (was a `parseJSON` no-op); device tracking
+  uses real `known_devices` columns; `GetUserDevices` no longer silently drops rows with NULL text
+  columns.
+- **Dashboard** — dropped a non-existent `users.deleted_at` predicate that errored and made the
+  admin dashboard silently report zero users (#435).
+- **Admin console** — reads the bare-array `/organizations` response so the tenant UI renders (WS-03).
+
+### Removed
+
+- **Dead-code purge (~8.8k+ lines)** — deleted five never-wired subsystems and additional dead
+  paths: the OAuth `KeyManager` and its phantom `oauth_signing_keys` layer, the unrouted
+  `CertificationService` and WebAuthn subsystem, the never-functional admin passwordless subsystem,
+  the dead AI policy-recommendations route, and orphaned CSV-import handlers.
+
+### Migrations
+
+- **v69–v80** (all additive): governance org-isolation (v69), `users.manager_id` (v70),
+  `temp_access_links`/`device_trust_requests`/`published_apps` tenant isolation (v71–v73),
+  `detailed_compliance_reports` (v74), `known_devices.device_type`/`seen_count` (v75/v76),
+  session-risk history (v77), recording retention policies (v78), `oauth_signing_keys` (v79),
+  enrolled-agent ↔ known-device link (v80).
 
 ## [1.24.11] - 2026-07-09
 
