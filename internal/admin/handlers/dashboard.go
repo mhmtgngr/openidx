@@ -99,8 +99,8 @@ func (h *DashboardHandler) GetDashboardStats(c *gin.Context) {
 	// Query dashboard stats - single query for efficiency
 	err = h.db.QueryRow(ctx, `
 		SELECT
-			COALESCE((SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND org_id = $1), 0),
-			COALESCE((SELECT COUNT(*) FROM users WHERE enabled = true AND deleted_at IS NULL AND org_id = $1), 0),
+			COALESCE((SELECT COUNT(*) FROM users WHERE org_id = $1), 0),
+			COALESCE((SELECT COUNT(*) FROM users WHERE enabled = true AND org_id = $1), 0),
 			COALESCE((SELECT COUNT(*) FROM user_sessions WHERE expires_at > NOW() AND org_id = $1), 0),
 			COALESCE((SELECT COUNT(*) FROM access_reviews WHERE status IN ('pending', 'in_progress') AND org_id = $1), 0)
 	`, org.ID).Scan(&stats.TotalUsers, &stats.ActiveUsers, &stats.ActiveSessions, &stats.PendingReviews)

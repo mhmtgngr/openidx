@@ -89,7 +89,7 @@ func (s *Service) aggregateDashboardStats(ctx context.Context) (*DashboardStats,
 	// Get total user count from identity service
 	var totalUsers int64
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND org_id = $1
+		SELECT COUNT(*) FROM users WHERE org_id = $1
 	`, org.ID).Scan(&totalUsers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count users: %w", err)
