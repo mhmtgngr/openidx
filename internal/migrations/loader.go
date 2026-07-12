@@ -579,5 +579,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamEntriesUp,
 			DownSQL:     pamEntriesDown,
 		},
+		{
+			Version:     82,
+			Name:        "pam_entry_reach_mode",
+			Description: "Add pam_entries.reach_mode (direct|ziti), ziti_service_name, ziti_intercept_port so a brokered PAM session can reach its target over the OpenZiti overlay (guacd → loopback → ziti-tunnel → edge-router-hosted host.v1 → target) instead of guacd dialing the target directly — removing inbound target exposure. Additive/idempotent; existing entries default to 'direct'. Partial unique index on (org_id, ziti_intercept_port) prevents broker loopback-port collisions.",
+			UpSQL:       pamReachModeUp,
+			DownSQL:     pamReachModeDown,
+		},
 	}
 }

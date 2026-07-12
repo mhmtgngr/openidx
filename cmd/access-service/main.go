@@ -281,7 +281,7 @@ func main() {
 
 	// Initialize Apache Guacamole client if configured
 	if cfg.GuacamoleURL != "" {
-		log.Info("Initializing Apache Guacamole integration...", zap.String("url", cfg.GuacamoleURL))
+		log.Info("Initializing Apache Guacamole integration (direct PAM broker)...", zap.String("url", cfg.GuacamoleURL))
 		gc, err := access.NewGuacamoleClient(cfg, db, log)
 		if err != nil {
 			log.Error("Failed to initialize Guacamole client -- remote access features disabled", zap.Error(err))
@@ -289,7 +289,23 @@ func main() {
 			accessService.SetGuacamoleClient(gc)
 			featureManager.SetGuacamoleClient(gc)
 			auditService.SetGuacamoleClient(gc)
-			log.Info("Apache Guacamole integration ready")
+			log.Info("Apache Guacamole integration ready (direct PAM broker)")
+		}
+	}
+
+	// Dedicated OpenZiti PAM broker — a second Guacamole whose guacd is colocated
+	// with a ziti-tunnel, so entries with reach_mode='ziti' reach their target
+	// over the overlay. Independent endpoint + admin credential from the direct
+	// broker, so a connection is chosen per-entry (the Ziti enable/disable toggle)
+	// and routed to the matching broker at connect time.
+	if cfg.GuacamoleZitiURL != "" {
+		log.Info("Initializing dedicated OpenZiti PAM broker...", zap.String("url", cfg.GuacamoleZitiURL))
+		zgc, err := access.NewGuacamoleZitiClient(cfg, db, log)
+		if err != nil {
+			log.Error("Failed to initialize OpenZiti PAM broker -- ziti-reach launches will be unavailable", zap.Error(err))
+		} else {
+			accessService.SetGuacamoleZitiClient(zgc)
+			log.Info("Dedicated OpenZiti PAM broker ready")
 		}
 	}
 

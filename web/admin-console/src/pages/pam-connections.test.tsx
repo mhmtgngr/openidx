@@ -19,6 +19,9 @@ vi.mock('../lib/api', () => ({
       updateEntry: vi.fn(),
       deleteEntry: vi.fn(),
       createFolder: vi.fn(),
+      brokerStatus: vi.fn(),
+      enableZiti: vi.fn(),
+      disableZiti: vi.fn(),
     },
   },
 }))
@@ -40,6 +43,7 @@ const rdpEntry = {
   tags: [], hostname: 'dc01.corp', port: 3389, username: 'administrator',
   settings: {}, has_secret: true, allow_reveal: true,
   require_approval: false, record_session: true, favorite: false,
+  reach_mode: 'direct', ziti_enabled: false,
   connect_count: 3, created_at: '2026-07-10T00:00:00Z', updated_at: '2026-07-10T00:00:00Z',
 }
 
@@ -68,6 +72,9 @@ describe('PamConnectionsPage', () => {
     pam.unfavorite.mockResolvedValue({ favorite: false })
     pam.reveal.mockResolvedValue({ value: 'hunter2' })
     pam.requestAccess.mockResolvedValue({ request_id: 'r1' })
+    pam.brokerStatus.mockResolvedValue({ available: true, reach_modes: ['direct', 'ziti'] })
+    pam.enableZiti.mockResolvedValue({ reach_mode: 'ziti', ziti_service_name: 'openidx-pam-e1', ziti_intercept_port: 14000 })
+    pam.disableZiti.mockResolvedValue({ reach_mode: 'direct' })
     window.open = vi.fn()
   })
 
@@ -104,5 +111,23 @@ describe('PamConnectionsPage', () => {
     await screen.findByText('DC01')
     // rdpEntry allows reveal; gatedEntry does not.
     expect(screen.getAllByTitle('Reveal secret')).toHaveLength(1)
+  })
+
+  it('enables Ziti reach on a session entry when the overlay is available', async () => {
+    renderPage()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    fireEvent.click(within(card).getByTitle(/enable ziti reach/i))
+    await waitFor(() => expect(pam.enableZiti).toHaveBeenCalledWith('e1'))
+  })
+
+  it('shows a via-Ziti badge and offers disable for ziti-enabled entries', async () => {
+    pam.listEntries.mockResolvedValue({
+      entries: [{ ...rdpEntry, reach_mode: 'ziti', ziti_enabled: true }],
+    })
+    renderPage()
+    expect(await screen.findByText(/via ziti/i)).toBeInTheDocument()
+    const card = (await screen.findByText('DC01')).closest('[class*="rounded"]') as HTMLElement
+    fireEvent.click(within(card).getByTitle(/disable ziti reach/i))
+    await waitFor(() => expect(pam.disableZiti).toHaveBeenCalledWith('e1'))
   })
 })

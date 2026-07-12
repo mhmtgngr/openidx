@@ -91,10 +91,28 @@ func NewConnectionPool(maxConnections int, idleTimeout time.Duration) *Connectio
 	}
 }
 
-// NewGuacamoleClient creates and authenticates a Guacamole API client
+// NewGuacamoleClient creates and authenticates the "direct" PAM session broker
+// client (guacd dials targets directly) from the GUACAMOLE_* config.
 func NewGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*GuacamoleClient, error) {
-	if cfg.GuacamoleURL == "" {
-		return nil, fmt.Errorf("GUACAMOLE_URL is not configured")
+	return newGuacamoleClient(cfg, db, logger, "guacamole",
+		cfg.GuacamoleURL, cfg.GuacamoleAdminUser, cfg.GuacamoleAdminPassword)
+}
+
+// NewGuacamoleZitiClient creates and authenticates the dedicated OpenZiti PAM
+// session broker client (guacd colocated with a ziti-tunnel) from the
+// GUACAMOLE_ZITI_* config. Entries with reach_mode='ziti' are launched through
+// this broker so guacd reaches the target over the overlay.
+func NewGuacamoleZitiClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*GuacamoleClient, error) {
+	return newGuacamoleClient(cfg, db, logger, "guacamole-ziti",
+		cfg.GuacamoleZitiURL, cfg.GuacamoleZitiAdminUser, cfg.GuacamoleZitiAdminPassword)
+}
+
+// newGuacamoleClient is the shared constructor for a Guacamole broker client at
+// an explicit URL/credential (so the direct and ziti brokers are independent
+// endpoints with independent admin credentials).
+func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger, component, baseURL, adminUser, adminPassword string) (*GuacamoleClient, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("%s URL is not configured", component)
 	}
 
 	tokenCipher, err := secretcrypt.New(cfg.EncryptionKey)
@@ -104,18 +122,18 @@ func NewGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 	}
 
 	gc := &GuacamoleClient{
-		baseURL:     strings.TrimRight(cfg.GuacamoleURL, "/"),
-		username:    cfg.GuacamoleAdminUser,
-		password:    cfg.GuacamoleAdminPassword,
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		username:    adminUser,
+		password:    adminPassword,
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
 		db:          db,
-		logger:      logger.With(zap.String("component", "guacamole")),
+		logger:      logger.With(zap.String("component", component)),
 		tokenCipher: tokenCipher,
 	}
 
 	// Authenticate to get a token
-	if err := gc.authenticate(cfg.GuacamoleAdminUser, cfg.GuacamoleAdminPassword); err != nil {
-		return nil, fmt.Errorf("failed to authenticate to Guacamole: %w", err)
+	if err := gc.authenticate(adminUser, adminPassword); err != nil {
+		return nil, fmt.Errorf("failed to authenticate to %s: %w", component, err)
 	}
 
 	gc.logger.Info("Authenticated to Apache Guacamole", zap.String("url", gc.baseURL))

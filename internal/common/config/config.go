@@ -128,11 +128,21 @@ type Config struct {
 	// GeoIP service (optional)
 	GeoIPServiceURL string `mapstructure:"geoip_service_url"`
 
-	// Apache Guacamole integration
+	// Apache Guacamole integration (the "direct" PAM session broker — guacd
+	// dials targets directly).
 	GuacamoleURL           string `mapstructure:"guacamole_url"`
 	GuacamoleAdminUser     string `mapstructure:"guacamole_admin_user"`
 	GuacamoleAdminPassword string `mapstructure:"guacamole_admin_password"`
 	GuacamoleRecordingPath string `mapstructure:"guacamole_recording_path"`
+
+	// Dedicated OpenZiti PAM session broker — a second Guacamole whose guacd is
+	// colocated with a ziti-tunnel, so entries with reach_mode='ziti' reach their
+	// target over the overlay (guacd → loopback → ziti-tunnel → edge-router).
+	// When unset, ziti-reach entries fall back to the direct broker only if it can
+	// see the loopback ports (normally it can't — keep them on separate brokers).
+	GuacamoleZitiURL           string `mapstructure:"guacamole_ziti_url"`
+	GuacamoleZitiAdminUser     string `mapstructure:"guacamole_ziti_admin_user"`
+	GuacamoleZitiAdminPassword string `mapstructure:"guacamole_ziti_admin_password"`
 
 	// BrowZer configuration (browser-native Ziti participation)
 	BrowZerEnabled          bool   `mapstructure:"browzer_enabled"`
@@ -514,6 +524,9 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("guacamole_admin_user", "guacadmin")
 	v.SetDefault("guacamole_admin_password", defaultGuacamoleAdminPassword)
 	v.SetDefault("guacamole_recording_path", "/var/lib/openidx/recordings/guacamole")
+	v.SetDefault("guacamole_ziti_url", "")
+	v.SetDefault("guacamole_ziti_admin_user", "guacadmin")
+	v.SetDefault("guacamole_ziti_admin_password", defaultGuacamoleAdminPassword)
 
 	// BrowZer defaults
 	v.SetDefault("browzer_enabled", false)
@@ -661,6 +674,9 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_admin_user":                "GUACAMOLE_ADMIN_USER",
 		"guacamole_admin_password":            "GUACAMOLE_ADMIN_PASSWORD",
 		"guacamole_recording_path":            "GUACAMOLE_RECORDING_PATH",
+		"guacamole_ziti_url":                  "GUACAMOLE_ZITI_URL",
+		"guacamole_ziti_admin_user":           "GUACAMOLE_ZITI_ADMIN_USER",
+		"guacamole_ziti_admin_password":       "GUACAMOLE_ZITI_ADMIN_PASSWORD",
 		"browzer_enabled":                     "BROWZER_ENABLED",
 		"browzer_client_id":                   "BROWZER_CLIENT_ID",
 		"browzer_targets_path":                "BROWZER_TARGETS_PATH",
