@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-07-12
+
+### Added
+
+- **PAM connection manager — RDM parity (#437)** — a Remote Desktop Manager-style privileged
+  connection tree for brokered, passwordless sessions:
+  - Folders/entries model (`pam_folders`, `pam_entries`) with tags, per-entry policy flags
+    (`allow_reveal`, `require_approval`, `record_session`), grants (`pam_entry_grants`),
+    favorites, access requests, and a session ledger (`pam_entry_sessions`) — all org-scoped
+    under FORCE RLS.
+  - Import path for existing connection inventories and a launch path that opens brokered
+    sessions without exposing the underlying vault credential.
+  - New **PAM Connections** console page (`/pam-connections`) and API client wiring; nav entry
+    under the Privileged Access section.
+  - CR/LF scrubbing on user-derived values in the import/launch log lines.
+
+### Migrations
+
+- **v81** (additive) — `pam_folders`, `pam_entries`, `pam_entry_grants`, `pam_entry_favorites`,
+  `pam_entry_access_requests`, `pam_entry_sessions` with per-table org-scope RLS policies and
+  `openidx_app` grants.
+
 ## [1.25.0] - 2026-07-12
 
 Large security-and-correctness release (workstreams WS-01…WS-05) plus cross-pillar
