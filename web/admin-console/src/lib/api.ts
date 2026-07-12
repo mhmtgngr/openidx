@@ -482,6 +482,8 @@ export const api = {
 export interface PamBrokerStatus {
   available: boolean
   reach_modes: string[]
+  direct_broker?: boolean
+  ziti_broker?: boolean
 }
 
 // PAM connection-manager types

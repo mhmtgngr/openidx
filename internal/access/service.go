@@ -120,7 +120,8 @@ type Service struct {
 	idpCipher            *secretcrypt.Cipher // decrypts identity_providers.client_secret at rest
 	zitiProvider         *ZitiProvider
 	zitiReconciler       *ZitiReconciler
-	guacamoleClient      *GuacamoleClient
+	guacamoleClient      *GuacamoleClient // "direct" PAM broker (guacd dials targets directly)
+	guacamoleZitiClient  *GuacamoleClient // dedicated OpenZiti PAM broker (guacd + ziti-tunnel)
 	featureManager       *FeatureManager
 	auditService         *UnifiedAuditService
 	browzerTargetManager *BrowZerTargetManager
@@ -142,7 +143,7 @@ func (s *Service) handleAgentAPKDownload(c *gin.Context) {
 	s.agentHandler.HandleAPKDownload(c)
 }
 
-// SetGuacamoleClient sets the Guacamole client for the service
+// SetGuacamoleClient sets the "direct" PAM broker (guacd dials targets directly).
 func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	s.guacamoleClient = gc
 	if s.featureManager != nil {
@@ -151,6 +152,22 @@ func (s *Service) SetGuacamoleClient(gc *GuacamoleClient) {
 	if s.auditService != nil {
 		s.auditService.SetGuacamoleClient(gc)
 	}
+}
+
+// SetGuacamoleZitiClient wires the dedicated OpenZiti PAM broker. Entries with
+// reach_mode='ziti' launch through this broker (its guacd is colocated with a
+// ziti-tunnel that carries the target hop over the overlay).
+func (s *Service) SetGuacamoleZitiClient(gc *GuacamoleClient) { s.guacamoleZitiClient = gc }
+
+// brokerFor returns the Guacamole broker client a launch should use for the
+// given reach mode: the dedicated Ziti broker for 'ziti', otherwise the direct
+// broker. Returns nil when the required broker is not configured — the caller
+// fails closed rather than dialing a target the wrong way.
+func (s *Service) brokerFor(reachMode string) *GuacamoleClient {
+	if reachMode == "ziti" {
+		return s.guacamoleZitiClient
+	}
+	return s.guacamoleClient
 }
 
 // ziti returns the live OpenZiti manager (nil when disconnected, or when no

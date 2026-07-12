@@ -50,6 +50,39 @@ func TestPamLaunchEntryDialTarget(t *testing.T) {
 	}
 }
 
+// A connection's per-entry choice (reach_mode) must route to the matching
+// dedicated broker: ziti → the OpenZiti broker, direct/empty → the direct
+// broker; and a missing broker must resolve to nil so connect fails closed
+// rather than launching through the wrong data plane.
+func TestBrokerFor(t *testing.T) {
+	t.Parallel()
+
+	direct := &GuacamoleClient{}
+	ziti := &GuacamoleClient{}
+
+	both := &Service{guacamoleClient: direct, guacamoleZitiClient: ziti}
+	if both.brokerFor("direct") != direct {
+		t.Fatal("direct reach must use the direct broker")
+	}
+	if both.brokerFor("") != direct {
+		t.Fatal("empty reach must default to the direct broker")
+	}
+	if both.brokerFor("ziti") != ziti {
+		t.Fatal("ziti reach must use the dedicated ziti broker")
+	}
+
+	// Ziti chosen but no ziti broker configured → nil (fail closed).
+	directOnly := &Service{guacamoleClient: direct}
+	if directOnly.brokerFor("ziti") != nil {
+		t.Fatal("ziti reach with no ziti broker must be nil, not the direct broker")
+	}
+	// Direct chosen but no direct broker configured → nil.
+	zitiOnly := &Service{guacamoleZitiClient: ziti}
+	if zitiOnly.brokerFor("direct") != nil {
+		t.Fatal("direct reach with no direct broker must be nil")
+	}
+}
+
 func TestPamZitiServiceName(t *testing.T) {
 	t.Parallel()
 

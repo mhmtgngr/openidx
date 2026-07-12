@@ -372,13 +372,21 @@ func (s *Service) handlePamZitiBindings(c *gin.Context) {
 // which reach modes are available, instead of dead-ending on a 503.
 func (s *Service) handlePamBrokerStatus(c *gin.Context) {
 	reachModes := []string{}
-	available := s.guacamoleClient != nil
-	if available {
+	directOK := s.guacamoleClient != nil
+	// Ziti reach needs BOTH the dedicated Ziti broker (to render/relay the
+	// session) and a live overlay (to provision/carry the target hop).
+	zitiOK := s.guacamoleZitiClient != nil && s.ziti() != nil
+	if directOK {
 		reachModes = append(reachModes, "direct")
-		if s.ziti() != nil {
-			reachModes = append(reachModes, "ziti")
-		}
+	}
+	if zitiOK {
+		reachModes = append(reachModes, "ziti")
 	}
 	sort.Strings(reachModes)
-	c.JSON(http.StatusOK, gin.H{"available": available, "reach_modes": reachModes})
+	c.JSON(http.StatusOK, gin.H{
+		"available":     directOK || zitiOK,
+		"reach_modes":   reachModes,
+		"direct_broker": directOK,
+		"ziti_broker":   zitiOK,
+	})
 }

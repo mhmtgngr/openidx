@@ -88,9 +88,30 @@ platform is already an OpenZiti overlay, make the target hop **zero-trust over Z
                                                                     (NO inbound exposure — target/router dials out)
 ```
 
-### The dedicated broker
+### Two dedicated brokers, chosen per connection
 
-A new **`pam-broker`** deployment unit, separate from the BrowZer Guacamole:
+The reach mode is a **per-connection choice** (the Ziti enable/disable toggle sets
+`pam_entries.reach_mode`), and each choice routes to its **own dedicated broker**:
+
+- **Direct broker** (`GUACAMOLE_URL` / `GUACAMOLE_ADMIN_*`) — guacd dials targets
+  directly. Used for `reach_mode='direct'` connections.
+- **OpenZiti broker** (`GUACAMOLE_ZITI_URL` / `GUACAMOLE_ZITI_ADMIN_*`) — a second,
+  independent Guacamole whose guacd is colocated with the `ziti-tunnel`. Used for
+  `reach_mode='ziti'` connections, so guacd dials the broker loopback that the
+  tunnel carries over the overlay.
+
+At connect time `Service.brokerFor(reach_mode)` picks the matching client
+(`internal/access/service.go`); a ziti connection is **never** launched through the
+direct broker (it can't see the overlay loopback ports) or vice-versa — a missing
+broker fails closed with a structured 503 (`ziti_broker_unconfigured` /
+`broker_unconfigured`). `GET /pam/broker/status` reports `{direct_broker, ziti_broker,
+reach_modes}` so the launcher only offers a mode whose broker is live. The two
+brokers are independent endpoints with independent admin credentials; a
+single-broker deployment can point both URLs at the same Guacamole.
+
+### The dedicated broker deployment
+
+Each broker is a **`pam-broker`** deployment unit, separate from the BrowZer Guacamole:
 
 - **`pam-guacd`** — `guacamole/guacd`, plus (for Ziti mode) a colocated **`ziti-tunnel`** in
   **proxy mode** enrolled as a dedicated Ziti identity `pam-broker` (role `#pam-broker-dialers`).
