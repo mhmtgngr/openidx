@@ -572,5 +572,12 @@ func allMigrations() []*Migration {
 			UpSQL:       enrolledAgentDeviceLinkUp,
 			DownSQL:     enrolledAgentDeviceLinkDown,
 		},
+		{
+			Version:     81,
+			Name:        "pam_connection_manager",
+			Description: "PAM connection manager (Devolutions RDM parity): pam_folders (hierarchical tree), pam_entries (typed entries — rdp/ssh/vnc/telnet/website sessions, credentials, ssh keys, api keys, secure information records — with secret payloads envelope-encrypted in vault_secrets and an optional linked credential entry), pam_entry_grants (view/connect/edit/reveal ACL), pam_entry_favorites, pam_entry_access_requests (pre-connect approval), pam_entry_sessions (launch ledger). Sessions launch through the Guacamole broker with the credential injected server-side so users connect without ever seeing the password. All six tables org-scoped under the v37 FORCE-RLS belt. Idempotent.",
+			UpSQL:       pamEntriesUp,
+			DownSQL:     pamEntriesDown,
+		},
 	}
 }
