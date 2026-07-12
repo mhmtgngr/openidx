@@ -554,6 +554,37 @@ func RegisterRoutes(router *gin.Engine, svc *Service, authMiddleware ...gin.Hand
 		// (admin console W1.3). Static path avoids the /sessions/:id wildcard conflict.
 		api.GET("/guacamole/session-history", svc.requireAdminRole(), svc.handleListGuacSessionHistory)
 
+		// PAM connection manager (Devolutions RDM parity): folder tree +
+		// typed entries with vault-backed secrets, per-entry ACL, favorites,
+		// passwordless launch (server-side credential injection), approval
+		// gate, audited reveal, session ledger, and RDM import.
+		api.GET("/pam/entry-types", svc.handlePamListEntryTypes)
+		api.GET("/pam/folders", svc.handlePamListFolders)
+		api.POST("/pam/folders", svc.requireAdminRole(), svc.handlePamCreateFolder)
+		api.PUT("/pam/folders/:id", svc.requireAdminRole(), svc.handlePamUpdateFolder)
+		api.DELETE("/pam/folders/:id", svc.requireAdminRole(), svc.handlePamDeleteFolder)
+		api.GET("/pam/entries", svc.handlePamListEntries)
+		api.POST("/pam/entries", svc.requireAdminRole(), svc.handlePamCreateEntry)
+		api.GET("/pam/entries/:id", svc.handlePamGetEntry)
+		// Update allows non-admins holding an `edit` grant (checked in-handler).
+		api.PUT("/pam/entries/:id", svc.handlePamUpdateEntry)
+		api.DELETE("/pam/entries/:id", svc.requireAdminRole(), svc.handlePamDeleteEntry)
+		api.POST("/pam/entries/:id/favorite", svc.handlePamFavoriteEntry)
+		api.DELETE("/pam/entries/:id/favorite", svc.handlePamUnfavoriteEntry)
+		api.POST("/pam/entries/:id/connect", svc.handlePamConnect)
+		api.POST("/pam/entries/:id/reveal", svc.handlePamRevealEntry)
+		api.POST("/pam/entries/:id/request", svc.handlePamRequestAccess)
+		api.GET("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamListEntryGrants)
+		api.POST("/pam/entries/:id/grants", svc.requireAdminRole(), svc.handlePamAddEntryGrant)
+		api.DELETE("/pam/entries/:id/grants/:grantId", svc.requireAdminRole(), svc.handlePamRemoveEntryGrant)
+		api.GET("/pam/entry-requests", svc.requireAdminRole(), svc.handlePamListRequests)
+		api.POST("/pam/entry-requests/:id/approve", svc.requireAdminRole(), svc.handlePamApproveRequest)
+		api.POST("/pam/entry-requests/:id/deny", svc.requireAdminRole(), svc.handlePamDenyRequest)
+		api.GET("/pam/my-entry-requests", svc.handlePamListMyRequests)
+		api.GET("/pam/sessions", svc.requireAdminRole(), svc.handlePamListSessions)
+		api.POST("/pam/sessions/:id/end", svc.handlePamEndSession)
+		api.POST("/pam/import/rdm", svc.requireAdminRole(), svc.handlePamImportRDM)
+
 		// Temporary access links for support/vendor access
 		// PAM vendor access to internal SSH/RDP/VNC hosts is a privileged
 		// operation — gate management to admins, matching the guacamole PAM

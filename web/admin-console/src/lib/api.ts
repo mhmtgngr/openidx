@@ -418,6 +418,181 @@ export const api = {
     listRotations: (secretId: string) =>
       api.get<{ rotations: VaultRotationRun[] | null }>(`/api/v1/vault/secrets/${secretId}/rotations`),
   },
+
+  // PAM connection manager (Devolutions RDM parity). Sessions launch through
+  // the access-service Guacamole broker with the credential injected
+  // server-side; the browser only ever receives a connect URL.
+  pam: {
+    listEntryTypes: () =>
+      api.get<{ types: PamEntryType[] }>('/api/v1/access/pam/entry-types'),
+    listFolders: () =>
+      api.get<{ folders: PamFolder[] }>('/api/v1/access/pam/folders'),
+    createFolder: (body: { parent_id?: string; name: string; icon?: string; description?: string }) =>
+      api.post<{ id: string }>('/api/v1/access/pam/folders', body),
+    updateFolder: (id: string, body: { parent_id?: string; name: string; icon?: string; description?: string }) =>
+      api.put<{ id: string }>(`/api/v1/access/pam/folders/${id}`, body),
+    deleteFolder: (id: string) => api.delete<void>(`/api/v1/access/pam/folders/${id}`),
+    listEntries: (params?: { folder_id?: string; type?: string; q?: string; favorites?: boolean }) => {
+      const qs = new URLSearchParams()
+      if (params?.folder_id) qs.set('folder_id', params.folder_id)
+      if (params?.type) qs.set('type', params.type)
+      if (params?.q) qs.set('q', params.q)
+      if (params?.favorites) qs.set('favorites', 'true')
+      const suffix = qs.toString() ? `?${qs.toString()}` : ''
+      return api.get<{ entries: PamEntry[] }>(`/api/v1/access/pam/entries${suffix}`)
+    },
+    getEntry: (id: string) => api.get<PamEntry>(`/api/v1/access/pam/entries/${id}`),
+    createEntry: (body: PamEntryInput) =>
+      api.post<{ id: string }>('/api/v1/access/pam/entries', body),
+    updateEntry: (id: string, body: PamEntryInput) =>
+      api.put<{ id: string }>(`/api/v1/access/pam/entries/${id}`, body),
+    deleteEntry: (id: string) => api.delete<void>(`/api/v1/access/pam/entries/${id}`),
+    favorite: (id: string) => api.post<{ favorite: boolean }>(`/api/v1/access/pam/entries/${id}/favorite`),
+    unfavorite: (id: string) => api.delete<{ favorite: boolean }>(`/api/v1/access/pam/entries/${id}/favorite`),
+    connect: (id: string) => api.post<PamConnectResult>(`/api/v1/access/pam/entries/${id}/connect`),
+    reveal: (id: string, reason: string) =>
+      api.post<{ value: string }>(`/api/v1/access/pam/entries/${id}/reveal`, { reason }),
+    requestAccess: (id: string, reason: string) =>
+      api.post<{ request_id: string }>(`/api/v1/access/pam/entries/${id}/request`, { reason }),
+    listGrants: (id: string) =>
+      api.get<{ grants: PamEntryGrant[] }>(`/api/v1/access/pam/entries/${id}/grants`),
+    addGrant: (id: string, grant: { principal_type: string; principal_id: string; actions: string[]; expires_at?: string }) =>
+      api.post<{ id: string }>(`/api/v1/access/pam/entries/${id}/grants`, grant),
+    removeGrant: (id: string, grantId: string) =>
+      api.delete<void>(`/api/v1/access/pam/entries/${id}/grants/${grantId}`),
+    listRequests: () =>
+      api.get<{ requests: PamAccessRequest[] }>('/api/v1/access/pam/entry-requests'),
+    approveRequest: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/entry-requests/${id}/approve`),
+    denyRequest: (id: string) =>
+      api.post<{ status: string }>(`/api/v1/access/pam/entry-requests/${id}/deny`),
+    listSessions: () =>
+      api.get<{ sessions: PamEntrySession[] }>('/api/v1/access/pam/sessions'),
+    importRDM: (data: string, folderId?: string) =>
+      api.post<PamImportResult>('/api/v1/access/pam/import/rdm', { data, folder_id: folderId }),
+  },
+}
+
+// PAM connection-manager types
+export interface PamEntryType {
+  type: string
+  kind: 'session' | 'credential' | 'info'
+  label: string
+  protocol?: string
+  secret_label?: string
+}
+
+export interface PamFolder {
+  id: string
+  parent_id?: string
+  name: string
+  icon?: string
+  description?: string
+  entry_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PamEntry {
+  id: string
+  folder_id?: string
+  name: string
+  entry_type: string
+  kind: string
+  description?: string
+  tags: string[]
+  hostname?: string
+  port?: number
+  username?: string
+  domain?: string
+  url?: string
+  settings: Record<string, unknown>
+  has_secret: boolean
+  credential_entry_id?: string
+  credential_entry_name?: string
+  allow_reveal: boolean
+  require_approval: boolean
+  record_session: boolean
+  favorite: boolean
+  last_connected_at?: string
+  connect_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PamEntryInput {
+  folder_id?: string
+  name: string
+  entry_type: string
+  description?: string
+  tags?: string[]
+  hostname?: string
+  port?: number
+  username?: string
+  domain?: string
+  url?: string
+  settings?: Record<string, unknown>
+  secret?: string
+  credential_entry_id?: string
+  allow_reveal?: boolean
+  require_approval?: boolean
+  record_session?: boolean
+}
+
+export interface PamConnectResult {
+  launch_type: 'guacamole' | 'url'
+  connect_url?: string
+  url?: string
+  entry_id: string
+  session_id?: string
+  credential_injected?: boolean
+  recorded?: boolean
+  approval_required?: boolean
+}
+
+export interface PamEntryGrant {
+  id: string
+  principal_type: string
+  principal_id: string
+  actions: string[]
+  expires_at?: string
+  granted_by?: string
+  created_at: string
+}
+
+export interface PamAccessRequest {
+  id: string
+  entry_id: string
+  entry_name: string
+  entry_type: string
+  requester_id: string
+  reason?: string
+  status: string
+  approver_id?: string
+  decided_at?: string
+  expires_at?: string
+  created_at: string
+}
+
+export interface PamEntrySession {
+  id: string
+  entry_id: string
+  entry_name: string
+  user_id?: string
+  protocol?: string
+  credential_injected: boolean
+  recording_available: boolean
+  started_at: string
+  ended_at?: string
+  status: string
+}
+
+export interface PamImportResult {
+  folders_created: number
+  entries_created: number
+  secrets_stored: number
+  by_type: Record<string, number>
+  skipped: Array<{ name: string; reason: string }>
 }
 
 // WebAuthn types

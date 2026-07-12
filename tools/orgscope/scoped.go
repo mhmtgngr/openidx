@@ -94,4 +94,12 @@ var scopedTables = map[string]bool{
 	"ziti_identities":              true,
 	"ziti_service_policies":        true,
 	"ziti_services":                true,
+
+	// v81 — PAM connection manager (RDM parity)
+	"pam_folders":               true,
+	"pam_entries":               true,
+	"pam_entry_grants":          true,
+	"pam_entry_favorites":       true,
+	"pam_entry_access_requests": true,
+	"pam_entry_sessions":        true,
 }
