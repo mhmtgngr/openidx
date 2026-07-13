@@ -37,11 +37,11 @@ type GuacamoleClient struct {
 	publicBaseURL string
 	username      string
 	password      string
-	authToken  string
-	dataSource string
-	httpClient *http.Client
-	db         *database.PostgresDB
-	logger     *zap.Logger
+	authToken     string
+	dataSource    string
+	httpClient    *http.Client
+	db            *database.PostgresDB
+	logger        *zap.Logger
 	// tokenCipher encrypts the pooled Guacamole session token at rest (write-only
 	// DB copy; the in-memory pool holds plaintext for reuse).
 	tokenCipher *secretcrypt.Cipher
@@ -133,11 +133,11 @@ func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 		baseURL:       strings.TrimRight(baseURL, "/"),
 		publicBaseURL: strings.TrimRight(publicBaseURL, "/"),
 		username:      adminUser,
-		password:    adminPassword,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
-		db:          db,
-		logger:      logger.With(zap.String("component", component)),
-		tokenCipher: tokenCipher,
+		password:      adminPassword,
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		db:            db,
+		logger:        logger.With(zap.String("component", component)),
+		tokenCipher:   tokenCipher,
 	}
 
 	// Authenticate to get a token
