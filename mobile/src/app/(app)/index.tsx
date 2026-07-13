@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Link, Stack } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '@/lib/auth';
@@ -23,6 +23,21 @@ export default function HomeScreen() {
           </Text>
         </View>
 
+        <View style={styles.nav}>
+          <Link href="/(app)/approvals" asChild>
+            <Pressable style={styles.navItem}>
+              <Text style={styles.navText}>Approvals</Text>
+              <Text style={styles.navChevron}>›</Text>
+            </Pressable>
+          </Link>
+          <Link href="/(app)/security/passkeys" asChild>
+            <Pressable style={styles.navItem}>
+              <Text style={styles.navText}>Passkeys</Text>
+              <Text style={styles.navChevron}>›</Text>
+            </Pressable>
+          </Link>
+        </View>
+
         <Pressable style={styles.logout} onPress={logout}>
           <Text style={styles.logoutText}>Sign out</Text>
         </Pressable>
@@ -43,6 +58,17 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
   mono: { fontFamily: 'monospace', fontSize: 13, opacity: 0.8 },
+  nav: { marginTop: 8, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(127,127,127,0.12)' },
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(127,127,127,0.25)',
+  },
+  navText: { fontSize: 16, fontWeight: '500' },
+  navChevron: { fontSize: 22, opacity: 0.4 },
   logout: {
     height: 48,
     borderRadius: 12,
