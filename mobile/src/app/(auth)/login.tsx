@@ -8,11 +8,13 @@ import {
   View,
 } from 'react-native';
 
+import { passkeysSupported } from '@/features/mfa/passkey';
 import { useAuth } from '@/lib/auth';
 
 export default function LoginScreen() {
-  const { loginWithBrowser } = useAuth();
+  const { loginWithBrowser, loginWithPasskey } = useAuth();
   const [busy, setBusy] = useState(false);
+  const canPasskey = passkeysSupported();
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -34,10 +36,19 @@ export default function LoginScreen() {
         <ActivityIndicator size="large" style={{ marginTop: 32 }} />
       ) : (
         <View style={styles.actions}>
+          {canPasskey && (
+            <Pressable
+              style={[styles.button, styles.primary]}
+              onPress={() => run(loginWithPasskey)}>
+              <Text style={styles.primaryText}>Sign in with passkey</Text>
+            </Pressable>
+          )}
           <Pressable
-            style={[styles.button, styles.primary]}
+            style={[styles.button, canPasskey ? styles.secondary : styles.primary]}
             onPress={() => run(loginWithBrowser)}>
-            <Text style={styles.primaryText}>Sign in</Text>
+            <Text style={canPasskey ? styles.secondaryText : styles.primaryText}>
+              {canPasskey ? 'Other sign-in options' : 'Sign in'}
+            </Text>
           </Pressable>
         </View>
       )}
@@ -63,4 +74,7 @@ const styles = StyleSheet.create({
   },
   primary: { backgroundColor: '#208AEF' },
   primaryText: { color: 'white', fontSize: 17, fontWeight: '600' },
+  secondary: { borderWidth: 1, borderColor: 'rgba(127,127,127,0.5)' },
+  secondaryText: { fontSize: 16, fontWeight: '600', opacity: 0.8 },
 });
+
