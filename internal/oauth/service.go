@@ -1205,6 +1205,10 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		// Server-rendered login form callback (for standard OIDC clients)
 		oauth.POST("/authorize/callback", svc.handleAuthorizeCallback)
 
+		// Login page (GET) — the target of the /oauth/authorize[/v2] redirect for
+		// native/redirect clients; renders the server-side login form.
+		oauth.GET("/login", svc.handleLoginPage)
+
 		// Login endpoint for direct authentication (SPA flow)
 		oauth.POST("/login", svc.handleLogin)
 
@@ -1528,6 +1532,23 @@ func (s *Service) loadLoginBranding(ctx context.Context) loginBranding {
 		b.PortalTitle = portal
 	}
 	return b
+}
+
+// handleLoginPage (GET /oauth/login) renders the server-side login form. It is
+// the redirect target of /oauth/authorize[/v2] for native/redirect clients
+// (e.g. the desktop/mobile PKCE-loopback flow). Validates the login_session
+// before rendering so a stale/forged session doesn't reach the form.
+func (s *Service) handleLoginPage(c *gin.Context) {
+	loginSession := c.Query("login_session")
+	if loginSession == "" || !isValidSessionID(loginSession) {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "missing or invalid login_session"})
+		return
+	}
+	if _, err := s.redis.Client.Get(c.Request.Context(), "login_session:"+loginSession).Result(); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "login session expired; restart sign-in"})
+		return
+	}
+	s.renderLoginPage(c, loginSession, "")
 }
 
 // renderLoginPage serves a minimal HTML login form for standard OIDC clients,
