@@ -37,6 +37,8 @@ GRAFANA_ADMIN_PASSWORD="$(rand_password)"
 ZITI_PWD="$(rand_password)"
 ACCESS_SESSION_SECRET="$(rand_key_32)"
 GUACAMOLE_ADMIN_PASSWORD="$(rand_password)"
+GUACAMOLE_ZITI_ADMIN_PASSWORD="$(rand_password)"
+PAM_GUAC_DB_PASSWORD="$(rand_password)"
 
 # --- backup existing file ---
 if [ -f "$OUTPUT" ]; then
@@ -100,6 +102,10 @@ ACCESS_SESSION_SECRET=${ACCESS_SESSION_SECRET}
 # ----- Guacamole -----
 GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD}
 
+# ----- PAM dedicated brokers (docker-compose.pam-broker.yml) -----
+GUACAMOLE_ZITI_ADMIN_PASSWORD=${GUACAMOLE_ZITI_ADMIN_PASSWORD}
+PAM_GUAC_DB_PASSWORD=${PAM_GUAC_DB_PASSWORD}
+
 # ----- SMTP (optional) -----
 SMTP_HOST=
 SMTP_PORT=587
@@ -120,3 +126,5 @@ echo "  GRAFANA_ADMIN_PW   = ${GRAFANA_ADMIN_PASSWORD:0:8}..."
 echo "  ZITI_PWD           = ${ZITI_PWD:0:8}..."
 echo "  ACCESS_SESSION     = ${ACCESS_SESSION_SECRET:0:8}..."
 echo "  GUACAMOLE_ADMIN_PW = ${GUACAMOLE_ADMIN_PASSWORD:0:8}..."
+echo "  GUAC_ZITI_ADMIN_PW = ${GUACAMOLE_ZITI_ADMIN_PASSWORD:0:8}..."
+echo "  PAM_GUAC_DB_PW     = ${PAM_GUAC_DB_PASSWORD:0:8}..."

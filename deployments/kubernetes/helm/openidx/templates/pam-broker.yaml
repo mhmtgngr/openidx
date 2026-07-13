@@ -1,0 +1,287 @@
+{{- if .Values.pamBroker.enabled }}
+{{- /*
+PAM dedicated session brokers — two Guacamole stacks the access-service routes
+to per connection (reach_mode), plus a shared recordings PVC:
+
+  direct broker  pam-guacd + pam-guacamole            guacd dials targets directly
+  ziti broker    pam-guacd-ziti + pam-guacamole-ziti  guacd dials a loopback port that
+                 (ziti-tunnel sidecar)                the tunnel carries over the overlay
+
+Both use the Guacamole JDBC/Postgres auth extension so OpenIDX holds a real REST
+admin credential. The recordings PVC is shared (ReadWriteMany) by both guacd's
+and the access-service so the recording + retention pipeline has a substrate.
+*/}}
+---
+# ---- Shared recordings volume (RWX so both guacd's and access-service mount it) ----
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-recordings
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-broker
+spec:
+  accessModes:
+    - {{ .Values.pamBroker.recordings.accessMode | default "ReadWriteMany" }}
+  {{- if .Values.pamBroker.recordings.storageClass }}
+  storageClassName: {{ .Values.pamBroker.recordings.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.pamBroker.recordings.size | default "20Gi" }}
+---
+# ---- Direct broker: guacd ----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacd
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pam-guacd
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pam-guacd
+    spec:
+      containers:
+        - name: guacd
+          image: {{ .Values.pamBroker.guacd.image | quote }}
+          ports:
+            - name: guacd
+              containerPort: 4822
+              protocol: TCP
+          volumeMounts:
+            - name: recordings
+              mountPath: /recordings
+          resources:
+            {{- toYaml .Values.pamBroker.guacd.resources | nindent 12 }}
+      volumes:
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: {{ include "openidx.fullname" . }}-pam-recordings
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacd
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacd
+spec:
+  ports:
+    - port: 4822
+      targetPort: guacd
+      name: guacd
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacd
+---
+# ---- Direct broker: guacamole web (REST) ----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacamole
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacamole
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pam-guacamole
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pam-guacamole
+    spec:
+      containers:
+        - name: guacamole
+          image: {{ .Values.pamBroker.guacamole.image | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: GUACD_HOSTNAME
+              value: {{ include "openidx.fullname" . }}-pam-guacd
+            - name: POSTGRESQL_HOSTNAME
+              value: {{ .Values.pamBroker.db.hostname | quote }}
+            - name: POSTGRESQL_DATABASE
+              value: {{ .Values.pamBroker.db.directDatabase | default "guac_direct" | quote }}
+            - name: POSTGRESQL_USER
+              value: {{ .Values.pamBroker.db.user | default "guacamole" | quote }}
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openidx.fullname" . }}-secrets
+                  key: PAM_GUAC_DB_PASSWORD
+            - name: POSTGRESQL_AUTO_CREATE_ACCOUNTS
+              value: "true"
+          resources:
+            {{- toYaml .Values.pamBroker.guacamole.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacamole
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacamole
+spec:
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacamole
+---
+# ---- OpenZiti broker: guacd + ziti-tunnel sidecar (same pod so loopback is shared) ----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacd-ziti
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacd-ziti
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pam-guacd-ziti
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pam-guacd-ziti
+    spec:
+      containers:
+        - name: guacd
+          image: {{ .Values.pamBroker.guacd.image | quote }}
+          ports:
+            - name: guacd
+              containerPort: 4822
+              protocol: TCP
+          volumeMounts:
+            - name: recordings
+              mountPath: /recordings
+          resources:
+            {{- toYaml .Values.pamBroker.guacd.resources | nindent 12 }}
+        # ziti-tunnel sidecar: same pod as guacd, so the loopback ports it binds
+        # are the 127.0.0.1:<port> addresses guacd dials for ziti-reach entries.
+        - name: ziti-tunnel
+          image: {{ .Values.pamBroker.zitiTunnel.image | quote }}
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          env:
+            - name: PAM_ZITI_IDENTITY
+              value: /ziti-identity/pam-broker.json
+            - name: PAM_BROKER_BINDINGS_URL
+              value: {{ .Values.pamBroker.zitiTunnel.bindingsUrl | default (printf "http://%s-access-service:8007/api/v1/access/pam/broker/ziti-bindings" (include "openidx.fullname" .)) | quote }}
+          volumeMounts:
+            - name: ziti-identity
+              mountPath: /ziti-identity
+      volumes:
+        - name: recordings
+          persistentVolumeClaim:
+            claimName: {{ include "openidx.fullname" . }}-pam-recordings
+        - name: ziti-identity
+          {{- if .Values.pamBroker.zitiTunnel.identitySecret }}
+          secret:
+            secretName: {{ .Values.pamBroker.zitiTunnel.identitySecret }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacd-ziti
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacd-ziti
+spec:
+  ports:
+    - port: 4822
+      targetPort: guacd
+      name: guacd
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacd-ziti
+---
+# ---- OpenZiti broker: guacamole web (REST) ----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacamole-ziti
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacamole-ziti
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "openidx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pam-guacamole-ziti
+  template:
+    metadata:
+      labels:
+        {{- include "openidx.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pam-guacamole-ziti
+    spec:
+      containers:
+        - name: guacamole
+          image: {{ .Values.pamBroker.guacamole.image | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: GUACD_HOSTNAME
+              value: {{ include "openidx.fullname" . }}-pam-guacd-ziti
+            - name: POSTGRESQL_HOSTNAME
+              value: {{ .Values.pamBroker.db.hostname | quote }}
+            - name: POSTGRESQL_DATABASE
+              value: {{ .Values.pamBroker.db.zitiDatabase | default "guac_ziti" | quote }}
+            - name: POSTGRESQL_USER
+              value: {{ .Values.pamBroker.db.user | default "guacamole" | quote }}
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openidx.fullname" . }}-secrets
+                  key: PAM_GUAC_DB_PASSWORD
+            - name: POSTGRESQL_AUTO_CREATE_ACCOUNTS
+              value: "true"
+          resources:
+            {{- toYaml .Values.pamBroker.guacamole.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openidx.fullname" . }}-pam-guacamole-ziti
+  labels:
+    {{- include "openidx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacamole-ziti
+spec:
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+  selector:
+    {{- include "openidx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: pam-guacamole-ziti
+{{- end }}

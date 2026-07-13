@@ -1,0 +1,179 @@
+# OpenIDX PAM dedicated session brokers (compose overlay).
+#
+# Stands up the two dedicated Guacamole brokers the PAM connection manager routes
+# to per connection (reach_mode), isolated from the shared BrowZer Guacamole:
+#
+#   direct broker  pam-guacd + pam-guacamole            guacd dials targets directly
+#   ziti broker    pam-guacd-ziti + pam-guacamole-ziti  guacd dials a loopback port that
+#                  + pam-ziti-tunnel                    the ziti-tunnel carries over the
+#                                                       OpenZiti overlay (zero inbound target exposure)
+#
+# Both brokers use JDBC/Postgres auth (their own dedicated pam-guac-postgres, two
+# databases) so OpenIDX holds a real REST admin credential — the shared stack's
+# header-auth is why it can't be reused. A single pam_recordings volume is shared
+# by both guacd's and the access-service so the M3/M4 recording + retention
+# pipeline has an on-disk substrate.
+#
+# Usage (opt-in overlay, layered on the base compose):
+#   docker compose -f docker-compose.yml -f docker-compose.pam-broker.yml up -d
+#
+# Secrets required (added by scripts/generate-secrets.sh):
+#   GUACAMOLE_ADMIN_PASSWORD        direct broker REST admin (already used by base)
+#   GUACAMOLE_ZITI_ADMIN_PASSWORD   ziti broker REST admin
+#
+# See README.pam-broker.md for enrollment of the ziti-tunnel identity and the
+# loopback-binding refresh.
+
+services:
+  # ---- Dedicated Postgres for the PAM brokers (isolated from the app + BrowZer DBs) ----
+  pam-guac-postgres:
+    image: postgres:16-alpine
+    container_name: openidx-pam-guac-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: guacamole
+      POSTGRES_PASSWORD: ${PAM_GUAC_DB_PASSWORD:?PAM_GUAC_DB_PASSWORD required - run scripts/generate-secrets.sh}
+    volumes:
+      - pam_guac_pgdata:/var/lib/postgresql/data
+      # Creates the guac_direct + guac_ziti databases and loads the Guacamole
+      # JDBC schema into each (runs once on a fresh data volume).
+      - ./init-pam-guac.sh:/docker-entrypoint-initdb.d/00-init-pam-guac.sh:ro
+      - ./init-guacamole.sql:/docker-entrypoint-initdb.d/guacamole-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guacamole"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - openidx-network
+
+  # ---- Direct broker ----
+  pam-guacd:
+    image: guacamole/guacd:latest
+    container_name: openidx-pam-guacd
+    restart: unless-stopped
+    volumes:
+      # Shared recording substrate: guacd WRITES recordings here; access-service
+      # reads them for retention/transcript.
+      - pam_recordings:/recordings
+    networks:
+      - openidx-network
+
+  pam-guacamole:
+    image: guacamole/guacamole:latest
+    container_name: openidx-pam-guacamole
+    restart: unless-stopped
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        for SCRIPT in /opt/guacamole/entrypoint.d/*.sh; do
+          [ "$$(basename "$$SCRIPT")" = "999-start-tomcat.sh" ] && continue
+          source "$$SCRIPT"
+        done
+        source /opt/guacamole/entrypoint.d/999-start-tomcat.sh
+    environment:
+      - GUACD_HOSTNAME=pam-guacd
+      - POSTGRESQL_HOSTNAME=pam-guac-postgres
+      - POSTGRESQL_DATABASE=guac_direct
+      - POSTGRESQL_USER=guacamole
+      - POSTGRESQL_PASSWORD=${PAM_GUAC_DB_PASSWORD:?PAM_GUAC_DB_PASSWORD required - run scripts/generate-secrets.sh}
+      - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+    depends_on:
+      - pam-guacd
+      - pam-guac-postgres
+    ports:
+      - "8086:8080"
+    networks:
+      - openidx-network
+
+  # ---- OpenZiti broker ----
+  pam-guacd-ziti:
+    image: guacamole/guacd:latest
+    container_name: openidx-pam-guacd-ziti
+    restart: unless-stopped
+    volumes:
+      - pam_recordings:/recordings
+    networks:
+      - openidx-network
+
+  # ziti-tunnel sidecar — shares the ziti guacd's network namespace so the
+  # loopback ports it binds (127.0.0.1:<port>) are the exact addresses guacd
+  # dials. Enrolled as an identity with the #pam-broker-dialers role so it may
+  # Dial the per-entry PAM services. See README.pam-broker.md for enrollment and
+  # the loopback-binding refresh from /pam/broker/ziti-bindings.
+  pam-ziti-tunnel:
+    image: openziti/ziti-edge-tunnel:latest
+    container_name: openidx-pam-ziti-tunnel
+    restart: unless-stopped
+    network_mode: "service:pam-guacd-ziti"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    entrypoint: /bin/sh
+    command:
+      - /pam-ziti-tunnel-entrypoint.sh
+    environment:
+      # Where the enrolled identity lives (mount it here) and where to fetch the
+      # service→loopback-port bindings from the access-service.
+      - PAM_ZITI_IDENTITY=/ziti-identity/pam-broker.json
+      - PAM_BROKER_BINDINGS_URL=${PAM_BROKER_BINDINGS_URL:-http://access-service:8007/api/v1/access/pam/broker/ziti-bindings}
+      - PAM_BROKER_BINDINGS_TOKEN=${PAM_BROKER_BINDINGS_TOKEN:-}
+    volumes:
+      - ./pam-ziti-tunnel-entrypoint.sh:/pam-ziti-tunnel-entrypoint.sh:ro
+      - pam_ziti_identity:/ziti-identity
+    depends_on:
+      - pam-guacd-ziti
+
+  pam-guacamole-ziti:
+    image: guacamole/guacamole:latest
+    container_name: openidx-pam-guacamole-ziti
+    restart: unless-stopped
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        for SCRIPT in /opt/guacamole/entrypoint.d/*.sh; do
+          [ "$$(basename "$$SCRIPT")" = "999-start-tomcat.sh" ] && continue
+          source "$$SCRIPT"
+        done
+        source /opt/guacamole/entrypoint.d/999-start-tomcat.sh
+    environment:
+      # The ziti guacd is reachable on the tunnel-shared namespace at its
+      # container name (both share pam-guacd-ziti's network).
+      - GUACD_HOSTNAME=pam-guacd-ziti
+      - POSTGRESQL_HOSTNAME=pam-guac-postgres
+      - POSTGRESQL_DATABASE=guac_ziti
+      - POSTGRESQL_USER=guacamole
+      - POSTGRESQL_PASSWORD=${PAM_GUAC_DB_PASSWORD:?PAM_GUAC_DB_PASSWORD required - run scripts/generate-secrets.sh}
+      - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+    depends_on:
+      - pam-guacd-ziti
+      - pam-guac-postgres
+    ports:
+      - "8087:8080"
+    networks:
+      - openidx-network
+
+  # ---- Point the access-service at the dedicated brokers + share the recordings volume ----
+  access-service:
+    environment:
+      # Direct broker (override the base, which points at the shared BrowZer guacamole).
+      - GUACAMOLE_URL=http://pam-guacamole:8080/guacamole
+      - GUACAMOLE_ADMIN_USER=guacadmin
+      - GUACAMOLE_ADMIN_PASSWORD=${GUACAMOLE_ADMIN_PASSWORD:?GUACAMOLE_ADMIN_PASSWORD required - run scripts/generate-secrets.sh}
+      # Dedicated OpenZiti broker.
+      - GUACAMOLE_ZITI_URL=http://pam-guacamole-ziti:8080/guacamole
+      - GUACAMOLE_ZITI_ADMIN_USER=guacadmin
+      - GUACAMOLE_ZITI_ADMIN_PASSWORD=${GUACAMOLE_ZITI_ADMIN_PASSWORD:?GUACAMOLE_ZITI_ADMIN_PASSWORD required - run scripts/generate-secrets.sh}
+      # Shared recording substrate (matches the volume mount below).
+      - GUACAMOLE_RECORDING_PATH=/recordings
+    volumes:
+      - pam_recordings:/recordings
+
+volumes:
+  pam_guac_pgdata:
+  pam_recordings:
+  pam_ziti_identity:

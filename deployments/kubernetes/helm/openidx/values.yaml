@@ -13,6 +13,11 @@ secrets:
   encryptionKey: ""          # REQUIRED - exactly 32 bytes
   keycloakAdminPassword: ""
   smtpPassword: ""
+  # PAM dedicated brokers (pamBroker.enabled). REST admin credentials for the
+  # direct + ziti Guacamole brokers, and the brokers' Postgres password.
+  guacamoleAdminPassword: ""
+  guacamoleZitiAdminPassword: ""
+  pamGuacDbPassword: ""
 
 # ----- External Secrets Operator -----
 # Enable this to pull secrets from AWS Secrets Manager, HashiCorp Vault, etc.
@@ -292,6 +297,50 @@ accessService:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
+
+# PAM dedicated session brokers (two Guacamole stacks + a ziti-tunnel sidecar +
+# a shared recordings PVC). Disabled by default; enable to make brokered PAM
+# RDP/SSH/VNC launches work. When enabled, the access-service Deployment is
+# pointed at these brokers and mounts the recordings PVC.
+pamBroker:
+  enabled: false
+  guacd:
+    image: guacamole/guacd:latest
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  guacamole:
+    image: guacamole/guacamole:latest
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  zitiTunnel:
+    image: openziti/ziti-edge-tunnel:latest
+    # Secret holding the enrolled #pam-broker-dialers identity (pam-broker.json).
+    # When empty an emptyDir is used and you enroll into it out-of-band.
+    identitySecret: ""
+    # Override if the access-service is reachable at a non-default name.
+    bindingsUrl: ""
+  db:
+    # A Postgres reachable from the cluster with the Guacamole JDBC schema loaded
+    # into directDatabase + zitiDatabase. Point at the bundled postgres or a
+    # dedicated instance; password comes from secrets.pamGuacDbPassword.
+    hostname: openidx-postgresql
+    user: guacamole
+    directDatabase: guac_direct
+    zitiDatabase: guac_ziti
+  recordings:
+    size: 20Gi
+    accessMode: ReadWriteMany
+    storageClass: ""
 
 # Admin Console
 adminConsole:
