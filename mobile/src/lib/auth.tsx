@@ -25,6 +25,7 @@ import {
   OAUTH_REDIRECT_SCHEME,
   OAUTH_SCOPES,
 } from '@/config';
+import { passkeyLogin } from '@/features/mfa/passkey';
 import { setOnAuthLost } from '@/lib/api';
 import { decodeClaims, type Claims } from '@/lib/jwt';
 import { exchangeCode, refreshTokens, revokeSession } from '@/lib/oauth';
@@ -49,6 +50,8 @@ type AuthState = {
   isAuthenticated: boolean;
   isLoading: boolean;
   loginWithBrowser: () => Promise<void>;
+  /** Fully-native usernameless passkey login. */
+  loginWithPasskey: () => Promise<void>;
   /** Passkey/other flows that already obtained tokens hand them here. */
   loginWithTokens: (t: Tokens) => Promise<void>;
   logout: () => Promise<void>;
@@ -108,6 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       request.codeVerifier ?? '',
       redirectUri,
     );
+    await loginWithTokens(tokens);
+  }, [loginWithTokens]);
+
+  const loginWithPasskey = useCallback(async () => {
+    const tokens = await passkeyLogin();
     await loginWithTokens(tokens);
   }, [loginWithTokens]);
 
@@ -171,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!claims,
         isLoading,
         loginWithBrowser,
+        loginWithPasskey,
         loginWithTokens,
         logout,
       }}>
