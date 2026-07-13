@@ -78,6 +78,7 @@ export default function HomeScreen() {
         <View style={styles.nav}>
           <NavRow href="/(app)/security/passkeys" label="Passkeys" />
           <NavRow href="/(app)/security/totp" label="Authenticator app" />
+          <NavRow href="/(app)/security/device" label="This device" />
         </View>
 
         <Pressable style={styles.logout} onPress={logout}>
