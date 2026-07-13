@@ -29,14 +29,19 @@ var ErrSharingUnsupported = errors.New("guacamole: connection sharing not suppor
 
 // GuacamoleClient communicates with the Apache Guacamole REST API to manage connections
 type GuacamoleClient struct {
-	baseURL    string
-	username   string
-	password   string
-	authToken  string
-	dataSource string
-	httpClient *http.Client
-	db         *database.PostgresDB
-	logger     *zap.Logger
+	baseURL string
+	// publicBaseURL is the browser-facing base for connect URLs handed back to the
+	// client (e.g. https://openidx.tdv.org:8443/guacamole behind a reverse proxy).
+	// baseURL stays the server-side/internal endpoint the access service dials for
+	// the REST API. Falls back to baseURL when unset.
+	publicBaseURL string
+	username      string
+	password      string
+	authToken     string
+	dataSource    string
+	httpClient    *http.Client
+	db            *database.PostgresDB
+	logger        *zap.Logger
 	// tokenCipher encrypts the pooled Guacamole session token at rest (write-only
 	// DB copy; the in-memory pool holds plaintext for reuse).
 	tokenCipher *secretcrypt.Cipher
@@ -95,7 +100,7 @@ func NewConnectionPool(maxConnections int, idleTimeout time.Duration) *Connectio
 // client (guacd dials targets directly) from the GUACAMOLE_* config.
 func NewGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*GuacamoleClient, error) {
 	return newGuacamoleClient(cfg, db, logger, "guacamole",
-		cfg.GuacamoleURL, cfg.GuacamoleAdminUser, cfg.GuacamoleAdminPassword)
+		cfg.GuacamoleURL, cfg.GuacamolePublicURL, cfg.GuacamoleAdminUser, cfg.GuacamoleAdminPassword)
 }
 
 // NewGuacamoleZitiClient creates and authenticates the dedicated OpenZiti PAM
@@ -104,15 +109,18 @@ func NewGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 // this broker so guacd reaches the target over the overlay.
 func NewGuacamoleZitiClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger) (*GuacamoleClient, error) {
 	return newGuacamoleClient(cfg, db, logger, "guacamole-ziti",
-		cfg.GuacamoleZitiURL, cfg.GuacamoleZitiAdminUser, cfg.GuacamoleZitiAdminPassword)
+		cfg.GuacamoleZitiURL, cfg.GuacamoleZitiPublicURL, cfg.GuacamoleZitiAdminUser, cfg.GuacamoleZitiAdminPassword)
 }
 
 // newGuacamoleClient is the shared constructor for a Guacamole broker client at
 // an explicit URL/credential (so the direct and ziti brokers are independent
 // endpoints with independent admin credentials).
-func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger, component, baseURL, adminUser, adminPassword string) (*GuacamoleClient, error) {
+func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap.Logger, component, baseURL, publicBaseURL, adminUser, adminPassword string) (*GuacamoleClient, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("%s URL is not configured", component)
+	}
+	if publicBaseURL == "" {
+		publicBaseURL = baseURL
 	}
 
 	tokenCipher, err := secretcrypt.New(cfg.EncryptionKey)
@@ -122,13 +130,14 @@ func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 	}
 
 	gc := &GuacamoleClient{
-		baseURL:     strings.TrimRight(baseURL, "/"),
-		username:    adminUser,
-		password:    adminPassword,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
-		db:          db,
-		logger:      logger.With(zap.String("component", component)),
-		tokenCipher: tokenCipher,
+		baseURL:       strings.TrimRight(baseURL, "/"),
+		publicBaseURL: strings.TrimRight(publicBaseURL, "/"),
+		username:      adminUser,
+		password:      adminPassword,
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		db:            db,
+		logger:        logger.With(zap.String("component", component)),
+		tokenCipher:   tokenCipher,
 	}
 
 	// Authenticate to get a token
@@ -332,7 +341,7 @@ func (gc *GuacamoleClient) UpdateConnection(connID, name, protocol, hostname str
 func (gc *GuacamoleClient) GetConnectionURL(connID string) string {
 	// The Guacamole client URL format: /#/client/{base64(connID + \0 + c + \0 + dataSource)}
 	// Simplified: just return the base URL with connection reference
-	return fmt.Sprintf("%s/#/client/%s?token=%s", gc.baseURL, connID, gc.authToken)
+	return fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, connID, gc.authToken)
 }
 
 // ---- Database operations for tracking Guacamole connections ----

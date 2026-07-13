@@ -368,7 +368,20 @@ func (s *Service) ensurePamGuacConnection(ctx context.Context, orgID string, ent
 	}
 	newID, err := broker.CreateConnection(name, protocol, dialHost, dialPort, params)
 	if err != nil {
-		return "", err
+		// The connection name is deterministic (pam-<entryID>). If a prior launch
+		// created it but we never persisted the id (failed/cross-context persist, or
+		// a stale guacamole_connection_id that no longer resolves), Guacamole rejects
+		// the duplicate name. Recover by finding the existing connection by name and
+		// updating it in place — makes ensure idempotent regardless of persisted state.
+		existingID := s.findGuacConnectionIDByName(ctx, broker, name)
+		if existingID == "" {
+			return "", err
+		}
+		if uerr := broker.UpdateConnection(existingID, name, protocol, dialHost, dialPort, params); uerr != nil {
+			s.logger.Warn("ensurePamGuacConnection: update of existing connection failed",
+				zap.String("entry_id", entry.ID), zap.Error(uerr))
+		}
+		newID = existingID
 	}
 	if _, err := s.db.Pool.Exec(ctx,
 		`UPDATE pam_entries SET guacamole_connection_id = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
@@ -376,6 +389,23 @@ func (s *Service) ensurePamGuacConnection(ctx context.Context, orgID string, ent
 		s.logger.Warn("ensurePamGuacConnection: persist connection id failed", zap.Error(err))
 	}
 	return newID, nil
+}
+
+// findGuacConnectionIDByName returns the Guacamole identifier of the connection
+// with the given name, or "" if not found or on error. Used to recover the
+// deterministic pam-<entryID> connection when its id wasn't persisted.
+func (s *Service) findGuacConnectionIDByName(ctx context.Context, broker *GuacamoleClient, name string) string {
+	conns, err := broker.ListConnections(ctx)
+	if err != nil {
+		s.logger.Warn("findGuacConnectionIDByName: list connections failed", zap.Error(err))
+		return ""
+	}
+	for _, c := range conns {
+		if c.Name == name {
+			return c.ID
+		}
+	}
+	return ""
 }
 
 // recordPamLaunch writes the pam_entry_sessions ledger row, bumps the entry's
