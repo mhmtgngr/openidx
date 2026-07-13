@@ -1,0 +1,10 @@
+PackageIdentifier: OpenIDX.Agent
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: OpenIDX
+PackageName: OpenIDX Agent
+License: See repository
+ShortDescription: OpenIDX Windows client — device-trust agent + SSO/PAM tray.
+Moniker: openidx-agent
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

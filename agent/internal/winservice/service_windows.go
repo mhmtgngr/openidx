@@ -7,6 +7,7 @@ package winservice
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -14,7 +15,31 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/ipc"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
+
+// statusProvider builds a read-only status snapshot for the tray from the
+// persisted agent config (best-effort; live posture is a follow-up).
+func (h *handler) statusProvider() ipc.Status {
+	cfg, err := agent.LoadConfig(h.configDir)
+	if err != nil || cfg == nil {
+		return ipc.Status{Enrolled: false}
+	}
+	zitiUp := false
+	if cfg.ZitiIdentityFile != "" {
+		if _, statErr := os.Stat(cfg.ZitiIdentityFile); statErr == nil {
+			zitiUp = true
+		}
+	}
+	return ipc.Status{
+		Enrolled:     cfg.AgentID != "",
+		AgentID:      cfg.AgentID,
+		DeviceID:     cfg.DeviceID,
+		ServerURL:    cfg.ServerURL,
+		ZitiEnrolled: zitiUp,
+	}
+}
 
 // ServiceName is the Windows Service key/name.
 const ServiceName = "OpenIDXAgent"
@@ -26,6 +51,7 @@ const DisplayName = "OpenIDX Agent"
 type handler struct {
 	logger    *zap.Logger
 	configDir string
+	version   string
 }
 
 // Execute implements svc.Handler.
@@ -51,6 +77,15 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 		cancel()
 	}()
 
+	// Expose read-only status to the user-session tray over a named pipe.
+	go func() {
+		if err := ipc.Serve(ctx, h.statusProvider); err != nil {
+			h.logger.Warn("service: ipc server stopped", zap.Error(err))
+		}
+	}()
+	// Periodic self-update (no-op unless update_manifest_url is configured).
+	go h.updateLoop(ctx)
+
 	s <- svc.Status{State: svc.Running, Accepts: accepted}
 	for {
 		select {
@@ -75,8 +110,31 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 func IsWindowsService() (bool, error) { return svc.IsWindowsService() }
 
 // Run runs the agent under the Windows Service control manager.
-func Run(logger *zap.Logger, configDir string) error {
-	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir})
+func Run(logger *zap.Logger, configDir, version string) error {
+	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir, version: version})
+}
+
+// updateLoop periodically self-updates when an update manifest is configured.
+func (h *handler) updateLoop(ctx context.Context) {
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cfg, err := agent.LoadConfig(h.configDir)
+			if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
+				continue
+			}
+			applied, newV, err := updater.CheckAndApply(ctx, cfg.UpdateManifestURL, h.version)
+			if err != nil {
+				h.logger.Warn("service: update check failed", zap.Error(err))
+			} else if applied {
+				h.logger.Info("service: applying update", zap.String("version", newV))
+			}
+		}
+	}
 }
 
 // Install registers the service (auto-start, LocalSystem) to launch the given

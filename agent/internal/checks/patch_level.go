@@ -47,6 +47,8 @@ func (c *PatchLevelCheck) Run(_ context.Context, params map[string]interface{}) 
 		return c.checkLinux(maxDays)
 	case "darwin":
 		return c.checkMacOS(maxDays)
+	case "windows":
+		return c.checkWindows(maxDays)
 	default:
 		return &CheckResult{
 			Status:  StatusWarn,
@@ -58,6 +60,32 @@ func (c *PatchLevelCheck) Run(_ context.Context, params map[string]interface{}) 
 			},
 		}
 	}
+}
+
+// checkWindows computes days since the most recent installed hotfix
+// (Win32_QuickFixEngineering) and grades it against maxDays.
+func (c *PatchLevelCheck) checkWindows(maxDays int) *CheckResult {
+	const ps = `$h = Get-HotFix | Where-Object InstalledOn | Sort-Object InstalledOn -Descending | Select-Object -First 1; ` +
+		`if ($h) { [int]((Get-Date) - $h.InstalledOn).TotalDays } else { -1 }`
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	if err != nil {
+		return &CheckResult{
+			Status:  StatusError,
+			Score:   0,
+			Message: fmt.Sprintf("hotfix query failed: %v", err),
+			Details: map[string]interface{}{"os": "windows", "max_days": maxDays},
+		}
+	}
+	var days int
+	if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &days); scanErr != nil || days < 0 {
+		return &CheckResult{
+			Status:  StatusWarn,
+			Score:   0.5,
+			Message: "could not determine last Windows update date",
+			Details: map[string]interface{}{"os": "windows", "max_days": maxDays},
+		}
+	}
+	return c.resultFromAge(days, maxDays, "Win32_QuickFixEngineering", "windows")
 }
 
 func (c *PatchLevelCheck) resultFromAge(daysSince, maxDays int, method, os string) *CheckResult {
