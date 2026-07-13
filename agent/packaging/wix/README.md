@@ -34,6 +34,19 @@ or Intune command), then users sign in from the tray:
 Set `WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD` repo secrets; the CI job
 Authenticode-signs the MSI when they're present.
 
+## Releases & auto-update
+Push an **`agent-v<version>`** tag (e.g. `agent-v1.2.0`). The Windows Client
+Build workflow then builds + signs the MSI and publishes a GitHub Release with:
+- `OpenIDX-<version>.msi`
+- `latest.json` — `{ "version", "url", "sha256" }` the self-updater polls.
+
+Point clients at the stable "latest" URL (redirects to the newest release):
+```
+update_manifest_url = https://github.com/mhmtgngr/openidx/releases/latest/download/latest.json
+```
+Set it in the agent config (or via a deployment script); the service checks
+every 6h and applies newer signed MSIs. Manual: `openidx-agent update --apply`.
+
 ## winget
 `packaging/winget/` holds a manifest template — fill `InstallerUrl` +
 `InstallerSha256` from the released MSI and submit to `microsoft/winget-pkgs`.

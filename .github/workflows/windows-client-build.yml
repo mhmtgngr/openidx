@@ -9,6 +9,7 @@ on:
   push:
     branches: [main]
     paths: ['agent/**', '.github/workflows/windows-client-build.yml']
+    tags: ['agent-v*']
   pull_request:
     paths: ['agent/**', '.github/workflows/windows-client-build.yml']
   workflow_dispatch:
@@ -45,6 +46,8 @@ jobs:
     name: build .exe + MSI
     runs-on: windows-latest
     needs: smoke-crosscompile
+    permissions:
+      contents: write # create the release + upload assets on a tag
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -55,7 +58,15 @@ jobs:
       - name: Resolve version
         id: ver
         shell: bash
-        run: echo "version=${{ inputs.version || '0.1.0' }}" >> "$GITHUB_OUTPUT"
+        run: |
+          # On a tag `agent-v1.2.0`, version = 1.2.0; else the dispatch input.
+          if [[ "$GITHUB_REF" == refs/tags/agent-v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/agent-v}" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version || '0.1.0' }}" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build openidx-agent.exe
         working-directory: agent
@@ -99,3 +110,31 @@ jobs:
             agent/dist/openidx-agent.exe
             dist/OpenIDX-*.msi
           if-no-files-found: error
+
+      # ---- Release wiring (tags only) ----------------------------------------
+      # On an `agent-v*` tag, publish a GitHub Release with the MSI + a
+      # latest.json manifest the self-updater polls. Clients set
+      #   update_manifest_url = https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+      # which always redirects to the newest release's manifest.
+      - name: Generate latest.json
+        if: steps.ver.outputs.release == 'true'
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          $msi = "dist/OpenIDX-$ver.msi"
+          $sha = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLower()
+          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/OpenIDX-$ver.msi"
+          $manifest = [ordered]@{ version = $ver; url = $url; sha256 = $sha }
+          $manifest | ConvertTo-Json | Set-Content -Path dist/latest.json -Encoding utf8
+          Get-Content dist/latest.json
+
+      - name: Publish release
+        if: steps.ver.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: OpenIDX Windows Client ${{ steps.ver.outputs.version }}
+          files: |
+            dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
+            dist/latest.json
+          fail_on_unmatched_files: true
