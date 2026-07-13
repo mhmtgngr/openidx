@@ -16,6 +16,7 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/ipc"
+	"github.com/openidx/openidx/agent/internal/updater"
 )
 
 // statusProvider builds a read-only status snapshot for the tray from the
@@ -50,6 +51,7 @@ const DisplayName = "OpenIDX Agent"
 type handler struct {
 	logger    *zap.Logger
 	configDir string
+	version   string
 }
 
 // Execute implements svc.Handler.
@@ -81,6 +83,8 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 			h.logger.Warn("service: ipc server stopped", zap.Error(err))
 		}
 	}()
+	// Periodic self-update (no-op unless update_manifest_url is configured).
+	go h.updateLoop(ctx)
 
 	s <- svc.Status{State: svc.Running, Accepts: accepted}
 	for {
@@ -106,8 +110,31 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 func IsWindowsService() (bool, error) { return svc.IsWindowsService() }
 
 // Run runs the agent under the Windows Service control manager.
-func Run(logger *zap.Logger, configDir string) error {
-	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir})
+func Run(logger *zap.Logger, configDir, version string) error {
+	return svc.Run(ServiceName, &handler{logger: logger, configDir: configDir, version: version})
+}
+
+// updateLoop periodically self-updates when an update manifest is configured.
+func (h *handler) updateLoop(ctx context.Context) {
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cfg, err := agent.LoadConfig(h.configDir)
+			if err != nil || cfg == nil || cfg.UpdateManifestURL == "" {
+				continue
+			}
+			applied, newV, err := updater.CheckAndApply(ctx, cfg.UpdateManifestURL, h.version)
+			if err != nil {
+				h.logger.Warn("service: update check failed", zap.Error(err))
+			} else if applied {
+				h.logger.Info("service: applying update", zap.String("version", newV))
+			}
+		}
+	}
 }
 
 // Install registers the service (auto-start, LocalSystem) to launch the given

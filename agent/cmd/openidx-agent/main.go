@@ -17,6 +17,7 @@ import (
 	"github.com/openidx/openidx/agent/internal/enrollment"
 	"github.com/openidx/openidx/agent/internal/sso"
 	"github.com/openidx/openidx/agent/internal/tray"
+	"github.com/openidx/openidx/agent/internal/updater"
 	"github.com/openidx/openidx/agent/internal/winservice"
 )
 
@@ -217,7 +218,44 @@ var serviceRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run under the Windows Service control manager (invoked by the SCM)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return winservice.Run(logger, configDir)
+		return winservice.Run(logger, configDir, Version)
+	},
+}
+
+var updateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Check for and (with --apply) install a newer OpenIDX client",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		url, _ := cmd.Flags().GetString("manifest-url")
+		if url == "" {
+			if cfg, err := agent.LoadConfig(configDir); err == nil {
+				url = cfg.UpdateManifestURL
+			}
+		}
+		if url == "" {
+			return fmt.Errorf("no update manifest URL: pass --manifest-url or set update_manifest_url in config")
+		}
+		m, err := updater.Fetch(cmd.Context(), url)
+		if err != nil {
+			return err
+		}
+		if !updater.Newer(Version, m.Version) {
+			fmt.Printf("Up to date (current %s, latest %s).\n", Version, m.Version)
+			return nil
+		}
+		fmt.Printf("Update available: %s -> %s\n", Version, m.Version)
+		if apply, _ := cmd.Flags().GetBool("apply"); !apply {
+			fmt.Println("Run with --apply to install.")
+			return nil
+		}
+		applied, newV, err := updater.CheckAndApply(cmd.Context(), url, Version)
+		if err != nil {
+			return fmt.Errorf("update failed: %w", err)
+		}
+		if applied {
+			fmt.Printf("Installing %s (msiexec launched)...\n", newV)
+		}
+		return nil
 	},
 }
 
@@ -267,6 +305,8 @@ func init() {
 
 	loginCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
 	trayCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
+	updateCmd.Flags().String("manifest-url", "", "version manifest URL (defaults to config update_manifest_url)")
+	updateCmd.Flags().Bool("apply", false, "download and install the update if one is available")
 
 	rootCmd.AddCommand(enrollCmd)
 	rootCmd.AddCommand(runCmd)
@@ -274,4 +314,5 @@ func init() {
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(trayCmd)
+	rootCmd.AddCommand(updateCmd)
 }
