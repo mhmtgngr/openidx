@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -12,7 +14,21 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/agent"
 	"github.com/openidx/openidx/agent/internal/enrollment"
+	"github.com/openidx/openidx/agent/internal/winservice"
 )
+
+// defaultConfigDir returns the platform-appropriate config/credential directory:
+// %ProgramData%\OpenIDX\agent on Windows, /etc/openidx-agent elsewhere.
+func defaultConfigDir() string {
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("ProgramData")
+		if base == "" {
+			base = `C:\ProgramData`
+		}
+		return filepath.Join(base, "OpenIDX", "agent")
+	}
+	return "/etc/openidx-agent"
+}
 
 // Version information injected via ldflags at build time.
 var (
@@ -132,9 +148,52 @@ begin enforcing access policies and reporting health checks.`,
 	},
 }
 
+// serviceCmd groups Windows-service lifecycle subcommands.
+var serviceCmd = &cobra.Command{
+	Use:   "service",
+	Short: "Manage the OpenIDX agent Windows service",
+	Long:  "Install, uninstall, or run the OpenIDX agent as a Windows service (Windows only).",
+}
+
+var serviceRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run under the Windows Service control manager (invoked by the SCM)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return winservice.Run(logger, configDir)
+	},
+}
+
+var serviceInstallCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install and start the OpenIDX agent service (LocalSystem, auto-start)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolving executable path: %w", err)
+		}
+		if err := winservice.Install(exe, configDir); err != nil {
+			return err
+		}
+		logger.Info("service installed", zap.String("name", winservice.ServiceName))
+		return nil
+	},
+}
+
+var serviceUninstallCmd = &cobra.Command{
+	Use:   "uninstall",
+	Short: "Stop and remove the OpenIDX agent service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := winservice.Uninstall(); err != nil {
+			return err
+		}
+		logger.Info("service uninstalled", zap.String("name", winservice.ServiceName))
+		return nil
+	},
+}
+
 func init() {
 	// Persistent flags available to all subcommands.
-	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", "/etc/openidx-agent",
+	rootCmd.PersistentFlags().StringVar(&configDir, "config-dir", defaultConfigDir(),
 		"directory for agent configuration and credentials")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false,
 		"enable verbose (debug) logging")
@@ -144,6 +203,11 @@ func init() {
 	enrollCmd.Flags().String("server", "https://openidx.example.com", "OpenIDX server URL")
 	_ = enrollCmd.MarkFlagRequired("token")
 
+	serviceCmd.AddCommand(serviceRunCmd)
+	serviceCmd.AddCommand(serviceInstallCmd)
+	serviceCmd.AddCommand(serviceUninstallCmd)
+
 	rootCmd.AddCommand(enrollCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(serviceCmd)
 }

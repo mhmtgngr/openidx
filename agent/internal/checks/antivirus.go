@@ -42,6 +42,8 @@ func (c *AntivirusCheck) Run(_ context.Context, _ map[string]interface{}) *Check
 		return c.checkLinux()
 	case "darwin":
 		return c.checkMacOS()
+	case "windows":
+		return c.checkWindows()
 	default:
 		return &CheckResult{
 			Status:  StatusWarn,
@@ -51,6 +53,49 @@ func (c *AntivirusCheck) Run(_ context.Context, _ map[string]interface{}) *Check
 				"os": runtime.GOOS,
 			},
 		}
+	}
+}
+
+// checkWindows queries the Windows Security Center (root/SecurityCenter2) for
+// registered antivirus products via PowerShell/CIM. Any registered product
+// (including Microsoft Defender) passes.
+func (c *AntivirusCheck) checkWindows() *CheckResult {
+	const ps = `Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | ` +
+		`Select-Object -ExpandProperty displayName`
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	if err != nil {
+		return &CheckResult{
+			Status:  StatusError,
+			Score:   0,
+			Message: fmt.Sprintf("SecurityCenter2 query failed: %v", err),
+			Details: map[string]interface{}{"os": "windows"},
+		}
+	}
+	var products []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if p := strings.TrimSpace(line); p != "" {
+			products = append(products, p)
+		}
+	}
+	details := map[string]interface{}{
+		"os":       "windows",
+		"products": products,
+		"method":   "SecurityCenter2",
+	}
+	if len(products) > 0 {
+		return &CheckResult{
+			Status:  StatusPass,
+			Score:   1.0,
+			Details: details,
+			Message: "antivirus registered: " + strings.Join(products, ", "),
+		}
+	}
+	return &CheckResult{
+		Status:      StatusFail,
+		Score:       0,
+		Details:     details,
+		Message:     "no antivirus product registered with Windows Security Center",
+		Remediation: "Ensure Microsoft Defender or another AV is enabled and registered.",
 	}
 }
 

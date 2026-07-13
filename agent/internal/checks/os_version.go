@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 // OSVersionCheck reports the current operating system name, version, and
@@ -51,27 +49,7 @@ func (c *OSVersionCheck) Run(_ context.Context, params map[string]interface{}) *
 	}
 }
 
-// getOSVersion retrieves the kernel/OS release string via uname on
-// Linux/macOS and falls back to "unknown" on other platforms.
-func getOSVersion() string {
-	var uts unix.Utsname
-	if err := unix.Uname(&uts); err != nil {
-		return "unknown"
-	}
-	// Release is [65]uint8 on Linux/amd64; convert to a Go string stopping at
-	// the first NUL byte.
-	b := make([]byte, 0, len(uts.Release))
-	for _, c := range uts.Release {
-		if c == 0 {
-			break
-		}
-		b = append(b, byte(c))
-	}
-	if len(b) == 0 {
-		return "unknown"
-	}
-	return strings.SplitN(string(b), "-", 2)[0]
-}
+// getOSVersion is implemented per-platform (os_version_unix.go / os_version_windows.go).
 
 // compareVersions compares two dot-separated version strings.
 // Returns -1 if a < b, 0 if equal, 1 if a > b.
