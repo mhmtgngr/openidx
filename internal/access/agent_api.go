@@ -267,7 +267,7 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		Status:    status,
 	}
 
-	if status == "active" && h.zm != nil {
+	if status == "active" && h.zm != nil && agentZitiOverlayEnabled() {
 		zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
 		if err != nil {
 			h.logger.Warn("Failed to create Ziti identity for agent",
@@ -283,9 +283,33 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 				zap.String("agent_id", agentID),
 				zap.String("ziti_id", zitiID))
 		}
+	} else if status == "active" && h.zm != nil {
+		h.logger.Debug("Ziti overlay for agents disabled; enrolling over HTTPS only "+
+			"(set ZITI_AGENT_OVERLAY_ENABLED=true when the controller is reachable from agents)",
+			zap.String("agent_id", agentID))
 	}
 
 	return result
+}
+
+// agentZitiOverlayEnabled reports whether newly-enrolled agents should be issued
+// a Ziti (OpenZiti) enrollment JWT. This requires the controller to be reachable
+// FROM THE AGENT'S NETWORK and to advertise a publicly-resolvable address whose
+// cert matches the enrollment signer — a deployment fact only the operator knows.
+//
+// Defaults to false: a local-dev controller (e.g. advertising a *.localtest.me /
+// localhost address, or with its edge port unpublished) cannot complete a remote
+// one-time-token enrollment, and handing agents an unusable JWT only surfaces a
+// confusing "crypto/rsa: verification error" on every enroll. The agent works
+// fully over HTTPS without it. Operators running a publicly-reachable controller
+// opt in with ZITI_AGENT_OVERLAY_ENABLED=true.
+func agentZitiOverlayEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ZITI_AGENT_OVERLAY_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // HandleEnroll validates the Authorization header, validates the enrollment token
@@ -318,11 +342,12 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 		var expiresAt time.Time
 		var usedAt *time.Time
 		var revoked bool
+		var reusable bool
 		err := h.db.Pool.QueryRow(ctx, `
-			SELECT id, expires_at, used_at, revoked
+			SELECT id, expires_at, used_at, revoked, reusable
 			FROM agent_enrollment_tokens
 			WHERE token_hash = $1
-		`, incomingHash).Scan(&tokenID, &expiresAt, &usedAt, &revoked)
+		`, incomingHash).Scan(&tokenID, &expiresAt, &usedAt, &revoked, &reusable)
 		if err != nil {
 			h.logger.Warn("HandleEnroll: enrollment token not found", zap.Error(err))
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid enrollment token"})
@@ -336,28 +361,31 @@ func (h *AgentAPIHandler) HandleEnroll(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has expired"})
 			return
 		}
-		if usedAt != nil {
+		// Single-use enforcement is skipped for reusable (fleet/MDM) tokens.
+		if !reusable && usedAt != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "enrollment token has already been used"})
 			return
 		}
 
-		// Mark token as used. We don't yet know agent_id, so update post-issue.
-		_, err = h.db.Pool.Exec(ctx, `
-			UPDATE agent_enrollment_tokens
-			SET used_at = NOW()
-			WHERE id = $1
-		`, tokenID)
-		if err != nil {
-			h.logger.Warn("HandleEnroll: failed to mark token as used",
-				zap.String("token_id", tokenID), zap.Error(err))
+		if !reusable {
+			// Mark single-use tokens consumed (agent_id stamped post-issue).
+			if _, err = h.db.Pool.Exec(ctx, `
+				UPDATE agent_enrollment_tokens SET used_at = NOW() WHERE id = $1
+			`, tokenID); err != nil {
+				h.logger.Warn("HandleEnroll: failed to mark token as used",
+					zap.String("token_id", tokenID), zap.Error(err))
+			}
 		}
 
 		creds := h.issueAgentCredentials(ctx, enrollReq, "token", "")
 
-		// Stamp used_by_agent now that we have the agent_id.
-		_, _ = h.db.Pool.Exec(ctx,
-			`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2`,
-			creds.AgentID, tokenID)
+		// Track the most recent enrolling agent (single-use tokens only; a
+		// reusable token enrolls many, so this field is left for the last one).
+		if !reusable {
+			_, _ = h.db.Pool.Exec(ctx,
+				`UPDATE agent_enrollment_tokens SET used_by_agent = $1 WHERE id = $2`,
+				creds.AgentID, tokenID)
+		}
 
 		writeEnrollResponse(c, creds, "token")
 		h.logAuditEvent("agent.enrolled", creds.AgentID, "success", "method=token")
@@ -1277,6 +1305,9 @@ type enrollmentTokenRecord struct {
 type generateTokenRequest struct {
 	Description string `json:"description"`
 	CreatedBy   string `json:"created_by"`
+	// Reusable mints a fleet/MDM bootstrap token: multi-use and long-lived
+	// (not consumed on enroll). Use for GPO/Intune silent rollout.
+	Reusable bool `json:"reusable"`
 }
 
 // HandleGenerateToken creates a new enrollment token, stores its SHA-256 hash,
@@ -1288,17 +1319,21 @@ func (h *AgentAPIHandler) HandleGenerateToken(c *gin.Context) {
 
 	plaintext := uuid.New().String()
 	hash := sha256Hex(plaintext)
+	// Reusable (fleet) tokens are long-lived; single-use tokens expire in 24h.
 	expiresAt := time.Now().UTC().Add(24 * time.Hour)
+	if req.Reusable {
+		expiresAt = time.Now().UTC().AddDate(10, 0, 0)
+	}
 
 	var tokenID string
 
 	if h.db != nil && h.db.Pool != nil {
 		ctx := c.Request.Context()
 		err := h.db.Pool.QueryRow(ctx, `
-			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO agent_enrollment_tokens (token_hash, description, created_by, expires_at, reusable)
+			VALUES ($1, $2, $3, $4, $5)
 			RETURNING id
-		`, hash, req.Description, req.CreatedBy, expiresAt).Scan(&tokenID)
+		`, hash, req.Description, req.CreatedBy, expiresAt, req.Reusable).Scan(&tokenID)
 		if err != nil {
 			h.logger.Error("HandleGenerateToken: failed to insert token", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
