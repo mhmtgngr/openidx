@@ -3,6 +3,7 @@ import { Link, Stack, type Href } from 'expo-router';
 import { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { listPendingApprovals } from '@/features/approvals/api';
 import { registerDevice } from '@/features/mfa/push';
 import { unreadCount } from '@/features/notifications/api';
 import { useAuth } from '@/lib/auth';
@@ -47,6 +48,12 @@ export default function HomeScreen() {
     queryFn: unreadCount,
     refetchInterval: 30000,
   });
+  const { data: pending } = useQuery({
+    queryKey: ['approvals'],
+    queryFn: listPendingApprovals,
+    refetchInterval: 30000,
+    select: (r) => r.length,
+  });
 
   return (
     <>
@@ -56,9 +63,15 @@ export default function HomeScreen() {
         <Text style={styles.sub}>You are signed in.</Text>
 
         <View style={styles.nav}>
-          <NavRow href="/(app)/approvals" label="Approvals" />
+          <NavRow href="/(app)/approvals" label="Approvals" badge={pending} />
           <NavRow href="/(app)/my-access" label="My Access" />
           <NavRow href="/(app)/notifications" label="Notifications" badge={unread} />
+        </View>
+
+        <Text style={styles.groupLabel}>Privileged Access</Text>
+        <View style={styles.nav}>
+          <NavRow href="/(app)/pam" label="Connections" />
+          <NavRow href="/(app)/pam/requests" label="My PAM requests" />
         </View>
 
         <Text style={styles.groupLabel}>Security</Text>
