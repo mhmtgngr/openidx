@@ -14,7 +14,7 @@ package migrations
 //   - last_used_at           last successful SSO through this SP (nullable)
 //
 // Additive and idempotent (ADD COLUMN IF NOT EXISTS). TEXT columns get NOT NULL
-// DEFAULT '' so existing rows satisfy the un-COALESCEd list scan; booleans
+// DEFAULT ” so existing rows satisfy the un-COALESCEd list scan; booleans
 // default false; last_used_at is nullable (no default). saml_service_providers
 // is already org-scoped under the FORCE-RLS belt, so no new policy is needed.
 // Plain statements only (splitSQL cannot handle DO $$).
