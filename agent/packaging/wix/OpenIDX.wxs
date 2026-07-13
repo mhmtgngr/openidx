@@ -12,7 +12,8 @@
     msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=...
   ENROLL_TOKEN triggers a one-shot device enrollment during install (best-effort).
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="OpenIDX Agent"
            Manufacturer="OpenIDX"
            Version="$(var.Version)"
@@ -67,15 +68,29 @@
     </Feature>
 
     <!--
-      SERVER_URL / ENROLL_TOKEN are accepted on the command line for GPO/Intune
-      documentation parity, but enrollment is a separate post-install step to
-      keep the MSI robust (no custom action / WiX Util extension dependency):
-
-        "%ProgramFiles%\OpenIDX\openidx-agent.exe" enroll --server <SERVER_URL> --token <ENROLL_TOKEN>
-
-      Run that as a machine startup script (GPO) or an Intune post-install
-      command; the service picks up the resulting agent.json on its next cycle.
-      (A future revision can fold this into a deferred WixQuietExec custom action.)
+      Silent enroll-at-install: when SERVER_URL + ENROLL_TOKEN are supplied,
+      run `openidx-agent enroll` after files are laid down. Use a REUSABLE
+      bootstrap token (see the reusable flag on /agent/tokens) so one token
+      serves the whole fleet:
+        msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=<REUSABLE>
+      Deferred + no-impersonate (runs as LocalSystem, same account as the
+      service). Return=ignore so a transient enroll failure never blocks the
+      install (the service/tray can enroll later).
     -->
+    <SetProperty Id="EnrollDevice"
+                 Sequence="execute"
+                 Before="EnrollDevice"
+                 Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[ENROLL_TOKEN]&quot; --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;"
+                 Condition="SERVER_URL AND ENROLL_TOKEN" />
+    <CustomAction Id="EnrollDevice"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="EnrollDevice" After="InstallServices"
+              Condition="SERVER_URL AND ENROLL_TOKEN AND NOT Installed" />
+    </InstallExecuteSequence>
   </Package>
 </Wix>

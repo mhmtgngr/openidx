@@ -607,5 +607,12 @@ func allMigrations() []*Migration {
 			UpSQL:       desktopClientUp,
 			DownSQL:     desktopClientDown,
 		},
+		{
+			Version:     86,
+			Name:        "reusable_enrollment_tokens",
+			Description: "Add agent_enrollment_tokens.reusable so a single bootstrap token can enroll a whole fleet (MDM/GPO/Intune) without being consumed. Enrollment validation skips the single-use check for reusable tokens. Additive/idempotent.",
+			UpSQL:       reusableTokensUp,
+			DownSQL:     reusableTokensDown,
+		},
 	}
 }
