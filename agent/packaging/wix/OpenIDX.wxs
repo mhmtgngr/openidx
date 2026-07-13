@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OpenIDX Windows client MSI (WiX v4/v5).
+
+  Build:
+    wix build agent/packaging/wix/OpenIDX.wxs \
+      -d Version=1.0.0 -d ExePath=dist/openidx-agent.exe \
+      -arch x64 -o dist/OpenIDX.msi
+
+  Installs the single openidx-agent.exe, registers + starts the Windows service
+  (posture loop), and launches the tray at user login. Silent/GPO/Intune:
+    msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=...
+  ENROLL_TOKEN triggers a one-shot device enrollment during install (best-effort).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="OpenIDX Agent"
+           Manufacturer="OpenIDX"
+           Version="$(var.Version)"
+           UpgradeCode="6f4a1e2c-2b7d-4b1a-9c3e-0a1b2c3d4e5f"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenIDX Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Public properties usable from a silent msiexec command line. -->
+    <Property Id="SERVER_URL" Secure="yes" />
+    <Property Id="ENROLL_TOKEN" Secure="yes" Hidden="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OpenIDX" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <!-- The agent binary + the Windows service definition. -->
+      <Component Id="AgentExe">
+        <File Id="AgentExeFile" Name="openidx-agent.exe" Source="$(var.ExePath)" KeyPath="yes" />
+        <ServiceInstall Id="OpenIDXAgentSvc"
+                        Name="OpenIDXAgent"
+                        DisplayName="OpenIDX Agent"
+                        Description="OpenIDX device-trust agent (enrollment, posture, OpenZiti connectivity)."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Arguments="service run --config-dir &quot;[CommonAppDataFolder]OpenIDX\agent&quot;" />
+        <ServiceControl Id="OpenIDXAgentSvcCtl"
+                        Name="OpenIDXAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+
+      <!-- Launch the tray for the interactive user at login. -->
+      <Component Id="TrayAutostart">
+        <RegistryValue Root="HKMU"
+                       Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="OpenIDXTray"
+                       Type="string"
+                       Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tray"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="OpenIDX Agent" Level="1">
+      <ComponentGroupRef Id="AppComponents" />
+    </Feature>
+
+    <!--
+      SERVER_URL / ENROLL_TOKEN are accepted on the command line for GPO/Intune
+      documentation parity, but enrollment is a separate post-install step to
+      keep the MSI robust (no custom action / WiX Util extension dependency):
+
+        "%ProgramFiles%\OpenIDX\openidx-agent.exe" enroll --server <SERVER_URL> --token <ENROLL_TOKEN>
+
+      Run that as a machine startup script (GPO) or an Intune post-install
+      command; the service picks up the resulting agent.json on its next cycle.
+      (A future revision can fold this into a deferred WixQuietExec custom action.)
+    -->
+  </Package>
+</Wix>

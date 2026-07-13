@@ -1,0 +1,15 @@
+# winget installer manifest (template). Fill InstallerUrl + InstallerSha256 from
+# the released MSI, then submit to microsoft/winget-pkgs (or a private source).
+PackageIdentifier: OpenIDX.Agent
+PackageVersion: 0.1.0
+InstallerType: wix
+Scope: machine
+InstallModes:
+  - silent
+  - silentWithProgress
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/mhmtgngr/openidx/releases/download/agent-v0.1.0/OpenIDX-0.1.0.msi
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ManifestType: installer
+ManifestVersion: 1.6.0

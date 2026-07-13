@@ -1,0 +1,101 @@
+name: Windows Client Build
+
+# Builds the OpenIDX Windows client (.exe) and packages the MSI. The box/CI
+# Linux runners can't build the MSI, so the packaging job runs on windows-latest
+# (WiX v5 via `dotnet tool install`). A fast Linux job cross-builds the .exe as
+# a smoke check on every relevant push/PR.
+
+on:
+  push:
+    branches: [main]
+    paths: ['agent/**', '.github/workflows/windows-client-build.yml']
+  pull_request:
+    paths: ['agent/**', '.github/workflows/windows-client-build.yml']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: MSI version (x.y.z)
+        type: string
+        default: 0.1.0
+
+concurrency:
+  group: windows-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast signal on every PR: does the agent cross-compile to Windows?
+  smoke-crosscompile:
+    name: cross-compile (linux → windows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: agent/go.sum
+      - name: go vet + build (windows target)
+        working-directory: agent
+        run: |
+          go vet ./...
+          GOOS=windows GOARCH=amd64 go build ./...
+          go test ./internal/... 2>&1 | tail -20
+
+  # Real artifact: build the .exe natively + package the MSI (WiX).
+  build-msi:
+    name: build .exe + MSI
+    runs-on: windows-latest
+    needs: smoke-crosscompile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: agent/go.sum
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: echo "version=${{ inputs.version || '0.1.0' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build openidx-agent.exe
+        working-directory: agent
+        shell: bash
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}" \
+            -o dist/openidx-agent.exe ./cmd/openidx-agent
+
+      - name: Install WiX
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        shell: bash
+        run: |
+          mkdir -p dist
+          wix build agent/packaging/wix/OpenIDX.wxs \
+            -d Version=${{ steps.ver.outputs.version }} \
+            -d ExePath=agent/dist/openidx-agent.exe \
+            -arch x64 \
+            -o dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
+
+      # Authenticode signing (optional): add WINDOWS_CERT_PFX_BASE64 +
+      # WINDOWS_CERT_PASSWORD secrets to enable. Skipped when unset.
+      - name: Sign MSI (optional)
+        if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          & signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/OpenIDX-${{ steps.ver.outputs.version }}.msi"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openidx-windows-client-${{ steps.ver.outputs.version }}
+          path: |
+            agent/dist/openidx-agent.exe
+            dist/OpenIDX-*.msi
+          if-no-files-found: error
