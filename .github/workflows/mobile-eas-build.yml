@@ -1,0 +1,79 @@
+name: Mobile EAS Build
+
+# Manually-triggered cloud build of the OpenIDX mobile app on Expo's EAS
+# builders (macOS for iOS, Linux for Android) — the only way to produce real
+# installable artifacts, since this repo's CI runners can't compile native apps.
+#
+# Prerequisites (one-time):
+#   1. Create an Expo account + an EAS project:  cd mobile && npx eas init
+#      (sets expo.extra.eas.projectId + owner in app.json — commit that).
+#   2. Add a repo secret EXPO_TOKEN (Expo dashboard → Access tokens).
+# Without EXPO_TOKEN the job exits early with instructions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Target platform
+        type: choice
+        default: android
+        options: [android, ios, all]
+      profile:
+        description: EAS build profile (see mobile/eas.json)
+        type: choice
+        default: preview
+        options: [development, preview, production]
+      wait:
+        description: Wait for the build to finish (else submit and return)
+        type: boolean
+        default: true
+
+concurrency:
+  group: mobile-eas-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: eas build (${{ inputs.platform }} / ${{ inputs.profile }})
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Require EXPO_TOKEN
+        if: env.EXPO_TOKEN == ''
+        run: |
+          echo "::error::EXPO_TOKEN secret is not set."
+          echo "Add it under Settings → Secrets and variables → Actions"
+          echo "(create it at Expo dashboard → Access tokens), and run"
+          echo "'cd mobile && npx eas init' once to link an EAS project."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: EAS build
+        run: |
+          WAIT_FLAG="--no-wait"
+          if [ "${{ inputs.wait }}" = "true" ]; then WAIT_FLAG="--wait"; fi
+          eas build \
+            --non-interactive \
+            "$WAIT_FLAG" \
+            --platform "${{ inputs.platform }}" \
+            --profile "${{ inputs.profile }}"
