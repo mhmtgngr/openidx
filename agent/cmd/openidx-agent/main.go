@@ -13,9 +13,23 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/authstore"
 	"github.com/openidx/openidx/agent/internal/enrollment"
+	"github.com/openidx/openidx/agent/internal/sso"
+	"github.com/openidx/openidx/agent/internal/tray"
 	"github.com/openidx/openidx/agent/internal/winservice"
 )
+
+// resolveServer returns the --server flag if set, else the enrolled server URL.
+func resolveServer(cmd *cobra.Command) string {
+	if s, _ := cmd.Flags().GetString("server"); s != "" {
+		return s
+	}
+	if cfg, err := agent.LoadConfig(configDir); err == nil {
+		return cfg.ServerURL
+	}
+	return ""
+}
 
 // defaultConfigDir returns the platform-appropriate config/credential directory:
 // %ProgramData%\OpenIDX\agent on Windows, /etc/openidx-agent elsewhere.
@@ -148,6 +162,50 @@ begin enforcing access policies and reporting health checks.`,
 	},
 }
 
+var loginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Sign in to OpenIDX (browser PKCE flow) and cache the session",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		server := resolveServer(cmd)
+		if server == "" {
+			return fmt.Errorf("no server: pass --server or enroll first")
+		}
+		t, err := sso.Login(cmd.Context(), server)
+		if err != nil {
+			return fmt.Errorf("sign-in failed: %w", err)
+		}
+		if err := authstore.Save(configDir, t); err != nil {
+			return fmt.Errorf("saving session: %w", err)
+		}
+		fmt.Println("Signed in.")
+		return nil
+	},
+}
+
+var logoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Sign out and clear the cached session",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := authstore.Clear(configDir); err != nil {
+			return err
+		}
+		fmt.Println("Signed out.")
+		return nil
+	},
+}
+
+var trayCmd = &cobra.Command{
+	Use:   "tray",
+	Short: "Run the OpenIDX system-tray app (Windows)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		server := resolveServer(cmd)
+		if server == "" {
+			return fmt.Errorf("no server: pass --server or enroll first")
+		}
+		return tray.Run(logger, configDir, server)
+	},
+}
+
 // serviceCmd groups Windows-service lifecycle subcommands.
 var serviceCmd = &cobra.Command{
 	Use:   "service",
@@ -207,7 +265,13 @@ func init() {
 	serviceCmd.AddCommand(serviceInstallCmd)
 	serviceCmd.AddCommand(serviceUninstallCmd)
 
+	loginCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
+	trayCmd.Flags().String("server", "", "OpenIDX server URL (defaults to the enrolled server)")
+
 	rootCmd.AddCommand(enrollCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(serviceCmd)
+	rootCmd.AddCommand(loginCmd)
+	rootCmd.AddCommand(logoutCmd)
+	rootCmd.AddCommand(trayCmd)
 }
