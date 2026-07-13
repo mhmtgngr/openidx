@@ -30,6 +30,8 @@ func (c *DomainCheck) Run(_ context.Context, _ map[string]interface{}) *CheckRes
 		return c.checkLinux()
 	case "darwin":
 		return c.checkMacOS()
+	case "windows":
+		return c.checkWindows()
 	default:
 		return &CheckResult{
 			Status:  StatusWarn,
@@ -40,6 +42,27 @@ func (c *DomainCheck) Run(_ context.Context, _ map[string]interface{}) *CheckRes
 			},
 		}
 	}
+}
+
+// checkWindows uses Win32_ComputerSystem.PartOfDomain to report AD domain
+// membership (informational: unjoined is not a failure by itself).
+func (c *DomainCheck) checkWindows() *CheckResult {
+	const ps = `(Get-CimInstance Win32_ComputerSystem).PartOfDomain`
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	if err != nil {
+		return &CheckResult{
+			Status:  StatusError,
+			Score:   0,
+			Message: fmt.Sprintf("Win32_ComputerSystem query failed: %v", err),
+			Details: map[string]interface{}{"os": "windows"},
+		}
+	}
+	joined := strings.EqualFold(strings.TrimSpace(string(out)), "True")
+	details := map[string]interface{}{"os": "windows", "domain_joined": joined, "method": "Win32_ComputerSystem"}
+	if joined {
+		return &CheckResult{Status: StatusPass, Score: 1.0, Details: details, Message: "device is joined to an Active Directory domain"}
+	}
+	return &CheckResult{Status: StatusWarn, Score: 0.5, Details: details, Message: "device is not domain-joined (workgroup / Entra-joined)"}
 }
 
 func (c *DomainCheck) checkLinux() *CheckResult {

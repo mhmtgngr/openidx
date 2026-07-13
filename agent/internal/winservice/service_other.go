@@ -18,7 +18,7 @@ const (
 	DisplayName = "OpenIDX Agent"
 )
 
-func IsWindowsService() (bool, error)   { return false, nil }
-func Run(_ *zap.Logger, _ string) error { return ErrWindowsOnly }
-func Install(_ string, _ string) error  { return ErrWindowsOnly }
-func Uninstall() error                  { return ErrWindowsOnly }
+func IsWindowsService() (bool, error)      { return false, nil }
+func Run(_ *zap.Logger, _, _ string) error { return ErrWindowsOnly }
+func Install(_ string, _ string) error     { return ErrWindowsOnly }
+func Uninstall() error                     { return ErrWindowsOnly }

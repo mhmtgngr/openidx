@@ -19,6 +19,9 @@ type AgentConfig struct {
 	ZitiIdentityFile string `json:"ziti_identity_file,omitempty"`
 	ZitiServiceName  string `json:"ziti_service_name,omitempty"`
 	PluginDir        string `json:"plugin_dir,omitempty"`
+	// UpdateManifestURL, when set, enables self-update: the service polls this
+	// JSON manifest and applies a newer published MSI. Empty disables it.
+	UpdateManifestURL string `json:"update_manifest_url,omitempty"`
 }
 
 // CheckConfig is an alias for checks.CheckConfig so callers that import the
