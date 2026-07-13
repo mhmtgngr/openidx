@@ -38,6 +38,14 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "apiBaseUrl": "https://openidx.tdv.org",
+      "oauthClientId": "openidx-mobile",
+      "oauthScopes": "openid profile email offline_access",
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
     }
   }
 }
