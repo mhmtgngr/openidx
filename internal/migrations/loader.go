@@ -593,5 +593,12 @@ func allMigrations() []*Migration {
 			UpSQL:       samlSPReconcileUp,
 			DownSQL:     samlSPReconcileDown,
 		},
+		{
+			Version:     84,
+			Name:        "seed_mobile_oauth_client",
+			Description: "Seed the openidx-mobile public (PKCE) OAuth client with the native redirect openidx://oauth-callback and refresh tokens, so the companion mobile app's login works on every install. Idempotent (ON CONFLICT DO NOTHING).",
+			UpSQL:       mobileClientUp,
+			DownSQL:     mobileClientDown,
+		},
 	}
 }

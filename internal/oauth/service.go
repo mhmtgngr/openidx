@@ -1253,6 +1253,11 @@ func RegisterRoutes(router *gin.Engine, svc *Service, clientMgmtAuth gin.Handler
 		oauth.POST("/userinfo", svc.handleUserInfo)
 		oauth.OPTIONS("/userinfo", svc.handleUserInfo)
 
+		// Native (mobile) login-session init — mints a login_session from JSON
+		// PKCE params so a native client can drive passkey-begin/finish without
+		// the browser authorize→login redirect (which RN fetch can't intercept).
+		oauth.POST("/native/login-init", svc.handleNativeLoginInit)
+
 		// Passkey-first login (WebAuthn as first factor)
 		oauth.POST("/passkey-begin", svc.handlePasskeyBegin)
 		oauth.POST("/passkey-finish", svc.handlePasskeyFinish)

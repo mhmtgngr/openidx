@@ -148,6 +148,74 @@ func (s *Service) handleMFASendOTP(c *gin.Context) {
 	c.JSON(200, gin.H{"message": fmt.Sprintf("Verification code sent via %s", req.Method)})
 }
 
+// handleNativeLoginInit mints a login_session for native (mobile) app login
+// flows. POST /oauth/native/login-init.
+//
+// The browser authorize flow (handleAuthorize) mints the login_session during a
+// 302 redirect to the server-rendered login page — which a native RN client
+// can't intercept. This exposes the same capture+validate+store step as a JSON
+// endpoint so the app can then drive /oauth/passkey-begin|finish with the
+// returned login_session. Public/PKCE only: a code_challenge is required and the
+// redirect_uri must be registered for the client (same checks as handleAuthorize).
+func (s *Service) handleNativeLoginInit(c *gin.Context) {
+	var req struct {
+		ClientID            string `json:"client_id"`
+		RedirectURI         string `json:"redirect_uri"`
+		Scope               string `json:"scope"`
+		State               string `json:"state"`
+		Nonce               string `json:"nonce"`
+		CodeChallenge       string `json:"code_challenge"`
+		CodeChallengeMethod string `json:"code_challenge_method"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "invalid request body"})
+		return
+	}
+	if req.ClientID == "" || req.RedirectURI == "" || req.CodeChallenge == "" {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "client_id, redirect_uri and code_challenge are required"})
+		return
+	}
+	method := req.CodeChallengeMethod
+	if method == "" {
+		method = "S256"
+	}
+
+	client, err := s.GetClient(c.Request.Context(), req.ClientID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid_client"})
+		return
+	}
+	validRedirect := false
+	for _, uri := range client.RedirectURIs {
+		if uri == req.RedirectURI {
+			validRedirect = true
+			break
+		}
+	}
+	if !validRedirect {
+		c.JSON(400, gin.H{"error": "invalid_request", "error_description": "redirect_uri not registered for client"})
+		return
+	}
+
+	oauthParams := map[string]string{
+		"client_id":             req.ClientID,
+		"redirect_uri":          req.RedirectURI,
+		"response_type":         "code",
+		"scope":                 req.Scope,
+		"state":                 req.State,
+		"nonce":                 req.Nonce,
+		"code_challenge":        req.CodeChallenge,
+		"code_challenge_method": method,
+	}
+	loginSession := GenerateRandomToken(32)
+	paramsJSON, _ := json.Marshal(oauthParams)
+	if err := s.redis.Client.Set(c.Request.Context(), "login_session:"+loginSession, string(paramsJSON), 10*time.Minute).Err(); err != nil {
+		c.JSON(500, gin.H{"error": "server_error", "error_description": "failed to create login session"})
+		return
+	}
+	c.JSON(200, gin.H{"login_session": loginSession})
+}
+
 // handlePasskeyBegin starts passkey-first (discoverable credential) authentication.
 // POST /oauth/passkey-begin
 func (s *Service) handlePasskeyBegin(c *gin.Context) {
