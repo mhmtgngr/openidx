@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -31,6 +32,8 @@ func (c *DiskEncryptionCheck) Run(_ context.Context, _ map[string]interface{}) *
 		return c.checkLinux()
 	case "darwin":
 		return c.checkMacOS()
+	case "windows":
+		return c.checkWindows()
 	default:
 		return &CheckResult{
 			Status:  StatusWarn,
@@ -77,6 +80,52 @@ func (c *DiskEncryptionCheck) checkLinux() *CheckResult {
 		Details:     details,
 		Message:     "no encrypted block device found; disk encryption does not appear to be active",
 		Remediation: "Enable full-disk encryption using LUKS (e.g. `cryptsetup luksFormat`) or an equivalent tool.",
+	}
+}
+
+// checkWindows uses `manage-bde -status` to determine whether BitLocker
+// protection is on for the system drive. "Protection Status: Protection On"
+// indicates an encrypted, protected volume.
+func (c *DiskEncryptionCheck) checkWindows() *CheckResult {
+	out, err := exec.Command("manage-bde", "-status", "C:").Output()
+	if err != nil {
+		// Fall back to the OS drive via the SystemDrive env if C: is wrong.
+		if sd := os.Getenv("SystemDrive"); sd != "" && sd != "C:" {
+			out, err = exec.Command("manage-bde", "-status", sd).Output()
+		}
+	}
+	if err != nil {
+		return &CheckResult{
+			Status:  StatusError,
+			Score:   0,
+			Message: fmt.Sprintf("manage-bde failed: %v", err),
+			Details: map[string]interface{}{"os": "windows"},
+		}
+	}
+
+	text := string(out)
+	protectionOn := strings.Contains(text, "Protection On")
+	details := map[string]interface{}{
+		"os":        "windows",
+		"encrypted": protectionOn,
+		"method":    "manage-bde",
+	}
+
+	if protectionOn {
+		return &CheckResult{
+			Status:  StatusPass,
+			Score:   1.0,
+			Details: details,
+			Message: "BitLocker protection is on",
+		}
+	}
+
+	return &CheckResult{
+		Status:      StatusFail,
+		Score:       0,
+		Details:     details,
+		Message:     "BitLocker protection is not on for the system drive",
+		Remediation: "Enable BitLocker on the system drive (Settings > Privacy & security > Device encryption, or `manage-bde -on C:`).",
 	}
 }
 

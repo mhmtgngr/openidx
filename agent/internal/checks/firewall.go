@@ -28,6 +28,8 @@ func (c *FirewallCheck) Run(_ context.Context, _ map[string]interface{}) *CheckR
 		return c.checkLinux()
 	case "darwin":
 		return c.checkMacOS()
+	case "windows":
+		return c.checkWindows()
 	default:
 		return &CheckResult{
 			Status:  StatusWarn,
@@ -37,6 +39,47 @@ func (c *FirewallCheck) Run(_ context.Context, _ map[string]interface{}) *CheckR
 				"os": runtime.GOOS,
 			},
 		}
+	}
+}
+
+// checkWindows uses `netsh advfirewall show allprofiles state` and inspects the
+// per-profile State lines. All profiles ON → pass; none ON → fail; a mix → warn.
+func (c *FirewallCheck) checkWindows() *CheckResult {
+	out, err := exec.Command("netsh", "advfirewall", "show", "allprofiles", "state").Output()
+	if err != nil {
+		return &CheckResult{
+			Status:  StatusError,
+			Score:   0,
+			Message: fmt.Sprintf("netsh advfirewall failed: %v", err),
+			Details: map[string]interface{}{"os": "windows"},
+		}
+	}
+	on, off := 0, 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "State") {
+			continue
+		}
+		u := strings.ToUpper(line)
+		if strings.Contains(u, "ON") {
+			on++
+		} else if strings.Contains(u, "OFF") {
+			off++
+		}
+	}
+	details := map[string]interface{}{
+		"os": "windows", "method": "netsh", "profiles_on": on, "profiles_off": off,
+	}
+	switch {
+	case on > 0 && off == 0:
+		return &CheckResult{Status: StatusPass, Score: 1.0, Details: details, Message: "Windows Firewall is on for all profiles"}
+	case on == 0:
+		return &CheckResult{
+			Status: StatusFail, Score: 0, Details: details,
+			Message:     "Windows Firewall is off for all profiles",
+			Remediation: "Enable Windows Firewall (`netsh advfirewall set allprofiles state on`).",
+		}
+	default:
+		return &CheckResult{Status: StatusWarn, Score: 0.5, Details: details, Message: fmt.Sprintf("Windows Firewall on for %d profile(s), off for %d", on, off)}
 	}
 }
 

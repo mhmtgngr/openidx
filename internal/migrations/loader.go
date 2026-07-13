@@ -600,5 +600,12 @@ func allMigrations() []*Migration {
 			UpSQL:       mobileClientUp,
 			DownSQL:     mobileClientDown,
 		},
+		{
+			Version:     85,
+			Name:        "seed_desktop_oauth_client",
+			Description: "Seed the openidx-desktop public (PKCE) OAuth client with a fixed loopback redirect (http://127.0.0.1:47600/callback) so the Windows client's SSO works on every install. Idempotent (ON CONFLICT DO NOTHING).",
+			UpSQL:       desktopClientUp,
+			DownSQL:     desktopClientDown,
+		},
 	}
 }
