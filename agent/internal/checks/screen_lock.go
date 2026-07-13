@@ -30,6 +30,8 @@ func (c *ScreenLockCheck) Run(_ context.Context, _ map[string]interface{}) *Chec
 		return c.checkLinux()
 	case "darwin":
 		return c.checkMacOS()
+	case "windows":
+		return c.checkWindows()
 	default:
 		return &CheckResult{
 			Status:  StatusWarn,
@@ -39,6 +41,43 @@ func (c *ScreenLockCheck) Run(_ context.Context, _ map[string]interface{}) *Chec
 				"os": runtime.GOOS,
 			},
 		}
+	}
+}
+
+// checkWindows inspects the machine screen-saver policy: a password-protected
+// screensaver with a timeout is a reasonable "auto-lock" proxy. Reads the GPO
+// policy hive first, then the per-user default.
+func (c *ScreenLockCheck) checkWindows() *CheckResult {
+	// ScreenSaverIsSecure=1 + ScreenSaveTimeOut>0 under the policy or control panel keys.
+	const ps = `$p='HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop';` +
+		`$u='HKCU:\Control Panel\Desktop';` +
+		`function g($k,$n){ try { (Get-ItemProperty -Path $k -Name $n -ErrorAction Stop).$n } catch { $null } };` +
+		`$sec=g $p 'ScreenSaverIsSecure'; if($sec -eq $null){$sec=g $u 'ScreenSaverIsSecure'};` +
+		`$to=g $p 'ScreenSaveTimeOut'; if($to -eq $null){$to=g $u 'ScreenSaveTimeOut'};` +
+		`"$sec|$to"`
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	if err != nil {
+		return &CheckResult{
+			Status:  StatusError,
+			Score:   0,
+			Message: fmt.Sprintf("screen-lock policy query failed: %v", err),
+			Details: map[string]interface{}{"os": "windows"},
+		}
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "|", 2)
+	secure := len(parts) > 0 && strings.TrimSpace(parts[0]) == "1"
+	timeout := ""
+	if len(parts) > 1 {
+		timeout = strings.TrimSpace(parts[1])
+	}
+	details := map[string]interface{}{"os": "windows", "secure": secure, "timeout_seconds": timeout, "method": "registry"}
+	if secure && timeout != "" && timeout != "0" {
+		return &CheckResult{Status: StatusPass, Score: 1.0, Details: details, Message: "password-protected auto-lock is configured"}
+	}
+	return &CheckResult{
+		Status: StatusWarn, Score: 0.5, Details: details,
+		Message:     "no password-protected screen-saver auto-lock detected",
+		Remediation: "Enable a password-protected screen saver with a timeout, or apply a screen-lock GPO.",
 	}
 }
 

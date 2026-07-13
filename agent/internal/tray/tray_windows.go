@@ -16,6 +16,7 @@ import (
 
 	"github.com/openidx/openidx/agent/internal/authstore"
 	"github.com/openidx/openidx/agent/internal/desktoppam"
+	"github.com/openidx/openidx/agent/internal/ipc"
 	"github.com/openidx/openidx/agent/internal/sso"
 )
 
@@ -70,8 +71,43 @@ func (a *app) onReady() {
 	if t, _ := authstore.Load(a.configDir); t != nil {
 		a.setSignedIn(t)
 	}
+	a.updateStatus()
 
 	go a.loop(mQuit)
+	go a.statusTicker()
+}
+
+// updateStatus composes the status line from the sign-in state and the
+// device-service status (best-effort, over the named pipe).
+func (a *app) updateStatus() {
+	a.mu.Lock()
+	signedIn := a.tokens != nil
+	a.mu.Unlock()
+
+	signPart := "Not signed in"
+	if signedIn {
+		signPart = "Signed in"
+	}
+	devPart := "device: unknown"
+	if st, err := ipc.Query(); err == nil && st != nil {
+		if st.Enrolled {
+			devPart = "device: enrolled"
+			if st.ZitiEnrolled {
+				devPart += " · ziti"
+			}
+		} else {
+			devPart = "device: not enrolled"
+		}
+	}
+	a.mStatus.SetTitle(signPart + " · " + devPart)
+}
+
+func (a *app) statusTicker() {
+	t := time.NewTicker(20 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		a.updateStatus()
+	}
 }
 
 func (a *app) loop(mQuit *systray.MenuItem) {
@@ -106,9 +142,9 @@ func (a *app) signOut() {
 	a.mu.Lock()
 	a.tokens = nil
 	a.mu.Unlock()
-	a.mStatus.SetTitle("Not signed in")
 	a.mSignIn.Show()
 	a.mSignOut.Hide()
+	a.updateStatus()
 	for i, mi := range a.connSlot {
 		mi.Hide()
 		a.slotID[i] = ""
@@ -119,9 +155,9 @@ func (a *app) setSignedIn(t *sso.Tokens) {
 	a.mu.Lock()
 	a.tokens = t
 	a.mu.Unlock()
-	a.mStatus.SetTitle("Signed in")
 	a.mSignIn.Hide()
 	a.mSignOut.Show()
+	a.updateStatus()
 	go a.refreshConnections()
 }
 

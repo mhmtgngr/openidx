@@ -7,6 +7,7 @@ package winservice
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -14,7 +15,30 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/openidx/openidx/agent/internal/agent"
+	"github.com/openidx/openidx/agent/internal/ipc"
 )
+
+// statusProvider builds a read-only status snapshot for the tray from the
+// persisted agent config (best-effort; live posture is a follow-up).
+func (h *handler) statusProvider() ipc.Status {
+	cfg, err := agent.LoadConfig(h.configDir)
+	if err != nil || cfg == nil {
+		return ipc.Status{Enrolled: false}
+	}
+	zitiUp := false
+	if cfg.ZitiIdentityFile != "" {
+		if _, statErr := os.Stat(cfg.ZitiIdentityFile); statErr == nil {
+			zitiUp = true
+		}
+	}
+	return ipc.Status{
+		Enrolled:     cfg.AgentID != "",
+		AgentID:      cfg.AgentID,
+		DeviceID:     cfg.DeviceID,
+		ServerURL:    cfg.ServerURL,
+		ZitiEnrolled: zitiUp,
+	}
+}
 
 // ServiceName is the Windows Service key/name.
 const ServiceName = "OpenIDXAgent"
@@ -49,6 +73,13 @@ func (h *handler) Execute(_ []string, r <-chan svc.ChangeRequest, s chan<- svc.S
 			h.logger.Error("service: agent run failed", zap.Error(err))
 		}
 		cancel()
+	}()
+
+	// Expose read-only status to the user-session tray over a named pipe.
+	go func() {
+		if err := ipc.Serve(ctx, h.statusProvider); err != nil {
+			h.logger.Warn("service: ipc server stopped", zap.Error(err))
+		}
 	}()
 
 	s <- svc.Status{State: svc.Running, Accepts: accepted}

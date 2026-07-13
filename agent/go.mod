@@ -3,6 +3,7 @@ module github.com/openidx/openidx/agent
 go 1.25.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/getlantern/systray v1.2.2
 	github.com/openziti/sdk-golang v1.7.0
 	github.com/spf13/cobra v1.10.2
