@@ -21,14 +21,18 @@ wix build agent/packaging/wix/OpenIDX.wxs -d Version=1.0.0 -d ExePath=agent/dist
 ```
 
 ## Deploy (silent / GPO / Intune)
+Zero-touch fleet enroll with a **reusable** bootstrap token (one token for all
+devices — mint via `POST /api/v1/access/agent/tokens {"reusable":true}`):
 ```
-msiexec /i OpenIDX.msi /qn
+msiexec /i OpenIDX.msi /qn SERVER_URL=https://openidx.example.com ENROLL_TOKEN=<REUSABLE_TOKEN>
 ```
-The service starts automatically. Enroll the device (post-install startup script
-or Intune command), then users sign in from the tray:
+The MSI installs + starts the service and, when SERVER_URL+ENROLL_TOKEN are
+given, enrolls the device during install. Without them it installs silently and
+you enroll later (single-use token or the tray's OAuth sign-in):
 ```
 "%ProgramFiles%\OpenIDX\openidx-agent.exe" enroll --server https://openidx.example.com --token <ENROLL_TOKEN>
 ```
+Users then sign in for SSO/PAM from the tray (launched at login).
 
 ## Signing
 Set `WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD` repo secrets; the CI job

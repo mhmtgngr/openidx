@@ -78,13 +78,19 @@ jobs:
             -o dist/openidx-agent.exe ./cmd/openidx-agent
 
       - name: Install WiX
-        run: dotnet tool install --global wix
+        # Pin WiX v5: v6/v7 require accepting the OSMF EULA at build time
+        # (WIX7015), which fails unattended CI. v5 is free and uses the same
+        # v4/v5 .wxs schema. Also add the Util extension used by the enroll CA.
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2
 
       - name: Build MSI
         shell: bash
         run: |
           mkdir -p dist
           wix build agent/packaging/wix/OpenIDX.wxs \
+            -ext WixToolset.Util.wixext \
             -d Version=${{ steps.ver.outputs.version }} \
             -d ExePath=agent/dist/openidx-agent.exe \
             -arch x64 \
