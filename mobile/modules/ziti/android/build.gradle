@@ -1,0 +1,20 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.oidxziti'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.oidxziti'
+  defaultConfig {
+    minSdkVersion 26
+  }
+}
+
+dependencies {
+  // OpenZiti Android SDK. Pin the exact version verified against the enroll/dial
+  // API used in OidxZitiModule.kt before the first EAS build.
+  implementation 'org.openziti:ziti-android:0.30.+'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+}
