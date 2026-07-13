@@ -97,7 +97,11 @@ func Login(ctx context.Context, serverURL string) (*Tokens, error) {
 	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
-	authURL := serverURL + "/oauth/authorize/v2?" + url.Values{
+	// Use /oauth/authorize (v1): for public/PKCE clients it renders the login
+	// form inline and completes via POST /login, then redirects to our loopback
+	// with the code. (v2 redirects to /oauth/login keyed on a separate session
+	// store the server-rendered login page can't read.)
+	authURL := serverURL + "/oauth/authorize?" + url.Values{
 		"response_type":         {"code"},
 		"client_id":             {DesktopClientID},
 		"redirect_uri":          {RedirectURI},
