@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-07-13
+
+### Added
+
+- **PAM per-connection broker routing — direct vs OpenZiti (#439)** — each connection
+  entry selects a `reach_mode`: `direct` (guacd dials the target) or `ziti` (guacd →
+  loopback → ziti-tunnel → OpenZiti overlay → target, no inbound target exposure).
+  Migration **v82** adds `reach_mode`/`ziti_service_name`/`ziti_intercept_port` to
+  `pam_entries`.
+- **PAM dedicated session brokers — deploy artifacts (#440)** — opt-in docker-compose
+  overlay and Helm templates for two isolated Guacamole brokers (direct + ziti) with
+  their own DB and admin credentials, kept separate from any shared Guacamole. Gated by
+  `pamBroker.enabled` (default off → zero manifests).
+- **Split internal vs browser-facing Guacamole URL (#441)** — `GUACAMOLE_PUBLIC_URL` /
+  `GUACAMOLE_ZITI_PUBLIC_URL`: the access service dials the internal broker for the REST
+  API but hands the browser a reverse-proxy-reachable connect URL. Falls back to the
+  internal URL when unset.
+
+### Fixed
+
+- **Brokered PAM launch was not idempotent (#441)** — the Guacamole connection name is
+  deterministic (`pam-<entryID>`); once created, a relaunch without a persisted connection
+  id hit Guacamole's `409/400 "already exists"` → 500. Now the launcher looks the
+  connection up by name, updates it in place, and reuses it.
+- **SAML service-provider schema drift** — `internal/oauth/saml_sp.go` read/wrote columns
+  (`description`, `metadata_url`, `want_assertions_signed`, `encryption_enabled`,
+  `last_used_at`) that no migration had created, so the SP admin list/create/update paths
+  errored with `42703`. Migration **v83** reconciles the table (additive; TEXT columns
+  `NOT NULL DEFAULT ''`, booleans default false, `last_used_at` nullable).
+
+### Migrations
+
+- **v82** — `pam_entries` reach mode (direct|ziti) columns + partial unique index on the
+  ziti intercept port.
+- **v83** — `saml_service_providers` column reconcile.
+
 ## [1.26.0] - 2026-07-12
 
 ### Added

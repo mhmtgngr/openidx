@@ -586,5 +586,12 @@ func allMigrations() []*Migration {
 			UpSQL:       pamReachModeUp,
 			DownSQL:     pamReachModeDown,
 		},
+		{
+			Version:     83,
+			Name:        "saml_sp_schema_reconcile",
+			Description: "Reconcile saml_service_providers to the columns internal/oauth/saml_sp.go reads/writes (description, metadata_url, want_assertions_signed, encryption_enabled, last_used_at) — the SP list/create/update paths were erroring with 42703 (column does not exist). Additive/idempotent; TEXT cols NOT NULL DEFAULT '', booleans default false, last_used_at nullable.",
+			UpSQL:       samlSPReconcileUp,
+			DownSQL:     samlSPReconcileDown,
+		},
 	}
 }
