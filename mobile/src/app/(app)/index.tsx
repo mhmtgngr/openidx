@@ -1,11 +1,52 @@
-import { Link, Stack } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
+import { Link, Stack, type Href } from 'expo-router';
+import { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { registerDevice } from '@/features/mfa/push';
+import { unreadCount } from '@/features/notifications/api';
 import { useAuth } from '@/lib/auth';
+
+function NavRow({
+  href,
+  label,
+  badge,
+}: {
+  href: Href;
+  label: string;
+  badge?: number;
+}) {
+  return (
+    <Link href={href} asChild>
+      <Pressable style={styles.navItem}>
+        <Text style={styles.navText}>{label}</Text>
+        <View style={styles.navRight}>
+          {!!badge && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{badge}</Text>
+            </View>
+          )}
+          <Text style={styles.navChevron}>›</Text>
+        </View>
+      </Pressable>
+    </Link>
+  );
+}
 
 export default function HomeScreen() {
   const { claims, logout } = useAuth();
   const name = claims?.name ?? claims?.preferred_username ?? claims?.email ?? 'there';
+
+  // Register this device as a push authenticator (best-effort, idempotent).
+  useEffect(() => {
+    registerDevice().catch(() => {});
+  }, []);
+
+  const { data: unread } = useQuery({
+    queryKey: ['notifications-unread'],
+    queryFn: unreadCount,
+    refetchInterval: 30000,
+  });
 
   return (
     <>
@@ -14,28 +55,16 @@ export default function HomeScreen() {
         <Text style={styles.greeting}>Hi, {name}</Text>
         <Text style={styles.sub}>You are signed in.</Text>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Signed-in identity</Text>
-          <Text style={styles.mono}>sub: {claims?.sub ?? '—'}</Text>
-          <Text style={styles.mono}>email: {claims?.email ?? '—'}</Text>
-          <Text style={styles.mono}>
-            roles: {(claims?.roles ?? []).join(', ') || '—'}
-          </Text>
+        <View style={styles.nav}>
+          <NavRow href="/(app)/approvals" label="Approvals" />
+          <NavRow href="/(app)/my-access" label="My Access" />
+          <NavRow href="/(app)/notifications" label="Notifications" badge={unread} />
         </View>
 
+        <Text style={styles.groupLabel}>Security</Text>
         <View style={styles.nav}>
-          <Link href="/(app)/approvals" asChild>
-            <Pressable style={styles.navItem}>
-              <Text style={styles.navText}>Approvals</Text>
-              <Text style={styles.navChevron}>›</Text>
-            </Pressable>
-          </Link>
-          <Link href="/(app)/security/passkeys" asChild>
-            <Pressable style={styles.navItem}>
-              <Text style={styles.navText}>Passkeys</Text>
-              <Text style={styles.navChevron}>›</Text>
-            </Pressable>
-          </Link>
+          <NavRow href="/(app)/security/passkeys" label="Passkeys" />
+          <NavRow href="/(app)/security/totp" label="Authenticator app" />
         </View>
 
         <Pressable style={styles.logout} onPress={logout}>
@@ -47,18 +76,18 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 24, gap: 16 },
+  container: { padding: 20, gap: 12 },
   greeting: { fontSize: 28, fontWeight: '700' },
-  sub: { fontSize: 15, opacity: 0.6 },
-  card: {
-    borderRadius: 14,
-    padding: 16,
-    gap: 6,
-    backgroundColor: 'rgba(127,127,127,0.12)',
+  sub: { fontSize: 15, opacity: 0.6, marginBottom: 4 },
+  groupLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    opacity: 0.5,
+    marginTop: 8,
+    marginLeft: 4,
   },
-  cardTitle: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
-  mono: { fontFamily: 'monospace', fontSize: 13, opacity: 0.8 },
-  nav: { marginTop: 8, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(127,127,127,0.12)' },
+  nav: { borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(127,127,127,0.12)' },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -68,7 +97,18 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(127,127,127,0.25)',
   },
   navText: { fontSize: 16, fontWeight: '500' },
+  navRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   navChevron: { fontSize: 22, opacity: 0.4 },
+  badge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    backgroundColor: '#d33',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: 'white', fontSize: 12, fontWeight: '700' },
   logout: {
     height: 48,
     borderRadius: 12,
@@ -76,7 +116,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#d33',
-    marginTop: 8,
+    marginTop: 16,
   },
   logoutText: { color: '#d33', fontSize: 16, fontWeight: '600' },
 });
