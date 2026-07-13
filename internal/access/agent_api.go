@@ -267,7 +267,7 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 		Status:    status,
 	}
 
-	if status == "active" && h.zm != nil {
+	if status == "active" && h.zm != nil && agentZitiOverlayEnabled() {
 		zitiID, zitiJWT, err := h.zm.CreateIdentity(ctx, agentID, "Device", []string{"openidx-agent"})
 		if err != nil {
 			h.logger.Warn("Failed to create Ziti identity for agent",
@@ -283,9 +283,33 @@ func (h *AgentAPIHandler) issueAgentCredentials(
 				zap.String("agent_id", agentID),
 				zap.String("ziti_id", zitiID))
 		}
+	} else if status == "active" && h.zm != nil {
+		h.logger.Debug("Ziti overlay for agents disabled; enrolling over HTTPS only "+
+			"(set ZITI_AGENT_OVERLAY_ENABLED=true when the controller is reachable from agents)",
+			zap.String("agent_id", agentID))
 	}
 
 	return result
+}
+
+// agentZitiOverlayEnabled reports whether newly-enrolled agents should be issued
+// a Ziti (OpenZiti) enrollment JWT. This requires the controller to be reachable
+// FROM THE AGENT'S NETWORK and to advertise a publicly-resolvable address whose
+// cert matches the enrollment signer — a deployment fact only the operator knows.
+//
+// Defaults to false: a local-dev controller (e.g. advertising a *.localtest.me /
+// localhost address, or with its edge port unpublished) cannot complete a remote
+// one-time-token enrollment, and handing agents an unusable JWT only surfaces a
+// confusing "crypto/rsa: verification error" on every enroll. The agent works
+// fully over HTTPS without it. Operators running a publicly-reachable controller
+// opt in with ZITI_AGENT_OVERLAY_ENABLED=true.
+func agentZitiOverlayEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ZITI_AGENT_OVERLAY_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // HandleEnroll validates the Authorization header, validates the enrollment token

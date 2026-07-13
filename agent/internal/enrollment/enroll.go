@@ -105,7 +105,18 @@ func enrollZitiIdentity(jwtStr, identityPath string) error {
 		KeyAlg:    keyAlg,
 	})
 	if err != nil {
-		return fmt.Errorf("enroll identity: %w", err)
+		// The SDK enrolls by connecting to the controller address embedded in
+		// the JWT (its "iss"). The common failures are the controller being
+		// unreachable from this host, or advertising an address whose TLS cert
+		// doesn't match the enrollment signer — e.g. a local-dev controller
+		// (a *.localtest.me / localhost address, which resolves to 127.0.0.1)
+		// reached from a remote agent. Both surface as a signature/verification
+		// error. The agent still works over HTTPS; the Ziti overlay just won't
+		// be available until the controller advertises a reachable address.
+		return fmt.Errorf("enroll identity against controller %q "+
+			"(the controller must be reachable from this host and advertise a "+
+			"publicly-resolvable address whose cert matches the JWT signer): %w",
+			claims.Issuer, err)
 	}
 
 	data, err := json.MarshalIndent(zitiCfg, "", "  ")
