@@ -1092,7 +1092,9 @@ func (gc *GuacamoleClient) ShareActiveConnection(ctx context.Context, activeConn
 	clientID := base64.StdEncoding.EncodeToString(
 		[]byte(sharingResp.Identifier + "\x00s\x00" + gc.dataSource),
 	)
-	shareURL := fmt.Sprintf("%s/#/client/%s?token=%s", gc.baseURL, clientID, gc.authToken)
+	// Use the browser-facing base (like connect URLs) so the admin's browser can
+	// reach it — baseURL is the internal REST endpoint the access service dials.
+	shareURL := fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, clientID, gc.authToken)
 
 	gc.logger.Info("Created Guacamole read-only sharing profile",
 		zap.String("active_conn_id", activeConnID),
