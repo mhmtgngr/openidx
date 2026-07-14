@@ -228,7 +228,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 	// Website entries: no brokering — hand back the URL. The password (if
 	// any) stays in the vault, retrievable only via the audited reveal path.
 	if typeInfo.Protocol == "" {
-		s.recordPamLaunch(c, org.ID, &entry, "", "", false)
+		s.recordPamLaunch(c, org.ID, &entry, "", "", false, "")
 		c.JSON(http.StatusOK, gin.H{"launch_type": "url", "url": entry.URL, "entry_id": entryID})
 		return
 	}
@@ -319,7 +319,11 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 			})
 	}
 
-	sessionID := s.recordPamLaunch(c, org.ID, &entry, typeInfo.Protocol, connID, injected)
+	// Build the browser URL before recording the launch so the per-user Guacamole
+	// identity (if enabled) can be persisted on the session row for later revoke.
+	connectURL, guacUser := s.connectURLForBroker(ctx, broker, org.ID, userID, connID, realClientIP(c))
+
+	sessionID := s.recordPamLaunch(c, org.ID, &entry, typeInfo.Protocol, connID, injected, guacUser)
 	if entry.RecordSession && sessionID != "" && recFile != "" {
 		if _, err := s.db.Pool.Exec(ctx,
 			//orgscope:ignore pam_entry_sessions UPDATE keyed by its own primary key immediately after the org-scoped INSERT
@@ -330,7 +334,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"launch_type":         "guacamole",
-		"connect_url":         broker.GetConnectionURLForClient(connID, realClientIP(c)),
+		"connect_url":         connectURL,
 		"entry_id":            entryID,
 		"session_id":          sessionID,
 		"credential_injected": injected,
@@ -411,16 +415,16 @@ func (s *Service) findGuacConnectionIDByName(ctx context.Context, broker *Guacam
 // recordPamLaunch writes the pam_entry_sessions ledger row, bumps the entry's
 // launch counters, and emits the pam.entry_connected audit event. Best-effort:
 // a ledger failure must not block the session. Returns the session row id.
-func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunchEntry, protocol, guacConnID string, injected bool) string {
+func (s *Service) recordPamLaunch(c *gin.Context, orgID string, entry *pamLaunchEntry, protocol, guacConnID string, injected bool, guacUsername string) string {
 	ctx := c.Request.Context()
 	userID := c.GetString("user_id")
 
 	var sessionID string
 	if err := s.db.Pool.QueryRow(ctx, `
-		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected)
-		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6)
+		INSERT INTO pam_entry_sessions (org_id, entry_id, user_id, protocol, guac_connection_id, credential_injected, guac_username)
+		VALUES ($1, $2, NULLIF($3,'')::uuid, NULLIF($4,''), NULLIF($5,''), $6, NULLIF($7,''))
 		RETURNING id`,
-		orgID, entry.ID, userID, protocol, guacConnID, injected).Scan(&sessionID); err != nil {
+		orgID, entry.ID, userID, protocol, guacConnID, injected, guacUsername).Scan(&sessionID); err != nil {
 		s.logger.Warn("recordPamLaunch: session ledger insert failed",
 			zap.String("entry_id", entry.ID), zap.Error(err))
 	}
@@ -747,5 +751,24 @@ func (s *Service) handlePamEndSession(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "active session not found"})
 		return
 	}
+
+	// Best-effort JIT revoke of the per-user connection READ grant on the broker
+	// that served this session (per-user identities path only).
+	var connID, guacUser, reach string
+	if qerr := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(pes.guac_connection_id,''), COALESCE(pes.guac_username,''),
+		       COALESCE(e.reach_mode,'')
+		  FROM pam_entry_sessions pes JOIN pam_entries e ON e.id = pes.entry_id
+		 WHERE pes.id = $1 AND pes.org_id = $2`, sessionID, org.ID).Scan(&connID, &guacUser, &reach); qerr == nil {
+		if connID != "" && guacUser != "" {
+			if broker := s.brokerFor(reach); broker != nil && broker.perUserIdentities {
+				if rerr := broker.revokeConnectionRead(ctx, guacUser, connID); rerr != nil {
+					s.logger.Warn("handlePamEndSession: revoke connection READ failed",
+						zap.String("guac_user", guacUser), zap.String("conn_id", connID), zap.Error(rerr))
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"id": sessionID, "status": "ended"})
 }

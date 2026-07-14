@@ -337,6 +337,7 @@ func (s *Service) annotateGuacSessionUsers(ctx context.Context, sessions []GuacA
 		return
 	}
 
+	//orgscope:ignore pam_entry_sessions,users RLS enforces org scope via the request ctx; keys are the global Guacamole connection identifiers of the active sessions
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DISTINCT ON (pes.guac_connection_id)
 		       pes.guac_connection_id,
@@ -386,11 +387,45 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	// Capture the per-user owner + connection BEFORE terminating (terminate
+	// removes the active connection, after which it can't be resolved) so the
+	// READ grant can be revoked. Best-effort; the stale-grant sweep is the backstop.
+	var termConnID, termGuacUser string
+	if (s.guacamoleClient != nil && s.guacamoleClient.perUserIdentities) ||
+		(s.guacamoleZitiClient != nil && s.guacamoleZitiClient.perUserIdentities) {
+		if sessions, lerr := s.guacamoleClient.ListActiveSessions(ctx); lerr == nil {
+			for _, sess := range sessions {
+				if sess.Identifier == activeConnID {
+					termConnID = sess.ConnectionIdentifier
+					break
+				}
+			}
+			if termConnID != "" {
+				_ = s.db.Pool.QueryRow(ctx,
+					//orgscope:ignore pam_entry_sessions RLS enforces org scope via the request ctx; the lookup key is the global Guacamole connection identifier
+					`SELECT COALESCE(guac_username,'') FROM pam_entry_sessions
+					  WHERE guac_connection_id = $1 AND guac_username IS NOT NULL
+					  ORDER BY started_at DESC LIMIT 1`, termConnID).Scan(&termGuacUser)
+			}
+		}
+	}
+
 	if err := s.guacamoleClient.TerminateSession(ctx, activeConnID); err != nil {
 		s.logger.Error("handleTerminateGuacSession: failed to terminate session",
 			zap.String("active_conn_id", activeConnID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	if termConnID != "" && termGuacUser != "" {
+		for _, b := range []*GuacamoleClient{s.guacamoleClient, s.guacamoleZitiClient} {
+			if b != nil && b.perUserIdentities {
+				if rerr := b.revokeConnectionRead(ctx, termGuacUser, termConnID); rerr != nil {
+					s.logger.Warn("handleTerminateGuacSession: revoke READ failed",
+						zap.String("guac_user", termGuacUser), zap.String("conn_id", termConnID), zap.Error(rerr))
+				}
+			}
+		}
 	}
 
 	// Best-effort: mark the tracking row as terminated. guacamole_sessions has
@@ -437,7 +472,21 @@ func (s *Service) handleShareGuacSession(c *gin.Context) {
 	activeConnID := c.Param("id")
 	ctx := c.Request.Context()
 
-	shareURL, err := s.guacamoleClient.ShareActiveConnection(ctx, activeConnID)
+	gc := s.guacamoleClient
+	var shareURL string
+	var err error
+	if gc.perUserIdentities {
+		// Owner-restricted: mint the share key as the session's per-user owner.
+		owner, pw, oerr := s.resolveActiveSessionOwner(ctx, gc, activeConnID)
+		if oerr != nil {
+			s.logger.Warn("handleShareGuacSession: owner resolve failed", zap.Error(oerr))
+			c.JSON(http.StatusConflict, gin.H{"error": "cannot resolve session owner for read-only monitor"})
+			return
+		}
+		shareURL, err = gc.ShareActiveConnectionForOwner(ctx, activeConnID, owner, pw)
+	} else {
+		shareURL, err = gc.ShareActiveConnection(ctx, activeConnID)
+	}
 	if err != nil {
 		if errors.Is(err, ErrSharingUnsupported) {
 			c.JSON(http.StatusNotImplemented, gin.H{

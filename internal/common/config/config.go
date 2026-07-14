@@ -151,6 +151,15 @@ type Config struct {
 	// GuacamoleZitiPublicURL — browser-facing base for the ziti broker (as above).
 	GuacamoleZitiPublicURL string `mapstructure:"guacamole_ziti_public_url"`
 
+	// GuacamolePerUserIdentities gates the per-user Guacamole broker identity path
+	// (PAM hardening). When true, PAM sessions broker under a standing non-admin
+	// per-user Guacamole account granted READ on only the target connection, and
+	// the browser token is minted as that account (never the admin token). When
+	// false (default) the legacy shared-admin token path is used; even when true
+	// it falls back to the shared path on any provisioning error. Env
+	// GUACAMOLE_PER_USER_IDENTITIES.
+	GuacamolePerUserIdentities bool `mapstructure:"guacamole_per_user_identities"`
+
 	// BrowZer configuration (browser-native Ziti participation)
 	BrowZerEnabled          bool   `mapstructure:"browzer_enabled"`
 	BrowZerClientID         string `mapstructure:"browzer_client_id"`
@@ -536,6 +545,7 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("guacamole_ziti_admin_user", "guacadmin")
 	v.SetDefault("guacamole_ziti_admin_password", defaultGuacamoleAdminPassword)
 	v.SetDefault("guacamole_ziti_public_url", "")
+	v.SetDefault("guacamole_per_user_identities", false)
 
 	// BrowZer defaults
 	v.SetDefault("browzer_enabled", false)
@@ -688,6 +698,7 @@ func bindEnvVars(v *viper.Viper) {
 		"guacamole_ziti_admin_user":           "GUACAMOLE_ZITI_ADMIN_USER",
 		"guacamole_ziti_admin_password":       "GUACAMOLE_ZITI_ADMIN_PASSWORD",
 		"guacamole_ziti_public_url":           "GUACAMOLE_ZITI_PUBLIC_URL",
+		"guacamole_per_user_identities":       "GUACAMOLE_PER_USER_IDENTITIES",
 		"browzer_enabled":                     "BROWZER_ENABLED",
 		"browzer_client_id":                   "BROWZER_CLIENT_ID",
 		"browzer_targets_path":                "BROWZER_TARGETS_PATH",
