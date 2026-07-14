@@ -80,6 +80,14 @@ services:
       - POSTGRESQL_USER=guacamole
       - POSTGRESQL_PASSWORD=${PAM_GUAC_DB_PASSWORD:?PAM_GUAC_DB_PASSWORD required - run scripts/generate-secrets.sh}
       - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+      # Record the real client IP (not the reverse-proxy address) in session
+      # history: honor X-Forwarded-For via Tomcat's RemoteIpValve. Trusted
+      # proxies are loopback (host-net APISIX/nginx) + the podman bridge; the
+      # client range (e.g. 10.10.x) is deliberately NOT trusted so it isn't
+      # stripped — the Tomcat default trusts all of 10/8, which would discard a
+      # private-range client. Tune REMOTE_IP_VALVE_INTERNAL_PROXIES to your net.
+      - REMOTE_IP_VALVE_ENABLED=true
+      - REMOTE_IP_VALVE_INTERNAL_PROXIES=127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.89\.\d{1,3}\.\d{1,3}
     depends_on:
       - pam-guacd
       - pam-guac-postgres
@@ -149,6 +157,14 @@ services:
       - POSTGRESQL_USER=guacamole
       - POSTGRESQL_PASSWORD=${PAM_GUAC_DB_PASSWORD:?PAM_GUAC_DB_PASSWORD required - run scripts/generate-secrets.sh}
       - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+      # Record the real client IP (not the reverse-proxy address) in session
+      # history: honor X-Forwarded-For via Tomcat's RemoteIpValve. Trusted
+      # proxies are loopback (host-net APISIX/nginx) + the podman bridge; the
+      # client range (e.g. 10.10.x) is deliberately NOT trusted so it isn't
+      # stripped — the Tomcat default trusts all of 10/8, which would discard a
+      # private-range client. Tune REMOTE_IP_VALVE_INTERNAL_PROXIES to your net.
+      - REMOTE_IP_VALVE_ENABLED=true
+      - REMOTE_IP_VALVE_INTERNAL_PROXIES=127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.89\.\d{1,3}\.\d{1,3}
     depends_on:
       - pam-guacd-ziti
       - pam-guac-postgres
