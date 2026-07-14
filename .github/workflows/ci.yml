@@ -681,7 +681,7 @@ jobs:
   status-check:
     name: Required Checks
     runs-on: ubuntu-latest
-    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check, test-integration]
+    needs: [build-matrix, lint, test-unit, test-race, vulnerability-check, test-integration, orgscope]
     if: always()
     timeout-minutes: 5
 
@@ -702,7 +702,8 @@ jobs:
             "test-unit=${{ needs.test-unit.result }}" \
             "test-race=${{ needs.test-race.result }}" \
             "vulnerability-check=${{ needs.vulnerability-check.result }}" \
-            "test-integration=${{ needs.test-integration.result }}"; do
+            "test-integration=${{ needs.test-integration.result }}" \
+            "orgscope=${{ needs.orgscope.result }}"; do
             name="${jr%%=*}"
             result="${jr#*=}"
             if [[ "$result" != "success" && "$result" != "skipped" ]]; then
