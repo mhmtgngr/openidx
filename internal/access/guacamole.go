@@ -3,7 +3,6 @@ package access
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1028,41 +1027,156 @@ func (gc *GuacamoleClient) TerminateSession(ctx context.Context, activeConnID st
 //     base64(<sharingProfileIdentifier> + "\x00" + "s" + "\x00" + <dataSource>)
 //     giving /#/client/<clientID>?token=<authToken>.
 //
-// An admin monitors a live privileged session by JOINING the active connection.
-// Guacamole client identifiers are type-tagged — "c" connection, "g" group,
-// "a" active connection — there is NO "s" (sharing-profile) type: sharing
-// profiles only mint one-time share KEYS, which the session's own user
-// generates, so they can't be used for third-party (admin) monitoring. Opening
-// the active connection (type "a") joins the running session directly.
+// ShareActiveConnection mints a read-only monitor link for a live privileged
+// session. Read-only monitoring in Guacamole works via a sharing profile
+// (read-only=true) + a one-time share KEY obtained from the active connection's
+// sharingCredentials endpoint. That endpoint is restricted to the user who owns
+// the active session — and OpenIDX brokers every PAM session as this same admin
+// user, so it legitimately owns the tunnel and may mint the key. The returned
+// URL (…/#/?key=<key>) authenticates the viewer into the shared, read-only view;
+// the key is valid only while the underlying session is active.
+//
+// Returns ErrSharingUnsupported when the Guacamole server lacks sharing profiles
+// (< 1.3 / feature disabled).
 func (gc *GuacamoleClient) ShareActiveConnection(ctx context.Context, activeConnID string) (string, error) {
-	// Confirm the session is still active — a clearer error than a dead client URL.
+	// Step 1 — resolve the underlying connection for this active session.
 	sessions, err := gc.ListActiveSessions(ctx)
 	if err != nil {
 		return "", fmt.Errorf("guacamole ShareActiveConnection: list active sessions: %w", err)
 	}
-	active := false
+	var connIdentifier string
 	for _, s := range sessions {
 		if s.Identifier == activeConnID {
-			active = true
+			connIdentifier = s.ConnectionIdentifier
 			break
 		}
 	}
-	if !active {
+	if connIdentifier == "" {
 		return "", fmt.Errorf("guacamole ShareActiveConnection: active connection %q not found (session may have ended)", activeConnID)
 	}
 
-	// Encode the active-connection client id in Guacamole's standard form:
-	//   <identifier>\x00a\x00<dataSource>   ("a" = active connection).
-	clientID := base64.StdEncoding.EncodeToString(
-		[]byte(activeConnID + "\x00a\x00" + gc.dataSource),
-	)
-	// Browser-facing base (like connect URLs); baseURL is the internal REST endpoint.
-	monitorURL := fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, clientID, gc.authToken)
+	// Step 2 — get-or-create a read-only sharing profile for the connection.
+	profileID, err := gc.getOrCreateReadOnlyShareProfile(ctx, connIdentifier)
+	if err != nil {
+		return "", err
+	}
 
-	gc.logger.Info("Guacamole active-connection monitor link created",
-		zap.String("active_conn_id", activeConnID))
+	// Step 3 — mint a one-time read-only share key for the active session.
+	key, err := gc.mintShareKey(ctx, activeConnID, profileID)
+	if err != nil {
+		return "", err
+	}
+
+	// Step 4 — the viewer opens the app with ?key=<key>; Guacamole authenticates
+	// via the sharing key and auto-connects to the read-only shared view.
+	monitorURL := fmt.Sprintf("%s/#/?key=%s", gc.publicBaseURL, url.QueryEscape(key))
+
+	gc.logger.Info("Guacamole read-only monitor link created",
+		zap.String("active_conn_id", activeConnID),
+		zap.String("connection_identifier", connIdentifier),
+		zap.String("sharing_profile_id", profileID))
 
 	return monitorURL, nil
+}
+
+// getOrCreateReadOnlyShareProfile returns the identifier of a read-only sharing
+// profile for the given connection, creating one if absent. The name is
+// per-connection (profile names are global in Guacamole), and re-creating an
+// existing profile returns 400 "already exists" — which must be reused, not
+// treated as a failure. Returns ErrSharingUnsupported when the sharingProfiles
+// endpoint is absent (Guacamole < 1.3).
+func (gc *GuacamoleClient) getOrCreateReadOnlyShareProfile(ctx context.Context, connIdentifier string) (string, error) {
+	profileName := "openidx-readonly-share-" + connIdentifier
+
+	if id, err := gc.findSharingProfile(ctx, profileName, connIdentifier); err != nil {
+		return "", err
+	} else if id != "" {
+		return id, nil
+	}
+
+	body := map[string]interface{}{
+		"name":                        profileName,
+		"primaryConnectionIdentifier": connIdentifier,
+		"parameters":                  map[string]string{"read-only": "true"},
+	}
+	respData, statusCode, err := gc.apiRequest("POST", "/sharingProfiles", body)
+	if err != nil {
+		return "", fmt.Errorf("guacamole getOrCreateReadOnlyShareProfile: create failed: %w", err)
+	}
+	if statusCode == http.StatusNotFound {
+		return "", ErrSharingUnsupported
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		// Likely a create race — fall back to lookup.
+		if id, lerr := gc.findSharingProfile(ctx, profileName, connIdentifier); lerr == nil && id != "" {
+			return id, nil
+		}
+		return "", ErrSharingUnsupported
+	}
+	var created struct {
+		Identifier string `json:"identifier"`
+	}
+	if err := json.Unmarshal(respData, &created); err != nil || created.Identifier == "" {
+		return "", ErrSharingUnsupported
+	}
+	return created.Identifier, nil
+}
+
+// findSharingProfile returns the identifier of an existing sharing profile named
+// name whose primary connection is primaryConnID, or "" if none. Returns
+// ErrSharingUnsupported when the endpoint is absent (404).
+func (gc *GuacamoleClient) findSharingProfile(ctx context.Context, name, primaryConnID string) (string, error) {
+	respData, statusCode, err := gc.apiRequest("GET", "/sharingProfiles", nil)
+	if err != nil {
+		return "", fmt.Errorf("guacamole findSharingProfile: list failed: %w", err)
+	}
+	if statusCode == http.StatusNotFound {
+		return "", ErrSharingUnsupported
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return "", nil // can't list — caller will attempt create
+	}
+	var profiles map[string]struct {
+		Identifier                  string `json:"identifier"`
+		Name                        string `json:"name"`
+		PrimaryConnectionIdentifier string `json:"primaryConnectionIdentifier"`
+	}
+	if err := json.Unmarshal(respData, &profiles); err != nil {
+		return "", nil
+	}
+	for _, p := range profiles {
+		if p.Name == name && p.PrimaryConnectionIdentifier == primaryConnID {
+			return p.Identifier, nil
+		}
+	}
+	return "", nil
+}
+
+// mintShareKey requests a one-time read-only share key for an active connection
+// via GET /activeConnections/{id}/sharingCredentials/{profileID}. The key is
+// valid only while the underlying session stays active.
+func (gc *GuacamoleClient) mintShareKey(ctx context.Context, activeConnID, profileID string) (string, error) {
+	path := fmt.Sprintf("/activeConnections/%s/sharingCredentials/%s",
+		url.PathEscape(activeConnID), url.PathEscape(profileID))
+	respData, statusCode, err := gc.apiRequest("GET", path, nil)
+	if err != nil {
+		return "", fmt.Errorf("guacamole mintShareKey: request failed: %w", err)
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return "", fmt.Errorf("guacamole mintShareKey: HTTP %d", statusCode)
+	}
+	var creds struct {
+		Values struct {
+			Key string `json:"key"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(respData, &creds); err != nil {
+		return "", fmt.Errorf("guacamole mintShareKey: decode: %w", err)
+	}
+	if creds.Values.Key == "" {
+		return "", fmt.Errorf("guacamole mintShareKey: no share key returned")
+	}
+	return creds.Values.Key, nil
 }
 
 // GetSessionHistory retrieves session history from Guacamole
