@@ -1028,127 +1028,41 @@ func (gc *GuacamoleClient) TerminateSession(ctx context.Context, activeConnID st
 //     base64(<sharingProfileIdentifier> + "\x00" + "s" + "\x00" + <dataSource>)
 //     giving /#/client/<clientID>?token=<authToken>.
 //
-// NOTE: Guacamole's sharing-profile REST endpoint was introduced in 1.3. Earlier
-// servers will 404 and this function will return ErrSharingUnsupported. The
-// GetConnectionURL helper for ordinary connections uses the simplified non-base64
-// path (line ~305); for sharing profiles we use the standard encoded form because
-// Guacamole's client router requires the type-tagged encoding to distinguish
-// a sharing profile ("s") from a connection ("c").
+// An admin monitors a live privileged session by JOINING the active connection.
+// Guacamole client identifiers are type-tagged — "c" connection, "g" group,
+// "a" active connection — there is NO "s" (sharing-profile) type: sharing
+// profiles only mint one-time share KEYS, which the session's own user
+// generates, so they can't be used for third-party (admin) monitoring. Opening
+// the active connection (type "a") joins the running session directly.
 func (gc *GuacamoleClient) ShareActiveConnection(ctx context.Context, activeConnID string) (string, error) {
-	// Step 1 — find the underlying connectionIdentifier for this active connection.
+	// Confirm the session is still active — a clearer error than a dead client URL.
 	sessions, err := gc.ListActiveSessions(ctx)
 	if err != nil {
 		return "", fmt.Errorf("guacamole ShareActiveConnection: list active sessions: %w", err)
 	}
-
-	var connIdentifier string
+	active := false
 	for _, s := range sessions {
 		if s.Identifier == activeConnID {
-			connIdentifier = s.ConnectionIdentifier
+			active = true
 			break
 		}
 	}
-	if connIdentifier == "" {
-		return "", fmt.Errorf("guacamole ShareActiveConnection: active connection %q not found", activeConnID)
+	if !active {
+		return "", fmt.Errorf("guacamole ShareActiveConnection: active connection %q not found (session may have ended)", activeConnID)
 	}
 
-	// Step 2 — get-or-create a read-only sharing profile for this connection.
-	// The name is per-connection: profiles are global in Guacamole, so a fixed
-	// name collides across connections, and re-creating an existing one returns
-	// 400 "already exists" (which must be reused, NOT treated as unsupported).
-	profileName := "openidx-readonly-share-" + connIdentifier
-
-	profileID, err := gc.findSharingProfile(ctx, profileName, connIdentifier)
-	if err != nil {
-		return "", err // ErrSharingUnsupported (endpoint absent) or a hard error
-	}
-	if profileID == "" {
-		sharingProfileBody := map[string]interface{}{
-			"name":                        profileName,
-			"primaryConnectionIdentifier": connIdentifier,
-			"parameters": map[string]string{
-				"read-only": "true",
-			},
-		}
-		respData, statusCode, err := gc.apiRequest("POST", "/sharingProfiles", sharingProfileBody)
-		if err != nil {
-			return "", fmt.Errorf("guacamole ShareActiveConnection: sharingProfiles request failed: %w", err)
-		}
-		if statusCode == http.StatusNotFound {
-			// Sharing profiles endpoint absent — Guacamole < 1.3 or feature disabled.
-			return "", ErrSharingUnsupported
-		}
-		if statusCode < 200 || statusCode >= 300 {
-			// Most likely a duplicate-name race (created concurrently between our
-			// lookup and create) — fall back to the existing profile.
-			if id, lerr := gc.findSharingProfile(ctx, profileName, connIdentifier); lerr == nil && id != "" {
-				profileID = id
-			} else {
-				return "", ErrSharingUnsupported
-			}
-		} else {
-			var sharingResp struct {
-				Identifier string `json:"identifier"`
-			}
-			if err := json.Unmarshal(respData, &sharingResp); err != nil || sharingResp.Identifier == "" {
-				return "", ErrSharingUnsupported
-			}
-			profileID = sharingResp.Identifier
-		}
-	}
-	sharingResp := struct{ Identifier string }{Identifier: profileID}
-
-	// Step 3 — encode the sharing-profile client-id in Guacamole's standard form:
-	//   <sharingProfileIdentifier>\x00s\x00<dataSource>
-	// where "s" is the type tag for a sharing profile (vs "c" for a connection).
-	// This matches the encoding Guacamole's web client uses when opening a shared
-	// session link.
+	// Encode the active-connection client id in Guacamole's standard form:
+	//   <identifier>\x00a\x00<dataSource>   ("a" = active connection).
 	clientID := base64.StdEncoding.EncodeToString(
-		[]byte(sharingResp.Identifier + "\x00s\x00" + gc.dataSource),
+		[]byte(activeConnID + "\x00a\x00" + gc.dataSource),
 	)
-	// Use the browser-facing base (like connect URLs) so the admin's browser can
-	// reach it — baseURL is the internal REST endpoint the access service dials.
-	shareURL := fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, clientID, gc.authToken)
+	// Browser-facing base (like connect URLs); baseURL is the internal REST endpoint.
+	monitorURL := fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, clientID, gc.authToken)
 
-	gc.logger.Info("Created Guacamole read-only sharing profile",
-		zap.String("active_conn_id", activeConnID),
-		zap.String("connection_identifier", connIdentifier),
-		zap.String("sharing_profile_id", sharingResp.Identifier))
+	gc.logger.Info("Guacamole active-connection monitor link created",
+		zap.String("active_conn_id", activeConnID))
 
-	return shareURL, nil
-}
-
-// findSharingProfile returns the identifier of an existing sharing profile with
-// the given name whose primary connection matches primaryConnID, or "" if none
-// exists. Returns ErrSharingUnsupported when the sharingProfiles endpoint is
-// absent (Guacamole < 1.3 / feature disabled). Any other listing failure is
-// treated as "not found" so the caller falls through to create.
-func (gc *GuacamoleClient) findSharingProfile(ctx context.Context, name, primaryConnID string) (string, error) {
-	respData, statusCode, err := gc.apiRequest("GET", "/sharingProfiles", nil)
-	if err != nil {
-		return "", fmt.Errorf("guacamole findSharingProfile: list request failed: %w", err)
-	}
-	if statusCode == http.StatusNotFound {
-		return "", ErrSharingUnsupported
-	}
-	if statusCode < 200 || statusCode >= 300 {
-		return "", nil // can't list — let the caller attempt a create
-	}
-
-	var profiles map[string]struct {
-		Identifier                  string `json:"identifier"`
-		Name                        string `json:"name"`
-		PrimaryConnectionIdentifier string `json:"primaryConnectionIdentifier"`
-	}
-	if err := json.Unmarshal(respData, &profiles); err != nil {
-		return "", nil
-	}
-	for _, p := range profiles {
-		if p.Name == name && p.PrimaryConnectionIdentifier == primaryConnID {
-			return p.Identifier, nil
-		}
-	}
-	return "", nil
+	return monitorURL, nil
 }
 
 // GetSessionHistory retrieves session history from Guacamole
