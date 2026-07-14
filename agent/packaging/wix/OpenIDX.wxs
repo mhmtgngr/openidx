@@ -23,12 +23,21 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of OpenIDX Agent is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Branding: the multi-resolution shield icon, shown in Add/Remove
+         Programs and on the Start-Menu shortcut. Path is relative to this .wxs. -->
+    <Icon Id="OpenIDXIcon" SourceFile="$(sys.SOURCEFILEDIR)..\..\assets\openidx.ico" />
+    <Property Id="ARPPRODUCTICON" Value="OpenIDXIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/mhmtgngr/openidx" />
+
     <!-- Public properties usable from a silent msiexec command line. -->
     <Property Id="SERVER_URL" Secure="yes" />
     <Property Id="ENROLL_TOKEN" Secure="yes" Hidden="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="OpenIDX" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppShortcutFolder" Name="OpenIDX" />
     </StandardDirectory>
 
     <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
@@ -59,6 +68,24 @@
                        Name="OpenIDXTray"
                        Type="string"
                        Value="&quot;[INSTALLFOLDER]openidx-agent.exe&quot; tray"
+                       KeyPath="yes" />
+      </Component>
+
+      <!-- Start-Menu shortcut to (re)launch the tray, carrying the app icon. -->
+      <Component Id="StartMenuShortcut" Directory="AppShortcutFolder">
+        <Shortcut Id="TrayShortcut"
+                  Name="OpenIDX"
+                  Description="Open the OpenIDX tray (sign in, connections, status)"
+                  Target="[INSTALLFOLDER]openidx-agent.exe"
+                  Arguments="tray"
+                  Icon="OpenIDXIcon"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveAppShortcutFolder" On="uninstall" />
+        <RegistryValue Root="HKMU"
+                       Key="Software\OpenIDX\Agent"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
                        KeyPath="yes" />
       </Component>
     </ComponentGroup>
