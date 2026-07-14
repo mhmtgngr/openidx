@@ -1,5 +1,29 @@
 # OpenIDX box operations scripts
 
+## Secret file permissions (`harden-secret-perms.sh`)
+
+The service env files carry plaintext secrets (DB / Guacamole / Ziti passwords,
+JWT secret, encryption key, internal service token). They must be **owner-only**
+— everything runs as the same `systemd --user` user, so `0600` files / `0700`
+dirs break nothing.
+
+```bash
+./deployments/scripts/harden-secret-perms.sh          # idempotent; run at every deploy
+```
+
+Locks down `~/.config/oidx/common.env`, `~/oidx-runtime/run-access.sh`, the ziti
+password, and the code-signing key material. (Historically `run-access.sh` was
+`775` and `common.env` `664` — world-readable. Fixed.)
+
+> ⚠️ **Rotation is a separate, deliberate step.** Any secret that was ever
+> world-readable should be rotated — but rotating the **JWT secret** or
+> **encryption key** invalidates live tokens / re-keys encrypted columns, and
+> rotating DB/broker passwords needs a coordinated restart. Do these in a
+> maintenance window, one at a time, not as a drive-by. `harden-secret-perms.sh`
+> only fixes *exposure going forward*.
+
+
+
 ## Postgres backups (`pg-backup.sh` / `pg-restore-verify.sh`)
 
 Automated, rotated backups of the OpenIDX database from the `oidx-pg` podman
