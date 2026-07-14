@@ -20,7 +20,8 @@ scrape_configs:
           - 127.0.0.1:8005   # admin-api
           - 127.0.0.1:8006   # oauth
           - 127.0.0.1:8007   # access
-          - 127.0.0.1:8008   # gateway
+        # gateway-service (:8008) retired on the box — APISIX is the sole edge
+        # (see docs/architecture/edge.md).
         labels:
           env: box
 
