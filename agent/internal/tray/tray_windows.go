@@ -14,6 +14,7 @@ import (
 	"github.com/getlantern/systray"
 	"go.uber.org/zap"
 
+	"github.com/openidx/openidx/agent/assets"
 	"github.com/openidx/openidx/agent/internal/authstore"
 	"github.com/openidx/openidx/agent/internal/desktoppam"
 	"github.com/openidx/openidx/agent/internal/ipc"
@@ -46,6 +47,7 @@ func Run(logger *zap.Logger, configDir, serverURL string) error {
 }
 
 func (a *app) onReady() {
+	systray.SetIcon(assets.OpenIDXICO)
 	systray.SetTitle("OpenIDX")
 	systray.SetTooltip("OpenIDX")
 
