@@ -94,6 +94,15 @@ type ZitiIdentityInfo struct {
 // is in base cfg. Used for the admin-panel runtime connect path so the
 // connection can come from DB settings rather than env. base provides all the
 // non-Ziti config the manager needs.
+// zitiHTTPTimeout bounds every Ziti controller management API call (default 8s)
+// so a slow/hung controller can't stall an enroll or a reconcile pass.
+func zitiHTTPTimeout(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.ZitiHTTPTimeoutSeconds > 0 {
+		return time.Duration(cfg.ZitiHTTPTimeoutSeconds) * time.Second
+	}
+	return 8 * time.Second
+}
+
 func NewZitiManagerWithConn(base *config.Config, ctrlURL, adminUser, adminPwd, identityDir string, insecure bool, db *database.PostgresDB, logger *zap.Logger) (*ZitiManager, error) {
 	c := *base // shallow copy; we only override the Ziti connection fields
 	c.ZitiEnabled = true
@@ -148,7 +157,7 @@ func NewZitiManager(cfg *config.Config, db *database.PostgresDB, logger *zap.Log
 	}
 
 	zm.mgmtClient = &http.Client{
-		Timeout:   30 * time.Second,
+		Timeout:   zitiHTTPTimeout(cfg),
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
 

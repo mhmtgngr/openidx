@@ -7,9 +7,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/resilience"
 )
+
+// testResilient wraps a test server's *http.Client the way the real broker
+// client is now built (breaker + timeout), so tests exercise the same path.
+func testResilient(c *http.Client) *resilience.ResilientHTTPClient {
+	return resilience.NewResilientHTTPClient(c, resilience.New("test", 100, time.Second))
+}
 
 func TestGuacUsernameFor(t *testing.T) {
 	cases := []struct{ email, username, id, want string }{
@@ -46,7 +55,7 @@ func TestMintSessionTokenAs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	gc := &GuacamoleClient{baseURL: srv.URL, httpClient: srv.Client(), logger: zap.NewNop()}
+	gc := &GuacamoleClient{baseURL: srv.URL, httpClient: testResilient(srv.Client()), logger: zap.NewNop()}
 	tok, err := gc.mintSessionTokenAs("bob@x.com", "pw", "1.2.3.4")
 	if err != nil || tok != "USER-TOKEN" {
 		t.Fatalf("tok=%q err=%v", tok, err)
@@ -78,7 +87,7 @@ func TestGrantRevokeConnectionRead(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	gc := &GuacamoleClient{baseURL: srv.URL, dataSource: "postgresql", httpClient: srv.Client(), logger: zap.NewNop()}
+	gc := &GuacamoleClient{baseURL: srv.URL, dataSource: "postgresql", httpClient: testResilient(srv.Client()), logger: zap.NewNop()}
 	if err := gc.grantConnectionRead(context.Background(), "bob@x.com", "42"); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +107,7 @@ func TestRevokeConnectionReadTolerates404(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
-	gc := &GuacamoleClient{baseURL: srv.URL, dataSource: "postgresql", httpClient: srv.Client(), logger: zap.NewNop()}
+	gc := &GuacamoleClient{baseURL: srv.URL, dataSource: "postgresql", httpClient: testResilient(srv.Client()), logger: zap.NewNop()}
 	if err := gc.revokeConnectionRead(context.Background(), "bob@x.com", "42"); err != nil {
 		t.Fatalf("revoke should tolerate 404, got %v", err)
 	}
@@ -115,7 +124,7 @@ func TestMintShareKeyAsOwner(t *testing.T) {
 		_, _ = w.Write([]byte(`{"values":{"key":"SHARE-KEY-XYZ"}}`))
 	}))
 	defer srv.Close()
-	gc := &GuacamoleClient{baseURL: srv.URL, dataSource: "postgresql", httpClient: srv.Client(), logger: zap.NewNop()}
+	gc := &GuacamoleClient{baseURL: srv.URL, dataSource: "postgresql", httpClient: testResilient(srv.Client()), logger: zap.NewNop()}
 	key, err := gc.mintShareKeyAsOwner(context.Background(), "OWNER-TOKEN", "active-uuid", "7")
 	if err != nil || key != "SHARE-KEY-XYZ" {
 		t.Fatalf("key=%q err=%v", key, err)
