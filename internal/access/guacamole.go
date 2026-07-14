@@ -336,6 +336,54 @@ func (gc *GuacamoleClient) UpdateConnection(connID, name, protocol, hostname str
 	return nil
 }
 
+// GetConnectionURLForClient is GetConnectionURL but binds the session token to
+// the end-user's client IP, so the broker (with RemoteIpValve enabled) records
+// the real client — not the access service — as the session's remote host.
+// Every session is still brokered as the shared admin account; only the
+// recorded source address changes. Falls back to the shared-token URL when the
+// client IP is unknown or a fresh token can't be minted.
+func (gc *GuacamoleClient) GetConnectionURLForClient(connID, clientIP string) string {
+	if clientIP != "" {
+		if token, err := gc.mintSessionToken(clientIP); err == nil && token != "" {
+			return fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, connID, token)
+		} else if err != nil {
+			gc.logger.Warn("GetConnectionURLForClient: token mint failed; using shared token",
+				zap.Error(err))
+		}
+	}
+	return gc.GetConnectionURL(connID)
+}
+
+// mintSessionToken authenticates to Guacamole as the broker admin, tagging the
+// request with the end-user's client IP via X-Forwarded-For so the broker's
+// RemoteIpValve attributes the resulting session to the real client. Returns a
+// fresh auth token (distinct from the long-lived shared gc.authToken).
+func (gc *GuacamoleClient) mintSessionToken(clientIP string) (string, error) {
+	data := url.Values{"username": {gc.username}, "password": {gc.password}}
+	req, err := http.NewRequest(http.MethodPost, gc.baseURL+"/api/tokens", strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-For", clientIP)
+
+	resp, err := gc.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("guacamole token mint: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		AuthToken string `json:"authToken"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.AuthToken == "" {
+		return "", fmt.Errorf("guacamole token mint: empty/invalid response")
+	}
+	return result.AuthToken, nil
+}
+
 // GetConnectionURL returns the URL to open a Guacamole connection in the browser
 func (gc *GuacamoleClient) GetConnectionURL(connID string) string {
 	// The Guacamole client URL format: /#/client/{base64(connID + \0 + c + \0 + dataSource)}
@@ -575,7 +623,7 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"connect_url":   s.guacamoleClient.GetConnectionURL(connID),
+		"connect_url":   s.guacamoleClient.GetConnectionURLForClient(connID, realClientIP(c)),
 		"connection_id": connID,
 		"route_id":      routeID,
 	})
@@ -955,6 +1003,26 @@ type GuacActiveSession struct {
 	Username             string `json:"username"`
 	RemoteHost           string `json:"remoteHost"`
 	StartDate            int64  `json:"startDate"`
+	// OpenIDXUser is the real end user who launched the session, resolved from
+	// OpenIDX's own ledger. Guacamole only knows the shared broker account, so
+	// Username above is always that account; this surfaces the actual user.
+	OpenIDXUser string `json:"openidx_user,omitempty"`
+}
+
+// realClientIP returns the end-user's client address as seen through OpenIDX's
+// own reverse proxies: the left-most X-Forwarded-For entry (the original
+// client), then X-Real-IP, then gin's ClientIP().
+func realClientIP(c *gin.Context) string {
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xr := strings.TrimSpace(c.GetHeader("X-Real-IP")); xr != "" {
+		return xr
+	}
+	return c.ClientIP()
 }
 
 // ListActiveSessions returns all currently active Guacamole connections.
