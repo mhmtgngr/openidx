@@ -64,6 +64,9 @@ interface GuacActiveSession {
   remoteHost: string
   /** Epoch milliseconds. */
   startDate: number
+  /** Real OpenIDX user who launched the session (Guacamole itself only sees the
+   * shared broker account). Present when resolvable from OpenIDX's ledger. */
+  openidx_user?: string
 }
 
 /** Row from the guacamole_sessions DB table. */
@@ -334,7 +337,7 @@ function ActiveSessionsTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Username</TableHead>
+                  <TableHead>User</TableHead>
                   <TableHead>Remote host</TableHead>
                   <TableHead>Connection</TableHead>
                   <TableHead>Started</TableHead>
@@ -344,7 +347,14 @@ function ActiveSessionsTab() {
               <TableBody>
                 {sessions.map((s) => (
                   <TableRow key={s.identifier}>
-                    <TableCell className="font-medium">{s.username}</TableCell>
+                    <TableCell className="font-medium">
+                      {s.openidx_user || s.username}
+                      {s.openidx_user && (
+                        <span className="block text-xs font-normal text-muted-foreground">
+                          via {s.username}
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{s.remoteHost}</TableCell>
                     <TableCell className="font-mono text-xs">
                       {s.connectionIdentifier}
@@ -411,7 +421,7 @@ function ActiveSessionsTab() {
             <AlertDialogTitle>Terminate session?</AlertDialogTitle>
             <AlertDialogDescription>
               This will forcibly disconnect{' '}
-              <span className="font-medium">{terminateTarget?.username}</span> from{' '}
+              <span className="font-medium">{terminateTarget?.openidx_user || terminateTarget?.username}</span> from{' '}
               <span className="font-mono text-xs">{terminateTarget?.connectionIdentifier}</span>.
             </AlertDialogDescription>
           </AlertDialogHeader>

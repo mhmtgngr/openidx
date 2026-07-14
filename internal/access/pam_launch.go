@@ -330,7 +330,7 @@ func (s *Service) handlePamConnect(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"launch_type":         "guacamole",
-		"connect_url":         broker.GetConnectionURL(connID),
+		"connect_url":         broker.GetConnectionURLForClient(connID, realClientIP(c)),
 		"entry_id":            entryID,
 		"session_id":          sessionID,
 		"credential_injected": injected,

@@ -307,7 +307,63 @@ func (s *Service) handleListActiveGuacSessions(c *gin.Context) {
 		return
 	}
 
+	// Guacamole only knows the shared broker account — surface the real OpenIDX
+	// user who launched each session from our own ledger (best-effort).
+	s.annotateGuacSessionUsers(c.Request.Context(), sessions)
+
 	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+}
+
+// annotateGuacSessionUsers fills OpenIDXUser on each active session by matching
+// its Guacamole connection identifier to the most recent OpenIDX PAM session
+// ledger row (pam_entry_sessions) for that connection. Best-effort: on any DB
+// error or RLS-hidden row the session simply keeps the shared broker username.
+func (s *Service) annotateGuacSessionUsers(ctx context.Context, sessions []GuacActiveSession) {
+	if s.db == nil || s.db.Pool == nil || len(sessions) == 0 {
+		return
+	}
+	seen := make(map[string]struct{})
+	ids := make([]string, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.ConnectionIdentifier == "" {
+			continue
+		}
+		if _, ok := seen[sess.ConnectionIdentifier]; !ok {
+			seen[sess.ConnectionIdentifier] = struct{}{}
+			ids = append(ids, sess.ConnectionIdentifier)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT ON (pes.guac_connection_id)
+		       pes.guac_connection_id,
+		       COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
+		                u.username, u.email, pes.user_id::text)
+		  FROM pam_entry_sessions pes
+		  LEFT JOIN users u ON u.id = pes.user_id
+		 WHERE pes.guac_connection_id = ANY($1)
+		 ORDER BY pes.guac_connection_id, pes.started_at DESC`, ids)
+	if err != nil {
+		s.logger.Warn("annotateGuacSessionUsers: lookup failed", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	byConn := make(map[string]string)
+	for rows.Next() {
+		var connID, display string
+		if scanErr := rows.Scan(&connID, &display); scanErr == nil && display != "" {
+			byConn[connID] = display
+		}
+	}
+	for i := range sessions {
+		if display, ok := byConn[sessions[i].ConnectionIdentifier]; ok {
+			sessions[i].OpenIDXUser = display
+		}
+	}
 }
 
 // ---- handleTerminateGuacSession ----
