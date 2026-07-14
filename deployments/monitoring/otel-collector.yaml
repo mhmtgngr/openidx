@@ -1,0 +1,22 @@
+# OTel collector: receives the services' OTLP traces (gRPC :4317) and logs a
+# summary. Swap the `debug` exporter for `otlp`/`jaeger`/`tempo` to persist +
+# visualize traces. Bound to loopback (host-networked).
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

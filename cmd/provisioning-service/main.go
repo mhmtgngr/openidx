@@ -91,6 +91,9 @@ func main() {
 		log.Fatal("Failed to connect to database", zap.Error(err))
 	}
 
+	// Export DB pool saturation gauges (openidx_db_connections{state=...}).
+	metrics.NewTracedPool(db.Pool, "provisioning-service").StartPoolStatsCollector(context.Background())
+
 	redis, err := database.NewRedisFromConfig(database.RedisConfig{
 		URL:                cfg.RedisURL,
 		SentinelEnabled:    cfg.RedisSentinelEnabled,

@@ -70,6 +70,7 @@ func (t *TracedPool) CollectPoolStats() {
 	stat := t.Stat()
 	SetDBConnections(t.serviceName, "total", float64(stat.TotalConns()))
 	SetDBConnections(t.serviceName, "idle", float64(stat.IdleConns()))
+	SetDBConnections(t.serviceName, "acquired", float64(stat.AcquiredConns())) // in-use; saturation = acquired/max
 	SetDBConnections(t.serviceName, "acquire_count", float64(stat.AcquireCount()))
 	SetDBConnections(t.serviceName, "max", float64(stat.MaxConns()))
 }

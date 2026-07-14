@@ -1,0 +1,56 @@
+# OpenIDX SLO / health alerting rules.
+# A small, high-signal starter set — expand as you learn the baselines.
+groups:
+  - name: openidx-slo
+    rules:
+      - alert: OpenIDXServiceDown
+        expr: up{job="openidx"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "OpenIDX service {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} has failed scrapes for >2m."
+
+      - alert: OpenIDXHighErrorRate
+        # >5% of requests are 5xx over 5m.
+        expr: |
+          sum(rate(openidx_http_requests_total{status=~"5.."}[5m])) by (service)
+            / clamp_min(sum(rate(openidx_http_requests_total[5m])) by (service), 1)
+            > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} is serving >5% 5xx over 5m."
+
+      - alert: OpenIDXHighLatencyP99
+        # p99 request latency > 1s over 5m.
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(openidx_http_request_duration_seconds_bucket[5m])) by (le, service)
+          ) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p99 latency > 1s on {{ $labels.service }}"
+          description: "{{ $labels.service }} p99 request latency has exceeded 1s for 10m."
+
+      - alert: OpenIDXDBPoolSaturation
+        # In-use connections > 80% of the pool max.
+        expr: |
+          openidx_db_connections{state="acquired"}
+            / clamp_min(openidx_db_connections{state="max"}, 1)
+            > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "DB pool >80% saturated on {{ $labels.service }}"
+          description: "{{ $labels.service }} is holding >80% of its pgx pool — raise DB_MAX_CONNS or add pgbouncer."
+
+      - alert: OpenIDXGoroutineLeak
+        expr: openidx_process_goroutines > 5000
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Goroutine count high on {{ $labels.service }}"
+          description: "{{ $labels.service }} has >5000 goroutines for 15m — possible leak."
