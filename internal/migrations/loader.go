@@ -621,5 +621,12 @@ func allMigrations() []*Migration {
 			UpSQL:       guacPerUserUp,
 			DownSQL:     guacPerUserDown,
 		},
+		{
+			Version:     88,
+			Name:        "audit_es_reconcile_watermark",
+			Description: "Add audit_events.indexed_at (+ partial index) so a background reconciler can backfill any audit event the fire-and-forget Elasticsearch write missed, guaranteeing ES search completeness. Additive/idempotent.",
+			UpSQL:       auditIndexedAtUp,
+			DownSQL:     auditIndexedAtDown,
+		},
 	}
 }
