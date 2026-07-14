@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenIDX Postgres backup (pg_dump + rotate)
+Documentation=file:deployments/scripts/pg-backup.sh
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Installed copy of deployments/scripts/pg-backup.sh.
+ExecStart=%h/oidx-runtime/scripts/pg-backup.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1800

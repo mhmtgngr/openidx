@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenIDX Postgres restore-verify (restore latest dump into a scratch DB)
+Documentation=file:deployments/scripts/pg-restore-verify.sh
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/oidx-runtime/scripts/pg-restore-verify.sh
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=1800

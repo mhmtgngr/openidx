@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily OpenIDX Postgres backup
+
+[Timer]
+# Daily at 03:17 UTC, jittered, and Persistent so a missed run (VM off) fires
+# on the next boot.
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
