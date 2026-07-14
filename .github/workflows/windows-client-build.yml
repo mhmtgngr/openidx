@@ -96,6 +96,15 @@ jobs:
           if (-not $st) { throw "signtool.exe not found" }
           "SIGNTOOL=$($st.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "signtool: $($st.FullName)"
+          # Trust our (self-signed) cert on the runner so `signtool verify /pa`
+          # chain-check passes — mirrors distributing the public cert to Trusted
+          # Root on managed endpoints. Machine store when elevated, else the user
+          # store (both are consulted during Authenticode chain building).
+          try {
+            Import-Certificate -FilePath agent/packaging/openidx-codesign.cer -CertStoreLocation Cert:\LocalMachine\Root -ErrorAction Stop | Out-Null
+          } catch {
+            Import-Certificate -FilePath agent/packaging/openidx-codesign.cer -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          }
 
       - name: Sign openidx-agent.exe
         if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
