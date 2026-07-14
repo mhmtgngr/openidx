@@ -309,6 +309,13 @@ func main() {
 		}
 	}
 
+	// Per-user Guacamole identities: sweep stale per-connection grants + deprovision
+	// accounts for disabled/removed users. Only started when the feature is enabled.
+	if cfg.GuacamolePerUserIdentities {
+		accessService.StartGuacGrantSweeper(context.Background())
+		log.Info("Per-user Guacamole identities enabled; grant sweeper started")
+	}
+
 	// Start continuous session verification if enabled
 	if cfg.ContinuousVerifyEnabled {
 		log.Info("Starting continuous session verifier", zap.Int("interval_seconds", cfg.ContinuousVerifyInterval))

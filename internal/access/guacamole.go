@@ -48,6 +48,14 @@ type GuacamoleClient struct {
 	// Connection pool
 	pool           *ConnectionPool
 	activeSessions int
+
+	// perUserIdentities enables the per-user broker identity path (PAM hardening):
+	// broker sessions under a standing non-admin per-user Guacamole account instead
+	// of handing the admin token to the browser. From cfg.GuacamolePerUserIdentities.
+	perUserIdentities bool
+	// component is the broker label ("guacamole" | "guacamole-ziti"), used as the
+	// guacamole_users.broker discriminator so each broker keeps its own account set.
+	component string
 }
 
 // GuacConnection represents a Guacamole connection
@@ -129,14 +137,16 @@ func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 	}
 
 	gc := &GuacamoleClient{
-		baseURL:       strings.TrimRight(baseURL, "/"),
-		publicBaseURL: strings.TrimRight(publicBaseURL, "/"),
-		username:      adminUser,
-		password:      adminPassword,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		db:            db,
-		logger:        logger.With(zap.String("component", component)),
-		tokenCipher:   tokenCipher,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		publicBaseURL:     strings.TrimRight(publicBaseURL, "/"),
+		username:          adminUser,
+		password:          adminPassword,
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		db:                db,
+		logger:            logger.With(zap.String("component", component)),
+		tokenCipher:       tokenCipher,
+		perUserIdentities: cfg.GuacamolePerUserIdentities,
+		component:         component,
 	}
 
 	// Authenticate to get a token
@@ -354,18 +364,22 @@ func (gc *GuacamoleClient) GetConnectionURLForClient(connID, clientIP string) st
 	return gc.GetConnectionURL(connID)
 }
 
-// mintSessionToken authenticates to Guacamole as the broker admin, tagging the
-// request with the end-user's client IP via X-Forwarded-For so the broker's
-// RemoteIpValve attributes the resulting session to the real client. Returns a
-// fresh auth token (distinct from the long-lived shared gc.authToken).
-func (gc *GuacamoleClient) mintSessionToken(clientIP string) (string, error) {
-	data := url.Values{"username": {gc.username}, "password": {gc.password}}
+// mintSessionTokenAs authenticates to Guacamole as an arbitrary account (the
+// per-user broker identity), tagging the request with the end-user's client IP
+// via X-Forwarded-For so the broker's RemoteIpValve attributes the resulting
+// session to the real client. Returns a fresh auth token scoped to that
+// account's permissions (distinct from the long-lived shared gc.authToken).
+// A blank clientIP omits the header (management calls, e.g. share-key minting).
+func (gc *GuacamoleClient) mintSessionTokenAs(username, password, clientIP string) (string, error) {
+	data := url.Values{"username": {username}, "password": {password}}
 	req, err := http.NewRequest(http.MethodPost, gc.baseURL+"/api/tokens", strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("X-Forwarded-For", clientIP)
+	if clientIP != "" {
+		req.Header.Set("X-Forwarded-For", clientIP)
+	}
 
 	resp, err := gc.httpClient.Do(req)
 	if err != nil {
@@ -382,6 +396,25 @@ func (gc *GuacamoleClient) mintSessionToken(clientIP string) (string, error) {
 		return "", fmt.Errorf("guacamole token mint: empty/invalid response")
 	}
 	return result.AuthToken, nil
+}
+
+// mintSessionToken mints a token as the broker admin (legacy shared path).
+func (gc *GuacamoleClient) mintSessionToken(clientIP string) (string, error) {
+	return gc.mintSessionTokenAs(gc.username, gc.password, clientIP)
+}
+
+// GetConnectionURLForUser mints a browser token as the per-user account and
+// returns the connect URL. The token can reach only connections that account
+// holds READ on — never the admin API. Returns "" on failure so callers can
+// degrade to the shared-admin URL.
+func (gc *GuacamoleClient) GetConnectionURLForUser(connID, guacUser, guacPassword, clientIP string) string {
+	tok, err := gc.mintSessionTokenAs(guacUser, guacPassword, clientIP)
+	if err != nil || tok == "" {
+		gc.logger.Warn("GetConnectionURLForUser: per-user token mint failed",
+			zap.String("guac_user", guacUser), zap.Error(err))
+		return ""
+	}
+	return fmt.Sprintf("%s/#/client/%s?token=%s", gc.publicBaseURL, connID, tok)
 }
 
 // GetConnectionURL returns the URL to open a Guacamole connection in the browser
@@ -622,8 +655,9 @@ func (s *Service) handleGuacamoleConnect(c *gin.Context) {
 		}
 	}
 
+	connectURL, _ := s.connectURLForBroker(ctx, s.guacamoleClient, org.ID, userID, connID, realClientIP(c))
 	c.JSON(http.StatusOK, gin.H{
-		"connect_url":   s.guacamoleClient.GetConnectionURLForClient(connID, realClientIP(c)),
+		"connect_url":   connectURL,
 		"connection_id": connID,
 		"route_id":      routeID,
 	})
@@ -1145,6 +1179,69 @@ func (gc *GuacamoleClient) ShareActiveConnection(ctx context.Context, activeConn
 		zap.String("sharing_profile_id", profileID))
 
 	return monitorURL, nil
+}
+
+// ShareActiveConnectionForOwner is ShareActiveConnection for the per-user path:
+// the sharingCredentials endpoint is restricted to the session OWNER, so under
+// per-user identities the admin token would 403. It creates the read-only profile
+// as admin, then mints the share key using a token minted AS the owner account.
+func (gc *GuacamoleClient) ShareActiveConnectionForOwner(ctx context.Context, activeConnID, ownerGuacUser, ownerPw string) (string, error) {
+	sessions, err := gc.ListActiveSessions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("guacamole ShareActiveConnectionForOwner: list active sessions: %w", err)
+	}
+	var connIdentifier string
+	for _, s := range sessions {
+		if s.Identifier == activeConnID {
+			connIdentifier = s.ConnectionIdentifier
+			break
+		}
+	}
+	if connIdentifier == "" {
+		return "", fmt.Errorf("guacamole ShareActiveConnectionForOwner: active connection %q not found (session may have ended)", activeConnID)
+	}
+
+	profileID, err := gc.getOrCreateReadOnlyShareProfile(ctx, connIdentifier) // admin token
+	if err != nil {
+		return "", err
+	}
+	ownerToken, err := gc.mintSessionTokenAs(ownerGuacUser, ownerPw, "")
+	if err != nil {
+		return "", fmt.Errorf("guacamole ShareActiveConnectionForOwner: owner token mint: %w", err)
+	}
+	key, err := gc.mintShareKeyAsOwner(ctx, ownerToken, activeConnID, profileID)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/#/?key=%s", gc.publicBaseURL, url.QueryEscape(key)), nil
+}
+
+// mintShareKeyAsOwner mints the one-time read-only share key using the session
+// owner's token (sharingCredentials is owner-restricted).
+func (gc *GuacamoleClient) mintShareKeyAsOwner(ctx context.Context, ownerToken, activeConnID, profileID string) (string, error) {
+	apiURL := fmt.Sprintf("%s/api/session/data/%s/activeConnections/%s/sharingCredentials/%s?token=%s",
+		gc.baseURL, gc.dataSource, url.PathEscape(activeConnID), url.PathEscape(profileID), url.QueryEscape(ownerToken))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := gc.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("guacamole mintShareKeyAsOwner: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("guacamole mintShareKeyAsOwner: HTTP %d", resp.StatusCode)
+	}
+	var creds struct {
+		Values struct {
+			Key string `json:"key"`
+		} `json:"values"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil || creds.Values.Key == "" {
+		return "", fmt.Errorf("guacamole mintShareKeyAsOwner: no share key returned")
+	}
+	return creds.Values.Key, nil
 }
 
 // getOrCreateReadOnlyShareProfile returns the identifier of a read-only sharing

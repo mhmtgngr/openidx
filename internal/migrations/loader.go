@@ -614,5 +614,12 @@ func allMigrations() []*Migration {
 			UpSQL:       reusableTokensUp,
 			DownSQL:     reusableTokensDown,
 		},
+		{
+			Version:     87,
+			Name:        "guacamole_per_user_identities",
+			Description: "Per-user non-admin Guacamole accounts (guacamole_users) + pam_entry_sessions.guac_username so PAM sessions broker under a per-user identity scoped to a single connection instead of the shared admin token. Additive/idempotent.",
+			UpSQL:       guacPerUserUp,
+			DownSQL:     guacPerUserDown,
+		},
 	}
 }
