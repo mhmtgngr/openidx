@@ -72,5 +72,16 @@ Set it in the agent config (or via a deployment script); the service checks
 every 6h and applies newer signed MSIs. Manual: `openidx-agent update --apply`.
 
 ## winget
-`packaging/winget/` holds a manifest template — fill `InstallerUrl` +
-`InstallerSha256` from the released MSI and submit to `microsoft/winget-pkgs`.
+`packaging/winget/` holds the three-file manifest (version + installer + en-US
+locale), filled for the current signed release (`InstallerUrl` → the release MSI,
+`InstallerSha256` → the hash from that release's `latest.json`). Submit it to
+`microsoft/winget-pkgs` (public) or host a private source. Install:
+```
+winget install OpenIDX.Agent
+# Zero-touch fleet enroll — pass MSI properties through --override:
+winget install OpenIDX.Agent --override "SERVER_URL=https://openidx.example.com ENROLL_TOKEN=<REUSABLE>"
+```
+Upgrades are detected via the fixed `UpgradeCode` (the MSI ProductCode changes
+per build). On each release: bump `PackageVersion` in all three files, repoint
+`InstallerUrl` to the new tag, and replace `InstallerSha256` from the new
+`latest.json`.

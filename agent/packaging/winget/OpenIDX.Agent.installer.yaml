@@ -1,15 +1,23 @@
-# winget installer manifest (template). Fill InstallerUrl + InstallerSha256 from
-# the released MSI, then submit to microsoft/winget-pkgs (or a private source).
+# winget installer manifest. Values filled from the signed agent-v0.1.1 release.
+# On each release: bump PackageVersion, repoint InstallerUrl to the new tag, and
+# replace InstallerSha256 with the sha256 from that release's latest.json.
 PackageIdentifier: OpenIDX.Agent
-PackageVersion: 0.1.0
+PackageVersion: 0.1.1
 InstallerType: wix
 Scope: machine
 InstallModes:
   - silent
   - silentWithProgress
+# UpgradeCode is fixed across versions (from OpenIDX.wxs), so winget detects and
+# upgrades an existing install even though the MSI ProductCode changes per build.
+AppsAndFeaturesEntries:
+  - UpgradeCode: '6f4a1e2c-2b7d-4b1a-9c3e-0a1b2c3d4e5f'
+# Silent fleet enroll uses MSI properties; pass them through winget with
+#   winget install OpenIDX.Agent --override "SERVER_URL=https://... ENROLL_TOKEN=<REUSABLE>"
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/mhmtgngr/openidx/releases/download/agent-v0.1.0/OpenIDX-0.1.0.msi
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerUrl: https://github.com/mhmtgngr/openidx/releases/download/agent-v0.1.1/OpenIDX-0.1.1.msi
+    InstallerSha256: 94671c373a88a25cb549b5bf0c4f9a3e2fbe205270817bbe533fa68a5ae44cea
+ReleaseDate: 2026-07-14
 ManifestType: installer
 ManifestVersion: 1.6.0

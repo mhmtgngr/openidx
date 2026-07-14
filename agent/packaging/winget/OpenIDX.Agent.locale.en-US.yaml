@@ -1,10 +1,32 @@
 PackageIdentifier: OpenIDX.Agent
-PackageVersion: 0.1.0
+PackageVersion: 0.1.1
 PackageLocale: en-US
 Publisher: OpenIDX
+PublisherUrl: https://github.com/mhmtgngr/openidx
+PublisherSupportUrl: https://github.com/mhmtgngr/openidx/issues
+Author: OpenIDX
 PackageName: OpenIDX Agent
-License: See repository
+PackageUrl: https://github.com/mhmtgngr/openidx
+License: Apache-2.0
+LicenseUrl: https://github.com/mhmtgngr/openidx/blob/main/LICENSE
+Copyright: Copyright (c) OpenIDX
 ShortDescription: OpenIDX Windows client — device-trust agent + SSO/PAM tray.
+Description: >-
+  The OpenIDX Windows client is a single lightweight binary that runs as both a
+  background Windows service (device enrollment, endpoint posture reporting, and
+  OpenZiti connectivity) and a system-tray app (browser-based PKCE single sign-on
+  with MFA, and one-click launch of brokered privileged-access sessions). It is
+  deployable at scale via GPO or Intune and updates itself from signed releases.
 Moniker: openidx-agent
+Tags:
+  - security
+  - identity
+  - zero-trust
+  - sso
+  - pam
+  - device-trust
+  - ztna
+  - openidx
+ReleaseNotesUrl: https://github.com/mhmtgngr/openidx/releases/tag/agent-v0.1.1
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0
