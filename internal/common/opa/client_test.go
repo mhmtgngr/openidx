@@ -878,7 +878,7 @@ func TestTableDrivenAuthorize(t *testing.T) {
 
 // TestDecisionCachingBehavior tests that decisions are correctly retrieved
 func TestDecisionCachingBehavior(t *testing.T) {
-	t.Run("Same request gets fresh decision", func(t *testing.T) {
+	t.Run("Identical requests are served from the decision cache", func(t *testing.T) {
 		requestCount := atomic.Int32{}
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -923,14 +923,38 @@ func TestDecisionCachingBehavior(t *testing.T) {
 			decisions[i] = decision
 		}
 
-		// Verify we made 5 requests (no client-side caching)
-		assert.Equal(t, int32(5), requestCount.Load())
-
-		// Verify decisions alternated (1st=true, 2nd=false, 3rd=true, etc.)
+		// With the short-TTL decision cache (default on), 5 identical requests
+		// hit OPA once and every caller gets the first (cached) decision — even
+		// though the server would otherwise alternate allow/deny per call.
+		assert.Equal(t, int32(1), requestCount.Load(), "identical requests should be served from the cache")
 		for i := 0; i < 5; i++ {
-			expectedAllow := (i%2 == 0) // 1st request (index 0) = true, 2nd (index 1) = false
-			assert.Equal(t, expectedAllow, decisions[i].Allow, "Request %d should have allow=%v", i+1, expectedAllow)
+			assert.True(t, decisions[i].Allow, "request %d should return the cached first decision (allow=true)", i+1)
 		}
+	})
+
+	t.Run("caching disabled makes a fresh OPA call each time", func(t *testing.T) {
+		t.Setenv("OPA_DECISION_CACHE_TTL_SECONDS", "0") // disable the cache
+		requestCount := atomic.Int32{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			count := requestCount.Add(1)
+			allow := count%2 == 1
+			result := map[string]interface{}{"result": map[string]interface{}{"allow": allow}}
+			if !allow {
+				result["result"].(map[string]interface{})["deny"] = []string{"alternating_deny"}
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(result)
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, zap.NewNop())
+		input := Input{User: UserContext{ID: "user-123", Roles: []string{"viewer"}, Authenticated: true}, Method: "GET", Path: "/api/v1/test"}
+		for i := 0; i < 5; i++ {
+			d, err := client.Authorize(context.Background(), input)
+			require.NoError(t, err)
+			assert.Equal(t, i%2 == 0, d.Allow, "request %d should be a fresh (alternating) decision", i+1)
+		}
+		assert.Equal(t, int32(5), requestCount.Load(), "no cache → one OPA call per request")
 	})
 }
 

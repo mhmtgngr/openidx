@@ -19,6 +19,7 @@ import (
 	"github.com/openidx/openidx/internal/common/config"
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/resilience"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 )
 
@@ -38,7 +39,7 @@ type GuacamoleClient struct {
 	password      string
 	authToken     string
 	dataSource    string
-	httpClient    *http.Client
+	httpClient    *resilience.ResilientHTTPClient
 	db            *database.PostgresDB
 	logger        *zap.Logger
 	// tokenCipher encrypts the pooled Guacamole session token at rest (write-only
@@ -119,6 +120,26 @@ func NewGuacamoleZitiClient(cfg *config.Config, db *database.PostgresDB, logger 
 		cfg.GuacamoleZitiURL, cfg.GuacamoleZitiPublicURL, cfg.GuacamoleZitiAdminUser, cfg.GuacamoleZitiAdminPassword)
 }
 
+// guacHTTPTimeout bounds every Guacamole REST call (default 8s) so a slow/hung
+// broker can't stall a user's PAM connect.
+func guacHTTPTimeout(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.GuacamoleHTTPTimeoutSeconds > 0 {
+		return time.Duration(cfg.GuacamoleHTTPTimeoutSeconds) * time.Second
+	}
+	return 8 * time.Second
+}
+
+// guacBreaker returns a circuit breaker so a persistently failing broker fails
+// fast (on 5xx/timeouts; 4xx pass through) instead of hanging every request.
+func guacBreaker(component string, logger *zap.Logger) *resilience.CircuitBreaker {
+	return resilience.NewCircuitBreaker(resilience.CircuitBreakerConfig{
+		Name:         "guacamole-" + component,
+		Threshold:    5,
+		ResetTimeout: 15 * time.Second,
+		Logger:       logger.With(zap.String("component", "guacamole-circuit-breaker")),
+	})
+}
+
 // newGuacamoleClient is the shared constructor for a Guacamole broker client at
 // an explicit URL/credential (so the direct and ziti brokers are independent
 // endpoints with independent admin credentials).
@@ -141,7 +162,7 @@ func newGuacamoleClient(cfg *config.Config, db *database.PostgresDB, logger *zap
 		publicBaseURL:     strings.TrimRight(publicBaseURL, "/"),
 		username:          adminUser,
 		password:          adminPassword,
-		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		httpClient:        resilience.NewResilientHTTPClient(&http.Client{Timeout: guacHTTPTimeout(cfg)}, guacBreaker(component, logger)),
 		db:                db,
 		logger:            logger.With(zap.String("component", component)),
 		tokenCipher:       tokenCipher,
@@ -164,7 +185,12 @@ func (gc *GuacamoleClient) authenticate(username, password string) error {
 		"password": {password},
 	}
 
-	resp, err := gc.httpClient.PostForm(gc.baseURL+"/api/tokens", data)
+	req, err := http.NewRequest(http.MethodPost, gc.baseURL+"/api/tokens", strings.NewReader(data.Encode()))
+	if err != nil {
+		return fmt.Errorf("guacamole auth request build: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := gc.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("guacamole auth request failed: %w", err)
 	}

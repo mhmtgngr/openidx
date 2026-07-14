@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -57,6 +60,7 @@ type Client struct {
 	logger        *zap.Logger
 	policyPath    string
 	ssrfValidator *netutil.SSRFProtectedClient
+	cache         *decisionCache // nil when caching is disabled
 }
 
 // NewClient creates a new OPA client with SSRF protection
@@ -87,17 +91,49 @@ func NewClient(baseURL string, logger *zap.Logger) *Client {
 		ssrfValidator.AllowedDomains = []string{parsedURL.Hostname()}
 	}
 
+	// Short-TTL decision cache keeps repeated identical authz checks off the OPA
+	// hot path. TTL from OPA_DECISION_CACHE_TTL_SECONDS (default 5s; 0 disables).
+	var cache *decisionCache
+	if ttl := decisionCacheTTL(); ttl > 0 {
+		cache = newDecisionCache(ttl, 50000)
+		logger.Info("OPA decision cache enabled", zap.Duration("ttl", ttl))
+	}
+
 	return &Client{
 		baseURL:       baseURL,
 		httpClient:    resilience.NewResilientHTTPClient(rawClient, cb),
 		logger:        logger,
 		policyPath:    "/v1/data/openidx/authz",
 		ssrfValidator: ssrfValidator,
+		cache:         cache,
 	}
 }
 
-// Authorize sends an authorization request to OPA and returns the decision
+// decisionCacheTTL reads OPA_DECISION_CACHE_TTL_SECONDS (default 5s; 0 disables).
+func decisionCacheTTL() time.Duration {
+	v := strings.TrimSpace(os.Getenv("OPA_DECISION_CACHE_TTL_SECONDS"))
+	if v == "" {
+		return 5 * time.Second
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(n) * time.Second
+}
+
+// Authorize sends an authorization request to OPA and returns the decision.
+// Repeated identical inputs are served from a short-TTL cache (when enabled) so
+// OPA stays off the hot path for bursts of the same check.
 func (c *Client) Authorize(ctx context.Context, input Input) (*Decision, error) {
+	var key string
+	if c.cache != nil {
+		key = cacheKey(input)
+		if d, ok := c.cache.get(key); ok {
+			return &d, nil
+		}
+	}
+
 	fullURL := c.baseURL + c.policyPath
 
 	// SSRF protection: validate URL before making request
@@ -135,6 +171,12 @@ func (c *Client) Authorize(ctx context.Context, input Input) (*Decision, error) 
 	var opaResp opaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&opaResp); err != nil {
 		return nil, fmt.Errorf("decode OPA response: %w", err)
+	}
+
+	// Cache the definitive decision (never errors — an OPA blip can't produce a
+	// stale allow beyond a decision made while it was healthy).
+	if c.cache != nil {
+		c.cache.put(key, opaResp.Result)
 	}
 
 	return &opaResp.Result, nil

@@ -115,6 +115,10 @@ type Config struct {
 	ZitiAdminPassword      string `mapstructure:"ziti_admin_password"`
 	ZitiIdentityDir        string `mapstructure:"ziti_identity_dir"`
 	ZitiInsecureSkipVerify bool   `mapstructure:"ziti_insecure_skip_verify"`
+	// ZitiHTTPTimeoutSeconds bounds every Ziti controller management API call so a
+	// slow/hung controller can't stall an enroll/reconcile. Default 8s (env
+	// ZITI_HTTP_TIMEOUT_SECONDS). Calls also run through a circuit breaker.
+	ZitiHTTPTimeoutSeconds int `mapstructure:"ziti_http_timeout_seconds"`
 	// Browser-facing URL of the controller-hosted ZAC console. When empty the
 	// URL is derived from the controller URL (<ctrl>/zac/); set explicitly when
 	// the browser reaches the controller on a different host/port than the
@@ -150,6 +154,11 @@ type Config struct {
 	GuacamoleZitiAdminPassword string `mapstructure:"guacamole_ziti_admin_password"`
 	// GuacamoleZitiPublicURL — browser-facing base for the ziti broker (as above).
 	GuacamoleZitiPublicURL string `mapstructure:"guacamole_ziti_public_url"`
+
+	// GuacamoleHTTPTimeoutSeconds bounds every REST call to the Guacamole broker
+	// so a slow/hung broker can't stall a user's PAM connect. Default 8s (env
+	// GUACAMOLE_HTTP_TIMEOUT_SECONDS). Calls also run through a circuit breaker.
+	GuacamoleHTTPTimeoutSeconds int `mapstructure:"guacamole_http_timeout_seconds"`
 
 	// GuacamolePerUserIdentities gates the per-user Guacamole broker identity path
 	// (PAM hardening). When true, PAM sessions broker under a standing non-admin
@@ -546,6 +555,8 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("guacamole_ziti_admin_password", defaultGuacamoleAdminPassword)
 	v.SetDefault("guacamole_ziti_public_url", "")
 	v.SetDefault("guacamole_per_user_identities", false)
+	v.SetDefault("guacamole_http_timeout_seconds", 8)
+	v.SetDefault("ziti_http_timeout_seconds", 8)
 
 	// BrowZer defaults
 	v.SetDefault("browzer_enabled", false)
@@ -659,75 +670,77 @@ func setDefaults(v *viper.Viper, serviceName string) {
 func bindEnvVars(v *viper.Viper) {
 	// Common environment variable mappings
 	envMappings := map[string]string{
-		"database_url":                        "DATABASE_URL",
-		"redis_url":                           "REDIS_URL",
-		"elasticsearch_url":                   "ELASTICSEARCH_URL",
-		"opa_url":                             "OPA_URL",
-		"environment":                         "APP_ENV",
-		"log_level":                           "LOG_LEVEL",
-		"port":                                "PORT",
-		"shutdown_timeout_seconds":            "SHUTDOWN_TIMEOUT_SECONDS",
-		"oauth_issuer":                        "OAUTH_ISSUER",
-		"tenant_base_domain":                  "TENANT_BASE_DOMAIN",
-		"default_org_fallback":                "DEFAULT_ORG_FALLBACK",
-		"default_org_id":                      "DEFAULT_ORG_ID",
-		"oauth_jwks_url":                      "OAUTH_JWKS_URL",
-		"governance_url":                      "GOVERNANCE_URL",
-		"audit_url":                           "AUDIT_URL",
-		"internal_service_token":              "INTERNAL_SERVICE_TOKEN",
-		"access_session_secret":               "ACCESS_SESSION_SECRET",
-		"access_proxy_domain":                 "ACCESS_PROXY_DOMAIN",
-		"access_apps_domain":                  "ACCESS_APPS_DOMAIN",
-		"ziti_enabled":                        "ZITI_ENABLED",
-		"ziti_reconciler":                     "ZITI_RECONCILER",
-		"ziti_ctrl_url":                       "ZITI_CTRL_URL",
-		"ziti_admin_user":                     "ZITI_ADMIN_USER",
-		"ziti_admin_password":                 "ZITI_ADMIN_PASSWORD",
-		"ziti_identity_dir":                   "ZITI_IDENTITY_DIR",
-		"ziti_insecure_skip_verify":           "ZITI_INSECURE_SKIP_VERIFY",
-		"ziti_console_url":                    "ZITI_CONSOLE_URL",
-		"continuous_verify_enabled":           "CONTINUOUS_VERIFY_ENABLED",
-		"continuous_verify_interval":          "CONTINUOUS_VERIFY_INTERVAL",
-		"geoip_service_url":                   "GEOIP_SERVICE_URL",
-		"guacamole_url":                       "GUACAMOLE_URL",
-		"guacamole_admin_user":                "GUACAMOLE_ADMIN_USER",
-		"guacamole_admin_password":            "GUACAMOLE_ADMIN_PASSWORD",
-		"guacamole_recording_path":            "GUACAMOLE_RECORDING_PATH",
-		"guacamole_public_url":                "GUACAMOLE_PUBLIC_URL",
-		"guacamole_ziti_url":                  "GUACAMOLE_ZITI_URL",
-		"guacamole_ziti_admin_user":           "GUACAMOLE_ZITI_ADMIN_USER",
-		"guacamole_ziti_admin_password":       "GUACAMOLE_ZITI_ADMIN_PASSWORD",
-		"guacamole_ziti_public_url":           "GUACAMOLE_ZITI_PUBLIC_URL",
-		"guacamole_per_user_identities":       "GUACAMOLE_PER_USER_IDENTITIES",
-		"browzer_enabled":                     "BROWZER_ENABLED",
-		"browzer_client_id":                   "BROWZER_CLIENT_ID",
-		"browzer_targets_path":                "BROWZER_TARGETS_PATH",
-		"browzer_router_config_path":          "BROWZER_ROUTER_CONFIG_PATH",
-		"browzer_hop_config_path":             "BROWZER_HOP_CONFIG_PATH",
-		"browzer_hop_cert_path":               "BROWZER_HOP_CERT_PATH",
-		"browzer_hop_key_path":                "BROWZER_HOP_KEY_PATH",
-		"browzer_certs_path":                  "BROWZER_CERTS_PATH",
-		"browzer_router_host":                 "BROWZER_ROUTER_HOST",
-		"browzer_router_port":                 "BROWZER_ROUTER_PORT",
-		"ziti_browzer_hop_addr":               "BROWZER_HOP_ADDR",
-		"browzer_vhost_config_path":           "BROWZER_VHOST_CONFIG_PATH",
-		"browzer_bootstrapper_addr":           "BROWZER_BOOTSTRAPPER_ADDR",
-		"browzer_vhost_ssl_cert":              "BROWZER_VHOST_SSL_CERT",
-		"browzer_vhost_ssl_key":               "BROWZER_VHOST_SSL_KEY",
-		"browzer_oidc_callback_paths":         "BROWZER_OIDC_CALLBACK_PATHS",
-		"apisix_config_path":                  "APISIX_CONFIG_PATH",
-		"apisix_edge_enabled":                 "APISIX_EDGE_ENABLED",
-		"require_device_trust_for_clientless": "OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS",
-		"apisix_admin_url":                    "APISIX_ADMIN_URL",
-		"apisix_admin_key":                    "APISIX_ADMIN_KEY",
-		"apisix_bootstrapper_node":            "APISIX_BOOTSTRAPPER_NODE",
-		"enable_opa_authz":                    "ENABLE_OPA_AUTHZ",
-		"jwt_secret":                          "JWT_SECRET",
-		"encryption_key":                      "ENCRYPTION_KEY",
-		"vault_kek":                           "VAULT_KEK",
-		"vault_keks":                          "VAULT_KEKS",
-		"vault_active_kek_id":                 "VAULT_ACTIVE_KEK_ID",
-		"vault_reveal_lease_ttl_seconds":      "VAULT_REVEAL_LEASE_TTL_SECONDS",
+		"database_url":                                    "DATABASE_URL",
+		"redis_url":                                       "REDIS_URL",
+		"elasticsearch_url":                               "ELASTICSEARCH_URL",
+		"opa_url":                                         "OPA_URL",
+		"environment":                                     "APP_ENV",
+		"log_level":                                       "LOG_LEVEL",
+		"port":                                            "PORT",
+		"shutdown_timeout_seconds":                        "SHUTDOWN_TIMEOUT_SECONDS",
+		"oauth_issuer":                                    "OAUTH_ISSUER",
+		"tenant_base_domain":                              "TENANT_BASE_DOMAIN",
+		"default_org_fallback":                            "DEFAULT_ORG_FALLBACK",
+		"default_org_id":                                  "DEFAULT_ORG_ID",
+		"oauth_jwks_url":                                  "OAUTH_JWKS_URL",
+		"governance_url":                                  "GOVERNANCE_URL",
+		"audit_url":                                       "AUDIT_URL",
+		"internal_service_token":                          "INTERNAL_SERVICE_TOKEN",
+		"access_session_secret":                           "ACCESS_SESSION_SECRET",
+		"access_proxy_domain":                             "ACCESS_PROXY_DOMAIN",
+		"access_apps_domain":                              "ACCESS_APPS_DOMAIN",
+		"ziti_enabled":                                    "ZITI_ENABLED",
+		"ziti_reconciler":                                 "ZITI_RECONCILER",
+		"ziti_ctrl_url":                                   "ZITI_CTRL_URL",
+		"ziti_admin_user":                                 "ZITI_ADMIN_USER",
+		"ziti_admin_password":                             "ZITI_ADMIN_PASSWORD",
+		"ziti_identity_dir":                               "ZITI_IDENTITY_DIR",
+		"ziti_insecure_skip_verify":                       "ZITI_INSECURE_SKIP_VERIFY",
+		"ziti_console_url":                                "ZITI_CONSOLE_URL",
+		"continuous_verify_enabled":                       "CONTINUOUS_VERIFY_ENABLED",
+		"continuous_verify_interval":                      "CONTINUOUS_VERIFY_INTERVAL",
+		"geoip_service_url":                               "GEOIP_SERVICE_URL",
+		"guacamole_url":                                   "GUACAMOLE_URL",
+		"guacamole_admin_user":                            "GUACAMOLE_ADMIN_USER",
+		"guacamole_admin_password":                        "GUACAMOLE_ADMIN_PASSWORD",
+		"guacamole_recording_path":                        "GUACAMOLE_RECORDING_PATH",
+		"guacamole_public_url":                            "GUACAMOLE_PUBLIC_URL",
+		"guacamole_ziti_url":                              "GUACAMOLE_ZITI_URL",
+		"guacamole_ziti_admin_user":                       "GUACAMOLE_ZITI_ADMIN_USER",
+		"guacamole_ziti_admin_password":                   "GUACAMOLE_ZITI_ADMIN_PASSWORD",
+		"guacamole_ziti_public_url":                       "GUACAMOLE_ZITI_PUBLIC_URL",
+		"guacamole_per_user_identities":                   "GUACAMOLE_PER_USER_IDENTITIES",
+		"guacamole_http_timeout_seconds":                  "GUACAMOLE_HTTP_TIMEOUT_SECONDS",
+		"ziti_http_timeout_seconds":                       "ZITI_HTTP_TIMEOUT_SECONDS",
+		"browzer_enabled":                                 "BROWZER_ENABLED",
+		"browzer_client_id":                               "BROWZER_CLIENT_ID",
+		"browzer_targets_path":                            "BROWZER_TARGETS_PATH",
+		"browzer_router_config_path":                      "BROWZER_ROUTER_CONFIG_PATH",
+		"browzer_hop_config_path":                         "BROWZER_HOP_CONFIG_PATH",
+		"browzer_hop_cert_path":                           "BROWZER_HOP_CERT_PATH",
+		"browzer_hop_key_path":                            "BROWZER_HOP_KEY_PATH",
+		"browzer_certs_path":                              "BROWZER_CERTS_PATH",
+		"browzer_router_host":                             "BROWZER_ROUTER_HOST",
+		"browzer_router_port":                             "BROWZER_ROUTER_PORT",
+		"ziti_browzer_hop_addr":                           "BROWZER_HOP_ADDR",
+		"browzer_vhost_config_path":                       "BROWZER_VHOST_CONFIG_PATH",
+		"browzer_bootstrapper_addr":                       "BROWZER_BOOTSTRAPPER_ADDR",
+		"browzer_vhost_ssl_cert":                          "BROWZER_VHOST_SSL_CERT",
+		"browzer_vhost_ssl_key":                           "BROWZER_VHOST_SSL_KEY",
+		"browzer_oidc_callback_paths":                     "BROWZER_OIDC_CALLBACK_PATHS",
+		"apisix_config_path":                              "APISIX_CONFIG_PATH",
+		"apisix_edge_enabled":                             "APISIX_EDGE_ENABLED",
+		"require_device_trust_for_clientless":             "OPENIDX_REQUIRE_DEVICE_TRUST_FOR_CLIENTLESS",
+		"apisix_admin_url":                                "APISIX_ADMIN_URL",
+		"apisix_admin_key":                                "APISIX_ADMIN_KEY",
+		"apisix_bootstrapper_node":                        "APISIX_BOOTSTRAPPER_NODE",
+		"enable_opa_authz":                                "ENABLE_OPA_AUTHZ",
+		"jwt_secret":                                      "JWT_SECRET",
+		"encryption_key":                                  "ENCRYPTION_KEY",
+		"vault_kek":                                       "VAULT_KEK",
+		"vault_keks":                                      "VAULT_KEKS",
+		"vault_active_kek_id":                             "VAULT_ACTIVE_KEK_ID",
+		"vault_reveal_lease_ttl_seconds":                  "VAULT_REVEAL_LEASE_TTL_SECONDS",
 		"credentials_rotation_scheduler_interval_seconds": "CREDENTIALS_ROTATION_SCHEDULER_INTERVAL_SECONDS",
 		"credentials_rotation_default_length":             "CREDENTIALS_ROTATION_DEFAULT_LENGTH",
 		"smtp_host":                                       "SMTP_HOST",
