@@ -1,0 +1,24 @@
+# container-oidx-redis.service
+# Tue Jul 14 12:21:09 UTC 2026
+
+[Unit]
+Description=Podman container-oidx-redis.service
+Documentation=man:podman-generate-systemd(1)
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/run/user/1000/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Restart=always
+TimeoutStopSec=70
+ExecStart=/usr/bin/podman start oidx-redis
+ExecStop=/usr/bin/podman stop  \
+	-t 10 oidx-redis
+ExecStopPost=/usr/bin/podman stop  \
+	-t 10 oidx-redis
+PIDFile=/run/user/1000/containers/overlay-containers/519ee7cd6ac3523c9d1e1ab02f439369a5b0ee8d45a57e7cf053dc07fcaab191/userdata/conmon.pid
+Type=forking
+
+[Install]
+WantedBy=default.target
