@@ -63,9 +63,19 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 		return nil, fmt.Errorf("failed to parse connection string: %w", err)
 	}
 
-	// Connection pool settings
-	config.MaxConns = envInt32("DB_MAX_CONNS", 25, 1)
-	config.MinConns = envInt32("DB_MIN_CONNS", 5, 0)
+	// Connection pool settings. Sized so the whole fleet fits under Postgres
+	// max_connections: OpenIDX runs ~8 services against ONE database, so the old
+	// 25-conn default per service allowed up to ~200 connections vs a typical
+	// max_connections=100 — connection exhaustion under load. Default to 10 max /
+	// 2 min per service (8*10=80, leaving headroom for migrations, admin, psql and
+	// monitoring); raise DB_MAX_CONNS for a hot service (and Postgres
+	// max_connections to match) if the openidx_db_connections saturation alert
+	// fires. NOTE: do NOT front this with a transaction-pooling pgbouncer — RLS
+	// sets app.org_id as a SESSION GUC at pool checkout (see rls.go), which
+	// transaction pooling does not preserve (cross-tenant risk). See
+	// docs/architecture/db-pooling.md.
+	config.MaxConns = envInt32("DB_MAX_CONNS", 10, 1)
+	config.MinConns = envInt32("DB_MIN_CONNS", 2, 0)
 	config.MaxConnLifetime = time.Hour
 	config.MaxConnIdleTime = 30 * time.Minute
 	config.HealthCheckPeriod = time.Minute
