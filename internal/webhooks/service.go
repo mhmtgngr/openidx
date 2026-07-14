@@ -362,6 +362,11 @@ func (s *Service) deliverWebhook(ctx context.Context, deliveryID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to query delivery: %w", err)
 	}
+	// Idempotency: a duplicate nudge (e.g. the DB backstop re-queuing a row that
+	// was actually in-flight) must not re-send an already-completed delivery.
+	if status == "delivered" {
+		return nil
+	}
 	if subSecret, err = s.cipher.Decrypt(subSecret); err != nil {
 		return fmt.Errorf("failed to decrypt webhook secret: %w", err)
 	}
@@ -563,9 +568,15 @@ func (s *Service) ProcessRetries(ctx context.Context) {
 }
 
 // processRetryBatch finds and re-queues pending deliveries that are due for retry
+// OR that are stranded: a fresh delivery whose Redis nudge was lost (Redis blip/
+// restart) has status='pending' with next_retry_at=NULL and would otherwise never
+// be delivered. Recover those too, after a 30s grace so we don't race the normal
+// nudge path. This makes the DB the reliable backstop — at-least-once delivery.
 func (s *Service) processRetryBatch(ctx context.Context) {
 	query := `SELECT id FROM webhook_deliveries
-		WHERE status = 'pending' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW()`
+		WHERE status = 'pending'
+		  AND ( (next_retry_at IS NOT NULL AND next_retry_at <= NOW())
+		     OR (next_retry_at IS NULL AND created_at < NOW() - INTERVAL '30 seconds') )`
 
 	rows, err := s.db.Pool.Query(ctx, query)
 	if err != nil {

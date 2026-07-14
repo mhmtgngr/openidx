@@ -162,6 +162,8 @@ func main() {
 		if err := auditService.InitElasticsearch(); err != nil {
 			log.Warn("Failed to initialize ES index, search may not work", zap.Error(err))
 		}
+		// Backfill any audit event the fire-and-forget ES write missed.
+		auditService.StartESReconciler(context.Background())
 	}
 
 	// Initialize EventStreamer with WebSocket origin validation

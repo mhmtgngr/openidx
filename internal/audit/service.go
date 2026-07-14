@@ -234,20 +234,95 @@ func (s *Service) LogEvent(ctx context.Context, event *ServiceAuditEvent) error 
 		event.ActorID, event.ActorType, event.ActorIP, event.TargetID, event.TargetType,
 		event.ResourceID, data, event.SessionID, event.RequestID, orgID)
 
-	// Dual-write to Elasticsearch (best-effort, non-blocking)
+	// Dual-write to Elasticsearch (best-effort, non-blocking). On success, stamp
+	// indexed_at so the reconciler (StartESReconciler) doesn't backfill it; on
+	// failure the row stays indexed_at IS NULL and the reconciler catches it —
+	// guaranteeing ES search completeness without blocking the write path.
 	if s.es != nil {
 		esData := data // capture for goroutine
 		eventID := event.ID
 		go func() {
-			if err := s.es.Index("audit_events", eventID, esData); err != nil {
-				s.logger.Warn("failed to index audit event to ES",
+			if ierr := s.es.Index("audit_events", eventID, esData); ierr != nil {
+				s.logger.Warn("failed to index audit event to ES (reconciler will backfill)",
 					zap.String("event_id", eventID),
-					zap.Error(err))
+					zap.Error(ierr))
+				return
+			}
+			bg := orgctx.WithBypassRLS(context.Background())
+			if _, uerr := s.db.Pool.Exec(bg,
+				//orgscope:ignore audit_events indexed-flag stamp by primary key under bypass-RLS (detached goroutine, no request org)
+				`UPDATE audit_events SET indexed_at = NOW() WHERE id = $1`, eventID); uerr != nil {
+				s.logger.Warn("failed to stamp audit indexed_at", zap.String("event_id", eventID), zap.Error(uerr))
 			}
 		}()
 	}
 
 	return err
+}
+
+// StartESReconciler backfills audit_events rows that never reached Elasticsearch
+// (the fire-and-forget index dropped, or ES was down). Every interval it indexes
+// a batch of rows with indexed_at IS NULL that are older than a short grace, then
+// stamps indexed_at. Runs under a bypass-RLS background context (cross-org
+// maintenance). No-op when ES is unconfigured.
+func (s *Service) StartESReconciler(ctx context.Context) {
+	if s.es == nil {
+		return
+	}
+	ctx = orgctx.WithBypassRLS(ctx)
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.reconcileUnindexedToES(ctx)
+			}
+		}
+	}()
+}
+
+func (s *Service) reconcileUnindexedToES(ctx context.Context) {
+	// details holds the marshaled event = exactly the ES document written by LogEvent.
+	//orgscope:ignore audit_events cross-org ES backfill under a bypass-RLS background context (reconciler)
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, details FROM audit_events
+		 WHERE indexed_at IS NULL AND timestamp < NOW() - INTERVAL '30 seconds'
+		 ORDER BY timestamp
+		 LIMIT 500`)
+	if err != nil {
+		s.logger.Warn("audit ES reconcile: query failed", zap.Error(err))
+		return
+	}
+	type row struct {
+		id   string
+		data []byte
+	}
+	var batch []row
+	for rows.Next() {
+		var r row
+		if scanErr := rows.Scan(&r.id, &r.data); scanErr == nil {
+			batch = append(batch, r)
+		}
+	}
+	rows.Close()
+
+	var indexed int
+	for _, r := range batch {
+		if ierr := s.es.Index("audit_events", r.id, r.data); ierr != nil {
+			continue // leave indexed_at NULL; next pass retries
+		}
+		if _, uerr := s.db.Pool.Exec(ctx,
+			//orgscope:ignore audit_events indexed-flag stamp by primary key under the bypass-RLS reconciler
+			`UPDATE audit_events SET indexed_at = NOW() WHERE id = $1`, r.id); uerr == nil {
+			indexed++
+		}
+	}
+	if indexed > 0 {
+		s.logger.Info("audit ES reconcile: backfilled events", zap.Int("count", indexed))
+	}
 }
 
 // QueryEvents queries audit events with filtering
