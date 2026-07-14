@@ -1,0 +1,24 @@
+# container-apisix-docker2_etcd_1.service
+# Tue Jul 14 12:21:09 UTC 2026
+
+[Unit]
+Description=Podman container-apisix-docker2_etcd_1.service
+Documentation=man:podman-generate-systemd(1)
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/run/user/1000/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Restart=always
+TimeoutStopSec=70
+ExecStart=/usr/bin/podman start apisix-docker2_etcd_1
+ExecStop=/usr/bin/podman stop  \
+	-t 10 apisix-docker2_etcd_1
+ExecStopPost=/usr/bin/podman stop  \
+	-t 10 apisix-docker2_etcd_1
+PIDFile=/run/user/1000/containers/overlay-containers/e6a52585d47239d4113f4d74249978ca9cdd51e2387821274e4fc5ee03b14fa4/userdata/conmon.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,24 @@
+# container-oidx-pg.service
+# Tue Jul 14 12:21:09 UTC 2026
+
+[Unit]
+Description=Podman container-oidx-pg.service
+Documentation=man:podman-generate-systemd(1)
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/run/user/1000/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Restart=always
+TimeoutStopSec=70
+ExecStart=/usr/bin/podman start oidx-pg
+ExecStop=/usr/bin/podman stop  \
+	-t 10 oidx-pg
+ExecStopPost=/usr/bin/podman stop  \
+	-t 10 oidx-pg
+PIDFile=/run/user/1000/containers/overlay-containers/37c90c54e17751d6860b5ade5f3d35291af2a7eb9bd52427ae6b2400c27ce5b3/userdata/conmon.pid
+Type=forking
+
+[Install]
+WantedBy=default.target
