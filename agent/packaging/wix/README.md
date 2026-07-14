@@ -35,8 +35,28 @@ you enroll later (single-use token or the tray's OAuth sign-in):
 Users then sign in for SSO/PAM from the tray (launched at login).
 
 ## Signing
-Set `WINDOWS_CERT_PFX_BASE64` + `WINDOWS_CERT_PASSWORD` repo secrets; the CI job
-Authenticode-signs the MSI when they're present.
+Set `WINDOWS_CERT_PFX_BASE64` (base64 of a code-signing `.pfx`) +
+`WINDOWS_CERT_PASSWORD` repo secrets; the CI job then Authenticode-signs **both**
+`openidx-agent.exe` (before packaging) and the MSI, with an RFC 3161 timestamp.
+When the secrets are unset, signing is skipped and the build still succeeds.
+
+This repo ships a **self-signed** code-signing certificate. That satisfies
+Authenticode and lets you silence SmartScreen/Defender on **managed** machines by
+distributing the public cert to the **Trusted Publishers** (and Trusted Root)
+store — it does *not* establish trust on unmanaged/public machines (only a
+public-CA cert does that). The public cert (no private key) is
+`agent/packaging/openidx-codesign.cer`.
+
+Push it to your fleet via GPO — *Computer Configuration → Policies → Windows
+Settings → Security Settings → Public Key Policies → Trusted Publishers* (import
+the `.cer`) — or Intune (a Trusted Certificate profile). To trust it on a single
+box for testing:
+```powershell
+Import-Certificate -FilePath openidx-codesign.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+Import-Certificate -FilePath openidx-codesign.cer -CertStoreLocation Cert:\LocalMachine\Root
+```
+Rotate by regenerating the `.pfx`, updating the two secrets, and re-distributing
+the new `.cer`.
 
 ## Releases & auto-update
 Push an **`agent-v<version>`** tag (e.g. `agent-v1.2.0`). The Windows Client

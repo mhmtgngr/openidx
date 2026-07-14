@@ -48,6 +48,11 @@ jobs:
     needs: smoke-crosscompile
     permissions:
       contents: write # create the release + upload assets on a tag
+    # Job-level env so the signing steps' `if:` can read whether a cert secret
+    # is configured (step-level env isn't visible to that step's own `if`).
+    env:
+      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -77,6 +82,29 @@ jobs:
             -ldflags "-s -w -X main.Version=${{ steps.ver.outputs.version }} -X main.Commit=${{ github.sha }}" \
             -o dist/openidx-agent.exe ./cmd/openidx-agent
 
+      # Authenticode signing (optional): set WINDOWS_CERT_PFX_BASE64 +
+      # WINDOWS_CERT_PASSWORD repo secrets to enable. Decode the cert once and
+      # locate signtool (present via the Windows SDK on windows-latest but not
+      # on PATH). Skipped entirely when the secret is unset.
+      - name: Prepare code-signing
+        if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+                Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $st) { throw "signtool.exe not found" }
+          "SIGNTOOL=$($st.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "signtool: $($st.FullName)"
+
+      - name: Sign openidx-agent.exe
+        if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERT_PASSWORD" `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 agent/dist/openidx-agent.exe
+          & "$env:SIGNTOOL" verify /pa agent/dist/openidx-agent.exe
+
       - name: Install WiX
         # Pin WiX v5: v6/v7 require accepting the OSMF EULA at build time
         # (WIX7015), which fails unattended CI. v5 is free and uses the same
@@ -96,17 +124,15 @@ jobs:
             -arch x64 \
             -o dist/OpenIDX-${{ steps.ver.outputs.version }}.msi
 
-      # Authenticode signing (optional): add WINDOWS_CERT_PFX_BASE64 +
-      # WINDOWS_CERT_PASSWORD secrets to enable. Skipped when unset.
-      - name: Sign MSI (optional)
+      # Sign the packaged MSI (contains the already-signed exe). latest.json is
+      # generated AFTER this so its sha256 matches the signed MSI.
+      - name: Sign MSI
         if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
-        env:
-          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         shell: pwsh
         run: |
-          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-          & signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/OpenIDX-${{ steps.ver.outputs.version }}.msi"
+          & "$env:SIGNTOOL" sign /f "$env:RUNNER_TEMP\cert.pfx" /p "$env:WINDOWS_CERT_PASSWORD" `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist/OpenIDX-${{ steps.ver.outputs.version }}.msi"
+          & "$env:SIGNTOOL" verify /pa "dist/OpenIDX-${{ steps.ver.outputs.version }}.msi"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
