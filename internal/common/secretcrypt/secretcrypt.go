@@ -129,6 +129,12 @@ func newKeyringFromEnv(keysStr, activeStr string, legacyKey []byte) (*Cipher, er
 // NewNoop returns a passthrough Cipher for environments without a usable key.
 func NewNoop() *Cipher { return &Cipher{noop: true} }
 
+// ActiveKEKID returns the id of the KEK that Encrypt seals under: a positive id
+// in keyring mode, or 0 in single-key (encv1) / noop mode. The rekey tool uses
+// this to skip values already sealed under the active KEK and to require keyring
+// mode before re-encrypting.
+func (c *Cipher) ActiveKEKID() int { return c.activeID }
+
 // IsEncrypted reports whether stored was produced by Encrypt (encv1 or encv2).
 func IsEncrypted(stored string) bool {
 	return strings.HasPrefix(stored, tagV1) || strings.HasPrefix(stored, tagV2)

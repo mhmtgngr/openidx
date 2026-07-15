@@ -42,9 +42,8 @@ rotates **without a re-encryption flag-day**:
    - `ENCRYPTION_KEYS="1:<base64(current ENCRYPTION_KEY)>"`, `ENCRYPTION_ACTIVE_KEK_ID=1`, keep `ENCRYPTION_KEY`. Restart. (New writes become `encv2:1`; old `encv1` still read via `ENCRYPTION_KEY`.)
 2. **Rotate**: add a new key and flip active:
    - `ENCRYPTION_KEYS="1:<old>,2:<new>"`, `ENCRYPTION_ACTIVE_KEK_ID=2`. Restart. New writes are `encv2:2`; everything sealed under key 1 (and `encv1`) still decrypts.
-3. **Re-encrypt** (to retire the exposed key): run the re-encryption pass so all
-   `encv1` / `encv2:1` values are re-sealed under key 2. *(Tool is the next step —
-   see below.)*
+3. **Re-encrypt** (to retire the exposed key): run `cmd/rekey` so all
+   `encv1` / `encv2:1` values are re-sealed under key 2 (see below).
 4. **Retire**: drop key 1 from `ENCRYPTION_KEYS` (and eventually `ENCRYPTION_KEY`).
    Only safe once nothing is sealed under it — step 3 guarantees that.
 
@@ -57,7 +56,31 @@ Generate a key: `openssl rand -base64 32`.
 - **`ZITI_ADMIN_PASSWORD`** — update the controller admin + env, restart.
 - **`JWT_SECRET`** — vestigial (only referenced in `doctor.go`; OAuth uses RS256 JWKS). Rotating it is a no-op; consider removing it.
 
+### `cmd/rekey` — the re-encryption pass (step 3)
+
+Re-seals every secretcrypt value that isn't already under the active KEK, so the
+old key can be dropped from the ring. It's **correct-by-construction**: rather
+than a hand-maintained column registry, it scans every text column in the public
+schema for values carrying the `encv1:` / `encv2:` prefix that aren't sealed
+under the active KEK, decrypts them via the ring, and re-seals under the active
+KEK. Vault ciphertext (a different format) and plaintext are ignored. Idempotent;
+running twice is a no-op.
+
+```bash
+# dry-run (default): report what would change, writes nothing
+ENCRYPTION_KEY=... ENCRYPTION_KEYS="1:<old>,2:<new>" ENCRYPTION_ACTIVE_KEK_ID=2 \
+  DATABASE_URL=... go run ./cmd/rekey
+
+# apply
+... go run ./cmd/rekey -dry-run=false
+```
+
+Requires keyring mode (`ENCRYPTION_KEYS` + `ENCRYPTION_ACTIVE_KEK_ID`) — it
+refuses to run in single-key mode since there's no active KEK to seal under. It
+sets `app.bypass_rls=on` for a cross-org pass, and skips known-large non-secret
+columns (`audit_events.details`) — extend with `-skip table.col,...`.
+
 ## Status / next
-- ✅ `secretcrypt` keyring (this change) — master-key rotation is now a safe config change.
-- ⬜ **Re-encryption tool** (`cmd/`/`tools/`) — walk every encrypted column, decrypt with the ring, re-seal under the active KEK. Needed to fully retire an exposed key (step 3).
+- ✅ `secretcrypt` keyring — master-key rotation is now a safe config change.
+- ✅ **`cmd/rekey`** — re-encryption pass; retires an exposed key (step 3).
 - ⬜ **Platform secrets → vault** — move the plaintext env secrets into the vault, fetch at boot, rotate via the rotation engine.
