@@ -184,6 +184,10 @@ type Service struct {
 	// lives in one place and read-mostly queries use the read replica. The
 	// legacy inline db.Pool user queries are being migrated here incrementally.
 	users UserRepository
+
+	// groups is the group data-access port (see group_repository.go), the second
+	// aggregate migrated to the Repository pattern.
+	groups GroupRepository
 }
 
 // NewService creates a new identity service
@@ -205,6 +209,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		logger:    log,
 		idpCipher: idpCipher,
 		users:     NewPostgresUserRepository(db),
+		groups:    NewPostgresGroupRepository(db),
 	}
 }
 
@@ -1102,25 +1107,9 @@ func (s *Service) ListGroups(ctx context.Context, offset, limit int, search ...s
 // GetGroup retrieves a group by ID
 func (s *Service) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	s.logger.Debug("Getting group", zap.String("group_id", groupID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var dbGroup GroupDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
-		FROM groups g WHERE g.id = $1 AND g.org_id = $2
-	`, groupID, org.ID).Scan(
-		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
-	)
-	if err != nil {
-		return nil, err
-	}
-	group := dbGroup.ToGroup()
-	return &group, nil
+	// Delegates to the group repository (see group_repository.go): tenant-scoped
+	// read on the replica, returns ErrGroupNotFound on a miss.
+	return s.groups.GetByID(ctx, groupID)
 }
 
 // GetGroupMembers retrieves members of a group
@@ -1159,73 +1148,22 @@ func (s *Service) GetGroupMembers(ctx context.Context, groupID string) ([]GroupM
 // CreateGroup creates a new group
 func (s *Service) CreateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Creating group", zap.String("name", group.GetName()))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Generate UUID if not provided
-	if group.ID == "" {
-		group.ID = uuid.New().String()
-	}
-
-	now := time.Now()
-	group.CreatedAt = now
-	group.UpdatedAt = now
-
-	// Convert SCIM Group to GroupDB for database insert
-	dbGroup := FromGroup(*group)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO groups (id, name, description, parent_id, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.CreatedAt, dbGroup.UpdatedAt, org.ID)
-
-	return err
+	// Persistence in the repository (primary pool); it writes the generated id +
+	// timestamps back onto `group`.
+	return s.groups.Create(ctx, group)
 }
 
 // UpdateGroup updates an existing group
 func (s *Service) UpdateGroup(ctx context.Context, group *Group) error {
 	s.logger.Info("Updating group", zap.String("group_id", group.ID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	group.UpdatedAt = time.Now()
-
-	// Convert SCIM Group to GroupDB for database update
-	dbGroup := FromGroup(*group)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE groups
-		SET name = $2, description = $3, parent_id = $4, allow_self_join = $5, require_approval = $6, max_members = $7, updated_at = $8
-		WHERE id = $1 AND org_id = $9
-	`, dbGroup.ID, dbGroup.DisplayName, dbGroup.Description, dbGroup.ParentID, dbGroup.AllowSelfJoin, dbGroup.RequireApproval, dbGroup.MaxMembers, dbGroup.UpdatedAt, org.ID)
-
-	return err
+	return s.groups.Update(ctx, group)
 }
 
 // DeleteGroup deletes a group
 func (s *Service) DeleteGroup(ctx context.Context, groupID string) error {
 	s.logger.Info("Deleting group", zap.String("group_id", groupID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	// First remove all group memberships
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM group_memberships WHERE group_id = $1 AND org_id = $2", groupID, org.ID)
-	if err != nil {
-		return fmt.Errorf("failed to remove group memberships: %w", err)
-	}
-
-	// Then delete the group
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM groups WHERE id = $1 AND org_id = $2", groupID, org.ID)
-	return err
+	// Repo removes memberships then the group row (primary pool).
+	return s.groups.Delete(ctx, groupID)
 }
 
 // AddGroupMember adds a user to a group

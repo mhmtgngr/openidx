@@ -69,6 +69,14 @@ incremental.*
 > read *and* write service logic is now unit-tested with a **fake repo and no
 > database** (previously impossible). This is the template — extend it
 > method-by-method and roll the same shape to the other services.
+>
+> ✅ **Second aggregate confirms the template repeats.** `Group` is now behind
+> `GroupRepository` (`internal/identity/group_repository.go`) the same way:
+> `GetByID`/`GetByName` on the replica, `Create`/`Update`/`Delete` on the primary
+> (Delete removes memberships then the group), typed `ErrGroupNotFound`/
+> `ErrGroupAlreadyExists`, and `identity.Service`'s five group methods delegate to
+> it. `group_repository_test.go` unit-tests the group service logic with a fake
+> repo and no DB. Two aggregates down; the pattern is mechanical from here.
 
 ---
 

@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
-
-	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
 // ============================================================
@@ -72,27 +70,8 @@ func (s *Service) ListUsersWithFilter(ctx context.Context, filter UserFilter) (*
 // GetGroupByDisplayName retrieves a group by display name
 func (s *Service) GetGroupByDisplayName(ctx context.Context, displayName string) (*Group, error) {
 	s.logger.Debug("Getting group by display name", zap.String("display_name", displayName))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fall back to direct database query
-	var dbGroup GroupDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT g.id, g.name, g.description, g.parent_id, g.allow_self_join, g.require_approval, g.max_members, g.created_at, g.updated_at,
-		       COALESCE((SELECT COUNT(*) FROM group_memberships gm WHERE gm.group_id = g.id AND gm.org_id = $2), 0) as member_count
-		FROM groups g WHERE g.name = $1 AND g.org_id = $2
-	`, displayName, org.ID).Scan(
-		&dbGroup.ID, &dbGroup.DisplayName, &dbGroup.Description, &dbGroup.ParentID, &dbGroup.AllowSelfJoin, &dbGroup.RequireApproval, &dbGroup.MaxMembers, &dbGroup.CreatedAt, &dbGroup.UpdatedAt, &dbGroup.MemberCount,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("group not found")
-	}
-
-	group := dbGroup.ToGroup()
-	return &group, nil
+	// Delegates to the group repository (see group_repository.go).
+	return s.groups.GetByName(ctx, displayName)
 }
 
 // ListGroupsWithFilter lists groups with advanced filtering and pagination

@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/architecture/design-patterns-review.md`). Business logic (full CRUD) is
   now unit-testable with a fake repo and no database (`user_repository_test.go`).
 
+- **Repository pattern — second aggregate (identity/Group).** `Group` is now
+  behind `GroupRepository` (`internal/identity/group_repository.go`) following the
+  same template: `GetByID`/`GetByName` reads on the replica, `Create`/`Update`/
+  `Delete` writes on the primary (Delete removes memberships then the group row),
+  typed `ErrGroupNotFound`/`ErrGroupAlreadyExists`. `identity.Service`'s
+  `GetGroup`/`GetGroupByDisplayName`/`CreateGroup`/`UpdateGroup`/`DeleteGroup`
+  delegate to it. Unit-tested with a fake repo and no database
+  (`group_repository_test.go`).
+
 ### Changed
 
 - **Hardened the shared error renderer (`internal/common/errors`).** `HandleError`
