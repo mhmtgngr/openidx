@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Always-available authentication — Tier 0 (verify-path survives a DB outage).**
+  Token *verification* (validating an already-issued JWT) is now hardened to keep
+  working through an outage of the OAuth/JWKS endpoint and the shared database:
+  - **Serve-stale JWKS.** The shared verify path
+    (`internal/common/middleware`, used by all services) and the gateway JWT
+    middleware now keep serving the last successfully fetched signing keys when a
+    JWKS refresh fails, bounded by `JWKS_MAX_STALE` (default 12h) past the
+    `JWKS_TTL` freshness window (default 1h). Previously a failed refresh after
+    cache expiry rejected otherwise-valid tokens, turning a database blip into an
+    auth outage.
+  - **Metrics + alerts.** New `openidx_jwks_refresh_failures_total`,
+    `openidx_jwks_serve_stale_total`, and `openidx_jwks_stale_seconds`, with a
+    `openidx.jwks_availability` PrometheusRule group (issuer-down, serving-stale,
+    and near-max-stale alerts).
+  - **Liveness/readiness probe split.** Every Helm service pointed both probes at
+    `/health` (which 503s when the shared DB is down), so a DB blip would restart
+    every pod at once and wipe warm JWKS caches. Liveness now uses `/health/live`
+    (process-only), readiness uses `/health/ready` (drains from the LB on a
+    critical dependency outage), for graceful degradation instead of a crash-loop.
+  - Docs: `docs/architecture/always-available-auth-plan.md`.
+
 ## [1.27.0] - 2026-07-13
 
 ### Added

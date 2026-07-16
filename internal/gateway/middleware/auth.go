@@ -26,11 +26,17 @@ type JWTAuthMiddleware struct {
 	httpClient *http.Client
 }
 
-// jwksCache caches RSA public keys from JWKS endpoint
+// jwksCache caches RSA public keys from JWKS endpoint. It retains the last
+// successfully fetched key set (and when it was fetched) so that, when a refresh
+// fails because the OAuth/JWKS endpoint or the shared database is down, we can
+// SERVE STALE keys rather than reject otherwise-valid tokens. Verification must
+// survive an issuer outage — see internal/common/middleware for the primary
+// (all-services) implementation of this contract.
 type jwksCache struct {
-	keys      map[string]*rsa.PublicKey
-	expiresAt time.Time
-	mu        sync.RWMutex
+	keys          map[string]*rsa.PublicKey
+	expiresAt     time.Time
+	lastRefreshOK time.Time
+	mu            sync.RWMutex
 }
 
 // JWKSResponse represents the JWKS endpoint response
@@ -248,7 +254,15 @@ func (m *JWTAuthMiddleware) respondWithError(c *gin.Context, status int, message
 	})
 }
 
-// getSigningKey retrieves an RSA public key from the JWKS cache
+// jwksMaxStale bounds how long past the freshness TTL the gateway will keep
+// serving a cached key set when refresh fails. Mirrors the common middleware.
+const jwksMaxStale = 12 * time.Hour
+
+// getSigningKey retrieves an RSA public key from the JWKS cache.
+//
+// Availability contract: a valid, already-issued token keeps verifying through a
+// JWKS/database outage. fresh cache hit → successful refresh → SERVE STALE within
+// jwksMaxStale; only with no usable key set do we surface the error.
 func (m *JWTAuthMiddleware) getSigningKey(kid string) (*rsa.PublicKey, error) {
 	// Try cache first
 	m.cache.mu.RLock()
@@ -274,11 +288,25 @@ func (m *JWTAuthMiddleware) getSigningKey(kid string) (*rsa.PublicKey, error) {
 	// Fetch from JWKS endpoint
 	keys, err := m.fetchJWKS()
 	if err != nil {
+		// Refresh failed. Serve stale if we still have a trustworthy cached set
+		// within the max-stale window.
+		if len(m.cache.keys) > 0 && !m.cache.lastRefreshOK.IsZero() &&
+			time.Since(m.cache.expiresAt) <= jwksMaxStale {
+			if key, ok := m.cache.keys[kid]; ok {
+				m.logger.Warn("serving stale JWKS key during issuer outage",
+					"kid", kid,
+					"stale_for", time.Since(m.cache.lastRefreshOK).String(),
+					"error", err.Error())
+				return key, nil
+			}
+		}
 		return nil, err
 	}
 
 	m.cache.keys = keys
-	m.cache.expiresAt = time.Now().Add(1 * time.Hour)
+	now := time.Now()
+	m.cache.expiresAt = now.Add(1 * time.Hour)
+	m.cache.lastRefreshOK = now
 
 	if key, ok := keys[kid]; ok {
 		return key, nil

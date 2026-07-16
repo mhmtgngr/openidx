@@ -113,10 +113,18 @@ Grounding the plan in reality — these are **done** and the plan builds on them
 The prize: **existing sessions survive a full Postgres outage.** Small, cheap,
 high impact.
 
-1. **Serve-stale JWKS on refresh failure.** The gateway caches JWKS 1h; ensure a
-   failed refresh **keeps serving the last-good key set** (don't blank it) and add
-   a metric + alert on staleness. So even if `oauth-service`/DB is down, in-flight
-   verification never breaks. *Effort: S.*
+1. ✅ **Done — Serve-stale JWKS on refresh failure.** The shared verify path
+   (`internal/common/middleware/middleware.go`, used by all 8 services, plus the
+   retired gateway's `internal/gateway/middleware/auth.go`) now keeps serving the
+   last-good key set when a JWKS refresh fails, bounded by `JWKS_MAX_STALE`
+   (default 12h). So even if `oauth-service`/DB is down, in-flight verification
+   never breaks. Metrics: `openidx_jwks_refresh_failures_total`,
+   `openidx_jwks_serve_stale_total`, `openidx_jwks_stale_seconds`
+   (`internal/common/middleware/jwks_metrics.go`); alerts in the
+   `openidx.jwks_availability` PrometheusRule group. The oauth JWKS endpoint
+   itself serves from an in-memory atomic snapshot, so it does not hit Postgres
+   per request — the verify path is DB-independent end to end. Tests:
+   `internal/common/middleware/jwks_stale_test.go`.
 2. **Keep access-token TTL short, refresh-token TTL long.** Confirm access tokens
    are short-lived (≈5–15 min) and revocation is checked from Redis, not Postgres,
    on the hot path. Long-lived refresh tokens mean a DB brownout is only felt at
@@ -127,6 +135,14 @@ high impact.
    (available, tiny risk window = token TTL) or (b) deny (safe, unavailable)?
    Recommend **(a) for access tokens** given their short TTL, **(b) for
    high-value admin scopes**. Document and enforce per-scope. *Effort: M.*
+4. ✅ **Done — Liveness/readiness probe split.** Every Helm service pointed BOTH
+   its liveness and readiness probe at `/health`, which returns 503 when the
+   shared DB is down — so a DB blip would make Kubernetes restart *every* pod at
+   once, wiping the warm JWKS caches and turning a brownout into a crash-loop
+   outage. Fixed: liveness → `/health/live` (process-only, always 200), readiness
+   → `/health/ready` (drains from the LB when the critical DB dep is down) across
+   all service templates. The Go handlers already implemented these semantics
+   correctly; the probes just weren't using them.
 
 **Exit criteria:** kill Postgres in staging → already-logged-in users keep using
 protected apps for at least the access-token TTL; Grafana shows verify success
