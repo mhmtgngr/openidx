@@ -2845,6 +2845,14 @@ func (s *Service) handleAuthorizationCodeGrant(c *gin.Context) {
 
 	// Verify PKCE - required for public clients, optional for confidential
 	if authCode.CodeChallenge != "" {
+		// Reject "plain" PKCE in production: it's a bare string compare with no
+		// protection against code interception, and only exists for insecure-
+		// context dev clients (crypto.subtle unavailable). A prod console is on
+		// HTTPS and always uses S256, so plain here would only help an attacker.
+		if authCode.CodeChallengeMethod == "plain" && s.config != nil && s.config.IsProduction() {
+			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE method 'plain' is not allowed in production; use S256"})
+			return
+		}
 		if !VerifyPKCE(codeVerifier, authCode.CodeChallenge, authCode.CodeChallengeMethod) {
 			c.JSON(400, gin.H{"error": "invalid_grant", "error_description": "PKCE verification failed"})
 			return
