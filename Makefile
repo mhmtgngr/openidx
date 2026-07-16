@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill dr-game-day build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -147,6 +147,17 @@ ha-drill:
 		./internal/oauth/ \
 		'OAuthClientStoreWritesUsePrimary|OAuthClientGetUsesPrimary'
 	@echo "✅ Availability drill passed — all always-available-auth guarantees hold."
+
+#---------------------------------------------------------------------------
+# DR game-day — rehearse data-tier failover (docs/disaster-recovery.md §1D).
+# `dr-game-day` runs the self-test: it stands up a local mock that simulates a
+# failover window and drives the whole canary/verdict logic against it, so the
+# drill itself is verified (a false-green DR drill is worse than none) with NO
+# infrastructure. To run against real staging, call the script directly:
+#   scripts/dr-game-day.sh --base-url https://staging.openidx.example --trigger \
+#       --provider rds --rds-instance openidx-staging
+dr-game-day:
+	@bash scripts/dr-game-day.sh --self-test
 
 #---------------------------------------------------------------------------
 # Linting

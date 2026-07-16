@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`make dr-game-day` — the data-tier failover game-day is now runnable, not a
+  copy-paste runbook.** `docs/disaster-recovery.md` §1D previously described the
+  RDS Multi-AZ / Patroni failover drill as manual shell steps in a comment block.
+  New `scripts/dr-game-day.sh` executes it end-to-end: a synthetic auth canary
+  probes `/health/live` (verify path — must stay 200 the entire window, since
+  verify is DB-free/serve-stale) and `/health/ready` (issue path — may 503 while
+  the LB drains new logins, then must self-recover as pgxpool re-dials the
+  promoted primary), then prints a pass/fail verdict and exits non-zero on any
+  contract violation. It can trigger failover itself (`--trigger --provider
+  rds|patroni`) or just observe. Crucially it ships a **`--self-test` mode** that
+  stands up a local stdlib mock simulating a failover window and runs the whole
+  canary/verdict logic against it — so the drill is verified with no
+  infrastructure and can't silently rot into a false-green (a false-green DR
+  drill is worse than none). `make dr-game-day` runs that self-test; verified it
+  passes on a clean window and fails correctly on both a verify-path drop and a
+  non-recovering issue path.
+
 - **`make ha-drill` — one command to verify the always-available-auth
   guarantees.** Runs the focused Go tests that encode each availability tier
   (serve-stale JWKS + Auth-survives-issuer-outage; bounded DB timeouts +
