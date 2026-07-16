@@ -146,6 +146,9 @@ ha-drill:
 	@bash scripts/ha-drill.sh "Guards: oauth client store pool safety (mutation-tested)" \
 		./internal/oauth/ \
 		'OAuthClientStoreWritesUsePrimary|OAuthClientGetUsesPrimary'
+	@bash scripts/ha-drill.sh "Guards: admin settings store pool safety (mutation-tested)" \
+		./internal/admin/ \
+		'SettingsRepositoryWritesUsePrimary|SettingsRepositoryGetUsesPrimary'
 	@echo "✅ Availability drill passed — all always-available-auth guarantees hold."
 
 #---------------------------------------------------------------------------

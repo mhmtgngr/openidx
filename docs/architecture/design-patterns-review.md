@@ -123,6 +123,23 @@ incremental.*
 > `TestSecurityFeatures`); `TestOAuthConstants` was retargeted onto the preserved
 > constants. `go build ./...`, `go vet ./...`, and `go test ./internal/oauth/`
 > all pass.
+>
+> ✅ **Pattern reaches the admin god-object (`SettingsRepository`).** Started
+> strangling `internal/admin/service.go` (3,439 lines — the biggest god-object in
+> the review's table) by extracting its `system_settings` access into
+> `SettingsRepository` (`internal/admin/settings_repository.go`). That table is a
+> key/value JSON store (`system`, `sms_config`, `mfa_methods`, ...) whose identical
+> `SELECT value FROM system_settings WHERE key = $1` + `INSERT ... ON CONFLICT (key)
+> DO UPDATE` was copy-pasted inline across ~6 handlers, each free to pick its own
+> pool. Now it's one `GetRaw`/`PutRaw` port. **Pool judgment:** reads use the
+> **primary**, not the replica — `system_settings` carries password policy,
+> `RequireMFA`, lockout, and session limits, so a just-tightened policy must take
+> effect immediately (read-after-write); serving it off a lagging replica could
+> briefly enforce a weaker policy. That choice is documented on the type and
+> **locked by a mutation-tested guard** (`TestSettingsRepositoryGetUsesPrimary` /
+> `WritesUsePrimary`, wired into `make ha-drill`). Unit-tested with a fake repo and
+> no database (defaulting, corrupt-row fallback, write-error propagation, nil-db
+> guards). Verified the guard fails when a write is moved to `.Reader()`.
 
 ---
 

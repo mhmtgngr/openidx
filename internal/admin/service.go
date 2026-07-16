@@ -249,6 +249,7 @@ type Service struct {
 	redis            *database.RedisClient
 	config           *config.Config
 	logger           *zap.Logger
+	settings         SettingsRepository
 	directoryService DirectorySyncer
 	riskService      RiskAssessor
 	apiKeyService    APIKeyManager
@@ -275,10 +276,11 @@ func requireAdmin(c *gin.Context) bool {
 // NewService creates a new admin service
 func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *config.Config, logger *zap.Logger) *Service {
 	return &Service{
-		db:     db,
-		redis:  redis,
-		config: cfg,
-		logger: logger.With(zap.String("service", "admin")),
+		db:       db,
+		redis:    redis,
+		config:   cfg,
+		logger:   logger.With(zap.String("service", "admin")),
+		settings: NewPostgresSettingsRepository(db),
 	}
 }
 
@@ -576,8 +578,7 @@ func (s *Service) getAuthStatistics(ctx context.Context) AuthStatistics {
 func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
 	s.logger.Debug("Getting system settings")
 
-	var valueBytes []byte
-	err := s.db.Pool.QueryRow(ctx, "SELECT value FROM system_settings WHERE key = 'system'").Scan(&valueBytes)
+	valueBytes, err := s.settings.GetRaw(ctx, "system")
 	if err == nil {
 		var settings Settings
 		if jsonErr := json.Unmarshal(valueBytes, &settings); jsonErr == nil {
@@ -642,12 +643,7 @@ func (s *Service) UpdateSettings(ctx context.Context, settings *Settings) error 
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO system_settings (key, value, updated_at)
-		VALUES ('system', $1, NOW())
-		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
-	`, valueBytes)
-	if err != nil {
+	if err := s.settings.PutRaw(ctx, "system", valueBytes); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
@@ -1285,9 +1281,7 @@ func (s *Service) handleUpdateSettings(c *gin.Context) {
 }
 
 func (s *Service) handleGetSMSSettings(c *gin.Context) {
-	var valueBytes []byte
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&valueBytes)
+	valueBytes, err := s.settings.GetRaw(c.Request.Context(), "sms_config")
 
 	var settings *sms.DBSMSSettings
 	if err == nil {
@@ -1311,10 +1305,8 @@ func (s *Service) handleUpdateSMSSettings(c *gin.Context) {
 	}
 
 	// Load existing settings to merge masked credentials
-	var existingBytes []byte
 	var existing *sms.DBSMSSettings
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&existingBytes)
+	existingBytes, err := s.settings.GetRaw(c.Request.Context(), "sms_config")
 	if err == nil {
 		existing = &sms.DBSMSSettings{}
 		json.Unmarshal(existingBytes, existing)
@@ -1329,12 +1321,7 @@ func (s *Service) handleUpdateSMSSettings(c *gin.Context) {
 		return
 	}
 
-	_, err = s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO system_settings (key, value, updated_at)
-		VALUES ('sms_config', $1, NOW())
-		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
-	`, valueBytes)
-	if err != nil {
+	if err := s.settings.PutRaw(c.Request.Context(), "sms_config", valueBytes); err != nil {
 		c.JSON(500, gin.H{"error": "failed to save SMS settings"})
 		return
 	}
@@ -1358,10 +1345,8 @@ func (s *Service) handleTestSMS(c *gin.Context) {
 	}
 
 	// Merge masked credentials from DB before testing
-	var existingBytes []byte
 	var existing *sms.DBSMSSettings
-	err := s.db.Pool.QueryRow(c.Request.Context(),
-		"SELECT value FROM system_settings WHERE key = 'sms_config'").Scan(&existingBytes)
+	existingBytes, err := s.settings.GetRaw(c.Request.Context(), "sms_config")
 	if err == nil {
 		existing = &sms.DBSMSSettings{}
 		json.Unmarshal(existingBytes, existing)
@@ -1729,8 +1714,7 @@ func (s *Service) handleGetSyncState(c *gin.Context) {
 }
 
 func (s *Service) handleListMFAMethods(c *gin.Context) {
-	var valueBytes []byte
-	err := s.db.Pool.QueryRow(c.Request.Context(), "SELECT value FROM system_settings WHERE key = 'mfa_methods'").Scan(&valueBytes)
+	valueBytes, err := s.settings.GetRaw(c.Request.Context(), "mfa_methods")
 	if err == nil {
 		var methods []string
 		if json.Unmarshal(valueBytes, &methods) == nil {
@@ -1754,12 +1738,7 @@ func (s *Service) handleUpdateMFAMethods(c *gin.Context) {
 		return
 	}
 
-	_, err = s.db.Pool.Exec(c.Request.Context(), `
-		INSERT INTO system_settings (key, value, updated_at)
-		VALUES ('mfa_methods', $1, NOW())
-		ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
-	`, valueBytes)
-	if err != nil {
+	if err := s.settings.PutRaw(c.Request.Context(), "mfa_methods", valueBytes); err != nil {
 		c.JSON(500, gin.H{"error": "Failed to save MFA methods"})
 		return
 	}

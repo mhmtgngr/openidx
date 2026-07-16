@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repository pattern reaches the admin god-object (`SettingsRepository`).**
+  Began strangling `internal/admin/service.go` (3,439 lines — the largest
+  god-object in the design-patterns review) by extracting all `system_settings`
+  access into `internal/admin/settings_repository.go`. That table is a key/value
+  JSON store (`system`, `sms_config`, `mfa_methods`, ...) whose identical
+  `SELECT value FROM system_settings WHERE key = $1` + `INSERT ... ON CONFLICT
+  (key) DO UPDATE` UPSERT was copy-pasted inline across ~6 handlers, each free to
+  pick its own pool. It's now one `GetRaw`/`PutRaw` port with a typed
+  `ErrSettingNotFound` and nil-db guards; `admin.Service`'s `GetSettings`/
+  `UpdateSettings` + the SMS/MFA-methods handlers delegate to it. **Pool
+  judgment:** reads use the **primary**, not the replica — `system_settings`
+  carries password policy, `RequireMFA`, lockout, and session limits, so a
+  just-tightened policy must take effect immediately (read-after-write); a lagging
+  replica could briefly enforce a weaker policy. Locked by a mutation-tested
+  invariant guard (`TestSettingsRepositoryGetUsesPrimary`/`WritesUsePrimary`,
+  wired into `make ha-drill`; verified it fails when a write is moved to
+  `.Reader()`) and unit-tested with a fake repo and no database (defaulting,
+  corrupt-row fallback, write-error propagation, nil-db guards).
+
 - **`make dr-game-day` — the data-tier failover game-day is now runnable, not a
   copy-paste runbook.** `docs/disaster-recovery.md` §1D previously described the
   RDS Multi-AZ / Patroni failover drill as manual shell steps in a comment block.
