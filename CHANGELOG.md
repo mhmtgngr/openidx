@@ -49,6 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes-never-replica guard now covers all three repositories. Unit-tested with a
   fake repo and no database (`session_repository_test.go`).
 
+- **Repository pattern generalizes to the oauth service (OAuth clients).** OAuth
+  client CRUD is now behind `OAuthClientStore`
+  (`internal/oauth/oauth_client_store.go`): `GetByClientID` reads the primary
+  (client validation gates every token grant and checks the secret), `List` reads
+  the replica, and `Create`/`Update`/`Delete` write the primary.
+  `oauth.Service`'s `GetClient`/`ListClients`/`CreateClient`/`UpdateClient`/
+  `DeleteClient` delegate to it; guarded by a mutation-tested invariant test and
+  unit-tested with a fake store and no database. Also documented a pre-existing
+  smell surfaced by this work: the oauth package has a *separate* `ClientRepository`
+  (`client.go`, used by `token_flow.go`) that models the same `oauth_clients` table
+  differently — a worthwhile unification follow-up (see
+  `docs/architecture/design-patterns-review.md`).
+
 ### Changed
 
 - **Hardened the shared error renderer (`internal/common/errors`).** `HandleError`

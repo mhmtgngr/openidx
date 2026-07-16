@@ -165,6 +165,11 @@ type Service struct {
 	// 3s read timeout (a latency cliff on the verify/introspect hot path). It is
 	// shared per-service and distributed via Redis state when available.
 	redisBreaker *resilience.CircuitBreaker
+
+	// clients is the OAuth client data-access port (Repository pattern — see
+	// client_repository.go). GetByClientID reads the primary (security), List the
+	// replica; writes the primary.
+	clients OAuthClientStore
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -286,6 +291,10 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 
 	// Initialize authorize handler
 	svc.authorizeHandler = NewAuthorizeHandler(svc, svc.logger)
+
+	// OAuth client data-access repository (Repository pattern — see
+	// client_repository.go).
+	svc.clients = NewPostgresOAuthClientStore(db)
 
 	// Circuit breaker for Redis-backed revocation checks: after 5 consecutive
 	// failures, fast-fail for 5s instead of paying the Redis read timeout on
@@ -409,198 +418,33 @@ func (s *Service) checkCountryBlock(ctx context.Context, clientIP, userID, usern
 // CreateClient creates a new OAuth client
 func (s *Service) CreateClient(ctx context.Context, client *OAuthClient) error {
 	s.logger.Info("Creating OAuth client", zap.String("name", client.Name))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	client.CreatedAt = now
-	client.UpdatedAt = now
-
-	// Set defaults
-	if client.AccessTokenLifetime == 0 {
-		client.AccessTokenLifetime = 3600 // 1 hour
-	}
-	if client.RefreshTokenLifetime == 0 {
-		client.RefreshTokenLifetime = 86400 // 24 hours
-	}
-
-	redirectURIsJSON, _ := json.Marshal(client.RedirectURIs)
-	grantTypesJSON, _ := json.Marshal(client.GrantTypes)
-	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
-	scopesJSON, _ := json.Marshal(client.Scopes)
-
-	// Use timeout context for database operation
-	dbCtx, cancel := s.withDBTimeout(ctx)
-	defer cancel()
-
-	_, err = s.db.Pool.Exec(dbCtx, `
-		INSERT INTO oauth_clients (
-			id, client_id, client_secret, name, description, type,
-			redirect_uris, grant_types, response_types, scopes,
-			logo_uri, policy_uri, tos_uri, pkce_required,
-			allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-			created_at, updated_at, org_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-	`, client.ID, client.ClientID, client.ClientSecret, client.Name, client.Description,
-		client.Type, redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON,
-		client.LogoURI, client.PolicyURI, client.TOSUri, client.PKCERequired,
-		client.AllowRefreshToken, client.AccessTokenLifetime, client.RefreshTokenLifetime,
-		client.CreatedAt, client.UpdatedAt, org.ID)
-
-	return err
+	// Persistence in the repository (primary pool) — see client_repository.go.
+	return s.clients.Create(ctx, client)
 }
 
 // GetClient retrieves an OAuth client by client ID
 func (s *Service) GetClient(ctx context.Context, clientID string) (*OAuthClient, error) {
-	var client OAuthClient
-	// Use pointers to handle NULL values
-	var clientSecret, description, logoURI, policyURI, tosURI *string
-	var redirectURIsJSON, grantTypesJSON, responseTypesJSON, scopesJSON []byte
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Use timeout context for database operation
-	dbCtx, cancel := s.withDBTimeout(ctx)
-	defer cancel()
-
-	err = s.db.Pool.QueryRow(dbCtx, `
-		SELECT id, client_id, client_secret, name, description, type,
-		       redirect_uris, grant_types, response_types, scopes,
-		       logo_uri, policy_uri, tos_uri, pkce_required,
-		       allow_refresh_token, access_token_lifetime, refresh_token_lifetime,
-		       created_at, updated_at
-		FROM oauth_clients WHERE client_id = $1 AND org_id = $2
-	`, clientID, org.ID).Scan(
-		&client.ID, &client.ClientID, &clientSecret, &client.Name, &description,
-		&client.Type, &redirectURIsJSON, &grantTypesJSON, &responseTypesJSON, &scopesJSON,
-		&logoURI, &policyURI, &tosURI, &client.PKCERequired,
-		&client.AllowRefreshToken, &client.AccessTokenLifetime, &client.RefreshTokenLifetime,
-		&client.CreatedAt, &client.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle NULL values
-	if clientSecret != nil {
-		client.ClientSecret = *clientSecret
-	}
-	if description != nil {
-		client.Description = *description
-	}
-	if logoURI != nil {
-		client.LogoURI = *logoURI
-	}
-	if policyURI != nil {
-		client.PolicyURI = *policyURI
-	}
-	if tosURI != nil {
-		client.TOSUri = *tosURI
-	}
-
-	json.Unmarshal(redirectURIsJSON, &client.RedirectURIs)
-	json.Unmarshal(grantTypesJSON, &client.GrantTypes)
-	json.Unmarshal(responseTypesJSON, &client.ResponseTypes)
-	json.Unmarshal(scopesJSON, &client.Scopes)
-
-	return &client, nil
+	// Repo reads the PRIMARY here: client validation gates every token grant and
+	// checks the secret, so a just-rotated/disabled client must be seen at once.
+	return s.clients.GetByClientID(ctx, clientID)
 }
 
 // ListClients retrieves all OAuth clients
 func (s *Service) ListClients(ctx context.Context, offset, limit int) ([]OAuthClient, int, error) {
-	var total int
-
-	// Use timeout context for database operations
-	dbCtx, cancel := s.withDBTimeout(ctx)
-	defer cancel()
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	err = s.db.Pool.QueryRow(dbCtx, "SELECT COUNT(*) FROM oauth_clients WHERE org_id = $1", org.ID).Scan(&total)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	rows, err := s.db.Pool.Query(dbCtx, `
-		SELECT id, client_id, name, description, type, created_at, updated_at
-		FROM oauth_clients
-		WHERE org_id = $3
-		ORDER BY created_at DESC
-		OFFSET $1 LIMIT $2
-	`, offset, limit, org.ID)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	var clients []OAuthClient
-	for rows.Next() {
-		var c OAuthClient
-		var desc *string
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &desc, &c.Type, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, 0, err
-		}
-		if desc != nil {
-			c.Description = *desc
-		}
-		clients = append(clients, c)
-	}
-
-	return clients, total, nil
+	// Repo reads the replica (admin/dashboard, lag-tolerant).
+	return s.clients.List(ctx, offset, limit)
 }
 
 // UpdateClient updates an OAuth client
 func (s *Service) UpdateClient(ctx context.Context, clientID string, client *OAuthClient) error {
 	s.logger.Info("Updating OAuth client", zap.String("client_id", clientID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	client.UpdatedAt = now
-
-	redirectURIsJSON, _ := json.Marshal(client.RedirectURIs)
-	grantTypesJSON, _ := json.Marshal(client.GrantTypes)
-	responseTypesJSON, _ := json.Marshal(client.ResponseTypes)
-	scopesJSON, _ := json.Marshal(client.Scopes)
-
-	_, err = s.db.Pool.Exec(ctx, `
-		UPDATE oauth_clients
-		SET name = $2, description = $3, redirect_uris = $4, grant_types = $5,
-		    response_types = $6, scopes = $7, pkce_required = $8,
-		    allow_refresh_token = $9, access_token_lifetime = $10,
-		    refresh_token_lifetime = $11, updated_at = $12
-		WHERE client_id = $1 AND org_id = $13
-	`, clientID, client.Name, client.Description, redirectURIsJSON, grantTypesJSON,
-		responseTypesJSON, scopesJSON, client.PKCERequired, client.AllowRefreshToken,
-		client.AccessTokenLifetime, client.RefreshTokenLifetime, now, org.ID)
-
-	return err
+	return s.clients.Update(ctx, clientID, client)
 }
 
 // DeleteClient deletes an OAuth client
 func (s *Service) DeleteClient(ctx context.Context, clientID string) error {
 	s.logger.Info("Deleting OAuth client", zap.String("client_id", clientID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM oauth_clients WHERE client_id = $1 AND org_id = $2", clientID, org.ID)
-	return err
+	return s.clients.Delete(ctx, clientID)
 }
 
 // Authorization Flow

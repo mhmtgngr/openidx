@@ -87,6 +87,21 @@ incremental.*
 > mutation-tested guard** (`TestSecurityCriticalReadUsesPrimary`). Writes
 > (`Create`/`UpdateActivity`/`Terminate`) are on the primary. Three aggregates now
 > behind repositories, all guarded.
+>
+> ✅ **Pattern generalizes to a second service (oauth).** OAuth client CRUD is now
+> behind `OAuthClientStore` (`internal/oauth/oauth_client_store.go`): `GetByClientID`
+> reads the **primary** (client validation gates every token grant and checks the
+> secret — a just-rotated secret / disabled client must be seen at once), `List`
+> reads the replica, writes on the primary. `oauth.Service`'s five client methods
+> delegate; guarded by `oauth_client_store_invariants_test.go` (mutation-tested),
+> unit-tested by `oauth_client_store_test.go`. **Finding surfaced along the way:**
+> the oauth package already had a *separate* `ClientRepository` (in `client.go`,
+> used by `token_flow.go`) operating on the SAME `oauth_clients` table with a
+> DIFFERENT model (`Client` with `client_secret_hash`/`tenant_id`) than the
+> service's `OAuthClient` (`client_secret`/`org_id`). Two representations of one
+> table is a real smell — it means two code paths can disagree about a client.
+> Unifying them is a worthwhile follow-up (out of scope here; named the new type
+> `OAuthClientStore` to avoid the collision rather than paper over it).
 
 ---
 
