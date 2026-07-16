@@ -11,13 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Repository pattern reference implementation (identity/User).** Introduced
   `internal/identity/user_repository.go`: a `UserRepository` interface +
-  `PostgresUserRepository` pgx implementation (`GetByID`/`GetByUsername`/
-  `GetByEmail`/`Exists`) that isolates user SQL into one type, scopes every read
-  to the caller's tenant, and serves reads from the read replica via `db.Reader()`
-  (Tier 1.6). `identity.Service.GetUser`/`GetUserByUsername`/`GetUserByEmail` now
-  delegate to it (behavior-preserving; the shared column list also fixes a latent
-  NULL-name scan error the username/email lookups had). This is the template for
-  splitting the god-object services (see
+  `PostgresUserRepository` pgx implementation
+  (`GetByID`/`GetByUsername`/`GetByEmail`/`Exists` reads via `db.Reader()`, plus
+  `Create`/`Update` writes on the primary pool) that isolates user SQL into one
+  type, scopes every query to the caller's tenant, and makes the primary-vs-
+  replica choice explicit (reads offload to the Tier 1.6 replica; writes never
+  do). `identity.Service.GetUser`/`GetUserByUsername`/`GetUserByEmail`/
+  `CreateUser`/`UpdateUser` now delegate to it (behavior-preserving; domain side
+  effects like audit logging and deprovisioning stay in the service). Along the
+  way this fixed a latent NULL-name scan error in the username/email lookups and
+  surfaces duplicate username/email as a typed `ErrUserAlreadyExists` (409). This
+  is the template for splitting the god-object services (see
   `docs/architecture/design-patterns-review.md`). Business logic is now
   unit-testable with a fake repo and no database (`user_repository_test.go`).
 

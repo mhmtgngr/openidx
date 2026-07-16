@@ -58,12 +58,17 @@ incremental.*
 
 > ✅ **Reference implementation landed.** `internal/identity/user_repository.go`
 > defines `UserRepository` (interface) + `PostgresUserRepository` (pgx impl) with
-> `GetByID`/`GetByUsername`/`Exists`. `identity.Service.GetUser` now **delegates**
-> to it (behavior-preserving), the repo reads via `db.Reader()` (adopting the
-> Tier 1.6 read replica), and returns the `ErrUserNotFound` sentinel. The payoff
-> is proven in `user_repository_test.go`: service logic is now unit-tested with a
-> **fake repo and no database** (previously impossible). This is the template —
-> extend it method-by-method and roll the same shape to the other services.
+> reads (`GetByID`/`GetByUsername`/`GetByEmail`/`Exists`, served via `db.Reader()`)
+> and writes (`Create`/`Update`, on the **primary** pool — the seam makes the
+> primary-vs-replica choice explicit so a write can never accidentally hit a
+> lagging replica). `identity.Service`'s `GetUser`/`GetUserByUsername`/
+> `GetUserByEmail`/`CreateUser`/`UpdateUser` now **delegate** to it, with domain
+> side effects (audit, deprovisioning) staying in the service. The refactor also
+> fixed a latent NULL-name scan bug and gave duplicates a typed
+> `ErrUserAlreadyExists` (→409). The payoff is proven in `user_repository_test.go`:
+> read *and* write service logic is now unit-tested with a **fake repo and no
+> database** (previously impossible). This is the template — extend it
+> method-by-method and roll the same shape to the other services.
 
 ---
 

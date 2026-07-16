@@ -6,7 +6,14 @@ import (
 	"testing"
 
 	"go.uber.org/zap"
+
+	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// orgCtx returns a context carrying a tenant, as the resolver middleware would.
+func orgCtx() context.Context {
+	return orgctx.With(context.Background(), orgctx.Org{ID: "org-test", Slug: "test"})
+}
 
 // fakeUserRepository is an in-memory UserRepository for unit tests. Its existence
 // is the entire payoff of the Repository refactor: business logic that depends on
@@ -69,6 +76,25 @@ func (f *fakeUserRepository) GetByEmail(_ context.Context, email string) (*User,
 func (f *fakeUserRepository) Exists(_ context.Context, id string) (bool, error) {
 	_, ok := f.byID[id]
 	return ok, nil
+}
+
+func (f *fakeUserRepository) Create(_ context.Context, u *User) error {
+	if _, dup := f.byUsername[u.UserName]; dup {
+		return ErrUserAlreadyExists
+	}
+	if u.ID == "" {
+		u.ID = "generated-" + u.UserName
+	}
+	f.add(u)
+	return nil
+}
+
+func (f *fakeUserRepository) Update(_ context.Context, u *User) error {
+	if _, ok := f.byID[u.ID]; !ok {
+		return ErrUserNotFound
+	}
+	f.add(u)
+	return nil
 }
 
 // serviceWithRepo builds a Service wired to a fake repository — no DB, no config.
@@ -146,5 +172,49 @@ func TestGetUserByUsernameAndEmailDelegate(t *testing.T) {
 	}
 	if _, err := svc.GetUserByEmail(context.Background(), "nobody@example.test"); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("missing email should be ErrUserNotFound, got %v", err)
+	}
+}
+
+// TestCreateUserDelegatesAndKeepsSideEffects proves the write path: Service.
+// CreateUser persists via the repo (which writes back the generated id) and the
+// domain side effect (audit) stays in the service. No database.
+func TestCreateUserDelegatesToRepository(t *testing.T) {
+	repo := newFakeUserRepository()
+	svc := serviceWithRepo(repo)
+
+	u := &User{UserName: "carol"}
+	if err := svc.CreateUser(orgCtx(), u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.ID == "" {
+		t.Fatal("expected the repository to write back a generated id")
+	}
+	if _, ok := repo.byUsername["carol"]; !ok {
+		t.Fatal("user was not persisted through the repository")
+	}
+}
+
+// TestCreateUserDuplicateSurfacesConflict proves a unique violation surfaces as
+// ErrUserAlreadyExists (which the handler maps to 409), not a raw DB error.
+func TestCreateUserDuplicateSurfacesConflict(t *testing.T) {
+	repo := newFakeUserRepository()
+	repo.add(&User{ID: "u-1", UserName: "dave"})
+	svc := serviceWithRepo(repo)
+
+	err := svc.CreateUser(orgCtx(), &User{UserName: "dave"})
+	if !errors.Is(err, ErrUserAlreadyExists) {
+		t.Fatalf("expected ErrUserAlreadyExists, got %v", err)
+	}
+}
+
+// TestUpdateUserNotFound proves updating a missing user returns the legacy
+// "user not found" contract callers expect.
+func TestUpdateUserNotFound(t *testing.T) {
+	repo := newFakeUserRepository()
+	svc := serviceWithRepo(repo)
+
+	err := svc.UpdateUser(orgCtx(), &User{ID: "ghost", UserName: "ghost"})
+	if err == nil || err.Error() != "user not found" {
+		t.Fatalf("expected \"user not found\", got %v", err)
 	}
 }

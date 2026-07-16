@@ -26,8 +26,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -62,7 +65,21 @@ type UserRepository interface {
 	// Exists reports whether a user with the given id exists in the caller's
 	// tenant. Read-only.
 	Exists(ctx context.Context, id string) (bool, error)
+
+	// Create inserts a new user in the caller's tenant. WRITE: uses the primary
+	// pool. On success the generated id and timestamps are written back onto the
+	// passed *User. A duplicate username/email surfaces as ErrUserAlreadyExists.
+	Create(ctx context.Context, user *User) error
+
+	// Update mutates an existing user's core fields in the caller's tenant.
+	// WRITE: primary pool. Returns ErrUserNotFound when no row matches (so a
+	// cross-tenant id can't be probed or written).
+	Update(ctx context.Context, user *User) error
 }
+
+// ErrUserAlreadyExists is returned by Create on a unique-constraint violation
+// (duplicate username or email within the tenant). Callers map it to 409.
+var ErrUserAlreadyExists = errors.New("user already exists")
 
 // PostgresUserRepository is the pgx implementation of UserRepository. It holds
 // the *database.PostgresDB so it can pick the primary pool (writes / read-your-
@@ -178,6 +195,78 @@ func (r *PostgresUserRepository) Exists(ctx context.Context, id string) (bool, e
 		return false, fmt.Errorf("user exists check: %w", err)
 	}
 	return exists, nil
+}
+
+// isUniqueViolation reports whether err is a Postgres 23505 unique_violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// Create implements UserRepository. WRITE — uses the primary pool. Reads-your-
+// write callers therefore see the row immediately (a replica could lag).
+func (r *PostgresUserRepository) Create(ctx context.Context, user *User) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	dbUser := FromUser(*user)
+	if dbUser.ID == "" {
+		dbUser.ID = uuid.New().String()
+	}
+	now := time.Now()
+	dbUser.CreatedAt = now
+	dbUser.UpdatedAt = now
+
+	_, err = r.db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, first_name, last_name, enabled,
+		                   email_verified, created_at, updated_at, org_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt, org.ID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrUserAlreadyExists
+		}
+		return fmt.Errorf("create user: %w", err)
+	}
+
+	// Write the generated id + timestamps back so the caller (and its audit /
+	// webhook hooks) see the real values.
+	user.ID = dbUser.ID
+	user.CreatedAt = dbUser.CreatedAt
+	user.UpdatedAt = dbUser.UpdatedAt
+	return nil
+}
+
+// Update implements UserRepository. WRITE — primary pool. Returns
+// ErrUserNotFound when no row in the tenant matches.
+func (r *PostgresUserRepository) Update(ctx context.Context, user *User) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	dbUser := FromUser(*user)
+	dbUser.UpdatedAt = time.Now()
+
+	result, err := r.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET username = $2, email = $3, first_name = $4, last_name = $5,
+		    enabled = $6, email_verified = $7, updated_at = $8
+		WHERE id = $1 AND org_id = $9
+	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
+		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrUserAlreadyExists
+		}
+		return fmt.Errorf("update user: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	user.UpdatedAt = dbUser.UpdatedAt
+	return nil
 }
 
 // Ensure the concrete type satisfies the interface at compile time.

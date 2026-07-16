@@ -649,85 +649,48 @@ func (s *Service) ListUsers(ctx context.Context, offset, limit int, search ...st
 
 // CreateUser creates a new user
 func (s *Service) CreateUser(ctx context.Context, user *User) error {
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	s.logger.Info("Creating user", zap.String("username", user.UserName))
+
+	// Persistence lives in the repository (primary pool). The service keeps the
+	// domain side effects: audit logging on success. Repo writes the generated
+	// id + timestamps back onto `user`.
+	if err := s.users.Create(ctx, user); err != nil {
 		return err
 	}
 
-	// Convert SCIM User to UserDB for database operations
-	dbUser := FromUser(*user)
-
-	s.logger.Info("Creating user", zap.String("username", dbUser.Username))
-
-	// Generate UUID if not provided
-	if dbUser.ID == "" {
-		dbUser.ID = uuid.New().String()
-	}
-
-	now := time.Now()
-	dbUser.CreatedAt = now
-	dbUser.UpdatedAt = now
-
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, first_name, last_name, enabled,
-		                   email_verified, created_at, updated_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.CreatedAt, dbUser.UpdatedAt, org.ID)
-
-	if err == nil {
-		// Mirror the generated ID and timestamps back to the caller so the
-		// HTTP handler's `c.JSON(201, user)` returns a usable id, and so
-		// downstream best-effort hooks (email verification, webhooks) see
-		// the real user_id instead of "".
-		user.ID = dbUser.ID
-		user.CreatedAt = dbUser.CreatedAt
-		user.UpdatedAt = dbUser.UpdatedAt
-
-		actorID := actorIDFromContext(ctx)
-		s.logAuditEvent(ctx, "identity", "user_management", "user.created", "success",
-			actorID, dbUser.ID, "user", map[string]interface{}{
-				"username": dbUser.Username,
-				"email":    dbUser.Email,
-			})
-	}
-
-	return err
+	actorID := actorIDFromContext(ctx)
+	s.logAuditEvent(ctx, "identity", "user_management", "user.created", "success",
+		actorID, user.ID, "user", map[string]interface{}{
+			"username": user.UserName,
+			"email":    GetEmail(*user),
+		})
+	return nil
 }
 
 // UpdateUser updates an existing user
 func (s *Service) UpdateUser(ctx context.Context, user *User) error {
 	s.logger.Info("Updating user", zap.String("user_id", user.ID))
 
-	// Convert SCIM User to UserDB for database operations
 	org, err := orgctx.From(ctx)
 	if err != nil {
 		return err
 	}
 
-	dbUser := FromUser(*user)
-
-	dbUser.UpdatedAt = time.Now()
-
-	result, err := s.db.Pool.Exec(ctx, `
-		UPDATE users
-		SET username = $2, email = $3, first_name = $4, last_name = $5,
-		    enabled = $6, email_verified = $7, updated_at = $8
-		WHERE id = $1 AND org_id = $9
-	`, dbUser.ID, dbUser.Username, dbUser.Email, dbUser.FirstName, dbUser.LastName,
-		dbUser.Enabled, dbUser.EmailVerified, dbUser.UpdatedAt, org.ID)
-	if err != nil {
+	// Persistence in the repository (primary pool); domain side effects stay
+	// here. A missing row returns ErrUserNotFound (repo), which we translate to
+	// the legacy "user not found" contract existing callers expect.
+	if err := s.users.Update(ctx, user); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return fmt.Errorf("user not found")
+		}
 		return err
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("user not found")
 	}
 
 	// A user set to disabled must lose live access, not just be blocked from new
 	// password logins. deprovisionUser is idempotent, so running it whenever the
 	// resulting state is disabled (without needing the prior value) is safe.
-	if !dbUser.Enabled {
-		s.deprovisionUser(ctx, dbUser.ID, org.ID, false)
+	if !user.Enabled {
+		s.deprovisionUser(ctx, user.ID, org.ID, false)
 	}
 	return nil
 }
@@ -6262,6 +6225,11 @@ func (s *Service) logAuditEvent(ctx context.Context, eventType, category, action
 	orgID := "00000000-0000-0000-0000-000000000010"
 	if org, err := orgctx.From(ctx); err == nil && org.ID != "" {
 		orgID = org.ID
+	}
+	// No database configured (unit tests, or a service constructed without a
+	// pool): audit is best-effort, so skip rather than nil-panic in a goroutine.
+	if s.db == nil || s.db.Pool == nil {
+		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
