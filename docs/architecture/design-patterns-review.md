@@ -161,6 +161,18 @@ commented.)
 bounded `WithTimeout`) instead of `Background()`. The Tier 2 DB timeouts only
 help if the request context actually reaches the driver. *Effort: S–M, mechanical.*
 
+> ⚠️ **Audited — mostly a false positive, downgraded to 🟢.** All 11
+> `oauth/service.go` uses are inside `go func()` background goroutines (fire-and-
+> forget audit writes that intentionally outlive the request — using
+> `Background()` there is *correct*; the request context would cancel them). The
+> `common/database` uses are pool construction/health-check (startup/periodic, not
+> request-scoped). `common/cache/response.go` uses are a background cache refresh
+> (correct) plus admin ops helpers (`GetStats`/`ClearAll`) and two unused
+> functions. **No request-path detachment was found in the hot paths audited.**
+> The lesson: verify before "fixing" — blindly threading the request context into
+> these would have introduced cancellation bugs (a finished request killing an
+> in-flight audit write). Keep the guidance for new code; no migration needed.
+
 ---
 
 ## 5. `config.Config` god-struct 🟢/🟡 (lower priority)
