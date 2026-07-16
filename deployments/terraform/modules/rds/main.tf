@@ -92,3 +92,34 @@ resource "aws_db_instance" "this" {
     Name = var.identifier
   })
 }
+
+# Optional read replica(s). These serve read-mostly, replication-lag-tolerant
+# queries via the app's DATABASE_READ_URL (see internal/common/database
+# PostgresDB.Reader) and double as a warm standby. A replica reads the primary's
+# encrypted storage and inherits its subnet/SG; it is NOT multi_az itself (it is
+# already a standby). Create with read_replica_count > 0 in prod.
+resource "aws_db_instance" "replica" {
+  count = var.read_replica_count
+
+  identifier          = "${var.identifier}-replica-${count.index}"
+  replicate_source_db = aws_db_instance.this.identifier
+
+  instance_class = var.read_replica_instance_class != "" ? var.read_replica_instance_class : var.instance_class
+
+  # Replicas inherit storage encryption from the source. They live in the same
+  # subnet group / SG as the primary and must not take their own final snapshot.
+  vpc_security_group_ids = [aws_security_group.this.id]
+  publicly_accessible    = false
+  skip_final_snapshot    = true
+
+  performance_insights_enabled    = var.performance_insights_enabled
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+
+  # A replica cannot set backup_retention_period, db_name, username, or password
+  # (they come from the source).
+
+  tags = merge(var.tags, {
+    Name = "${var.identifier}-replica-${count.index}"
+    Role = "read-replica"
+  })
+}

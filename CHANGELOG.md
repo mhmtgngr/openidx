@@ -73,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     "oauth-redis-revocation"}` (existing `CircuitBreakerOpen` alert). Test:
     `internal/oauth/revocation_breaker_test.go`.
 
+- **Always-available authentication — Tier 3 (infra for HA prod).** The Terraform
+  RDS module now provisions optional read replica(s) (`read_replica_count`,
+  defaulted to 1 in prod / 0 in dev) and exposes `rds_reader_endpoints` /
+  `rds_reader_addresses`. This is the managed reader endpoint the Tier 1.6
+  `DATABASE_READ_URL` app seam points at — previously the app supported a read
+  pool that prod had no way to create. Wire the output into the external secret
+  `.../database-read-url` and set `externalSecrets.readReplica=true` to activate
+  it. (`deployments/terraform/modules/rds`, `deployments/terraform/main.tf`.)
+
 ## [1.27.0] - 2026-07-13
 
 ### Added

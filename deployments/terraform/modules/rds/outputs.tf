@@ -37,3 +37,13 @@ output "arn" {
   description = "ARN of the RDS instance"
   value       = aws_db_instance.this.arn
 }
+
+output "reader_endpoints" {
+  description = "host:port of each read replica (empty when read_replica_count = 0). Build DATABASE_READ_URL from one of these for read-mostly, lag-tolerant queries."
+  value       = [for r in aws_db_instance.replica : r.endpoint]
+}
+
+output "reader_addresses" {
+  description = "Hostnames of each read replica (empty when read_replica_count = 0)."
+  value       = [for r in aws_db_instance.replica : r.address]
+}

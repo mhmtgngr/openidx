@@ -85,6 +85,18 @@ variable "performance_insights_enabled" {
   default     = true
 }
 
+variable "read_replica_count" {
+  description = "Number of read replicas to create. Each is exposed via the reader_endpoints output for DATABASE_READ_URL (read-mostly, lag-tolerant queries). 0 disables the feature."
+  type        = number
+  default     = 0
+}
+
+variable "read_replica_instance_class" {
+  description = "Instance class for read replicas. Empty string inherits the primary's instance_class."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Additional tags"
   type        = map(string)

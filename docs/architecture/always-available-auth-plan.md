@@ -253,6 +253,27 @@ Ziti all one-of). Two honest paths:
   Terraform is ~70% written. Recommended target for a real "auth is important"
   posture. *Effort: L (mostly wiring + game-days, not greenfield).*
 
+**What landed for 3b (closing the loop with the app-side work):**
+- ✅ **RDS read replica in IaC.** The Terraform RDS module now provisions optional
+  read replica(s) (`read_replica_count`, defaulted to **1 in prod**, 0 in dev) and
+  exposes `rds_reader_endpoints`. This is what the Tier 1.6 `DATABASE_READ_URL`
+  seam points at — previously the app supported a reader endpoint that prod had no
+  way to create. Wire the output into the external secret `.../database-read-url`
+  and flip `externalSecrets.readReplica = true` to activate the read pool.
+  (`deployments/terraform/modules/rds`, `deployments/terraform/main.tf`.)
+- Already present in 3b: EKS across 3 AZs, RDS Multi-AZ (`multi_az` in prod),
+  3-node ElastiCache with failover, ingress HA values, HPA/PDB/anti-affinity.
+
+**Still open for 3b (infra + drills, not app code):** cluster the APISIX etcd
+(single etcd is a gateway-config SPOF), bring OpenSearch under Terraform, and run
+the failover game-day (DR runbook §1D) end-to-end in staging. For 3a, the
+equivalent is a streaming-replication hot standby + rehearsed promotion.
+
+**Recommendation:** for "authentication is important, I want always-available",
+**3b is the target** — the app is now ready for it (verify survives DB loss, issue
+fails over fast and degrades cleanly, reader endpoint provisioned). The remaining
+work is operational (game-days, etcd cluster), not application rearchitecture.
+
 ### Tier 4 — Only *then* consider a service split (and only one)
 
 If, after Tiers 0–3, one workload still has a *genuinely different* availability
