@@ -10,10 +10,6 @@ vi.mock('../lib/api', () => ({
     put: vi.fn(() => Promise.resolve({})),
     delete: vi.fn(() => Promise.resolve({})),
   },
-  // The page reads baseURL at module-import time and concatenates it
-  // into the /health URL — supply a sentinel so the resulting URL is
-  // well-formed even though our fetch stub ignores the input.
-  baseURL: 'http://test',
 }))
 
 vi.mock('../hooks/use-toast', () => ({
@@ -21,34 +17,30 @@ vi.mock('../hooks/use-toast', () => ({
 }))
 
 import { SystemHealthPage } from './system-health'
+import { api } from '../lib/api'
 
-const healthyResponse = {
+// Raw shape as returned by GET /api/v1/system/health (admin-api): dependency
+// status is healthy/degraded/unhealthy, which the page normalizes to up/
+// degraded/down. Using the real vocabulary here guards the normalizer.
+const rawSystemHealth = {
   status: 'healthy',
-  uptime_seconds: 7325, // 2h 2m 5s
+  uptime: '2h 2m 5s',
   version: '1.1.0',
+  timestamp: new Date().toISOString(),
   dependencies: [
-    // DEP_STATUS_CONFIG keys are 'up' / 'degraded' / 'down'; use those.
-    {
-      name: 'postgres',
-      status: 'up',
-      latency_ms: 3,
-      last_checked: new Date().toISOString(),
-      details: 'Connected to primary',
-    },
-    {
-      name: 'redis',
-      status: 'up',
-      latency_ms: 1,
-      last_checked: new Date().toISOString(),
-    },
-    {
-      name: 'elasticsearch',
-      status: 'degraded',
-      latency_ms: 250,
-      last_checked: new Date().toISOString(),
-      details: 'High response time observed',
-    },
+    { name: 'postgres', status: 'healthy', latency_ms: 3, details: 'Connected to primary' },
+    { name: 'redis', status: 'healthy', latency_ms: 1 },
+    { name: 'elasticsearch', status: 'degraded', latency_ms: 250, details: 'High response time observed' },
   ],
+}
+
+const emptyRelations = { findings: [] }
+
+// Route api.get by URL: the page issues two queries (system health + relations).
+function routeGet(url: string) {
+  if (url.includes('/system/health')) return Promise.resolve(rawSystemHealth)
+  if (url.includes('/access/health/relations')) return Promise.resolve(emptyRelations)
+  return Promise.resolve({})
 }
 
 function createWrapper() {
@@ -60,30 +52,15 @@ function createWrapper() {
   )
 }
 
-const originalFetch = globalThis.fetch
-
-function setFetchMock(impl: (...args: unknown[]) => Promise<unknown>) {
-  // System health calls fetch() directly against `${baseURL}/health`.
-  // Assign on both globalThis and window so happy-dom + node-style code
-  // pick up the mock regardless of resolution path.
-  ;(globalThis as unknown as { fetch: typeof impl }).fetch = impl
-}
-
 describe('SystemHealthPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     document.body.innerHTML = ''
-    setFetchMock(() =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve(healthyResponse),
-      } as unknown as Response),
-    )
+    vi.mocked(api.get).mockImplementation((url: string) => routeGet(url) as ReturnType<typeof api.get>)
   })
 
   afterEach(() => {
-    ;(globalThis as unknown as { fetch: typeof originalFetch }).fetch = originalFetch
+    vi.clearAllMocks()
   })
 
   it('renders the heading + subtitle once health resolves', async () => {
@@ -119,7 +96,7 @@ describe('SystemHealthPage', () => {
     expect(screen.getByText('1ms')).toBeInTheDocument()
     expect(screen.getByText('250ms')).toBeInTheDocument()
 
-    // Connected to primary detail line.
+    // Detail lines survive normalization.
     expect(screen.getByText(/connected to primary/i)).toBeInTheDocument()
     expect(
       screen.getByText(/high response time observed/i),
@@ -127,7 +104,11 @@ describe('SystemHealthPage', () => {
   })
 
   it('renders the loading branch before fetch resolves', async () => {
-    setFetchMock(() => new Promise(() => undefined))
+    vi.mocked(api.get).mockImplementation((url: string) =>
+      (url.includes('/system/health')
+        ? new Promise(() => undefined)
+        : routeGet(url)) as ReturnType<typeof api.get>,
+    )
     render(<SystemHealthPage />, { wrapper: createWrapper() })
 
     expect(
@@ -135,13 +116,11 @@ describe('SystemHealthPage', () => {
     ).toBeInTheDocument()
   })
 
-  it('renders the empty / failed-fetch fallback when fetch errors', async () => {
-    setFetchMock(() =>
-      Promise.resolve({
-        ok: false,
-        status: 500,
-        json: () => Promise.resolve({}),
-      } as unknown as Response),
+  it('renders the empty / failed-fetch fallback when the request errors', async () => {
+    vi.mocked(api.get).mockImplementation((url: string) =>
+      (url.includes('/system/health')
+        ? Promise.reject(new Error('boom'))
+        : routeGet(url)) as ReturnType<typeof api.get>,
     )
 
     render(<SystemHealthPage />, { wrapper: createWrapper() })
