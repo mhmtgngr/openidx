@@ -724,7 +724,12 @@ func (s *Service) handleDeleteScheduledReport(c *gin.Context) {
 }
 
 // RegisterReportRoutes registers report-related routes
-func RegisterReportRoutes(router *gin.RouterGroup, svc *Service) {
+func RegisterReportRoutes(router *gin.RouterGroup, svc *Service, extraMiddleware ...gin.HandlerFunc) {
+	// These endpoints generate/download/schedule reports over the audit trail
+	// (sensitive). Apply the JWT auth middleware passed by the caller.
+	for _, mw := range extraMiddleware {
+		router.Use(mw)
+	}
 	router.POST("/reports/generate", svc.handleGenerateExport)
 	router.GET("/reports/exports", svc.handleListExports)
 	router.GET("/reports/exports/:id/download", svc.handleDownloadExport)

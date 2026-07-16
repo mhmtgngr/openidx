@@ -1102,13 +1102,27 @@ func (s *Service) GetComplianceReport(ctx context.Context, reportID string) (*Co
 	return &r, nil
 }
 
-// RegisterRoutes registers audit service routes
-func RegisterRoutes(router *gin.Engine, svc *Service) {
+// RegisterRoutes registers the audit REST routes. extraMiddleware (e.g. the JWT
+// auth middleware) is applied to the whole /api/v1/audit group — the audit trail
+// is sensitive security data and MUST NOT be readable/exportable unauthenticated.
+func RegisterRoutes(router *gin.Engine, svc *Service, extraMiddleware ...gin.HandlerFunc) {
+	// Ingestion endpoint — the internal, server-to-server audit WRITE path
+	// (e.g. access-service posts proxy-access events here with no user token).
+	// It is deliberately OUTSIDE the authenticated group: it must be reachable
+	// service-to-service and is protected by network isolation, not a user JWT.
+	// It only accepts writes; it never reads/leaks the trail.
+	ingest := router.Group("/api/v1/audit")
+	ingest.POST("/events", svc.handleLogEvent)
+
+	// Everything else reads/exports the audit trail (sensitive security data) and
+	// MUST be authenticated. extraMiddleware carries the JWT auth middleware.
 	audit := router.Group("/api/v1/audit")
+	for _, mw := range extraMiddleware {
+		audit.Use(mw)
+	}
 	{
-		// Events
+		// Events (read)
 		audit.GET("/events", svc.handleListEvents)
-		audit.POST("/events", svc.handleLogEvent)
 		audit.GET("/events/:id", svc.handleGetEvent)
 		audit.GET("/events/search", svc.handleSearchEvents)
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -169,10 +170,27 @@ func main() {
 	// Initialize EventStreamer with WebSocket origin validation
 	streamConfig := audit.StreamConfigFromAppConfig(cfg)
 	eventStreamer := audit.NewEventStreamerWithConfig(log, auditService, streamConfig)
+	// Enable JWT auth on the stream (WebSocket subprotocol + REST middleware).
+	eventStreamer.SetJWKSURL(cfg.OAuthJWKSURL)
+
+	// The audit trail is sensitive security data: every READ/report/export/stream
+	// route must be authenticated. Only the internal server-to-server ingestion
+	// endpoint (POST /events) is intentionally left open (network-isolated) — see
+	// RegisterRoutes. Historically NONE of the audit routes had auth, so the whole
+	// trail was readable/streamable unauthenticated.
+	var auditAuth []gin.HandlerFunc
+	if cfg.OAuthJWKSURL != "" {
+		auditAuth = append(auditAuth, middleware.Auth(cfg.OAuthJWKSURL))
+	} else if cfg.IsProduction() {
+		log.Error("OAUTH_JWKS_URL is not set — the audit trail read/export/stream routes would be UNAUTHENTICATED in production. Refusing to serve them open; set OAUTH_JWKS_URL.")
+		os.Exit(1)
+	} else {
+		log.Warn("OAUTH_JWKS_URL not set — audit read/export/stream routes are UNAUTHENTICATED (dev only). Set OAUTH_JWKS_URL to enable auth.")
+	}
 
 	// Register standard audit routes
-	audit.RegisterRoutes(router, auditService)
-	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService)
+	audit.RegisterRoutes(router, auditService, auditAuth...)
+	audit.RegisterReportRoutes(router.Group("/api/v1/audit"), auditService, auditAuth...)
 
 	// Register WebSocket streaming routes with origin validation
 	eventStreamer.RegisterRoutes(router.Group("/api/v1/audit"))

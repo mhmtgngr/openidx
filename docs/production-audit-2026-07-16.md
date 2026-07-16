@@ -16,6 +16,34 @@ backend (`internal/`, `cmd/`) along three journeys:
 
 ## Findings
 
+### 🔴 P0 (security) — The entire audit trail was readable/streamable UNAUTHENTICATED — FIXED
+
+**Where:** `cmd/audit-service/main.go`, `internal/audit/service.go`
+`RegisterRoutes`, `internal/audit/reports.go` `RegisterReportRoutes`,
+`internal/audit/stream.go` `handleWebSocketStream`.
+
+**What was exposed:** every other service (identity, admin, governance,
+provisioning, access, oauth) applies JWT auth *inside* the service (APISIX only
+does rate-limit + CORS, `global_rules` only sets a request-id — there is no edge
+auth). The **audit-service applied none.** So `GET /api/v1/audit/events` (the full
+security audit trail — who logged in, who accessed what, every security event),
+`/statistics`, `/reports`, `/export`, and the real-time WebSocket `/stream` were
+all reachable by any unauthenticated caller who could reach the service. The
+frontend even passes a token as the `access_token_<jwt>` WebSocket subprotocol —
+but the server never read or validated it. Tenant-scoping (`org_id`) still
+applied, so it wasn't cross-tenant, but it was unauthenticated read of the most
+sensitive data in the system, and a compliance failure (SOC2/ISO/GDPR audit
+integrity).
+
+**Fix:** the audit-service now authenticates every READ/report/export/stream
+route with `middleware.Auth(OAUTH_JWKS_URL)`. The WebSocket validates the
+`access_token_<jwt>` subprotocol *before* upgrading (`extractSubprotocolToken` +
+`VerifyBearerToken`). The **internal server-to-server ingestion endpoint
+(`POST /events`)** — which the access-service calls with no user token — is
+deliberately kept open (network-isolated, write-only, never leaks the trail). If
+`OAUTH_JWKS_URL` is unset the service **refuses to start in production** rather
+than serve the trail open. Tests: `internal/audit/stream_auth_test.go`.
+
 ### 🔴 P1 — PKCE S256/plain mismatch made login impossible on non-HTTPS deploys — FIXED
 
 **Where:** `web/admin-console/src/lib/auth.tsx` (`generateCodeChallenge` +
