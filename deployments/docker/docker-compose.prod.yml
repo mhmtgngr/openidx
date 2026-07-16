@@ -192,6 +192,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       - OPA_URL=http://opa:8281
@@ -229,6 +234,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       - OPA_URL=http://opa:8281
@@ -259,6 +269,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       - OAUTH_ISSUER=https://openidx.tdv.org
@@ -289,6 +304,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-elastic}
@@ -318,6 +338,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       - OPA_URL=http://opa:8281
@@ -354,6 +379,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -384,6 +414,11 @@ services:
     restart: always
     environment:
       - APP_ENV=production
+      # Single-tenant install: attach the seeded default org when no tenant
+      # subdomain/JWT signal is present, so org-scoped reads aren't empty under RLS.
+      # Set DEFAULT_ORG_FALLBACK=false for a true multi-tenant (subdomain-per-org) deploy.
+      - DEFAULT_ORG_FALLBACK=${DEFAULT_ORG_FALLBACK:-true}
+      - DEFAULT_ORG_ID=${DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000010}
       - DATABASE_URL=postgres://openidx_app:${OPENIDX_APP_PASSWORD:?OPENIDX_APP_PASSWORD required - run scripts/generate-secrets.sh}@postgres:5432/openidx?sslmode=${DATABASE_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD required}@redis:6379
       - OAUTH_ISSUER=https://openidx.tdv.org

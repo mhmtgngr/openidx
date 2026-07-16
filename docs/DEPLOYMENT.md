@@ -320,6 +320,43 @@ Traces are emitted when `TRACING_ENABLED=true` (services export OTLP to
 
 ---
 
+## Troubleshooting: "organization empty" / empty lists on a fresh install
+
+If a freshly built stack (Docker or self-hosted) logs in but shows **empty
+lists** — 0 users/groups/apps, or an "organization" / "organization context
+required" error — the request is resolving **no tenant**, so under the RLS belt
+every org-scoped read comes back empty.
+
+Run the read-only doctor to pinpoint it:
+
+```bash
+# against a compose Postgres container:
+PG_CONTAINER=openidx-postgres scripts/org-doctor.sh
+# or with a direct URL:
+DATABASE_URL='postgres://openidx:PASS@localhost:5432/openidx?sslmode=disable' scripts/org-doctor.sh
+```
+
+Two causes, in order of likelihood:
+
+1. **`DEFAULT_ORG_FALLBACK` is not set** (it defaults to **`false`**). For a
+   single-tenant install every service must run with `DEFAULT_ORG_FALLBACK=true`
+   (optionally `DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000010`); otherwise
+   a request that carries no tenant subdomain/JWT resolves no org and the API
+   returns empty/blocked results. The bundled
+   `deployments/docker/docker-compose*.yml` now set this to `true` by default —
+   pull the updated file, or add the two env vars to each service and restart.
+   Verify a running container: `docker exec openidx-identity-service printenv
+   DEFAULT_ORG_FALLBACK`.
+2. **The seeded default org is missing or users have `org_id = NULL`** — migration
+   025 (multitenancy) creates the org and backfills `org_id`; if it didn't run,
+   re-run the `migrate` (and `seed`) steps **as the DB owner** (not the
+   `openidx_app` role, which is `NOBYPASSRLS`). The doctor prints the exact fix.
+
+A true multi-tenant (subdomain-per-org) deploy intentionally leaves
+`DEFAULT_ORG_FALLBACK=false` and resolves the tenant from the host/JWT instead.
+
+---
+
 ## Upgrades and rollback
 
 ```bash
