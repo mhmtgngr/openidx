@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`make ha-drill` — one command to verify the always-available-auth
+  guarantees.** Runs the focused Go tests that encode each availability tier
+  (serve-stale JWKS + Auth-survives-issuer-outage; bounded DB timeouts +
+  read-replica seam; dependency-outage classification + 503 brownout + Redis
+  revocation breaker) plus the mutation-tested read/write pool-safety guards. The
+  wrapper (`scripts/ha-drill.sh`) fails loudly if a guarantee test is renamed or
+  removed (no silent "[no tests to run]" false-green), so the drill stays
+  trustworthy. Runs in ~15s with no infrastructure; complements the DR failover
+  game-day. See `docs/architecture/always-available-auth-plan.md` §5.
+
 - **Repository pattern reference implementation (identity/User).** Introduced
   `internal/identity/user_repository.go`: a `UserRepository` interface +
   `PostgresUserRepository` pgx implementation

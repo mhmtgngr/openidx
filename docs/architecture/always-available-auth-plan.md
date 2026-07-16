@@ -316,11 +316,20 @@ real durability work. 10 is deferred until measurements justify it.
 ## 5. How we'll know it works (verifiable objectives)
 
 Availability claims are worthless without a test that fails when they're false.
-Build these into a `make ha-drill` / chaos suite:
 
+- ✅ **`make ha-drill` exists.** It runs the focused Go tests that encode each
+  tier's guarantee — serve-stale JWKS + `Auth()`-survives-issuer-outage (Tier 0),
+  bounded DB timeouts + read-replica seam (Tier 1), dependency-outage
+  classification + 503-brownout + Redis revocation breaker (Tier 2), and the
+  mutation-tested read/write pool-safety guards. Crucially it **fails loudly if a
+  guarantee test is renamed or deleted** (`scripts/ha-drill.sh` asserts each block
+  actually matched tests — no silent "[no tests to run]" false-green). This is the
+  in-process half of the definition of done; it runs in ~15s with no
+  infrastructure. Data-tier *failover* itself is the game-day below.
 - **Chaos game-days:** in staging, kill (a) Postgres primary, (b) Redis, (c) an
   auth replica, (d) the whole VM. Record: did verify stay up? did login return a
-  clean 503? did failover complete within RTO? Automate as a scripted drill.
+  clean 503? did failover complete within RTO? The Postgres failover procedure is
+  scripted in the DR runbook (§1D); wire the rest into a staging chaos job.
 - **SLO dashboards (Grafana):** separate SLOs for `auth_verify_success_rate`
   (target 99.99%) and `auth_issue_success_rate` (target 99.9%), with error-budget
   burn alerts. The split in §1 is only real if it's measured separately.
@@ -329,7 +338,8 @@ Build these into a `make ha-drill` / chaos suite:
 
 **Definition of done for "always-available auth":** a killed Postgres primary is a
 non-event for verification and a <RTO, clearly-degraded event for issuance, proven
-by an automated drill in CI/staging — not by assertion.
+by an automated drill in CI/staging — not by assertion. `make ha-drill` proves the
+code-level half today; the game-day proves the infra half.
 
 ---
 

@@ -1,7 +1,7 @@
 # OpenIDX Makefile
 # Build, test, and deploy automation
 
-.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
+.PHONY: all build test lint clean dev dev-infra docker helm docs smoke-test ha-drill build-agent build-agent-all test-agent docker-build-agent ziti-quickstart ziti-down
 
 # Variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -117,6 +117,36 @@ test-e2e:
 smoke-test:
 	@echo "Running smoke tests..."
 	@./scripts/smoke-test.sh
+
+#---------------------------------------------------------------------------
+# Availability drill — verify the "always-available auth" guarantees
+#---------------------------------------------------------------------------
+# Runs the focused Go tests that encode each availability tier (see
+# docs/architecture/always-available-auth-plan.md). This is the single command
+# to prove the guarantees hold; each maps to a tier and fails loudly if a change
+# regresses it. Data-tier failover itself is exercised by the DR game-day
+# (docs/disaster-recovery.md §1D) against a live DB, not here.
+ha-drill:
+	@echo "🛡️  OpenIDX availability drill — verifying always-available-auth guarantees"
+	@echo ""
+	@bash scripts/ha-drill.sh "Tier 0: verify path survives a JWKS/DB outage (serve-stale)" \
+		./internal/common/middleware/ \
+		'ServeStaleJWKSOnRefreshFailure|StaleJWKSExpiresAfterMaxStale|NoStaleServeWithoutSuccessfulFetch|AuthMiddlewareSurvivesIssuerOutage'
+	@bash scripts/ha-drill.sh "Tier 1: bounded DB timeouts" \
+		./internal/common/database/ \
+		'BuildPoolConfigConnectTimeoutDefault|BuildPoolConfigStatementTimeout|ReaderFallsBackToPrimary|PingReadNoReplicaIsNil'
+	@bash scripts/ha-drill.sh "Tier 1: read-replica health checker (non-critical)" \
+		./internal/health/ 'ReadReplicaCheckerNonCritical'
+	@bash scripts/ha-drill.sh "Tier 2: issue-path brownout + Redis breaker" \
+		./internal/oauth/ \
+		'IsDependencyUnavailable|WriteServerOrUnavailable|RevocationBreakerFastFailsOnRedisOutage'
+	@bash scripts/ha-drill.sh "Guards: identity read/write pool safety (mutation-tested)" \
+		./internal/identity/ \
+		'WritesNeverUseReplica|ReadsUseReplica|SecurityCriticalReadUsesPrimary'
+	@bash scripts/ha-drill.sh "Guards: oauth client store pool safety (mutation-tested)" \
+		./internal/oauth/ \
+		'OAuthClientStoreWritesUsePrimary|OAuthClientGetUsesPrimary'
+	@echo "✅ Availability drill passed — all always-available-auth guarantees hold."
 
 #---------------------------------------------------------------------------
 # Linting
