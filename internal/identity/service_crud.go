@@ -17,61 +17,18 @@ import (
 // GetUserByUsername retrieves a user by username
 func (s *Service) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	s.logger.Debug("Getting user by username", zap.String("username", username))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fall back to direct database query
-	var dbUser UserDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE username = $1 AND org_id = $2
-	`, username, org.ID).Scan(
-		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
-		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
-		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
-		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	user := dbUser.ToUser()
-	return &user, nil
+	// Delegates to the user repository (see user_repository.go). The repo owns
+	// the SQL, scopes to the caller's tenant, reads from the replica, and returns
+	// ErrUserNotFound on a miss. Note: the repo's shared column list COALESCEs
+	// first_name/last_name, fixing a latent scan error this method had for users
+	// with a NULL name.
+	return s.users.GetByUsername(ctx, username)
 }
 
 // GetUserByEmail retrieves a user by email address
 func (s *Service) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	s.logger.Debug("Getting user by email", zap.String("email", email))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fall back to direct database query
-	var dbUser UserDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, first_name, last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE email = $1 AND org_id = $2
-	`, email, org.ID).Scan(
-		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
-		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
-		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
-		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	user := dbUser.ToUser()
-	return &user, nil
+	return s.users.GetByEmail(ctx, email)
 }
 
 // ListUsersWithFilter lists users with advanced filtering and pagination

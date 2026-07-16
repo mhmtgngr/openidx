@@ -55,6 +55,10 @@ type UserRepository interface {
 	// tenant, or ErrUserNotFound. Read-only.
 	GetByUsername(ctx context.Context, username string) (*User, error)
 
+	// GetByEmail returns the user with the given email within the caller's
+	// tenant, or ErrUserNotFound. Read-only.
+	GetByEmail(ctx context.Context, email string) (*User, error)
+
 	// Exists reports whether a user with the given id exists in the caller's
 	// tenant. Read-only.
 	Exists(ctx context.Context, id string) (bool, error)
@@ -135,6 +139,25 @@ func (r *PostgresUserRepository) GetByUsername(ctx context.Context, username str
 			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("get user by username: %w", err)
+	}
+	user := dbUser.ToUser()
+	return &user, nil
+}
+
+// GetByEmail implements UserRepository.
+func (r *PostgresUserRepository) GetByEmail(ctx context.Context, email string) (*User, error) {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `SELECT ` + userSelectColumns + ` FROM users WHERE email = $1 AND org_id = $2`
+	dbUser, err := scanUser(r.db.Reader().QueryRow(ctx, query, email, org.ID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("get user by email: %w", err)
 	}
 	user := dbUser.ToUser()
 	return &user, nil
