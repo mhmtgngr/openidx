@@ -264,10 +264,13 @@ Ziti all one-of). Two honest paths:
 - Already present in 3b: EKS across 3 AZs, RDS Multi-AZ (`multi_az` in prod),
   3-node ElastiCache with failover, ingress HA values, HPA/PDB/anti-affinity.
 
-**Still open for 3b (infra + drills, not app code):** cluster the APISIX etcd
-(single etcd is a gateway-config SPOF), bring OpenSearch under Terraform, and run
-the failover game-day (DR runbook §1D) end-to-end in staging. For 3a, the
-equivalent is a streaming-replication hot standby + rehearsed promotion.
+**Still open for 3b (infra + drills, not app code):** bring OpenSearch under
+Terraform, and run the failover game-day (DR runbook §1D) end-to-end in staging.
+(The APISIX-etcd SPOF the earlier review flagged is **moot in prod**: prod runs
+APISIX in standalone YAML mode — `APISIX_STAND_ALONE=true`, routes from
+`apisix.yaml` — so etcd is not on the prod config-serving path. If a future prod
+moves APISIX to etcd-backed mode, cluster the etcd to 3 nodes then.) For 3a, the
+equivalent open item is a streaming-replication hot standby + rehearsed promotion.
 
 **Recommendation:** for "authentication is important, I want always-available",
 **3b is the target** — the app is now ready for it (verify survives DB loss, issue
