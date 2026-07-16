@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     critical dependency outage), for graceful degradation instead of a crash-loop.
   - Docs: `docs/architecture/always-available-auth-plan.md`.
 
+- **Always-available authentication — Tier 1 (issue path survives DB failover).**
+  - **Bounded DB connect timeout.** pgxpool's default `ConnectTimeout` was 0
+    (unbounded), so a runtime reconnect to a dead primary during an RDS/Patroni
+    failover could hang for minutes, pin the request, and exhaust the pool — a DB
+    failover cascading into a service-wide outage. `internal/common/database` now
+    sets a 5s connect timeout (`DB_CONNECT_TIMEOUT`) so failover fails fast and the
+    pool re-dials the promoted primary.
+  - **Optional per-statement timeout** (`DB_STATEMENT_TIMEOUT`, 30s in prod
+    values) so a query on a degraded primary can't hold a connection open forever.
+    Off by default; migrations run out-of-band and are unaffected.
+  - Wired through the Helm configmap (`database.connectTimeout` /
+    `database.statementTimeout`), set in `values-prod.yaml`. Tests:
+    `internal/common/database/pool_config_test.go`. Added a Postgres failover
+    game-day to the DR runbook.
+
 ## [1.27.0] - 2026-07-13
 
 ### Added

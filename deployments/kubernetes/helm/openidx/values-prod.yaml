@@ -55,6 +55,13 @@ config:
 # (DATABASE_SSL_ROOT_CERT via the external secret) for the strongest posture.
 database:
   sslMode: require
+  # Fail a dial fast during an RDS Multi-AZ failover so the pool re-dials the
+  # promoted primary instead of hanging on the dead one and exhausting itself.
+  connectTimeout: "5s"
+  # Cap any single query at 30s. Generous enough for audit/governance reports
+  # while preventing a query on a degraded primary from pinning a connection
+  # indefinitely. Migrations run out-of-band and are unaffected by this chart.
+  statementTimeout: "30s"
 
 # ----- Production hardening -----
 networkPolicy:

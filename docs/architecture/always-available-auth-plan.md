@@ -151,16 +151,29 @@ flat, only issue/refresh error rate rises.
 ### Tier 1 — HA the ISSUE path's dependencies (the real SPOFs)
 
 4. **Postgres: from Multi-AZ to fast, tested failover.** RDS Multi-AZ is set for
-   prod. Now make failover *cheap and rehearsed*: pin sensible pgx timeouts
-   (`connect_timeout`, statement timeouts already partly there), add a **failover
-   game-day** to the DR runbook, and verify the pool reconnects without a service
-   restart. For the **single-VM deploy**, this is the biggest gap: a single
-   Postgres container on one VM has **no failover at all** — see Tier 3. *Effort: M.*
+   prod.
+   - ✅ **Done — bounded dial + optional statement timeout.** pgx's default
+     `ConnectTimeout` was 0 (unbounded), so a runtime reconnect to a *dead*
+     primary during an RDS/Patroni failover could hang for the OS TCP timeout
+     (minutes), pin the acquiring request, and exhaust the pool — a DB failover
+     cascading into a service-wide outage. `internal/common/database` now sets a
+     **5s connect timeout** (tunable `DB_CONNECT_TIMEOUT`) so failover fails fast
+     and the pool re-dials the promoted primary, plus an **opt-in
+     `DB_STATEMENT_TIMEOUT`** (30s in prod values) so a query on a degraded
+     primary can't hold a connection open forever. Wired through the Helm
+     configmap (`database.connectTimeout` / `database.statementTimeout`), set in
+     `values-prod.yaml`. Tests: `internal/common/database/pool_config_test.go`.
+   - **Still to do:** add a **failover game-day** to the DR runbook and verify the
+     pool reconnects without a service restart. For the **single-VM deploy** this
+     is the biggest gap: a single Postgres container on one VM has **no failover
+     at all** — see Tier 3. *Effort: M.*
 5. **Redis: turn on Sentinel/managed failover in prod paths.** The code supports
    Sentinel; ensure prod actually runs ≥3-node ElastiCache/Sentinel and never the
-   single in-cluster Redis. Audit every security-sensitive Redis use for a
-   **divergent in-memory fallback** (the review flagged
-   `internal/governance/zt_policy_handler.go`) and make those fail-closed. *Effort: M.*
+   single in-cluster Redis. The security-sensitive rate-limit path already
+   **fails closed** on auth routes when Redis is unavailable
+   (`internal/common/middleware/ratelimit.go`); the divergent in-memory limiter
+   the earlier review flagged (`zt_policy_handler`) has since been removed. Keep
+   this property under test. *Effort: M.*
 6. **Add a read replica and route read-mostly auth queries to it.** Login needs
    the primary (writes a session), but JWKS key reads, discovery, user lookups for
    MFA challenge, and policy reads can hit a **reader endpoint**. This removes read

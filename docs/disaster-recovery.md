@@ -90,6 +90,46 @@ dropdb openidx_temp
 
 ---
 
+### 1D. Failover Game-Day (RDS Multi-AZ / Patroni)
+
+Multi-AZ RDS provides *automatic* failover to a synchronous standby, but failover
+is only trustworthy if it is **rehearsed**. Run this in staging quarterly and
+after any DB/driver upgrade.
+
+**What "good" looks like:**
+- The verify path (validating already-issued JWTs) is **unaffected** — it does not
+  touch Postgres (in-memory JWKS + serve-stale, see the always-available-auth plan).
+- The issue path (login/refresh) returns clean, retryable errors for a few
+  seconds, then recovers **without any service restart** as pgxpool re-dials the
+  promoted primary.
+
+**Drill:**
+```bash
+# 1. Start a synthetic auth canary (verify + login loop) recording success/latency.
+#    Watch openidx_jwks_serve_stale_total (should stay flat — verify is DB-free).
+
+# 2. Trigger failover.
+#    RDS:      aws rds reboot-db-instance --db-instance-identifier openidx-prod --force-failover
+#    Patroni:  patronictl switchover openidx --candidate <standby> --force
+
+# 3. Observe. Expectations:
+#    - connect attempts fail FAST (~5s DB_CONNECT_TIMEOUT), not hang for minutes
+#    - /health/ready flips to 503 on affected replicas → LB drains new logins
+#    - /health/live stays 200 → pods are NOT killed/restarted
+#    - within ~1 pool HealthCheckPeriod (60s) new acquires reach the new primary
+#    - the canary's login success rate recovers on its own (no kubectl rollout)
+
+# 4. Confirm no restarts and steady state.
+kubectl get pods -l app.kubernetes.io/name=openidx   # RESTARTS column unchanged
+```
+
+**If the pool does NOT recover without a restart**, that is a regression — check
+that `DB_CONNECT_TIMEOUT` is set (a hung dial with no timeout is the classic
+cause) and that `HealthCheckPeriod` is evicting dead conns. See
+`internal/common/database/database.go` and `docs/architecture/db-pooling.md`.
+
+---
+
 ## Procedure 2: Elasticsearch Recovery
 
 ```bash
