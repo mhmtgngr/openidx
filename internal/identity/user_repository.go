@@ -75,6 +75,12 @@ type UserRepository interface {
 	// WRITE: primary pool. Returns ErrUserNotFound when no row matches (so a
 	// cross-tenant id can't be probed or written).
 	Update(ctx context.Context, user *User) error
+
+	// Delete removes a user row in the caller's tenant. WRITE: primary pool.
+	// Returns ErrUserNotFound when no row matches. NOTE: this only removes the
+	// row — the service is responsible for ordering audit + deprovisioning
+	// (session/API-key/PAM revocation) around it.
+	Delete(ctx context.Context, id string) error
 }
 
 // ErrUserAlreadyExists is returned by Create on a unique-constraint violation
@@ -266,6 +272,24 @@ func (r *PostgresUserRepository) Update(ctx context.Context, user *User) error {
 		return ErrUserNotFound
 	}
 	user.UpdatedAt = dbUser.UpdatedAt
+	return nil
+}
+
+// Delete implements UserRepository. WRITE — primary pool. Only removes the row;
+// the service orders audit + deprovisioning around this call.
+func (r *PostgresUserRepository) Delete(ctx context.Context, id string) error {
+	org, err := orgctx.From(ctx)
+	if err != nil {
+		return err
+	}
+	result, err := r.db.Pool.Exec(ctx,
+		`DELETE FROM users WHERE id = $1 AND org_id = $2`, id, org.ID)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
 	return nil
 }
 

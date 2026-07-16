@@ -725,6 +725,13 @@ func (s *Service) deprovisionUser(ctx context.Context, userID, orgID string, har
 	// below never re-embed caller-supplied input directly.
 	log := s.logger.With(zap.String("user_id", scrubLogValue(userID)))
 
+	// No database configured (unit tests, or a service without a pool): there is
+	// nothing to revoke. deprovision is best-effort, so skip rather than
+	// nil-panic. Redis-side revocation below is likewise guarded.
+	if s.db == nil || s.db.Pool == nil {
+		return
+	}
+
 	// Collect the user's live session IDs so we can publish revocation markers
 	// that the oauth-service checks (it has its own Redis view; the marker is
 	// the cross-service signal).
@@ -824,12 +831,14 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	// against a still-present user.
 	s.deprovisionUser(ctx, userID, org.ID, true)
 
-	result, err := s.db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1 AND org_id = $2", userID, org.ID)
-	if err != nil {
+	// Row removal lives in the repository (primary pool). Ordering + side
+	// effects (audit above, deprovision above) stay here. Missing row maps to
+	// the legacy "user not found" contract.
+	if err := s.users.Delete(ctx, userID); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return fmt.Errorf("user not found")
+		}
 		return err
-	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("user not found")
 	}
 	return nil
 }

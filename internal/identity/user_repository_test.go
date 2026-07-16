@@ -97,6 +97,16 @@ func (f *fakeUserRepository) Update(_ context.Context, u *User) error {
 	return nil
 }
 
+func (f *fakeUserRepository) Delete(_ context.Context, id string) error {
+	u, ok := f.byID[id]
+	if !ok {
+		return ErrUserNotFound
+	}
+	delete(f.byID, id)
+	delete(f.byUsername, u.UserName)
+	return nil
+}
+
 // serviceWithRepo builds a Service wired to a fake repository — no DB, no config.
 // This is only possible because the Service now depends on the UserRepository
 // interface for user reads. A nop logger keeps it a pure unit test.
@@ -214,6 +224,34 @@ func TestUpdateUserNotFound(t *testing.T) {
 	svc := serviceWithRepo(repo)
 
 	err := svc.UpdateUser(orgCtx(), &User{ID: "ghost", UserName: "ghost"})
+	if err == nil || err.Error() != "user not found" {
+		t.Fatalf("expected \"user not found\", got %v", err)
+	}
+}
+
+// TestDeleteUserDelegatesToRepository proves the delete path removes the row via
+// the repo while the ordered side effects (audit, deprovision) run in the
+// service — all with no database.
+func TestDeleteUserDelegatesToRepository(t *testing.T) {
+	repo := newFakeUserRepository()
+	repo.add(&User{ID: "u-9", UserName: "erin"})
+	svc := serviceWithRepo(repo)
+
+	if err := svc.DeleteUser(orgCtx(), "u-9"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if _, ok := repo.byID["u-9"]; ok {
+		t.Fatal("user row was not removed through the repository")
+	}
+}
+
+// TestDeleteUserNotFound proves deleting a missing user returns the legacy
+// "user not found" contract.
+func TestDeleteUserNotFound(t *testing.T) {
+	repo := newFakeUserRepository()
+	svc := serviceWithRepo(repo)
+
+	err := svc.DeleteUser(orgCtx(), "ghost")
 	if err == nil || err.Error() != "user not found" {
 		t.Fatalf("expected \"user not found\", got %v", err)
 	}
