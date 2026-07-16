@@ -77,6 +77,16 @@ incremental.*
 > `ErrGroupAlreadyExists`, and `identity.Service`'s five group methods delegate to
 > it. `group_repository_test.go` unit-tests the group service logic with a fake
 > repo and no DB. Two aggregates down; the pattern is mechanical from here.
+>
+> ✅ **Third aggregate — `Session` — shows the per-query pool judgment.**
+> `SessionRepository` (`internal/identity/session_repository.go`) puts
+> lag-tolerant reads (`ListByUser`/`CountActive`) on the replica but keeps
+> `IsValid` on the **primary** on purpose: session validity is a read-after-write
+> *security* check — a just-revoked session must never read as valid off a lagging
+> replica. That deliberate exception is documented on the method and **locked by a
+> mutation-tested guard** (`TestSecurityCriticalReadUsesPrimary`). Writes
+> (`Create`/`UpdateActivity`/`Terminate`) are on the primary. Three aggregates now
+> behind repositories, all guarded.
 
 ---
 

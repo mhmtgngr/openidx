@@ -20,9 +20,11 @@ func TestWritesNeverUseReplica(t *testing.T) {
 	repoFiles := []string{
 		"user_repository.go",
 		"group_repository.go",
+		"session_repository.go",
 	}
-	// Method-name prefixes considered writes.
-	writeMethod := regexp.MustCompile(`^func \(r \*Postgres\w+Repository\) (Create|Update|Delete)\(`)
+	// Method-name prefixes considered writes. Includes session write verbs
+	// (UpdateActivity matches Update; Terminate is an explicit delete).
+	writeMethod := regexp.MustCompile(`^func \(r \*Postgres\w+Repository\) (Create|Update|Delete|Terminate)\(`)
 
 	for _, file := range repoFiles {
 		src, err := os.ReadFile(file)
@@ -82,6 +84,28 @@ func TestReadsUseReplica(t *testing.T) {
 		if !strings.Contains(body, ".Reader(") {
 			t.Errorf("%s: read method %s should use db.Reader() for replica offload", tc.file, tc.method)
 		}
+	}
+}
+
+// TestSecurityCriticalReadUsesPrimary pins the deliberate exception: session
+// validity (IsValid) is a read-after-write security check — a just-revoked
+// session must never read as valid off a lagging replica — so it MUST use the
+// primary db.Pool, NOT db.Reader(). This guards against a future "optimization"
+// that moves it to the replica and silently introduces an auth bug.
+func TestSecurityCriticalReadUsesPrimary(t *testing.T) {
+	src, err := os.ReadFile("session_repository.go")
+	if err != nil {
+		t.Fatalf("read session_repository.go: %v", err)
+	}
+	body := methodBody(string(src), "IsValid")
+	if body == "" {
+		t.Fatal("could not find IsValid method")
+	}
+	if strings.Contains(body, ".Reader(") {
+		t.Error("session IsValid must read the PRIMARY (db.Pool), not the replica — read-after-write security check")
+	}
+	if !strings.Contains(body, ".Pool.") {
+		t.Error("session IsValid should read via db.Pool (primary)")
 	}
 }
 

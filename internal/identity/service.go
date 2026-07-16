@@ -188,6 +188,11 @@ type Service struct {
 	// groups is the group data-access port (see group_repository.go), the second
 	// aggregate migrated to the Repository pattern.
 	groups GroupRepository
+
+	// sessions is the session data-access port (see session_repository.go), the
+	// third aggregate. Reads that tolerate lag use the replica; IsValid reads the
+	// primary (security-critical read-after-write).
+	sessions SessionRepository
 }
 
 // NewService creates a new identity service
@@ -210,6 +215,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		idpCipher: idpCipher,
 		users:     NewPostgresUserRepository(db),
 		groups:    NewPostgresGroupRepository(db),
+		sessions:  NewPostgresSessionRepository(db),
 	}
 }
 
@@ -986,50 +992,14 @@ func (s *Service) DeleteIdentityProvider(ctx context.Context, idpID string) erro
 // GetUserSessions retrieves active sessions for a user
 func (s *Service) GetUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	s.logger.Debug("Getting sessions for user", zap.String("user_id", userID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, user_id, client_id, ip_address, user_agent,
-		       started_at, last_seen_at, expires_at
-		FROM sessions
-		WHERE user_id = $1 AND org_id = $2 AND expires_at > NOW()
-		ORDER BY last_seen_at DESC
-	`, userID, org.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []Session
-	for rows.Next() {
-		var s Session
-		if err := rows.Scan(
-			&s.ID, &s.UserID, &s.ClientID, &s.IPAddress, &s.UserAgent,
-			&s.StartedAt, &s.LastSeenAt, &s.ExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, s)
-	}
-
-	return sessions, nil
+	// Delegates to the session repository (replica read, lag-tolerant).
+	return s.sessions.ListByUser(ctx, userID)
 }
 
 // TerminateSession terminates a specific session
 func (s *Service) TerminateSession(ctx context.Context, sessionID string) error {
 	s.logger.Info("Terminating session", zap.String("session_id", sessionID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1 AND org_id = $2", sessionID, org.ID)
-	return err
+	return s.sessions.Terminate(ctx, sessionID)
 }
 
 // ListGroups retrieves groups with pagination
@@ -1396,94 +1366,53 @@ func (s *Service) GetSubgroups(ctx context.Context, parentID string) ([]Group, e
 func (s *Service) CreateSession(ctx context.Context, userID, clientID, ipAddress, userAgent string, sessionDuration time.Duration) (*Session, error) {
 	s.logger.Info("Creating session", zap.String("user_id", userID), zap.String("client_id", clientID))
 
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	sessionID := uuid.New().String()
 	now := time.Now()
-	expiresAt := now.Add(sessionDuration)
-
 	session := &Session{
-		ID:         sessionID,
 		UserID:     userID,
 		ClientID:   clientID,
 		IPAddress:  ipAddress,
 		UserAgent:  userAgent,
 		StartedAt:  now,
 		LastSeenAt: now,
-		ExpiresAt:  expiresAt,
+		ExpiresAt:  now.Add(sessionDuration),
 	}
-
-	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, client_id, ip_address, user_agent, started_at, last_seen_at, expires_at, org_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, session.ID, session.UserID, session.ClientID, session.IPAddress, session.UserAgent,
-		session.StartedAt, session.LastSeenAt, session.ExpiresAt, org.ID)
-
-	if err != nil {
+	// Persistence in the repository (primary); it fills in the generated id.
+	if err := s.sessions.Create(ctx, session); err != nil {
 		return nil, err
 	}
-
 	return session, nil
 }
 
 // UpdateSessionActivity updates the last seen time for a session
 func (s *Service) UpdateSessionActivity(ctx context.Context, sessionID string) error {
 	s.logger.Debug("Updating session activity", zap.String("session_id", sessionID))
-
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	// Repo write (primary). Legacy contract: missing/revoked/expired -> error.
+	if err := s.sessions.UpdateActivity(ctx, sessionID); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return fmt.Errorf("session not found or is revoked/expired")
+		}
 		return err
 	}
-
-	now := time.Now()
-	result, err := s.db.Pool.Exec(ctx, `
-		UPDATE sessions SET last_seen_at = $2
-		WHERE id = $1 AND org_id = $3 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, sessionID, now, org.ID)
-	if err != nil {
-		return err
-	}
-
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("session not found or is revoked/expired")
-	}
-
 	return nil
 }
 
 // IsSessionValid checks if a session is not revoked and not expired
 func (s *Service) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
+	// Repo reads the PRIMARY here (security-critical read-after-write): a
+	// just-revoked session must not read as valid off a lagging replica.
+	valid, err := s.sessions.IsValid(ctx, sessionID)
+	if errors.Is(err, ErrSessionNotFound) {
+		// Preserve the legacy contract: a missing session returned the raw
+		// pgx.ErrNoRows-derived error to the caller. Surface a non-nil error so
+		// callers still treat it as "not valid".
 		return false, err
 	}
-
-	var revoked bool
-	var expiresAt time.Time
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE(revoked, false), expires_at FROM sessions WHERE id = $1 AND org_id = $2
-	`, sessionID, org.ID).Scan(&revoked, &expiresAt)
-	if err != nil {
-		return false, err
-	}
-	return !revoked && time.Now().Before(expiresAt), nil
+	return valid, err
 }
 
 // CountActiveSessions returns the number of active (non-revoked, non-expired) sessions for a user
 func (s *Service) CountActiveSessions(ctx context.Context, userID string) (int, error) {
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	var count int
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND org_id = $2 AND (revoked IS NULL OR revoked = false) AND expires_at > NOW()
-	`, userID, org.ID).Scan(&count)
-	return count, err
+	return s.sessions.CountActive(ctx, userID)
 }
 
 // RevokeUserSessionsOnPasswordChange revokes all sessions and refresh tokens for a user on password change

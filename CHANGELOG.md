@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delegate to it. Unit-tested with a fake repo and no database
   (`group_repository_test.go`).
 
+- **Repository pattern — third aggregate (identity/Session).**
+  `SessionRepository` (`internal/identity/session_repository.go`) demonstrates
+  per-query pool judgment: lag-tolerant reads (`ListByUser`/`CountActive`) use the
+  replica, while `IsValid` deliberately reads the **primary** because session
+  validity is a read-after-write security check (a just-revoked session must not
+  read as valid off a lagging replica). Writes (`Create`/`UpdateActivity`/
+  `Terminate`) use the primary. `identity.Service`'s `GetUserSessions`/
+  `CreateSession`/`UpdateSessionActivity`/`IsSessionValid`/`CountActiveSessions`/
+  `TerminateSession` delegate to it. The security-critical primary read is locked
+  by a mutation-tested guard (`TestSecurityCriticalReadUsesPrimary`), and the
+  writes-never-replica guard now covers all three repositories. Unit-tested with a
+  fake repo and no database (`session_repository_test.go`).
+
 ### Changed
 
 - **Hardened the shared error renderer (`internal/common/errors`).** `HandleError`
