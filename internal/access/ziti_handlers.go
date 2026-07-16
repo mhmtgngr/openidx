@@ -277,8 +277,17 @@ func (s *Service) handleListZitiIdentities(c *gin.Context) {
 		return
 	}
 	rows, err := s.db.Pool.Query(c.Request.Context(),
-		`SELECT id, ziti_id, name, identity_type, user_id, enrolled, attributes, created_at, updated_at
-		 FROM ziti_identities WHERE org_id = $1 ORDER BY name`, org.ID)
+		// The identity `name` is the user's UUID (it is the stable linking key to
+		// the Ziti controller / BrowZer OIDC sub — see ziti_user_sync.go). Join
+		// the user so the UI can show a human-readable display_name instead of the
+		// raw UUID, without changing the controller-facing name.
+		`SELECT zi.id, zi.ziti_id, zi.name, zi.identity_type, zi.user_id, zi.enrolled,
+		        zi.attributes, zi.created_at, zi.updated_at,
+		        COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''),
+		                 NULLIF(u.username, ''), NULLIF(u.email, '')) AS display_name
+		 FROM ziti_identities zi
+		 LEFT JOIN users u ON u.id = zi.user_id
+		 WHERE zi.org_id = $1 ORDER BY display_name NULLS LAST, zi.name`, org.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list ziti identities"})
 		return
@@ -289,6 +298,7 @@ func (s *Service) handleListZitiIdentities(c *gin.Context) {
 		ID           string    `json:"id"`
 		ZitiID       string    `json:"ziti_id"`
 		Name         string    `json:"name"`
+		DisplayName  string    `json:"display_name"`
 		IdentityType string    `json:"identity_type"`
 		UserID       *string   `json:"user_id,omitempty"`
 		Enrolled     bool      `json:"enrolled"`
@@ -301,13 +311,20 @@ func (s *Service) handleListZitiIdentities(c *gin.Context) {
 	for rows.Next() {
 		var ident zitiIdentityRow
 		var attrs []byte
+		var displayName *string
 		err := rows.Scan(&ident.ID, &ident.ZitiID, &ident.Name, &ident.IdentityType,
-			&ident.UserID, &ident.Enrolled, &attrs, &ident.CreatedAt, &ident.UpdatedAt)
+			&ident.UserID, &ident.Enrolled, &attrs, &ident.CreatedAt, &ident.UpdatedAt, &displayName)
 		if err != nil {
 			s.logger.Error("Failed to scan ziti identity", zap.Error(err))
 			continue
 		}
 		json.Unmarshal(attrs, &ident.Attributes)
+		// Fall back to the name (UUID) only when there's no linked user to name.
+		if displayName != nil && *displayName != "" {
+			ident.DisplayName = *displayName
+		} else {
+			ident.DisplayName = ident.Name
+		}
 		identities = append(identities, ident)
 	}
 
