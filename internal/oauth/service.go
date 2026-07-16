@@ -1715,7 +1715,9 @@ func (s *Service) handleAuthorizeCallback(c *gin.Context) {
 	}
 
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
+		// DB write failure: a transient outage becomes a retryable 503, a real
+		// error stays a 500 (see unavailable.go).
+		writeServerOrUnavailable(c, err)
 		return
 	}
 
@@ -2136,7 +2138,9 @@ func (s *Service) issueAuthorizationCode(c *gin.Context, oauthParams map[string]
 	}
 
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
+		// DB write failure: a transient outage becomes a retryable 503, a real
+		// error stays a 500 (see unavailable.go).
+		writeServerOrUnavailable(c, err)
 		return
 	}
 
@@ -2805,7 +2809,9 @@ func (s *Service) handleAuthorizeConsent(c *gin.Context) {
 	}
 
 	if err := s.CreateAuthorizationCode(c.Request.Context(), authCode); err != nil {
-		c.JSON(500, gin.H{"error": "server_error"})
+		// DB write failure: a transient outage becomes a retryable 503, a real
+		// error stays a 500 (see unavailable.go).
+		writeServerOrUnavailable(c, err)
 		return
 	}
 
@@ -3093,7 +3099,10 @@ func (s *Service) handleRefreshTokenGrant(c *gin.Context) {
 	if active, err := s.userIsActive(c.Request.Context(), token.UserID); err != nil {
 		s.logger.Error("refresh grant: failed to check user status",
 			zap.String("user_id", token.UserID), zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error"})
+		// A DB outage here is a transient brownout, not a client error: tell the
+		// client to retry shortly (503 temporarily_unavailable + Retry-After)
+		// instead of a hard 500 it would hammer. See unavailable.go.
+		writeServerOrUnavailable(c, err)
 		return
 	} else if !active {
 		s.logger.Info("refresh grant denied: user disabled or deleted",

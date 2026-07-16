@@ -53,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     auto-routed — adoption is per-query where read-after-write is not required.
     Tests: `read_replica_test.go`, `read_replica_checker_test.go`.
 
+- **Always-available authentication — Tier 2 (graceful brownout on the issue path).**
+  Added `internal/oauth/unavailable.go`: a classifier that distinguishes a
+  transient dependency outage (Postgres/Redis unreachable, pool exhausted, dial
+  timeout, `57P0x`/`08xxx`/`53300`/`25006` SQLSTATEs, network errors) from a
+  genuine application error, and returns RFC 6749 `503 temporarily_unavailable`
+  with a `Retry-After` header for the former (clients back off and retry) while
+  keeping `500 server_error` for the latter. Applied to the DB-backed OAuth
+  issue-path sites (authorization-code creation, refresh-grant user-status
+  check), so a database failover degrades login to a brief, retryable brownout
+  instead of a hammered 500. Tests: `internal/oauth/unavailable_test.go`.
+
 ## [1.27.0] - 2026-07-13
 
 ### Added

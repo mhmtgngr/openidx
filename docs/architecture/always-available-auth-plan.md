@@ -200,10 +200,26 @@ flat, only issue/refresh error rate rises.
    `/health/ready` should flip so the LB drains new logins from that replica, but
    the **verify path stays `live`**. Return a clear, retryable `503` with
    `Retry-After` for login (not a 500 stack), so clients back off instead of
-   hammering. *Effort: S–M.*
+   hammering.
+   - ✅ **Done (oauth issue path).** The readiness/liveness split landed in Tier 0.
+     Added `internal/oauth/unavailable.go`: `isDependencyUnavailable` classifies a
+     transient infra outage (Postgres/Redis unreachable, pool exhausted, dial
+     timeout, `57P0x`/`08xxx`/`53300`/`25006` SQLSTATEs, net errors) vs a genuine
+     app error, and `writeServerOrUnavailable` returns RFC 6749 `503
+     temporarily_unavailable` + `Retry-After` for the former, keeping `500
+     server_error` for the latter. Applied to the DB-backed issue-path sites
+     (auth-code creation ×3, refresh-grant user-status check). A bad password
+     still gets a 4xx; a DB failover now yields a retryable 503, not a hammered
+     500. Tests: `internal/oauth/unavailable_test.go`.
+   - **Follow-up:** `internal/identity/handlers_*.go` still return raw
+     `500 {err.Error()}` on dependency failure (and leak the error string) — worth
+     the same treatment, tracked separately. *Effort: S.*
 8. **Circuit-breaker + bounded timeouts** on every dependency call in the issue
-   path so a slow Postgres/Redis doesn't exhaust the pool and cascade. (pgx pool is
-   sized; add per-call `context` deadlines and a breaker around Redis/ES.) *Effort: M.*
+   path so a slow Postgres/Redis doesn't exhaust the pool and cascade. The DB dial
+   is now bounded (Tier 1.4, `DB_CONNECT_TIMEOUT`), and a circuit-breaker package
+   already exists (`internal/common/resilience`, used for outbound OPA/webhooks/
+   ziti/guacamole). Remaining: wrap the Redis/ES issue-path calls in a breaker and
+   add per-call `context` deadlines. *Effort: M.*
 9. **Idempotent, replayable side effects.** Refresh-token rotation, session
    creation, and audit writes should be safe to retry after a mid-request failover
    (audit already went async + outbox in #483 — extend that discipline to session
