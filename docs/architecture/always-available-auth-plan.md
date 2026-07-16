@@ -277,6 +277,17 @@ equivalent open item is a streaming-replication hot standby + rehearsed promotio
 fails over fast and degrades cleanly, reader endpoint provisioned). The remaining
 work is operational (game-days, etcd cluster), not application rearchitecture.
 
+**Cutover is scoped:** the single-VM → EKS move is sequenced end to end in
+[`docs/tier3b-cutover-runbook.md`](../tier3b-cutover-runbook.md) — preconditions
+(HA drill + a live DR game-day PASS), closing the two open infra gaps (OpenSearch
+under Terraform; activating the read replica via `externalSecrets.readReplica`),
+standing up the EKS stack in parallel, the data cutover (logical replication
+preferred, dump/restore fallback), a DNS traffic cutover that flips the
+DB-independent **verify** surfaces first, and rollback. The whole plan leans on
+the always-available invariant this doc establishes — verification never depends
+on which stack/DB is live — which is exactly what `make dr-game-day` checks at
+every gate.
+
 ### Tier 4 — Only *then* consider a service split (and only one)
 
 If, after Tiers 0–3, one workload still has a *genuinely different* availability

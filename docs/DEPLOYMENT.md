@@ -19,6 +19,11 @@ in this repo:
 > [production config checklist](#production-config-checklist) lists exactly
 > what must be set.
 
+> **Migrating an existing single-VM prod onto this EKS path?** Follow the
+> sequenced, low-downtime cutover in
+> [`tier3b-cutover-runbook.md`](./tier3b-cutover-runbook.md). This guide covers a
+> greenfield install; the cutover runbook covers moving live traffic and data.
+
 ---
 
 ## Prerequisites

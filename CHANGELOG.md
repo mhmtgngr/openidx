@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scoped the Tier 3b cutover: `docs/tier3b-cutover-runbook.md`.** The
+  availability plan recommended moving prod off the single VM onto the
+  already-written EKS/managed path but left the *cutover* itself unsequenced. New
+  runbook lays out the end-to-end move: preconditions (a passing `make ha-drill`
+  and a live DR game-day PASS), closing the two open infra gaps (add an OpenSearch
+  Terraform module; activate the RDS read replica via `externalSecrets.readReplica`
+  — everything else is wired), standing up the EKS stack in parallel on a shadow
+  DNS name, the data cutover (logical replication preferred, dump/restore
+  fallback), a DNS traffic cutover that deliberately flips the **DB-independent
+  verify surfaces first** so token validation never stops, post-cutover
+  activation/verification, and rollback at each stage. It leans on the
+  always-available invariant (verification does not depend on which stack/DB is
+  live) that `make dr-game-day` checks at every gate. Also surfaced and wired the
+  concrete config gap it identified: `values-prod.yaml` now carries a documented
+  `externalSecrets.readReplica` flag (left `false` so a fresh cutover's
+  ExternalSecret doesn't reference a missing key; flip on as a follow-on step).
+  Verified `helm template` renders clean with the flag both off (no
+  `DATABASE_READ_URL`) and on (rendered). Linked from the availability plan and
+  `DEPLOYMENT.md`.
+
 - **Repository pattern reaches the admin god-object (`SettingsRepository`).**
   Began strangling `internal/admin/service.go` (3,439 lines — the largest
   god-object in the design-patterns review) by extracting all `system_settings`
