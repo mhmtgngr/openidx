@@ -74,6 +74,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Removed — that duplicate turned out to be unwired, security-divergent dead code
   and was deleted.)**
 
+### Fixed
+
+- **Admin-console unit tests can run again (frontend test env repaired).**
+  `vitest.config.ts` requested `environment: 'happy-dom'`, but `happy-dom` was
+  never in `package.json` (only `jsdom` is a pinned devDependency), so `npm test`
+  / CI's `npm test -- --run` died immediately with `ERR_MODULE_NOT_FOUND` and
+  ran **zero** tests. Switched the config to the installed `jsdom` environment
+  and added the one jsdom shim happy-dom provided that Radix UI needs:
+  `Element.prototype.scrollIntoView` (a no-op mock in `src/test/setup.ts`),
+  which `@radix-ui/react-select` calls on mount and which otherwise threw
+  `candidate?.scrollIntoView is not a function` and failed every Select-based
+  test. Result: the full suite now runs green — **761 tests across 122 files
+  pass** (previously: could not start). This also unblocks the `ci-web`
+  pipeline. No new dependency added.
+
 ### Security
 
 - **Closed ~170 server-error information-disclosure sites: 5xx responses no
