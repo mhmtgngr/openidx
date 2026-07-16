@@ -102,6 +102,27 @@ incremental.*
 > table is a real smell — it means two code paths can disagree about a client.
 > Unifying them is a worthwhile follow-up (out of scope here; named the new type
 > `OAuthClientStore` to avoid the collision rather than paper over it).
+>
+> ✅ **Resolved (unification #1).** Investigation showed the `Client` /
+> `ClientRepository` / `AuthorizeFlow` / `TokenFlow` / `OIDCProvider(Client-side)`
+> cluster (`client.go`, `authorize_flow.go`, `token_flow.go`) was a **second,
+> entirely parallel OAuth/OIDC pipeline that was never wired to a live route** —
+> only reachable from tests. Worse, the two paths had already *diverged on a
+> security check*: the dead `ClientRepository.ValidateRedirectURI` allowed
+> wildcard-subdomain redirect URIs (`https://*.example.com`, an open-redirect
+> foot-gun), while the live authorize handler (`service.go`) requires exact
+> byte-equality. Leaving insecure dead code around invites someone to wire it, so
+> the three files (~3,100 lines incl. their now-redundant tests) were **deleted**.
+> The authoritative representation is `OAuthClient` (+ `OAuthClientStore`); the
+> live token/authorize/userinfo flows live in `service.go` / `authorize.go`. The
+> three genuinely-live symbols the cluster still exported (`TokenFlowResponse`,
+> `generateUUID`, and the RFC 6749 error-code constants used by the brownout path)
+> were preserved in the small `oauth_types.go`. Redundant validation tests were
+> dropped only after confirming the live path has equivalent coverage
+> (`TestAuthorizeHandler_ValidateRedirectURI` byte-equality, `TestValidatePKCE`,
+> `TestSecurityFeatures`); `TestOAuthConstants` was retargeted onto the preserved
+> constants. `go build ./...`, `go vet ./...`, and `go test ./internal/oauth/`
+> all pass.
 
 ---
 

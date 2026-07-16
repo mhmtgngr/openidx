@@ -210,80 +210,6 @@ func BenchmarkValidateTokenSimple(b *testing.B) {
 	}
 }
 
-// BenchmarkAuthorizeFlow benchmarks the authorization flow parsing and validation
-func BenchmarkAuthorizeFlow(b *testing.B) {
-	svc, _, db := createTestOAuthServiceForBench(b)
-	if svc == nil {
-		return
-	}
-
-	ctx := context.Background()
-
-	// Create a test OAuth client
-	clientID := "bench_auth_client_" + randomString(8)
-	clientSecret := "bench-secret"
-	hashedSecret := hashClientSecret(clientSecret)
-
-	now := time.Now()
-	_, err := db.Pool.Exec(ctx, `
-		INSERT INTO oauth_clients (id, client_id, client_secret, name, type, redirect_uris, grant_types, response_types, scopes, pkce_required, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, 'confidential', $5, $6, $7, $8, true, $9, $9)
-	`, clientID+"-id", clientID, hashedSecret, "Benchmark Client",
-		[]string{"http://localhost:3000/callback"},
-		[]string{"authorization_code", "refresh_token"},
-		[]string{"code"},
-		[]string{"openid", "profile", "email"},
-		now)
-	if err != nil {
-		b.Fatalf("Failed to create test client: %v", err)
-	}
-
-	// Create a test user
-	userID := "bench_auth_user_" + randomString(8)
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.DefaultCost)
-	_, err = db.Pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, password_hash, enabled, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, true, true, $5, $5)
-	`, userID, "auth_user", "auth@example.com", hashedPassword, now)
-	if err != nil {
-		b.Fatalf("Failed to create test user: %v", err)
-	}
-
-	b.Cleanup(func() {
-		db.Pool.Exec(ctx, "DELETE FROM oauth_clients WHERE client_id = $1", clientID)
-		db.Pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
-	})
-
-	// Set up AuthorizeFlow
-	clients := NewClientRepository(svc.db, zap.NewNop())
-	_ = NewAuthorizeFlow(clients, nil, zap.NewNop(), svc.issuer)
-
-	// Create authorization request parameters
-	codeVerifier := generateRandomString(43)
-	codeChallenge := benchSha256Hash(codeVerifier)
-	state := generateRandomString(16)
-
-	// Measure the parsing and validation part (not the full flow with redirect)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		req := &FlowAuthorizeRequest{
-			ClientID:            clientID,
-			RedirectURI:         "http://localhost:3000/callback",
-			ResponseType:        "code",
-			Scope:               "openid profile email",
-			State:               state,
-			CodeChallenge:       codeChallenge,
-			CodeChallengeMethod: "S256",
-		}
-
-		// Validate client
-		_, _ = clients.GetByClientID(ctx, req.ClientID)
-		// Validate scope
-		_ = clients.ValidateScope(nil, req.Scope)
-		_ = req
-	}
-}
-
 // BenchmarkCreateAuthorizationCode benchmarks authorization code creation and storage
 func BenchmarkCreateAuthorizationCode(b *testing.B) {
 	svc, _, db := createTestOAuthServiceForBench(b)
@@ -324,14 +250,14 @@ func BenchmarkCreateAuthorizationCode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		code := &AuthorizationCode{
-			Code:                generateRandomString(32),
+			Code:                randomString(32),
 			ClientID:            clientID,
 			UserID:              userID,
 			RedirectURI:         "http://localhost:3000/callback",
 			Scope:               "openid",
 			ExpiresAt:           time.Now().Add(10 * time.Minute),
 			CreatedAt:           time.Now(),
-			CodeChallenge:       generateRandomString(43),
+			CodeChallenge:       randomString(43),
 			CodeChallengeMethod: "S256",
 		}
 		_ = svc.CreateAuthorizationCode(ctx, code)
@@ -373,7 +299,7 @@ func BenchmarkGetClient(b *testing.B) {
 
 // BenchmarkPKCEVerification benchmarks PKCE code verifier validation
 func BenchmarkPKCEVerification(b *testing.B) {
-	codeVerifier := generateRandomString(43)
+	codeVerifier := randomString(43)
 	codeChallenge := benchSha256Hash(codeVerifier)
 
 	b.ResetTimer()
@@ -438,14 +364,6 @@ func randomString(n int) string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)[:n]
 }
-
-func generateRandomString(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)[:n]
-}
-
-// hashClientSecret is defined in client.go
 
 // benchSha256Hash is a simplified SHA256 hash for benchmark PKCE code challenges
 func benchSha256Hash(s string) string {

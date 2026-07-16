@@ -70,7 +70,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smell surfaced by this work: the oauth package has a *separate* `ClientRepository`
   (`client.go`, used by `token_flow.go`) that models the same `oauth_clients` table
   differently — a worthwhile unification follow-up (see
-  `docs/architecture/design-patterns-review.md`).
+  `docs/architecture/design-patterns-review.md`). **(Resolved below in
+  Removed — that duplicate turned out to be unwired, security-divergent dead code
+  and was deleted.)**
+
+### Removed
+
+- **Deleted a dead, security-divergent duplicate OAuth/OIDC pipeline
+  (`client.go`, `authorize_flow.go`, `token_flow.go`; ~3,100 lines incl. tests).**
+  The oauth package carried a second, fully parallel implementation
+  (`Client` / `ClientRepository` / `AuthorizeFlow` / `TokenFlow`) operating on the
+  same `oauth_clients` table as the live `OAuthClient` / `OAuthClientStore`, but it
+  was **never wired to a live route** — only reachable from tests. It had also
+  already diverged from the live path on a security check: the dead
+  `ClientRepository.ValidateRedirectURI` permitted wildcard-subdomain redirect
+  URIs (`https://*.example.com`, an open-redirect risk), while the live authorize
+  handler requires exact byte-equality. Two representations of one table that can
+  disagree — and insecure dead code invites someone to wire it — so the cluster
+  was removed. The authoritative representation is `OAuthClient` (+
+  `OAuthClientStore`); live token/authorize/userinfo flows remain in
+  `service.go` / `authorize.go`. The three genuinely-live symbols the cluster
+  exported (`TokenFlowResponse`, `generateUUID`, and the RFC 6749 error-code
+  constants used by the 503 brownout path) were preserved in a small new
+  `internal/oauth/oauth_types.go`. Redundant validation tests were dropped only
+  after confirming equivalent live coverage
+  (`TestAuthorizeHandler_ValidateRedirectURI`, `TestValidatePKCE`,
+  `TestSecurityFeatures`); `TestOAuthConstants` was retargeted onto the preserved
+  constants. `go build ./...`, `go vet ./...`, and `go test ./internal/oauth/`
+  all pass. See `docs/architecture/design-patterns-review.md` §1.
 
 ### Changed
 
