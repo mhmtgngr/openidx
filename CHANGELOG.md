@@ -131,6 +131,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Collapsed the admin-console's two parallel API clients — deleted the entire
+  dead `src/lib/api/` directory (client + domain wrappers + barrel; ~800 lines).**
+  The console had two API layers: the live `src/lib/api.ts` (the `api` object,
+  imported by ~199 modules) and a second, separate `src/lib/api/` package
+  (`client.ts` axios instance + `admin`/`audit`/`governance`/`identity` wrappers +
+  `types.ts` + an `index.ts` barrel re-exporting `apiClient as api`). Because a
+  file (`api.ts`) wins module resolution over a same-named directory
+  (`api/index.ts`), **every `@/lib/api` import hit `api.ts` and the whole
+  directory had zero live importers** — a classic duplicate-that-can-drift trap
+  (the two clients had already diverged on token-storage keys and the
+  refresh-token endpoint, both fixed earlier). Verified exhaustively that nothing
+  outside the directory imported any of its modules, then removed it. The one
+  place that referenced it — `dashboard.test.tsx` — was `vi.mock()`-ing the dead
+  `./lib/api/client` while the component under test actually imports `{ api }`
+  from `../lib/api`, so the mock was inert; retargeted it to mock the real
+  `../lib/api`, which also makes the test's stubbing actually take effect.
+  `tsc --noEmit`, the full vitest suite (746 tests / 121 files pass; the −15 vs
+  before are exactly the deleted `audit.test.ts` that only tested the dead
+  `auditApi`), and `vite build` all pass.
+
 - **Deleted a dead, security-divergent duplicate OAuth/OIDC pipeline
   (`client.go`, `authorize_flow.go`, `token_flow.go`; ~3,100 lines incl. tests).**
   The oauth package carried a second, fully parallel implementation
