@@ -178,6 +178,12 @@ type Service struct {
 	// idpCipher encrypts identity_providers.client_secret at rest. Best-effort:
 	// a passthrough (noop) when no usable ENCRYPTION_KEY is configured.
 	idpCipher *secretcrypt.Cipher
+
+	// users is the user data-access port (Repository pattern — see
+	// user_repository.go). New/refactored user reads route through this so SQL
+	// lives in one place and read-mostly queries use the read replica. The
+	// legacy inline db.Pool user queries are being migrated here incrementally.
+	users UserRepository
 }
 
 // NewService creates a new identity service
@@ -198,6 +204,7 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 		cfg:       cfg,
 		logger:    log,
 		idpCipher: idpCipher,
+		users:     NewPostgresUserRepository(db),
 	}
 }
 
@@ -545,36 +552,13 @@ func parseRSAPublicKey(nStr, eStr string) (*rsa.PublicKey, error) {
 func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
 	s.logger.Debug("Getting user", zap.String("user_id", userID))
 
-	org, err := orgctx.From(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Query from database - use UserDB for scanning. A user in another
-	// org reads as not-found (pgx.ErrNoRows) rather than 403, so the
-	// existence of other tenants' users can't be probed. first_name/last_name
-	// are nullable in the schema (SCIM users may have no name), so COALESCE to
-	// '' — UserDB scans them into plain strings and a raw NULL errors the scan.
-	var dbUser UserDB
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, COALESCE(first_name, '') AS first_name,
-		       COALESCE(last_name, '') AS last_name, enabled, email_verified,
-		       created_at, updated_at, last_login_at, password_changed_at,
-		       password_must_change, failed_login_count, last_failed_login_at, locked_until
-		FROM users WHERE id = $1 AND org_id = $2
-	`, userID, org.ID).Scan(
-		&dbUser.ID, &dbUser.Username, &dbUser.Email, &dbUser.FirstName, &dbUser.LastName,
-		&dbUser.Enabled, &dbUser.EmailVerified, &dbUser.CreatedAt, &dbUser.UpdatedAt, &dbUser.LastLoginAt,
-		&dbUser.PasswordChangedAt, &dbUser.PasswordMustChange, &dbUser.FailedLoginCount,
-		&dbUser.LastFailedLoginAt, &dbUser.LockedUntil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to SCIM User model
-	user := dbUser.ToUser()
-	return &user, nil
+	// Delegates to the user repository (Repository pattern — see
+	// user_repository.go). The repo owns the SQL, scopes to the caller's tenant
+	// (a cross-tenant id reads as not-found, not 403), and serves the read from
+	// the replica pool when one is configured. The repo returns the sentinel
+	// ErrUserNotFound on a miss; existing callers already treat any error here as
+	// "user not found", so the contract is preserved.
+	return s.users.GetByID(ctx, userID)
 }
 
 // ListUsers retrieves users with pagination

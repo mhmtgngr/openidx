@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repository pattern reference implementation (identity/User).** Introduced
+  `internal/identity/user_repository.go`: a `UserRepository` interface +
+  `PostgresUserRepository` pgx implementation (`GetByID`/`GetByUsername`/`Exists`)
+  that isolates user SQL into one type, scopes every read to the caller's tenant,
+  and serves reads from the read replica via `db.Reader()` (Tier 1.6).
+  `identity.Service.GetUser` now delegates to it (behavior-preserving). This is
+  the template for splitting the god-object services (see
+  `docs/architecture/design-patterns-review.md`). Business logic is now
+  unit-testable with a fake repo and no database (`user_repository_test.go`).
+
+### Changed
+
+- **Hardened the shared error renderer (`internal/common/errors`).** `HandleError`
+  now guarantees the client only sees safe, typed fields (never the wrapped
+  internal error), and a new `HandleErrorWithLogger(c, err, logger)` logs the real
+  cause server-side for 5xx (with request id + path) instead of silently dropping
+  it. Closes an information-disclosure vector and an observability gap. Tests in
+  `render_test.go` verify a DB error containing a password/hostname is logged but
+  not leaked to the response body.
+
 - **Always-available authentication — Tier 0 (verify-path survives a DB outage).**
   Token *verification* (validating an already-issued JWT) is now hardened to keep
   working through an outage of the OAuth/JWKS endpoint and the shared database:

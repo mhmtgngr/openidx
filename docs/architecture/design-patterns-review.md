@@ -56,6 +56,15 @@ This is the **Repository pattern + hexagonal ports**. Benefits that compound:
 `User`), leave the old methods delegating to the new repo until empty. *Effort: L,
 incremental.*
 
+> ✅ **Reference implementation landed.** `internal/identity/user_repository.go`
+> defines `UserRepository` (interface) + `PostgresUserRepository` (pgx impl) with
+> `GetByID`/`GetByUsername`/`Exists`. `identity.Service.GetUser` now **delegates**
+> to it (behavior-preserving), the repo reads via `db.Reader()` (adopting the
+> Tier 1.6 read replica), and returns the `ErrUserNotFound` sentinel. The payoff
+> is proven in `user_repository_test.go`: service logic is now unit-tested with a
+> **fake repo and no database** (previously impossible). This is the template —
+> extend it method-by-method and roll the same shape to the other services.
+
 ---
 
 ## 2. Duplicated service bootstrap 🟡 (easy, high-consistency win)
@@ -111,6 +120,17 @@ Handlers `return apierror.NotFound("user")` / `apierror.Internal(err)`; the
 renderer logs the *real* error server-side and emits a **safe, structured** body.
 Kills the disclosure class and gives every service one error shape. *Effort: M
 (mechanical, do alongside §1 handler extraction).*
+
+> ✅ **Renderer hardened (foundation for adoption).** The `AppError` +
+> `HandleError` machinery already existed in `internal/common/errors` but was
+> used at only ~53 sites vs **402** raw `err.Error()` leaks, and — worse — it
+> **never logged** the wrapped internal error, so coerced 500s vanished silently.
+> `HandleError` now documents/guarantees the client only sees safe fields, and a
+> new `HandleErrorWithLogger(c, err, logger)` logs the real cause server-side for
+> 5xx (with request id + path) while keeping it out of the response. Tests in
+> `render_test.go` prove both: a DB error with a password/hostname is logged but
+> **not** leaked to the body. Remaining work is the mechanical migration of the
+> 402 call sites onto this renderer (do it as handlers are extracted per §1).
 
 ---
 
