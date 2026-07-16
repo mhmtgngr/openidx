@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -430,8 +431,7 @@ func (s *Service) handleGetUnifiedAuditEvents(c *gin.Context) {
 
 	result, err := s.auditService.QueryEvents(c.Request.Context(), filters)
 	if err != nil {
-		s.logger.Error("Failed to query audit events", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to query audit events", err), s.logger)
 		return
 	}
 
@@ -461,8 +461,7 @@ func (s *Service) handleGetServiceAuditEvents(c *gin.Context) {
 
 	result, err := s.auditService.QueryEvents(c.Request.Context(), filters)
 	if err != nil {
-		s.logger.Error("Failed to query service audit events", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to query service audit events", err), s.logger)
 		return
 	}
 
@@ -481,7 +480,7 @@ func (s *Service) handleSyncExternalAuditEvents(c *gin.Context) {
 	// already runs bypassed; this is the admin HTTP trigger).
 	err := s.auditService.SyncExternalAuditEvents(orgctx.WithBypassRLS(c.Request.Context()))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("sync external audit events", err), s.logger)
 		return
 	}
 
@@ -503,7 +502,7 @@ func (s *Service) handleGetAuditEventsSummary(c *gin.Context) {
 		GROUP BY source
 	`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get audit events summary", err), s.logger)
 		return
 	}
 	defer rows.Close()

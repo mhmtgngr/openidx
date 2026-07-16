@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ func (s *Service) handleListZitiSessions(c *gin.Context) {
 
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", path, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list ziti sessions", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -118,7 +119,7 @@ func (s *Service) handleDeleteZitiSession(c *gin.Context) {
 	id := c.Param("id")
 	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/sessions/"+id, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete ziti session", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {

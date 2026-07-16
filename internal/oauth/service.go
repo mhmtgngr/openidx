@@ -26,6 +26,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -2745,7 +2746,7 @@ func (s *Service) handleAuthorizeConsentV2(c *gin.Context) {
 	code, err := s.authorizeHandler.IssueAuthorizationCode(c.Request.Context(), req.AuthSession, userID, req.SessionID)
 	if err != nil {
 		s.logger.Error("Failed to issue authorization code", zap.Error(err))
-		c.JSON(500, gin.H{"error": "server_error", "error_description": err.Error()})
+		c.JSON(500, gin.H{"error": "server_error", "error_description": "failed to issue authorization code"})
 		return
 	}
 
@@ -3309,7 +3310,7 @@ func (s *Service) handleListClients(c *gin.Context) {
 
 	clients, total, err := s.ListClients(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list clients", err), s.logger)
 		return
 	}
 
@@ -3332,7 +3333,7 @@ func (s *Service) handleCreateClient(c *gin.Context) {
 	client.ClientSecret = GenerateRandomToken(32)
 
 	if err := s.CreateClient(c.Request.Context(), &client); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create client", err), s.logger)
 		return
 	}
 
@@ -3380,7 +3381,7 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 	}
 
 	if err := s.UpdateClient(c.Request.Context(), c.Param("id"), &client); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update client", err), s.logger)
 		return
 	}
 
@@ -3389,7 +3390,7 @@ func (s *Service) handleUpdateClient(c *gin.Context) {
 
 func (s *Service) handleDeleteClient(c *gin.Context) {
 	if err := s.DeleteClient(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete client", err), s.logger)
 		return
 	}
 
@@ -3412,7 +3413,7 @@ func (s *Service) RegenerateClientSecret(ctx context.Context, clientID string) (
 func (s *Service) handleRegenerateClientSecret(c *gin.Context) {
 	secret, err := s.RegenerateClientSecret(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("regenerate client secret", err), s.logger)
 		return
 	}
 	c.JSON(200, gin.H{"client_secret": secret})

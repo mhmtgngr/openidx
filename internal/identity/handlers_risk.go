@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
 	"github.com/openidx/openidx/internal/risk"
@@ -16,7 +17,7 @@ func (s *Service) handleListRiskPolicies(c *gin.Context) {
 
 	policies, err := s.risk.ListRiskPolicies(c.Request.Context(), enabledOnly)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list risk policies", err), s.logger)
 		return
 	}
 
@@ -46,7 +47,7 @@ func (s *Service) handleCreateRiskPolicy(c *gin.Context) {
 
 	policy, err := s.risk.CreateRiskPolicy(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create risk policy", err), s.logger)
 		return
 	}
 
@@ -65,7 +66,7 @@ func (s *Service) handleUpdateRiskPolicy(c *gin.Context) {
 
 	policy, err := s.risk.UpdateRiskPolicy(c.Request.Context(), policyID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update risk policy", err), s.logger)
 		return
 	}
 
@@ -97,7 +98,7 @@ func (s *Service) handleToggleRiskPolicy(c *gin.Context) {
 	}
 
 	if err := s.risk.ToggleRiskPolicy(c.Request.Context(), policyID, req.Enabled); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("toggle risk policy", err), s.logger)
 		return
 	}
 
@@ -168,7 +169,7 @@ func (s *Service) handleEvaluateRisk(c *gin.Context) {
 
 	result, err := s.risk.EvaluateRiskPolicies(c.Request.Context(), loginCtx)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("evaluate risk", err), s.logger)
 		return
 	}
 
@@ -215,7 +216,7 @@ func (s *Service) userGroupNames(ctx context.Context, userID, orgID string) []st
 func (s *Service) handleGetRiskStats(c *gin.Context) {
 	stats, err := s.risk.GetRiskStats(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get risk stats", err), s.logger)
 		return
 	}
 
@@ -261,7 +262,7 @@ func (s *Service) handleGetLoginHistory(c *gin.Context) {
 
 	history, err := s.risk.GetLoginHistory(c.Request.Context(), requestedUserID, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get login history", err), s.logger)
 		return
 	}
 

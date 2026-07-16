@@ -34,6 +34,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
@@ -340,7 +341,7 @@ func (h *RemoteSupportHandler) HandleGetSession(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get session", err), h.logger)
 		return
 	}
 	c.JSON(http.StatusOK, row)
@@ -357,7 +358,7 @@ func (h *RemoteSupportHandler) HandleEndSession(c *gin.Context) {
 		body.Reason = "admin_ended"
 	}
 	if err := h.endSession(c.Request.Context(), id, body.Reason); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("end session", err), h.logger)
 		return
 	}
 	h.audit(c.Request.Context(), "remote_support.session_ended", id, "success", body.Reason)

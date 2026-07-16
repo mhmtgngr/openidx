@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -141,7 +142,7 @@ func (s *Service) handleListApps(c *gin.Context) {
 		       created_at, updated_at
 		FROM published_apps WHERE org_id=$3 ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset, org.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list apps", err), s.logger)
 		return
 	}
 	defer rows.Close()
@@ -206,7 +207,7 @@ func (s *Service) handleRegisterApp(c *gin.Context) {
 		VALUES ($1, $2, $3, $4, $5, 'pending', $6, NULLIF($7,'')::uuid)`,
 		id, req.Name, req.Description, req.TargetURL, req.SpecURL, org.ID, createdBy)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("register app", err), s.logger)
 		return
 	}
 
@@ -342,7 +343,7 @@ func (s *Service) handleListDiscoveredPaths(c *gin.Context) {
 
 	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list discovered paths", err), s.logger)
 		return
 	}
 	defer rows.Close()
@@ -573,7 +574,7 @@ func (s *Service) handlePublishPaths(c *gin.Context) {
 	// ONE host route for the whole app.
 	appRouteID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create app route: " + err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create app route", err), s.logger)
 		return
 	}
 
@@ -708,7 +709,7 @@ func (s *Service) handlePublishApp(c *gin.Context) {
 
 	routeID, err := s.ensureHostRoute(ctx, org.ID, appName, fromURL, targetURL, preserveHost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create route: " + err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create route", err), s.logger)
 		return
 	}
 
@@ -1245,7 +1246,7 @@ func (s *Service) handleConsolidateApp(c *gin.Context) {
 	}
 	routeID, paths, err := s.consolidateApp(c.Request.Context(), org.ID, appID, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("consolidate app", err), s.logger)
 		return
 	}
 	s.logAuditEvent(c, "app_consolidated", appID, "published_app", map[string]interface{}{
@@ -1429,7 +1430,7 @@ func (s *Service) handleGetAppZitiServices(c *gin.Context) {
 		WHERE dp.app_id = $1 AND dp.published = true AND pr.ziti_service_name IS NOT NULL AND pr.org_id = $2
 		ORDER BY zs.name`, appID, org.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get app ziti services", err), s.logger)
 		return
 	}
 	defer rows.Close()

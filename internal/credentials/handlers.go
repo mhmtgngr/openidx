@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // RegisterRoutes mounts the credential rotation API under an already-admin-guarded group.
@@ -36,7 +37,7 @@ func (s *Service) handleCreatePolicy(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "secret not found or not accessible"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create policy", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusCreated, policy)
@@ -45,7 +46,7 @@ func (s *Service) handleCreatePolicy(c *gin.Context) {
 func (s *Service) handleListPolicies(c *gin.Context) {
 	policies, err := s.ListPolicies(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list policies", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"policies": policies})
@@ -58,7 +59,7 @@ func (s *Service) handleGetPolicy(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get policy", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, policy)
@@ -80,7 +81,7 @@ func (s *Service) handleUpdatePolicy(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update policy", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, policy)
@@ -92,7 +93,7 @@ func (s *Service) handleDeletePolicy(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete policy", err), s.logger)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -106,11 +107,11 @@ func (s *Service) handleRotateNow(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "no rotation policy configured for this secret"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("rotate now", err), s.logger)
 		return
 	}
 	if err := s.RotateSecret(c.Request.Context(), policyID, "on_demand"); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("rotate now", err), s.logger)
 		return
 	}
 	run, err := s.LatestRotationRun(c.Request.Context(), secretID)
@@ -125,7 +126,7 @@ func (s *Service) handleRotateNow(c *gin.Context) {
 func (s *Service) handleRotationHistory(c *gin.Context) {
 	runs, err := s.RotationHistory(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("rotation history", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rotations": runs})

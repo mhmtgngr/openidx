@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
 
@@ -30,8 +31,7 @@ func (s *Service) handleGetFabricOverview(c *gin.Context) {
 	}
 	overview, err := s.ziti().GetFabricOverview(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to get fabric overview", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get fabric overview", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, overview)
@@ -43,8 +43,7 @@ func (s *Service) handleListEdgeRouters(c *gin.Context) {
 	}
 	routers, err := s.ziti().ListEdgeRouters(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to list edge routers", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list edge routers", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, routers)
@@ -57,8 +56,7 @@ func (s *Service) handleGetEdgeRouter(c *gin.Context) {
 	id := c.Param("id")
 	router, err := s.ziti().GetEdgeRouter(c.Request.Context(), id)
 	if err != nil {
-		s.logger.Error("failed to get edge router", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get edge router", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, router)
@@ -70,8 +68,7 @@ func (s *Service) handleGetHealth(c *gin.Context) {
 	}
 	status, err := s.ziti().HealthCheck(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to get health status", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get health status", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, status)
@@ -82,8 +79,7 @@ func (s *Service) handleReconnect(c *gin.Context) {
 		return
 	}
 	if err := s.ziti().Reconnect(c.Request.Context()); err != nil {
-		s.logger.Error("failed to reconnect to Ziti controller", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to reconnect to Ziti controller", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "reconnected successfully"})
@@ -123,8 +119,7 @@ func (s *Service) handleGetMetrics(c *gin.Context) {
 
 	metrics, err := s.ziti().GetMetrics(c.Request.Context(), metricType, since, limit)
 	if err != nil {
-		s.logger.Error("failed to get metrics", zap.String("type", metricType), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get metrics", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, metrics)
@@ -136,8 +131,7 @@ func (s *Service) handleListServicePolicies(c *gin.Context) {
 	}
 	policies, err := s.ziti().ListServicePolicies(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to list service policies", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list service policies", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, policies)
@@ -236,8 +230,7 @@ func (s *Service) handleListEdgeRouterPolicies(c *gin.Context) {
 	}
 	policies, err := s.ziti().ListEdgeRouterPolicies(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to list edge router policies", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list edge router policies", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, policies)
@@ -269,7 +262,7 @@ func (s *Service) handleCreateEdgeRouterPolicy(c *gin.Context) {
 	body, _ := json.Marshal(payload)
 	respData, statusCode, err := s.ziti().MgmtRequest("POST", "/edge/management/v1/edge-router-policies", body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create edge router policy", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusCreated && statusCode != http.StatusOK {
@@ -302,7 +295,7 @@ func (s *Service) handleUpdateEdgeRouterPolicy(c *gin.Context) {
 	body, _ := json.Marshal(payload)
 	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/edge-router-policies/"+id, body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update edge router policy", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -319,7 +312,7 @@ func (s *Service) handleDeleteEdgeRouterPolicy(c *gin.Context) {
 	id := c.Param("id")
 	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/edge-router-policies/"+id, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete edge router policy", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {
@@ -339,8 +332,7 @@ func (s *Service) handleListPostureChecks(c *gin.Context) {
 	}
 	checks, err := s.ziti().ListPostureChecks(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to list posture checks", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list posture checks", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, checks)
@@ -356,8 +348,7 @@ func (s *Service) handleCreatePostureCheck(c *gin.Context) {
 		return
 	}
 	if err := s.ziti().CreatePostureCheck(c.Request.Context(), &check); err != nil {
-		s.logger.Error("failed to create posture check", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create posture check", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusCreated, check)
@@ -374,8 +365,7 @@ func (s *Service) handleUpdatePostureCheck(c *gin.Context) {
 		return
 	}
 	if err := s.ziti().UpdatePostureCheck(c.Request.Context(), id, &check); err != nil {
-		s.logger.Error("failed to update posture check", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update posture check", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, check)
@@ -387,8 +377,7 @@ func (s *Service) handleDeletePostureCheck(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if err := s.ziti().DeletePostureCheck(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to delete posture check", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to delete posture check", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusNoContent, nil)
@@ -401,8 +390,7 @@ func (s *Service) handleGetIdentityPosture(c *gin.Context) {
 	identityID := c.Param("id")
 	results, err := s.ziti().GetIdentityPostureStatus(c.Request.Context(), identityID)
 	if err != nil {
-		s.logger.Error("failed to get identity posture status", zap.String("identityID", identityID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get identity posture status", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, results)
@@ -415,8 +403,7 @@ func (s *Service) handleEvaluateIdentityPosture(c *gin.Context) {
 	identityID := c.Param("id")
 	passed, results, err := s.ziti().EvaluateIdentityPosture(c.Request.Context(), identityID)
 	if err != nil {
-		s.logger.Error("failed to evaluate identity posture", zap.String("identityID", identityID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to evaluate identity posture", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -431,8 +418,7 @@ func (s *Service) handleGetPostureSummary(c *gin.Context) {
 	}
 	summary, err := s.ziti().GetPostureCheckSummary(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to get posture check summary", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get posture check summary", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, summary)
@@ -456,7 +442,7 @@ func (s *Service) handleSubmitDevicePosture(c *gin.Context) {
 	if err != nil {
 		s.logger.Error("Device posture evaluation failed",
 			zap.String("identity_id", req.IdentityID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("submit device posture", err), s.logger)
 		return
 	}
 
@@ -480,8 +466,7 @@ func (s *Service) handleListPolicySyncStates(c *gin.Context) {
 	}
 	states, err := s.ziti().ListPolicySyncStates(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to list policy sync states", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list policy sync states", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, states)
@@ -511,15 +496,14 @@ func (s *Service) handleSyncGovernancePolicy(c *gin.Context) {
 		policy, err := s.ziti().FetchGovernancePolicy(c.Request.Context(), req.GovernancePolicyID)
 		if err != nil {
 			s.logger.Error("failed to fetch governance policy", zap.String("policyID", req.GovernancePolicyID), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch governance policy: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch governance policy"})
 			return
 		}
 		config = TransformGovernancePolicyToZiti(policy)
 	}
 
 	if err := s.ziti().SyncGovernancePolicy(c.Request.Context(), req.GovernancePolicyID, config); err != nil {
-		s.logger.Error("failed to sync governance policy", zap.String("policyID", req.GovernancePolicyID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to sync governance policy", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "policy synced successfully", "auto_fetched": req.AutoFetch || len(req.Config) == 0})
@@ -531,8 +515,7 @@ func (s *Service) handleTriggerPolicySync(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if err := s.ziti().TriggerPolicySync(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to trigger policy sync", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to trigger policy sync", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "policy sync triggered"})
@@ -544,8 +527,7 @@ func (s *Service) handleDeletePolicySyncState(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if err := s.ziti().DeletePolicySyncState(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to delete policy sync state", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to delete policy sync state", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusNoContent, nil)
@@ -583,8 +565,7 @@ func (s *Service) handleCreateServicePolicy(c *gin.Context) {
 
 	zitiID, err := s.ziti().CreateServicePolicy(c.Request.Context(), req.Name, req.Type, req.ServiceRoles, req.IdentityRoles)
 	if err != nil {
-		s.logger.Error("failed to create service policy", zap.String("name", req.Name), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to create service policy", err), s.logger)
 		return
 	}
 
@@ -654,8 +635,7 @@ func (s *Service) handleUpdateServicePolicy(c *gin.Context) {
 	}
 
 	if err := s.ziti().UpdateServicePolicy(c.Request.Context(), zitiID, req.Name, req.Type, req.ServiceRoles, req.IdentityRoles); err != nil {
-		s.logger.Error("failed to update service policy", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to update service policy", err), s.logger)
 		return
 	}
 
@@ -746,8 +726,7 @@ func (s *Service) handlePatchIdentityAttributes(c *gin.Context) {
 	}
 
 	if err := s.ziti().PatchIdentityRoleAttributes(c.Request.Context(), zitiID, req.Attributes); err != nil {
-		s.logger.Error("failed to patch identity attributes", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to patch identity attributes", err), s.logger)
 		return
 	}
 
@@ -774,8 +753,7 @@ func (s *Service) handleListCertificates(c *gin.Context) {
 	}
 	certs, err := s.ziti().ListZitiCertificates(c.Request.Context())
 	if err != nil {
-		s.logger.Error("failed to list certificates", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to list certificates", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, certs)
@@ -796,8 +774,7 @@ func (s *Service) handleGetCertExpiryAlerts(c *gin.Context) {
 	}
 	certs, err := s.ziti().GetCertificateExpiryAlerts(c.Request.Context(), thresholdDays)
 	if err != nil {
-		s.logger.Error("failed to get certificate expiry alerts", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to get certificate expiry alerts", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, certs)
@@ -809,8 +786,7 @@ func (s *Service) handleRotateCertificate(c *gin.Context) {
 	}
 	id := c.Param("id")
 	if err := s.ziti().RotateCertificate(c.Request.Context(), id); err != nil {
-		s.logger.Error("failed to rotate certificate", zap.String("id", id), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to rotate certificate", err), s.logger)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "certificate rotated successfully"})

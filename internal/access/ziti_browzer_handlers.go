@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -49,8 +50,7 @@ func (s *Service) handleEnableBrowZer(c *gin.Context) {
 		s.config.BrowZerClientID,
 	)
 	if err != nil {
-		s.logger.Error("Failed to enable BrowZer", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to enable BrowZer", err), s.logger)
 		return
 	}
 
@@ -66,8 +66,7 @@ func (s *Service) handleDisableBrowZer(c *gin.Context) {
 
 	err := s.ziti().DisableBrowZer(c.Request.Context())
 	if err != nil {
-		s.logger.Error("Failed to disable BrowZer", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to disable BrowZer", err), s.logger)
 		return
 	}
 
@@ -119,8 +118,7 @@ func (s *Service) handleEnableBrowZerOnService(c *gin.Context) {
 	}
 
 	if err := s.ziti().PatchServiceRoleAttributes(c.Request.Context(), zitiServiceID, attrs); err != nil {
-		s.logger.Error("Failed to enable BrowZer on service", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to enable BrowZer on service", err), s.logger)
 		return
 	}
 
@@ -253,8 +251,7 @@ func (s *Service) handleDisableBrowZerOnService(c *gin.Context) {
 	}
 
 	if err := s.ziti().PatchServiceRoleAttributes(c.Request.Context(), zitiServiceID, filtered); err != nil {
-		s.logger.Error("Failed to disable BrowZer on service", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to disable BrowZer on service", err), s.logger)
 		return
 	}
 

@@ -373,7 +373,9 @@ func TestHandleReviewGroupRequest_InvalidDecision(t *testing.T) {
 	svc := &Service{logger: zap.NewNop()}
 	svc.handleReviewGroupRequest(c)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// An unrecognized decision is client input, so it is a 400 (validation),
+	// not a 500. The message is safe to surface.
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "invalid decision")
 }
 

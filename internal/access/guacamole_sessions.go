@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -302,8 +303,7 @@ func (s *Service) handleListActiveGuacSessions(c *gin.Context) {
 
 	sessions, err := s.guacamoleClient.ListActiveSessions(c.Request.Context())
 	if err != nil {
-		s.logger.Error("handleListActiveGuacSessions: failed to list active sessions", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("handleListActiveGuacSessions: failed to list active sessions", err), s.logger)
 		return
 	}
 
@@ -413,7 +413,7 @@ func (s *Service) handleTerminateGuacSession(c *gin.Context) {
 	if err := s.guacamoleClient.TerminateSession(ctx, activeConnID); err != nil {
 		s.logger.Error("handleTerminateGuacSession: failed to terminate session",
 			zap.String("active_conn_id", activeConnID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("terminate guac session", err), s.logger)
 		return
 	}
 
@@ -496,7 +496,7 @@ func (s *Service) handleShareGuacSession(c *gin.Context) {
 		}
 		s.logger.Error("handleShareGuacSession: ShareActiveConnection failed",
 			zap.String("active_conn_id", activeConnID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("share guac session", err), s.logger)
 		return
 	}
 

@@ -74,6 +74,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Removed — that duplicate turned out to be unwired, security-divergent dead code
   and was deleted.)**
 
+### Security
+
+- **Closed ~170 server-error information-disclosure sites: 5xx responses no
+  longer leak `err.Error()` to clients.** Handlers across 30+ files (access/Ziti,
+  identity MFA/risk, vault, credentials, audit, organization, portal, oauth
+  client-management) were returning the raw wrapped error
+  (`c.JSON(500, gin.H{"error": err.Error()})`) — which can expose SQL fragments,
+  hostnames, driver text, and internal paths. Every 5xx `err.Error()` leak was
+  migrated to the typed renderer `apperrors.HandleErrorWithLogger(c,
+  apperrors.Internal("<action>", err), logger)`, which returns a safe, typed body
+  (`{"error":"INTERNAL_ERROR","message":"<action>"}`) to the client while logging
+  the real cause server-side with request-id/path context. Where a handler
+  already logged the error immediately before leaking it, that now-redundant log
+  line was removed to avoid double-logging (the renderer logs). Protocol
+  endpoints kept their RFC 6749 shape (e.g. the OAuth authorize/consent path
+  still returns `{"error":"server_error"}`, now with a static
+  `error_description` instead of the raw error). A count check enforces zero
+  remaining 5xx `err.Error()` leaks. **Surfaced and fixed a latent bug in the
+  process:** `portal.ReviewGroupRequest` returned its "invalid decision"
+  *validation* error as a 500 leak; it now returns a typed `ErrInvalidDecision`
+  sentinel that the handler maps to a proper 400. `go build ./...`,
+  `go vet ./...`, and the touched-package tests all pass.
+
 ### Removed
 
 - **Deleted a dead, security-divergent duplicate OAuth/OIDC pipeline

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/config"
@@ -1319,7 +1320,7 @@ func (s *Service) handleListEvents(c *gin.Context) {
 
 	events, total, err := s.QueryEvents(c.Request.Context(), query)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list events", err), s.logger)
 		return
 	}
 
@@ -1335,7 +1336,7 @@ func (s *Service) handleLogEvent(c *gin.Context) {
 	}
 
 	if err := s.LogEvent(c.Request.Context(), &event); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("log event", err), s.logger)
 		return
 	}
 
@@ -1390,7 +1391,7 @@ func (s *Service) handleGetStatistics(c *gin.Context) {
 
 	stats, err := s.GetEventStatistics(c.Request.Context(), startDate, endDate)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get statistics", err), s.logger)
 		return
 	}
 
@@ -1413,7 +1414,7 @@ func (s *Service) handleListReports(c *gin.Context) {
 
 	reports, total, err := s.ListComplianceReports(c.Request.Context(), offset, limit)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list reports", err), s.logger)
 		return
 	}
 
@@ -1435,7 +1436,7 @@ func (s *Service) handleGenerateReport(c *gin.Context) {
 
 	report, err := s.GenerateComplianceReport(c.Request.Context(), req.Type, req.StartDate, req.EndDate)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("generate report", err), s.logger)
 		return
 	}
 
@@ -1528,7 +1529,7 @@ func (s *Service) handleExportEvents(c *gin.Context) {
 
 	events, _, err := s.QueryEvents(c.Request.Context(), query)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("export events", err), s.logger)
 		return
 	}
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // ========================================
@@ -17,7 +18,7 @@ func (s *Service) handleListHardwareTokens(c *gin.Context) {
 
 	tokens, err := s.ListHardwareTokens(c.Request.Context(), status, assignedTo)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list hardware tokens", err), s.logger)
 		return
 	}
 
@@ -156,7 +157,7 @@ func (s *Service) handleGetTokenEvents(c *gin.Context) {
 
 	events, err := s.GetTokenEvents(c.Request.Context(), tokenID, 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get token events", err), s.logger)
 		return
 	}
 
@@ -299,7 +300,7 @@ func (s *Service) handleListDeviceTrustRequests(c *gin.Context) {
 
 	requests, total, err := s.ListDeviceTrustRequests(c.Request.Context(), status, requestedUserID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list device trust requests", err), s.logger)
 		return
 	}
 
@@ -377,7 +378,7 @@ func (s *Service) handleBulkRejectDeviceTrust(c *gin.Context) {
 func (s *Service) handleGetDeviceTrustSettings(c *gin.Context) {
 	settings, err := s.GetDeviceTrustSettings(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get device trust settings", err), s.logger)
 		return
 	}
 
@@ -462,7 +463,7 @@ func (s *Service) handleListBypassCodes(c *gin.Context) {
 
 	codes, total, err := s.ListBypassCodes(c.Request.Context(), requestedUserID, status, activeOnly, 50, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list bypass codes", err), s.logger)
 		return
 	}
 
@@ -523,7 +524,7 @@ func (s *Service) handleVerifyBypassCode(c *gin.Context) {
 
 	valid, err := s.VerifyBypassCode(c.Request.Context(), userID, req.Code, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("verify bypass code", err), s.logger)
 		return
 	}
 
@@ -564,7 +565,7 @@ func (s *Service) handleGetBypassAuditLog(c *gin.Context) {
 
 	entries, err := s.GetBypassAuditLog(c.Request.Context(), requestedUserID, 100, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get bypass audit log", err), s.logger)
 		return
 	}
 
@@ -632,7 +633,7 @@ func (s *Service) handleCreateQRLoginSession(c *gin.Context) {
 
 	session, err := s.CreateQRLoginSession(c.Request.Context(), c.ClientIP(), browserInfo)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create q r login session", err), s.logger)
 		return
 	}
 
@@ -723,7 +724,7 @@ func (s *Service) handleGetPasswordlessPreferences(c *gin.Context) {
 
 	prefs, err := s.GetPasswordlessPreferences(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get passwordless preferences", err), s.logger)
 		return
 	}
 
@@ -756,7 +757,7 @@ func (s *Service) handleGetBiometricPreferences(c *gin.Context) {
 
 	prefs, err := s.GetBiometricPreferences(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get biometric preferences", err), s.logger)
 		return
 	}
 
@@ -805,7 +806,7 @@ func (s *Service) handleDisableBiometricOnly(c *gin.Context) {
 func (s *Service) handleListBiometricPolicies(c *gin.Context) {
 	policies, err := s.ListBiometricPolicies(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list biometric policies", err), s.logger)
 		return
 	}
 
@@ -862,7 +863,7 @@ func (s *Service) handleGetPlatformAuthenticators(c *gin.Context) {
 
 	authenticators, err := s.GetUserPlatformAuthenticators(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("get platform authenticators", err), s.logger)
 		return
 	}
 

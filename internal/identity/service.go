@@ -4701,7 +4701,7 @@ func (s *Service) handleAdminResetPassword(c *gin.Context) {
 				zap.String("target_user_id", userID),
 				zap.String("source", *source),
 				zap.Error(err))
-			c.JSON(500, gin.H{"error": "Failed to reset directory password: " + err.Error()})
+			c.JSON(500, gin.H{"error": "Failed to reset directory password"})
 			return
 		}
 

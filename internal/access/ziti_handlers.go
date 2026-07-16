@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/orgctx"
@@ -199,8 +200,7 @@ func (s *Service) handleCreateZitiService(c *gin.Context) {
 
 	zitiID, err := s.ziti().CreateService(c.Request.Context(), req.Name, attrs)
 	if err != nil {
-		s.logger.Error("Failed to create ziti service", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to create ziti service", err), s.logger)
 		return
 	}
 
@@ -344,8 +344,7 @@ func (s *Service) handleCreateZitiIdentity(c *gin.Context) {
 
 	zitiID, enrollmentJWT, err := s.ziti().CreateIdentity(c.Request.Context(), req.Name, req.IdentityType, req.Attributes)
 	if err != nil {
-		s.logger.Error("Failed to create ziti identity", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to create ziti identity", err), s.logger)
 		return
 	}
 
@@ -479,8 +478,7 @@ func (s *Service) handleEnableZitiOnRoute(c *gin.Context) {
 	}
 
 	if err := s.ziti().SetupZitiForRoute(c.Request.Context(), routeID, req.ServiceName, req.Host, req.Port); err != nil {
-		s.logger.Error("Failed to enable Ziti on route", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to enable Ziti on route", err), s.logger)
 		return
 	}
 
@@ -511,8 +509,7 @@ func (s *Service) handleDisableZitiOnRoute(c *gin.Context) {
 	}
 
 	if err := s.ziti().TeardownZitiForRoute(c.Request.Context(), routeID); err != nil {
-		s.logger.Error("Failed to disable Ziti on route", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("Failed to disable Ziti on route", err), s.logger)
 		return
 	}
 

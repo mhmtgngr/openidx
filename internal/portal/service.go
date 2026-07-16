@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,11 +13,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 	"go.uber.org/zap"
 
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/orgctx"
 )
+
+// ErrInvalidDecision is returned when a group-request review decision is not one
+// of the accepted values. It is a client-input (validation) error, so handlers
+// map it to HTTP 400 rather than a generic 500.
+var ErrInvalidDecision = errors.New("invalid decision: must be 'approved' or 'denied'")
 
 // UserApplication represents an application assigned to a user
 type UserApplication struct {
@@ -422,7 +429,7 @@ func (s *Service) GetAccessOverview(ctx context.Context, userID string) (*Access
 // ReviewGroupRequest allows an admin to approve or deny a group join request.
 func (s *Service) ReviewGroupRequest(ctx context.Context, requestID, reviewerID, decision, comments string) error {
 	if decision != "approved" && decision != "denied" {
-		return fmt.Errorf("invalid decision: must be 'approved' or 'denied'")
+		return ErrInvalidDecision
 	}
 
 	now := time.Now().UTC()
@@ -535,8 +542,7 @@ func (s *Service) handleRequestGroupJoin(c *gin.Context) {
 
 	err := s.RequestGroupJoin(c.Request.Context(), userIDStr, req.GroupID, req.Justification)
 	if err != nil {
-		s.logger.Error("failed to request group join", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to request group join", err), s.logger)
 		return
 	}
 
@@ -595,8 +601,11 @@ func (s *Service) handleReviewGroupRequest(c *gin.Context) {
 
 	err := s.ReviewGroupRequest(c.Request.Context(), requestID, reviewerID, req.Decision, req.Comments)
 	if err != nil {
-		s.logger.Error("failed to review group request", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if errors.Is(err, ErrInvalidDecision) {
+			apperrors.HandleError(c, apperrors.ValidationError(err.Error()))
+			return
+		}
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to review group request", err), s.logger)
 		return
 	}
 
@@ -779,8 +788,7 @@ func (s *Service) handleRegisterDevice(c *gin.Context) {
 	device, err := s.RegisterDevice(c.Request.Context(), userID, req.Name, req.Fingerprint,
 		c.ClientIP(), c.GetHeader("User-Agent"), req.Location)
 	if err != nil {
-		s.logger.Error("failed to register device", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to register device", err), s.logger)
 		return
 	}
 
@@ -840,8 +848,7 @@ func (s *Service) handleRequestDeviceTrust(c *gin.Context) {
 	c.ShouldBindJSON(&req)
 
 	if err := s.RequestDeviceTrust(c.Request.Context(), userID, deviceID, req.Justification); err != nil {
-		s.logger.Error("failed to request device trust", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("failed to request device trust", err), s.logger)
 		return
 	}
 

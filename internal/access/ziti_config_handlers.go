@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	apperrors "github.com/openidx/openidx/internal/common/errors"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,7 +19,7 @@ func (s *Service) handleListConfigTypes(c *gin.Context) {
 	}
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/config-types?limit=500", nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list config types", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -54,7 +55,7 @@ func (s *Service) handleListConfigs(c *gin.Context) {
 	}
 	respData, statusCode, err := s.ziti().MgmtRequest("GET", "/edge/management/v1/configs?limit=500", nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("list configs", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -112,7 +113,7 @@ func (s *Service) handleCreateConfig(c *gin.Context) {
 	body, _ := json.Marshal(payload)
 	respData, statusCode, err := s.ziti().MgmtRequest("POST", "/edge/management/v1/configs", body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("create config", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusCreated && statusCode != http.StatusOK {
@@ -143,7 +144,7 @@ func (s *Service) handleUpdateConfig(c *gin.Context) {
 	body, _ := json.Marshal(payload)
 	respData, statusCode, err := s.ziti().MgmtRequest("PUT", "/edge/management/v1/configs/"+id, body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("update config", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK {
@@ -160,7 +161,7 @@ func (s *Service) handleDeleteConfig(c *gin.Context) {
 	id := c.Param("id")
 	_, statusCode, err := s.ziti().MgmtRequest("DELETE", "/edge/management/v1/configs/"+id, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apperrors.HandleErrorWithLogger(c, apperrors.Internal("delete config", err), s.logger)
 		return
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusNoContent {
