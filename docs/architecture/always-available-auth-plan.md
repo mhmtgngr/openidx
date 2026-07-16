@@ -177,9 +177,22 @@ flat, only issue/refresh error rate rises.
 6. **Add a read replica and route read-mostly auth queries to it.** Login needs
    the primary (writes a session), but JWKS key reads, discovery, user lookups for
    MFA challenge, and policy reads can hit a **reader endpoint**. This removes read
-   load from the primary and gives a warm standby. Introduce an optional
-   `DATABASE_READ_URL` in `internal/common/database` and a read-only pool.
-   *Effort: M–L.*
+   load from the primary and gives a warm standby.
+   - ✅ **Done — read-pool seam.** `internal/common/database` now opens an optional
+     second pool from `DATABASE_READ_URL` and exposes `(*PostgresDB).Reader()`,
+     which returns the replica pool when configured and **falls back to the
+     primary** otherwise (correct by construction — a call site can always use
+     `Reader()` safely). Replica unavailability **never fails startup** (degrades
+     to primary-only) and is surfaced by a **non-critical** `database_replica`
+     health check (a replica outage degrades health but does not fail readiness).
+     Wired via the external-secret store (`externalSecrets.readReplica`).
+     Tests: `read_replica_test.go`, `read_replica_checker_test.go`.
+   - **Deliberately NOT auto-routed yet.** Query call sites still use the primary
+     `Pool`; adoption is intentionally per-query because reading from a lagged
+     replica is only safe where read-after-write does not matter. The signing-key
+     load path, for instance, must NOT move to the replica (a just-rotated key
+     could be missing on a lagged standby). Migrate read-mostly reports
+     (audit/governance dashboards) first. *Effort remaining: per-call-site.*
 
 ### Tier 2 — Degrade gracefully, don't fall over
 

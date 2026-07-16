@@ -28,6 +28,10 @@ externalSecrets:
     name: ""
     kind: ClusterSecretStore
   remoteKeyPrefix: "openidx"
+  # When true, also pull <remoteKeyPrefix>/database-read-url into DATABASE_READ_URL
+  # so services open a read-replica pool (PostgresDB.Reader()). Off by default;
+  # a replica outage transparently falls back to the primary.
+  readReplica: false
 
 global:
   # Image namespace. Matches the GHCR pipeline in .github/workflows/docker.yml

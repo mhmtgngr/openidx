@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `database.statementTimeout`), set in `values-prod.yaml`. Tests:
     `internal/common/database/pool_config_test.go`. Added a Postgres failover
     game-day to the DR runbook.
+  - **Optional read-replica pool.** `DATABASE_READ_URL` opens a second read-only
+    pool exposed via `(*PostgresDB).Reader()`, which falls back to the primary
+    when no replica is configured (correct-by-construction call sites). A replica
+    outage never fails startup (degrades to primary-only) and is surfaced by a
+    new non-critical `database_replica` health check. Delivered via the external
+    secret store (`externalSecrets.readReplica`). Query call sites are not
+    auto-routed — adoption is per-query where read-after-write is not required.
+    Tests: `read_replica_test.go`, `read_replica_checker_test.go`.
 
 ## [1.27.0] - 2026-07-13
 

@@ -21,9 +21,35 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// PostgresDB wraps the pgx connection pool
+// PostgresDB wraps the pgx connection pool.
+//
+// Pool is the primary (read-write) pool and MUST be used for all writes and for
+// any read that must observe its own prior write (read-after-write). readPool,
+// when non-nil, is an OPTIONAL pool pointed at a read replica / reader endpoint;
+// callers opt into it via Reader() for read-mostly, lag-tolerant queries (e.g.
+// signing-key/discovery reads, dashboards, audit/governance reports). When no
+// replica is configured, Reader() returns the primary pool, so call sites are
+// always correct by construction and simply lose the offload benefit.
 type PostgresDB struct {
-	Pool *pgxpool.Pool
+	Pool     *pgxpool.Pool
+	readPool *pgxpool.Pool
+}
+
+// Reader returns the pool to use for read-mostly, replication-lag-tolerant
+// queries. It returns the read-replica pool when one is configured
+// (DATABASE_READ_URL), otherwise the primary pool. NEVER use Reader() for writes
+// or for a read that must see a just-committed write from the same request — use
+// Pool for those.
+func (db *PostgresDB) Reader() *pgxpool.Pool {
+	if db.readPool != nil {
+		return db.readPool
+	}
+	return db.Pool
+}
+
+// HasReadReplica reports whether a distinct read-replica pool is configured.
+func (db *PostgresDB) HasReadReplica() bool {
+	return db.readPool != nil
 }
 
 // PostgresTLSConfig holds TLS configuration for PostgreSQL connections
@@ -67,6 +93,14 @@ func envDuration(name string, def time.Duration) time.Duration {
 
 // NewPostgres creates a new PostgreSQL connection pool.
 // An optional PostgresTLSConfig can be provided to configure SSL parameters.
+//
+// If DATABASE_READ_URL is set, a second (read-only) pool is opened against it and
+// exposed via (*PostgresDB).Reader() for read-mostly, replication-lag-tolerant
+// queries. The same TLS config and pool settings are applied. If the replica
+// can't be reached at startup, NewPostgres logs nothing here (no logger) but
+// returns an error only for the PRIMARY — a bad replica must not take the service
+// down, so a replica ping failure degrades to "no replica" (Reader() falls back
+// to the primary) rather than failing startup.
 func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, error) {
 	// Apply TLS config to connection string if provided
 	if len(tlsCfg) > 0 {
@@ -92,7 +126,44 @@ func NewPostgres(connString string, tlsCfg ...PostgresTLSConfig) (*PostgresDB, e
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &PostgresDB{Pool: pool}, nil
+	db := &PostgresDB{Pool: pool}
+
+	// Optional read-replica pool. A replica is a pure optimization + warm standby;
+	// its unavailability must never fail service startup, so we degrade to
+	// primary-only (Reader() falls back to Pool) if it can't be opened/pinged.
+	if readURL := os.Getenv("DATABASE_READ_URL"); readURL != "" {
+		if len(tlsCfg) > 0 {
+			readURL = applyPostgresTLS(readURL, tlsCfg[0])
+		}
+		if rp, rerr := openReadPool(readURL); rerr == nil {
+			db.readPool = rp
+		}
+		// On error: leave db.readPool nil. The audit checker (registered
+		// separately) surfaces replica health; startup continues on the primary.
+	}
+
+	return db, nil
+}
+
+// openReadPool builds and pings a read-only pool for the reader endpoint. It uses
+// the same buildPoolConfig (pool sizing, timeouts, RLS checkout — set_config is
+// read-only-safe on a hot standby) as the primary.
+func openReadPool(readURL string) (*pgxpool.Pool, error) {
+	cfg, err := buildPoolConfig(readURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rp, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := rp.Ping(ctx); err != nil {
+		rp.Close()
+		return nil, err
+	}
+	return rp, nil
 }
 
 // buildPoolConfig parses connString and applies OpenIDX's pool sizing, timeout,
@@ -182,8 +253,22 @@ func applyPostgresTLS(connString string, cfg PostgresTLSConfig) string {
 
 // Close closes the connection pool
 func (db *PostgresDB) Close() error {
+	if db.readPool != nil {
+		db.readPool.Close()
+	}
 	db.Pool.Close()
 	return nil
+}
+
+// PingRead verifies the read-replica connection is alive. Returns nil when no
+// replica is configured (nothing to check).
+func (db *PostgresDB) PingRead() error {
+	if db.readPool == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return db.readPool.Ping(ctx)
 }
 
 // Ping verifies the database connection is alive

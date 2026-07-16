@@ -269,6 +269,7 @@ func main() {
 	healthService := newhealth.NewHealthService(log)
 	healthService.SetVersion(Version)
 	healthService.RegisterCheck(newhealth.NewPostgresChecker(db))
+	healthService.RegisterCheck(newhealth.NewReadReplicaChecker(db))
 	healthService.RegisterCheck(newhealth.NewRedisChecker(redis))
 
 	// Register standard health check endpoints (/health, /health/ready, /health/live)
