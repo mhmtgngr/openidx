@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue-path sites (authorization-code creation, refresh-grant user-status
   check), so a database failover degrades login to a brief, retryable brownout
   instead of a hammered 500. Tests: `internal/oauth/unavailable_test.go`.
+  - **Redis revocation-check circuit breaker.** `IsAccessTokenRevoked` (the
+    hot-path revocation read used by token introspection/verification) now runs
+    its Redis reads through a circuit breaker (`oauth-redis-revocation`,
+    threshold 5, 5s reset). During a Redis brownout the breaker opens and the
+    check fails fast instead of every request paying the 3s Redis read timeout.
+    Callers already fail closed on error, so opening the breaker changes cost, not
+    security. Observable via `openidx_circuit_breaker_state{name=
+    "oauth-redis-revocation"}` (existing `CircuitBreakerOpen` alert). Test:
+    `internal/oauth/revocation_breaker_test.go`.
 
 ## [1.27.0] - 2026-07-13
 

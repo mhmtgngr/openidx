@@ -34,6 +34,7 @@ import (
 	"github.com/openidx/openidx/internal/common/database"
 	"github.com/openidx/openidx/internal/common/middleware"
 	"github.com/openidx/openidx/internal/common/orgctx"
+	"github.com/openidx/openidx/internal/common/resilience"
 	"github.com/openidx/openidx/internal/common/secretcrypt"
 	"github.com/openidx/openidx/internal/identity"
 	"github.com/openidx/openidx/internal/risk"
@@ -159,6 +160,11 @@ type Service struct {
 	riskService      *risk.Service
 	webhookService   WebhookPublisher
 	authorizeHandler *AuthorizeHandler
+	// redisBreaker fast-fails Redis-backed revocation checks when Redis is
+	// unhealthy, so a Redis brownout doesn't make every token op pay the full
+	// 3s read timeout (a latency cliff on the verify/introspect hot path). It is
+	// shared per-service and distributed via Redis state when available.
+	redisBreaker *resilience.CircuitBreaker
 }
 
 // WebhookPublisher defines the interface for publishing webhook events
@@ -280,6 +286,21 @@ func NewService(db *database.PostgresDB, redis *database.RedisClient, cfg *confi
 
 	// Initialize authorize handler
 	svc.authorizeHandler = NewAuthorizeHandler(svc, svc.logger)
+
+	// Circuit breaker for Redis-backed revocation checks: after 5 consecutive
+	// failures, fast-fail for 5s instead of paying the Redis read timeout on
+	// every request during a Redis brownout. State is shared across replicas via
+	// Redis when a client is available.
+	breakerCfg := resilience.CircuitBreakerConfig{
+		Name:         "oauth-redis-revocation",
+		Threshold:    5,
+		ResetTimeout: 5 * time.Second,
+		Logger:       svc.logger,
+	}
+	if redis != nil {
+		breakerCfg.RedisClient = redis.Client
+	}
+	svc.redisBreaker = resilience.NewCircuitBreaker(breakerCfg)
 
 	// Build the signing snapshot (active key + verification set + JWKS) and
 	// keep it fresh so rotations by the admin service take effect without a
@@ -811,43 +832,65 @@ func (s *Service) MarkUserTokensRevoked(ctx context.Context, userID string) erro
 // blacklist entry exists, or (b) the user's "revoke everything before
 // timestamp T" marker is newer than the token's `iat`. When Redis is
 // unavailable it returns the error so the caller can fail closed.
+//
+// The Redis reads run through a circuit breaker: after repeated Redis failures
+// the breaker opens and this returns fast (an error) instead of every request
+// paying the Redis read timeout during a brownout. Callers already fail closed
+// on error, so opening the breaker is safe — it just makes the failure cheap.
 func (s *Service) IsAccessTokenRevoked(ctx context.Context, token string, userID string, issuedAt int64) (bool, error) {
 	if s.redis == nil || s.redis.Client == nil {
 		return false, fmt.Errorf("redis not configured for token revocation")
 	}
 
-	// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
-	if n, err := s.redis.Client.Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
-		return false, err
-	} else if n > 0 {
-		return true, nil
-	}
-
-	// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
-	if userID != "" && issuedAt > 0 {
-		v, err := s.redis.Client.Get(ctx, userTokensRevokedAtKey(userID)).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return false, err
+	var revoked bool
+	err := s.revocationBreakerExec(func() error {
+		// Per-token blacklist (set by /oauth/revoke and /oauth/logout).
+		if n, err := s.redis.Client.Exists(ctx, accessTokenBlacklistKey(token)).Result(); err != nil {
+			return err
+		} else if n > 0 {
+			revoked = true
+			return nil
 		}
-		if v != "" {
-			cutoff, perr := strconv.ParseInt(v, 10, 64)
-			// `<=` means "tokens issued in the same wall-clock second as
-			// (or before) the logout-all call are revoked." This is the
-			// right semantic for /oauth/logout-all: every outstanding
-			// access token that existed at the moment the user said
-			// "kill everything" should stop working — including ones
-			// issued in the very same second. The previous
-			// inter-subtest-pollution worry about `handleLogout` bumping
-			// the cutoff went away when handleLogout switched to a
-			// per-token blacklist for single-session logout (only
-			// logout-all bumps the cutoff now).
-			if perr == nil && issuedAt <= cutoff {
-				return true, nil
+
+		// Per-user "revoke everything before now" marker (set by /oauth/logout-all).
+		if userID != "" && issuedAt > 0 {
+			v, err := s.redis.Client.Get(ctx, userTokensRevokedAtKey(userID)).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return err
+			}
+			if v != "" {
+				cutoff, perr := strconv.ParseInt(v, 10, 64)
+				// `<=` means "tokens issued in the same wall-clock second as
+				// (or before) the logout-all call are revoked." This is the
+				// right semantic for /oauth/logout-all: every outstanding
+				// access token that existed at the moment the user said
+				// "kill everything" should stop working — including ones
+				// issued in the very same second. The previous
+				// inter-subtest-pollution worry about `handleLogout` bumping
+				// the cutoff went away when handleLogout switched to a
+				// per-token blacklist for single-session logout (only
+				// logout-all bumps the cutoff now).
+				if perr == nil && issuedAt <= cutoff {
+					revoked = true
+				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return false, err
 	}
+	return revoked, nil
+}
 
-	return false, nil
+// revocationBreakerExec runs a Redis revocation read through the circuit
+// breaker when one is configured, otherwise runs it directly. Redis.Nil
+// (key-miss) is handled inside fn and never surfaces as a breaker failure.
+func (s *Service) revocationBreakerExec(fn func() error) error {
+	if s.redisBreaker == nil {
+		return fn()
+	}
+	return s.redisBreaker.ExecuteError(fn)
 }
 
 // JWT Token Generation

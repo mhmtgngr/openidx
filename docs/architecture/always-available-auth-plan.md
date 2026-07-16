@@ -218,12 +218,25 @@ flat, only issue/refresh error rate rises.
    path so a slow Postgres/Redis doesn't exhaust the pool and cascade. The DB dial
    is now bounded (Tier 1.4, `DB_CONNECT_TIMEOUT`), and a circuit-breaker package
    already exists (`internal/common/resilience`, used for outbound OPA/webhooks/
-   ziti/guacamole). Remaining: wrap the Redis/ES issue-path calls in a breaker and
-   add per-call `context` deadlines. *Effort: M.*
-9. **Idempotent, replayable side effects.** Refresh-token rotation, session
-   creation, and audit writes should be safe to retry after a mid-request failover
-   (audit already went async + outbox in #483 — extend that discipline to session
-   writes). *Effort: M.*
+   ziti/guacamole).
+   - ✅ **Done — Redis revocation-check breaker.** `IsAccessTokenRevoked` (the
+     hot-path revocation read used by introspection and access verification) now
+     runs its Redis reads through a circuit breaker (`oauth-redis-revocation`,
+     threshold 5, 5s reset). During a Redis brownout the breaker opens and the
+     check fails *fast* instead of every request paying the 3s Redis read timeout
+     — a latency-cliff fix. Callers already fail closed on error, so opening the
+     breaker changes cost, not security. Observable via the existing
+     `openidx_circuit_breaker_state{name="oauth-redis-revocation"}` metric and
+     `CircuitBreakerOpen` alert. Test:
+     `internal/oauth/revocation_breaker_test.go`. *Remaining: ES issue-path calls.*
+9. **Idempotent, replayable side effects.**
+   - ✅ **Already crash-safe.** Refresh-token rotation creates the new token
+     *before* revoking the old one (`handleRefreshTokenGrant`), so a crash between
+     the two leaves the user with a working refresh token rather than none. Audit
+     writes are async + outbox (#483). Session-activity updates are debounced
+     (`SetNX`) and best-effort (backgrounded, never block the response). No change
+     needed; documented here as the deliberate design. *Effort: done for the auth
+     path; extend the outbox discipline to any future session-write side effects.*
 
 ### Tier 3 — Remove the ultimate SPOF: the single VM
 
