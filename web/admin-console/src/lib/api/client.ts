@@ -13,9 +13,16 @@ export interface ApiResponse<T> {
   error?: ApiError
 }
 
-// Token storage
-const TOKEN_KEY = 'openidx_access_token'
-const REFRESH_TOKEN_KEY = 'openidx_refresh_token'
+// Token storage.
+//
+// IMPORTANT: these keys MUST match what the auth context (lib/auth.tsx) actually
+// writes at login — it stores the access token under 'token' and the refresh
+// token under 'refresh_token'. This client historically used different keys
+// ('openidx_access_token' / 'openidx_refresh_token'), which meant that if any
+// page wired this client it would read an empty token and 401 on every request.
+// Keep these aligned with auth.tsx.
+const TOKEN_KEY = 'token'
+const REFRESH_TOKEN_KEY = 'refresh_token'
 
 export const getToken = (): string | null => {
   return localStorage.getItem(TOKEN_KEY)
@@ -66,12 +73,28 @@ apiClient.interceptors.response.use(
       const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
       if (refreshToken) {
         try {
-          const response = await axios.post('/api/v1/identity/refresh', {
-            refresh_token: refreshToken,
-          })
+          // Refresh via the OAuth token endpoint (form-encoded, grant_type=
+          // refresh_token) — the same path the auth context uses. The previous
+          // '/api/v1/identity/refresh' route does NOT exist on the backend, so
+          // every refresh here 404'd and logged the user out. The oauth issuer
+          // base may differ from the API base, so target it explicitly.
+          const oauthBase = import.meta.env.VITE_OAUTH_URL || import.meta.env.VITE_API_URL || ''
+          const clientId = import.meta.env.VITE_OAUTH_CLIENT_ID || 'admin-console'
+          const response = await axios.post(
+            `${oauthBase}/oauth/token`,
+            new URLSearchParams({
+              grant_type: 'refresh_token',
+              client_id: clientId,
+              refresh_token: refreshToken,
+            }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+          )
 
-          const { access_token } = response.data
+          const { access_token, refresh_token } = response.data
           setToken(access_token)
+          if (refresh_token) {
+            localStorage.setItem(REFRESH_TOKEN_KEY, refresh_token)
+          }
 
           if (originalRequest.headers) {
             originalRequest.headers.Authorization = `Bearer ${access_token}`
