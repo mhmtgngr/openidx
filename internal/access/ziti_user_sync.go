@@ -228,32 +228,47 @@ func (zm *ZitiManager) hasUserTrustedDevice(ctx context.Context, userID string) 
 
 // buildUserAttributes combines group names with device trust attribute.
 func (zm *ZitiManager) buildUserAttributes(ctx context.Context, userID string) ([]string, error) {
-	attrs, err := zm.getUserGroupNames(ctx, userID)
+	groups, err := zm.getUserGroupNames(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get groups for user %s: %w", userID, err)
 	}
-	if attrs == nil {
-		attrs = []string{}
-	}
 
-	// Add #device-trusted if user has any trusted device
+	// #device-trusted iff the user has any trusted device.
 	hasTrusted, err := zm.hasUserTrustedDevice(ctx, userID)
 	if err != nil {
 		zm.logger.Warn("Failed to check device trust", zap.String("user_id", userID), zap.Error(err))
-	} else if hasTrusted {
+		hasTrusted = false
+	}
+
+	// #browzer-users when BrowZer is enabled.
+	_, browzer := zm.browzerAuthPolicy(ctx)
+
+	return assembleAttributes(groups, hasTrusted, browzer), nil
+}
+
+// assembleAttributes is the pure attribute-assembly for a synced Ziti identity,
+// factored out of buildUserAttributes so the policy can be unit-tested without a
+// database. The canonical set is:
+//   - the user's group names,
+//   - #enrolled-users on EVERY identity (Tier 1 dial gate: any enrolled user),
+//   - #device-trusted iff the user has a trusted device (Tier 2 dial gate),
+//   - #browzer-users iff BrowZer is enabled.
+//
+// This is the whole roleAttributes set; the periodic group-attribute reconcile
+// replaces roleAttributes wholesale, so anything omitted here is stripped off.
+func assembleAttributes(groups []string, deviceTrusted, browzer bool) []string {
+	attrs := make([]string, 0, len(groups)+3)
+	attrs = append(attrs, groups...)
+	// Every enrolled identity carries #enrolled-users so the Tier-1 dial policy
+	// (#enrolled-users -> Tier-1 services) applies to any logged-in user.
+	attrs = append(attrs, "enrolled-users")
+	if deviceTrusted {
 		attrs = append(attrs, "device-trusted")
 	}
-
-	// When BrowZer is enabled, every synced identity carries the #browzer-users
-	// role so the BrowZer Dial policy (#browzer-users → #browzer-enabled) applies.
-	// It must be part of the canonical attribute set, otherwise the periodic
-	// group-attribute reconcile (which replaces roleAttributes wholesale) would
-	// strip it back off.
-	if _, ok := zm.browzerAuthPolicy(ctx); ok {
+	if browzer {
 		attrs = append(attrs, "browzer-users")
 	}
-
-	return attrs, nil
+	return attrs
 }
 
 // browzerAuthPolicy returns the BrowZer auth-policy id when BrowZer is enabled,
