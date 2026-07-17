@@ -24,6 +24,13 @@ in this repo:
 > [`tier3b-cutover-runbook.md`](./tier3b-cutover-runbook.md). This guide covers a
 > greenfield install; the cutover runbook covers moving live traffic and data.
 
+> **Going dark (Ziti-first / overlay-only posture)?** The staged, verify-before-
+> cutover procedure — enroll the fleet, drill, cut Tier 2 then Tier 1, and the
+> break-glass undark path — is in
+> [`OPENIDX_ZITI_ARCHITECTURE.md` → Dark platform cutover](./OPENIDX_ZITI_ARCHITECTURE.md#dark-platform-cutover-staged-verify-before-cutover).
+> It is fully opt-in: defaults preserve today's public behavior, and every step
+> is gated by `make dark-drill` and `scripts/dark-mode.sh --verify`.
+
 ---
 
 ## Prerequisites

@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dark platform (Ziti-first / overlay-only posture) — Phases 1-6, fully opt-in.**
+  A staged path to make OpenIDX's own surfaces reachable only over the OpenZiti
+  overlay, defaults preserving today's public behavior at every step. (1)
+  `SERVICE_BIND_ADDR` + `DARK_MODE_TIER1/2` config and `cfg.ListenAddr()` so every
+  service can bind loopback-only (verified live). (2) `#enrolled-users` on every
+  identity + gated `#device-trusted`, and a reconciler `ensureTierDialPolicy`.
+  (3) A single hardened public enroll door `POST /api/v1/access/enroll`
+  (session/token → Ziti enrollment JWT, rate-limited + audited; verified live,
+  fail-closed on every bad path). (4) `DARK_MODE={off|tier2|tier1}` edge route
+  set + `scripts/dark-mode.sh` (`--verify`/`--undark`/`--self-test`) + `make
+  dark-drill`. (5) The reconciler now models OpenIDX's own surfaces as tier'd
+  dark Ziti services via `defaultDarkServices()` (admin-api/governance/audit/
+  provisioning/scim/access → Tier 2 `#device-trusted`; identity self-service +
+  console → Tier 1 `#enrolled-users`; enroll/oauth/jwks never darked), plus
+  `scripts/register-console-dark-app.sh` registering the admin console as a
+  BrowZer dark app (Tier-1 shell, same-origin `/api/*` tunnels to the Tier-2
+  backends). (6) Staged **cutover runbook + break-glass** in
+  `OPENIDX_ZITI_ARCHITECTURE.md` (enroll fleet → drill → cut Tier 2 then Tier 1
+  → `--undark`), linked from `DEPLOYMENT.md`, and **mutation-tested tier
+  invariants** wired into `make dark-drill` (Tier-2 surfaces must be
+  `#device-trusted`; no Tier-0 surface is ever darked; dark upstreams are
+  loopback). Spec/plan under `docs/superpowers/`.
+
 - **Scoped the Tier 3b cutover: `docs/tier3b-cutover-runbook.md`.** The
   availability plan recommended moving prod off the single VM onto the
   already-written EKS/managed path but left the *cutover* itself unsequenced. New

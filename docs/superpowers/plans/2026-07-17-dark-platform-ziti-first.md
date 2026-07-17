@@ -634,7 +634,7 @@ The operator procedure to actually go dark, Tier 2 first, each step gated on `da
 
 **Interfaces:** none (docs).
 
-- [ ] **Step 1: Write the runbook**
+- [x] **Step 1: Write the runbook**
 
 Document, in order:
 1. Enroll the admin fleet (native tunnel or BrowZer); confirm `#device-trusted` via `GET /api/v1/access/my-devices`.
@@ -643,12 +643,12 @@ Document, in order:
 4. Only if verify passes: proceed to prod Tier 2, then repeat for Tier 1.
 5. **Break-glass:** `scripts/dark-mode.sh --undark` (re-seeds `DARK_MODE=off`, prints the `SERVICE_BIND_ADDR` revert) + the sealed out-of-band enroll token. Test the undark path in staging as part of the drill.
 
-- [ ] **Step 2: Cross-check the drill exists and passes**
+- [x] **Step 2: Cross-check the drill exists and passes**
 
 Run: `make dark-drill`
 Expected: green.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/OPENIDX_ZITI_ARCHITECTURE.md docs/DEPLOYMENT.md
@@ -664,7 +664,7 @@ git commit -m "docs: dark-platform staged cutover runbook + break-glass (Tier 2 
 **Interfaces:**
 - Produces: mutation-tested guards: Tier-2 dark services carry `#device-trusted` (not `#enrolled-users`); `defaultDarkServices()` never lists a Tier-0 surface (no `openidx-oauth`/`enroll`/`wellknown`); the seeder's Tier-0 set always includes enroll + well-known.
 
-- [ ] **Step 1: Write the guard tests**
+- [x] **Step 1: Write the guard tests**
 
 ```go
 func TestTier2ServicesRequireDeviceTrust(t *testing.T) {
@@ -692,16 +692,16 @@ func TestNoTier0SurfaceIsDarked(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify they pass**
+- [x] **Step 2: Run to verify they pass**
 
 Run: `go test ./internal/access/ -run 'TestTier2ServicesRequireDeviceTrust|TestNoTier0SurfaceIsDarked' -v`
 Expected: PASS.
 
-- [ ] **Step 3: Mutation check (guard actually bites)**
+- [x] **Step 3: Mutation check (guard actually bites)**
 
 Temporarily set `openidx-admin-api` to `enrolled-users` in `defaultDarkServices()`; rerun; expected FAIL. Revert.
 
-- [ ] **Step 4: Wire into the Makefile**
+- [x] **Step 4: Wire into the Makefile**
 
 ```make
 dark-drill:
@@ -710,7 +710,7 @@ dark-drill:
 	@bash scripts/dark-mode.sh --verify --self-test
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 go build ./... && go vet ./internal/access/
