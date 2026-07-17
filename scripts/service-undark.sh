@@ -23,7 +23,7 @@ for u in $UNITS; do systemctl --user restart "$u" && echo "  restarted $u"; done
 sleep 3
 echo "== external reachability restored =="
 HOSTIP=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -1)
-declare -A P=( [oidx-audit]=8004 [oidx-governance]=8002 [oidx-provisioning]=8003 [oidx-admin-api]=8005 )
+declare -A P=( [oidx-audit]=8004 [oidx-governance]=8002 [oidx-provisioning]=8003 [oidx-admin-api]=8005 [oidx-identity]=8001 )
 for u in $UNITS; do
   p=${P[$u]:-}; [ -n "$p" ] || continue
   c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "http://$HOSTIP:$p/health/live" 2>/dev/null)

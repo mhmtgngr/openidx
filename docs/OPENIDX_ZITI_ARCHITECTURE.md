@@ -574,3 +574,31 @@ need it at 3am.
 - Every dark upstream is loopback (`TestDarkServiceUpstreamsAreLoopback`).
 - `scripts/dark-mode.sh --self-test` proves public-refused + overlay-200 +
   tier-gate on every run, so a cutover can't be green-lit on a false positive.
+
+## Live cutover result (this deployment, Tier 1+2 dark)
+
+Verified on this box: 5 services loopback-bound (dark on the external host IP,
+still served via the local edge + overlay):
+
+| Service | Port | External host-IP | Via edge |
+|---|---|---|---|
+| identity | 8001 | refused (dark) | reachable |
+| governance | 8002 | refused (dark) | reachable |
+| provisioning | 8003 | refused (dark) | reachable |
+| audit | 8004 | refused (dark) | reachable |
+| admin-api | 8005 | refused (dark) | reachable |
+| oauth | 8006 | public (Tier 0) | reachable |
+| access | 8007 | public (Tier 0) | reachable |
+
+**Key finding — darking `identity` does NOT break login.** The oauth service
+holds `identityService *identity.Service` as an **in-process embedded library**
+(`internal/oauth/service.go`), and `handleLogin` calls
+`s.identityService.AuthenticateUser(...)` directly against the DB — not over
+HTTP to `:8001`. So loopback-binding identity's network port has zero effect on
+credential verification. Proven live with identity dark: full auth-code+PKCE
+login issued a real `access_token` (873 chars) + `id_token`.
+
+Cutover tooling: `scripts/service-dark-bind.sh` (per-service loopback bind via a
+systemd drop-in; drill by default, `KEEP=1` persists) and
+`scripts/service-undark.sh` (break-glass revert). Requires binaries that honor
+`SERVICE_BIND_ADDR` (Phase 1); the pre-Phase-1 binaries silently ignored it.

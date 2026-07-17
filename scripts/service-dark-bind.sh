@@ -58,7 +58,8 @@ say "  loopback  http://127.0.0.1:$PORT/health/live -> $LB   (want: 200)"
 
 # Edge check: pick the right public path per service.
 declare -A EDGE=( [oidx-audit]=/api/v1/audit/health [oidx-governance]=/api/v1/governance/health
-  [oidx-provisioning]=/api/v1/provisioning/health [oidx-admin-api]=/api/v1/admin/health )
+  [oidx-provisioning]=/api/v1/provisioning/health [oidx-admin-api]=/api/v1/admin/health
+  [oidx-identity]=/api/v1/identity/health [oidx-access]=/api/v1/access/health )
 EPATH=${EDGE[$UNIT]:-}
 if [ -n "$EPATH" ]; then
   EC=$(curl --resolve openidx.tdv.org:443:127.0.0.1 -k -s -o /dev/null -w '%{http_code}' --max-time 5 "https://openidx.tdv.org$EPATH" 2>/dev/null)
