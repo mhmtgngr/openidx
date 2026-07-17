@@ -410,6 +410,14 @@ func main() {
 
 			if cfg.ZitiReconcilerEnabled {
 				reconciler := access.NewZitiReconciler(db, log, zitiProvider, cfg.ZitiBrowZerHopAddr)
+				// Dark-platform: when a DARK_MODE tier is enabled, the reconciler
+				// also models OpenIDX's OWN surfaces as tier'd overlay-only Ziti
+				// services (host.v1 → loopback, tier dial policy). Inert otherwise.
+				if cfg.DarkModeTier1 || cfg.DarkModeTier2 {
+					reconciler.EnableDefaultDarkServices()
+					log.Info("dark-platform: reconciler will model OpenIDX surfaces as tier'd dark services",
+						zap.Bool("tier1", cfg.DarkModeTier1), zap.Bool("tier2", cfg.DarkModeTier2))
+				}
 				// Process-lifetime context, NOT zitiCtx: an admin-panel reconnect
 				// Swaps the provider slot and cancels zitiCtx, which used to kill
 				// the reconciler loop for good. The loop is cheap and no-ops while
