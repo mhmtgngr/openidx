@@ -1130,3 +1130,17 @@ func BenchmarkLoad(b *testing.B) {
 		_, _ = Load("test-service")
 	}
 }
+
+func TestListenAddrDefaultsToAllInterfaces(t *testing.T) {
+	c := &Config{Port: 8001}
+	if got := c.ListenAddr(); got != ":8001" {
+		t.Errorf("ListenAddr() = %q, want \":8001\"", got)
+	}
+}
+
+func TestListenAddrHonorsBindAddr(t *testing.T) {
+	c := &Config{Port: 8001, BindAddr: "127.0.0.1"}
+	if got := c.ListenAddr(); got != "127.0.0.1:8001" {
+		t.Errorf("ListenAddr() = %q, want \"127.0.0.1:8001\"", got)
+	}
+}

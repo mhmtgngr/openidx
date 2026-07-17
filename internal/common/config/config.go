@@ -29,7 +29,12 @@ type Config struct {
 	ServiceName string `mapstructure:"service_name"`
 	Environment string `mapstructure:"environment"`
 	Port        int    `mapstructure:"port"`
-	LogLevel    string `mapstructure:"log_level"`
+	// BindAddr is the interface the HTTP server binds. Empty (default) means all
+	// interfaces (":<port>", today's behavior); "127.0.0.1" binds loopback-only,
+	// which is how a service goes "dark" (overlay-only reach). See the
+	// dark-platform spec: docs/superpowers/specs/2026-07-17-dark-platform-ziti-first-design.md.
+	BindAddr string `mapstructure:"bind_addr"`
+	LogLevel string `mapstructure:"log_level"`
 
 	// ShutdownTimeoutSeconds bounds the graceful-shutdown drain window for the
 	// HTTP server. Non-positive falls back to 30s (see ShutdownTimeout).
@@ -106,6 +111,15 @@ type Config struct {
 	// DefaultOrgID is the org UUID handed out when DefaultOrgFallback is on.
 	// Defaults to the canonical default-org UUID (migration v25).
 	DefaultOrgID string `mapstructure:"default_org_id"`
+
+	// DarkModeTier1/Tier2 gate the "dark platform" posture: when a tier is dark,
+	// its services bind loopback-only (BindAddr) and their public edge routes are
+	// dropped, so they are reachable only over the OpenZiti overlay. Default
+	// false = today's public behavior. Tier 0 (login/JWKS/enroll) is ALWAYS
+	// public — there is deliberately no flag to dark it (that would brick
+	// bootstrap). See docs/superpowers/specs/2026-07-17-dark-platform-ziti-first-design.md.
+	DarkModeTier1 bool `mapstructure:"dark_mode_tier1"`
+	DarkModeTier2 bool `mapstructure:"dark_mode_tier2"`
 
 	// OpenZiti configuration
 	ZitiEnabled            bool   `mapstructure:"ziti_enabled"`
@@ -489,6 +503,12 @@ func setDefaults(v *viper.Viper, serviceName string) {
 		v.SetDefault("port", 8080)
 	}
 
+	// Bind address + dark-mode flags. Defaults preserve today's public behavior:
+	// empty bind_addr = all interfaces; dark tiers off.
+	v.SetDefault("bind_addr", "")
+	v.SetDefault("dark_mode_tier1", false)
+	v.SetDefault("dark_mode_tier2", false)
+
 	// Database defaults
 	v.SetDefault("database_url", "postgres://openidx:openidx_secret@localhost:5432/openidx?sslmode=disable")
 	v.SetDefault("redis_url", "redis://:redis_secret@localhost:6379")
@@ -677,6 +697,9 @@ func bindEnvVars(v *viper.Viper) {
 		"environment":                                     "APP_ENV",
 		"log_level":                                       "LOG_LEVEL",
 		"port":                                            "PORT",
+		"bind_addr":                                       "SERVICE_BIND_ADDR",
+		"dark_mode_tier1":                                 "DARK_MODE_TIER1",
+		"dark_mode_tier2":                                 "DARK_MODE_TIER2",
 		"shutdown_timeout_seconds":                        "SHUTDOWN_TIMEOUT_SECONDS",
 		"oauth_issuer":                                    "OAUTH_ISSUER",
 		"tenant_base_domain":                              "TENANT_BASE_DOMAIN",
@@ -828,6 +851,14 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("port must be between 1 and 65535")
 	}
 	return nil
+}
+
+// ListenAddr is the address the HTTP server binds. An empty BindAddr yields
+// ":<port>" (all interfaces — today's behavior); BindAddr "127.0.0.1" yields
+// "127.0.0.1:<port>" (loopback-only, i.e. "dark": reachable only over the
+// OpenZiti overlay). See the dark-platform spec.
+func (c *Config) ListenAddr() string {
+	return fmt.Sprintf("%s:%d", c.BindAddr, c.Port)
 }
 
 // GetRedisSentinelAddresses returns the sentinel addresses as a slice
